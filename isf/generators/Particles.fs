@@ -9,14 +9,22 @@
  {"NAME":"hit","LABEL":"Hit","TYPE":"float","DEFAULT":0,"MIN":0,"MAX":1},
  {"NAME":"turbulence","LABEL":"Turbulence","TYPE":"float","DEFAULT":0.4,"MIN":0,"MAX":1},
  {"NAME":"pull","LABEL":"Pull","TYPE":"float","DEFAULT":0.3,"MIN":0,"MAX":1},
- {"NAME":"orbit","LABEL":"Orbit","TYPE":"float","DEFAULT":0.2,"MIN":-1,"MAX":1},
  {"NAME":"size","LABEL":"Size","TYPE":"float","DEFAULT":0.3,"MIN":0,"MAX":1},
  {"NAME":"exposure","LABEL":"Exposure","TYPE":"float","DEFAULT":0.5,"MIN":0,"MAX":1},
  {"NAME":"trail","LABEL":"Trail","TYPE":"float","DEFAULT":0.6,"MIN":0,"MAX":0.98},
  {"NAME":"tint","LABEL":"Tint","TYPE":"color","DEFAULT":[0.55,0.75,1,1]},
- {"NAME":"hot","LABEL":"Hot","TYPE":"color","DEFAULT":[1,0.85,0.7,1]}
+ {"NAME":"hot","LABEL":"Hot","TYPE":"color","DEFAULT":[1,0.85,0.7,1]},
+ {"NAME":"camYaw","LABEL":"Camera Direction","TYPE":"float","DEFAULT":0,"MIN":-1,"MAX":1},
+ {"NAME":"camPitch","LABEL":"Camera Height","TYPE":"float","DEFAULT":0.25,"MIN":-1,"MAX":1},
+ {"NAME":"camDistance","LABEL":"Camera Distance","TYPE":"float","DEFAULT":0.35,"MIN":0,"MAX":1},
+ {"NAME":"camTarget","LABEL":"Camera Target","TYPE":"point2D","DEFAULT":[0,0],"MIN":[-1,-1],"MAX":[1,1]},
+ {"NAME":"camLens","LABEL":"Camera Lens","TYPE":"float","DEFAULT":0.4,"MIN":0,"MAX":1},
+ {"NAME":"camPath","LABEL":"Camera Path","TYPE":"long","DEFAULT":1,"VALUES":[0,1,2,3,4,5],"LABELS":["Fixed","Orbit","Figure eight","Spiral","Pendulum","Fly-through"]},
+ {"NAME":"camSpeed","LABEL":"Camera Speed","TYPE":"float","DEFAULT":0.25,"MIN":-1,"MAX":1},
+ {"NAME":"camSize","LABEL":"Camera Path Size","TYPE":"float","DEFAULT":0.5,"MIN":0,"MAX":1}
  ],
  "PASSES":[
+ {"TARGET":"cam","PERSISTENT":true,"FLOAT":true,"WIDTH":1,"HEIGHT":1},
  {"TARGET":"vel","PERSISTENT":true,"FLOAT":true,"WIDTH":512,"HEIGHT":512},
  {"TARGET":"pos","PERSISTENT":true,"FLOAT":true,"WIDTH":512,"HEIGHT":512},
  {"TARGET":"glow","PERSISTENT":true,"FLOAT":true},
@@ -24,10 +32,11 @@
  {}
  ]
 }*/
-// Pass 0: velocities (xyz, w: the particle's life when it was born). Pass 1: positions (xyz, w: life left, in
+// Pass 0: where the camera is along its path (its speed changes it smoothly, a new path is reached gradually).
+// Pass 1: velocities (xyz, w: the particle's life when it was born). Pass 2: positions (xyz, w: life left, in
 // seconds; 0: born again). Both decide a birth the same way, from the position before this frame.
-// Pass 2: what was drawn fades (the trail). Pass 3: the particles, added as soft points (vertex shader:
-// Particles.vs). Pass 4: the light they add up to, brought into the picture.
+// Pass 3: what was drawn fades (the trail). Pass 4: the particles, added as soft points (vertex shader:
+// Particles.vs, with the camera). Pass 5: the light they add up to, brought into the picture.
 
 varying vec4 pColor;
 
@@ -63,12 +72,20 @@ vec3 ptBirthPos(uint id){
 }
 
 void main(){
- if(PASSINDEX<2){
+ if(PASSINDEX==0){
+  // x: cycles travelled (one in 20 s at full speed; 4 bring every path back to its start). A new path is
+  // reached in 2 s from where the camera is: y the path it leaves, z the one it goes to, w how far it is.
+  vec4 C=texelFetch(cam,ivec2(0),0);
+  float dt=min(TIMEDELTA,.1);
+  if(FRAMEINDEX==0)C=vec4(0,camPath,camPath,1);
+  if(float(camPath)!=C.z)C=vec4(C.x,C.w<.5?C.y:C.z,camPath,0);
+  gl_FragColor=vec4(mod(C.x+dt*camSpeed*.05,4.),C.y,C.z,min(C.w+dt*.5,1.));
+ }else if(PASSINDEX<3){
   uint id=ptId();ivec2 c=ivec2(gl_FragCoord.xy);
   vec4 P=texelFetch(pos,c,0),V=texelFetch(vel,c,0);
   bool born=P.w<=0.;
   float dt=min(TIMEDELTA,.1);
-  if(PASSINDEX==0){
+  if(PASSINDEX==1){
    if(born){vec3 p=ptBirthPos(id);gl_FragColor=vec4(cross(p,vec3(0,1,0))*.15,ptLife(id));return;}
    vec3 flow=ptCurl(P.xyz*(1.1+2.2*metal)+vec3(0,TIME*.07,0))*(.35+1.2*turbulence+1.6*air);
    vec3 toward=-P.xyz*(.4+3.5*bass)*pull*2.;
@@ -83,9 +100,9 @@ void main(){
    if(dot(p,p)>6.)life=0.; // gone too far: born again at the next frame
    gl_FragColor=vec4(p,max(life,0.));
   }
- }else if(PASSINDEX==2){
-  gl_FragColor=texelFetch(glow,ivec2(gl_FragCoord.xy),0)*trail;
  }else if(PASSINDEX==3){
+  gl_FragColor=texelFetch(glow,ivec2(gl_FragCoord.xy),0)*trail;
+ }else if(PASSINDEX==4){
   vec2 d=gl_PointCoord*2.-1.;
   float a=exp(-dot(d,d)*3.5)*step(dot(d,d),1.);
   gl_FragColor=vec4(pColor.rgb*pColor.a*a,pColor.a*a);

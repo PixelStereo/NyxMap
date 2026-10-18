@@ -385,6 +385,20 @@ void main(){
             first = red(64);
             second = red(64);
             CHECK(first > 60 && second > first + 40); // added to the previous frame's
+            // The shipped particle generator: a cloud appears, from every camera path
+            CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
+            inst = e.layer(g)->generator.get();
+            IsfInput *path = inst ? inst->input(QStringLiteral("camPath")) : nullptr;
+            CHECK(path != nullptr && path->lValues.size() == 6);
+            for (int p = 0; path && p < 6; ++p) {
+                path->lValue = p;
+                for (int k = 0; k < 8; ++k) e.renderFrame();
+                const QImage img = e.grabViewport(e.mainViewportId());
+                int lit = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
+                CHECK(lit > img.width() * img.height() / 20);
+            }
             e.newProject();
         }
     } // isf_safe
