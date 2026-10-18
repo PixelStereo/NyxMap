@@ -26,6 +26,7 @@ public:
     QString deviceName() const; // the device actually open (empty when stopped)
 
     AudioAnalysis::Spectrum spectrum() const { return m_analysis.spectrum(); }
+    AudioAnalysis::Wave wave() const { return m_analysis.wave(); }
     AudioAnalysis::Values analysis() const { return m_analysis.values(); }
     float peak() const { return m_peak.load(); } // 0..1+, with decay
 

@@ -490,6 +490,8 @@ bool IsfInstance::parse(const QString &src, QString *body)
             in.fDefault = j.value("DEFAULT").toDouble(in.fMin);
             in.fValue = in.fDefault;
             break;
+        case IsfInput::Audio:
+        case IsfInput::AudioFFT: in.audioMax = std::clamp(j.value("MAX").toInt(0), 0, 4096); break;
         case IsfInput::Bool:
         case IsfInput::Event: {
             QJsonValue d = j.value("DEFAULT");
@@ -885,7 +887,7 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
                 else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
                 break;
             case IsfInput::Audio:
-            case IsfInput::AudioFFT: bindSampler(in.loc, in.sizeLoc, in.rectLoc, 0, 1, 1); break;
+            case IsfInput::AudioFFT: bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h); break;
             default: break;
             }
         }
@@ -985,6 +987,11 @@ QJsonObject IsfInstance::save(const QString &projectDir, bool withParams) const
         if (in.type == IsfInput::Image && !in.isInputImage && in.imageLayer)
             imageLayers[in.name] = QString::number(in.imageLayer); // ids are strings: JSON numbers are doubles
     if (!imageLayers.isEmpty()) o["image_layers"] = imageLayers;
+    QJsonObject audio; // the sound of its audio inputs, when not the live input
+    for (const IsfInput &in : m_inputs)
+        if ((in.type == IsfInput::Audio || in.type == IsfInput::AudioFFT) && in.audioSource == IsfInput::Program)
+            audio[in.name] = QStringLiteral("program");
+    if (!audio.isEmpty()) o["audio_sources"] = audio;
     if (withParams) {
         std::vector<Parameter> params = parameters(QString());
         std::vector<Parameter *> list;
@@ -1013,6 +1020,10 @@ void IsfInstance::restore(const QJsonObject &o, const QString &projectDir)
     const QJsonObject imageLayers = o.value("image_layers").toObject();
     for (IsfInput &in : m_inputs)
         if (in.type == IsfInput::Image && !in.isInputImage) in.imageLayer = imageLayers.value(in.name).toString().toULongLong();
+    const QJsonObject audio = o.value("audio_sources").toObject();
+    for (IsfInput &in : m_inputs)
+        if (in.type == IsfInput::Audio || in.type == IsfInput::AudioFFT)
+            in.audioSource = audio.value(in.name).toString() == QLatin1String("program") ? IsfInput::Program : IsfInput::LiveInput;
     if (o.contains("params")) {
         std::vector<Parameter> params = parameters(QString());
         std::vector<Parameter *> list;

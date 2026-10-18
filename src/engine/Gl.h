@@ -78,5 +78,6 @@ struct Texture2D {
     GLuint tex = 0;
     int w = 0, h = 0;
     void upload(const void *rgba, int w, int h);
+    void uploadFloat(const float *rgba, int w, int h); // 32-bit float RGBA (audio for ISF)
     void destroy();
 };

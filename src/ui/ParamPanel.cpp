@@ -312,9 +312,24 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
         }
         case IsfInput::Audio:
         case IsfInput::AudioFFT: {
-            auto *l = new QLabel(QStringLiteral("audio input not supported (V1)"));
-            l->setStyleSheet("color:#888;");
-            field = l;
+            // The sound it shows: the live audio input (Settings > Audio Input), or the program (the mix the layers play)
+            auto *source = new QComboBox;
+            source->setObjectName(QStringLiteral("audioSource_") + in.name);
+            source->addItem(QStringLiteral("Audio In (live)"), int(IsfInput::LiveInput));
+            source->addItem(QStringLiteral("Program (mix)"), int(IsfInput::Program));
+            source->setCurrentIndex(in.audioSource == IsfInput::Program ? 1 : 0);
+            source->setToolTip(in.type == IsfInput::Audio
+                                   ? QStringLiteral("The waveform this shader receives: the live audio input (Settings > "
+                                                    "Audio Input), or the sound the layers play")
+                                   : QStringLiteral("The spectrum this shader receives: the live audio input (Settings > "
+                                                    "Audio Input), or the sound the layers play"));
+            connect(source, &QComboBox::currentIndexChanged, this, [this, idx, source] {
+                Engine::Lock lk(&m_engine->mutex());
+                IsfInstance *inst = cmd::resolveIsf(m_engine, m_layer, m_slot);
+                lk.unlock();
+                m_engine->setIsfAudioSource(inst, idx, IsfInput::AudioSource(source->currentData().toInt()));
+            });
+            field = source;
             break;
         }
         default: continue;

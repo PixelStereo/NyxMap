@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <limits>
 #include <random>
+#include <vector>
 int main(){
     int failures=0;auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL audio_analysis: %s\n",why);}};
     constexpr int frames=480,rate=48000;std::array<float,frames*2> buffer{};
@@ -82,5 +83,28 @@ int main(){
     check(same,"bounded band scan matches full scan for random bands and FFT boundaries");
     fixture.rate=0;check(fixture.band(20,20000)==0,"invalid sample rate is silent");
     fixture.rate=-48000;check(fixture.band(20,20000)==0,"negative sample rate is silent");
+    // ISF audio inputs: the waveform (centred on 0.5) and the log spectrum in dB
+    {
+        AudioAnalysis isf;double phase=0;
+        for(int block=0;block<30;++block){for(int i=0;i<frames;++i){const float x=.5f*float(std::sin(phase));phase+=6.283185307179586*1000/rate;buffer[2*i]=x;buffer[2*i+1]=-x;}isf.process(buffer.data(),frames,rate);}
+        const AudioAnalysis::Wave w=isf.wave();
+        std::vector<float> wave(2*1024);AudioAnalysis::waveColumns(w,0,wave.data());
+        float lo=1,hi=0;for(int i=0;i<1024;++i){lo=std::min(lo,wave[size_t(i)]);hi=std::max(hi,wave[size_t(i)]);}
+        check(AudioAnalysis::waveWidth(0)==1024&&hi>.74f&&hi<.76f&&lo>.24f&&lo<.26f,"ISF waveform: 0.5 +- amplitude / 2");
+        check(std::abs(wave[100]+wave[1024+100]-1.f)<1e-5f,"ISF waveform: a row per channel");
+        std::vector<float> one(2);AudioAnalysis::waveColumns(w,1,one.data());
+        check(std::abs(one[0]-.5f)>.24f,"ISF waveform of one column keeps the peak");
+        const AudioAnalysis::Spectrum sp=isf.spectrum();
+        std::vector<float> fft(2*512);AudioAnalysis::spectrumColumns(sp,0,fft.data());
+        const int at=int(512*std::log(1000./20.)/std::log(20000./20.)); // 1 kHz on the log axis
+        float peak=0;int where=0;for(int i=0;i<512;++i)if(fft[size_t(i)]>peak){peak=fft[size_t(i)];where=i;}
+        std::printf("       ISF FFT: peak %.3f at column %d (1 kHz: %d), 100 Hz %.3f\n",peak,where,at,fft[size_t(int(512*std::log(5.)/std::log(1000.)))]);
+        check(std::abs(where-at)<=3&&peak>.75f,"ISF FFT: a 1 kHz tone at its place on the log axis");
+        check(fft[size_t(int(512*std::log(5.)/std::log(1000.)))]<.2f,"ISF FFT: nothing at 100 Hz");
+        std::vector<float> loud(2);AudioAnalysis::spectrumColumns(sp,1,loud.data());
+        check(loud[0]>.8f&&loud[0]==loud[1],"ISF FFT of one column: the overall loudness, both rows");
+        std::vector<float> quiet(2);AudioAnalysis::spectrumColumns(AudioAnalysis::Spectrum{},1,quiet.data());
+        check(quiet[0]==0,"ISF FFT of silence is 0");
+    }
     std::printf("audio_analysis: %d failures\n",failures);return failures?1:0;
 }

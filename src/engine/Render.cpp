@@ -143,6 +143,33 @@ void Engine::bindLayerImages(IsfInstance &inst)
     }
 }
 
+// ISF "audio" and "audioFFT" inputs: the live input's sound or the program's, now, a row per channel, as
+// 32-bit float RGBA (grey)
+void Engine::feedAudio(IsfInstance &inst)
+{
+    std::vector<float> values, rgba;
+    for (IsfInput &in : inst.inputs()) {
+        if (in.type != IsfInput::Audio && in.type != IsfInput::AudioFFT) continue;
+        const bool program = in.audioSource == IsfInput::Program;
+        int w;
+        if (in.type == IsfInput::Audio) {
+            w = AudioAnalysis::waveWidth(in.audioMax);
+            values.resize(size_t(2 * w));
+            AudioAnalysis::waveColumns(program ? m_audio->wave() : m_audioInput->wave(), in.audioMax, values.data());
+        } else {
+            w = AudioAnalysis::spectrumWidth(in.audioMax);
+            values.resize(size_t(2 * w));
+            AudioAnalysis::spectrumColumns(program ? m_audio->spectrum() : m_audioInput->spectrum(), in.audioMax, values.data());
+        }
+        rgba.resize(values.size() * 4);
+        for (size_t k = 0; k < values.size(); ++k) {
+            rgba[4 * k] = rgba[4 * k + 1] = rgba[4 * k + 2] = values[k];
+            rgba[4 * k + 3] = 1.f;
+        }
+        in.imageTex.uploadFloat(rgba.data(), w, 2);
+    }
+}
+
 // Squares rather than GL_POINTS: no limit on their size, and no driver's wide-point path (Mesa 23.3's llvmpipe
 // crashed in it with a colour passed on and gl_PointCoord)
 void Engine::drawPoints(int count)
@@ -377,6 +404,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     case SourceType::Isf:
         if (l.generator) {
             bindLayerImages(*l.generator);
+            feedAudio(*l.generator);
             l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {
                 tex = l.generatorTarget.tex;
@@ -531,6 +559,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
             if (!fx->enabled) continue;
             RenderTarget &dst = l.fxTarget[ping];
             bindLayerImages(*fx);
+            feedAudio(*fx);
             fx->render(rc, tex, w, h, dst, w, h);
             if (!dst.ready(w, h)) {
                 // Do not present a raw source or a stale-size effect output.

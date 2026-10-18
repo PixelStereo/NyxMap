@@ -538,6 +538,55 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(img, isf_FragNormCoord).rgb, 1.)
         CHECK(centre().red() < 5 && centre().green() < 5);
         e.newProject();
     }
+    // ISF audio inputs: the live audio input's waveform and spectrum (MAX: their width), or the program's; saved
+    {
+        e.newProject();
+        e.setCompositionSize(QSize(64, 32));
+        e.setViewportSize(e.indexOfId(e.mainViewportId()), QSize(64, 32));
+        const QString shader = tmp + "/AudioIn.fs";
+        const double at = (int(512 * std::log(1000. / 20.) / std::log(1000.)) + .5) / 512; // 1 kHz on the log axis
+        {
+            QFile f(shader);
+            CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(QStringLiteral(R"(/*{"INPUTS":[{"NAME":"wave","TYPE":"audio","MAX":256},{"NAME":"fft","TYPE":"audioFFT"}]}*/
+void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(wave).x / 2048., IMG_SIZE(fft).x / 1024., 1.); }
+)").arg(at, 0, 'f', 6).toUtf8());
+        }
+        const quint64 id = e.layerId(e.addLayer("Audio"));
+        CHECK(e.setLayerIsf(e.indexOfId(id), shader, &err));
+        IsfInstance *inst = e.layer(e.indexOfId(id))->generator.get();
+        CHECK(inst && inst->inputs().size() == 2 && inst->inputs()[0].audioMax == 256 &&
+              inst->inputs()[0].audioSource == IsfInput::LiveInput);
+        auto centre = [&] {
+            e.renderFrame();
+            const QImage img = e.grabLayerSource(e.indexOfId(id));
+            return img.isNull() ? QColor(Qt::black) : img.pixelColor(img.width() / 2, img.height() / 2);
+        };
+        QColor c = centre();
+        std::printf("       ISF audio, silence: %d %d %d\n", c.red(), c.green(), c.blue());
+        CHECK(c.red() < 5 && std::abs(c.green() - 32) <= 2 && std::abs(c.blue() - 128) <= 2); // 256 and 512 wide
+        std::vector<float> tone(480);
+        double phase = 0;
+        for (int block = 0; block < 30; ++block) {
+            for (float &x : tone) {
+                x = .5f * float(std::sin(phase));
+                phase += 6.283185307179586 * 1000 / 48000;
+            }
+            e.audioInput().feed(tone.data(), int(tone.size()));
+        }
+        c = centre();
+        std::printf("       ISF audio, 1 kHz in: %d\n", c.red());
+        CHECK(c.red() > 180); // the tone, in the shader's spectrum
+        e.setIsfAudioSource(inst, 1, IsfInput::Program); // the program plays nothing
+        CHECK(centre().red() < 5);
+        const QString file = tmp + "/isf_audio.pinol";
+        CHECK(e.saveProject(file, {}, &err));
+        CHECK(e.loadProject(file, nullptr, &err));
+        inst = e.layer(e.indexOfId(id))->generator.get();
+        CHECK(inst && inst->inputs()[1].audioSource == IsfInput::Program && inst->inputs()[0].audioSource == IsfInput::LiveInput);
+        e.audioInput().stop(); // the analysis cleared for the next tests
+        e.newProject();
+    }
     } // isf_safe
 
     if (area("video")) {

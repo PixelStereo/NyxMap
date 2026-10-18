@@ -4,6 +4,58 @@
 #include <array>
 #include <complex>
 #include <cmath>
+#include <cstdint>
+
+// A value one producer publishes and readers copy, never waiting for one another (see publish())
+template <class T> class Published {
+public:
+    T read() const {
+        // A pin protects the whole snapshot. The writer can never recycle a pinned slot. Acquisition is bounded for
+        // render-thread readers too: extreme contention returns a cleared value.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            auto &slot = m_slots[m_published.load(std::memory_order_acquire)];
+            const unsigned state = slot.users.fetch_add(1, std::memory_order_acquire);
+            if (!(state & writing)) {
+                T result = slot.value;
+                slot.users.fetch_sub(1, std::memory_order_release);
+                return result;
+            }
+            slot.users.fetch_sub(1, std::memory_order_release);
+        }
+        return {};
+    }
+    // Exactly one producer (process/reset, as for the FFT ring itself).
+    // Multiple readers may pin the same slot. A reader arriving after writer
+    // ownership only touches the atomic counter, never the snapshot. Subtract
+    // the writer bit on release instead of storing zero: failed reader pins
+    // may still be in flight and must retain their counts until they withdraw.
+    void publish(const T &value) {
+        const unsigned current = m_published.load(std::memory_order_relaxed);
+        for (unsigned offset = 1; offset < m_slots.size(); ++offset) {
+            const unsigned next = (current + offset) % m_slots.size();
+            auto &slot = m_slots[next];
+            unsigned empty = 0;
+            if (!slot.users.compare_exchange_strong(empty, writing,
+                    std::memory_order_acquire, std::memory_order_relaxed)) continue;
+            slot.value = value;
+            slot.users.fetch_sub(writing, std::memory_order_release);
+            m_published.store(next, std::memory_order_release);
+            return;
+        }
+        // Slow readers may retain both inactive snapshots. Keep the previous
+        // complete publication; the audio callback must never wait for them.
+    }
+private:
+    static constexpr unsigned writing = 1u << 31;
+    struct SnapshotSlot {
+        T value;
+        mutable std::atomic<unsigned> users{0};
+    };
+    static_assert(std::atomic<unsigned>::is_always_lock_free,
+                  "Audio publication requires lock-free counters");
+    std::array<SnapshotSlot, 3> m_slots{};
+    std::atomic<unsigned> m_published{0};
+};
 
 // Audio-thread processing: fixed storage; no allocation, locks or callbacks.
 // Readers see normalized, smoothed program-audio energy before the master fader.
@@ -15,7 +67,9 @@ public:
         int rate = 48000;
         // Integrated, stereo-safe RMS over the selected FFT bins. Fractional
         // edge weights avoid jumps as a band handle crosses a bin boundary.
-        float band(float lo, float hi) const {
+        float band(float lo, float hi) const { return 1.f - std::exp(-4.f * float(std::sqrt(bandPower(lo, hi)))); }
+        // The power (mean square) of the bins between lo and hi Hz
+        double bandPower(float lo, float hi) const {
             if (rate <= 0 || !std::isfinite(lo) || !std::isfinite(hi) || hi <= lo) return 0;
             const float step = float(rate) / fftSize;
             // Only overlapping bins can contribute. Keep a bin of margin on
@@ -31,7 +85,7 @@ public:
                 const float weight = std::clamp((std::min(hi,right)-std::max(lo,left))/step,0.f,1.f);
                 sum += power[size_t(k)] * weight;
             }
-            return 1.f - std::exp(-4.f * float(std::sqrt(std::max(0.,sum))));
+            return std::max(0., sum);
         }
     };
     AudioAnalysis() {
@@ -40,31 +94,56 @@ public:
         for(int n=0;n<fftSize/2;++n)m_twiddle[n]=std::polar(1.f,float(-2*pi*n/fftSize));
 
     }
-    Spectrum spectrum() const {
-        // A pin protects the whole snapshot, including its sample rate. The
-        // writer can never recycle a pinned slot. Acquisition is bounded for
-        // render-thread readers too: extreme contention returns coherent silence.
-        for (int attempt = 0; attempt < 3; ++attempt) {
-            auto &slot = m_spectra[m_published.load(std::memory_order_acquire)];
-            const unsigned state = slot.users.fetch_add(1, std::memory_order_acquire);
-            if (!(state & writing)) {
-                Spectrum result = slot.value;
-                slot.users.fetch_sub(1, std::memory_order_release);
-                return result;
+    Spectrum spectrum() const { return m_spectra.read(); }
+    // The last waveSize frames heard, per channel (-1..1), republished every waveHop frames: what an ISF "audio"
+    // input shows
+    static constexpr int waveSize = 2048, waveHop = 256;
+    struct Wave {
+        std::array<std::array<float, waveSize>, 2> samples{};
+    };
+    Wave wave() const { return m_waves.read(); }
+
+    // What an ISF "audio" input receives: `columns` samples per channel (0: 1024), a row per channel, centred on 0.5.
+    // Fewer than 1024: each column holds the strongest sample of its stretch of the last 1024 (the envelope stays).
+    static void waveColumns(const Wave &w, int columns, float *out /* 2 * columns */) {
+        const int n = columns > 0 ? std::min(columns, int(waveSize)) : 1024;
+        const int span = std::max(n, 1024);
+        for (int c = 0; c < 2; ++c) {
+            const float *x = w.samples[size_t(c)].data() + waveSize - span;
+            for (int i = 0; i < n; ++i) {
+                const int a = int(std::int64_t(i) * span / n), b = std::max(a + 1, int(std::int64_t(i + 1) * span / n));
+                float v = 0;
+                for (int k = a; k < b; ++k) if (std::abs(x[k]) > std::abs(v)) v = x[k];
+                out[c * n + i] = std::clamp(.5f + .5f * v, 0.f, 1.f);
             }
-            slot.users.fetch_sub(1, std::memory_order_release);
         }
-        return {};
     }
+    // What an ISF "audioFFT" input receives: `columns` bands (0: 512) from 20 Hz to 20 kHz (or Nyquist) on a log
+    // scale, each its power in dB, 0 at -60 dB, 1 at 0 dB (a full-scale sine); two rows (the spectrum is stereo-safe:
+    // the same in both). One column: the whole band, the overall loudness.
+    static void spectrumColumns(const Spectrum &s, int columns, float *out /* 2 * columns */) {
+        const int n = columns > 0 ? std::min(columns, 2048) : 512;
+        const float lo = 20.f, hi = std::min(20000.f, s.rate * .5f);
+        for (int i = 0; i < n; ++i) {
+            const float a = lo * std::pow(hi / lo, float(i) / n), b = lo * std::pow(hi / lo, float(i + 1) / n);
+            const double p = s.bandPower(a, b);
+            const float v = std::clamp(1.f + float(10. * std::log10(std::max(p, 1e-12))) / 60.f, 0.f, 1.f);
+            out[i] = out[n + i] = v;
+        }
+    }
+    static int waveWidth(int columns) { return columns > 0 ? std::min(columns, int(waveSize)) : 1024; }
+    static int spectrumWidth(int columns) { return columns > 0 ? std::min(columns, 2048) : 512; }
     struct Values { float level=0, bass=0, mid=0, high=0, onset=0; };
     Values values() const { return {m_level.load(),m_bass.load(),m_mid.load(),m_high.load(),m_onset.load()}; }
     void reset() {
         for(int c=0;c<2;++c){m_low[c]=m_upper[c]=0;}
         m_write=m_filled=m_hop=0;
         for(auto &channel:m_ring)channel.fill(0);
+        m_waveHop=0;
         Spectrum cleared;
         cleared.rate = m_rate;
-        publish(cleared);
+        m_spectra.publish(cleared);
+        m_waves.publish(Wave{});
         m_slow=0; m_level=0; m_bass=0; m_mid=0; m_high=0; m_onset=0;
     }
     void process(const float *stereo,int frames,int rate) {
@@ -84,6 +163,7 @@ public:
           m_write=(m_write+1)%fftSize;
           m_filled=std::min(m_filled+1,fftSize);
           if(++m_hop>=hopSize && m_filled==fftSize){m_hop=0;publishSpectrum();}
+          if(++m_waveHop>=waveHop){m_waveHop=0;publishWave();}
         }
         const float seconds=float(frames)/rate;
         float rms[4];for(int band=0;band<4;++band)rms[band]=float(std::sqrt(energy[band]/(2*frames)));
@@ -116,44 +196,22 @@ private:
                 power[k] += scale * std::norm(m_fft[k]) / (fftSize * fftSize * .375f);
             }
         }
-        publish(Spectrum{power, m_rate});
+        m_spectra.publish(Spectrum{power, m_rate});
+    }
+    void publishWave(){
+        Wave w;
+        for(int c=0;c<2;++c)
+            for(int i=0;i<waveSize;++i)w.samples[size_t(c)][size_t(i)]=m_ring[c][(m_write+fftSize-waveSize+i)%fftSize];
+        m_waves.publish(w);
     }
     std::array<float,fftSize> m_window{};
     std::array<std::array<float,fftSize>,2> m_ring{};
     std::array<std::complex<float>,fftSize> m_fft{};
     std::array<std::complex<float>,fftSize/2> m_twiddle{};
-    static constexpr unsigned writing = 1u << 31;
-    struct SnapshotSlot {
-        Spectrum value;
-        mutable std::atomic<unsigned> users{0};
-    };
-    // Exactly one producer (process/reset, as for the FFT ring itself).
-    // Multiple readers may pin the same slot. A reader arriving after writer
-    // ownership only touches the atomic counter, never the snapshot. Subtract
-    // the writer bit on release instead of storing zero: failed reader pins
-    // may still be in flight and must retain their counts until they withdraw.
-    void publish(const Spectrum &value) {
-        const unsigned current = m_published.load(std::memory_order_relaxed);
-        for (unsigned offset = 1; offset < m_spectra.size(); ++offset) {
-            const unsigned next = (current + offset) % m_spectra.size();
-            auto &slot = m_spectra[next];
-            unsigned empty = 0;
-            if (!slot.users.compare_exchange_strong(empty, writing,
-                    std::memory_order_acquire, std::memory_order_relaxed)) continue;
-            slot.value = value;
-            slot.users.fetch_sub(writing, std::memory_order_release);
-            m_published.store(next, std::memory_order_release);
-            return;
-        }
-        // Slow readers may retain both inactive snapshots. Keep the previous
-        // complete publication; the audio callback must never wait for them.
-    }
-    static_assert(std::atomic<unsigned>::is_always_lock_free,
-                  "Audio spectrum publication requires lock-free counters");
-    std::array<SnapshotSlot, 3> m_spectra{};
-    std::atomic<unsigned> m_published{0};
+    Published<Spectrum> m_spectra;
+    Published<Wave> m_waves;
     int m_rate=48000;
-    int m_write=0,m_filled=0,m_hop=0;
+    int m_write=0,m_filled=0,m_hop=0,m_waveHop=0;
     float m_low[2]={},m_upper[2]={},m_slow=0;
     std::atomic<float> m_level{0},m_bass{0},m_mid{0},m_high{0},m_onset{0};
 };
