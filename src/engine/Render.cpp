@@ -118,17 +118,13 @@ void Engine::drawQuad()
     f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
-#ifndef GL_PROGRAM_POINT_SIZE
-#define GL_PROGRAM_POINT_SIZE 0x8642
-#endif
-
+// Squares rather than GL_POINTS: no limit on their size, and no driver's wide-point path (Mesa 23.3's llvmpipe
+// crashed in it with a colour passed on and gl_PointCoord)
 void Engine::drawPoints(int count)
 {
     auto f = gl();
     f->glBindVertexArray(m_pointsVao);
-    f->glEnable(GL_PROGRAM_POINT_SIZE); // their size from the vertex shader (gl_PointSize)
-    f->glDrawArrays(GL_POINTS, 0, count);
-    f->glDisable(GL_PROGRAM_POINT_SIZE);
+    f->glDrawArrays(GL_TRIANGLES, 0, count * 6);
 }
 
 void Engine::blit(GLuint tex, const RenderTarget &target)

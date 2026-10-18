@@ -762,7 +762,7 @@ private:
     void clearProject();
     int viewportCountLocked() const;
     void drawQuad();
-    void drawPoints(int count); // an ISF particle pass: count vertices, no attribute
+    void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
     void bindMesh(Layer &l);         // its mapped mesh (render thread, mesh vertex array bound)
     void bindMeshBuffer(GLuint vbo); // any mesh vertex buffer

@@ -81,8 +81,9 @@ struct IsfPass {
     QString target, widthExpr, heightExpr;
     bool persistent = false, isFloat = false;
     // A Pinol extension for particles: the pass draws POINTS points (a number or an expression) instead of a quad,
-    // one vertex each (gl_VertexID; their place comes from the vertex shader, typically read from a FLOAT target
-    // holding the particles' state), with gl_PointSize. BLEND: "ADD" (default) or "ALPHA", premultiplied.
+    // each a square of two triangles placed by the vertex shader: isf_PointIndex() says which point (typically read
+    // from a FLOAT target holding the particles' state), gl_Position = isf_PointSprite(its centre, its size in
+    // pixels); the fragment shader has gl_PointCoord. BLEND: "ADD" (default) or "ALPHA", premultiplied.
     // CLEAR false: drawn over what the target already holds instead of transparent black.
     // Other ISF hosts ignore these keys.
     QString pointsExpr;
@@ -108,7 +109,7 @@ struct IsfRenderContext {
     double dt = 0;
     GLuint blackTex = 0;
     std::function<void()> drawQuad;                                // fullscreen quad (VAO bound)
-    std::function<void(int count)> drawPoints;                     // count points, no vertex attribute
+    std::function<void(int count)> drawPoints;                     // count squares (6 vertices each), no attribute
     std::function<void(GLuint tex, const RenderTarget &)> blit;   // plain copy
 };
 

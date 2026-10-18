@@ -337,7 +337,7 @@ void main(){ gl_FragColor = definitely_not_defined; }
             e.newProject();
         }
         {
-            // A particle pass (POINTS): its count from an input, one vertex each placed by the vertex shader, added
+            // A particle pass (POINTS): its count from an input, each a square placed by the vertex shader, added
             // into a float target; CLEAR false draws over what the target holds (they build up frame after frame)
             e.setCompositionSize(QSize(128, 64));
             e.setViewportSize(e.indexOfId(e.mainViewportId()), QSize(128, 64));
@@ -348,8 +348,7 @@ void main(){ gl_FragColor = definitely_not_defined; }
             };
             const QByteArray vs = R"(void main(){
  if(PASSINDEX!=0){isf_vertShaderInit();return;}
- gl_Position=vec4(gl_VertexID==0?0.:.5,0.,0.,1.);
- gl_PointSize=6.;
+ gl_Position=isf_PointSprite(vec4(isf_PointIndex()==0?0.:.5,0.,0.,1.),6.);
 }
 )";
             const QByteArray fs = R"(/*{"INPUTS":[{"NAME":"count","TYPE":"float","DEFAULT":1,"MIN":0,"MAX":2}],
@@ -417,9 +416,8 @@ void main(){
                 const QString stepVs = QStringLiteral(R"(varying vec4 vColor;
 void main(){
  if(PASSINDEX!=1){isf_vertShaderInit();return;}
- vec4 s=texelFetch(state,ivec2(gl_VertexID%%1,gl_VertexID/%1),0);
- gl_Position=vec4(s.xy,0.,1.);
- gl_PointSize=6.;
+ vec4 s=texelFetch(state,ivec2(isf_PointIndex()%%1,isf_PointIndex()/%1),0);
+ gl_Position=isf_PointSprite(vec4(s.xy,0.,1.),6.);
  vColor=vec4(1.,0.,0.,1.);
 }
 )").arg(n);

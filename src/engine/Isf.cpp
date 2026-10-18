@@ -628,7 +628,9 @@ bool IsfInstance::compile(const QString &fsBody, const QString &vsBody)
         "#define texture2D texture\n"
         "#define texture2DRect texture\n"
         "#define varying in\n"
-        "#define vv_FragNormCoord isf_FragNormCoord\n");
+        "#define vv_FragNormCoord isf_FragNormCoord\n"
+        "in vec2 isf_PointCoord;\n" // a POINTS pass: where in its square (0..1)
+        "#define gl_PointCoord isf_PointCoord\n");
     fs += uniforms;
     fs += "#line 1\n";
     fs += fsBody;
@@ -636,8 +638,19 @@ bool IsfInstance::compile(const QString &fsBody, const QString &vsBody)
     QString vs = QStringLiteral(
         "#version 330 core\n"
         "layout(location = 0) in vec2 isf_position;\n"
-        "out vec2 isf_FragNormCoord;\n");
+        "out vec2 isf_FragNormCoord;\n"
+        "out vec2 isf_PointCoord;\n");
     vs += uniforms;
+    // A POINTS pass: which point this vertex belongs to, and the corner of its square around its centre (clip
+    // coordinates) for a size in pixels
+    vs += QStringLiteral(
+        "int isf_PointIndex() { return gl_VertexID / 6; }\n"
+        "vec4 isf_PointSprite(vec4 centre, float size) {\n"
+        "    const vec2 corners[6] = vec2[6](vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(-1, 1), vec2(1, -1), vec2(1, 1));\n"
+        "    vec2 k = corners[gl_VertexID % 6];\n"
+        "    isf_PointCoord = k * 0.5 + 0.5;\n"
+        "    return centre + vec4(k * size / RENDERSIZE * centre.w, 0.0, 0.0);\n"
+        "}\n");
     vs += QStringLiteral(
         "void isf_vertShaderInit() {\n"
         "    gl_Position = vec4(isf_position, 0.0, 1.0);\n"
