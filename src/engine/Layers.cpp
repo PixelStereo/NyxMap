@@ -580,7 +580,10 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
         if (parts & PartColor) merged["mask"] = o.value("mask");
         if (parts & PartSpatial) merged["mesh"] = o.value("mesh");
         if (parts & PartEffects) merged["fx"] = o.value("fx");
-        if (parts & PartMasks) merged["masks"] = o.value("masks");
+        if (parts & PartMasks) {
+            merged["masks"] = o.value("masks");
+            merged["matte"] = o.value("matte");
+        }
         if (parts & PartViewports) merged["viewports"] = o.value("viewports");
         if (parts & PartAnimations) merged["anims"] = o.value("anims");
         merged["params"] = merge(merged.value("params").toObject());
@@ -600,6 +603,7 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
         if (parts & PartMasks) {
             l->masks = masks::fromJson(o.value("masks").toArray());
             ++l->masksRevision; // drawn again
+            l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         }
         if ((parts & PartViewports) && !l->isViewport) {
             l->viewportOpacity.clear();
@@ -752,6 +756,7 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
             for (const auto &fx : l->effects) // the masks of its effects
                 if (fx->maskLayer && visit(fx->maskLayer)) return true;
             if (l->color.maskLayer && visit(l->color.maskLayer)) return true; // the mask of its color
+            if (l->matte.layer && visit(l->matte.layer)) return true;         // its matte
             // the layers its shaders' image inputs show
             auto viaImages = [&](const IsfInstance *inst) {
                 if (inst)
@@ -800,6 +805,17 @@ void Engine::fixLayerReferences(QStringList *warnings)
                                          : QStringLiteral(": its mask would feed back on the layer, mask dropped."));
             fx->maskLayer = 0;
         }
+    // Mattes: the same rules
+    for (auto &l : m_layers) {
+        if (!l->matte.layer) continue;
+        const int mi = indexOfId(l->matte.layer);
+        const bool bad = l->isViewport || mi < 0 || m_layers[size_t(mi)]->isViewport || l->matte.layer == l->id;
+        if (!bad && !layerDependsOn(l->matte.layer, l->id)) continue;
+        if (warnings)
+            *warnings << l->name + (mi < 0 ? QStringLiteral(": its matte layer is gone, matte dropped.")
+                                           : QStringLiteral(": its matte would feed back on it, matte dropped."));
+        l->matte = LayerMatte{};
+    }
     // Layers shown by the image inputs of its shaders: the same rules
     for (auto &l : m_layers) {
         std::vector<IsfInstance *> shaders;
@@ -830,6 +846,51 @@ void Engine::fixLayerReferences(QStringList *warnings)
                                            : QStringLiteral(": the mask of its color would feed back on it, mask dropped."));
         l->color.maskLayer = 0;
     }
+}
+
+QJsonObject LayerMatte::toJson() const
+{
+    if (!layer) return {};
+    return {{"layer", QString::number(layer)}, // ids are strings: JSON numbers are doubles
+            {"channel", channel == Channel::Alpha ? "alpha" : "luma"},
+            {"invert", invert},
+            {"space", space == Space::Picture ? "picture" : "composition"}};
+}
+
+LayerMatte LayerMatte::fromJson(const QJsonObject &o)
+{
+    LayerMatte m;
+    m.layer = o.value("layer").toString().toULongLong();
+    m.channel = o.value("channel").toString() == QLatin1String("alpha") ? Channel::Alpha : Channel::Luma;
+    m.invert = o.value("invert").toBool(false);
+    m.space = o.value("space").toString() == QLatin1String("picture") ? Space::Picture : Space::Composition;
+    return m;
+}
+
+bool Engine::setLayerMatte(int layerIndex, const LayerMatte &matte, QString *err)
+{
+    auto fail = [err](const QString &m) {
+        if (err) *err = m;
+        return false;
+    };
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(layerIndex);
+        if (!l) return false;
+        if (l->isViewport && matte.layer) return fail(QStringLiteral("A viewport has no matte: use a mask."));
+        if (matte.layer) {
+            const int mi = indexOfId(matte.layer);
+            if (mi < 0) return fail(QStringLiteral("That layer no longer exists."));
+            if (m_layers[size_t(mi)]->isViewport) return fail(QStringLiteral("A viewport cannot be a matte."));
+            if (matte.layer == l->id) return fail(QStringLiteral("A layer cannot be its own matte."));
+            if (layerDependsOn(matte.layer, l->id))
+                return fail(QStringLiteral("\"%1\" already uses this layer: the picture would feed back on itself.")
+                                .arg(m_layers[size_t(mi)]->name));
+        }
+        l->matte = matte; // its targets are released by the render thread (prepareMatte, applyPictureMatte)
+    }
+    emit layersChanged();
+    return true;
 }
 
 bool Engine::setColorMask(int layerIndex, quint64 maskId, bool invert, QString *err)

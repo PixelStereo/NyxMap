@@ -153,6 +153,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     o["enable"] = l.enabled;
     o["locked"] = l.locked;
     if (!l.masks.empty()) o["masks"] = masks::toJson(l.masks);
+    if (l.matte.layer) o["matte"] = l.matte.toJson();
     o["color_models"] = l.colorModels;
     if (l.color.maskLayer) o["mask"] = QString::number(l.color.maskLayer);
 
@@ -219,6 +220,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->locked = o.value("locked").toBool(false);
         l->masks = masks::fromJson(o.value("masks").toArray());
         ++l->masksRevision;
+        l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         l->isGroup = o.value("group").toBool(false);
         l->collapsed = o.value("collapsed").toBool(false);
         l->isViewport = o.value("viewport").toBool(false);

@@ -119,6 +119,25 @@ struct ColorAdjust {
 };
 
 // The Text generator's settings: what is typed and how it is set. Plain data, copied by the snapshots' fades.
+// A layer's matte: another layer's picture that sets where it shows (a track matte), on top of its masks. Its
+// luminance (times its alpha) or its alpha: shown fully on white, not at all on black or transparent, in proportion
+// in between; inverted, the other way. Taken either as that layer appears in the composition (its place, its mapping,
+// its own masks: what lines up on the screen), or stretched over this layer's own picture (as the mask of an effect).
+struct LayerMatte {
+    enum class Channel { Luma = 0, Alpha };
+    enum class Space { Composition = 0, Picture };
+    quint64 layer = 0; // 0: none
+    Channel channel = Channel::Luma;
+    bool invert = false;
+    Space space = Space::Composition;
+    bool operator==(const LayerMatte &o) const
+    {
+        return layer == o.layer && channel == o.channel && invert == o.invert && space == o.space;
+    }
+    QJsonObject toJson() const; // {} when none
+    static LayerMatte fromJson(const QJsonObject &o);
+};
+
 struct TextSource {
     QString content;                           // the text
     QString font = QStringLiteral("Arial");    // system font family
@@ -306,6 +325,9 @@ struct Layer {
     RenderTarget prepTarget;  // roi + color
     // Its masks (Masks.h): edited by the interface, drawn by the render thread when their revision changes
     std::vector<Mask> masks;
+    LayerMatte matte; // another layer's picture as its matte (none: layer 0)
+    RenderTarget matteTarget; // that picture as it is in the composition, this frame (its matte in Composition space)
+    RenderTarget mattePicture; // its picture through a matte in Picture space
     // A Timecode generator (a text source showing its clock): its settings and its clock
     std::optional<TimecodeSettings> timecode;
     std::shared_ptr<TimecodeClock> tcClock;

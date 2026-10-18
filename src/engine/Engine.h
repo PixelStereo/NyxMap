@@ -224,6 +224,9 @@ public:
     // Mask of an effect: the picture of another layer (0: none) says where the effect applies. Refused for a
     // viewport, the layer itself, or a layer that already depends on this one (err says why).
     bool setEffectMask(int layer, int effect, quint64 maskLayer, bool invert, QString *err = nullptr);
+    // A layer's matte (Layer.h): another layer's picture that sets where it shows (layer 0: none). Refused: a
+    // viewport (either side), the layer itself, or a layer that already uses it (the picture would feed back).
+    bool setLayerMatte(int layer, const LayerMatte &matte, QString *err = nullptr);
     bool setEffectMaskTap(int layer, int effect, bool preFx); // the mask's picture: before or after its own effects
     // Where the color section applies: another layer's picture (0: everywhere). Same rules as an effect's mask.
     bool setColorMask(int layer, quint64 maskLayer, bool invert, QString *err = nullptr);
@@ -775,7 +778,12 @@ private:
     void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
-    void bindMesh(Layer &l);         // its mapped mesh (render thread, mesh vertex array bound)
+    void bindMesh(Layer &l);
+    // A layer's matte (Layer.h): the other layer as it is in the composition this frame (Composition space), or its
+    // picture through the matte (Picture space)
+    void prepareMatte(Layer &l);
+    void applyPictureMatte(Layer &l, GLuint &tex, int w, int h);
+    static int matteMode(const LayerMatte &m) { return 1 + int(m.channel) + (m.invert ? 2 : 0); }         // its mapped mesh (render thread, mesh vertex array bound)
     void bindMeshBuffer(GLuint vbo); // any mesh vertex buffer
     QString resolvePath(const QJsonObject &o, const QString &projectDir) const;
     QJsonObject layerToJson(Layer &l, const QString &projectDir) const;
@@ -1041,6 +1049,9 @@ private:
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
     GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
+    GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)
+    GLint m_matteTexLoc = -1, m_matteMatteLoc = -1, m_matteModeLoc = -1;
+    GLint m_compMatteLoc = -1, m_compMatteModeLoc = -1, m_diffMatteLoc = -1, m_diffMatteModeLoc = -1;
     GLint m_compMaskLoc = -1, m_compMaskOnLoc = -1, m_diffMaskLoc = -1, m_diffMaskOnLoc = -1;
     void applySurfaceMasks(Layer &l, GLuint &tex, int w, int h);  // render thread
     bool bindCompositionMasks(Layer &l);                          // render thread: true if it has some

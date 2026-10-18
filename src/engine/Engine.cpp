@@ -172,7 +172,11 @@ bool Engine::initialize(QString *err)
         "  gl_Position = vec4((q+u_rot.zw)*u_view.xy+u_view.zw,0.0,1.0); }\n",
         "#version 330 core\nuniform sampler2D u_tex; uniform float u_opacity; in vec2 v_uv; out vec4 o;\n"
         "uniform sampler2D u_mask; uniform int u_maskOn; in vec2 v_comp;\n"
-        "void main(){ vec4 c = texture(u_tex, v_uv); float a = c.a*u_opacity;\n"
+        "uniform sampler2D u_matte; uniform int u_matteMode;\n" // a matte in Composition space (Layer.h): 0 none
+        "float isfMatte(){ if (u_matteMode == 0) return 1.0; vec4 m = texture(u_matte, v_comp); int k = u_matteMode - 1;\n"
+        "  float v = (k & 1) != 0 ? m.a : dot(m.rgb, vec3(0.2126, 0.7152, 0.0722));\n" // premultiplied: luma times alpha
+        "  return clamp((k & 2) != 0 ? 1.0 - v : v, 0.0, 1.0); }\n"
+        "void main(){ vec4 c = texture(u_tex, v_uv); float a = c.a*u_opacity*isfMatte();\n"
         "  if (u_maskOn != 0) a *= texture(u_mask, vec2(v_comp.x, 1.0 - v_comp.y)).r;\n"
         "  o = vec4(c.rgb*a, a); }\n",
         &log);
@@ -187,7 +191,11 @@ bool Engine::initialize(QString *err)
         "  gl_Position = vec4((q+u_rot.zw)*u_view.xy+u_view.zw,0.0,1.0); }\n",
         "#version 330 core\nuniform sampler2D u_tex; uniform sampler2D u_dst; uniform float u_opacity; in vec2 v_uv; out vec4 o;\n"
         "uniform sampler2D u_mask; uniform int u_maskOn; in vec2 v_comp;\n"
-        "void main(){ vec4 c = texture(u_tex, v_uv); float a = c.a*u_opacity;\n"
+        "uniform sampler2D u_matte; uniform int u_matteMode;\n" // a matte in Composition space (Layer.h): 0 none
+        "float isfMatte(){ if (u_matteMode == 0) return 1.0; vec4 m = texture(u_matte, v_comp); int k = u_matteMode - 1;\n"
+        "  float v = (k & 1) != 0 ? m.a : dot(m.rgb, vec3(0.2126, 0.7152, 0.0722));\n" // premultiplied: luma times alpha
+        "  return clamp((k & 2) != 0 ? 1.0 - v : v, 0.0, 1.0); }\n"
+        "void main(){ vec4 c = texture(u_tex, v_uv); float a = c.a*u_opacity*isfMatte();\n"
         "  if (u_maskOn != 0) a *= texture(u_mask, vec2(v_comp.x, 1.0 - v_comp.y)).r;\n"
         "  vec4 d = texelFetch(u_dst, ivec2(gl_FragCoord.xy), 0);\n"
         "  o = vec4(abs(d.rgb - c.rgb*a), d.a + a*(1.0-d.a)); }\n",
@@ -246,6 +254,21 @@ bool Engine::initialize(QString *err)
     m_shapeMaskTexLoc = f->glGetUniformLocation(m_shapeMaskProgram, "u_tex");
     m_shapeMaskMaskLoc = f->glGetUniformLocation(m_shapeMaskProgram, "u_mask");
     m_shapeMaskRgbLoc = f->glGetUniformLocation(m_shapeMaskProgram, "u_rgb");
+    // A picture through a matte in Picture space (Layer.h): the matte stretched over it, its luma or its alpha
+    m_matteProgram = compileProgram(quadVs,
+                                    "#version 330 core\nuniform sampler2D u_tex; uniform sampler2D u_matte; uniform int u_matteMode;\n"
+                                    "in vec2 v_uv; out vec4 o;\n"
+                                    "void main(){ vec4 m = texture(u_matte, v_uv); int k = u_matteMode - 1;\n"
+                                    "  float v = (k & 1) != 0 ? m.a : dot(m.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
+                                    "  o = texture(u_tex, v_uv) * clamp((k & 2) != 0 ? 1.0 - v : v, 0.0, 1.0); }\n",
+                                    &log);
+    if (!m_matteProgram) {
+        if (err) *err = QStringLiteral("Internal shaders: ") + log;
+        return false;
+    }
+    m_matteTexLoc = f->glGetUniformLocation(m_matteProgram, "u_tex");
+    m_matteMatteLoc = f->glGetUniformLocation(m_matteProgram, "u_matte");
+    m_matteModeLoc = f->glGetUniformLocation(m_matteProgram, "u_matteMode");
     // A crossfade between two pictures (a missing one: transparent), mixed in the shader rather than by blending
     m_fadeProgram = compileProgram(quadVs,
                                    "#version 330 core\nuniform sampler2D u_a; uniform sampler2D u_b; uniform vec3 u_k;\n"
@@ -286,6 +309,10 @@ bool Engine::initialize(QString *err)
     m_compViewLoc = f->glGetUniformLocation(m_compProgram, "u_view");
     m_compRotLoc = f->glGetUniformLocation(m_compProgram, "u_rot");
     m_compAspLoc = f->glGetUniformLocation(m_compProgram, "u_asp");
+    m_compMatteLoc = f->glGetUniformLocation(m_compProgram, "u_matte");
+    m_compMatteModeLoc = f->glGetUniformLocation(m_compProgram, "u_matteMode");
+    m_diffMatteLoc = f->glGetUniformLocation(m_diffProgram, "u_matte");
+    m_diffMatteModeLoc = f->glGetUniformLocation(m_diffProgram, "u_matteMode");
     m_diffRotLoc = f->glGetUniformLocation(m_diffProgram, "u_rot");
     m_diffAspLoc = f->glGetUniformLocation(m_diffProgram, "u_asp");
 
@@ -513,7 +540,7 @@ void Engine::releaseAll()
     m_videoConv.release();
     m_testCard.release();
     for (GLuint p : {m_blitProgram, m_compProgram, m_diffProgram, m_presentProgram, m_prepProgram, m_maskProgram,
-                     m_fadeProgram, m_shapeMaskProgram})
+                     m_fadeProgram, m_shapeMaskProgram, m_matteProgram})
         if (p) f->glDeleteProgram(p);
     GLuint bufs[] = {m_quadVbo, m_meshVbo, m_meshIbo};
     f->glDeleteBuffers(3, bufs);
@@ -522,7 +549,7 @@ void Engine::releaseAll()
     f->glDeleteTextures(1, &m_blackTex);
     m_quadVao = m_meshVao = m_pointsVao = 0;
     m_blitProgram = m_compProgram = m_diffProgram = m_presentProgram = m_prepProgram = m_maskProgram = 0;
-    m_fadeProgram = m_shapeMaskProgram = 0;
+    m_fadeProgram = m_shapeMaskProgram = m_matteProgram = 0;
 }
 
 // ---------------------------------------------------------------------------

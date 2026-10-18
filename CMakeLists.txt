@@ -514,7 +514,7 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_number_widgets_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME number_widgets COMMAND pinol_number_widgets_test)
   add_executable(pinol_mask_ui_test test/mask_ui.cpp src/ui/MappingView.cpp src/ui/GlDraw.cpp
-                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/MaskPanel.cpp)
   target_include_directories(pinol_mask_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_mask_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME mask_ui COMMAND pinol_mask_ui_test)

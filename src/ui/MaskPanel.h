@@ -56,6 +56,13 @@ private:
     void reordered();               // the list dragged into a new order
     QWidget *m_settings = nullptr;
     QLabel *m_empty = nullptr;
+    // Its matte: another layer's picture (Layer.h), set with an undo step
+    void buildMatte(class QVBoxLayout *v);
+    void showMatte();
+    void setMatte(const struct LayerMatte &m);
+    QComboBox *m_matteLayer = nullptr, *m_matteChannel = nullptr, *m_matteSpace = nullptr;
+    QPushButton *m_matteInvert = nullptr;
+    QLabel *m_matteNote = nullptr;
     std::vector<Mask> m_liveBefore;
     bool m_live = false, m_syncing = false;
 };

@@ -475,6 +475,110 @@ void main(){
             CHECK(litIn(formed, 0, formed.width() / 2) > 50);
             e.newProject();
         }
+        {
+            // A layer's matte (a track matte): red over blue, red shown where a switched-off matte layer is white
+            // (its left half), in the composition or over its picture; luminance or alpha, inverted; refused for a
+            // feedback, itself or a viewport; saved with the project
+            e.newProject();
+            e.setCompositionSize(QSize(128, 64));
+            e.setViewportSize(e.indexOfId(e.mainViewportId()), QSize(128, 64));
+            e.fadeCompositionOpacity(1.0, 0.0);
+            const QString half = tmp + "/HalfWhite.fs";
+            {
+                QFile f(half);
+                CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+                f.write(R"(/*{"INPUTS":[]}*/
+void main(){ gl_FragColor = vec4(vec3(step(isf_FragNormCoord.x, .5)), 1.); }
+)");
+            }
+            auto solid = [&](const char *name, float r, float g, float b) {
+                const int i = e.addLayer(QString::fromLatin1(name));
+                CHECK(e.setLayerIsf(i, isf + "/generators/SolidColor.fs", &err));
+                if (IsfInput *c = e.layer(i)->generator->input(QStringLiteral("color"))) {
+                    c->cValue[0] = r;
+                    c->cValue[1] = g;
+                    c->cValue[2] = b;
+                    c->cValue[3] = 1;
+                }
+                return e.layerId(i);
+            };
+            const quint64 blue = solid("Blue", 0, 0, 1); // at the bottom
+            const quint64 red = e.layerId(e.addLayer(QStringLiteral("Red"), V + 0));
+            CHECK(e.setLayerIsf(e.indexOfId(red), isf + "/generators/SolidColor.fs", &err));
+            if (IsfInput *c = e.layer(e.indexOfId(red))->generator->input(QStringLiteral("color"))) {
+                c->cValue[0] = 1;
+                c->cValue[1] = c->cValue[2] = 0;
+                c->cValue[3] = 1;
+            }
+            const quint64 matteId = e.layerId(e.addLayer(QStringLiteral("Matte")));
+            CHECK(e.setLayerIsf(e.indexOfId(matteId), half, &err));
+            {
+                Engine::Lock lk(&e.mutex());
+                e.layer(e.indexOfId(matteId))->enabled = false; // a matte is usually hidden
+            }
+            auto sides = [&] { // red on the left? red on the right?
+                e.renderFrame();
+                const QImage img = e.grabViewport(e.mainViewportId());
+                return std::make_pair(img.pixelColor(32, 32).red() > 200, img.pixelColor(96, 32).red() > 200);
+            };
+            CHECK(sides() == std::make_pair(true, true)); // no matte: red everywhere
+            LayerMatte m;
+            m.layer = matteId;
+            CHECK(e.setLayerMatte(e.indexOfId(red), m, &err));
+            CHECK(sides() == std::make_pair(true, false)); // red where the matte is white, blue elsewhere
+            {
+                e.renderFrame();
+                const QColor right = e.grabViewport(e.mainViewportId()).pixelColor(96, 32);
+                CHECK(right.blue() > 200 && right.red() < 30);
+            }
+            m.invert = true;
+            CHECK(e.setLayerMatte(e.indexOfId(red), m, &err));
+            CHECK(sides() == std::make_pair(false, true));
+            m.invert = false;
+            m.channel = LayerMatte::Channel::Alpha; // the matte is opaque everywhere
+            CHECK(e.setLayerMatte(e.indexOfId(red), m, &err));
+            CHECK(sides() == std::make_pair(true, true));
+            m.channel = LayerMatte::Channel::Luma;
+            m.space = LayerMatte::Space::Picture; // stretched over its picture: the same here (both fill the frame)
+            CHECK(e.setLayerMatte(e.indexOfId(red), m, &err));
+            CHECK(sides() == std::make_pair(true, false));
+            m.space = LayerMatte::Space::Composition;
+            CHECK(e.setLayerMatte(e.indexOfId(red), m, &err));
+            CHECK(e.setParameter(matteId, "opacity", 0.0)); // in the composition, its opacity too: nothing shows
+            CHECK(sides() == std::make_pair(false, false));
+            CHECK(e.setParameter(matteId, "opacity", 1.0));
+            // Refused: itself, a viewport, a feedback (the matte layer using the red one)
+            LayerMatte self = m;
+            self.layer = red;
+            CHECK(!e.setLayerMatte(e.indexOfId(red), self, &err) && err.contains("own"));
+            LayerMatte vp = m;
+            vp.layer = e.mainViewportId();
+            CHECK(!e.setLayerMatte(e.indexOfId(red), vp, &err));
+            LayerMatte back = m;
+            back.layer = red;
+            CHECK(!e.setLayerMatte(e.indexOfId(matteId), back, &err) && err.contains("feed back"));
+            const QString file = tmp + "/matte.pinol";
+            CHECK(e.saveProject(file, {}, &err) && e.loadProject(file, nullptr, &err));
+            CHECK(e.layer(e.indexOfId(red))->matte == m);
+            CHECK(sides() == std::make_pair(true, false));
+            CHECK(e.setLayerMatte(e.indexOfId(red), LayerMatte{}, &err)); // none: red everywhere again
+            CHECK(sides() == std::make_pair(true, true));
+            // A composition mask on the layer composited last (red, on top) keeps it to the left half: the blue under
+            // it shows on the right, and the viewport's output is not cut by that mask as well
+            {
+                Mask k = Mask::rectangle(QRectF(0, 0, 0.5, 1));
+                k.attach = Mask::Attach::Composition;
+                e.setLayerMasks(red, {k});
+            }
+            CHECK(sides() == std::make_pair(true, false));
+            {
+                e.renderFrame();
+                const QColor right = e.grabViewport(e.mainViewportId()).pixelColor(96, 32);
+                CHECK(right.blue() > 200);
+            }
+            (void)blue;
+            e.newProject();
+        }
     // A shader's image input showing another layer, live: it follows that layer's picture (even switched off, as a
     // source), refuses itself and a feedback, and survives a save
     {
