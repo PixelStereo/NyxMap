@@ -422,23 +422,47 @@ void Engine::recallPreset(int i)
     const Preset p = preset(i);
     if (!p.id) return;
     const double fade = std::max(0.0, p.fade);
+    std::map<quint64, QJsonObject> meshes; // the meshes it holds, by layer: moved there below, not set at once
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) {
         const QStringList key = it.key().split(QLatin1Char(':'));
         if (key.size() != 2) continue;
         const int index = indexOfId(key[0].toULongLong());
         if (index < 0 || isLocked(index)) continue;
         QJsonObject state = it.value().toObject();
+        const int parts = key[1].toInt();
         // Structural data applies first. Static values retain their live values until the
         // per-address scheduler below starts their individual delay/fade.
         state["params"] = layerJson(index).value("params");
-        applyLayerParts(index, state, key[1].toInt());
+        // Its mesh fades with the geometry below (a source rebuilt with the layer is set at once, with it)
+        if ((parts & PartSpatial) && !(parts & PartSource) && state.contains("mesh")) {
+            meshes[key[0].toULongLong()] = state.value("mesh").toObject();
+            state.remove("mesh");
+        }
+        applyLayerParts(index, state, parts);
     }
-    { Lock lock(&m_mutex);
-      for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) {
-          const int index = indexOfId(it.key().toULongLong());
-          Layer *layer = this->layer(index);
-          if (layer && !isLocked(index) && !layer->isViewport) layer->mapping.setMeshJson(it.value().toObject());
-      }
+    for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) meshes[it.key().toULongLong()] = it.value().toObject();
+    // The mesh's points move there over the preset's fade, as a snapshot's do; another grid is set at once
+    for (const auto &[id, mesh] : meshes) {
+        takeOverFades(id, QSet<QString>{QStringLiteral("mesh")});
+        Lock lock(&m_mutex);
+        const int index = indexOfId(id);
+        Layer *l = layer(index);
+        if (!l || isLocked(index) || l->isViewport) continue;
+        Mapping target = l->mapping;
+        target.setMeshJson(mesh);
+        if (fade <= 0 || target.cols != l->mapping.cols || target.rows != l->mapping.rows) {
+            l->mapping.setMeshJson(mesh);
+            continue;
+        }
+        l->mapping.meshMode = target.meshMode;
+        auto job = std::make_shared<FadeJob>();
+        job->id = id;
+        job->mesh = true;
+        job->meshFrom = l->mapping.offsets;
+        job->meshTo = target.offsets;
+        job->meshTime = fade;
+        job->meshCurve = easingOf(QJsonObject(), QStringLiteral("mesh"));
+        m_fades.push_back(std::move(job));
     }
     std::map<quint64, std::vector<const PresetValue *>> byLayer;
     for (const PresetValue &v : p.values)
