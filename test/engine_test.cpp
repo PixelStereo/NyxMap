@@ -385,6 +385,51 @@ void main(){
             first = red(64);
             second = red(64);
             CHECK(first > 60 && second > first + 40); // added to the previous frame's
+            // What a particle generator asks of the driver, one thing more at each step: points placed from a float
+            // state read in the vertex shader, then a colour passed on and gl_PointCoord, then 262 144 of them,
+            // then whole-number arithmetic in the state's pass. Every point lands in the middle of the picture.
+            struct Step {
+                const char *name;
+                int side;
+                bool varyings, hash;
+            };
+            for (const Step &s : {Step{"state", 4, false, false}, Step{"varyings", 4, true, false},
+                                  Step{"many", 512, true, false}, Step{"hash", 512, true, true}}) {
+                const QString n = QString::number(s.side);
+                const QString stepFs =
+                    QStringLiteral(R"(/*{"INPUTS":[],"PASSES":[{"TARGET":"state","PERSISTENT":true,"FLOAT":true,"WIDTH":%1,"HEIGHT":%1},
+{"TARGET":"dots","FLOAT":true,"POINTS":%2},{}]}*/
+varying vec4 vColor;
+void main(){
+ if(PASSINDEX==0){
+  %3
+  gl_FragColor=vec4(0.,0.,0.,1.);
+ }else if(PASSINDEX==1) gl_FragColor=%4;
+ else gl_FragColor=vec4(texelFetch(dots,ivec2(gl_FragCoord.xy),0).rgb,1.);
+}
+)")
+                        .arg(n, QString::number(s.side * s.side),
+                             s.hash ? QStringLiteral("uint h=uint(gl_FragCoord.x)*2654435761U^uint(gl_FragCoord.y);"
+                                                     "if(h==7U)discard;")
+                                    : QString(),
+                             s.varyings ? QStringLiteral("vec4(vColor.rgb*(1.-length(gl_PointCoord-.5)),1.)")
+                                        : QStringLiteral("vec4(.3,0.,0.,.3)"));
+                const QString stepVs = QStringLiteral(R"(varying vec4 vColor;
+void main(){
+ if(PASSINDEX!=1){isf_vertShaderInit();return;}
+ vec4 s=texelFetch(state,ivec2(gl_VertexID%%1,gl_VertexID/%1),0);
+ gl_Position=vec4(s.xy,0.,1.);
+ gl_PointSize=6.;
+ vColor=vec4(1.,0.,0.,1.);
+}
+)").arg(n);
+                const QString base = tmp + "/PointsStep_" + QLatin1String(s.name);
+                CHECK(write(base + ".fs", stepFs.toLatin1()) && write(base + ".vs", stepVs.toLatin1()));
+                CHECK(e.setLayerIsf(g, base + ".fs", &err));
+                std::printf("       points step: %s\n", s.name);
+                std::fflush(stdout);
+                CHECK(red(64) > 60 && red(4) < 5);
+            }
             // The shipped particle generator: a cloud appears, from every camera path
             CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
             inst = e.layer(g)->generator.get();

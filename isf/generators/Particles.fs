@@ -43,20 +43,20 @@ varying vec4 pColor;
 uint ptHash(uint x){x^=x>>16;x*=0x7feb352dU;x^=x>>15;x*=0x846ca68bU;x^=x>>16;return x;}
 float ptRand(uint x){return float(ptHash(x))*(1.0/4294967295.0);}
 float ptLattice(ivec3 i){return ptRand(uint(i.x)*73856093U^uint(i.y)*19349663U^uint(i.z)*83492791U);}
-float ptNoise(vec3 p){
- ivec3 i=ivec3(floor(p));vec3 f=fract(p);f=f*f*f*(f*(f*6.-15.)+10.);
- float a=mix(ptLattice(i),ptLattice(i+ivec3(1,0,0)),f.x),b=mix(ptLattice(i+ivec3(0,1,0)),ptLattice(i+ivec3(1,1,0)),f.x);
- float c=mix(ptLattice(i+ivec3(0,0,1)),ptLattice(i+ivec3(1,0,1)),f.x),d=mix(ptLattice(i+ivec3(0,1,1)),ptLattice(i+ivec3(1,1,1)),f.x);
- return mix(mix(a,b,f.y),mix(c,d,f.y),f.z)-.5;
+// Value noise and its gradient (x: value, yzw: gradient), from the 8 corners of its cell
+vec4 ptNoise(vec3 p){
+ ivec3 i=ivec3(floor(p));vec3 f=fract(p);
+ vec3 u=f*f*f*(f*(f*6.-15.)+10.),du=30.*f*f*(f*(f-2.)+1.);
+ float a=ptLattice(i),b=ptLattice(i+ivec3(1,0,0)),c=ptLattice(i+ivec3(0,1,0)),d=ptLattice(i+ivec3(1,1,0));
+ float e=ptLattice(i+ivec3(0,0,1)),g=ptLattice(i+ivec3(1,0,1)),h=ptLattice(i+ivec3(0,1,1)),k=ptLattice(i+ivec3(1,1,1));
+ float k1=b-a,k2=c-a,k3=e-a,k4=a-b-c+d,k5=a-c-e+h,k6=a-b-e+g,k7=-a+b+c-d+e-g-h+k;
+ return vec4(a-.5+k1*u.x+k2*u.y+k3*u.z+k4*u.x*u.y+k5*u.y*u.z+k6*u.z*u.x+k7*u.x*u.y*u.z,
+  du*vec3(k1+k4*u.y+k6*u.z+k7*u.y*u.z,k2+k5*u.z+k4*u.x+k7*u.z*u.x,k3+k6*u.x+k5*u.y+k7*u.x*u.y));
 }
-vec3 ptPotential(vec3 p){return vec3(ptNoise(p),ptNoise(p+vec3(31.4,7.1,-12.9)),ptNoise(p+vec3(-5.3,47.2,18.8)));}
-// A flow without sources or sinks: the grains swirl without clumping
+// A flow without sources or sinks (the curl of three noises): the grains swirl without clumping
 vec3 ptCurl(vec3 p){
- const float e=.05;
- vec3 dx=ptPotential(p+vec3(e,0,0))-ptPotential(p-vec3(e,0,0));
- vec3 dy=ptPotential(p+vec3(0,e,0))-ptPotential(p-vec3(0,e,0));
- vec3 dz=ptPotential(p+vec3(0,0,e))-ptPotential(p-vec3(0,0,e));
- return vec3(dy.z-dz.y,dz.x-dx.z,dx.y-dy.x)/(2.*e);
+ vec3 gx=ptNoise(p).yzw,gy=ptNoise(p+vec3(31.4,7.1,-12.9)).yzw,gz=ptNoise(p+vec3(-5.3,47.2,18.8)).yzw;
+ return vec3(gz.y-gy.z,gx.z-gz.x,gy.x-gx.y);
 }
 
 uint ptId(){ivec2 c=ivec2(gl_FragCoord.xy);return uint(c.y*512+c.x);}
