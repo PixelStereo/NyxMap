@@ -118,6 +118,15 @@ void Engine::drawQuad()
     f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+// Squares rather than GL_POINTS: no limit on their size, and no driver's wide-point path (Mesa 23.3's llvmpipe
+// crashed in it with a colour passed on and gl_PointCoord)
+void Engine::drawPoints(int count)
+{
+    auto f = gl();
+    f->glBindVertexArray(m_pointsVao);
+    f->glDrawArrays(GL_TRIANGLES, 0, count * 6);
+}
+
 void Engine::blit(GLuint tex, const RenderTarget &target)
 {
     auto f = gl();
@@ -922,6 +931,7 @@ void Engine::frame(double dt)
     rc.dt = dt * timeScale();
     rc.blackTex = m_blackTex;
     rc.drawQuad = [this] { drawQuad(); };
+    rc.drawPoints = [this](int count) { drawPoints(count); };
     rc.blit = [this](GLuint t, const RenderTarget &rt) { blit(t, rt); };
 
     // Members of a hidden group are hidden (and silent) too, at any depth. A group comes before its contents.

@@ -336,6 +336,114 @@ void main(){ gl_FragColor = definitely_not_defined; }
             CHECK(found >= 0 && e.layer(found)->genWidth == 1 && e.layer(found)->genHeight == 16384);
             e.newProject();
         }
+        {
+            // A particle pass (POINTS): its count from an input, each a square placed by the vertex shader, added
+            // into a float target; CLEAR false draws over what the target holds (they build up frame after frame)
+            e.setCompositionSize(QSize(128, 64));
+            e.setViewportSize(e.indexOfId(e.mainViewportId()), QSize(128, 64));
+            e.fadeCompositionOpacity(1.0, 0.0);
+            auto write = [](const QString &path, const QByteArray &body) {
+                QFile f(path);
+                return f.open(QIODevice::WriteOnly | QIODevice::Truncate) && f.write(body) == body.size();
+            };
+            const QByteArray vs = R"(void main(){
+ if(PASSINDEX!=0){isf_vertShaderInit();return;}
+ gl_Position=isf_PointSprite(vec4(isf_PointIndex()==0?0.:.5,0.,0.,1.),6.);
+}
+)";
+            const QByteArray fs = R"(/*{"INPUTS":[{"NAME":"count","TYPE":"float","DEFAULT":1,"MIN":0,"MAX":2}],
+"PASSES":[{"TARGET":"dots","PERSISTENT":true,"FLOAT":true,"POINTS":"$count"%1},{}]}*/
+void main(){
+ if(PASSINDEX==0) gl_FragColor=vec4(.3,0.,0.,.3);
+ else gl_FragColor=vec4(texelFetch(dots,ivec2(gl_FragCoord.xy),0).rgb,1.);
+}
+)";
+            const QString cleared = tmp + "/Points.fs", kept = tmp + "/PointsKept.fs";
+            CHECK(write(cleared, QString::fromLatin1(fs).arg(QString()).toLatin1()) &&
+                  write(tmp + "/Points.vs", vs));
+            CHECK(write(kept, QString::fromLatin1(fs).arg(QStringLiteral(",\"CLEAR\":false")).toLatin1()) &&
+                  write(tmp + "/PointsKept.vs", vs));
+            const int g = e.addLayer(QStringLiteral("Points"));
+            CHECK(e.setLayerIsf(g, cleared, &err));
+            auto red = [&](int x) {
+                e.renderFrame();
+                const QImage img = e.grabViewport(e.mainViewportId());
+                return img.isNull() ? -1 : img.pixelColor(x, 32).red();
+            };
+            int first = red(64), second = red(64);
+            CHECK(first > 60 && first < 100 && second == first); // one point, drawn again over a cleared target
+            CHECK(red(96) < 5);                                // the second vertex is not drawn
+            IsfInstance *inst = e.layer(g)->generator.get();
+            IsfInput *count = inst ? inst->input(QStringLiteral("count")) : nullptr;
+            CHECK(count != nullptr);
+            if (count) count->fValue = 2;
+            CHECK(red(96) > 60 && red(4) < 5); // both, and nothing elsewhere
+            if (count) count->fValue = 0;
+            CHECK(red(64) < 5);
+            CHECK(e.setLayerIsf(g, kept, &err));
+            first = red(64);
+            second = red(64);
+            CHECK(first > 60 && second > first + 40); // added to the previous frame's
+            // What a particle generator asks of the driver, one thing more at each step: points placed from a float
+            // state read in the vertex shader, then a colour passed on and gl_PointCoord, then 262 144 of them,
+            // then whole-number arithmetic in the state's pass. Every point lands in the middle of the picture.
+            struct Step {
+                const char *name;
+                int side;
+                bool varyings, hash;
+            };
+            for (const Step &s : {Step{"state", 4, false, false}, Step{"varyings", 4, true, false},
+                                  Step{"many", 512, true, false}, Step{"hash", 512, true, true}}) {
+                const QString n = QString::number(s.side);
+                const QString stepFs =
+                    QStringLiteral(R"(/*{"INPUTS":[],"PASSES":[{"TARGET":"state","PERSISTENT":true,"FLOAT":true,"WIDTH":%1,"HEIGHT":%1},
+{"TARGET":"dots","FLOAT":true,"POINTS":%2},{}]}*/
+varying vec4 vColor;
+void main(){
+ if(PASSINDEX==0){
+  %3
+  gl_FragColor=vec4(0.,0.,0.,1.);
+ }else if(PASSINDEX==1) gl_FragColor=%4;
+ else gl_FragColor=vec4(texelFetch(dots,ivec2(gl_FragCoord.xy),0).rgb,1.);
+}
+)")
+                        .arg(n, QString::number(s.side * s.side),
+                             s.hash ? QStringLiteral("uint h=uint(gl_FragCoord.x)*2654435761U^uint(gl_FragCoord.y);"
+                                                     "if(h==7U)discard;")
+                                    : QString(),
+                             s.varyings ? QStringLiteral("vec4(vColor.rgb*(1.-length(gl_PointCoord-.5)),1.)")
+                                        : QStringLiteral("vec4(.3,0.,0.,.3)"));
+                const QString stepVs = QStringLiteral(R"(varying vec4 vColor;
+void main(){
+ if(PASSINDEX!=1){isf_vertShaderInit();return;}
+ vec4 s=texelFetch(state,ivec2(isf_PointIndex()%%1,isf_PointIndex()/%1),0);
+ gl_Position=isf_PointSprite(vec4(s.xy,0.,1.),6.);
+ vColor=vec4(1.,0.,0.,1.);
+}
+)").arg(n);
+                const QString base = tmp + "/PointsStep_" + QLatin1String(s.name);
+                CHECK(write(base + ".fs", stepFs.toLatin1()) && write(base + ".vs", stepVs.toLatin1()));
+                CHECK(e.setLayerIsf(g, base + ".fs", &err));
+                std::printf("       points step: %s\n", s.name);
+                std::fflush(stdout);
+                CHECK(red(64) > 60 && red(4) < 5);
+            }
+            // The shipped particle generator: a cloud appears, from every camera path
+            CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
+            inst = e.layer(g)->generator.get();
+            IsfInput *path = inst ? inst->input(QStringLiteral("camPath")) : nullptr;
+            CHECK(path != nullptr && path->lValues.size() == 6);
+            for (int p = 0; path && p < 6; ++p) {
+                path->lValue = p;
+                for (int k = 0; k < 8; ++k) e.renderFrame();
+                const QImage img = e.grabViewport(e.mainViewportId());
+                int lit = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
+                CHECK(lit > img.width() * img.height() / 20);
+            }
+            e.newProject();
+        }
     } // isf_safe
 
     if (area("video")) {

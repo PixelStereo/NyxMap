@@ -122,6 +122,8 @@ bool Engine::initialize(QString *err)
     f->glEnableVertexAttribArray(0);
     f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
 
+    f->glGenVertexArrays(1, &m_pointsVao);
+
     // Mapping mesh: dynamic vertices, fixed indices
     f->glGenVertexArrays(1, &m_meshVao);
     f->glBindVertexArray(m_meshVao);
@@ -514,10 +516,10 @@ void Engine::releaseAll()
         if (p) f->glDeleteProgram(p);
     GLuint bufs[] = {m_quadVbo, m_meshVbo, m_meshIbo};
     f->glDeleteBuffers(3, bufs);
-    GLuint vaos[] = {m_quadVao, m_meshVao};
-    f->glDeleteVertexArrays(2, vaos);
+    GLuint vaos[] = {m_quadVao, m_meshVao, m_pointsVao};
+    f->glDeleteVertexArrays(3, vaos);
     f->glDeleteTextures(1, &m_blackTex);
-    m_quadVao = m_meshVao = 0;
+    m_quadVao = m_meshVao = m_pointsVao = 0;
     m_blitProgram = m_compProgram = m_diffProgram = m_presentProgram = m_prepProgram = m_maskProgram = 0;
     m_fadeProgram = m_shapeMaskProgram = 0;
 }
