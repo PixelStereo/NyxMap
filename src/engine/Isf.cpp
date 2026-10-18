@@ -542,6 +542,9 @@ bool IsfInstance::parse(const QString &src, QString *body)
         auto expr = [](const QJsonValue &x) { return x.isDouble() ? QString::number(x.toDouble()) : x.toString(); };
         p.widthExpr = expr(j.value("WIDTH"));
         p.heightExpr = expr(j.value("HEIGHT"));
+        p.pointsExpr = expr(j.value("POINTS"));
+        p.alphaBlend = j.value("BLEND").toString().compare("ALPHA", Qt::CaseInsensitive) == 0;
+        p.clear = j.value("CLEAR").toVariant().toBool() || !j.contains("CLEAR");
         m_passes.push_back(p);
         if (!p.target.isEmpty()) {
             auto it = std::find_if(m_targets.begin(), m_targets.end(), [&](const IsfTarget &t) { return t.name == p.target; });
@@ -855,18 +858,31 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
         case IsfInput::Long: if (in.loc >= 0) f->glUniform1i(in.loc, in.lValue); break;
         case IsfInput::Point2D: if (in.loc >= 0) f->glUniform2f(in.loc, float(in.pValue.x()), float(in.pValue.y())); break;
         case IsfInput::Color: if (in.loc >= 0) f->glUniform4fv(in.loc, 1, in.cValue); break;
-        case IsfInput::Image:
-            if (in.isInputImage) bindSampler(in.loc, in.sizeLoc, in.rectLoc, inputTex, inW, inH);
-            else if (in.extTex) bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.extTex, in.extW, in.extH);
-            else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
-            break;
-        case IsfInput::Audio:
-        case IsfInput::AudioFFT: bindSampler(in.loc, in.sizeLoc, in.rectLoc, 0, 1, 1); break;
         default: break;
         }
     }
-    for (IsfImported &im : m_imported) bindSampler(im.loc, im.sizeLoc, im.rectLoc, im.tex.tex, im.tex.w, im.tex.h);
-    const int targetUnitBase = unit;
+    // Its pictures, bound again at every pass (a copy between two passes uses the texture units)
+    auto bindPictures = [&] {
+        unit = 0;
+        for (IsfInput &in : m_inputs) {
+            switch (in.type) {
+            case IsfInput::Image:
+                if (in.isInputImage) bindSampler(in.loc, in.sizeLoc, in.rectLoc, inputTex, inW, inH);
+                else if (in.extTex) bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.extTex, in.extW, in.extH);
+                else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
+                break;
+            case IsfInput::Audio:
+            case IsfInput::AudioFFT: bindSampler(in.loc, in.sizeLoc, in.rectLoc, 0, 1, 1); break;
+            default: break;
+            }
+        }
+        for (IsfImported &im : m_imported) bindSampler(im.loc, im.sizeLoc, im.rectLoc, im.tex.tex, im.tex.w, im.tex.h);
+        // Already-rendered targets are readable ("front" buffer).
+        for (IsfTarget &t : m_targets) {
+            const RenderTarget &fr = t.rt[t.front];
+            bindSampler(t.loc, t.sizeLoc, t.rectLoc, fr.tex, fr.w, fr.h);
+        }
+    };
 
     static const std::vector<IsfPass> kSinglePass{IsfPass{}};
     const std::vector<IsfPass> &passes = m_passes.empty() ? kSinglePass : m_passes; // no copy per frame
@@ -877,6 +893,10 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
         // Bounded before rounding: lround of a value beyond a long is unspecified (1e30 became 0, then 1 pixel)
         const int pw = int(std::lround(std::clamp(evalSize(pass.widthExpr, outW, outH, outW), 1.0, 16384.0)));
         const int ph = int(std::lround(std::clamp(evalSize(pass.heightExpr, outW, outH, outH), 1.0, 16384.0)));
+        // Points of a particle pass (at most 4M: a 2048 x 2048 state)
+        const int points = pass.pointsExpr.isEmpty()
+                               ? -1
+                               : int(std::lround(std::clamp(evalSize(pass.pointsExpr, outW, outH, 0), 0.0, 4194304.0)));
 
         IsfTarget *target = nullptr;
         if (!pass.target.isEmpty())
@@ -892,31 +912,36 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
             }
         }
 
-        // Already-rendered targets are readable ("front" buffer).
-        unit = targetUnitBase;
-        for (IsfTarget &t : m_targets) {
-            const RenderTarget &fr = t.rt[t.front];
-            bindSampler(t.loc, t.sizeLoc, t.rectLoc, fr.tex, fr.w, fr.h);
+        // Points drawn over the target's picture: it is carried into the buffer they are drawn in
+        if (target && points >= 0 && !pass.clear) {
+            rc.blit(target->rt[target->front].tex, target->rt[1 - target->front]);
+            f->glUseProgram(m_program);
         }
+        bindPictures();
 
         if (m_locPassIndex >= 0) f->glUniform1i(m_locPassIndex, int(i));
 
-        if (target) {
-            // Double buffer: read "front", write "back", then swap.
-            RenderTarget &back = target->rt[1 - target->front];
-            back.bind();
-            if (m_locRenderSize >= 0) f->glUniform2f(m_locRenderSize, pw, ph);
+        // Double buffer: read "front", write "back", then swap. Without target: the output (output size).
+        const RenderTarget &dst = target ? target->rt[1 - target->front] : out;
+        dst.bind();
+        if (m_locRenderSize >= 0) f->glUniform2f(m_locRenderSize, dst.w, dst.h);
+        if (points < 0) {
             rc.drawQuad();
+        } else {
+            if (pass.clear) dst.clear();
+            if (points > 0 && rc.drawPoints) {
+                f->glEnable(GL_BLEND);
+                f->glBlendFunc(GL_ONE, pass.alphaBlend ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE);
+                rc.drawPoints(points);
+                f->glDisable(GL_BLEND);
+            }
+        }
+        if (target) {
             target->front = 1 - target->front;
             if (last) {
                 rc.blit(target->rt[target->front].tex, out);
                 f->glUseProgram(m_program);
             }
-        } else {
-            // Pass without target: renders directly into the output (output size).
-            out.bind();
-            if (m_locRenderSize >= 0) f->glUniform2f(m_locRenderSize, out.w, out.h);
-            rc.drawQuad();
         }
     }
 

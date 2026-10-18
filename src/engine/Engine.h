@@ -762,6 +762,7 @@ private:
     void clearProject();
     int viewportCountLocked() const;
     void drawQuad();
+    void drawPoints(int count); // an ISF particle pass: count vertices, no attribute
     void blit(GLuint tex, const RenderTarget &target);
     void bindMesh(Layer &l);         // its mapped mesh (render thread, mesh vertex array bound)
     void bindMeshBuffer(GLuint vbo); // any mesh vertex buffer
@@ -824,6 +825,7 @@ private:
     std::map<quint64, OutputSurface> m_outWindows; // by viewport id (render thread)
 
     GLuint m_quadVao = 0, m_quadVbo = 0;
+    GLuint m_pointsVao = 0; // no attribute: a particle's vertex finds its data from gl_VertexID
     GLuint m_meshVao = 0, m_meshVbo = 0, m_meshIbo = 0;
     GLsizei m_meshIndexCount = 0;
     GLuint m_diffProgram = 0, m_blitProgram = 0, m_compProgram = 0, m_presentProgram = 0, m_prepProgram = 0;

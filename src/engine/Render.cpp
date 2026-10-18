@@ -118,6 +118,19 @@ void Engine::drawQuad()
     f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+#ifndef GL_PROGRAM_POINT_SIZE
+#define GL_PROGRAM_POINT_SIZE 0x8642
+#endif
+
+void Engine::drawPoints(int count)
+{
+    auto f = gl();
+    f->glBindVertexArray(m_pointsVao);
+    f->glEnable(GL_PROGRAM_POINT_SIZE); // their size from the vertex shader (gl_PointSize)
+    f->glDrawArrays(GL_POINTS, 0, count);
+    f->glDisable(GL_PROGRAM_POINT_SIZE);
+}
+
 void Engine::blit(GLuint tex, const RenderTarget &target)
 {
     auto f = gl();
@@ -922,6 +935,7 @@ void Engine::frame(double dt)
     rc.dt = dt * timeScale();
     rc.blackTex = m_blackTex;
     rc.drawQuad = [this] { drawQuad(); };
+    rc.drawPoints = [this](int count) { drawPoints(count); };
     rc.blit = [this](GLuint t, const RenderTarget &rt) { blit(t, rt); };
 
     // Members of a hidden group are hidden (and silent) too, at any depth. A group comes before its contents.
