@@ -1717,6 +1717,18 @@ bool Engine::setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QSt
     return true;
 }
 
+void Engine::setIsfAudioSource(IsfInstance *inst, int input, IsfInput::AudioSource source)
+{
+    {
+        Lock lk(&m_mutex);
+        if (!inst || input < 0 || input >= int(inst->inputs().size())) return;
+        IsfInput &in = inst->inputs()[size_t(input)];
+        if (in.type != IsfInput::Audio && in.type != IsfInput::AudioFFT) return;
+        in.audioSource = source;
+    }
+    emit layersChanged();
+}
+
 bool Engine::reloadIsf(IsfInstance *inst)
 {
     if (!inst) return false;

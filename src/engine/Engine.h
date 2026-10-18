@@ -314,6 +314,8 @@ public:
     // effects, at every frame (0: back to its image file). Refused: a viewport, the layer itself, or a layer that
     // already uses it (the picture would feed back on itself).
     bool setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QString *err = nullptr);
+    // An ISF audio / audioFFT input: the live audio input's sound, or the program's (the mix the layers play)
+    void setIsfAudioSource(IsfInstance *inst, int input, IsfInput::AudioSource source);
     int reloadIsfFile(const QString &path, QString *error = nullptr); // all live instances, transactional per shader
     bool reloadIsf(IsfInstance *inst); // reloads from disk (live editing)
 
@@ -776,6 +778,7 @@ private:
     void drawQuad();
     void forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const;
     void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
+    void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (GL context current)
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
     void bindMesh(Layer &l);

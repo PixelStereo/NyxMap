@@ -150,7 +150,7 @@ CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites.
 A few important current boundaries:
 
 - **Video:** HAP Q is optimized for compressed GPU textures. HAP R / HAP HDR may require CPU block decoding on macOS because its OpenGL path lacks BPTC support.
-- **Audio and control:** one stereo program-audio output; MIDI/OSC/keyboard interactions and timecode are available. DMX input is not yet implemented, and ISF audio inputs are currently black.
+- **Audio and control:** one stereo program-audio output; MIDI/OSC/keyboard interactions and timecode are available. DMX input is not yet implemented. ISF `audio` (waveform) and `audioFFT` (spectrum: log scale 20 Hz–20 kHz, 0 at −60 dB, 1 at 0 dB) inputs receive the live audio input or the program mix, chosen per input in the shader's parameters; their `MAX` sets the width (1024 samples / 512 bands by default).
 - **Output protocols:** NDI / OMT use GPU readback and add latency; DeckLink also buffers frames to the card's clock. Hardware outputs require their vendor software. DeckLink is currently video-only, 8-bit, without keying.
 - **Network:** the OSC/OSCQuery server has **no password authentication**. In **Settings → OSC → Listen on**, bind to localhost or a trusted network interface rather than exposing the server to an untrusted network.
 

@@ -54,6 +54,12 @@ struct IsfInput {
     GLuint extTex = 0;
     int extW = 0, extH = 0;
 
+    // An "audio" or "audioFFT" input: the sound it shows (saved), and its MAX (the columns wanted; 0: the native
+    // width). The engine fills imageTex before each render.
+    enum AudioSource { LiveInput, Program };
+    AudioSource audioSource = LiveInput;
+    int audioMax = 0;
+
     GLint loc = -1, sizeLoc = -1, rectLoc = -1;
     static QString typeName(Type t);
     // A number (or numbers) a timeline, an animation or a snapshot's fade can move: a float, a choice among numbers,

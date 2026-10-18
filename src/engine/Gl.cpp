@@ -202,6 +202,27 @@ void Texture2D::upload(const void *rgba, int nw, int nh)
     }
 }
 
+void Texture2D::uploadFloat(const float *rgba, int nw, int nh)
+{
+    auto f = gl();
+    if (!tex) {
+        f->glGenTextures(1, &tex);
+        f->glBindTexture(GL_TEXTURE_2D, tex);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    f->glBindTexture(GL_TEXTURE_2D, tex);
+    f->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (nw != w || nh != h) {
+        w = nw; h = nh;
+        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, rgba);
+    } else {
+        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, rgba);
+    }
+}
+
 void Texture2D::destroy()
 {
     if (tex) gl()->glDeleteTextures(1, &tex);

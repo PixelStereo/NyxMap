@@ -47,6 +47,7 @@ public:
     // Peak levels of the mix (0..1+), with decay
     RealtimeTiming::Snapshot callbackTiming() const { return m_callbackTiming.snapshot(); }
     AudioAnalysis::Spectrum spectrum() const { return m_analysis.spectrum(); }
+    AudioAnalysis::Wave wave() const { return m_analysis.wave(); }
     AudioAnalysis::Values analysis() const { return m_analysis.values(); }
     float peak(int channel) const { return m_peak[channel & 1].load(); }
 
