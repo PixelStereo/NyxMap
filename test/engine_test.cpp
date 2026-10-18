@@ -3247,6 +3247,76 @@ void main(){ gl_FragColor = definitely_not_defined; }
         e.setFadesManual(false);
         e.newProject();
     }
+    // The mesh's points move to a snapshot's or a preset's over its time, as the corners do
+    {
+        e.newProject();
+        e.setFadesManual(true);
+        const int li = e.addLayer(QStringLiteral("Warped"));
+        CHECK(e.setLayerIsf(li, isf + "/generators/SolidColor.fs", &err));
+        const quint64 lid = e.layerId(li);
+        auto pointX = [&] {
+            Engine::Lock lk(&e.mutex());
+            return e.layer(e.indexOfId(lid))->mapping.offsets[5].x();
+        };
+        auto setPoint = [&](double x) {
+            Engine::Lock lk(&e.mutex());
+            Mapping &m = e.layer(e.indexOfId(lid))->mapping;
+            m.meshMode = true;
+            m.offsets[5] = QPointF(x, 0);
+            ++m.revision;
+        };
+        setPoint(0.0);
+        Engine::Snapshot flat;
+        flat.name = QStringLiteral("Flat");
+        flat.fade = 0;
+        flat.layers = e.captureLayers();
+        const int flatIndex = e.addSnapshot(flat);
+        setPoint(0.2);
+        Engine::Snapshot bent = flat;
+        bent.name = QStringLiteral("Bent");
+        bent.fade = 1.0;
+        bent.layers = e.captureLayers();
+        const int bentIndex = e.addSnapshot(bent);
+        e.recallSnapshot(flatIndex);
+        CHECK(std::abs(pointX()) < 1e-9);
+        e.recallSnapshot(bentIndex);
+        e.advanceFades(0.5);
+        std::printf("       snapshot: mesh point halfway at %.3f (0 -> 0.2)\n", pointX());
+        CHECK(pointX() > 0.02 && pointX() < 0.18);
+        e.advanceFades(1.0);
+        CHECK(std::abs(pointX() - 0.2) < 1e-9);
+        // A preset holding the mesh (Spatial)
+        e.recallSnapshot(flatIndex);
+        Engine::Preset bentPreset;
+        bentPreset.name = QStringLiteral("Bent preset");
+        bentPreset.fade = 1.0;
+        setPoint(0.2);
+        {
+            Engine::Lock lk(&e.mutex());
+            bentPreset.geometry[QString::number(lid)] = e.layer(e.indexOfId(lid))->mapping.meshJson();
+        }
+        setPoint(0.0);
+        e.recallPreset(e.addPreset(bentPreset));
+        e.advanceFades(0.5);
+        std::printf("       preset: mesh point halfway at %.3f (0 -> 0.2)\n", pointX());
+        CHECK(pointX() > 0.02 && pointX() < 0.18);
+        e.advanceFades(1.0);
+        CHECK(std::abs(pointX() - 0.2) < 1e-9);
+        // The same mesh held as a Spatial category of the layer
+        Engine::Preset spatial;
+        spatial.name = QStringLiteral("Spatial category");
+        spatial.fade = 1.0;
+        spatial.categories[QStringLiteral("%1:%2").arg(lid).arg(int(Engine::PartSpatial))] =
+            QJsonObject{{"mesh", bentPreset.geometry.value(QString::number(lid))}};
+        setPoint(0.0);
+        e.recallPreset(e.addPreset(spatial));
+        e.advanceFades(0.5);
+        CHECK(pointX() > 0.02 && pointX() < 0.18);
+        e.advanceFades(1.0);
+        CHECK(std::abs(pointX() - 0.2) < 1e-9);
+        e.setFadesManual(false);
+        e.newProject();
+    }
     } // snapshots
 
     if (area("masks")) {
