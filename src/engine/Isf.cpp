@@ -980,6 +980,11 @@ QJsonObject IsfInstance::save(const QString &projectDir, bool withParams) const
     for (const IsfInput &in : m_inputs)
         if (in.type == IsfInput::Image && !in.isInputImage && !in.imagePath.isEmpty()) images[in.name] = in.imagePath;
     if (!images.isEmpty()) o["images"] = images;
+    QJsonObject imageLayers;
+    for (const IsfInput &in : m_inputs)
+        if (in.type == IsfInput::Image && !in.isInputImage && in.imageLayer)
+            imageLayers[in.name] = QString::number(in.imageLayer); // ids are strings: JSON numbers are doubles
+    if (!imageLayers.isEmpty()) o["image_layers"] = imageLayers;
     if (withParams) {
         std::vector<Parameter> params = parameters(QString());
         std::vector<Parameter *> list;
@@ -1005,6 +1010,9 @@ void IsfInstance::restore(const QJsonObject &o, const QString &projectDir)
         if (QFile::exists(p)) setImageInput(idx, p, nullptr);
         else if (!p.isEmpty()) in.imagePath = p; // kept (missing) for the media bin and saving
     }
+    const QJsonObject imageLayers = o.value("image_layers").toObject();
+    for (IsfInput &in : m_inputs)
+        if (in.type == IsfInput::Image && !in.isInputImage) in.imageLayer = imageLayers.value(in.name).toString().toULongLong();
     if (o.contains("params")) {
         std::vector<Parameter> params = parameters(QString());
         std::vector<Parameter *> list;

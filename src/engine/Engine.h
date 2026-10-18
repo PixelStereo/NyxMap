@@ -307,6 +307,10 @@ public:
     void removeEffect(int layerIndex, int fx);
     void moveEffect(int layerIndex, int from, int to);
     bool setIsfImageInput(IsfInstance *inst, int input, const QString &path, QString *err = nullptr);
+    // The image input `input` of a shader (a layer's generator or effect) shows another layer's picture, after its
+    // effects, at every frame (0: back to its image file). Refused: a viewport, the layer itself, or a layer that
+    // already uses it (the picture would feed back on itself).
+    bool setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QString *err = nullptr);
     int reloadIsfFile(const QString &path, QString *error = nullptr); // all live instances, transactional per shader
     bool reloadIsf(IsfInstance *inst); // reloads from disk (live editing)
 
@@ -767,6 +771,8 @@ private:
     void clearProject();
     int viewportCountLocked() const;
     void drawQuad();
+    void forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const;
+    void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
     void bindMesh(Layer &l);         // its mapped mesh (render thread, mesh vertex array bound)
