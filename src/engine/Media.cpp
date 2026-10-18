@@ -128,6 +128,7 @@ QList<int> Engine::layersUsingMedia(const QString &path) const
         const Layer &l = *m_layers[size_t(i)];
         bool uses = l.sourcePath == path && (l.type == SourceType::Video || l.type == SourceType::Image ||
                                              l.type == SourceType::Audio || l.missingType != SourceType::None);
+        uses |= l.type == SourceType::Isf && !l.sourcePath.isEmpty() && QDir::cleanPath(l.sourcePath) == QDir::cleanPath(path);
         uses |= isfUsesImage(l.generator.get(), path);
         for (const auto &fx : l.effects) uses |= isfUsesImage(fx.get(), path);
         if (uses) out << i;
@@ -142,6 +143,7 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
     PlayMode mode = PlayMode::Loop;
     double in = 0, out = -1;
     QJsonObject kept; // the values it kept while its file was missing (its speed, its range…)
+    QJsonObject values; // an ISF generator's: its inputs' values, kept by the shader replacing it where the names match
     std::vector<std::pair<IsfInstance *, int>> inputs;
     {
         Lock lk(&m_mutex);
@@ -149,6 +151,10 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
         if (!l) return false;
         const SourceType t = l->type != SourceType::None ? l->type : l->missingType;
         if (l->sourcePath == from && (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio)) kind = t;
+        if (t == SourceType::Isf && !l->sourcePath.isEmpty() && QDir::cleanPath(l->sourcePath) == QDir::cleanPath(from)) {
+            kind = SourceType::Isf;
+            if (l->generator) values = l->generator->save(QString(), true);
+        }
         mapping = l->mapping;
         mode = l->mode;
         in = l->inPoint;
@@ -171,9 +177,26 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
         if (isImageFile(to)) target = SourceType::Image;
         else if (isVideoFile(to)) target = SourceType::Video;
         else if (isAudioFile(to)) target = SourceType::Audio;
+        else if (isIsfFile(to)) target = SourceType::Isf;
+        if (target == SourceType::Isf) {
+            const IsfInstance::Header h = IsfInstance::readHeader(to);
+            if (!h.ok || h.isFilter || h.isTransition) {
+                if (err) *err = QFileInfo(to).fileName() + QStringLiteral(": not an ISF generator");
+                return false;
+            }
+        }
         ok = target == SourceType::Video   ? setLayerVideo(i, to, err)
              : target == SourceType::Audio ? setLayerAudio(i, to, err)
+             : target == SourceType::Isf   ? setLayerIsf(i, to, err)
                                            : setLayerImage(i, to, err);
+        if (ok && target == SourceType::Isf && kind == SourceType::Isf) {
+            IsfInstance *gen;
+            {
+                Lock lk(&m_mutex);
+                gen = layer(i) ? layer(i)->generator.get() : nullptr;
+            }
+            if (gen && !values.isEmpty()) runGl([gen, values] { gen->restore(values, QString()); });
+        }
         if (ok) {
             setLayerPlayMode(i, mode); // the layer keeps its play mode and its in / out points
             setLayerInOut(i, in, out);

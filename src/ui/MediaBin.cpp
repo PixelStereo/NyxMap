@@ -15,6 +15,8 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QColorSpace>
+#include <QComboBox>
+#include <QToolButton>
 #include <QImageReader>
 #include <QLabel>
 #include <QMap>
@@ -34,7 +36,15 @@
 #include <QVBoxLayout>
 
 namespace {
-enum Role { PathRole = Qt::UserRole + 1, MissingRole, UsedRole, IsfRole, CategoryRole };
+// UsedRole: not removable (used, or always there); UsersRole: how many layers use it
+enum Role { PathRole = Qt::UserRole + 1, MissingRole, UsedRole, IsfRole, CategoryRole, UsersRole };
+
+// Replace… works on files: media, and ISF generators (not Text, Timecode or the live inputs)
+bool replaceable(const QTreeWidgetItem *it)
+{
+    const QString p = it->data(0, PathRole).toString();
+    return !p.isEmpty() && (!it->data(0, IsfRole).toBool() || Engine::isIsfFile(p));
+}
 
 // Media Bin tree: drag items onto layers, drop files to import them.
 class BinTree : public QTreeWidget
@@ -95,6 +105,12 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     auto *head = new QHBoxLayout;
     head->addWidget(new QLabel(QStringLiteral("<b>Media Bin</b>")));
     head->addStretch();
+    m_rebuild = new QToolButton;
+    m_rebuild->setObjectName(QStringLiteral("rebuild"));
+    m_rebuild->setText(QStringLiteral("⟳"));
+    m_rebuild->setToolTip(QStringLiteral("Rebuild: read the files again (missing, changed), look for the live inputs and "
+                                         "scan the ISF library folders again"));
+    head->addWidget(m_rebuild);
     auto *import = new QPushButton(QStringLiteral("Import…"));
     import->setToolTip(QStringLiteral("Add videos, images, sounds or ISF generators to the Media Bin"));
     head->addWidget(import);
@@ -103,8 +119,24 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_search->setPlaceholderText(QStringLiteral("Search…"));
     m_search->setClearButtonEnabled(true);
     m_search->setToolTip(QStringLiteral("Shows only the media and generators whose name contains this text"));
-    v->addWidget(m_search);
+    auto *filters = new QHBoxLayout;
+    filters->setSpacing(4);
+    filters->addWidget(m_search, 1);
+    m_type = new QComboBox;
+    m_type->setObjectName(QStringLiteral("typeFilter"));
+    m_type->addItems({QStringLiteral("All Types"), QStringLiteral("Videos"), QStringLiteral("Images"), QStringLiteral("Audio"),
+                      QStringLiteral("Generators"), QStringLiteral("Inputs"), QStringLiteral("ISF")});
+    m_type->setToolTip(QStringLiteral("Shows only one type of media"));
+    filters->addWidget(m_type);
+    m_usage = new QComboBox;
+    m_usage->setObjectName(QStringLiteral("usageFilter"));
+    m_usage->addItems({QStringLiteral("All"), QStringLiteral("Used"), QStringLiteral("Unused")});
+    m_usage->setToolTip(QStringLiteral("Used: only what the layers use; Unused: only what no layer uses"));
+    filters->addWidget(m_usage);
+    v->addLayout(filters);
     connect(m_search, &QLineEdit::textChanged, this, &MediaBin::applyFilter);
+    connect(m_type, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
+    connect(m_usage, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
 
     auto *tree = new BinTree;
     m_tree = tree;
@@ -172,7 +204,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
 
     auto *buttons = new QHBoxLayout;
     m_relink = new QPushButton(QStringLiteral("Replace…"));
-    m_relink->setToolTip(QStringLiteral("Replace this file with another everywhere it is used (moved file, new version)"));
+    m_relink->setToolTip(QStringLiteral("Replace this file (media or ISF generator) with another everywhere it is used "
+                                        "(moved file, new version)"));
     m_remove = new QPushButton(QStringLiteral("Remove"));
     m_remove->setToolTip(QStringLiteral("Remove from the Media Bin (only files not used by any layer)"));
 #if defined(Q_OS_MACOS)
@@ -191,6 +224,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     v->addWidget(m_summary);
 
     connect(import, &QPushButton::clicked, this, &MediaBin::importDialog);
+    connect(m_rebuild, &QToolButton::clicked, this, &MediaBin::rebuild);
     connect(m_relink, &QPushButton::clicked, this, &MediaBin::relinkSelected);
     connect(m_remove, &QPushButton::clicked, this, &MediaBin::removeSelected);
     connect(m_reveal, &QPushButton::clicked, this, &MediaBin::revealSelected);
@@ -237,6 +271,7 @@ void MediaBin::refresh()
         if (r.missing) ++missing;
         it->setData(0, MissingRole, r.missing);
         it->setData(0, UsedRole, !r.users.isEmpty());
+        it->setData(0, UsersRole, int(r.users.size()));
         it->setText(0, QFileInfo(r.path).fileName());
         if (r.missing) {
             it->setText(1, QStringLiteral("missing"));
@@ -368,6 +403,7 @@ void MediaBin::refreshIsf()
         const bool missing = !QFileInfo::exists(g.key());
         it->setData(0, MissingRole, missing);
         it->setData(0, UsedRole, g->inLibrary || !g->users.isEmpty()); // library shaders stay; imported ones can be removed
+        it->setData(0, UsersRole, int(g->users.size()));
         it->setText(0, g->name);
         it->setText(1, missing ? QStringLiteral("missing") : g->inLibrary ? QString() : g->imported ? QStringLiteral("imported") : QStringLiteral("outside library"));
         it->setText(2, g->users.isEmpty() ? QStringLiteral("—") : QString::number(g->users.size()));
@@ -445,6 +481,7 @@ void MediaBin::refreshInputs()
         it->setText(1, r.present ? r.kind : r.kind + QStringLiteral(" — not found"));
         if (!r.present) it->setForeground(1, QColor(255, 110, 95));
         const QStringList u = users.value(r.uri);
+        it->setData(0, UsersRole, int(u.size()));
         it->setText(2, u.isEmpty() ? QStringLiteral("—") : QString::number(u.size()));
         it->setTextAlignment(2, Qt::AlignCenter);
         it->setToolTip(0, QStringLiteral("%1 input — drag it onto a layer\n%2").arg(r.kind, r.uri) +
@@ -466,6 +503,7 @@ void MediaBin::refreshText()
         }
     }
     auto show = [](QTreeWidgetItem *it, const QStringList &users, const QString &what) {
+        it->setData(0, UsersRole, int(users.size()));
         it->setText(2, users.isEmpty() ? QStringLiteral("—") : QString::number(users.size()));
         const QString usedBy = users.isEmpty() ? QStringLiteral("Not used by any layer") : QStringLiteral("Used by:\n") + users.join('\n');
         it->setToolTip(0, what + QStringLiteral("\n\n") + usedBy);
@@ -555,14 +593,13 @@ void MediaBin::probe(const QString &path)
 
 void MediaBin::updateButtons()
 {
-    bool any = false, removable = false, isf = false;
+    bool any = false, removable = false;
     for (QTreeWidgetItem *it : m_tree->selectedItems()) {
         if (it->data(0, PathRole).toString().isEmpty()) continue;
         any = true;
-        isf |= it->data(0, IsfRole).toBool();
         removable |= !it->data(0, UsedRole).toBool();
     }
-    m_relink->setEnabled(m_tree->selectedItems().size() == 1 && any && !isf);
+    m_relink->setEnabled(m_tree->selectedItems().size() == 1 && replaceable(m_tree->selectedItems().first()));
     m_remove->setEnabled(removable);
     m_reveal->setEnabled(any && !m_tree->selectedItems().first()->data(0, MissingRole).toBool());
 }
@@ -619,8 +656,17 @@ void MediaBin::relinkSelected()
     if (from.isEmpty()) return;
     QString start = QFileInfo(from).absolutePath();
     if (!QFileInfo(start).isDir()) start = QSettings().value("dirs/video").toString();
+    // A generator by another generator; a media file by any media (a video by an image…) or a generator
+    QStringList ext;
+    if (!Engine::isIsfFile(from))
+        for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions()) ext << "*." + e;
+    ext << QStringLiteral("*.fs") << QStringLiteral("*.frag");
     const QString to = QFileDialog::getOpenFileName(this, QStringLiteral("Replace \"%1\" with…").arg(QFileInfo(from).fileName()),
-                                                    start + "/" + QFileInfo(from).fileName());
+                                                    start + "/" + QFileInfo(from).fileName(),
+                                                    (Engine::isIsfFile(from) ? QStringLiteral("ISF generators (%1)")
+                                                                             : QStringLiteral("Media and ISF generators (%1)"))
+                                                            .arg(ext.join(' ')) +
+                                                        QStringLiteral(";;All Files (*)"));
     if (to.isEmpty() || to == from) return;
     emit relinkRequested(from, QFileInfo(to).absoluteFilePath());
 }
@@ -677,7 +723,10 @@ void MediaBin::contextMenu(const QPoint &pos)
         into->setEnabled(!missing && !into->isEmpty());
         menu.addSeparator();
         if (isf) menu.addAction(QStringLiteral("Reload ISF"), this, [this, p] { emit reloadIsfRequested(p); })->setEnabled(!missing);
-        menu.addAction(QStringLiteral("Relink File…"), this, &MediaBin::relinkSelected)->setEnabled(!isf);
+        menu.addAction(QStringLiteral("Replace…"), this, [this, it] {
+                m_tree->setCurrentItem(it);
+                relinkSelected();
+            })->setEnabled(replaceable(it));
         menu.addAction(m_reveal->text(), this, &MediaBin::revealSelected)->setEnabled(!missing);
         menu.addAction(QStringLiteral("Remove from Media Bin"), this, &MediaBin::removeSelected)->setEnabled(!it->data(0, UsedRole).toBool());
         menu.addSeparator();
@@ -686,22 +735,48 @@ void MediaBin::contextMenu(const QPoint &pos)
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
 
+void MediaBin::rebuild()
+{
+    // Read again: what the files are now (a file found again, a new version), the inputs there, the library's shaders
+    m_info.clear();
+    for (auto p = m_probing.begin(); p != m_probing.end();) p = p.value() ? std::next(p) : m_probing.erase(p);
+    m_inputsSignature.clear();
+    for (QTreeWidgetItem *cat : {m_videos, m_images, m_audios})
+        for (int i = 0; i < cat->childCount(); ++i) cat->child(i)->setText(1, QStringLiteral("…"));
+    emit rebuildRequested(); // the owner scans the ISF library again, then refreshes the bin
+    refresh();
+}
+
 void MediaBin::applyFilter()
 {
     const QString f = m_search ? m_search->text().trimmed() : QString();
-    // Leaves (media, shaders) match by name; a category stays visible if one of its items does
+    const int usage = m_usage ? m_usage->currentIndex() : 0; // 0 all, 1 used, 2 unused
+    const int type = m_type ? m_type->currentIndex() : 0;
+    const QTreeWidgetItem *only = type == 1 ? m_videos : type == 2 ? m_images : type == 3 ? m_audios : type == 4 ? m_generators
+                                  : type == 5                                     ? m_inputs
+                                  : type == 6                                     ? m_isf
+                                                                                  : nullptr;
+    const bool filtering = !f.isEmpty() || usage != 0;
+    // Leaves (media, shaders) match by name and use; a category stays visible if one of its items does
     std::function<bool(QTreeWidgetItem *)> visit = [&](QTreeWidgetItem *it) -> bool {
         if (it->childCount() == 0 && (it->data(0, PathRole).isValid() || it->parent())) {
-            const bool show = f.isEmpty() || it->text(0).contains(f, Qt::CaseInsensitive) ||
-                              QFileInfo(it->data(0, PathRole).toString()).fileName().contains(f, Qt::CaseInsensitive);
+            const bool item = it->data(0, PathRole).isValid(); // not an empty category
+            const bool show = item ? (f.isEmpty() || it->text(0).contains(f, Qt::CaseInsensitive) ||
+                                      QFileInfo(it->data(0, PathRole).toString()).fileName().contains(f, Qt::CaseInsensitive)) &&
+                                         (usage == 0 || (usage == 1) == (it->data(0, UsersRole).toInt() > 0))
+                                   : !filtering;
             it->setHidden(!show);
             return show;
         }
         bool any = false;
         for (int c = 0; c < it->childCount(); ++c) any |= visit(it->child(c));
-        it->setHidden(!f.isEmpty() && !any);
-        if (!f.isEmpty() && any) it->setExpanded(true);
-        return any || f.isEmpty();
+        it->setHidden(filtering && !any);
+        if (filtering && any) it->setExpanded(true);
+        return any || !filtering;
     };
-    for (int t = 0; t < m_tree->topLevelItemCount(); ++t) visit(m_tree->topLevelItem(t));
+    for (int t = 0; t < m_tree->topLevelItemCount(); ++t) {
+        QTreeWidgetItem *top = m_tree->topLevelItem(t);
+        visit(top);
+        if (only) top->setHidden(top != only); // the chosen type shown, even empty
+    }
 }

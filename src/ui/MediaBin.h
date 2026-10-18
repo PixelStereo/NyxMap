@@ -8,6 +8,8 @@ class QTreeWidgetItem;
 class QPushButton;
 class QLabel;
 class QLineEdit;
+class QComboBox;
+class QToolButton;
 
 // Media Bin: the project's video, image and audio files (used by layers or imported), grouped by type, the Text
 // generator, the live inputs, and the ISF generators of the library (ISF > Generators). Items are dragged onto layers to load them.
@@ -28,6 +30,7 @@ signals:
     void loadIntoLayerRequested(int layer, const QString &path);  // load into that layer (right-click submenu)
     void reloadIsfRequested(const QString &path);
     void binEdited(); // import / removal: the project is modified
+    void rebuildRequested(); // Rebuild: the ISF library scanned again (the bin is refreshed after)
 
 private:
     void probe(const QString &path);
@@ -40,7 +43,8 @@ private:
     void removeSelected();
     void revealSelected();
     void contextMenu(const QPoint &pos);
-    void applyFilter(); // search field: hides what does not match
+    void applyFilter(); // search field, type and use filters: hides what does not match
+    void rebuild();     // everything read again: the files probed, the inputs looked for, the ISF library scanned
 
     Engine *m_engine;
     QTreeWidget *m_tree;
@@ -48,6 +52,9 @@ private:
     QPushButton *m_relink, *m_remove, *m_reveal;
     QLabel *m_summary;
     QLineEdit *m_search = nullptr;
+    QComboBox *m_type = nullptr;  // All, or one category (Videos, Images, Audio, Generators, Inputs, ISF)
+    QComboBox *m_usage = nullptr; // All, Used (by a layer), Unused
+    QToolButton *m_rebuild = nullptr;
     bool m_isfOpened = false; // ISF > Generators expanded once filled
     QHash<QString, QString> m_info;  // path -> description (resolution, duration…)
     QHash<QString, bool> m_probing;
