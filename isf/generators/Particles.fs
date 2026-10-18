@@ -88,14 +88,14 @@ void main(){
   if(PASSINDEX==1){
    if(born){vec3 p=ptBirthPos(id);gl_FragColor=vec4(cross(p,vec3(0,1,0))*.15,ptLife(id));return;}
    vec3 flow=ptCurl(P.xyz*(1.1+2.2*metal)+vec3(0,TIME*.07,0))*(.35+1.2*turbulence+1.6*air);
-   vec3 toward=-P.xyz*(.4+3.5*bass)*pull*2.;
-   vec3 burst=normalize(P.xyz+1e-4)*hit*9.;
+   vec3 toward=-P.xyz*(.4+1.6*bass)*pull*2.;
+   vec3 burst=normalize(P.xyz+1e-4)*hit*5.;
    vec3 v=V.xyz+(flow+toward+burst)*dt;
    v*=exp(-dt*(1.4-.8*energy));
    gl_FragColor=vec4(v,V.w);
   }else{
    if(born){gl_FragColor=vec4(ptBirthPos(id),ptLife(id));return;}
-   vec3 p=P.xyz+V.xyz*dt*(.45+1.3*energy);
+   vec3 p=P.xyz+V.xyz*dt*(.45+.8*energy);
    float life=P.w-dt;
    if(dot(p,p)>6.)life=0.; // gone too far: born again at the next frame
    gl_FragColor=vec4(p,max(life,0.));

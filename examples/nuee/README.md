@@ -41,7 +41,7 @@ La position sur le chemin s'accumule d'une image à l'autre : changer la vitesse
 | 1:31 | Grêle métallique | Traînées courtes, lumière blanche. | Balancier rapide. |
 | 1:44 | Fracture / silence | Les traces restent longtemps. | Arrêt net. |
 | 1:56 | Mémoire oblique | Violet, mémoire des traces. | Spirale à rebours. |
-| 2:08 | Masse critique | Densité maximale. | Traversée. |
+| 2:08 | Masse critique | Densité maximale. | Spirale proche. |
 | 2:24 | Le champ cède | Plus d'attraction : le nuage s'ouvre. | Huit à pleine vitesse. |
 | 2:40 | Débris lents | Moins de grains, longues traînées. | Orbite très lente, loin. |
 | 2:52–3:00 | Retour au noir | Extinction de l'image et de la bande. | Fixe. |

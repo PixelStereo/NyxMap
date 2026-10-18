@@ -22,7 +22,7 @@ MOMENTS=[
  (91,"07 · Grêle métallique",.6,dict(amount=.75,pull=.4,trail=.4,exposure=.6,tint=WHITE,hot=WHITE,camPath=4,camSpeed=.9,camSize=.7,camDistance=.4,camYaw=.3)),
  (104,"08 · Fracture / silence",.12,dict(amount=.5,pull=.2,trail=.93,exposure=.5,tint=BLUE,hot=AMBER,camPath=0,camSpeed=0,camSize=.5,camDistance=.55,camYaw=.4)),
  (116,"09 · Mémoire oblique",2.2,dict(amount=.55,pull=.3,trail=.85,exposure=.5,tint=VIOLET,hot=WHITE,camPath=3,camSpeed=-.4,camSize=.5,camDistance=.5,camYaw=.4)),
- (128,"10 · Masse critique",.8,dict(amount=1,pull=.6,trail=.8,exposure=.7,tint=COLD,hot=AMBER,camPath=5,camSpeed=.6,camSize=.8,camDistance=.45,camYaw=.2)),
+ (128,"10 · Masse critique",.8,dict(amount=1,pull=.6,trail=.75,exposure=.5,tint=COLD,hot=AMBER,camPath=3,camSpeed=.6,camSize=.6,camDistance=.45,camYaw=.2)),
  (144,"11 · Le champ cède",.12,dict(amount=.9,pull=0,trail=.7,exposure=.75,tint=WHITE,hot=AMBER,camPath=2,camSpeed=1,camSize=1,camDistance=.5,camYaw=.2)),
  (160,"12 · Débris lents",2.8,dict(amount=.45,pull=.2,trail=.9,exposure=.4,tint=COLD,hot=WHITE,camPath=1,camSpeed=.08,camSize=.4,camDistance=.9,camYaw=0)),
  (172,"13 · Retour au noir",8.,dict(amount=.05,pull=.2,trail=.9,exposure=0,tint=COLD,hot=WHITE,camPath=0,camSpeed=0,camSize=.3,camDistance=1,camYaw=0)),

@@ -49,5 +49,6 @@ void main(){
  float fade=smoothstep(0.,.8,age)*smoothstep(0.,1.2,P.w)*smoothstep(.15,.6,depth);
  float speed=length(V.xyz);
  vec3 col=mix(tint.rgb,hot.rgb,clamp(speed*.5+hit*.8,0.,1.));
- pColor=vec4(col,fade*k*(.02+.05*energy)/(.4+amount));
+ // Its light over the frames it stays (the trail keeps 1/(1 - trail) of it): a longer trail, not a brighter cloud
+ pColor=vec4(col,fade*k*(.02+.05*energy)/(.4+amount)*(1.-trail)*2.5);
 }
