@@ -218,6 +218,10 @@ void Engine::markNeeded()
             const int mi = indexOfId(l->color.maskLayer);
             if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
         }
+        if (l->matte.layer) {
+            const int mi = indexOfId(l->matte.layer);
+            if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
+        }
     }
     const std::vector<bool> leftOut = soloLeftOut();
     for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloHidden = leftOut[i];
@@ -266,6 +270,10 @@ void Engine::renderPass(const IsfRenderContext &rc)
             const int mi = indexOfId(l.color.maskLayer);
             if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
         }
+        if (l.matte.layer) { // its matte, before it
+            const int mi = indexOfId(l.matte.layer);
+            if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
+        }
         if (l.isViewport) {
             // What it sees: the items at the top of the list it shows, all rendered by now
             std::vector<Layer *> shown;
@@ -291,6 +299,7 @@ void Engine::renderPass(const IsfRenderContext &rc)
             auto t = m_transitions.find(l.id);
             if (t != m_transitions.end()) renderTransition(l, *t->second, rc);
         }
+        if (!l.isViewport) prepareMatte(l); // before it is composited (a viewport or a group draws it later)
         m_renderMark[i] = Done;
     };
     for (size_t i = 0; i < n; ++i) render(i);
@@ -535,6 +544,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
         }
     }
     applySurfaceMasks(l, tex, w, h);
+    applyPictureMatte(l, tex, w, h);
     l.finalTex = tex;
     l.finalW = w;
     l.finalH = h;
@@ -582,6 +592,77 @@ void Engine::applySurfaceMasks(Layer &l, GLuint &tex, int w, int h)
     f->glUniform1i(m_shapeMaskRgbLoc, l.isViewport ? 1 : 0);
     drawQuad();
     tex = l.shapeMaskTarget.tex;
+}
+
+// A matte in Composition space: the matte layer drawn alone, where it is in the composition (its mapping, its
+// opacity, its own composition masks), on a transparent canvas the size of the composition. Drawn even when that
+// layer is switched off (a matte is usually hidden). A matte layer with no picture: nothing shows (or all, inverted).
+void Engine::prepareMatte(Layer &l)
+{
+    if (!l.matte.layer || l.matte.space != LayerMatte::Space::Composition) {
+        if (l.matteTarget.fbo) l.matteTarget.destroy();
+        return;
+    }
+    if (!l.needed) return; // not drawn this frame
+    l.matteTarget.ensure(m_compSize.width(), m_compSize.height());
+    if (!l.matteTarget.ready(m_compSize.width(), m_compSize.height())) {
+        l.matteTarget.destroy(); // no matte target: drawn without it rather than from a stale one
+        return;
+    }
+    l.matteTarget.clear();
+    Layer *m = layer(indexOfId(l.matte.layer));
+    if (!m || !m->finalTex) return;
+    auto f = gl();
+    l.matteTarget.bind();
+    f->glEnable(GL_BLEND);
+    f->glBlendEquation(GL_FUNC_ADD);
+    f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    f->glUseProgram(m_compProgram);
+    f->glUniform1i(m_compTexLoc, 0);
+    f->glUniform1i(m_compMaskLoc, 2);
+    f->glUniform1i(m_compMatteLoc, 3);
+    f->glUniform1i(m_compMatteModeLoc, 0);
+    f->glUniform4f(m_compViewLoc, 1.0f, 1.0f, 0.0f, 0.0f); // the whole composition
+    f->glUniform4f(m_compRotLoc, 1.0f, 0.0f, 0.0f, 0.0f);
+    f->glUniform1f(m_compAspLoc, float(double(m_compSize.width()) / std::max(1, m_compSize.height())));
+    f->glUniform1f(m_compOpacityLoc, m->opacity);
+    f->glBindVertexArray(m_meshVao);
+    bindMesh(*m);
+    f->glUniform1i(m_compMaskOnLoc, bindCompositionMasks(*m) ? 1 : 0);
+    f->glActiveTexture(GL_TEXTURE0);
+    f->glBindTexture(GL_TEXTURE_2D, m->finalTex);
+    f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+    f->glDisable(GL_BLEND);
+    f->glBindVertexArray(0);
+}
+
+// A matte in Picture space: the matte layer's picture stretched over this one's (after its effects and its surface
+// masks). A matte layer with no picture: nothing shows (or all, inverted).
+void Engine::applyPictureMatte(Layer &l, GLuint &tex, int w, int h)
+{
+    if (!l.matte.layer || l.matte.space != LayerMatte::Space::Picture || !tex || w <= 0 || h <= 0) {
+        if (l.mattePicture.fbo) l.mattePicture.destroy();
+        return;
+    }
+    const Layer *m = layer(indexOfId(l.matte.layer));
+    l.mattePicture.ensure(w, h);
+    if (!l.mattePicture.ready(w, h)) {
+        tex = 0; // fail closed: never the picture without its matte
+        return;
+    }
+    auto f = gl();
+    l.mattePicture.bind();
+    f->glDisable(GL_BLEND);
+    f->glUseProgram(m_matteProgram);
+    f->glActiveTexture(GL_TEXTURE1);
+    f->glBindTexture(GL_TEXTURE_2D, m && m->finalTex && m != &l ? m->finalTex : m_blackTex);
+    f->glActiveTexture(GL_TEXTURE0);
+    f->glBindTexture(GL_TEXTURE_2D, tex);
+    f->glUniform1i(m_matteTexLoc, 0);
+    f->glUniform1i(m_matteMatteLoc, 1);
+    f->glUniform1i(m_matteModeLoc, matteMode(l.matte));
+    drawQuad();
+    tex = l.mattePicture.tex;
 }
 
 // Its composition masks, on texture unit 2 for the compositing (false: none)
@@ -752,6 +833,15 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
         bindMesh(l);
         const bool compMasks = bindCompositionMasks(l);
         f->glUniform1i(inDiff ? m_diffMaskOnLoc : m_compMaskOnLoc, compMasks ? 1 : 0);
+        // Its matte in Composition space, on texture unit 3 (prepared this frame by prepareMatte)
+        const bool matte = l.matte.layer && l.matte.space == LayerMatte::Space::Composition && l.matteTarget.fbo;
+        f->glUniform1i(inDiff ? m_diffMatteLoc : m_compMatteLoc, 3);
+        f->glUniform1i(inDiff ? m_diffMatteModeLoc : m_compMatteModeLoc, matte ? matteMode(l.matte) : 0);
+        if (matte) {
+            f->glActiveTexture(GL_TEXTURE3);
+            f->glBindTexture(GL_TEXTURE_2D, l.matteTarget.tex);
+            f->glActiveTexture(GL_TEXTURE0);
+        }
         f->glBindTexture(GL_TEXTURE_2D, l.finalTex);
         // Drawn smaller than it is: sampled from mipmaps (no shimmer, no moiré), made for this draw only
         bool mip = false;
@@ -784,6 +874,11 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
     }
     f->glBlendEquation(GL_FUNC_ADD);
     f->glDisable(GL_BLEND);
+    // A matte is per layer: never left set for the next use of the programs
+    f->glUseProgram(m_diffProgram);
+    f->glUniform1i(m_diffMatteModeLoc, 0);
+    f->glUseProgram(m_compProgram);
+    f->glUniform1i(m_compMatteModeLoc, 0);
     f->glBindVertexArray(0);
     if (ms) ms->resolveInto(target);
 }
@@ -864,6 +959,11 @@ void Engine::composite()
             f->glUniform1i(m_compTexLoc, 0);
             f->glUniform4f(m_compViewLoc, 1, 1, 0, 0);
             f->glUniform1f(m_compOpacityLoc, v.opacity);
+            // Its picture as it is: none of what the last layer composited left set in the program (its composition
+            // masks, its matte, a turned view)
+            f->glUniform1i(m_compMaskOnLoc, 0);
+            f->glUniform1i(m_compMatteModeLoc, 0);
+            f->glUniform4f(m_compRotLoc, 1, 0, 0, 0);
             f->glActiveTexture(GL_TEXTURE0);
             f->glBindVertexArray(m_meshVao);
             bindMeshBuffer(m_meshVbo); // the whole frame, built once

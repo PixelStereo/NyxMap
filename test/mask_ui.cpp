@@ -1,5 +1,8 @@
 #include "Engine.h"
 #include "MappingView.h"
+#include "MaskPanel.h"
+#include <QComboBox>
+#include <QPushButton>
 #include <QApplication>
 #include <QDoubleSpinBox>
 #include <QMouseEvent>
@@ -119,6 +122,35 @@ int main(int argc, char **argv)
         QApplication::sendEvent(&view, &removePoint);
         check(engine.layer(index)->masks[0].nodes.size() == count + 1, "Layer mode never deletes mask points");
         view.hide();
+    }
+    {
+        // The Layer Matte section: another layer chosen, its channel, invert, undone in steps
+        QUndoStack undo;
+        const quint64 matteId = engine.layerId(engine.addLayer("Matte source"));
+        MaskPanel panel(&engine, &undo, id, false, false);
+        panel.show();
+        app.processEvents();
+        auto *layer = panel.findChild<QComboBox *>("matteLayer");
+        auto *channel = panel.findChild<QComboBox *>("matteChannel");
+        auto *invert = panel.findChild<QPushButton *>("matteInvert");
+        check(layer && channel && invert, "matte controls present");
+        if (layer && channel && invert) {
+            check(layer->findData(qulonglong(id)) < 0 && layer->findData(qulonglong(matteId)) > 0,
+                  "the matte list offers the other layers, not the layer itself");
+            check(!channel->isEnabled(), "matte settings wait for a matte layer");
+            layer->setCurrentIndex(layer->findData(qulonglong(matteId)));
+            emit layer->activated(layer->currentIndex());
+            const Layer *l = engine.layer(engine.indexOfId(id));
+            check(l->matte.layer == matteId && channel->isEnabled(), "choosing a layer sets the matte");
+            invert->click();
+            check(engine.layer(engine.indexOfId(id))->matte.invert, "Invert Matte inverts it");
+            undo.undo();
+            check(!engine.layer(engine.indexOfId(id))->matte.invert, "the invert undoes");
+            undo.undo();
+            panel.refresh(); // as the main window does at every undo step
+            check(engine.layer(engine.indexOfId(id))->matte.layer == 0 && layer->currentIndex() == 0,
+                  "the matte undoes, and the panel follows");
+        }
     }
     engine.shutdown();
     return failures ? 1 : 0;

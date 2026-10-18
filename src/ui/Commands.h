@@ -59,11 +59,12 @@ inline bool setValue(QUndoStack *undo, Engine *e, quint64 layer, const QString &
 // The addresses of a shader input's value (one; x y; r g b a) and its value there
 QJsonObject isfValueJson(const QString &prefix, const IsfInput &in, const IsfValue &v);
 
-// What a layer is, rather than a value of it: its name, switch, lock, transition, the layer its color mask comes from
+// What a layer is, rather than a value of it: its name, switch, lock, transition, the layer its color mask comes from,
+// its matte
 class SetLayerProp : public QUndoCommand
 {
 public:
-    enum Prop { Name, Enabled, Locked, Transition, ColorMask };
+    enum Prop { Name, Enabled, Locked, Transition, ColorMask, Matte }; // Matte: LayerMatte::toJson()
     SetLayerProp(Engine *e, quint64 layer, Prop prop, const QVariant &before, const QVariant &after);
     void undo() override { apply(m_before); }
     void redo() override { apply(m_after); }

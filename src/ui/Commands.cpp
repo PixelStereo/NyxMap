@@ -93,6 +93,7 @@ static QString propText(SetLayerProp::Prop p)
     case SetLayerProp::Locked: return QStringLiteral("Lock / Unlock Layer");
     case SetLayerProp::Transition: return QStringLiteral("Change Transition");
     case SetLayerProp::ColorMask: return QStringLiteral("Change Color Mask");
+    case SetLayerProp::Matte: return QStringLiteral("Change Layer Matte");
     }
     return {};
 }
@@ -116,6 +117,7 @@ QVariant SetLayerProp::read(Engine *e, quint64 layer, Prop prop)
     case Locked: return l->locked;
     case Transition: return l->transition;
     case ColorMask: return QVariant(qulonglong(l->color.maskLayer));
+    case Matte: return QVariant(l->matte.toJson());
     }
     return {};
 }
@@ -135,6 +137,15 @@ void SetLayerProp::apply(const QVariant &v)
         m_e->setColorMask(index, v.toULongLong(), invert);
         return;
     }
+    if (m_prop == Matte) { // checked against feedback by the engine
+        int index;
+        {
+            Engine::Lock lk(&m_e->mutex());
+            index = m_e->indexOfId(m_layer);
+        }
+        m_e->setLayerMatte(index, LayerMatte::fromJson(v.toJsonObject()));
+        return;
+    }
     Engine::Lock lk(&m_e->mutex());
     Layer *l = m_e->layer(m_e->indexOfId(m_layer));
     if (!l) return;
@@ -143,7 +154,8 @@ void SetLayerProp::apply(const QVariant &v)
     case Enabled: l->enabled = v.toBool(); break;
     case Locked: l->locked = v.toBool(); break;
     case Transition: l->transition = v.toString(); break;
-    case ColorMask: break;
+    case ColorMask:
+    case Matte: break;
     }
 }
 

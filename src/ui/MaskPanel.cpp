@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -217,6 +218,7 @@ MaskPanel::MaskPanel(Engine *engine, QUndoStack *undo, quint64 layer, bool viewp
         sf->labelForField(m_attach)->setVisible(false);
     }
     v->addWidget(m_settings);
+    if (!m_viewport) buildMatte(v);
 
     auto *importBtn = new QPushButton(QStringLiteral("Import SVG"));
     auto *exportBtn = new QPushButton(QStringLiteral("Export SVG"));
@@ -292,8 +294,110 @@ void MaskPanel::select(int index)
     showCurrent();
 }
 
+// Its matte: none, or another layer (not a viewport, not itself), its channel, invert, the space it is taken in
+void MaskPanel::buildMatte(QVBoxLayout *v)
+{
+    auto *box = new QGroupBox(QStringLiteral("Layer Matte"));
+    box->setToolTip(QStringLiteral("Another layer's picture sets where this one shows: fully on white (or opaque), not at all "
+                                   "on black (or transparent), in proportion in between; on top of its masks. The matte "
+                                   "layer can be switched off: it is still drawn for this one."));
+    auto *f = new QFormLayout(box);
+    f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_matteLayer = new QComboBox;
+    m_matteLayer->setObjectName(QStringLiteral("matteLayer"));
+    f->addRow(QStringLiteral("Layer"), m_matteLayer);
+    m_matteChannel = new QComboBox;
+    m_matteChannel->setObjectName(QStringLiteral("matteChannel"));
+    m_matteChannel->addItems({QStringLiteral("Luminance"), QStringLiteral("Alpha")});
+    m_matteChannel->setToolTip(QStringLiteral("Luminance: its brightness (times its alpha) · Alpha: its opacity only"));
+    f->addRow(QStringLiteral("Channel"), m_matteChannel);
+    m_matteInvert = new QPushButton(QStringLiteral("Invert Matte"));
+    m_matteInvert->setObjectName(QStringLiteral("matteInvert"));
+    m_matteInvert->setCheckable(true);
+    m_matteInvert->setStyleSheet(QStringLiteral("QPushButton:checked { background:#0b5c69; color:white; }"));
+    f->addRow(QString(), m_matteInvert);
+    m_matteSpace = new QComboBox;
+    m_matteSpace->setObjectName(QStringLiteral("matteSpace"));
+    m_matteSpace->addItems({QStringLiteral("Composition"), QStringLiteral("Picture")});
+    m_matteSpace->setToolTip(QStringLiteral("Composition: the matte layer as it is on the composition (its place, its "
+                                            "mapping): it lines up with what is seen · Picture: stretched over this "
+                                            "layer's own picture, before its mapping"));
+    f->addRow(QStringLiteral("Taken In"), m_matteSpace);
+    m_matteNote = new QLabel;
+    m_matteNote->setWordWrap(true);
+    m_matteNote->setStyleSheet("color:#ff6b5b;");
+    m_matteNote->setVisible(false);
+    f->addRow(m_matteNote);
+    v->addWidget(box);
+    for (QWidget *w : {static_cast<QWidget *>(m_matteLayer), static_cast<QWidget *>(m_matteChannel),
+                       static_cast<QWidget *>(m_matteInvert), static_cast<QWidget *>(m_matteSpace)})
+        w->setEnabled(!m_locked);
+    auto current = [this] {
+        LayerMatte m;
+        m.layer = m_matteLayer->currentData().toULongLong();
+        m.channel = LayerMatte::Channel(m_matteChannel->currentIndex());
+        m.invert = m_matteInvert->isChecked();
+        m.space = LayerMatte::Space(m_matteSpace->currentIndex());
+        return m;
+    };
+    connect(m_matteLayer, qOverload<int>(&QComboBox::activated), this, [this, current](int) { setMatte(current()); });
+    connect(m_matteChannel, qOverload<int>(&QComboBox::activated), this, [this, current](int) { setMatte(current()); });
+    connect(m_matteSpace, qOverload<int>(&QComboBox::activated), this, [this, current](int) { setMatte(current()); });
+    connect(m_matteInvert, &QPushButton::clicked, this, [this, current] { setMatte(current()); });
+    showMatte();
+}
+
+void MaskPanel::showMatte()
+{
+    if (!m_matteLayer) return;
+    LayerMatte m;
+    std::vector<std::pair<quint64, QString>> layers;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_engine->indexOfId(m_layer))) m = l->matte;
+        for (int k = 0; k < m_engine->layerCount(); ++k) {
+            const Layer *o = m_engine->layer(k);
+            if (o && !o->isViewport && o->id != m_layer) layers.emplace_back(o->id, o->name);
+        }
+    }
+    QSignalBlocker a(m_matteLayer), b(m_matteChannel), c(m_matteInvert), d(m_matteSpace);
+    m_matteLayer->clear();
+    m_matteLayer->addItem(QStringLiteral("None"), qulonglong(0));
+    for (const auto &[id, name] : layers) m_matteLayer->addItem(name, qulonglong(id));
+    m_matteLayer->setCurrentIndex(std::max(0, m_matteLayer->findData(qulonglong(m.layer))));
+    m_matteChannel->setCurrentIndex(int(m.channel));
+    m_matteInvert->setChecked(m.invert);
+    m_matteSpace->setCurrentIndex(int(m.space));
+    for (QWidget *w : {static_cast<QWidget *>(m_matteChannel), static_cast<QWidget *>(m_matteInvert),
+                       static_cast<QWidget *>(m_matteSpace)})
+        w->setEnabled(!m_locked && m.layer);
+}
+
+void MaskPanel::setMatte(const LayerMatte &m)
+{
+    const QVariant before = cmd::SetLayerProp::read(m_engine, m_layer, cmd::SetLayerProp::Matte);
+    QString err;
+    int index;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        index = m_engine->indexOfId(m_layer);
+    }
+    if (!m_engine->setLayerMatte(index, m, &err)) { // refused (a feedback): shown, nothing done
+        m_matteNote->setText(err);
+        m_matteNote->setVisible(true);
+        showMatte();
+        return;
+    }
+    m_matteNote->setVisible(false);
+    const QVariant after = cmd::SetLayerProp::read(m_engine, m_layer, cmd::SetLayerProp::Matte);
+    if (before != after) m_undo->push(new cmd::SetLayerProp(m_engine, m_layer, cmd::SetLayerProp::Matte, before, after));
+    showMatte();
+    emit edited();
+}
+
 void MaskPanel::refresh()
 {
+    showMatte(); // undone, or changed elsewhere
     const std::vector<Mask> m = masks();
     const int keep = m_list->currentRow();
     m_syncing = true;
