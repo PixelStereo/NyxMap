@@ -4984,6 +4984,35 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.setLayerImage(vi, root + "/media/bars.png", &err) && e.layer(vi)->extraParams.isEmpty());
         CHECK(e.binItems().contains(tmp + "/clip_moved.mp4"));
         QFile::remove(tmp + "/clip_moved.mp4");
+        // Replace an ISF generator (Media Bin): every layer using it takes the other shader, values kept by name
+        {
+            QFile::remove(tmp + "/genA.fs");
+            QFile::remove(tmp + "/genB.fs");
+            CHECK(QFile::copy(root + "/../isf/generators/SolidColor.fs", tmp + "/genA.fs"));
+            CHECK(QFile::copy(root + "/../isf/generators/SolidColor.fs", tmp + "/genB.fs"));
+            const quint64 id1 = e.layer(e.addLayer("Solid 1"))->id, id2 = e.layer(e.addLayer("Solid 2"))->id;
+            const int s1i = e.indexOfId(id1), s2 = e.indexOfId(id2);
+            CHECK(e.setLayerIsf(s1i, tmp + "/genA.fs", &err) && e.setLayerIsf(s2, tmp + "/genA.fs", &err));
+            {
+                Engine::Lock lk(&e.mutex());
+                e.layer(s1i)->generator->inputs()[0].cValue[0] = 0.25f;
+            }
+            const QList<int> users = e.layersUsingMedia(tmp + "/genA.fs");
+            CHECK(users.size() == 2);
+            for (int i : users) CHECK(e.relinkLayerMedia(i, tmp + "/genA.fs", tmp + "/genB.fs", &err));
+            CHECK(e.layersUsingMedia(tmp + "/genA.fs").isEmpty() && e.layersUsingMedia(tmp + "/genB.fs").size() == 2);
+            for (int i : users) {
+                const QString sp = e.layer(i)->sourcePath;
+                CHECK(e.layer(i)->type == SourceType::Isf && sp == QDir::cleanPath(tmp + "/genB.fs"));
+            }
+            CHECK(e.layer(s1i)->generator->inputs()[0].cValue[0] == 0.25f); // its value kept
+            // A generator replaced by an image: the layer becomes an image layer
+            CHECK(e.relinkLayerMedia(s2, tmp + "/genB.fs", root + "/media/bars.png", &err));
+            CHECK(e.layer(s2)->type == SourceType::Image);
+            // An effect is not a generator: refused, the layer keeps its shader
+            CHECK(!e.relinkLayerMedia(s1i, tmp + "/genB.fs", root + "/../isf/effects/Mask.fs", &err));
+            CHECK(e.layer(s1i)->sourcePath == QDir::cleanPath(tmp + "/genB.fs"));
+        }
         VideoDecoder::Info info;
         CHECK(VideoDecoder::probe(root + "/media/prores.mov", &info) && info.width == 1920 && info.codec == "prores");
     }

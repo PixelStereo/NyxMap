@@ -18,6 +18,9 @@
 #include <QUndoStack>
 #include <QListWidget>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
+#include <QToolButton>
+#include <QDir>
 #include <QTabWidget>
 #include <QPushButton>
 #include <QApplication>
@@ -120,6 +123,54 @@ int main(int argc, char **argv)
                     mainTabs->setCurrentIndex(1);
                     bin->useAsSourceRequested(shaderPath);
                     check(engine.layer(loaded)->type == SourceType::Isf, "selected-layer action replaces source with ISF");
+                }
+                // Media Bin filters: by type, used / unused; the rebuild button; Replace… for an ISF generator
+                auto *tree = bin->findChild<QTreeWidget *>();
+                auto *type = bin->findChild<QComboBox *>("typeFilter");
+                auto *usage = bin->findChild<QComboBox *>("usageFilter");
+                auto *rebuild = bin->findChild<QToolButton *>("rebuild");
+                check(tree && type && usage && rebuild, "media bin has type, usage filters and a rebuild button");
+                auto itemOf = [&](const QString &path) -> QTreeWidgetItem * {
+                    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                        if ((*it)->data(0, Qt::UserRole + 1).toString() == QDir::cleanPath(path)) return *it;
+                    return nullptr;
+                };
+                auto shown = [](QTreeWidgetItem *it) {
+                    for (; it; it = it->parent()) if (it->isHidden()) return false;
+                    return true;
+                };
+                if (tree && type && usage && rebuild && loaded >= 0) {
+                    bin->refresh();
+                    QTreeWidgetItem *gen = itemOf(shaderPath);
+                    check(gen && shown(gen), "used ISF generator listed in the media bin");
+                    usage->setCurrentIndex(2); // Unused
+                    check(gen && !shown(gen), "Unused hides a generator a layer uses");
+                    usage->setCurrentIndex(1); // Used
+                    check(gen && shown(gen), "Used shows it");
+                    QTreeWidgetItem *videos = tree->topLevelItem(0), *isfTop = nullptr;
+                    for (int t = 0; t < tree->topLevelItemCount(); ++t)
+                        if (tree->topLevelItem(t)->text(0) == "ISF") isfTop = tree->topLevelItem(t);
+                    type->setCurrentIndex(type->findText("ISF"));
+                    check(videos->isHidden() && isfTop && !isfTop->isHidden() && shown(gen), "type filter ISF shows only ISF");
+                    type->setCurrentIndex(type->findText("Videos"));
+                    check(!videos->isHidden() && isfTop && isfTop->isHidden(), "type filter Videos hides the ISF");
+                    type->setCurrentIndex(0);
+                    usage->setCurrentIndex(0);
+                    rebuild->click();
+                    app.processEvents();
+                    check(itemOf(shaderPath) && shown(itemOf(shaderPath)), "rebuild keeps the bin's items");
+                    // Replace: the layer takes the other generator, one undo step brings the first back
+                    const QString other = shaderDir.filePath("other.fs");
+                    QFile o(other);
+                    check(o.open(QIODevice::WriteOnly), "create second ISF fixture");
+                    o.write("/*{\"ISFVSN\":\"2\",\"INPUTS\":[]}*/\nvoid main(){gl_FragColor=vec4(0.5);}"); o.close();
+                    const quint64 id = engine.layerId(loaded);
+                    bin->relinkRequested(QDir::cleanPath(shaderPath), other);
+                    const int at = engine.indexOfId(id);
+                    check(at >= 0 && engine.layer(at)->type == SourceType::Isf && engine.layer(at)->sourcePath == QDir::cleanPath(other),
+                          "Replace swaps the ISF generator of the layers using it");
+                    if (auto *u = window.findChild<QUndoStack *>()) u->undo();
+                    check(at >= 0 && engine.layer(engine.indexOfId(id))->sourcePath == QDir::cleanPath(shaderPath), "Replace is undone");
                 }
             }
             // A complete Spatial tab captures corner values and mesh in one undoable edit.

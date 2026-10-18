@@ -392,6 +392,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
 
     // --- Media bin
     connect(m_bin, &MediaBin::relinkRequested, this, &MainWindow::relinkMedia);
+    connect(m_bin, &MediaBin::rebuildRequested, this, &MainWindow::rescanLibrary);
     connect(m_bin, &MediaBin::useAsSourceRequested, this, [this](const QString &p) { loadIntoLayer(m_layerTable->currentRow(), p); });
     connect(m_bin, &MediaBin::loadIntoNewLayerRequested, this, &MainWindow::loadIntoNewLayer);
     connect(m_bin, &MediaBin::loadIntoLayerRequested, this, [this](int i, const QString &p) { loadIntoLayer(i, p); });
@@ -1387,12 +1388,12 @@ void MainWindow::relinkMedia(const QString &from, const QString &to)
     QStringList errors;
     if (!layers.isEmpty()) {
         // A single undo step for all affected layers
-        m_undo->beginMacro(QStringLiteral("Relink \"%1\"").arg(QFileInfo(from).fileName()));
+        m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
         for (int i : layers) {
             const QJsonObject before = m_engine->layerJson(i);
             QString err;
             if (m_engine->relinkLayerMedia(i, from, to, &err))
-                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Relink File")));
+                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace")));
             else if (!err.isEmpty()) errors << err;
         }
         m_undo->endMacro();
@@ -1401,7 +1402,7 @@ void MainWindow::relinkMedia(const QString &from, const QString &to)
     markDirty();
     refreshAll();
     if (!errors.isEmpty()) QMessageBox::warning(this, QStringLiteral("Relink"), errors.join('\n'));
-    else statusBar()->showMessage(QStringLiteral("\"%1\" relinked in %2 layer(s)").arg(QFileInfo(from).fileName()).arg(layers.size()), 5000);
+    else statusBar()->showMessage(QStringLiteral("\"%1\" replaced in %2 layer(s)").arg(QFileInfo(from).fileName()).arg(layers.size()), 5000);
 }
 
 bool MainWindow::refuseLocked(int layer)
