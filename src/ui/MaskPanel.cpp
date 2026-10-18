@@ -180,19 +180,7 @@ MaskPanel::MaskPanel(Engine *engine, QUndoStack *undo, quint64 layer, bool viewp
     auto *sf = new QFormLayout(m_settings);
     sf->setContentsMargins(0, 0, 0, 0);
     sf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_combine = new QComboBox;
-    for (int i = 0; i < 5; ++i)
-        m_combine->addItem(masks::modeSymbol(Mask::Mode(i)) + QStringLiteral("   ") + masks::modeName(Mask::Mode(i)));
-    m_combine->setToolTip(QStringLiteral("How it combines with the masks above it in the list (as DaVinci's Mask window, "
-                                         "Fusion's paint modes): Add the shapes together, Subtract it from them, "
-                                         "Intersect (only where both are), Multiply, Difference (where one or the other, "
-                                         "not both). A list whose first mask does not add starts from the whole picture."));
-    sf->addRow(QStringLiteral("Combine"), m_combine);
-    m_invert = new QPushButton(QStringLiteral("Invert Mask"));
-    m_invert->setCheckable(true);
-    m_invert->setToolTip(QStringLiteral("Inverted: the shape inside out (what is outside it), before it combines"));
-    m_invert->setStyleSheet(QStringLiteral("QPushButton:checked { background:#0b5c69; color:white; }"));
-    sf->addRow(QString(), m_invert);
+    // In the order they act on the mask: its soft edge, then inverted, then combined with the masks above it
     m_feather = new SliderField;
     m_feather->setRange(0, 100);
     m_feather->setDecimals(0);
@@ -204,6 +192,19 @@ MaskPanel::MaskPanel(Engine *engine, QUndoStack *undo, quint64 layer, bool viewp
     m_mode->addItems({QStringLiteral("Centered"), QStringLiteral("Inner"), QStringLiteral("Outer")});
     m_mode->setToolTip(QStringLiteral("Where the soft edge goes: across the shape's edge, inside it, or outside it"));
     sf->addRow(QString(), m_mode);
+    m_invert = new QPushButton(QStringLiteral("Invert Mask"));
+    m_invert->setCheckable(true);
+    m_invert->setToolTip(QStringLiteral("Inverted: the shape inside out (what is outside it), before it combines"));
+    m_invert->setStyleSheet(QStringLiteral("QPushButton:checked { background:#0b5c69; color:white; }"));
+    sf->addRow(QString(), m_invert);
+    m_combine = new QComboBox;
+    for (int i = 0; i < 5; ++i)
+        m_combine->addItem(masks::modeSymbol(Mask::Mode(i)) + QStringLiteral("   ") + masks::modeName(Mask::Mode(i)));
+    m_combine->setToolTip(QStringLiteral("How it combines with the masks above it in the list (as DaVinci's Mask window, "
+                                         "Fusion's paint modes): Add the shapes together, Subtract it from them, "
+                                         "Intersect (only where both are), Multiply, Difference (where one or the other, "
+                                         "not both). A list whose first mask does not add starts from the whole picture."));
+    sf->addRow(QStringLiteral("Combine"), m_combine);
     m_attach = new QComboBox;
     m_attach->addItem(QStringLiteral("Surface"));
     m_attach->addItem(QStringLiteral("Composition"));
