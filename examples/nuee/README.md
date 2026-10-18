@@ -28,6 +28,15 @@ La source a sa propre caméra, réglable et animable comme tous ses paramètres 
 
 La position sur le chemin s'accumule d'une image à l'autre : changer la vitesse accélère ou ralentit la caméra sans la faire sauter. Un nouveau chemin est rejoint en 2 secondes depuis l'endroit où elle se trouve, en suivant la sphère qui entoure la cible.
 
+## Le rendu et les images
+
+Chaque grain laisse une traînée de mouvement (**Motion Streaks**). Hors du plan net, il devient un disque flou (**Depth of Field**). La lumière s'additionne puis passe par un halo (**Bloom**) et une courbe filmique. **Grain Variety** mêle à la poussière fine quelques grains plus gros et plus brillants.
+
+Deux images peuvent être choisies dans l'inspecteur de la source :
+
+- **Grain Image** : chaque particule est dessinée avec cette image (une étoile, une tache d'encre…), sur sa luminosité.
+- **Form Image** : les particules prennent leur place sur les zones claires de l'image, et le nuage dessine l'image. **Form Pull** règle la fermeté du rappel : les attaques et le flux la déforment, puis elle revient. **Form Size** règle sa taille. Changer d'image fait migrer tout le nuage vers la nouvelle forme.
+
 ## Partition
 
 | Temps | Cue | Nuage | Caméra |

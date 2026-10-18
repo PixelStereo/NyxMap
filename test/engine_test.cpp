@@ -442,6 +442,37 @@ void main(){
                     for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
                 CHECK(lit > img.width() * img.height() / 20);
             }
+            // A Form Image (a white bar in the left half): the cloud takes its shape, its light there and not on
+            // the right; then a Grain Image draws each grain
+            if (path) path->lValue = 0; // fixed, facing the form
+            if (IsfInput *pitch = inst->input(QStringLiteral("camPitch"))) pitch->fValue = 0;
+            QImage bar(256, 128, QImage::Format_RGBA8888);
+            bar.fill(Qt::black);
+            for (int y = 48; y < 80; ++y)
+                for (int x = 16; x < 112; ++x) bar.setPixelColor(x, y, Qt::white);
+            CHECK(bar.save(tmp + "/form.png"));
+            int formIndex = -1, spriteIndex = -1;
+            for (int k = 0; k < int(inst->inputs().size()); ++k) {
+                if (inst->inputs()[size_t(k)].name == QLatin1String("form")) formIndex = k;
+                if (inst->inputs()[size_t(k)].name == QLatin1String("sprite")) spriteIndex = k;
+            }
+            CHECK(formIndex >= 0 && spriteIndex >= 0 && e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err));
+            for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
+            auto litIn = [](const QImage &img, int x0, int x1) {
+                int n = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
+                return n;
+            };
+            QImage formed = e.grabViewport(e.mainViewportId());
+            const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
+            CHECK(left > 50 && left > 3 * right);
+            QImage star(32, 32, QImage::Format_RGBA8888);
+            star.fill(Qt::white);
+            CHECK(star.save(tmp + "/grain.png") && e.setIsfImageInput(inst, spriteIndex, tmp + "/grain.png", &err));
+            for (int k = 0; k < 4; ++k) e.renderFrame();
+            formed = e.grabViewport(e.mainViewportId());
+            CHECK(litIn(formed, 0, formed.width() / 2) > 50);
             e.newProject();
         }
         {
@@ -548,6 +579,69 @@ void main(){ gl_FragColor = vec4(vec3(step(isf_FragNormCoord.x, .5)), 1.); }
             (void)blue;
             e.newProject();
         }
+    // A shader's image input showing another layer, live: it follows that layer's picture (even switched off, as a
+    // source), refuses itself and a feedback, and survives a save
+    {
+        e.newProject();
+        e.setCompositionSize(QSize(128, 64));
+        e.setViewportSize(e.indexOfId(e.mainViewportId()), QSize(128, 64));
+        e.fadeCompositionOpacity(1.0, 0.0);
+        const QString shader = tmp + "/ShowImage.fs";
+        {
+            QFile f(shader);
+            CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(R"(/*{"INPUTS":[{"NAME":"img","TYPE":"image"}]}*/
+void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(img, isf_FragNormCoord).rgb, 1.); }
+)");
+        }
+        const quint64 idSrc = e.layerId(e.addLayer("Image source"));
+        CHECK(e.setLayerIsf(e.indexOfId(idSrc), isf + "/generators/SolidColor.fs", &err));
+        auto setSourceColor = [&](float r, float g) {
+            IsfInput *c = e.layer(e.indexOfId(idSrc))->generator->input(QStringLiteral("color"));
+            if (c) {
+                c->cValue[0] = r;
+                c->cValue[1] = g;
+                c->cValue[2] = 0;
+                c->cValue[3] = 1;
+            }
+        };
+        setSourceColor(1, 0);
+        const quint64 idShow = e.layerId(e.addLayer("Shows it", V + 0)); // above it: drawn over it
+        CHECK(e.setLayerIsf(e.indexOfId(idShow), shader, &err));
+        IsfInstance *show = e.layer(e.indexOfId(idShow))->generator.get();
+        CHECK(show && show->inputs().size() == 1);
+        auto centre = [&] { // the picture of "Shows it" (its source, before its own colour and effects)
+            e.renderFrame();
+            const QImage img = e.grabLayerSource(e.indexOfId(idShow));
+            return img.isNull() ? QColor(Qt::black) : img.pixelColor(img.width() / 2, img.height() / 2);
+        };
+        CHECK(centre().red() < 5); // no image yet: black
+        CHECK(e.setIsfImageLayer(show, 0, idSrc, &err));
+        QColor c = centre();
+        CHECK(c.red() > 240 && c.green() < 15);
+        setSourceColor(0, 1); // live: the next frame follows
+        c = centre();
+        CHECK(c.green() > 240 && c.red() < 15);
+        { // switched off, still drawn for the one that shows it
+            Engine::Lock lk(&e.mutex());
+            e.layer(e.indexOfId(idSrc))->enabled = false;
+        }
+        c = centre();
+        CHECK(c.green() > 240);
+        CHECK(!e.setIsfImageLayer(show, 0, idShow, &err) && err.contains("own")); // itself
+        CHECK(e.setLayerIsf(e.indexOfId(idSrc), shader, &err)); // the source shows "Shows it": a feedback
+        CHECK(!e.setIsfImageLayer(e.layer(e.indexOfId(idSrc))->generator.get(), 0, idShow, &err) &&
+              err.contains("feed back"));
+        CHECK(e.setLayerIsf(e.indexOfId(idSrc), isf + "/generators/SolidColor.fs", &err));
+        const QString file = tmp + "/image_layer.pinol";
+        CHECK(e.saveProject(file, {}, &err));
+        CHECK(e.loadProject(file, nullptr, &err));
+        show = e.layer(e.indexOfId(idShow))->generator.get();
+        CHECK(show && show->inputs()[0].imageLayer == idSrc);
+        CHECK(e.setIsfImageLayer(show, 0, 0, &err)); // back to its file (none): black
+        CHECK(centre().red() < 5 && centre().green() < 5);
+        e.newProject();
+    }
     } // isf_safe
 
     if (area("video")) {
@@ -5851,6 +5945,46 @@ void main(){ gl_FragColor = vec4(vec3(step(isf_FragNormCoord.x, .5)), 1.); }
     }
 
     if (area("interactions")) {
+    // An Audio interaction listening to the live input: a 440 Hz tone fed to the input drives it, not one listening
+    // to the program mix (silent here); the choice survives a save
+    {
+        Interaction live = Interaction::made(InteractionSource::Audio);
+        live.audioInput = true;
+        live.audioLow = 400;
+        live.audioHigh = 480;
+        live.filterOn = false;
+        live.dstMin = .2;
+        live.dstMax = .8;
+        live.layer = e.layerId(e.addLayer(QStringLiteral("Live input target")));
+        live.param = QStringLiteral("opacity");
+        CHECK(Interaction::fromJson(live.toJson()).audioInput && !Interaction::fromJson(Interaction().toJson()).audioInput);
+        CHECK(live.label().startsWith(QStringLiteral("Audio in ")));
+        Interaction program = live;
+        program.audioInput = false;
+        program.layer = e.layerId(e.addLayer(QStringLiteral("Program mix target")));
+        e.addInteraction(live);
+        e.addInteraction(program);
+        std::vector<float> tone(2400);
+        double phase = 0;
+        for (int k = 0; k < 40; ++k) { // 2 s, in 50 ms blocks, as a device delivers it
+            for (float &x : tone) {
+                x = float(0.5 * std::sin(phase));
+                phase += 2 * M_PI * 440 / 48000;
+            }
+            e.audioInput().feed(tone.data(), int(tone.size()));
+        }
+        CHECK(e.audioInput().spectrum().band(400, 480) > .15f && e.audioInput().spectrum().band(6000, 16000) < .01f);
+        CHECK(e.audioInput().peak() > .4f);
+        for (int k = 0; k < 5; ++k) e.renderFrame();
+        const double fromLive = e.parameterValue(live.layer, "opacity").toDouble();
+        const double fromProgram = e.parameterValue(program.layer, "opacity").toDouble();
+        CHECK(fromLive > .28 && fromLive <= .8);
+        CHECK(fromProgram >= .2 && fromProgram < .22);
+        e.setInteractions({});
+        e.stopAudioInput(); // also clears what was analysed
+        CHECK(e.audioInput().spectrum().band(400, 480) < .01f && !e.audioInput().isRunning());
+        e.newProject();
+    }
     // The chain of an interaction, on its own: range, toggle, filters, curve, master, pick-up
     {
         auto near = [](double a, double b, double eps = 1e-6) { return std::abs(a - b) < eps; };

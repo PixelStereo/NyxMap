@@ -19,6 +19,8 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
+#include <QToolButton>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -239,13 +241,28 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
             auto *w = new QWidget;
             auto *h = new QHBoxLayout(w);
             h->setContentsMargins(0, 0, 0, 0);
-            auto *name = new QLabel(in.imagePath.isEmpty() ? QStringLiteral("(none)") : QFileInfo(in.imagePath).fileName());
+            // What it shows: another layer's picture (live), else its image file
+            auto layerName = [this](quint64 id) {
+                Engine::Lock lk(&m_engine->mutex());
+                const Layer *l = m_engine->layer(m_engine->indexOfId(id));
+                return l ? QStringLiteral("⟶ %1").arg(l->name) : QStringLiteral("(missing layer)");
+            };
+            auto *name = new QLabel(in.imageLayer ? layerName(in.imageLayer)
+                                    : in.imagePath.isEmpty() ? QStringLiteral("(none)") : QFileInfo(in.imagePath).fileName());
             name->setStyleSheet("color:#bbb;");
             auto *pick = new QPushButton(QStringLiteral("Image…"));
+            auto *fromLayer = new QToolButton;
+            fromLayer->setObjectName(QStringLiteral("imageLayer_") + in.name);
+            fromLayer->setText(QStringLiteral("Layer"));
+            fromLayer->setToolTip(QStringLiteral("Show another layer's picture here, live (after its effects)"));
+            fromLayer->setPopupMode(QToolButton::InstantPopup);
+            auto *layers = new QMenu(fromLayer);
+            fromLayer->setMenu(layers);
             auto *clear = new QPushButton(QStringLiteral("×"));
             clear->setFixedWidth(28);
             h->addWidget(name, 1);
             h->addWidget(pick);
+            h->addWidget(fromLayer);
             h->addWidget(clear);
             auto instance = [this] {
                 Engine::Lock lk(&m_engine->mutex());
@@ -259,10 +276,33 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
                 if (f.isEmpty()) return;
                 s.setValue("dirs/image", QFileInfo(f).absolutePath());
                 QString err;
-                if (m_engine->setIsfImageInput(instance(), idx, f, &err)) name->setText(QFileInfo(f).fileName());
+                if (m_engine->setIsfImageInput(instance(), idx, f, &err)) {
+                    m_engine->setIsfImageLayer(instance(), idx, 0); // a file in place of a layer
+                    name->setText(QFileInfo(f).fileName());
+                }
                 else name->setText(err);
             });
+            // The layers it can show: every one but the viewports and this one, listed when the menu opens
+            connect(layers, &QMenu::aboutToShow, this, [=] {
+                layers->clear();
+                std::vector<std::pair<quint64, QString>> list;
+                {
+                    Engine::Lock lk(&m_engine->mutex());
+                    for (int k = 0; k < m_engine->layerCount(); ++k) {
+                        const Layer *l = m_engine->layer(k);
+                        if (l && !l->isViewport && l->id != m_layerId) list.emplace_back(l->id, l->name);
+                    }
+                }
+                if (list.empty()) layers->addAction(QStringLiteral("No other layer"))->setEnabled(false);
+                for (const auto &[id, layerTitle] : list)
+                    layers->addAction(layerTitle, this, [=, id = id] {
+                        QString err;
+                        if (m_engine->setIsfImageLayer(instance(), idx, id, &err)) name->setText(layerName(id));
+                        else name->setText(err);
+                    });
+            });
             connect(clear, &QPushButton::clicked, this, [=] {
+                m_engine->setIsfImageLayer(instance(), idx, 0);
                 m_engine->setIsfImageInput(instance(), idx, QString());
                 name->setText(QStringLiteral("(none)"));
             });

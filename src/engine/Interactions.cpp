@@ -109,13 +109,16 @@ QString Interaction::label() const
                  midiMessage == MidiMessageKind::PitchBend ? QString() : QStringLiteral(" %1").arg(midiNumber));
     case InteractionSource::Osc: return oscAddress.isEmpty() ? QStringLiteral("OSC") : QStringLiteral("OSC %1").arg(oscAddress);
     case InteractionSource::Internal: return QStringLiteral("Internal %1").arg(id);
-    case InteractionSource::Audio: return audioFeature==AudioFeature::Band ? QStringLiteral("Audio %1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("Audio level") : QStringLiteral("Audio attacks");
+    case InteractionSource::Audio: {
+        const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : QStringLiteral("attacks");
+        return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;
+    }
     }
     return QString();
 }
 
 static const char *const kNotState[] = {"id", "name", "source", "key", "port", "channel", "message", "number", "address",
-                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "layer", "param"};
+                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"};
 
 QJsonObject Interaction::stateJson() const
 {
@@ -185,6 +188,7 @@ QJsonObject Interaction::toJson() const
         o["audio_low"] = audioLow;
         o["audio_high"] = audioHigh;
         o["audio_feature"] = int(audioFeature);
+        o["audio_input"] = audioInput;
         break;
     }
     o["layer"] = QString::number(layer);
@@ -238,6 +242,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.audioHigh=bounded(o.value("audio_high").toDouble(20000),20000);
     if(it.audioLow>it.audioHigh)std::swap(it.audioLow,it.audioHigh);
     it.audioFeature=AudioFeature(std::clamp(o.value("audio_feature").toInt(),0,2));
+    it.audioInput=o.value("audio_input").toBool(false);
     // Older shows exposed these program-audio values through Internal.
     if(it.source==InteractionSource::Internal && !it.sourceLayer && it.sourceParam.startsWith("audio/")){
         const QString part=it.sourceParam.mid(6);

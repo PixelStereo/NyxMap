@@ -118,6 +118,31 @@ void Engine::drawQuad()
     f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+// The layers the image inputs of a layer's shaders (its generator, its enabled effects) show
+void Engine::forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const
+{
+    auto each = [&](const IsfInstance *inst) {
+        for (const IsfInput &in : inst->inputs())
+            if (in.imageLayer) fn(in.imageLayer);
+    };
+    if (l.type == SourceType::Isf && l.generator) each(l.generator.get());
+    if (l.effectsEnabled)
+        for (const auto &fx : l.effects)
+            if (fx->enabled) each(fx.get());
+}
+
+void Engine::bindLayerImages(IsfInstance &inst)
+{
+    for (IsfInput &in : inst.inputs()) {
+        if (!in.imageLayer) continue;
+        const Layer *src = layer(indexOfId(in.imageLayer));
+        // Not drawn this frame (gone, in error): its image file, or black
+        in.extTex = src && src->finalTex ? src->finalTex : 0;
+        in.extW = src ? src->finalW : 0;
+        in.extH = src ? src->finalH : 0;
+    }
+}
+
 // Squares rather than GL_POINTS: no limit on their size, and no driver's wide-point path (Mesa 23.3's llvmpipe
 // crashed in it with a colour passed on and gl_PointCoord)
 void Engine::drawPoints(int count)
@@ -222,6 +247,10 @@ void Engine::markNeeded()
             const int mi = indexOfId(l->matte.layer);
             if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
         }
+        forEachImageLayer(*l, [&](quint64 id) {
+            const int si = indexOfId(id);
+            if (si >= 0) m_layers[size_t(si)]->referenced = true;
+        });
     }
     const std::vector<bool> leftOut = soloLeftOut();
     for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloHidden = leftOut[i];
@@ -274,6 +303,10 @@ void Engine::renderPass(const IsfRenderContext &rc)
             const int mi = indexOfId(l.matte.layer);
             if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
         }
+        forEachImageLayer(l, [&](quint64 id) { // the layers its shaders show as images, before it
+            const int si = indexOfId(id);
+            if (si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
+        });
         if (l.isViewport) {
             // What it sees: the items at the top of the list it shows, all rendered by now
             std::vector<Layer *> shown;
@@ -352,6 +385,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         break;
     case SourceType::Isf:
         if (l.generator) {
+            bindLayerImages(*l.generator);
             l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {
                 tex = l.generatorTarget.tex;
@@ -505,6 +539,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
         for (auto &fx : l.effects) {
             if (!fx->enabled) continue;
             RenderTarget &dst = l.fxTarget[ping];
+            bindLayerImages(*fx);
             fx->render(rc, tex, w, h, dst, w, h);
             if (!dst.ready(w, h)) {
                 // Do not present a raw source or a stale-size effect output.

@@ -83,10 +83,11 @@ struct Interaction {
     int oscArgument = 0;
     quint64 sourceLayer = 0; // Internal: a value of the show (a layer's id, 0: the composition) and its address
     QString sourceParam;
-    // Audio is the program mix before the master fader; band limits in Hz.
+    // Audio is the program mix before the master fader, or the live input (AudioInput); band limits in Hz.
     double audioLow = 20, audioHigh = 20000;
     enum class AudioFeature { Band = 0, Level, Onset };
     AudioFeature audioFeature = AudioFeature::Band;
+    bool audioInput = false;
 
     // The target: a value of the show (a layer's id, 0: the composition) and its address
     quint64 layer = 0;

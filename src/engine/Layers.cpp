@@ -757,6 +757,16 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
                 if (fx->maskLayer && visit(fx->maskLayer)) return true;
             if (l->color.maskLayer && visit(l->color.maskLayer)) return true; // the mask of its color
             if (l->matte.layer && visit(l->matte.layer)) return true;         // its matte
+            // the layers its shaders' image inputs show
+            auto viaImages = [&](const IsfInstance *inst) {
+                if (inst)
+                    for (const IsfInput &in : inst->inputs())
+                        if (in.imageLayer && visit(in.imageLayer)) return true;
+                return false;
+            };
+            if (viaImages(l->generator.get())) return true;
+            for (const auto &fx : l->effects)
+                if (viaImages(fx.get())) return true;
             if (l->isGroup)
                 for (const auto &m : m_layers)
                     if (m->parent == cur && visit(m->id)) return true;
@@ -805,6 +815,25 @@ void Engine::fixLayerReferences(QStringList *warnings)
             *warnings << l->name + (mi < 0 ? QStringLiteral(": its matte layer is gone, matte dropped.")
                                            : QStringLiteral(": its matte would feed back on it, matte dropped."));
         l->matte = LayerMatte{};
+    }
+    // Layers shown by the image inputs of its shaders: the same rules
+    for (auto &l : m_layers) {
+        std::vector<IsfInstance *> shaders;
+        if (l->generator) shaders.push_back(l->generator.get());
+        for (auto &fx : l->effects) shaders.push_back(fx.get());
+        for (IsfInstance *inst : shaders)
+            for (IsfInput &in : inst->inputs()) {
+                if (!in.imageLayer) continue;
+                const int si = indexOfId(in.imageLayer);
+                const bool bad = si < 0 || m_layers[size_t(si)]->isViewport || in.imageLayer == l->id;
+                if (!bad && !layerDependsOn(in.imageLayer, l->id)) continue;
+                if (warnings)
+                    *warnings << l->name + " / " + inst->name() +
+                                     (si < 0 ? QStringLiteral(": the layer its image showed is gone, image dropped.")
+                                             : QStringLiteral(": its image would feed back on the layer, image dropped."));
+                in.imageLayer = 0;
+                in.extTex = 0;
+            }
     }
     // Mask of the color section: the same rules
     for (auto &l : m_layers) {
@@ -1653,6 +1682,39 @@ bool Engine::setIsfImageInput(IsfInstance *inst, int input, const QString &path,
     runGl([&] { ok = inst->setImageInput(input, path, &e); });
     if (err) *err = e;
     return ok;
+}
+
+bool Engine::setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QString *err)
+{
+    auto fail = [err](const QString &m) {
+        if (err) *err = m;
+        return false;
+    };
+    {
+        Lock lk(&m_mutex);
+        if (!inst || input < 0 || input >= int(inst->inputs().size())) return false;
+        IsfInput &in = inst->inputs()[size_t(input)];
+        if (in.type != IsfInput::Image || in.isInputImage) return false;
+        const Layer *owner = nullptr;
+        for (const auto &l : m_layers) {
+            if (l->generator.get() == inst) owner = l.get();
+            for (const auto &fx : l->effects)
+                if (fx.get() == inst) owner = l.get();
+        }
+        if (layerId) {
+            const int si = indexOfId(layerId);
+            if (si < 0) return fail(QStringLiteral("That layer no longer exists."));
+            if (m_layers[size_t(si)]->isViewport) return fail(QStringLiteral("A viewport cannot be an image."));
+            if (owner && layerId == owner->id) return fail(QStringLiteral("A layer cannot be its own image."));
+            if (owner && layerDependsOn(layerId, owner->id))
+                return fail(QStringLiteral("\"%1\" already uses this layer: the picture would feed back on itself.")
+                                .arg(m_layers[size_t(si)]->name));
+        }
+        in.imageLayer = layerId;
+        if (!layerId) in.extTex = 0; // back to its file
+    }
+    emit layersChanged();
+    return true;
 }
 
 bool Engine::reloadIsf(IsfInstance *inst)

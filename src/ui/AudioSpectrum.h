@@ -1,11 +1,12 @@
 #pragma once
 #include "AudioAnalysis.h"
 #include <QWidget>
-class AudioOutput;
+#include <functional>
 class AudioSpectrum : public QWidget {
     Q_OBJECT
 public:
-    explicit AudioSpectrum(AudioOutput *audio, QWidget *parent=nullptr);
+    // source: the spectrum shown (the program mix's, a live input's), read 25 times a second while visible
+    explicit AudioSpectrum(std::function<AudioAnalysis::Spectrum()> source, QWidget *parent=nullptr);
     void setBand(double low,double high);
     QSize minimumSizeHint() const override {return {220,135};}
 signals:
@@ -21,7 +22,7 @@ private:
     double frequency(double x) const;
     double position(double hz) const;
     void drag(double x);
-    AudioOutput *m_audio;
+    std::function<AudioAnalysis::Spectrum()> m_source;
     AudioAnalysis::Spectrum m_spectrum;
     double m_low=20,m_high=20000;
     int m_handle=0;

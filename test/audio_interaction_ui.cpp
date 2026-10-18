@@ -25,6 +25,12 @@ int main(int argc,char **argv){
     auto *spectrum=panel.findChild<AudioSpectrum*>();auto *lo=panel.findChild<QDoubleSpinBox*>("audioLowHz");auto *hi=panel.findChild<QDoubleSpinBox*>("audioHighHz");
     check(spectrum&&lo&&hi,"spectrum and numeric frequency selection shown before target mapping");
     if(lo&&hi){lo->setValue(500);hi->setValue(1500);auto list=engine.interactions();check(list.size()==1&&list[0].audioLow==500&&list[0].audioHigh==1500,"frequency widgets update engine interaction");undo.undo();check(engine.interactions()[0].audioHigh==20000,"band drag/number edits undo together");undo.redo();}
+    // The live input: chosen per interaction, undone like any edit, its spectrum shown in place of the program mix's
+    auto *input=panel.findChild<QComboBox*>("audioInput");check(input&&input->currentIndex()==0,"an Audio interaction listens to the program mix by default");
+    if(input){input->setCurrentIndex(1);emit input->activated(1);app.processEvents();
+        check(engine.interactions()[0].audioInput,"Live input is chosen from the Audio interaction");
+        check(panel.findChild<AudioSpectrum*>()!=nullptr,"the live input's spectrum is shown");
+        undo.undo();check(!engine.interactions()[0].audioInput,"the input choice undoes");undo.redo();}
     QMenu menu;InteractionPanel::fillValueMenu(&menu,&engine,0,{"opacity"});
     bool audioAction=false;for(auto *a:menu.actions())if(a->menu())for(auto *b:a->menu()->actions())if(b->text()=="Audio")audioAction=true;
     check(audioAction,"parameter right-click offers Audio mapping");

@@ -2,7 +2,7 @@
 
 Open **Interactions → Audio**, press **+**, select a frequency interval in the live spectrum, then choose **Target**. The interval can be dragged at either edge or entered in Hz. Regions offer Sub, Bass, Body, Presence and Air starting points. Arrow keys move the last spectrum boundary; Shift makes a finer adjustment.
 
-The source is PINOL's playing program mix, before master volume. It does not capture a microphone or a system loopback. Measure can be a selected frequency band, the overall level, or global attacks. Frequency selection applies to the band measure. For band-specific transients, keep Band and enable the existing Pulse Detection filter.
+The source is chosen per interaction (**Audio input**): the **Program mix** (PINOL's playing audio layers, before master volume) or the **Live input**, the first channel of the sound card input or microphone chosen in **Settings › Audio › Audio Input** (saved on this machine, with a level meter; Off by default). The live input is analysed exactly like the program mix. No system loopback is captured. Measure can be a selected frequency band, the overall level, or global attacks. Frequency selection applies to the band measure. For band-specific transients, keep Band and enable the existing Pulse Detection filter.
 
 After selecting the sound, set its input range, output target range, envelope/filter and response curve. New Audio interactions use a 12 ms attack / 200 ms release filter. Right-click a parameter → Learn Interaction → Audio opens a route to that parameter without waiting for a controller event. Frequency limits and measurement mode can also be included in presets and snapshots.
 
