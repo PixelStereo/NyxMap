@@ -1,8 +1,8 @@
 /*{
     "DESCRIPTION": "Animated two-color plasma.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
-    "CATEGORIES": ["Generative"],
+    "CATEGORIES": ["Animated Textures"],
     "INPUTS": [
         { "NAME": "colorA", "LABEL": "Color A", "TYPE": "color", "DEFAULT": [1.0, 0.45, 0.1, 1.0] },
         { "NAME": "colorB", "LABEL": "Color B", "TYPE": "color", "DEFAULT": [0.1, 0.2, 0.8, 1.0] },

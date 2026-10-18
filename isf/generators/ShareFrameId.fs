@@ -1,7 +1,7 @@
 /*{
     "DESCRIPTION": "GPU sharing diagnostic: identical frame number encoded as RGB bytes in every interior pixel; border alternates each frame. Capture the receiving Syphon/Spout pixels to detect torn or stale frames.",
     "ISFVSN": "2",
-    "CATEGORIES": ["Alignment", "Diagnostics"],
+    "CATEGORIES": ["Utility"],
     "INPUTS": []
 }*/
 

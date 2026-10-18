@@ -1,8 +1,8 @@
 /*{
     "DESCRIPTION": "Alignment test pattern for mapping: grid, center cross, circles, diagonals, border and colored corners (orientation).",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
-    "CATEGORIES": ["Alignment"],
+    "CATEGORIES": ["Utility"],
     "INPUTS": [
         { "NAME": "divisions", "LABEL": "Divisions", "TYPE": "float", "DEFAULT": 12, "MIN": 2, "MAX": 64 },
         { "NAME": "lineWidth", "LABEL": "Line width (px)", "TYPE": "float", "DEFAULT": 2, "MIN": 1, "MAX": 12 },
