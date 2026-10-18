@@ -1,6 +1,11 @@
-// Particles.fs: the quad of every pass, except the particles' pass (4), where each particle (isf_PointIndex() → its
-// texel in the state textures) is a small square seen by the camera.
+// Particles.fs: the quad of every pass, except the particles' pass (5), where each particle (isf_PointIndex() → its
+// texel in the state textures) is a small streak seen by the camera: along its motion on the picture, blurred out of
+// the plane in focus, some grains bigger and brighter than the rest.
 varying vec4 pColor;
+varying vec2 pStreak;
+
+uint ptHashV(uint x){x^=x>>16;x*=0x7feb352dU;x^=x>>15;x*=0x846ca68bU;x^=x>>16;return x;}
+float ptRandV(uint x){return float(ptHashV(x))*(1.0/4294967295.0);}
 
 // Where the camera is on a path (Fixed, Orbit, Figure eight, Spiral, Pendulum, Fly-through) after c cycles, around
 // its target: its direction, its height (radians) and its distance, moved by the path
@@ -31,25 +36,58 @@ vec3 ptCamera(out vec3 right, out vec3 up, out vec3 forward){
  return eye;
 }
 
+// A point seen by the camera: where on the picture (normalized device coordinates) and how far in front
+vec3 ptProject(vec3 p,vec3 eye,vec3 right,vec3 up,vec3 forward,float focal){
+ vec3 d=p-eye;
+ float depth=dot(d,forward);
+ vec2 xy=vec2(dot(d,right),dot(d,up))*focal/max(depth,.05);
+ xy.x*=RENDERSIZE.y/RENDERSIZE.x;
+ return vec3(xy,depth);
+}
+
 void main(){
- if(PASSINDEX!=4){isf_vertShaderInit();return;}
+ if(PASSINDEX!=5){isf_vertShaderInit();return;}
  int id=isf_PointIndex();
  ivec2 c=ivec2(id%512,id/512);
  vec4 P=texelFetch(pos,c,0),V=texelFetch(vel,c,0);
  vec3 right,up,forward;
- vec3 d=P.xyz-ptCamera(right,up,forward);
- float depth=dot(d,forward);
+ vec3 eye=ptCamera(right,up,forward);
  float focal=mix(1.,4.,camLens);
- vec2 xy=vec2(dot(d,right),dot(d,up))*focal/max(depth,.05);
- xy.x*=RENDERSIZE.y/RENDERSIZE.x;
+ // Its head now and its tail a moment ago: the streak
+ vec3 head=ptProject(P.xyz,eye,right,up,forward,focal);
+ vec3 tail=ptProject(P.xyz-V.xyz*(.01+.07*streaks)*(.45+.8*energy),eye,right,up,forward,focal);
+ // Its own size and brightness, for good: mostly fine dust, a few bright grains
+ uint u=uint(id);
+ float big=pow(ptRandV(u*3U+1U),8.),shine=pow(ptRandV(u*3U+2U),4.);
+ float sizeVar=mix(1.,.55+2.6*big,variety)*(_sprite_imgSize.x>1.?2.5:1.),brightVar=mix(1.,.45+1.7*shine,variety);
+ // Out of focus away from the camera's target: bigger and dimmer, the same light spread out
+ float focus=length(vec3(camTarget,0.)-eye);
+ float blur=clamp(abs(head.z-focus)/focus*dof*2.5,0.,1.5);
+ float spread=1.+5.*blur;
+ float k=clamp(3.2/head.z,.4,2.); // nearer: bigger, brighter; very near: fading out of the way
+ float px=clamp((1.+8.*size)*RENDERSIZE.y/720.*k*focal/2.2*sizeVar,1.,(_sprite_imgSize.x>1.?64.:24.)*RENDERSIZE.y/720.)*spread;
+ // The square along its motion on the picture (pixels), as long as the streak
+ vec2 halfSize=.5*RENDERSIZE;
+ vec2 pa=head.xy*halfSize,pb=tail.xy*halfSize,dir=pa-pb;
+ float len=min(length(dir),28.*RENDERSIZE.y/720.);
+ vec2 ax=len>1e-3?normalize(dir):vec2(1,0),ay=vec2(-ax.y,ax.x);
+ float hw=px*.5,hl=hw+len*.5;
+ const vec2 corners[6]=vec2[6](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(-1,1),vec2(1,-1),vec2(1,1));
+ vec2 kq=corners[gl_VertexID%6];
+ vec2 at=(pa+pb)*.5+ax*kq.x*hl+ay*kq.y*hw;
+ isf_PointCoord=kq*.5+.5;
  // A particle waiting for its birth, or behind the camera, is out of the picture
- float k=clamp(3.2/depth,.4,2.); // nearer: bigger, brighter; very near: fading out of the way
- float px=clamp((1.+8.*size)*RENDERSIZE.y/720.*k*focal/2.2,1.,16.*RENDERSIZE.y/720.);
- gl_Position=isf_PointSprite(P.w>0.&&depth>.05?vec4(xy,0,1):vec4(2,2,0,1),px);
+ gl_Position=P.w>0.&&head.z>.05&&tail.z>.05?vec4(at/halfSize,0,1):vec4(2,2,0,1);
+ pStreak=vec2(hl/hw,blur);
  float age=V.w-P.w;
- float fade=smoothstep(0.,.8,age)*smoothstep(0.,1.2,P.w)*smoothstep(.15,.6,depth);
+ float fade=smoothstep(0.,.8,age)*smoothstep(0.,1.2,P.w)*smoothstep(.15,.6,head.z);
  float speed=length(V.xyz);
- vec3 col=mix(tint.rgb,hot.rgb,clamp(speed*.5+hit*.8,0.,1.));
- // Its light over the frames it stays (the trail keeps 1/(1 - trail) of it): a longer trail, not a brighter cloud
- pColor=vec4(col,fade*k*(.02+.05*energy)/(.4+amount)*(1.-trail)*2.5);
+ // Its colour: from Tint to Hot with its speed and the hits, and across the cloud (a slow gradient in space)
+ float across=.5+.5*sin(dot(P.xyz,vec3(1.3,2.1,-.7))*1.6+TIME*.05);
+ vec3 col=mix(tint.rgb,hot.rgb,clamp(speed*.45+hit*.8+(across-.5)*.6+(ptRandV(u*3U+3U)-.5)*.25,0.,1.));
+ // The far side of the cloud quieter than the near one: its volume reads
+ fade*=mix(1.2,.45,smoothstep(focus-.9,focus+.9,head.z));
+ // Its light over the frames it stays (the trail keeps 1/(1 - trail) of it): a longer trail, not a brighter cloud;
+ // spread over its streak and its blur, not added by them
+ pColor=vec4(col,fade*k*(.02+.05*energy)/(.4+amount)*(1.-trail)*2.5*brightVar/(spread*spread)/(hl/hw)*sizeVar*(_sprite_imgSize.x>1.?.16:1.));
 }

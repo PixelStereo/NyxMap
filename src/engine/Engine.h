@@ -19,6 +19,7 @@
 #include "PresentMetal.h"
 #include "Sequencer.h"
 #include "FrameTiming.h"
+#include "AudioInput.h"
 #include "AudioOutput.h"
 #include "IsfLibrary.h"
 #include "Layer.h"
@@ -306,6 +307,10 @@ public:
     void removeEffect(int layerIndex, int fx);
     void moveEffect(int layerIndex, int from, int to);
     bool setIsfImageInput(IsfInstance *inst, int input, const QString &path, QString *err = nullptr);
+    // The image input `input` of a shader (a layer's generator or effect) shows another layer's picture, after its
+    // effects, at every frame (0: back to its image file). Refused: a viewport, the layer itself, or a layer that
+    // already uses it (the picture would feed back on itself).
+    bool setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QString *err = nullptr);
     int reloadIsfFile(const QString &path, QString *error = nullptr); // all live instances, transactional per shader
     bool reloadIsf(IsfInstance *inst); // reloads from disk (live editing)
 
@@ -558,6 +563,10 @@ public:
     bool startAudio(const QString &device, QString *err, bool nullDevice = false); // empty = system default
     void stopAudio();
     AudioOutput &audioOutput() { return *m_audio; }
+    // A live input listened to by the Audio interactions that ask for it (empty device: the system's default)
+    bool startAudioInput(const QString &device, QString *err) { return m_audioInput->start(device, err); }
+    void stopAudioInput() { m_audioInput->stop(); }
+    AudioInput &audioInput() { return *m_audioInput; }
     float audioVolume() const { return m_audio->volume(); }
     void setAudioVolume(float v); // stops a snapshot's fade of the volume
 
@@ -762,6 +771,8 @@ private:
     void clearProject();
     int viewportCountLocked() const;
     void drawQuad();
+    void forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const;
+    void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
     void bindMesh(Layer &l);         // its mapped mesh (render thread, mesh vertex array bound)
@@ -892,6 +903,7 @@ private:
     int64_t m_frameStampNs = 0; // steady_clock time the playheads of the current frame correspond to
 
     std::unique_ptr<AudioOutput> m_audio;
+    std::unique_ptr<AudioInput> m_audioInput = std::make_unique<AudioInput>();
     PlayMode m_defaultPlayMode = PlayMode::Loop;
     int m_defaultColorModels = 1;
     std::vector<Snapshot> m_snapshots;

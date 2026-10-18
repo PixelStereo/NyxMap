@@ -75,10 +75,16 @@ private:
     QWidget *buildFeedback();
     void fillAudioDevices();
     void openAudioDevice(const QString &name);
+    QWidget *buildAudioInput();
+    void fillAudioInputs();
+    void openAudioInput(); // the one saved (or none)
 
     Engine *m_engine;
     QComboBox *m_audioDevice = nullptr;
     QLabel *m_audioState = nullptr;
+    QComboBox *m_inputDevice = nullptr; // Off, System default, the inputs
+    QLabel *m_inputState = nullptr;
+    class QProgressBar *m_inputLevel = nullptr;
     QComboBox *m_playMode = nullptr, *m_colorModels = nullptr, *m_transition = nullptr, *m_rate = nullptr,
               *m_samples = nullptr, *m_depth = nullptr;
     QCheckBox *m_mipmaps = nullptr, *m_hardware = nullptr;

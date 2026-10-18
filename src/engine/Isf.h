@@ -46,6 +46,9 @@ struct IsfInput {
     bool eventFired = false;
 
     QString imagePath; // image chosen by the user for a secondary image input
+    // Or another layer's picture (after its effects), taken at every frame (0: none): its id, saved; the engine
+    // binds the picture (extTex) before each render
+    quint64 imageLayer = 0;
     Texture2D imageTex;
     // A picture of the engine for this input instead (transitions: startImage, endImage); 0: none
     GLuint extTex = 0;

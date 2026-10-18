@@ -290,19 +290,21 @@ void Engine::stepInteractions(double dt)
         events.swap(m_interactionEvents);
     }
     if (m_interactions.empty()) return;
-    const bool needsSpectrum=std::any_of(m_interactions.begin(),m_interactions.end(),[](const Interaction &it){return it.enabled && it.source==InteractionSource::Audio && it.audioFeature==Interaction::AudioFeature::Band;});
-    const auto spectrum=needsSpectrum?m_audio->spectrum():AudioAnalysis::Spectrum{};
-    const auto audio=m_audio->analysis();
+    // The program mix and the live input, each read only when an Audio interaction measures its bands
+    auto needsSpectrum=[this](bool input){return std::any_of(m_interactions.begin(),m_interactions.end(),[input](const Interaction &it){return it.enabled && it.source==InteractionSource::Audio && it.audioInput==input && it.audioFeature==Interaction::AudioFeature::Band;});};
+    const AudioAnalysis::Spectrum spectra[2]={needsSpectrum(false)?m_audio->spectrum():AudioAnalysis::Spectrum{},
+                                              needsSpectrum(true)?m_audioInput->spectrum():AudioAnalysis::Spectrum{}};
+    const AudioAnalysis::Values audios[2]={m_audio->analysis(),m_audioInput->analysis()};
     // A show commonly maps the same few audio regions to several layers.
     // Integrate each exact region once per frame; fixed storage avoids heap work.
-    struct BandSample { float low, high, value; };
+    struct BandSample { bool input; float low, high, value; };
     std::array<BandSample, 32> bands{};
     size_t bandCount = 0;
-    auto bandValue = [&](float low, float high) {
+    auto bandValue = [&](bool input, float low, float high) {
         for (size_t i = 0; i < bandCount; ++i)
-            if (bands[i].low == low && bands[i].high == high) return bands[i].value;
-        const float value = spectrum.band(low, high);
-        if (bandCount < bands.size()) bands[bandCount++] = {low, high, value};
+            if (bands[i].input == input && bands[i].low == low && bands[i].high == high) return bands[i].value;
+        const float value = spectra[input].band(low, high);
+        if (bandCount < bands.size()) bands[bandCount++] = {input, low, high, value};
         return value;
     };
     for (const Interaction &it : m_interactions) {
@@ -310,7 +312,8 @@ void Engine::stepInteractions(double dt)
         InteractionRun &run = m_interactionRun[it.id];
         bool fresh = false;
         if (it.source == InteractionSource::Audio) {
-            const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(float(it.audioLow),float(it.audioHigh)):
+            const AudioAnalysis::Values &audio=audios[it.audioInput];
+            const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
                 it.audioFeature==Interaction::AudioFeature::Level?audio.level:audio.onset;
             run.proc.input(it,x);
             fresh=true;
@@ -665,6 +668,8 @@ void Engine::makeInteractionParams()
         number(QStringLiteral("source/audio/high"),QStringLiteral("Audio High Hz"),20,20000,20000,[](Interaction &x)->double &{return x.audioHigh;}).limits(20,20000);
         choice(QStringLiteral("source/audio/feature"),QStringLiteral("Audio Measure"),{QStringLiteral("band"),QStringLiteral("level"),QStringLiteral("onset")},
             [](const Interaction &x){return int(x.audioFeature);},[](Interaction &x,int k){x.audioFeature=Interaction::AudioFeature(k);});
+        choice(QStringLiteral("source/audio/input"),QStringLiteral("Audio Source"),{QStringLiteral("program"),QStringLiteral("input")},
+            [](const Interaction &x){return x.audioInput?1:0;},[](Interaction &x,int k){x.audioInput=k==1;});
         text(QStringLiteral("target"), QStringLiteral("Target"), [valueRef](const Interaction &x) { return valueRef(x.layer, x.param); },
              [parseRef](Interaction &x, const QString &v) { parseRef(v, &x.layer, &x.param); });
         text(QStringLiteral("curve"), QStringLiteral("Curve Keys"),

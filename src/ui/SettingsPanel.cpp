@@ -9,6 +9,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QNetworkInterface>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -17,10 +18,12 @@
 #include <QSpinBox>
 #include <QHeaderView>
 #include <QTableWidget>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 static const char *kPlayModeKey = "playback/defaultMode";
@@ -425,6 +428,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
     oscPage->addWidget(osc);
     oscPage->addWidget(buildFeedback());
     audioPage->addWidget(buildAudio());
+    audioPage->addWidget(buildAudioInput());
     for (QVBoxLayout *l : {playbackPage, renderPage, audioPage, interfacePage, oscPage}) l->addStretch();
     auto apply = [this] {
         QSettings s;
@@ -594,6 +598,102 @@ void SettingsPanel::startAudio()
 {
     fillAudioDevices();
     openAudioDevice(QSettings().value("audio/device").toString());
+    fillAudioInputs();
+    openAudioInput();
+}
+
+// The live input the Audio interactions can listen to (Interactions › Audio › Audio input: Live input)
+QWidget *SettingsPanel::buildAudioInput()
+{
+    auto *g = new QGroupBox(QStringLiteral("Audio Input"));
+    auto *v = new QVBoxLayout(g);
+    auto *devRow = new QHBoxLayout;
+    m_inputDevice = new QComboBox;
+    m_inputDevice->setObjectName("audioInputDevice");
+    m_inputDevice->setToolTip(QStringLiteral("Sound card input or microphone analysed for the Audio interactions set to Live input"));
+    m_inputDevice->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_inputDevice->setMinimumContentsLength(8);
+    auto *rescan = new QToolButton;
+    rescan->setText(QStringLiteral("⟳"));
+    rescan->setToolTip(QStringLiteral("Refresh the list of audio inputs"));
+    devRow->addWidget(new ResetLabel(QStringLiteral("Device"), [this] {
+        m_inputDevice->setCurrentIndex(0); // off
+        emit m_inputDevice->activated(0);
+    }));
+    devRow->addWidget(m_inputDevice, 1);
+    devRow->addWidget(rescan);
+    v->addLayout(devRow);
+    m_inputLevel = new QProgressBar;
+    m_inputLevel->setObjectName("audioInputLevel");
+    m_inputLevel->setRange(0, 1000);
+    m_inputLevel->setTextVisible(false);
+    m_inputLevel->setFixedHeight(6);
+    m_inputLevel->setToolTip(QStringLiteral("Level of the live input"));
+    v->addWidget(m_inputLevel);
+    m_inputState = note(QString());
+    v->addWidget(m_inputState);
+    v->addWidget(note(QStringLiteral("Its first channel, analysed like the program mix. Saved on this machine.")));
+    connect(rescan, &QToolButton::clicked, this, [this] { fillAudioInputs(); });
+    connect(m_inputDevice, qOverload<int>(&QComboBox::activated), this, [this](int) {
+        const QVariant d = m_inputDevice->currentData();
+        QSettings s;
+        s.setValue("audio/input_on", d.isValid());
+        if (d.isValid()) s.setValue("audio/input_device", d.toString());
+        openAudioInput();
+    });
+    auto *timer = new QTimer(g);
+    timer->setInterval(40);
+    connect(timer, &QTimer::timeout, this, [this] {
+        if (!m_inputLevel->isVisible()) return;
+        // The peak in dB over 60 dB, so that a quiet microphone still shows
+        const float peak = m_engine->audioInput().peak();
+        const double db = 20.0 * std::log10(std::max(peak, 1e-6f));
+        m_inputLevel->setValue(int(std::lround(std::clamp((db + 60.0) / 60.0, 0.0, 1.0) * 1000)));
+    });
+    timer->start();
+    return g;
+}
+
+void SettingsPanel::fillAudioInputs()
+{
+    QSettings s;
+    const bool on = s.value("audio/input_on", false).toBool();
+    const QString saved = s.value("audio/input_device").toString();
+    QSignalBlocker b(m_inputDevice);
+    m_inputDevice->clear();
+    m_inputDevice->addItem(QStringLiteral("Off")); // no data
+    m_inputDevice->addItem(QStringLiteral("System default"), QString());
+    for (const QString &n : AudioOutput::captureDeviceNames()) m_inputDevice->addItem(n, n);
+    int idx = 0;
+    if (on) {
+        idx = m_inputDevice->findData(saved);
+        if (idx < 0 && !saved.isEmpty()) { // saved input currently unplugged: keep it visible
+            m_inputDevice->addItem(saved + QStringLiteral(" (not connected)"), saved);
+            idx = m_inputDevice->count() - 1;
+        }
+    }
+    m_inputDevice->setCurrentIndex(qMax(0, idx));
+}
+
+void SettingsPanel::openAudioInput()
+{
+    QSettings s;
+    if (!s.value("audio/input_on", false).toBool()) {
+        m_engine->stopAudioInput();
+        m_inputState->setText(QStringLiteral("Off: the Audio interactions set to Live input measure silence"));
+        m_inputState->setStyleSheet("color:#888; font-size:11px;");
+        return;
+    }
+    QString err;
+    if (m_engine->startAudioInput(s.value("audio/input_device").toString(), &err)) {
+        m_inputState->setText(QStringLiteral("Listening to \"%1\" · %2 kHz")
+                                  .arg(m_engine->audioInput().deviceName().toHtmlEscaped())
+                                  .arg(AudioOutput::kSampleRate / 1000));
+        m_inputState->setStyleSheet("color:#888; font-size:11px;");
+    } else {
+        m_inputState->setText(err.toHtmlEscaped());
+        m_inputState->setStyleSheet("color:#ff6b5b; font-size:11px;");
+    }
 }
 
 void SettingsPanel::setOscStatus(const QString &s) { m_oscStatus->setText(s.toHtmlEscaped()); }
