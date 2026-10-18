@@ -70,6 +70,7 @@ add_library(pinol_engine STATIC
   src/engine/Permissions.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
+  src/engine/AudioInput.cpp
   src/engine/MiniaudioImpl.cpp
   src/engine/Osc.cpp
   src/engine/EventLog.cpp

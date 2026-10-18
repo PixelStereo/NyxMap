@@ -5747,6 +5747,46 @@ void main(){
     }
 
     if (area("interactions")) {
+    // An Audio interaction listening to the live input: a 440 Hz tone fed to the input drives it, not one listening
+    // to the program mix (silent here); the choice survives a save
+    {
+        Interaction live = Interaction::made(InteractionSource::Audio);
+        live.audioInput = true;
+        live.audioLow = 400;
+        live.audioHigh = 480;
+        live.filterOn = false;
+        live.dstMin = .2;
+        live.dstMax = .8;
+        live.layer = e.layerId(e.addLayer(QStringLiteral("Live input target")));
+        live.param = QStringLiteral("opacity");
+        CHECK(Interaction::fromJson(live.toJson()).audioInput && !Interaction::fromJson(Interaction().toJson()).audioInput);
+        CHECK(live.label().startsWith(QStringLiteral("Audio in ")));
+        Interaction program = live;
+        program.audioInput = false;
+        program.layer = e.layerId(e.addLayer(QStringLiteral("Program mix target")));
+        e.addInteraction(live);
+        e.addInteraction(program);
+        std::vector<float> tone(2400);
+        double phase = 0;
+        for (int k = 0; k < 40; ++k) { // 2 s, in 50 ms blocks, as a device delivers it
+            for (float &x : tone) {
+                x = float(0.5 * std::sin(phase));
+                phase += 2 * M_PI * 440 / 48000;
+            }
+            e.audioInput().feed(tone.data(), int(tone.size()));
+        }
+        CHECK(e.audioInput().spectrum().band(400, 480) > .15f && e.audioInput().spectrum().band(6000, 16000) < .01f);
+        CHECK(e.audioInput().peak() > .4f);
+        for (int k = 0; k < 5; ++k) e.renderFrame();
+        const double fromLive = e.parameterValue(live.layer, "opacity").toDouble();
+        const double fromProgram = e.parameterValue(program.layer, "opacity").toDouble();
+        CHECK(fromLive > .28 && fromLive <= .8);
+        CHECK(fromProgram >= .2 && fromProgram < .22);
+        e.setInteractions({});
+        e.stopAudioInput(); // also clears what was analysed
+        CHECK(e.audioInput().spectrum().band(400, 480) < .01f && !e.audioInput().isRunning());
+        e.newProject();
+    }
     // The chain of an interaction, on its own: range, toggle, filters, curve, master, pick-up
     {
         auto near = [](double a, double b, double eps = 1e-6) { return std::abs(a - b) < eps; };

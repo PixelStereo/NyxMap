@@ -19,6 +19,7 @@
 #include "PresentMetal.h"
 #include "Sequencer.h"
 #include "FrameTiming.h"
+#include "AudioInput.h"
 #include "AudioOutput.h"
 #include "IsfLibrary.h"
 #include "Layer.h"
@@ -558,6 +559,10 @@ public:
     bool startAudio(const QString &device, QString *err, bool nullDevice = false); // empty = system default
     void stopAudio();
     AudioOutput &audioOutput() { return *m_audio; }
+    // A live input listened to by the Audio interactions that ask for it (empty device: the system's default)
+    bool startAudioInput(const QString &device, QString *err) { return m_audioInput->start(device, err); }
+    void stopAudioInput() { m_audioInput->stop(); }
+    AudioInput &audioInput() { return *m_audioInput; }
     float audioVolume() const { return m_audio->volume(); }
     void setAudioVolume(float v); // stops a snapshot's fade of the volume
 
@@ -892,6 +897,7 @@ private:
     int64_t m_frameStampNs = 0; // steady_clock time the playheads of the current frame correspond to
 
     std::unique_ptr<AudioOutput> m_audio;
+    std::unique_ptr<AudioInput> m_audioInput = std::make_unique<AudioInput>();
     PlayMode m_defaultPlayMode = PlayMode::Loop;
     int m_defaultColorModels = 1;
     std::vector<Snapshot> m_snapshots;

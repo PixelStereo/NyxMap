@@ -138,7 +138,7 @@ QJsonObject chainJson(const Interaction &it)
 {
     QJsonObject o = it.toJson();
     for (const char *k : {"id", "name", "enabled", "source", "key", "port", "channel", "message", "number", "address",
-                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "layer", "param"})
+                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"})
         o.remove(QLatin1String(k));
     return o;
 }
@@ -878,14 +878,25 @@ void InteractionPanel::rebuildSettings()
     }
     case InteractionSource::Audio: {
         form->addRow(note(QStringLiteral("1 · Select the sound, then 2 · Map it to a parameter below")));
-        form->addRow(QStringLiteral("Audio input"),note(QStringLiteral("Program mix · all playing audio layers, before master volume")));
+        auto *input=new QComboBox;input->setObjectName("audioInput");
+        input->addItems({QStringLiteral("Program mix"),QStringLiteral("Live input")});input->setCurrentIndex(it.audioInput?1:0);
+        input->setToolTip(QStringLiteral("Program mix: every playing audio layer, before master volume. Live input: the sound card input chosen in Settings › Audio Input"));
+        form->addRow(QStringLiteral("Audio input"),input);
+        connect(input,qOverload<int>(&QComboBox::activated),this,[this,edit](int k){edit(QStringLiteral("Change Audio Input"),[k](Interaction &x){x.audioInput=k==1;});rebuildSettings();});
+        attachPreset({input},{QStringLiteral("source/audio/input")});
+        if(it.audioInput){
+            AudioInput &live=m_engine->audioInput();
+            form->addRow(QString(),note(live.isRunning()?QStringLiteral("Listening to %1").arg(live.deviceName())
+                                                         :QStringLiteral("No live input open: choose one in Settings › Audio Input")));
+        }
         auto *feature=new QComboBox;feature->setObjectName("audioFeature");
         feature->addItems({QStringLiteral("Selected frequency band"),QStringLiteral("Overall level"),QStringLiteral("Attacks / onset")});feature->setCurrentIndex(int(it.audioFeature));
         form->addRow(QStringLiteral("Measure"),feature);
         connect(feature,qOverload<int>(&QComboBox::activated),this,[this,edit](int k){edit(QStringLiteral("Change Audio Measure"),[k](Interaction &x){x.audioFeature=Interaction::AudioFeature(k);});rebuildSettings();});
         attachPreset({feature},{QStringLiteral("source/audio/feature")});
         if(it.audioFeature==Interaction::AudioFeature::Band){
-            auto *spectrum=new AudioSpectrum(&m_engine->audioOutput());spectrum->setBand(it.audioLow,it.audioHigh);
+            Engine *engine=m_engine;const bool live=it.audioInput;
+            auto *spectrum=new AudioSpectrum([engine,live]{return live?engine->audioInput().spectrum():engine->audioOutput().spectrum();});spectrum->setBand(it.audioLow,it.audioHigh);
             form->addRow(spectrum);
             auto *band=new QWidget;auto *row=new QHBoxLayout(band);row->setContentsMargins(0,0,0,0);
             auto *low=new QDoubleSpinBox;auto *high=new QDoubleSpinBox;

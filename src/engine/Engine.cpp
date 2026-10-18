@@ -357,6 +357,7 @@ void Engine::stop()
 void Engine::shutdown()
 {
     m_audio->stop();
+    m_audioInput->stop();
     if (!m_initialized) return;
     stop();
     if (m_quadVao) { // not yet released by the render thread

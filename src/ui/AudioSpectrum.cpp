@@ -1,5 +1,4 @@
 #include "AudioSpectrum.h"
-#include "AudioOutput.h"
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
@@ -7,14 +6,14 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
-AudioSpectrum::AudioSpectrum(AudioOutput *audio,QWidget *parent):QWidget(parent),m_audio(audio){
+AudioSpectrum::AudioSpectrum(std::function<AudioAnalysis::Spectrum()> source,QWidget *parent):QWidget(parent),m_source(std::move(source)){
     setObjectName("audioSpectrum");setMinimumHeight(145);setFocusPolicy(Qt::StrongFocus);
     setAccessibleName("Audio spectrum frequency selection");
     setToolTip("Drag either frequency boundary, or click to move the nearest one. Arrow keys adjust the last boundary; Shift makes a fine adjustment.");
     auto *timer=new QTimer(this);timer->setInterval(40);
     connect(timer,&QTimer::timeout,this,[this]{
         if(!isVisible())return;
-        auto next=m_audio->spectrum();
+        auto next=m_source();
         if(next.rate==m_spectrum.rate && next.power==m_spectrum.power)return;
         m_spectrum=std::move(next);
         update();

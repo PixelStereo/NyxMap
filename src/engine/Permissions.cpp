@@ -14,7 +14,7 @@ void requestSystemPermissions()
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     if (QCoreApplication::instance()) {
-        // The microphone: asked too, so the app appears in Privacy › Microphone (no audio is captured yet)
+        // The microphone: asked too, so the app appears in Privacy › Microphone (a live audio input, an LTC input)
         QMicrophonePermission microphone;
         if (qApp->checkPermission(microphone) == Qt::PermissionStatus::Undetermined)
             qApp->requestPermission(microphone, qApp, [](const QPermission &) {});
