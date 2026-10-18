@@ -442,6 +442,37 @@ void main(){
                     for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
                 CHECK(lit > img.width() * img.height() / 20);
             }
+            // A Form Image (a white bar in the left half): the cloud takes its shape, its light there and not on
+            // the right; then a Grain Image draws each grain
+            if (path) path->lValue = 0; // fixed, facing the form
+            if (IsfInput *pitch = inst->input(QStringLiteral("camPitch"))) pitch->fValue = 0;
+            QImage bar(256, 128, QImage::Format_RGBA8888);
+            bar.fill(Qt::black);
+            for (int y = 48; y < 80; ++y)
+                for (int x = 16; x < 112; ++x) bar.setPixelColor(x, y, Qt::white);
+            CHECK(bar.save(tmp + "/form.png"));
+            int formIndex = -1, spriteIndex = -1;
+            for (int k = 0; k < int(inst->inputs().size()); ++k) {
+                if (inst->inputs()[size_t(k)].name == QLatin1String("form")) formIndex = k;
+                if (inst->inputs()[size_t(k)].name == QLatin1String("sprite")) spriteIndex = k;
+            }
+            CHECK(formIndex >= 0 && spriteIndex >= 0 && e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err));
+            for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
+            auto litIn = [](const QImage &img, int x0, int x1) {
+                int n = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
+                return n;
+            };
+            QImage formed = e.grabViewport(e.mainViewportId());
+            const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
+            CHECK(left > 50 && left > 3 * right);
+            QImage star(32, 32, QImage::Format_RGBA8888);
+            star.fill(Qt::white);
+            CHECK(star.save(tmp + "/grain.png") && e.setIsfImageInput(inst, spriteIndex, tmp + "/grain.png", &err));
+            for (int k = 0; k < 4; ++k) e.renderFrame();
+            formed = e.grabViewport(e.mainViewportId());
+            CHECK(litIn(formed, 0, formed.width() / 2) > 50);
             e.newProject();
         }
     } // isf_safe
