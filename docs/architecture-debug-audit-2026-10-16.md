@@ -1,5 +1,7 @@
 # Pinol — audit d’architecture et de débogage, 16 octobre 2026
 
+> Audit historique. Voir [l’état vérifié au 19 octobre et les corrections](audit-status-2026-10-19.md) avant de considérer un constat comme encore ouvert.
+
 ## Périmètre et niveau de preuve
 
 Révision examinée : `7308b2744c66b693e144bc8f52fd4f1f7de86706` (main).

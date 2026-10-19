@@ -6,6 +6,7 @@ The CSV comes from Pinol --endurance-csv, with adjacent .events.jsonl.
 This is diagnostics, not an assertion of zero stutter at the physical receiver.
 """
 import argparse
+from bisect import bisect_left
 import csv
 import datetime as dt
 import json
@@ -23,14 +24,28 @@ def instant(value):
     if not value:
         return None
     try:
-        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        value = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return value.replace(tzinfo=dt.timezone.utc) if value.tzinfo is None else value
     except ValueError:
         return None
 
 
 def summarize(path, fps):
+    metadata = {}
     with path.open(encoding="utf-8-sig", newline="") as f:
-        rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
+        def metrics():
+            nonlocal metadata
+            for line in f:
+                if line.startswith("#"):
+                    try:
+                        value = json.loads(line[1:].strip())
+                        if isinstance(value, dict):
+                            metadata = value
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    yield line
+        rows = list(csv.DictReader(metrics()))
     if not rows:
         raise ValueError("No 1Hz metrics rows found")
     budget_ms = 1000.0 / fps
@@ -43,21 +58,33 @@ def summarize(path, fps):
         return sum(max(0, b - a) for a, b in zip(vals, vals[1:]))
 
     events_path = Path(str(path) + ".events.jsonl")
-    events = []
+    cue_times, late_times = [], []
+    late_count = 0
     if events_path.is_file():
-        for line in events_path.read_text(encoding="utf-8").splitlines():
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    cue_times = [instant(e.get("utc")) for e in events
-                 if e.get("kind") in ("cue", "timeline", "snapshot")]
-    cue_times = [v for v in cue_times if v is not None]
-    late = [e for e in events if e.get("kind") == "frame_over_2x_budget"]
+        # Stream long recordings; retain only timestamps needed for correlation.
+        with events_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get("kind")
+                if kind == "frame_over_2x_budget":
+                    late_count += 1
+                    t = instant(event.get("utc"))
+                    if t is not None:
+                        late_times.append(t.timestamp())
+                elif kind in ("cue", "timeline", "snapshot", "snapshot_recall"):
+                    t = instant(event.get("utc"))
+                    if t is not None:
+                        cue_times.append(t.timestamp())
+    cue_times.sort()
     near = 0
-    for event in late:
-        t = instant(event.get("utc"))
-        if t is not None and any(abs((t - mark).total_seconds()) <= 0.25 for mark in cue_times):
+    for t in late_times:
+        first = bisect_left(cue_times, t - .25)
+        if first < len(cue_times) and cue_times[first] <= t + .25:
             near += 1
 
     print(f"Session: {len(rows)} samples / {fps} Hz (budget {budget_ms:.3f} ms)")
@@ -66,13 +93,17 @@ def summarize(path, fps):
     print(f"Seconds containing a >1.5x-budget frame: {len(slow)}/{len(rows)}")
     print(f"Missed deadlines (sum): {int(misses)}")
     print(f"Dropped output counter increase: {int(increase('outputs_dropped_total'))}")
-    print(f">2x-budget events: {len(late)}, within 250 ms of a cue/timeline: {near}")
+    print(f"GPU sharing skip counter increase: {int(increase('shares_skipped_total'))}")
+    print(f">2x-budget events: {late_count}, within 250 ms of a cue/timeline: {near}")
     if events_path.is_file():
         print(f"Correlated event log: {events_path}")
     else:
         print("No JSONL event file found: action correlation unavailable")
-    print("Note: evaluate GPU sharing skips from frameTimingJson['gpu_shares_skipped'];")
-    print("older endurance CSV versions may silently log zero due to a field-name mismatch.")
+    if metadata.get("schema") != 2:
+        print("Warning: only CSV schema 2 has verified GPU sharing skip counters; older files may silently log zero.")
+    lost = sum(number(row, "late_events_lost") + number(row, "journal_lost") for row in rows)
+    if lost:
+        print(f"Warning: {int(lost)} telemetry events lost; action correlation is incomplete.")
     print("This report does not prove receiver-side smoothness: compare against an unchanged hardware baseline.")
 
 

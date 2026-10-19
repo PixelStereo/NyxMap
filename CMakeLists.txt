@@ -425,6 +425,20 @@ if(PINOL_TESTS)
   # CTest: each area in a process of its own (a new engine), then every bundled shader compiled and rendered.
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(pinol_benchmark_rates_test test/benchmark_rates.cpp)
+  add_test(NAME benchmark_rates COMMAND pinol_benchmark_rates_test)
+  add_executable(pinol_show_clock_test test/show_clock.cpp)
+  target_link_libraries(pinol_show_clock_test PRIVATE pinol_engine)
+  add_test(NAME show_clock COMMAND pinol_show_clock_test)
+  set_tests_properties(show_clock PROPERTIES TIMEOUT 15)
+  add_executable(pinol_audio_snapshot_test test/audio_snapshot.cpp)
+  target_link_libraries(pinol_audio_snapshot_test PRIVATE pinol_engine)
+  add_test(NAME audio_snapshot COMMAND pinol_audio_snapshot_test)
+  add_executable(pinol_decoder_alpha_test test/decoder_alpha.cpp)
+  target_link_libraries(pinol_decoder_alpha_test PRIVATE pinol_engine)
+  target_compile_definitions(pinol_decoder_alpha_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME decoder_alpha COMMAND pinol_decoder_alpha_test)
+  set_tests_properties(decoder_alpha PROPERTIES TIMEOUT 15)
   # GNU-compatible Linux linkers inject failures at our FFmpeg call sites only.
   # No test hooks or extra branches are compiled into the production decoder.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -441,6 +455,7 @@ if(PINOL_TESTS)
   endif()
   find_package(Python3 QUIET COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
     add_test(NAME champ_score COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/examples/champ-de-rupture -p test_show.py)
     add_test(NAME champ_fixture COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/examples/champ-de-rupture/build_show.py --out ${CMAKE_BINARY_DIR}/champ-fixture)
@@ -501,9 +516,8 @@ if(PINOL_TESTS)
           media sound layersource timecode interactions)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()
-  # Areas whose checks depend on real time (sound clocks, threads, waits, publishers): label "timing". The CI runs the
-  # others once, these with retries (ctest -L timing --repeat until-pass:3) — their thresholds stay as they are; a CI
-  # runner without a sound card or a GPU is late now and then, a real regression fails every attempt
+  # Areas depending on real time (sound clocks, threads, waits, publishers): label "timing".
+  # CI gates on the first attempt; run_timing_tests.py reruns failures for diagnosis only.
   set_tests_properties(sound playback thread publishing timecode snapshots media PROPERTIES LABELS timing)
   add_executable(pinol_sequence_ui_test test/sequence_ui.cpp src/ui/SequencePanel.cpp src/ui/TimelineActivity.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_sequence_ui_test PRIVATE src/ui)

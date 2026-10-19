@@ -66,11 +66,12 @@ void bytePoolBudget::release(size_t bytes)
 // cores, 2 to 16: one heavy stream keeps most of the machine, several share it evenly). PINOL_DECODE_THREADS
 // overrides it (measurements).
 //
-// A process-wide budget bounds them all (audit P1): twice the cores by default (PINOL_DECODE_THREAD_BUDGET,
+// A process-wide soft budget guides new allocations (audit P1): twice the cores by default (PINOL_DECODE_THREAD_BUDGET,
 // setSoftwareThreadBudget). Up to it, nothing changes (four heavy streams on any machine). Beyond it — 8, 16 software
 // streams — a new decoder gets an even share of the budget among the software decoders open, at least 2, instead of
-// half the cores: the CPU is not given several times more runnable threads than it has cores, and each FFmpeg frame
-// thread is a set of frames in memory less. The decoders opened earlier keep theirs (FFmpeg's threads are set at open).
+// half the cores. This reduces oversubscription but is not a hard cap: older decoders retain their threads,
+// each new decoder gets at least two, and concurrent opens may inspect the same count before registration.
+// FFmpeg's threads are set at open; audio, worker-pool and hardware-driver threads are separate.
 static std::atomic<int> s_softwareThreadsInUse{0}, s_softwareDecodersOpen{0}, s_threadBudgetOverride{0};
 
 static int softwareThreadBudget()
@@ -200,6 +201,16 @@ struct HwFormat {
 
 bool VideoDecoder::setupHardware(const AVCodec *dec)
 {
+#if defined(__APPLE__)
+    // VideoToolbox's ProRes 4444 path can return opaque alpha even when RGB
+    // is correct (video-timing audit A5). Copying the surface does not restore
+    // it. Preserve transparency with software decoding for these profiles.
+    const AVPixFmtDescriptor *sourceFormat = av_pix_fmt_desc_get(m_codec->pix_fmt);
+    if (m_codec->codec_id == AV_CODEC_ID_PRORES &&
+        (m_codec->profile == AV_PROFILE_PRORES_4444 || m_codec->profile == AV_PROFILE_PRORES_XQ ||
+         m_codec->codec_tag == MKTAG('a', 'p', '4', 'h') || m_codec->codec_tag == MKTAG('a', 'p', '4', 'x') ||
+         (sourceFormat && (sourceFormat->flags & AV_PIX_FMT_FLAG_ALPHA)))) return false;
+#endif
     static const AVHWDeviceType kTypes[] = {
 #if defined(__APPLE__)
         AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
