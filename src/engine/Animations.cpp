@@ -567,16 +567,21 @@ Engine::AnimationTargetState Engine::captureAnimationTargets(quint64 layer) cons
 
 void Engine::restoreAnimationTargets(const AnimationTargetState &state)
 {
-    Lock lk(&m_mutex);
-    if (!state.layer || indexOfId(state.layer) < 0) return;
-    restoreLayerAnims(state.layer, state.layerAnimations);
-    for (const auto &before : state.timelines) {
-        const int index = indexOfAnimation(before.id);
-        if (index < 0) continue;
-        Animation current = animation(index);
-        current.tracks = before.tracks;
-        setAnimation(index, current); // restore bindings/keys, retaining this timeline's playback clock
+    bool changed = false;
+    {
+        Lock lk(&m_mutex);
+        if (!state.layer || indexOfId(state.layer) < 0) return;
+        restoreLayerAnims(state.layer, state.layerAnimations);
+        for (const auto &before : state.timelines) {
+            const int index = indexOfAnimation(before.id);
+            if (index < 0) continue;
+            // Restore the captured start values too. setAnimation() intentionally discards captures for
+            // newly added tracks, which would change an undone "start from current value" transition.
+            m_animations[size_t(index)].tracks = before.tracks;
+            changed = true; // the shared timeline's clock and transport keep running
+        }
     }
+    if (changed) emit animationsChanged();
 }
 
 void Engine::remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes)

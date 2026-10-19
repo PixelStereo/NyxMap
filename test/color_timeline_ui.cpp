@@ -208,7 +208,10 @@ int main(int argc, char **argv)
     AnimTrack firstTarget; firstTarget.layer = cid; firstTarget.param = oldFirst; firstTarget.keys = {{0, 1, 0}};
     AnimTrack secondTarget = firstTarget; secondTarget.param = oldSecond; secondTarget.keys[0].v = 2;
     Animation targets; targets.tracks = {firstTarget, secondTarget};
+    targets.tracks[0].keys[0].isCurrentValue = true;
     const int targetIndex = cleanup.addAnimation(targets);
+    cleanup.controlAnimation(cleanup.animation(targetIndex).id, AnimAction::Seek, .75);
+    const double capturedStart = cleanup.animation(targetIndex).tracks[0].captured;
     const auto beforeFx = cleanup.effectsJson(ci);
     const auto beforeTargets = cleanup.captureAnimationTargets(cid);
     cleanup.removeEffect(ci, 0);
@@ -222,6 +225,9 @@ int main(int argc, char **argv)
     cleanupUndo.undo();
     check(cleanup.layerAnim(cid, oldFirst, nullptr) && cleanup.layerAnim(cid, oldSecond, nullptr) &&
           cleanup.animation(targetIndex).tracks.size() == 2, "FX Undo restores local and shared animations together");
+    check(std::isfinite(capturedStart) && cleanup.animation(targetIndex).tracks[0].captured == capturedStart &&
+          cleanup.animation(targetIndex).clock == .75,
+          "FX Undo restores captured start values without rewinding shared playback");
     cleanupUndo.redo();
     check(cleanup.animation(targetIndex).tracks.size() == 1 && !cleanup.layerAnim(cid, oldSecond, nullptr),
           "FX Redo repeats the target cleanup");
