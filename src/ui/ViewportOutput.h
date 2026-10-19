@@ -11,6 +11,8 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QDoubleSpinBox;
+class QUndoStack;
 
 // Output tab of a viewport: its size in pixels, the screen it goes to and how it is shown there (hidden,
 // in a window, fullscreen), and what it publishes (NDI, OMT, Syphon, Spout), and the DeckLink port it plays out
@@ -19,7 +21,7 @@ class ViewportOutputPanel : public QWidget
 {
     Q_OBJECT
 public:
-    ViewportOutputPanel(Engine *engine, quint64 viewport, QWidget *parent = nullptr);
+    ViewportOutputPanel(Engine *engine, quint64 viewport, QUndoStack *undo, QWidget *parent = nullptr);
     void refreshStatus(); // mode set elsewhere (⌘F, the window closed), publishing states
 
 signals:
@@ -32,6 +34,9 @@ private:
     void refreshDeckLink(); // the ports plugged in, and their modes
     int index() const;
     Engine *m_engine;
+    QUndoStack *m_undo;
+    QComboBox *m_decode = nullptr, *m_encode = nullptr;
+    QDoubleSpinBox *m_exposure = nullptr;
     quint64 m_viewport;
     QComboBox *m_preset = nullptr, *m_screen = nullptr, *m_omtQuality = nullptr;
     QSpinBox *m_width = nullptr, *m_height = nullptr;

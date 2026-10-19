@@ -30,6 +30,18 @@ struct FrameStep {
     }
 };
 
+// Manual fader/blackout commands can arrive in the middle of a slow frame.
+// Their first step starts at the command, not at the previous frame's start.
+struct FaderClock {
+    quint64 lastNs = 0;
+    void reset(quint64 now) { lastNs = now; }
+    double step(quint64 now, bool threaded) {
+        const double elapsed = lastNs && now >= lastNs ? double(now - lastNs) / 1e9 : 0;
+        lastNs = now;
+        return FrameStep::fromElapsed(elapsed, threaded).elapsed;
+    }
+};
+
 // The render thread's pace without a vertical sync to wait for: absolute deadlines, one period apart
 struct FramePacer {
     // A frame started at `start`, done at `now`: how long to sleep (ns) before the next one is due. `next`: when it is

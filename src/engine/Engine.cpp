@@ -158,6 +158,30 @@ bool Engine::initialize(QString *err)
                                    "#version 330 core\nuniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
                                    "void main(){ o = texture(u_tex, v_uv); }\n",
                                    &log);
+    // IEC sRGB transfer functions (Khronos Data Format, section 13.3).
+    // Shared by native-source normalization (straight alpha) and opaque output.
+    m_outputColorProgram = compileProgram(quadVs,
+        "#version 330 core\nuniform sampler2D u_tex; uniform float u_opacity, u_gain;\n"
+        "uniform int u_decode, u_encode, u_source; in vec2 v_uv; out vec4 o;\n"
+        "vec3 decodeSrgb(vec3 c){ return mix(pow((c+0.055)/1.055,vec3(2.4)),c/12.92,lessThanEqual(c,vec3(0.04045))); }\n"
+        "vec3 encodeSrgb(vec3 c){ return mix(1.055*pow(c,vec3(1.0/2.4))-0.055,12.92*c,lessThanEqual(c,vec3(0.0031308))); }\n"
+        // D65 linear Display P3 <-> Rec.709 matrices (CSS Color 4 reference primaries).
+        "const mat3 p3To709=mat3(1.224940176,-0.042056955,-0.019637555,-0.224940176,1.042056955,-0.078636046,0.0,0.0,1.098273601);\n"
+        "const mat3 rec709ToP3=mat3(0.822461968,0.033194199,0.017082631,0.177538032,0.966805801,0.072397441,0.0,0.0,0.910519929);\n"
+        "void main(){ vec4 c=texture(u_tex,v_uv); vec3 rgb=max(c.rgb*(u_source!=0?1.0:c.a*u_opacity),vec3(0.0));\n"
+        " if(u_decode==0 || u_decode==2) rgb=decodeSrgb(rgb); else if(u_decode==3) rgb=pow(rgb,vec3(2.4));\n"
+        // ITU-R BT.709-6 inverse OETF: distinct from sRGB and display Gamma 2.4.
+        " else if(u_decode==4) rgb=mix(pow((rgb+0.099)/1.099,vec3(1.0/0.45)),rgb/4.5,lessThan(rgb,vec3(0.081)));\n"
+        " if(u_decode==2) rgb=p3To709*rgb; rgb*=u_gain; if(u_encode==2) rgb=rec709ToP3*rgb;\n"
+        " rgb=max(rgb,vec3(0.0)); if(u_encode==0 || u_encode==2) rgb=encodeSrgb(rgb); else if(u_encode==3) rgb=pow(rgb,vec3(1.0/2.4));\n"
+        " o=vec4(clamp(rgb,0.0,1.0),u_source!=0?c.a:1.0); }\n", &log);
+    if (!m_outputColorProgram) { if (err) *err = log; return false; }
+    m_outputTexLoc = f->glGetUniformLocation(m_outputColorProgram, "u_tex");
+    m_outputOpacityLoc = f->glGetUniformLocation(m_outputColorProgram, "u_opacity");
+    m_outputDecodeLoc = f->glGetUniformLocation(m_outputColorProgram, "u_decode");
+    m_outputEncodeLoc = f->glGetUniformLocation(m_outputColorProgram, "u_encode");
+    m_outputGainLoc = f->glGetUniformLocation(m_outputColorProgram, "u_gain");
+    m_outputSourceLoc = f->glGetUniformLocation(m_outputColorProgram, "u_source");
     m_presentProgram = compileProgram(quadVs,
                                       "#version 330 core\nuniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
                                       "void main(){ o = vec4(texture(u_tex, v_uv).rgb, 1.0); }\n",
@@ -540,7 +564,7 @@ void Engine::releaseAll()
     m_videoConv.release();
     m_testCard.release();
     for (GLuint p : {m_blitProgram, m_compProgram, m_diffProgram, m_presentProgram, m_prepProgram, m_maskProgram,
-                     m_fadeProgram, m_shapeMaskProgram, m_matteProgram})
+                     m_fadeProgram, m_shapeMaskProgram, m_matteProgram, m_outputColorProgram})
         if (p) f->glDeleteProgram(p);
     GLuint bufs[] = {m_quadVbo, m_meshVbo, m_meshIbo};
     f->glDeleteBuffers(3, bufs);
@@ -549,7 +573,7 @@ void Engine::releaseAll()
     f->glDeleteTextures(1, &m_blackTex);
     m_quadVao = m_meshVao = m_pointsVao = 0;
     m_blitProgram = m_compProgram = m_diffProgram = m_presentProgram = m_prepProgram = m_maskProgram = 0;
-    m_fadeProgram = m_shapeMaskProgram = m_matteProgram = 0;
+    m_fadeProgram = m_shapeMaskProgram = m_matteProgram = m_outputColorProgram = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -840,6 +864,7 @@ void Engine::fadeCompositionOpacity(double target, double seconds)
     m_compFade.opacity = false; // the fader takes over from a snapshot's fade
     m_compositionOpacityTarget = std::clamp(target, 0.0, 1.0);
     m_compositionOpacitySpeed = seconds > 0.0 ? 1.0 / seconds : 0.0;
+    m_compositionFaderClock.reset(RealtimeTiming::nowNs());
 }
 
 void Engine::setBlackout(bool on, double seconds)
@@ -848,6 +873,7 @@ void Engine::setBlackout(bool on, double seconds)
         Lock lk(&m_mutex);
         m_blackTarget = on ? 0.0 : 1.0;
         m_blackSpeed = seconds > 0.0 ? 1.0 / seconds : 0.0;
+        m_blackoutClock.reset(RealtimeTiming::nowNs());
         if (m_blackSpeed <= 0.0) m_blackLevel = m_blackTarget;
     }
     m_audio->fadeTo(on ? 0.0f : 1.0f, seconds);

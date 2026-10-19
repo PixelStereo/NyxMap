@@ -13,6 +13,7 @@
 #include "VideoTexture.h"
 
 #include <QColor>
+#include <QColorSpace>
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
@@ -232,6 +233,10 @@ struct Layer {
     QString vpScreen;                    // screen it is shown on (empty: the main one)
     int vpMode = 0;                      // 0 hidden, 1 windowed, 2 fullscreen
     bool testCard = false;               // a viewport shows its test card instead (a setup aid: not saved)
+    // Output-only calibration, after viewport effects/opacity and before the
+    // composition fader/blackout. Raw defaults preserve legacy pixel values.
+    QString outputInputSpace = QStringLiteral("srgb"), outputSpace = QStringLiteral("same");
+    double outputExposure = 0; // stops, applied between decode and encode
     PublishSettings vpPublish;           // NDI, OMT, Syphon, Spout of this viewport
     // How much of this item each viewport shows (an item at the top of the list; inside a group, the group decides).
     // A viewport that is not in the map shows it fully, so a viewport created later shows everything.
@@ -291,7 +296,15 @@ struct Layer {
 
     // Video / image / live input: source texture (fed in the render thread)
     Texture2D sourceTex;
-    QString imageColorInfo; // tagged source profile and original depth, before 8-bit upload
+    QString imageColorInfo; // tagged source profile and original depth, before upload conversion
+    QColorSpace imageProfile;
+    QString sourceColorSpace = QStringLiteral("auto");
+    // Only uncommon SDR ICC profiles need a second upload; common spaces use
+    // the source shader. Original pixels remain available for manual overrides.
+    Texture2D imageAutoTex;
+    QImage pendingAutoImage;
+    RenderTarget sourceColorTarget;
+    QString sourceColorCachedKey;
     std::unique_ptr<LiveInput> input; // a live input (its URI in sourcePath): frames come in on its own thread
     QImage pendingImage; // image to upload to the GPU on the next frame
     int srcWidth = 0, srcHeight = 0;

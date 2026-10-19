@@ -853,6 +853,9 @@ private:
     GLuint m_pointsVao = 0; // no attribute: a particle's vertex finds its data from gl_VertexID
     GLuint m_meshVao = 0, m_meshVbo = 0, m_meshIbo = 0;
     GLsizei m_meshIndexCount = 0;
+    GLuint m_outputColorProgram = 0;
+    GLint m_outputTexLoc = -1, m_outputOpacityLoc = -1, m_outputDecodeLoc = -1, m_outputEncodeLoc = -1, m_outputGainLoc = -1;
+    GLint m_outputSourceLoc = -1;
     GLuint m_diffProgram = 0, m_blitProgram = 0, m_compProgram = 0, m_presentProgram = 0, m_prepProgram = 0;
     GLint m_compRotLoc = -1, m_compAspLoc = -1, m_diffRotLoc = -1, m_diffAspLoc = -1;
     GLint m_diffTexLoc = -1, m_diffDstLoc = -1, m_diffOpacityLoc = -1, m_diffViewLoc = -1;
@@ -887,6 +890,7 @@ private:
     void updateTimeScale();
     std::atomic<double> m_compositionOpacity{1.0};
     double m_compositionOpacityTarget = 1.0, m_compositionOpacitySpeed = 0.0; // units per second (0 = immediate)
+    FaderClock m_compositionFaderClock, m_blackoutClock;
     struct CompositionFade {
         double opacityElapsed = 0, volumeElapsed = 0; // each on its own clock: two snapshots can drive them
         bool opacity = false, volume = false;

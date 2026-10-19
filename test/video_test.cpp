@@ -552,7 +552,10 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
                 }
                 sws_freeContext(to);
                 sws_freeContext(back);
+                fr->color_primaries = AVCOL_PRI_BT709;
+                fr->color_trc = AVCOL_TRC_IEC61966_2_1;
                 const auto L = VideoDecoder::layoutOf(fr);
+                if (L) VCHECK(L->primaries == "bt709" && L->transfer == "iec61966-2-1");
                 if (!L || !fm.gpu) {
                     std::printf("      %-12s %s\n", fm.name, L ? "taken by the GPU" : "refused: converted on the CPU");
                     VCHECK(!L == !fm.gpu);

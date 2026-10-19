@@ -1,6 +1,7 @@
 // The parameters a layer instantiates (Layer::parameters)
 #include "EngineInternal.h"
 #include "Osc.h"
+#include "ColorInfo.h"
 
 #include <QHash>
 #include <cmath>
@@ -198,6 +199,28 @@ const std::vector<Parameter *> &Layer::parameters()
         }
         flag("mask/invert", "Color › Invert Mask", false, &color.maskInvert);
         flag("fx/enable", "FX › Enable", true, &effectsEnabled);
+    }
+
+    if (!isViewport && !isGroup && type != SourceType::Layer && picture) {
+        add("source/color_space", "Source › Color Space", T::Choice)
+            .choices(sourceColorSpaceKeys()).byDefault("auto").animatable(false)
+            .bind([self] { return QVariant(self->sourceColorSpace); },
+                  [self](const QVariant &v) { self->sourceColorSpace = v.toString(); });
+    }
+    if (isViewport) {
+        add("output/input_space", "Output › Rendered Input Space", T::Choice)
+            .choices(outputColorSpaceKeys()).byDefault("srgb")
+            .bind([self] { return QVariant(self->outputInputSpace); },
+                  [self](const QVariant &v) { self->outputInputSpace = v.toString(); });
+        auto targets = outputColorSpaceKeys();
+        targets.prepend("same");
+        add("output/space", "Output › Color Space", T::Choice)
+            .choices(targets).byDefault("same")
+            .bind([self] { return QVariant(self->outputSpace); },
+                  [self](const QVariant &v) { self->outputSpace = v.toString(); });
+        num("output/exposure", "Output › Exposure (EV)", -10, 10, 0,
+            [self] { return self->outputExposure; }, [self](double v) { self->outputExposure = v; })
+            .step(.01).animatable(false); // calibration belongs to the viewport, independent of cues
     }
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME

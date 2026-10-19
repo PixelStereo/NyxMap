@@ -273,6 +273,12 @@ static void readSourceColor(const AVCodecParameters *par, VideoDecoder::Info *ou
     else if (par->color_range == AVCOL_RANGE_JPEG) out->range = QStringLiteral("full (PC)");
 }
 
+QString VideoDecoder::Info::colorSpaceSummary() const
+{
+    return (primaries.isEmpty() ? QStringLiteral("Unknown primaries") : primaries) + QStringLiteral(" / ") +
+           (transfer.isEmpty() ? QStringLiteral("Unknown transfer") : transfer);
+}
+
 QString VideoDecoder::Info::colorDescription() const
 {
     QStringList fields;
@@ -647,6 +653,8 @@ std::shared_ptr<const VideoLayout> VideoDecoder::surfaceLayout(const AVFrame *hw
     probe->colorspace = hw->colorspace;
     probe->color_range = hw->color_range;
     probe->chroma_location = hw->chroma_location;
+    probe->color_primaries = hw->color_primaries;
+    probe->color_trc = hw->color_trc;
     const std::shared_ptr<const VideoLayout> base = layoutFor(probe);
     av_frame_free(&probe);
     if (!base || base->mode != VideoLayout::Mode::Yuv) return nullptr;

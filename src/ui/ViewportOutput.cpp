@@ -3,6 +3,9 @@
 #include "Engine.h"
 #include "OutputWindow.h"
 #include "Widgets.h"
+#include "Commands.h"
+#include "ColorInfo.h"
+#include <QDoubleSpinBox>
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -31,8 +34,8 @@ static QLabel *note(const QString &t)
 
 static QSize nativeSize(const QScreen *sc) { return sc->geometry().size() * sc->devicePixelRatio(); }
 
-ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QWidget *parent)
-    : QWidget(parent), m_engine(engine), m_viewport(viewport)
+ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndoStack *undo, QWidget *parent)
+    : QWidget(parent), m_engine(engine), m_undo(undo), m_viewport(viewport)
 {
     QSize size;
     QString screen;
@@ -113,6 +116,61 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QWidg
     });
     connect(m_width, qOverload<int>(&QSpinBox::valueChanged), this, &ViewportOutputPanel::applySize);
     connect(m_height, qOverload<int>(&QSpinBox::valueChanged), this, &ViewportOutputPanel::applySize);
+
+    auto *color = new QGroupBox(QStringLiteral("Output Color"));
+    auto *cf = new QFormLayout(color);
+    m_decode = new QComboBox;
+    m_decode->setObjectName(QStringLiteral("outputDecode"));
+    m_encode = new QComboBox;
+    m_encode->setObjectName(QStringLiteral("outputEncode"));
+    m_encode->addItem(QStringLiteral("Unchanged"), QStringLiteral("same"));
+    const auto keys = outputColorSpaceKeys(), labels = outputColorSpaceLabels();
+    for (int i = 0; i < keys.size(); ++i) {
+        m_decode->addItem(labels[i], keys[i]);
+        m_encode->addItem(labels[i], keys[i]);
+    }
+    m_decode->setToolTip(QStringLiteral("Declare the space of the already composited RGB values. "
+                                       "Native sources are normalized to sRGB: keep sRGB unless a viewport shader deliberately changes its encoding."));
+    m_encode->setToolTip(QStringLiteral("Convert the declared rendered input space to this space, including primaries and transfer. "
+                                       "Rec.709 / Gamma 2.4 assumes an ideal black display; values outside the target gamut are clipped."));
+    m_exposure = new NumberBox;
+    m_exposure->setObjectName(QStringLiteral("outputExposure"));
+    m_exposure->setRange(-10, 10);
+    m_exposure->setDecimals(2);
+    m_exposure->setSingleStep(.1);
+    m_exposure->setSuffix(QStringLiteral(" EV"));
+    m_exposure->setKeyboardTracking(false);
+    m_exposure->setToolTip(QStringLiteral("Multiply decoded RGB by 2 to this power, before encoding; +1 doubles the values."));
+    cf->addRow(QStringLiteral("Rendered input space"), m_decode);
+    cf->addRow(QStringLiteral("Exposure"), m_exposure);
+    cf->addRow(QStringLiteral("Output color space"), m_encode);
+    auto applyColor = [this](const QString &path, const QJsonValue &value) {
+        if (m_syncing || m_engine->isLocked(index())) return;
+        if (cmd::setValue(m_undo, m_engine, m_viewport, path, value, QStringLiteral("Change Output Color"))) emit edited();
+    };
+    connect(m_decode, qOverload<int>(&QComboBox::activated), this, [this, applyColor] {
+        applyColor(QStringLiteral("output/input_space"), m_decode->currentData().toString());
+    });
+    connect(m_encode, qOverload<int>(&QComboBox::activated), this, [this, applyColor] {
+        applyColor(QStringLiteral("output/space"), m_encode->currentData().toString());
+    });
+    connect(m_exposure, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [applyColor](double value) {
+        applyColor(QStringLiteral("output/exposure"), value);
+    });
+    auto *resetColor = new QPushButton(QStringLiteral("Reset Output Color"));
+    resetColor->setObjectName(QStringLiteral("resetOutputColor"));
+    connect(resetColor, &QPushButton::clicked, this, [this] {
+        if (m_engine->isLocked(index())) return;
+        if (cmd::setValues(m_undo, m_engine, m_viewport,
+                {{"output/input_space", "srgb"}, {"output/space", "same"}, {"output/exposure", 0}},
+                QStringLiteral("Reset Output Color"))) emit edited();
+        refreshStatus();
+    });
+    cf->addRow(resetColor);
+    cf->addRow(note(QStringLiteral("Applied only to this viewport after its effects and opacity, before blackout. "
+                                   "Decode → gamut conversion and exposure → encode. Unchanged preserves existing values. "
+                                   "No automatic source-profile conversion or HDR tone mapping.")));
+    v->addWidget(color);
 
     // --- Screen and how it is shown there
     auto *out = new QGroupBox(QStringLiteral("Screen"));
@@ -357,12 +415,23 @@ void ViewportOutputPanel::refreshStatus()
 {
     int mode = 0;
     bool testCard = false;
+    QString decode, encode;
+    double exposure = 0;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(index());
         if (!l) return;
         mode = l->vpMode;
         testCard = l->testCard;
+        decode = l->outputInputSpace;
+        encode = l->outputSpace;
+        exposure = l->outputExposure;
+    }
+    {
+        const QSignalBlocker a(m_decode), b(m_encode), c(m_exposure);
+        m_decode->setCurrentIndex(m_decode->findData(decode));
+        m_encode->setCurrentIndex(m_encode->findData(encode));
+        if (!m_exposure->hasFocus()) m_exposure->setValue(exposure);
     }
     if (QAbstractButton *b = m_mode->button(mode); b && !b->isChecked()) b->setChecked(true);
     if (m_testCard && m_testCard->isChecked() != testCard) { // set by OSC

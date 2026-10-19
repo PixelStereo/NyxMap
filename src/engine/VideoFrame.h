@@ -50,6 +50,8 @@ struct VideoLayout {
     float matrix[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
     float chromaShift[2] = {0, 0}; // chroma siting, in texels of the chroma planes
     QString description;           // "yuv420p · BT.709", "Hap Q"…
+    QString primaries, transfer; // frame tags, independent of the YUV matrix/range
+    int primariesTag = -1, transferTag = -1;
     // The frames stay in the hardware decoder's surfaces (macOS: IOSurface), sampled there by the GPU: no copy.
     // Their planes are described as for the copy path; the frame is `av` (the hardware frame).
     bool surface = false;
