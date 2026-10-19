@@ -445,27 +445,30 @@ void RecallPreset::undo()
         const int index = m_e->indexOfId(id);
         if (index >= 0) m_e->applyLayerParts(index, state, m_parts[id]);
     }
-    for (const auto &value : m_before)
-        if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
-    for (const auto &[id, animations] : m_animations) {
-        const auto paths = m_animationParams.find(id);
-        if (paths == m_animationParams.end()) {
-            m_e->restoreLayerAnims(id, animations);
-            continue;
+    {
+        Engine::Lock lock(&m_e->mutex()); // keep output restoration and selective clock merge atomic
+        for (const auto &value : m_before)
+            if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
+        for (const auto &[id, animations] : m_animations) {
+            const auto paths = m_animationParams.find(id);
+            if (paths == m_animationParams.end()) {
+                m_e->restoreLayerAnims(id, animations);
+                continue;
+            }
+            auto current = m_e->layerAnims(id);
+            for (const QString &path : paths->second) {
+                const auto matches = [&](const Animation &a) {
+                    return !a.tracks.empty() && a.tracks.front().param == path;
+                };
+                const auto before = std::find_if(animations.begin(), animations.end(), matches);
+                const auto now = std::find_if(current.begin(), current.end(), matches);
+                if (before == animations.end()) {
+                    if (now != current.end()) current.erase(now);
+                } else if (now == current.end()) current.push_back(*before);
+                else *now = *before;
+            }
+            m_e->restoreLayerAnims(id, std::move(current));
         }
-        auto current = m_e->layerAnims(id);
-        for (const QString &path : paths->second) {
-            const auto matches = [&](const Animation &a) {
-                return !a.tracks.empty() && a.tracks.front().param == path;
-            };
-            const auto before = std::find_if(animations.begin(), animations.end(), matches);
-            const auto now = std::find_if(current.begin(), current.end(), matches);
-            if (before == animations.end()) {
-                if (now != current.end()) current.erase(now);
-            } else if (now == current.end()) current.push_back(*before);
-            else *now = *before;
-        }
-        m_e->restoreLayerAnims(id, std::move(current));
     }
     if (m_hasInteractions) m_e->setInteractions(m_interactions);
 }

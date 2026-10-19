@@ -16,6 +16,7 @@ int runRecallIntegrityTests(Engine &engine) {
     engine.newProject();
     engine.setFadesManual(true);
     engine.setCompositionSize(QSize(32, 32));
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), QSize(32, 32));
     QTemporaryDir files;
     QImage red(32, 32, QImage::Format_RGBA8888), blue = red;
     red.fill(Qt::red);
