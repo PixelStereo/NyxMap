@@ -67,6 +67,7 @@ void Engine::clearProject()
         m_nextPresetId = 1;
         m_render = RenderSettings(); // the machine's defaults
         m_paused = false;
+        m_emergencyHeld = false;
         m_compositionSpeed = 1.0;
         updateTimeScale();
         m_sequencer->clear();

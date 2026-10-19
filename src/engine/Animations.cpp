@@ -281,6 +281,7 @@ void Engine::controlAnimation(quint64 id, AnimAction action, double time, AnimLo
 
 void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoop loop, int repeat, Layer *owner)
 {
+    if (action == AnimAction::Play) resumeAfterStop();
     auto apply = [this, a, owner] {
         if (owner) applyLayerAnim(*owner, *a);
         else applyAnimation(*a);

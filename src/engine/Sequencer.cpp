@@ -361,6 +361,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
             m_runs.erase(std::remove_if(m_runs.begin(), m_runs.end(),
                 [owner](const Run &r) { return r.sequenceId == owner; }), m_runs.end());
         }
+        m_engine.resumeAfterStop(); // a deliberate GO must also release Escape before its pre-wait
         Run r = runOf(st, step, chain, owner);
         r.valid = commandTokenLocked(owner);
         r.duration = stepDuration(st);

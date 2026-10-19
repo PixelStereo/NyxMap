@@ -5,13 +5,18 @@ mask editing are implemented. Audio snapshots now save input, measure and freque
 bounds: recapture older snapshots to include these controls. Recall Undo restores
 meshes, mattes and animation transport, and cancels pending transitions/delays.
 Integer image sources retain up to 16-bit channels through layer and ISF uploads.
+Pause/speed zero hold source/effect frames, including feedback and live inputs.
+Escape also cancels pending show work; explicit GO/Play/recall releases its hold,
+while an operator Pause requires releasing Pause. Manual controls remain active.
 
 ## Known limitations
 
-- **Show control:** Escape stops transports/fades, but does not freeze all ISF
-  passes, feedback buffers or external inputs. Shader dt is capped at 250 ms and
-  show dt at 2 s; long stalls can desynchronize clocks. Output fades and show fades
-  use different time domains.
+- **Show control:** running show/media clocks and shader TIME catch up after stalls;
+  shader TIMEDELTA stays capped at 250 ms before speed scaling. Missed feedback
+  simulation frames are not replayed. Snapshot composition/layer fades share show
+  time; manual output faders and blackout use wall time and remain available while
+  paused. External receivers keep receiving the held picture; acquisition may
+  continue in input threads. Physical A/V recovery still needs measurement.
 - **Color:** RGBA16 UNORM is the internal default; ISF FLOAT targets use RGBA32F.
   CPU fallback/readback and some outputs remain 8-bit; HAP BC6 CPU fallback
   clips HDR. No verified end-to-end 10-bit output, linear-light working space,
@@ -32,8 +37,7 @@ Integer image sources retain up to 16-bit channels through layer and ISF uploads
 
 | Priority | Work | Acceptance |
 |---|---|---|
-| P1 | Define ISF freeze/resume, long-stall catch-up and safety-blackout semantics. | Stop/resume tests with feedback/external inputs and 60/120 Hz cues; no cumulative A/V drift. |
-| P1 | Profile callback, lock contention, memory and control floods before restructuring ownership/scheduling. | 18 × 1080p layers at 60 Hz, two outputs; zero control drops. Callback p99 ≤1 ms and ≤25% of its period, zero overruns; lock wait p99 ≤1 ms, hold p99 ≤8 ms. |
+| P1 | Measure callback, lock contention, memory and control floods on target hardware; automated report/threshold checks are available. | 18 × 1080p layers at 60 Hz, two outputs; zero control drops. Callback p99 ≤1 ms and ≤25% of its period, zero overruns; lock wait p99 ≤1 ms, hold p99 ≤8 ms. |
 | P1 | Validate sustained shows and real receivers. | Eight hours without crash/stuck transport or unexpected decoder errors; A/V offset <40 ms without growth. Twenty reconnect cycles: recover within 5 s or show an actionable error. Verify receiver frame IDs under load. |
 | P2 | Add explicit color/output transforms. | Reference gradients survive compositing; measure compatible physical outputs before claiming 10-bit/HDR. |
 
@@ -48,10 +52,14 @@ Record build, hardware/driver, media hashes and outputs when comparing versions:
 
 ```sh
 Pinol --endurance-csv session.csv show.pinol
-python3 scripts/analyze_timeline_endurance.py session.csv --fps 60
+python3 scripts/analyze_timeline_endurance.py session.csv --fps 60 --check
 ```
 
 CSV v2 reports sharing skips; analysis correlates late frames with cues and flags
 lost events. Correlation does not prove causality. OSC `/composition/timing` and
 `/composition/budget` expose metrics; `_lifetime` values survive timing resets.
+`--check` fails on missing/invalid/inactive telemetry, callback/lock threshold
+violations, control drops, decoder errors or lost telemetry. It evaluates lifetime
+histograms: start a fresh Pinol process for each comparison. A PASS does not certify
+the workload, duration or physical receiver; record these separately.
 Software-rendering/sanitizer CI does not establish hardware acceptance.

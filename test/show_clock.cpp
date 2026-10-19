@@ -2,6 +2,7 @@
 #include "Engine.h"
 #include <QCoreApplication>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 
 int main(int argc, char **argv)
@@ -13,6 +14,56 @@ int main(int argc, char **argv)
     auto check = [&](bool ok, const char *why) {
         if (!ok) { ++failures; std::printf("FAIL show_clock: %s\n", why); }
     };
+
+    for (const double hz : {60.0, 120.0}) {
+        double wall = 0, show = 0;
+        for (int i = 0; i < 600; ++i) {
+            const double elapsed = i % 100 == 0 ? 3.1 : 1.0 / hz;
+            wall += elapsed;
+            const auto step = FrameStep::fromElapsed(elapsed, true);
+            show += step.elapsed;
+            check(step.shaderDelta <= .25, "shader integration step remains bounded");
+        }
+        check(std::abs(show - wall) < 1e-10, "repeated stalls do not accumulate show-clock drift at 60/120 Hz");
+    }
+    check(FrameStep::fromElapsed(8, false).elapsed == .25, "manual renders retain their bounded step");
+    check(FrameStep::fromElapsed(-1, true).elapsed == 0 &&
+          FrameStep::fromElapsed(std::numeric_limits<double>::infinity(), true).elapsed == 0,
+          "invalid elapsed times cannot poison the clocks");
+
+    engine.stopShowPlayback();
+    check(engine.paused() && timeScale() == 0, "Escape holds the show clock");
+    engine.setPaused(false);
+    check(!engine.paused() && timeScale() == 1, "release Pause resumes rendering");
+    engine.setPaused(true);
+    engine.stopShowPlayback();
+    Animation probe;
+    const int probeIndex = engine.addAnimation(probe);
+    engine.controlAnimation(engine.animation(probeIndex).id, AnimAction::Play);
+    check(engine.paused(), "explicit Play never releases an operator Pause");
+    engine.setPaused(false);
+    engine.stopShowPlayback();
+    engine.controlAnimation(engine.animation(probeIndex).id, AnimAction::Play);
+    check(!engine.paused(), "explicit Play releases only the emergency hold");
+    engine.controlAnimation(engine.animation(probeIndex).id, AnimAction::Stop);
+
+    {
+        Sequencer::Step waiting;
+        waiting.timeline = engine.animation(probeIndex).id;
+        waiting.preWait = 5;
+        Sequencer::Sequence sequence;
+        sequence.steps = {waiting};
+        const int index = engine.sequencer().add(sequence);
+        engine.stopShowPlayback();
+        engine.sequencer().goSequence(index);
+        check(!engine.paused(), "GO releases Escape before the pre-wait, so the wait can advance");
+        engine.setPaused(true);
+        engine.stopShowPlayback();
+        engine.sequencer().goSequence(index);
+        check(engine.paused(), "GO preserves an operator Pause");
+        engine.sequencer().clear();
+        engine.setPaused(false);
+    }
 
     // A late cue starts its timeline now. Time spent missing the pre-wait
     // deadline must not count as time already played by that timeline.

@@ -847,7 +847,7 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
     }
 
     const double dt = rc.dt * speed;
-    m_time += dt;
+    m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
     f->glUseProgram(m_program);
     f->glDisable(GL_BLEND);
     if (m_locTime >= 0) f->glUniform1f(m_locTime, float(m_time));
