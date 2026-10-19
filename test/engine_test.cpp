@@ -483,7 +483,16 @@ void main(){
             setP("attr2Pos", -.25, 0);
             setF("attr2Radius", .5);
             setF("attr2Strength", -1);
-            for (int k = 0; k < 40; ++k) e.renderFrame();
+            {
+                // Rendered for 3 s of real time (the simulation's clock): every grain born again at the point, with
+                // the disperser there, whatever the machine's frame rate
+                QElapsedTimer t;
+                t.start();
+                for (int k = 0; k < 400 && t.elapsed() < 3000; ++k) {
+                    e.renderFrame();
+                    QThread::msleep(10);
+                }
+            }
             const QImage pushed = e.grabViewport(e.mainViewportId());
             const int dl = litIn(pushed, 0, pushed.width() / 2), dr = litIn(pushed, pushed.width() / 2, pushed.width());
             std::printf("       disperser on the left: %d lit on the left, %d on the right\n", dl, dr);
