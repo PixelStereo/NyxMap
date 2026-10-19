@@ -475,7 +475,13 @@ void main(){
             const int pl = litIn(pulled, 0, pulled.width() / 2), pr = litIn(pulled, pulled.width() / 2, pulled.width());
             std::printf("       attractor on the left: %d lit on the left, %d on the right\n", pl, pr);
             CHECK(pl > 50 && pl > 2 * pr);
-            // A disperser (a negative strength) on the left of the point the grains are born at: they go right
+            // A disperser (a negative strength) on the left of the point the grains are born at: they go right. The
+            // generator loaded again first: none of the grains the attractor gathered (alive up to 9 s) left
+            CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
+            inst = e.layer(g)->generator.get();
+            if (IsfInput *p = inst->input(QStringLiteral("camPath"))) p->lValue = 0;
+            setF("camPitch", 0);
+            setF("vortex", 0);
             setF("attr1Strength", 0);
             if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 3; // Point
             setF("speed", 0);
