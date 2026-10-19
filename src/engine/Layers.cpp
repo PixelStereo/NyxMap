@@ -577,6 +577,10 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
     // With the source, the layer is rebuilt from a merged state (the media is opened again, as when one is
     // loaded); the target keeps its identity and whatever the paste does not carry.
     if (parts & PartSource) {
+        {
+            Lock lk(&m_mutex);
+            if (Layer *l = layer(i)) removeSourceAnimations(*l);
+        }
         QJsonObject merged = layerJson(i);
         merged["source"] = o.value("source");
         if ((parts & PartTransport) && o.contains("play")) merged["play"] = o.value("play");
@@ -662,9 +666,14 @@ QJsonArray Engine::effectsJson(int i) const
 void Engine::setEffectsJson(int i, const QJsonArray &a)
 {
     auto g = std::make_shared<Garbage>();
+    std::vector<std::pair<QString, QString>> before; // old prefix and shader path, matched by occurrence
+    quint64 id = 0;
     {
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_layers.size())) return;
+        id = m_layers[size_t(i)]->id;
+        for (int fx = 0; fx < int(m_layers[size_t(i)]->effects.size()); ++fx)
+            before.push_back({shaderPrefix(id, fx).chopped(1), m_layers[size_t(i)]->effects[size_t(fx)]->path()});
         g->effects = std::move(m_layers[size_t(i)]->effects);
         m_layers[size_t(i)]->effects.clear();
     }
@@ -681,10 +690,28 @@ void Engine::setEffectsJson(int i, const QJsonArray &a)
         }
         runGl([inst, e] { inst->restore(e, QString()); });
     }
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(indexOfId(id));
+        if (!l) return;
+        std::vector<bool> used(l->effects.size(), false);
+        std::vector<std::pair<QString, QString>> targets;
+        for (const auto &[prefix, path] : before) {
+            QString next;
+            for (size_t fx = 0; fx < l->effects.size(); ++fx) if (!used[fx] && l->effects[fx]->path() == path) {
+                used[fx] = true;
+                next = shaderPrefix(id, int(fx)).chopped(1);
+                break;
+            }
+            targets.push_back({prefix, next});
+        }
+        remapAnimationTargets(id, targets);
+    }
 }
 
 std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
 {
+    removeSourceAnimations(l);
     auto g = std::make_shared<Garbage>();
     l.extraParams = QJsonObject(); // another source: what its missing file kept is not for this one
     g->video = std::move(l.video);
@@ -1674,8 +1701,14 @@ void Engine::removeEffect(int li, int fx)
         Lock lk(&m_mutex);
         Layer *l = layer(li);
         if (!l || fx < 0 || fx >= int(l->effects.size())) return;
+        std::vector<QString> before;
+        for (int i = 0; i < int(l->effects.size()); ++i) before.push_back(shaderPrefix(l->id, i).chopped(1));
         victim.reset(l->effects[size_t(fx)].release());
         l->effects.erase(l->effects.begin() + fx);
+        std::vector<std::pair<QString, QString>> targets;
+        for (int i = 0; i < int(before.size()); ++i)
+            targets.push_back({before[size_t(i)], i == fx ? QString() : shaderPrefix(l->id, i < fx ? i : i - 1).chopped(1)});
+        remapAnimationTargets(l->id, targets);
     }
     runGl([victim] { victim->releaseGl(); }, false);
 }
@@ -1689,9 +1722,16 @@ void Engine::moveEffect(int li, int from, int to)
     if (from < 0 || from >= n) return;
     to = std::clamp(to, 0, n - 1);
     if (from == to) return;
+    std::vector<std::pair<IsfInstance *, QString>> before;
+    for (int i = 0; i < n; ++i) before.push_back({l->effects[size_t(i)].get(), shaderPrefix(l->id, i).chopped(1)});
     auto e = std::move(l->effects[size_t(from)]);
     l->effects.erase(l->effects.begin() + from);
     l->effects.insert(l->effects.begin() + to, std::move(e));
+    std::vector<std::pair<QString, QString>> targets;
+    for (const auto &[instance, prefix] : before)
+        for (int i = 0; i < n; ++i) if (l->effects[size_t(i)].get() == instance)
+            targets.push_back({prefix, shaderPrefix(l->id, i).chopped(1)});
+    remapAnimationTargets(l->id, targets);
 }
 
 bool Engine::setIsfImageInput(IsfInstance *inst, int input, const QString &path, QString *err)

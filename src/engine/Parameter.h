@@ -48,6 +48,7 @@ struct ParamInfo {
     QList<int> values;       // Int: the values it can take (empty: any whole number within the limits)
     QStringList choices;     // Choice: its keys
     bool animatable = false; // a timeline or an animation can drive it (the numbers)
+    int colorComponent = -1; // explicit RGB(A) member at <color path>/r,g,b,a; -1: not a color
 
     bool isNumber() const { return type == Type::Float || type == Type::Int; }
     QString name() const; // its own name, without the category ("Rotation (°)")
@@ -68,6 +69,7 @@ public:
     Parameter &readOnly();
     Parameter &writeOnly();
     Parameter &animatable(bool on = true);
+    Parameter &colorComponent(int component) { m_info.colorComponent = component; return *this; }
     Parameter &values(const QList<int> &v);           // Int: among these
     Parameter &choices(const QStringList &keys);      // Choice
     Parameter &byDefault(const QVariant &v);
@@ -86,6 +88,7 @@ public:
     const QString &path() const { return m_info.path; }
     bool isNumber() const { return m_info.isNumber(); }
     bool animatable() const { return m_info.animatable; }
+    int colorComponent() const { return m_info.colorComponent; }
 
     QVariant value() const;
     double number() const { return value().toDouble(); }

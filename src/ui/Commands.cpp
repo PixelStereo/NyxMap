@@ -247,11 +247,32 @@ MoveLayer::MoveLayer(Engine *e, int from, int to) : m_e(e), m_from(from), m_to(t
     setText(QStringLiteral("Reorder Layers"));
 }
 
-ReplaceLayer::ReplaceLayer(Engine *e, int index, const QJsonObject &before, const QString &text)
+static Engine::AnimationTargetState targetsAfter(Engine *e, const Engine::AnimationTargetState &before)
+{
+    auto after = e->captureAnimationTargets(before.layer);
+    // A timeline whose last target was removed must still have an explicit empty definition for Redo.
+    for (const auto &a : before.timelines) {
+        if (std::any_of(after.timelines.begin(), after.timelines.end(), [&](const auto &x) { return x.id == a.id; })) continue;
+        const int index = e->indexOfAnimation(a.id);
+        if (index >= 0) after.timelines.push_back(e->animation(index));
+    }
+    return after;
+}
+
+ReplaceLayer::ReplaceLayer(Engine *e, int index, const QJsonObject &before, const QString &text,
+                           Engine::AnimationTargetState beforeAnimations)
     : m_e(e), m_index(index), m_before(before)
 {
     m_after = e->layerJson(index);
+    m_beforeAnimations = beforeAnimations.layer ? std::move(beforeAnimations) : e->captureAnimationTargets(e->layerId(index));
+    m_afterAnimations = targetsAfter(e, m_beforeAnimations);
     setText(text);
+}
+
+void ReplaceLayer::undo()
+{
+    m_e->replaceLayerJson(m_index, m_before);
+    m_e->restoreAnimationTargets(m_beforeAnimations);
 }
 
 void ReplaceLayer::redo()
@@ -261,6 +282,7 @@ void ReplaceLayer::redo()
         return;
     }
     m_e->replaceLayerJson(m_index, m_after);
+    m_e->restoreAnimationTargets(m_afterAnimations);
 }
 
 SetStructure::SetStructure(Engine *e, const LayerTree &before, const LayerTree &after, const QString &text)
@@ -300,11 +322,20 @@ void RecallSnapshot::redo()
     }
 }
 
-SetEffects::SetEffects(Engine *e, int index, const QJsonArray &before, const QString &text)
+SetEffects::SetEffects(Engine *e, int index, const QJsonArray &before, const QString &text,
+                       Engine::AnimationTargetState beforeAnimations)
     : m_e(e), m_index(index), m_before(before)
 {
     m_after = e->effectsJson(index);
+    m_beforeAnimations = beforeAnimations.layer ? std::move(beforeAnimations) : e->captureAnimationTargets(e->layerId(index));
+    m_afterAnimations = targetsAfter(e, m_beforeAnimations);
     setText(text);
+}
+
+void SetEffects::undo()
+{
+    m_e->setEffectsJson(m_index, m_before);
+    m_e->restoreAnimationTargets(m_beforeAnimations);
 }
 
 void SetEffects::redo()
@@ -314,6 +345,7 @@ void SetEffects::redo()
         return;
     }
     m_e->setEffectsJson(m_index, m_after);
+    m_e->restoreAnimationTargets(m_afterAnimations);
 }
 
 SetOpacityIn::SetOpacityIn(Engine *e, quint64 layer, quint64 viewport, float before, float after, const QString &text)

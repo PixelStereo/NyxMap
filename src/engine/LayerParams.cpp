@@ -194,7 +194,7 @@ const std::vector<Parameter *> &Layer::parameters()
             for (int c = 0; c < 3; ++c)
                 num(key + "/" + QChar("rgb"[c]), QStringLiteral("Color › %1 %2").arg(name).arg(QChar("RGB"[c])), 0, 1, 0.0,
                     [self, which, c] { return double((which ? self->color.remove : self->color.add)[c]); },
-                    [self, which, c](double v) { (which ? self->color.remove : self->color.add)[c] = float(v); });
+                    [self, which, c](double v) { (which ? self->color.remove : self->color.add)[c] = float(v); }).colorComponent(c);
             flag(key + "/enable", QStringLiteral("Color › %1 Enable").arg(name), true, which ? &color.removeOn : &color.addOn);
         }
         flag("mask/invert", "Color › Invert Mask", false, &color.maskInvert);
@@ -389,7 +389,7 @@ const std::vector<Parameter *> &Layer::parameters()
             for (int k = 0; k < 4; ++k) {
                 QColor TextSource::*m = c.member;
                 const double d = k == 0 ? c.def.redF() : k == 1 ? c.def.greenF() : k == 2 ? c.def.blueF() : c.def.alphaF();
-                num(QString::fromLatin1(c.path) + "/" + QChar("rgba"[k]), QString::fromLatin1(c.label) + " " + QChar("RGBA"[k]), 0, 1, d,
+                num(QString::fromLatin1(c.path) + "/" + QChar("rgba"[k]), QString::fromUtf8(c.label) + " " + QChar("RGBA"[k]), 0, 1, d,
                     [t, m, k] {
                         const QColor &q = t->*m;
                         return k == 0 ? q.redF() : k == 1 ? q.greenF() : k == 2 ? q.blueF() : q.alphaF();
@@ -400,7 +400,7 @@ const std::vector<Parameter *> &Layer::parameters()
                         else if (k == 1) q.setGreenF(float(v));
                         else if (k == 2) q.setBlueF(float(v));
                         else q.setAlphaF(float(v));
-                    });
+                    }).colorComponent(k);
             }
     }
 

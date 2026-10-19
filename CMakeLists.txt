@@ -417,7 +417,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(PINOL_TESTS "Build the engine tests" ON)
 if(PINOL_TESTS)
-  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(pinol_tests PRIVATE src/ui)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
@@ -425,6 +425,12 @@ if(PINOL_TESTS)
   # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(pinol_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp
+                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+  target_include_directories(pinol_color_timeline_ui_test PRIVATE src/ui)
+  target_link_libraries(pinol_color_timeline_ui_test PRIVATE pinol_engine Qt6::Widgets)
+  add_test(NAME color_timeline_ui COMMAND pinol_color_timeline_ui_test)
+  set_tests_properties(color_timeline_ui PROPERTIES TIMEOUT 30)
   add_executable(pinol_output_color_state_test test/output_color_state.cpp src/ui/Commands.cpp)
   target_include_directories(pinol_output_color_state_test PRIVATE src/ui)
   target_link_libraries(pinol_output_color_state_test PRIVATE pinol_engine Qt6::Widgets)
@@ -524,7 +530,7 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_cue_dispatch_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
-  foreach(area output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()

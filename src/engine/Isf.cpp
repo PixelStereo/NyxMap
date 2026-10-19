@@ -409,7 +409,7 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
         }
         case IsfInput::Color:
             for (int c = 0; c < 4; ++c)
-                number(path + "/" + QChar("rgba"[c]), label + " " + QChar("RGBA"[c]), c, 0, 1, in.cDefault[c]);
+                number(path + "/" + QChar("rgba"[c]), label + " " + QChar("RGBA"[c]), c, 0, 1, in.cDefault[c])->colorComponent(c);
             break;
         case IsfInput::Bool:
             out.emplace_back(path, label, T::Bool);
