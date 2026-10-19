@@ -38,6 +38,7 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QApplication app(argc, argv);
+    ignoreWheelOnFields(&app); // the trackpad scrolls the panels, it never changes a value
     QApplication::setApplicationName("Pinol");
     QApplication::setOrganizationName("Pinol");
     QApplication::setApplicationVersion("0.1.0");

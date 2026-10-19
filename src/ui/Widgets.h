@@ -8,6 +8,7 @@
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QObject>
+#include <QCoreApplication>
 #include <QIcon>
 #include <QImage>
 #include <QLabel>
@@ -128,6 +129,10 @@ private:
 // at its right end. Replaces the slider + spin box + separate value label of the earlier panels.
 // A click on the bar jumps to that value, a drag follows the cursor, the wheel steps, and the field at the
 // right takes a typed value (with its unit). Fine adjustment with Shift.
+// The scroll wheel and the trackpad never change a value: a number field, a slider, a menu passes them to what holds it
+// (the panel scrolls). Installed once on the application.
+void ignoreWheelOnFields(QCoreApplication *app);
+
 class SliderField : public QWidget
 {
     Q_OBJECT
@@ -159,7 +164,6 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
-    void wheelEvent(QWheelEvent *e) override;
     void resizeEvent(QResizeEvent *e) override;
 
 private:
