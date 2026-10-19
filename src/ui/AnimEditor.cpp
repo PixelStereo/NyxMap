@@ -817,7 +817,7 @@ void ColorLane::editColor(int key, double time)
     auto rgb = existing ? m_track.keys[size_t(key)].rgb : m_track.colorAt(time);
     if (!std::isfinite(rgb[0])) rgb = m_current ? m_current() : std::array<double, 3>{1, 1, 1};
     const QPointer<ColorLane> guard(this);
-    const QColor color = ColorPicker::getColor(rgbColor(rgb), this, QStringLiteral("Color Key"),
+    const QColor color = ColorPicker::getColor(rgbColor(rgb), window(), QStringLiteral("Color Key"),
                                                QStringLiteral("ui/colorPickerMode/timeline"), false);
     if (!guard || !color.isValid()) return;
     if (!existing) {
@@ -914,7 +914,7 @@ void ColorLane::contextMenuEvent(QContextMenuEvent *e)
             if (lo > hi) return;
             bool ok = false;
             const QPointer<ColorLane> guard(this);
-            const double t = QInputDialog::getDouble(this, QStringLiteral("Color Key"), QStringLiteral("Time (s)"),
+            const double t = QInputDialog::getDouble(window(), QStringLiteral("Color Key"), QStringLiteral("Time (s)"),
                                                      m_track.keys[size_t(key)].t, lo, hi, 3, &ok);
             if (!guard || !ok) return;
             m_track.keys[size_t(key)].t = t;
