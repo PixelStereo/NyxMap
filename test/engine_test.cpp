@@ -442,10 +442,71 @@ void main(){
                     for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
                 CHECK(lit > img.width() * img.height() / 20);
             }
-            // A Form Image (a white bar in the left half): the cloud takes its shape, its light there and not on
-            // the right; then a Grain Image draws each grain
+            // A Form Layer (a switched-off layer showing a white bar in its left half): the cloud takes its shape, its
+            // light there and not on the right; then a Grain Layer draws each grain. Both take a layer, never a file
             if (path) path->lValue = 0; // fixed, facing the form
             if (IsfInput *pitch = inst->input(QStringLiteral("camPitch"))) pitch->fValue = 0;
+            auto setF = [&](const char *n, double v) {
+                IsfInput *i = inst->input(QLatin1String(n));
+                CHECK(i != nullptr);
+                if (i) i->fValue = v;
+            };
+            auto setP = [&](const char *n, double x, double y) {
+                IsfInput *i = inst->input(QLatin1String(n));
+                CHECK(i != nullptr);
+                if (i) i->pValue = QPointF(x, y);
+            };
+            auto litIn = [](const QImage &img, int x0, int x1) {
+                int n = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
+                return n;
+            };
+            // An attractor on the left gathers the cloud there; a negative strength (a disperser) at the centre of a
+            // sphere of grains empties it
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 0; // Sphere
+            setF("vortex", 0);
+            setF("attr2Strength", 0);
+            setP("attr1Pos", -.7, 0);
+            setF("attr1Strength", .8);
+            setF("attr1Swirl", 0);
+            for (int k = 0; k < 60; ++k) e.renderFrame();
+            QImage pulled = e.grabViewport(e.mainViewportId());
+            const int pl = litIn(pulled, 0, pulled.width() / 2), pr = litIn(pulled, pulled.width() / 2, pulled.width());
+            std::printf("       attractor on the left: %d lit on the left, %d on the right\n", pl, pr);
+            CHECK(pl > 50 && pl > 2 * pr);
+            // A disperser (a negative strength) on the left of the point the grains are born at: they go right. The
+            // generator loaded again first: none of the grains the attractor gathered (alive up to 9 s) left
+            CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
+            inst = e.layer(g)->generator.get();
+            if (IsfInput *p = inst->input(QStringLiteral("camPath"))) p->lValue = 0;
+            setF("camPitch", 0);
+            setF("vortex", 0);
+            setF("attr1Strength", 0);
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 3; // Point
+            setF("speed", 0);
+            setF("life", 1.5);
+            setP("attr2Pos", -.25, 0);
+            setF("attr2Radius", .5);
+            setF("attr2Strength", -1);
+            {
+                // Rendered for 3 s of real time (the simulation's clock) and 30 frames at least (a slow software
+                // renderer draws few in 3 s): every grain born at the point, with the disperser there
+                QElapsedTimer t;
+                t.start();
+                for (int k = 0; k < 400 && (t.elapsed() < 3000 || k < 30); ++k) {
+                    e.renderFrame();
+                    QThread::msleep(10);
+                }
+            }
+            const QImage pushed = e.grabViewport(e.mainViewportId());
+            const int dl = litIn(pushed, 0, pushed.width() / 2), dr = litIn(pushed, pushed.width() / 2, pushed.width());
+            std::printf("       disperser on the left: %d lit on the left, %d on the right\n", dl, dr);
+            CHECK(dr > 50 && dr > 2 * dl);
+            setF("attr2Strength", 0);
+            setF("speed", .15);
+            setF("life", 6);
+            setF("attr2Strength", 0);
             QImage bar(256, 128, QImage::Format_RGBA8888);
             bar.fill(Qt::black);
             for (int y = 48; y < 80; ++y)
@@ -456,20 +517,27 @@ void main(){
                 if (inst->inputs()[size_t(k)].name == QLatin1String("form")) formIndex = k;
                 if (inst->inputs()[size_t(k)].name == QLatin1String("sprite")) spriteIndex = k;
             }
-            CHECK(formIndex >= 0 && spriteIndex >= 0 && e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err));
-            for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
-            auto litIn = [](const QImage &img, int x0, int x1) {
-                int n = 0;
-                for (int y = 0; y < img.height(); ++y)
-                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
-                return n;
+            CHECK(formIndex >= 0 && spriteIndex >= 0);
+            CHECK(!e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err) && err.contains("layer"));
+            auto hiddenImageLayer = [&](const char *name, const QString &file) {
+                const int i = e.addLayer(QLatin1String(name));
+                CHECK(e.setLayerImage(i, file, &err));
+                const quint64 id = e.layerId(i);
+                Engine::Lock lk(&e.mutex());
+                e.layer(i)->enabled = false; // not in the picture: drawn for the particles only
+                return id;
             };
+            const quint64 formId = hiddenImageLayer("Form", tmp + "/form.png");
+            CHECK(e.setIsfImageLayer(inst, formIndex, formId, &err));
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 5; // Layer: the Form Layer
+            for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
             QImage formed = e.grabViewport(e.mainViewportId());
             const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
             CHECK(left > 50 && left > 3 * right);
             QImage star(32, 32, QImage::Format_RGBA8888);
             star.fill(Qt::white);
-            CHECK(star.save(tmp + "/grain.png") && e.setIsfImageInput(inst, spriteIndex, tmp + "/grain.png", &err));
+            CHECK(star.save(tmp + "/grain.png"));
+            CHECK(e.setIsfImageLayer(inst, spriteIndex, hiddenImageLayer("Grain", tmp + "/grain.png"), &err));
             for (int k = 0; k < 4; ++k) e.renderFrame();
             formed = e.grabViewport(e.mainViewportId());
             CHECK(litIn(formed, 0, formed.width() / 2) > 50);
