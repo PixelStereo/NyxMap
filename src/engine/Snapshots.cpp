@@ -675,9 +675,61 @@ QJsonArray Engine::captureRecallLayers(int snapshotIndex) const
         // must be preserved exactly as they were just before the cue.
         QJsonObject o = layerJson(i);
         o[QStringLiteral("included")] = true;
+        QJsonArray animations = o.value("anims").toArray();
+        for (size_t k = 0; k < l.anims.size(); ++k) {
+            const Animation &a = l.anims[k];
+            if (a.tracks.empty()) continue;
+            QJsonObject state = animations[int(k)].toObject(); // reuse the serialized keys from layerJson
+            state["_undo_clock"] = a.clock;
+            state["_undo_oscillator_offset"] = a.oscillatorOffset;
+            state["_undo_reversed"] = a.reversed;
+            if (std::isfinite(a.tracks.front().captured)) state["_undo_captured"] = a.tracks.front().captured;
+            animations[int(k)] = state;
+        }
+        if (!animations.isEmpty()) o["anims"] = animations; // Undo-only metadata, never project/snapshot JSON
         result.append(o);
     }
+    for (quint64 id : included)
+        if (indexOfId(id) < 0) result.append(QJsonObject{{"id", QString::number(id)}, {"_undo_missing", true}});
     return result;
+}
+
+void Engine::restoreRecallLayers(const QJsonArray &states)
+{
+    Lock lock(&m_mutex);
+    QJsonArray existing;
+    for (const QJsonValue &value : states) {
+        const QJsonObject state = value.toObject();
+        if (!state.value("_undo_missing").toBool()) { existing.append(value); continue; }
+        const quint64 id = state.value("id").toString().toULongLong();
+        takeOverFades(id, {}, true);
+        auto pending = m_deferredRecallIndex.lower_bound({id, QString()});
+        while (pending != m_deferredRecallIndex.end() && pending->first.first == id) {
+            m_deferredRecall.erase(pending->second);
+            pending = m_deferredRecallIndex.erase(pending);
+        }
+        const int index = indexOfId(id);
+        if (index >= 0) removeLayer(index);
+    }
+    applyLayers(existing, 0);
+    for (const QJsonValue &value : states) {
+        const QJsonObject state = value.toObject();
+        if (!state.value("included").toBool(true)) continue;
+        const quint64 id = state.value("id").toString().toULongLong();
+        std::vector<Animation> animations;
+        for (const QJsonValue &entry : state.value("anims").toArray()) {
+            const QJsonObject saved = entry.toObject();
+            Animation a = layerAnimFromJson(saved, id);
+            if (a.tracks.empty() || a.tracks.front().param.isEmpty()) continue;
+            a.state = animStateFromJson(saved);
+            a.clock = saved.value("_undo_clock").toDouble(saved.value("clock").toDouble());
+            a.oscillatorOffset = saved.value("_undo_oscillator_offset").toDouble();
+            a.reversed = saved.value("_undo_reversed").toBool();
+            if (saved.contains("_undo_captured")) a.tracks.front().captured = saved.value("_undo_captured").toDouble();
+            animations.push_back(std::move(a));
+        }
+        restoreLayerAnims(id, std::move(animations));
+    }
 }
 
 Engine::RecallProgress Engine::recallProgress() const
@@ -990,6 +1042,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         l->name = o.value("name").toString(l->name);
         recallLayerAnims(*l, o.value("anims").toArray());
         if (!group) l->color.maskLayer = o.value("mask").toString().toULongLong();
+        l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         const QJsonArray fx = o.value("fx").toArray();
         for (size_t k = 0; k < l->effects.size() && int(k) < fx.size(); ++k) { // their masks
             const QJsonObject e = fx[int(k)].toObject();
@@ -1582,7 +1635,7 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
         if (row < 0) return mismatch(QStringLiteral("Layer removed"));
         if (isLocked(row)) continue; // the recall itself leaves this layer alone
         const QJsonObject live = layerJson(row);
-        for (const char *field : {"source", "fx", "parent", "enable", "name", "viewports", "masks", "mask"}) {
+        for (const char *field : {"source", "fx", "parent", "enable", "name", "viewports", "masks", "matte", "mask"}) {
             QJsonValue a = live.value(QLatin1String(field)), b = stored.value(QLatin1String(field));
             if (QLatin1String(field) == QLatin1String("source")) {
                 auto clean = [](QJsonValue value) { auto o = value.toObject(); o.remove("relative_path"); return QJsonValue(o); };

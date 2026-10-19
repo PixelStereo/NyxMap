@@ -269,7 +269,7 @@ SetStructure::SetStructure(Engine *e, const LayerTree &before, const LayerTree &
     setText(text);
 }
 
-RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(snapshot)
+RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(e->snapshot(snapshot).id)
 {
     m_before = e->captureRecallLayers(snapshot);
     m_beforeComposition = e->captureComposition();
@@ -279,7 +279,7 @@ RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(sna
 
 RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before, const QJsonObject &beforeComposition,
                                const QJsonArray &beforeInteractions)
-    : m_e(e), m_snapshot(snapshot), m_before(before), m_beforeComposition(beforeComposition),
+    : m_e(e), m_snapshot(e->snapshot(snapshot).id), m_before(before), m_beforeComposition(beforeComposition),
       m_beforeInteractions(beforeInteractions), m_done(true)
 {
     setText(QStringLiteral("Recall \"%1\"").arg(e->snapshot(snapshot).name));
@@ -287,11 +287,13 @@ RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before
 
 void RecallSnapshot::redo()
 {
+    const int index = m_e->indexOfSnapshot(m_snapshot);
+    if (index < 0) return;
     if (m_first) {
         m_first = false;
-        if (!m_done) m_e->recallSnapshot(m_snapshot);
+        if (!m_done) m_e->recallSnapshot(index);
     } else {
-        const Engine::Snapshot m = m_e->snapshot(m_snapshot);
+        const Engine::Snapshot m = m_e->snapshot(index);
         if (!m.layers.isEmpty()) m_e->applyLayers(m.layers, 0, true);
         m_e->applyComposition(m.composition, 0);
         m_e->applyInteractions(m.interactions, 0);
@@ -419,7 +421,10 @@ RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
         const quint64 layer = animation.tracks.front().layer;
         m_animations[layer] = e->layerAnims(layer);
     }
-    for (const auto &[id, parts] : m_parts) { (void)parts; m_layers[id] = e->layerJson(e->indexOfId(id)); }
+    for (const auto &[id, parts] : m_parts) {
+        m_layers[id] = e->layerJson(e->indexOfId(id));
+        if (parts & Engine::PartAnimations) m_animations[id] = e->layerAnims(id);
+    }
     m_hasInteractions = !p.interactions.empty();
     if (m_hasInteractions) m_interactions = e->interactions();
     setText(QStringLiteral("Recall Preset \"%1\"").arg(p.name));
@@ -429,12 +434,13 @@ void RecallPreset::undo()
 {
     for (const auto &value : m_before) m_e->cancelParameterRecall(value.layer, value.path);
     for (const auto &[id, state] : m_layers) {
+        if (m_parts[id] & Engine::PartSpatial) m_e->cancelParameterRecall(id, QStringLiteral("mesh"));
         const int index = m_e->indexOfId(id);
         if (index >= 0) m_e->applyLayerParts(index, state, m_parts[id]);
     }
     for (const auto &value : m_before)
         if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
-    for (const auto &[id, animations] : m_animations) m_e->setLayerAnims(id, animations);
+    for (const auto &[id, animations] : m_animations) m_e->restoreLayerAnims(id, animations);
     if (m_hasInteractions) m_e->setInteractions(m_interactions);
 }
 

@@ -195,7 +195,7 @@ public:
                    const QJsonArray &beforeInteractions);
     void undo() override
     {
-        m_e->applyLayers(m_before, 0);
+        m_e->restoreRecallLayers(m_before);
         m_e->applyComposition(m_beforeComposition, 0);
         m_e->applyInteractions(m_beforeInteractions, 0);
     }
@@ -203,7 +203,7 @@ public:
 
 private:
     Engine *m_e;
-    int m_snapshot;
+    quint64 m_snapshot;
     QJsonArray m_before;
     QJsonObject m_beforeComposition;
     QJsonArray m_beforeInteractions;

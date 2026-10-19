@@ -6,6 +6,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QString>
+#include <algorithm>
 
 #ifndef GL_RGBA16
 #define GL_RGBA16 0x805B
@@ -28,6 +29,22 @@ inline QImage flippedVertically(const QImage &img)
 #else
     return img.mirrored(false, true);
 #endif
+}
+
+// Preserve integer source channels wider than 8 bits. RGBA64 is native-endian
+// straight RGBA, matching GL_UNSIGNED_SHORT. Float/HDR sources retain the existing
+// SDR conversion policy; higher integer precision is not color management.
+inline QImage::Format imageUploadFormat(const QImage &image)
+{
+    const QPixelFormat p = image.pixelFormat();
+    const bool high = p.typeInterpretation() != QPixelFormat::FloatingPoint &&
+                     std::max({p.redSize(), p.greenSize(), p.blueSize(), p.alphaSize()}) > 8;
+    return high ? QImage::Format_RGBA64 : QImage::Format_RGBA8888;
+}
+
+inline QImage prepareImageUpload(const QImage &image)
+{
+    return flippedVertically(image.convertToFormat(imageUploadFormat(image)));
 }
 
 // Compiles and links a program. Returns 0 on failure (log filled in).
@@ -77,7 +94,11 @@ struct MsaaBuffer {
 struct Texture2D {
     GLuint tex = 0;
     int w = 0, h = 0;
+    GLenum storageFormat = 0;
     void upload(const void *rgba, int w, int h);
+    void uploadImage(const QImage &image); // first row is bottom; preserves normalized 16-bit integer samples
     void uploadFloat(const float *rgba, int w, int h); // 32-bit float RGBA (audio for ISF)
     void destroy();
+private:
+    void uploadPixels(const void *rgba, int w, int h, GLenum format, GLenum type);
 };

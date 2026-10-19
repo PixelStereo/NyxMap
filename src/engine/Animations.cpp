@@ -610,6 +610,17 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
     }
 }
 
+void Engine::restoreLayerAnims(quint64 layer, std::vector<Animation> anims)
+{
+    {
+        Lock lock(&m_mutex);
+        const int index = indexOfId(layer);
+        if (index < 0 || isLocked(index)) return;
+        m_layers[size_t(index)]->anims = std::move(anims);
+    }
+    emit layerAnimsChanged(layer);
+}
+
 void Engine::setLayerAnims(quint64 layer, const std::vector<Animation> &anims)
 {
     {

@@ -1094,7 +1094,7 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err)
         profile.isValid() ? QStringLiteral("ICC: ") +
             (profile.description().isEmpty() ? QStringLiteral("embedded profile") : profile.description())
                           : QStringLiteral("color profile: untagged/unknown"));
-    img = flippedVertically(img.convertToFormat(QImage::Format_RGBA8888));
+    img = prepareImageUpload(img);
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);

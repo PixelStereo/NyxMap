@@ -194,7 +194,7 @@ void Engine::blit(GLuint tex, const RenderTarget &target)
 void Engine::updateSource(Layer &l, double dt)
 {
     if (!l.pendingImage.isNull()) {
-        l.sourceTex.upload(l.pendingImage.constBits(), l.pendingImage.width(), l.pendingImage.height());
+        l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
     }
     (void)dt;

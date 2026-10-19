@@ -359,6 +359,7 @@ public:
     // Undo snapshot recalls from the cue clock: serialize only existing layers
     // the recall can actually modify, rather than every layer in the show.
     QJsonArray captureRecallLayers(int snapshotIndex) const;
+    void restoreRecallLayers(const QJsonArray &states); // Undo: exact animation definitions and transport, too
     // Applies layer states (those not excluded): opacity, volume, roi, color, mapping and ISF numbers fade in
     // `fade` seconds, or in the time a state gives them ("timing": key → seconds, 0 a cut); sources and effect chains change at once; a layer that became visible fades in from 0,
     // one that becomes hidden fades out; layers removed since are recreated. Other layers are left alone, or with
@@ -484,6 +485,7 @@ public:
     // The layer's whole list: an animation already there (the same number) goes on from where it is; one that is new,
     // or turned on, starts from the beginning; one turned off stops
     void setLayerAnims(quint64 layer, const std::vector<Animation> &anims);
+    void restoreLayerAnims(quint64 layer, std::vector<Animation> anims); // Undo of a captured runtime state
     // One of them (by its number): replaced, added at `at` (-1: at the end), or removed (a: null); the others are left
     // as they are
     void setLayerAnim(quint64 layer, const QString &param, const Animation *a, int at = -1);

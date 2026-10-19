@@ -474,7 +474,10 @@ void PresetEditor::captureCategory(Engine::Preset &preset, quint64 layer, const 
     QJsonObject category;
     if (part == Engine::PartSource) category["source"] = state.value("source");
     if (part == Engine::PartEffects) category["fx"] = state.value("fx");
-    if (part == Engine::PartMasks) category["masks"] = state.value("masks");
+    if (part == Engine::PartMasks) {
+        category["masks"] = state.value("masks");
+        category["matte"] = state.value("matte");
+    }
     if (part == Engine::PartViewports) category["viewports"] = state.value("viewports");
     preset.categories[QStringLiteral("%1:%2").arg(layer).arg(part)] = category;
 }
@@ -519,6 +522,7 @@ void PresetEditor::updateSnapshot(quint64 target, quint64 layer, const QStringLi
                 const int part = path.section('/', 1).toInt();
                 const QString key = part == Engine::PartSource ? "source" : part == Engine::PartEffects ? "fx" : part == Engine::PartMasks ? "masks" : part == Engine::PartViewports ? "viewports" : part == Engine::PartAnimations ? "anims" : "";
                 if (!key.isEmpty()) { if (live.contains(key)) state[key] = live.value(key); else state.remove(key); }
+                if (part == Engine::PartMasks) state["matte"] = live.value("matte");
             } else if (liveParams.contains(path)) params[path] = liveParams.value(path);
         }
         state["params"] = params;
