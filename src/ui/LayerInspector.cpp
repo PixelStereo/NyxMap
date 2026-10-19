@@ -783,11 +783,13 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         else d << QStringLiteral("waiting for its first picture");
         break;
     case SourceType::Text:
+        d << QStringLiteral("Color space: Unspecified (generated)");
         kind = s.timecode ? QStringLiteral("Timecode") : QStringLiteral("Text");
         name = s.timecode ? TimecodeSettings::sourceName(s.timecode->source) : s.text.content.section('\n', 0, 0).left(40);
         d << QStringLiteral("%1 × %2").arg(s.text.width).arg(s.text.height);
         break;
     case SourceType::Layer: {
+        d << QStringLiteral("Color space: Inherited (not tagged)");
         kind = QStringLiteral("Layer");
         name = QStringLiteral("(gone)");
         for (const auto &c : s.candidates)

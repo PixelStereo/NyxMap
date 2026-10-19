@@ -9,7 +9,8 @@
 inline QString imageColorSpaceName(const QColorSpace &space)
 {
     if (!space.isValid()) return QStringLiteral("Unknown (untagged)");
-    if (!space.description().isEmpty()) return space.description();
+    const QString description = space.description().simplified();
+    if (!description.isEmpty()) return description;
     const auto primaries = QMetaEnum::fromType<QColorSpace::Primaries>();
     const char *name = primaries.valueToKey(int(space.primaries()));
     const char *curve = QMetaEnum::fromType<QColorSpace::TransferFunction>().valueToKey(int(space.transferFunction()));
