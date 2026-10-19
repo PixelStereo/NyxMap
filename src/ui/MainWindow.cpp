@@ -1244,13 +1244,14 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
             }
         }
         const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
         if (!m_engine->setLayerTimecode(i, TimecodeSettings{})) return false;
         {
             Engine::Lock lk(&m_engine->mutex());
             Layer *l = m_engine->layer(i);
             if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = QStringLiteral("Timecode");
         }
-        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Timecode Generator")));
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Timecode Generator"), beforeAnimations));
         selectLayer(i);
         refreshAll();
         return true;
@@ -1266,13 +1267,14 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
             }
         }
         const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
         if (!m_engine->setLayerText(i)) return false;
         {
             Engine::Lock lk(&m_engine->mutex());
             Layer *l = m_engine->layer(i);
             if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = QStringLiteral("Text");
         }
-        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Text Generator")));
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Text Generator"), beforeAnimations));
         selectLayer(i);
         refreshAll();
         return true;
@@ -1288,6 +1290,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
             }
         }
         const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
         QString err;
         if (!m_engine->setLayerInput(i, uri, &err)) {
             QMessageBox::warning(this, QStringLiteral("Input"), liveInputName(uri) + QStringLiteral(": ") + err);
@@ -1298,7 +1301,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
             Layer *l = m_engine->layer(i);
             if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = liveInputName(uri);
         }
-        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Input \"%1\"").arg(liveInputName(uri))));
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Input \"%1\"").arg(liveInputName(uri)), beforeAnimations));
         selectLayer(i);
         refreshAll();
         return true;
@@ -1316,9 +1319,10 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         if (!h.ok) return fail(QStringLiteral("not a valid ISF shader."));
         if (h.isFilter) { // an ISF effect joins the layer's (or the group's) effect chain
             const QJsonArray before = m_engine->effectsJson(i);
+            const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
             QString err;
             if (m_engine->addEffect(i, path, &err) < 0) return fail(err); // refused: the chain is unchanged
-            m_undo->push(new cmd::SetEffects(m_engine, i, before, QStringLiteral("Add FX %1").arg(fi.completeBaseName())));
+            m_undo->push(new cmd::SetEffects(m_engine, i, before, QStringLiteral("Add FX %1").arg(fi.completeBaseName()), beforeAnimations));
             selectLayer(i);
             refreshAll();
             return true;
@@ -1339,6 +1343,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         }
     }
     const QJsonObject before = m_engine->layerJson(i);
+    const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
     QString err;
     // A shader that does not compile is refused: the source shown stays, the error is said
     if (kIsfExt.contains(ext)) {
@@ -1349,7 +1354,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         Layer *l = m_engine->layer(i);
         if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = fi.completeBaseName();
     }
-    m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(fi.fileName())));
+    m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(fi.fileName()), beforeAnimations));
     selectLayer(i);
     refreshAll();
     if (!err.isEmpty()) statusBar()->showMessage(fi.fileName() + QStringLiteral(": ") + err.section('\n', 0, 0), 8000);
@@ -1391,9 +1396,10 @@ void MainWindow::relinkMedia(const QString &from, const QString &to)
         m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
         for (int i : layers) {
             const QJsonObject before = m_engine->layerJson(i);
+            const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
             QString err;
             if (m_engine->relinkLayerMedia(i, from, to, &err))
-                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace")));
+                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace"), beforeAnimations));
             else if (!err.isEmpty()) errors << err;
         }
         m_undo->endMacro();
@@ -1594,8 +1600,9 @@ void MainWindow::pasteLayerParams(int parts, const QString &what)
     if (targets.size() > 1) m_undo->beginMacro(text);
     for (int i : targets) {
         const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
         if (m_engine->applyLayerParts(i, m_paramClipboard, parts))
-            m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, text));
+            m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, text, beforeAnimations));
     }
     if (targets.size() > 1) m_undo->endMacro();
     refreshAll();
@@ -1610,12 +1617,13 @@ void MainWindow::useLayerAsSource(int target, int sourceRow)
     const quint64 id = m_engine->layerId(sourceRow);
     if (!id) return;
     const QJsonObject before = m_engine->layerJson(target);
+    const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(target));
     QString err;
     if (!m_engine->setLayerSourceLayer(target, id, LayerTap::PostFx, &err)) {
         if (!err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Source"), err);
         return;
     }
-    m_undo->push(new cmd::ReplaceLayer(m_engine, target, before, QStringLiteral("Use Layer as Source")));
+    m_undo->push(new cmd::ReplaceLayer(m_engine, target, before, QStringLiteral("Use Layer as Source"), beforeAnimations));
     selectLayer(target);
     refreshAll();
 }

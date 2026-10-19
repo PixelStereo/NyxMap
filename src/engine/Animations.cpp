@@ -96,6 +96,25 @@ double AnimTrack::keyValue(size_t k) const
     return k < keys.size() ? keys[k].v : std::numeric_limits<double>::quiet_NaN();
 }
 
+std::array<double, 3> AnimTrack::colorAt(double position) const
+{
+    if (keys.empty()) {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        return {nan, nan, nan};
+    }
+    if (position <= keys.front().t) return keys.front().rgb;
+    for (size_t k = 0; k + 1 < keys.size(); ++k) {
+        const AnimKey &a = keys[k], &b = keys[k + 1];
+        if (position >= b.t) continue;
+        if (a.curve == kAnimHold || b.t - a.t <= 1e-9) return a.rgb;
+        const double u = easeCurve((position - a.t) / (b.t - a.t), a.curve);
+        std::array<double, 3> rgb;
+        for (int c = 0; c < 3; ++c) rgb[c] = a.rgb[c] + (b.rgb[c] - a.rgb[c]) * u;
+        return rgb;
+    }
+    return keys.back().rgb;
+}
+
 static double passDuration(double d) { return std::max(kMinDuration, d); }
 
 double Animation::length() const
@@ -345,6 +364,10 @@ void Engine::applyAnimation(Animation &a)
     const double pos = a.position(), played = a.played();
     for (const AnimTrack &t : a.tracks) {
         if (!t.enabled || t.param.isEmpty()) continue;
+        if (t.color) {
+            setAnimColor(t.layer, t.param, t.colorAt(pos));
+            continue;
+        }
         const double v = t.valueAt(pos, played);
         if (std::isfinite(v) && setAnimParam(t.layer, t.param, v) && t.layer) releaseFromFades(t.layer, t.param);
     }
@@ -476,6 +499,136 @@ std::vector<Engine::AnimParam> Engine::animatableParams(quint64 layer) const
     return out;
 }
 
+std::vector<Engine::AnimParam> Engine::animatableColors(quint64 layer) const
+{
+    const auto params = animatableParams(layer);
+    std::vector<AnimParam> out;
+    for (const auto &p : params) {
+        if (p.colorComponent != 0 || !p.path.endsWith("/r")) continue;
+        const QString path = p.path.chopped(2);
+        bool complete = true;
+        for (int c = 1; c < 3; ++c) {
+            const QString channel = path + '/' + QChar("rgb"[c]);
+            complete &= std::any_of(params.begin(), params.end(), [&](const auto &x) {
+                return x.path == channel && x.colorComponent == c;
+            });
+        }
+        if (!complete) continue;
+        AnimParam target = p;
+        target.path = path;
+        target.label = p.label.chopped(2) + QStringLiteral(" (RGB)");
+        out.push_back(target);
+    }
+    return out;
+}
+
+bool Engine::animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const
+{
+    if (!value) return false;
+    Lock lk(&m_mutex);
+    std::array<double, 3> rgb;
+    for (int c = 0; c < 3; ++c) {
+        const Parameter *p = const_cast<Engine *>(this)->findParameter(layer, path + '/' + QChar("rgb"[c]));
+        if (!p || !p->isNumber() || p->colorComponent() != c) return false;
+        rgb[c] = p->number();
+    }
+    *value = rgb;
+    return true;
+}
+
+bool Engine::setAnimColor(quint64 layer, const QString &path, const std::array<double, 3> &value)
+{
+    for (const auto &l : m_layers) if (l->id == layer && l->locked) return false;
+    std::array<Parameter *, 3> channels;
+    for (int c = 0; c < 3; ++c) {
+        channels[c] = findParameter(layer, path + '/' + QChar("rgb"[c]));
+        const Parameter *p = channels[c];
+        if (!std::isfinite(value[c]) || !p || !p->animatable() || p->colorComponent() != c) return false;
+    }
+    // Validate the entire target first: a missing/replaced shader must never receive a partial color.
+    for (int c = 0; c < 3; ++c) {
+        channels[c]->setNumber(value[c]);
+        if (layer) releaseFromFades(layer, channels[c]->path());
+    }
+    return true;
+}
+
+Engine::AnimationTargetState Engine::captureAnimationTargets(quint64 layer) const
+{
+    Lock lk(&m_mutex);
+    AnimationTargetState state;
+    state.layer = layer;
+    for (const auto &l : m_layers) if (l->id == layer) state.layerAnimations = l->anims;
+    for (const auto &a : m_animations)
+        if (std::any_of(a.tracks.begin(), a.tracks.end(), [layer](const AnimTrack &t) { return t.layer == layer; }))
+            state.timelines.push_back(a);
+    return state;
+}
+
+void Engine::restoreAnimationTargets(const AnimationTargetState &state)
+{
+    Lock lk(&m_mutex);
+    if (!state.layer || indexOfId(state.layer) < 0) return;
+    restoreLayerAnims(state.layer, state.layerAnimations);
+    for (const auto &before : state.timelines) {
+        const int index = indexOfAnimation(before.id);
+        if (index < 0) continue;
+        Animation current = animation(index);
+        current.tracks = before.tracks;
+        setAnimation(index, current); // restore bindings/keys, retaining this timeline's playback clock
+    }
+}
+
+void Engine::remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes)
+{
+    if (prefixes.empty()) return;
+    Lock lk(&m_mutex);
+    bool localChanged = false, sharedChanged = false;
+    auto remap = [&](AnimTrack &track) {
+        if (track.layer != layer) return false;
+        for (const auto &[from, to] : prefixes) {
+            const bool match = track.param == from || track.param.startsWith(from + '/') ||
+                               (track.color && from.startsWith(track.param + '/'));
+            if (!match) continue;
+            if (to.isEmpty()) return true;
+            track.param = to + track.param.mid(from.size());
+            return false;
+        }
+        return false;
+    };
+    for (auto &l : m_layers) if (l->id == layer) {
+        for (auto it = l->anims.begin(); it != l->anims.end();) {
+            if (!it->tracks.empty()) {
+                const QString before = it->tracks.front().param;
+                if (remap(it->tracks.front())) { it = l->anims.erase(it); localChanged = true; continue; }
+                localChanged |= it->tracks.front().param != before;
+            }
+            ++it;
+        }
+    }
+    for (auto &a : m_animations) {
+        for (auto it = a.tracks.begin(); it != a.tracks.end();) {
+            const QString before = it->param;
+            if (remap(*it)) { it = a.tracks.erase(it); sharedChanged = true; continue; }
+            sharedChanged |= it->param != before;
+            ++it;
+        }
+    }
+    // Source/FX edits call this under the lock. Refresh editors after the new topology is complete.
+    if (localChanged || sharedChanged) QMetaObject::invokeMethod(this, [this, layer, localChanged, sharedChanged] {
+        if (localChanged) emit layerAnimsChanged(layer);
+        if (sharedChanged) emit animationsChanged();
+    }, Qt::QueuedConnection);
+}
+
+void Engine::removeSourceAnimations(Layer &layer)
+{
+    std::vector<std::pair<QString, QString>> removed;
+    for (const auto *parameter : layer.parameters())
+        if (partOf(parameter->path()) & (PartSource | PartTransport)) removed.push_back({parameter->path(), {}});
+    remapAnimationTargets(layer.id, removed);
+}
+
 bool Engine::parameterInfo(quint64 layer, const QString &path, ParamInfo *info) const
 {
     Lock lk(&m_mutex);
@@ -523,6 +676,10 @@ void Engine::applyLayerAnim(Layer &l, Animation &a)
     if (a.tracks.empty()) return;
     const AnimTrack &t = a.tracks.front();
     if (!t.enabled || t.param.isEmpty()) return;
+    if (t.color) {
+        setAnimColor(l.id, t.param, t.colorAt(a.position()));
+        return;
+    }
     const double v = t.valueAt(a.position(), a.played());
     Parameter *p = l.parameter(t.param);
     if (std::isfinite(v) && p && p->setNumber(v)) releaseFromFades(l.id, t.param);
@@ -806,6 +963,7 @@ Engine::AnimLoop animLoopFromKey(const QString &k) { return Engine::AnimLoop(key
 // [t, v, curve, "current", {"in": [dt, dv], "out": [dt, dv]}] (all but t and v when they matter) and its oscillator
 static void trackToJson(const AnimTrack &t, QJsonObject &o)
 {
+    if (t.color) o["type"] = QStringLiteral("color");
     if (!t.enabled) o["enable"] = false;
     if (t.oscillator) {
         o["oscillator"] = QJsonObject{{"wave", QString::fromLatin1(kWaveKeys[std::clamp(int(t.wave), 0, kAnimWaveCount - 1)])},
@@ -817,7 +975,9 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
     }
     QJsonArray keys;
     for (const AnimKey &k : t.keys) {
-        QJsonArray kv{k.t, k.v};
+        QJsonArray kv{k.t};
+        if (t.color) kv.append(QJsonArray{k.rgb[0], k.rgb[1], k.rgb[2]});
+        else kv.append(k.v);
         QJsonObject handles;
         if (k.hasIn()) handles["in"] = QJsonArray{k.inDt, k.inDv};
         if (k.hasOut()) handles["out"] = QJsonArray{k.outDt, k.outDv};
@@ -834,6 +994,7 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
 
 static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
 {
+    t.color = o.value("type").toString() == QLatin1String("color");
     t.enabled = o.value("enable").toBool(true);
     if (o.contains("oscillator")) {
         const QJsonObject w = o.value("oscillator").toObject();
@@ -849,9 +1010,17 @@ static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
     for (const QJsonValue &kv : o.value("keys").toArray()) {
         const QJsonArray k = kv.toArray();
         if (k.size() < 2) continue;
+        if (t.color) {
+            const auto rgb = k[1].toArray();
+            if (rgb.size() != 3 || !rgb[0].isDouble() || !rgb[1].isDouble() || !rgb[2].isDouble()) continue;
+        } else if (!k[1].isDouble()) continue;
         AnimKey key;
         key.t = std::clamp(k[0].toDouble(), 0.0, duration);
         key.v = k[1].toDouble();
+        if (t.color) {
+            const auto rgb = k[1].toArray();
+            for (int c = 0; c < 3; ++c) key.rgb[c] = std::clamp(rgb[c].toDouble(), 0.0, 1.0);
+        }
         key.curve = 3;
         for (int i = 2; i < k.size(); ++i) {
             const QJsonValue x = k[i];
@@ -868,6 +1037,13 @@ static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
         t.keys.push_back(key);
     }
     sortKeys(t);
+    if (t.color) {
+        t.oscillator = false;
+        for (auto &key : t.keys) {
+            key.isCurrentValue = false;
+            if (key.curve == kAnimBezier) key.curve = 3;
+        }
+    }
 }
 
 // The transport settings shared by a timeline and a layer's animation

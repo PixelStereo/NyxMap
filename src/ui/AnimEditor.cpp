@@ -1,5 +1,6 @@
 #include "AnimEditor.h"
 #include "Widgets.h"
+#include "ColorPicker.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -7,6 +8,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QKeyEvent>
+#include <QPointer>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
@@ -91,7 +94,7 @@ static bool sameKeys(const std::vector<AnimKey> &a, const std::vector<AnimKey> &
     for (size_t k = 0; k < a.size(); ++k) {
         const AnimKey &x = a[k], &y = b[k];
         if (x.t != y.t || x.v != y.v || x.curve != y.curve || x.isCurrentValue != y.isCurrentValue || x.inDt != y.inDt ||
-            x.inDv != y.inDv || x.outDt != y.outDt || x.outDv != y.outDv)
+            x.inDv != y.inDv || x.outDt != y.outDt || x.outDv != y.outDv || x.rgb != y.rgb)
             return false;
     }
     return true;
@@ -104,7 +107,7 @@ bool sameAnimation(const Animation &a, const Animation &b)
         return false;
     for (size_t k = 0; k < a.tracks.size(); ++k) {
         const AnimTrack &x = a.tracks[k], &y = b.tracks[k];
-        if (x.layer != y.layer || x.param != y.param || x.enabled != y.enabled || x.oscillator != y.oscillator ||
+        if (x.layer != y.layer || x.param != y.param || x.enabled != y.enabled || x.oscillator != y.oscillator || x.color != y.color ||
             x.wave != y.wave || x.period != y.period || x.center != y.center || x.amplitude != y.amplitude ||
             x.phase != y.phase || x.seed != y.seed || !sameKeys(x.keys, y.keys))
             return false;
@@ -711,6 +714,228 @@ void TimeRuler::wheelEvent(QWheelEvent *e)
 }
 
 // ---------------------------------------------------------------------------
+// ColorLane
+
+static QColor rgbColor(const std::array<double, 3> &rgb)
+{
+    return QColor::fromRgbF(std::clamp(rgb[0], 0.0, 1.0), std::clamp(rgb[1], 0.0, 1.0),
+                            std::clamp(rgb[2], 0.0, 1.0));
+}
+
+ColorLane::ColorLane(QWidget *parent) : QWidget(parent)
+{
+    setObjectName(QStringLiteral("colorLane"));
+    setMinimumHeight(90);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setFocusPolicy(Qt::StrongFocus);
+    setToolTip(QStringLiteral("Click an empty space: add a color key · drag a key: move in time · double-click: edit color\n"
+                              "Right-click: color, time, transition, delete · Delete: remove selected key · Ctrl/⌘+wheel: zoom time"));
+}
+
+void ColorLane::setTrack(const AnimTrack &track, double duration)
+{
+    m_track = track;
+    m_duration = std::max(.05, duration);
+    if (m_selected >= int(track.keys.size())) m_selected = -1;
+    update();
+}
+
+void ColorLane::setView(double t0, double t1) { m_t0 = t0; m_t1 = std::max(t0 + 1e-6, t1); update(); }
+void ColorLane::setPlayhead(double position, bool shown)
+{
+    if (position == m_playhead && shown == m_shown) return;
+    m_playhead = position; m_shown = shown; update();
+}
+double ColorLane::xOf(double t) const { return CurveLane::kMargin + (t - m_t0) / (m_t1 - m_t0) * (width() - 2 * CurveLane::kMargin); }
+double ColorLane::tOf(double x) const
+{
+    return std::clamp(m_t0 + (x - CurveLane::kMargin) / std::max(1, width() - 2 * CurveLane::kMargin) * (m_t1 - m_t0), 0.0, m_duration);
+}
+int ColorLane::keyAt(QPointF pos) const
+{
+    int best = -1;
+    double distance = 9;
+    for (size_t i = 0; i < m_track.keys.size(); ++i) {
+        const double d = std::abs(xOf(m_track.keys[i].t) - pos.x());
+        if (d <= distance) best = int(i), distance = d;
+    }
+    return best;
+}
+
+void ColorLane::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.fillRect(rect(), QColor(26, 26, 30));
+    const QRect strip(CurveLane::kMargin, 38, std::max(1, width() - 2 * CurveLane::kMargin), std::max(20, height() - 60));
+    p.setClipRect(strip);
+    if (!m_track.keys.empty()) {
+        // Sample the engine's RGB interpolation: hold and easing previews cannot diverge from playback.
+        for (int x = strip.left(); x <= strip.right(); ++x) {
+            p.setPen(rgbColor(m_track.colorAt(tOf(x))));
+            p.drawLine(x, strip.top(), x, strip.bottom());
+        }
+    } else {
+        p.fillRect(strip, QColor(44, 44, 50));
+        p.setPen(QColor(175, 175, 182));
+        p.drawText(strip, Qt::AlignCenter, QStringLiteral("Click to choose a color"));
+    }
+    p.setClipping(false);
+    p.setPen(QColor(74, 74, 82));
+    p.drawRect(strip.adjusted(0, 0, -1, -1));
+    const double step = tickStep(m_t1 - m_t0, strip.width(), 70);
+    for (double t = std::ceil(m_t0 / step) * step; t <= m_t1 + 1e-9; t += step) {
+        p.setPen(QColor(65, 65, 73));
+        p.drawLine(QPointF(xOf(t), height() - 18), QPointF(xOf(t), height()));
+    }
+    p.setRenderHint(QPainter::Antialiasing);
+    for (size_t i = 0; i < m_track.keys.size(); ++i) {
+        const auto &key = m_track.keys[i];
+        const double x = xOf(key.t);
+        if (x < 0 || x > width()) continue;
+        const bool selected = int(i) == m_selected;
+        p.setPen(QPen(selected ? QColor(Qt::white) : QColor(110, 110, 120), selected ? 2 : 1));
+        p.setBrush(rgbColor(key.rgb));
+        p.drawRoundedRect(QRectF(x - 7, 11, 14, 21), 3, 3);
+        p.drawLine(QPointF(x, 32), QPointF(x, strip.bottom()));
+        p.setBrush(selected ? Qt::white : QColor(160, 160, 170));
+        p.drawPolygon(QPolygonF({QPointF(x - 4, 33), QPointF(x + 4, 33), QPointF(x, 38)}));
+        if (selected) {
+            p.setPen(QColor(210, 210, 220));
+            p.drawText(QRectF(12, height() - 18, width() - 24, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                       QStringLiteral("%1 s   %2").arg(key.t, 0, 'f', 2).arg(rgbColor(key.rgb).name().toUpper()));
+        }
+    }
+    if (m_shown) {
+        p.setPen(QPen(kPlayhead, 1.5));
+        p.drawLine(QPointF(xOf(m_playhead), 0), QPointF(xOf(m_playhead), height()));
+    }
+}
+
+void ColorLane::editColor(int key, double time)
+{
+    const bool existing = key >= 0 && key < int(m_track.keys.size());
+    auto rgb = existing ? m_track.keys[size_t(key)].rgb : m_track.colorAt(time);
+    if (!std::isfinite(rgb[0])) rgb = m_current ? m_current() : std::array<double, 3>{1, 1, 1};
+    const QPointer<ColorLane> guard(this);
+    const QColor color = ColorPicker::getColor(rgbColor(rgb), this, QStringLiteral("Color Key"),
+                                               QStringLiteral("ui/colorPickerMode/timeline"), false);
+    if (!guard || !color.isValid()) return;
+    if (!existing) {
+        AnimKey added{time, 0, 0};
+        auto it = std::lower_bound(m_track.keys.begin(), m_track.keys.end(), time, [](const AnimKey &k, double t) { return k.t < t; });
+        key = int(it - m_track.keys.begin());
+        m_track.keys.insert(it, added);
+    }
+    m_track.keys[size_t(key)].rgb = {color.redF(), color.greenF(), color.blueF()};
+    m_selected = key;
+    update();
+    emit edited(m_track, 0);
+}
+
+void ColorLane::removeKey(int key)
+{
+    if (key < 0 || key >= int(m_track.keys.size())) return;
+    m_track.keys.erase(m_track.keys.begin() + key);
+    m_selected = m_drag = -1;
+    update();
+    emit edited(m_track, 0);
+}
+
+void ColorLane::mousePressEvent(QMouseEvent *e)
+{
+    m_press = e->position();
+    m_panning = e->button() == Qt::MiddleButton;
+    if (e->button() != Qt::LeftButton) return;
+    setFocus();
+    m_selected = m_drag = keyAt(e->position());
+    m_add = m_drag < 0;
+    if (m_drag >= 0) {
+        m_pressTime = m_track.keys[size_t(m_drag)].t;
+        m_gesture = ++s_gestures;
+    }
+    update();
+}
+
+void ColorLane::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_panning) {
+        emit panTime(-(e->position().x() - m_press.x()) / std::max(1, width() - 2 * CurveLane::kMargin) * (m_t1 - m_t0));
+        m_press = e->position();
+    } else if (m_drag >= 0 && m_drag < int(m_track.keys.size())) {
+        const double lo = m_drag > 0 ? m_track.keys[size_t(m_drag - 1)].t + 1e-6 : 0;
+        const double hi = m_drag + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(m_drag + 1)].t - 1e-6 : m_duration;
+        if (lo > hi) return;
+        auto &key = m_track.keys[size_t(m_drag)];
+        key.t = std::clamp(tOf(xOf(m_pressTime) + e->position().x() - m_press.x()), lo, hi);
+        update();
+        emit edited(m_track, m_gesture);
+    }
+}
+
+void ColorLane::mouseReleaseEvent(QMouseEvent *e)
+{
+    const bool add = m_add && e->button() == Qt::LeftButton && (e->position() - m_press).manhattanLength() < QApplication::startDragDistance();
+    m_add = m_panning = false;
+    m_drag = -1;
+    if (add) editColor(-1, tOf(e->position().x()));
+}
+void ColorLane::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_add = false; m_drag = -1;
+    const int key = keyAt(e->position());
+    if (key >= 0) editColor(key);
+}
+void ColorLane::keyPressEvent(QKeyEvent *e)
+{
+    if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) { removeKey(m_selected); e->accept(); }
+    else QWidget::keyPressEvent(e);
+}
+void ColorLane::wheelEvent(QWheelEvent *e)
+{
+    const double steps = (e->angleDelta().y() ? e->angleDelta().y() : e->angleDelta().x()) / 120.0;
+    if (e->modifiers() & Qt::ControlModifier) emit zoomTime(std::pow(1.2, steps), tOf(e->position().x()));
+    else if ((e->modifiers() & Qt::ShiftModifier) || e->angleDelta().x()) emit panTime(-steps * .1 * (m_t1 - m_t0));
+    else { e->ignore(); return; }
+    e->accept();
+}
+void ColorLane::contextMenuEvent(QContextMenuEvent *e)
+{
+    const int key = keyAt(e->pos());
+    auto *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (key < 0) menu->addAction(QStringLiteral("Add Color Key…"), this, [this, t = tOf(e->pos().x())] { editColor(-1, t); });
+    else {
+        m_selected = key; update();
+        menu->addAction(QStringLiteral("Color…"), this, [this, key] { editColor(key); });
+        menu->addAction(QStringLiteral("Time…"), this, [this, key] {
+            const double lo = key > 0 ? m_track.keys[size_t(key - 1)].t + 1e-6 : 0;
+            const double hi = key + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(key + 1)].t - 1e-6 : m_duration;
+            if (lo > hi) return;
+            bool ok = false;
+            const QPointer<ColorLane> guard(this);
+            const double t = QInputDialog::getDouble(this, QStringLiteral("Color Key"), QStringLiteral("Time (s)"),
+                                                     m_track.keys[size_t(key)].t, lo, hi, 3, &ok);
+            if (!guard || !ok) return;
+            m_track.keys[size_t(key)].t = t;
+            update(); emit edited(m_track, 0);
+        });
+        auto *curve = menu->addMenu(QStringLiteral("Transition to the next key"));
+        for (int c : {0, 1, 2, 3, 4, 5, int(kAnimHold)}) {
+            auto *action = curve->addAction(animCurveName(c), this, [this, key, c] {
+                m_track.keys[size_t(key)].curve = c;
+                update(); emit edited(m_track, 0);
+            });
+            action->setCheckable(true);
+            action->setChecked(m_track.keys[size_t(key)].curve == c);
+        }
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("Delete Key"), this, [this, key] { removeKey(key); });
+    }
+    menu->popup(e->globalPos());
+}
+
+// ---------------------------------------------------------------------------
 // TrackRow
 
 static NumberBox *numberBox(double lo, double hi, int decimals, double step, const QString &suffix = {})
@@ -809,6 +1034,19 @@ void TrackRow::build()
     m_lane->setCurrentValue([this] { return currentValue(); });
     box->addWidget(head);
     box->addWidget(m_lane, 1);
+    m_colorLane = new ColorLane;
+    m_colorLane->setCurrentColor([this] {
+        std::array<double, 3> rgb{1, 1, 1};
+        m_e->animColorValue(track().layer, track().param, &rgb);
+        return rgb;
+    });
+    box->addWidget(m_colorLane, 1);
+    connect(m_colorLane, &ColorLane::edited, this, [this](const AnimTrack &t, int gesture) {
+        track().keys = t.keys;
+        changed(false, gesture ? QStringLiteral("lane%1").arg(gesture) : QString());
+    });
+    connect(m_colorLane, &ColorLane::zoomTime, m_ed, &AnimEditor::zoomTime);
+    connect(m_colorLane, &ColorLane::panTime, m_ed, &AnimEditor::panTime);
 
     connect(m_kind, qOverload<int>(&QComboBox::activated), this, [this](int k) {
         const bool osc = k == 1;
@@ -866,11 +1104,14 @@ void TrackRow::fill()
 {
     m_filling = true;
     const AnimTrack &t = track();
+    m_kind->setVisible(!t.color);
+    m_lane->setVisible(!t.color);
+    m_colorLane->setVisible(t.color);
     m_kind->setCurrentIndex(t.oscillator ? 1 : 0);
     m_wave->setCurrentIndex(int(t.wave));
-    m_wave->setVisible(t.oscillator);
-    m_reseed->setVisible(t.oscillator && (t.wave == AnimWave::Random || t.wave == AnimWave::SmoothRandom));
-    m_osc->setVisible(t.oscillator);
+    m_wave->setVisible(!t.color && t.oscillator);
+    m_reseed->setVisible(!t.color && t.oscillator && (t.wave == AnimWave::Random || t.wave == AnimWave::SmoothRandom));
+    m_osc->setVisible(!t.color && t.oscillator);
     m_period->setValue(t.period);
     m_phase->setValue(t.phase);
     m_center->setValue(t.center);
@@ -879,7 +1120,7 @@ void TrackRow::fill()
     updateLane();
 }
 
-void TrackRow::setPlayhead(double pos, bool shown) { m_lane->setPlayhead(pos, shown); }
+void TrackRow::setPlayhead(double pos, bool shown) { m_lane->setPlayhead(pos, shown); m_colorLane->setPlayhead(pos, shown); }
 
 void TrackRow::setLive(double captured, bool running)
 {
@@ -903,6 +1144,7 @@ void TrackRow::updateLane()
 {
     const auto [lo, hi] = range();
     m_lane->setTrack(track(), m_ed->m_edit.duration, lo, hi);
+    m_colorLane->setTrack(track(), m_ed->m_edit.duration);
     applyView();
 }
 
@@ -911,6 +1153,7 @@ void TrackRow::applyView()
     double vlo = 0, vhi = 1;
     m_ed->viewOfLane(m_i, m_lane->fullLo(), m_lane->fullHi(), &vlo, &vhi);
     m_lane->setView(m_ed->m_t0, m_ed->m_t1, vlo, vhi);
+    m_colorLane->setView(m_ed->m_t0, m_ed->m_t1);
 }
 
 void TrackRow::changed(bool lane, const QString &mergeKey)

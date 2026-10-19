@@ -161,14 +161,16 @@ private:
 class ReplaceLayer : public QUndoCommand
 {
 public:
-    ReplaceLayer(Engine *e, int index, const QJsonObject &before, const QString &text);
-    void undo() override { m_e->replaceLayerJson(m_index, m_before); }
+    ReplaceLayer(Engine *e, int index, const QJsonObject &before, const QString &text,
+                 Engine::AnimationTargetState beforeAnimations = {});
+    void undo() override;
     void redo() override;
 
 private:
     Engine *m_e;
     int m_index;
     QJsonObject m_before, m_after;
+    Engine::AnimationTargetState m_beforeAnimations, m_afterAnimations;
     bool m_first = true;
 };
 
@@ -215,14 +217,16 @@ private:
 class SetEffects : public QUndoCommand
 {
 public:
-    SetEffects(Engine *e, int index, const QJsonArray &before, const QString &text);
-    void undo() override { m_e->setEffectsJson(m_index, m_before); }
+    SetEffects(Engine *e, int index, const QJsonArray &before, const QString &text,
+               Engine::AnimationTargetState beforeAnimations = {});
+    void undo() override;
     void redo() override;
 
 private:
     Engine *m_e;
     int m_index;
     QJsonArray m_before, m_after;
+    Engine::AnimationTargetState m_beforeAnimations, m_afterAnimations;
     bool m_first = true;
 };
 

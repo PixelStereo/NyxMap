@@ -462,6 +462,15 @@ public:
     void controlAnimation(quint64 id, AnimAction action, double time = 0, AnimLoop loop = AnimLoop::Loop, int repeat = 0);
     // The numbers of a layer (0: the composition) a timeline can drive, with their ranges
     std::vector<AnimParam> animatableParams(quint64 layer) const;
+    std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
+    bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
+    struct AnimationTargetState {
+        quint64 layer = 0;
+        std::vector<Animation> layerAnimations;
+        std::vector<Animation> timelines; // only timelines touching this layer; definitions, with runtime retained on restore
+    };
+    AnimationTargetState captureAnimationTargets(quint64 layer) const;
+    void restoreAnimationTargets(const AnimationTargetState &state);
     // The parameters of a layer (0: the composition), as they declare themselves (Parameter.h)
     std::vector<ParamInfo> parameters(quint64 layer) const;
     bool parameterInfo(quint64 layer, const QString &path, ParamInfo *p) const; // false: it has none at that address
@@ -966,6 +975,9 @@ private:
     // A number of a layer an animation sets: the snapshots' fades running leave it to it from now on (lock held)
     void releaseFromFades(quint64 layer, const QString &path);
     bool setAnimParam(quint64 layer, const QString &path, double v); // lock held
+    bool setAnimColor(quint64 layer, const QString &path, const std::array<double, 3> &value); // lock held
+    void remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes); // empty replacement removes
+    void removeSourceAnimations(Layer &layer); // lock held, before detaching the source
     const std::vector<Parameter *> &compositionParameters(); // its opacity, volume, speed (lock held)
     Parameter *findParameter(quint64 layer, const QString &path); // a layer's (0: the composition's); lock held
     std::vector<std::unique_ptr<Parameter>> m_compParams;

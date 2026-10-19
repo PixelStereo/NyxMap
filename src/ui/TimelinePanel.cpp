@@ -45,6 +45,7 @@ protected:
 private:
     void fillParams(); // the numbers of its layer, in the menu
     void selectParam(const QString &path);
+    void selectColor(const QString &path);
     TimelineEditor *m_tl;
     FlagBox *m_on = nullptr;
     QComboBox *m_layer = nullptr;
@@ -54,14 +55,14 @@ private:
 void TimelineTrackRow::buildHeader(QGridLayout *g)
 {
     m_on = new FlagBox;
-    m_on->setToolTip(QStringLiteral("On: the track drives its number while the timeline plays"));
+    m_on->setToolTip(QStringLiteral("On: the track drives its parameter while the timeline plays"));
     m_layer = new QComboBox;
     m_layer->setToolTip(QStringLiteral("The layer driven (or the composition)"));
     auto *del = new QPushButton(QStringLiteral("✕"));
     del->setFixedWidth(26);
     del->setToolTip(QStringLiteral("Delete the track"));
     m_param = new QPushButton;
-    m_param->setToolTip(QStringLiteral("The number driven: a category, then the number in it"));
+    m_param->setToolTip(QStringLiteral("Choose a color (RGB) or an individual numeric parameter"));
     m_param->setMenu(new QMenu(m_param));
     m_param->setStyleSheet(QStringLiteral("QPushButton { text-align:left; padding-left:6px; }"));
     g->addWidget(m_on, 0, 0);
@@ -79,6 +80,7 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
         const auto &params = m_ed->paramsOf(track().layer);
         // Its first number, from where it is
         track().param = params.empty() ? QString() : params.front().path;
+        track().color = false;
         track().keys = {AnimKey{0, currentValue(), 3}};
         fillParams();
         fill();
@@ -104,19 +106,44 @@ void TimelineTrackRow::fillParams()
 {
     QMenu *menu = m_param->menu();
     menu->clear();
+    const auto colors = m_e->animatableColors(track().layer);
+    if (!colors.empty()) {
+        auto *colorMenu = menu->addMenu(QStringLiteral("Colors (RGB)"));
+        addParamMenu(colorMenu, colors, [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+            auto *a = into->addAction(text, this, [this, path = p.path] { selectColor(path); });
+            a->setCheckable(true);
+            a->setChecked(track().color && p.path == track().param);
+        });
+        menu->addSeparator();
+    }
     addParamMenu(menu, m_ed->paramsOf(track().layer), [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
         QAction *a = into->addAction(text, this, [this, path = p.path] { selectParam(path); });
         a->setCheckable(true);
-        a->setChecked(p.path == track().param);
+        a->setChecked(!track().color && p.path == track().param);
     });
 }
 
 void TimelineTrackRow::selectParam(const QString &path)
 {
+    track().color = false;
     track().param = path;
     track().keys = {AnimKey{0, currentValue(), 3}};
     m_e->waveAround(track().layer, path, &track().center, &track().amplitude);
     fillParams(); // the check mark
+    fill();
+    changed();
+}
+
+void TimelineTrackRow::selectColor(const QString &path)
+{
+    auto &t = track();
+    t.param = path;
+    t.color = true;
+    t.oscillator = false;
+    AnimKey key{0, 0, 0};
+    m_e->animColorValue(t.layer, path, &key.rgb);
+    t.keys = {key};
+    fillParams();
     fill();
     changed();
 }
@@ -132,8 +159,9 @@ void TimelineTrackRow::fill()
         li = m_layer->count() - 1;
     }
     m_layer->setCurrentIndex(li);
-    QString label = t.param.isEmpty() ? QStringLiteral("(choose a number)") : QStringLiteral("(%1 — not on this layer)").arg(t.param);
-    for (const Engine::AnimParam &p : m_ed->paramsOf(t.layer))
+    QString label = t.param.isEmpty() ? QStringLiteral("(choose a parameter)") : QStringLiteral("(%1 — not on this layer)").arg(t.param);
+    const auto params = t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
+    for (const Engine::AnimParam &p : params)
         if (p.path == t.param) label = p.label;
     m_param->setText(label);
     m_filling = false;
@@ -150,8 +178,8 @@ TimelineEditor::TimelineEditor(Engine *engine, QUndoStack *undo, QWidget *parent
     m_addTrack = new QPushButton(QStringLiteral("+ Track"));
     m_addTrack->setToolTip(QStringLiteral("A track for the layer selected in the layer list"));
     bottom->addWidget(m_addTrack);
-    auto *how = new QLabel(QStringLiteral("Lane: click: a key · drag a key: move it (Shift: one axis) · drag elsewhere: draw · "
-                                          "double-click a key: delete · right-click: curve (Bézier…), value, start from the current value"));
+    auto *how = new QLabel(QStringLiteral("Color lane: click to add · drag to move · double-click to edit color · right-click for transitions.\n"
+                                          "Curve lane: click or draw keys · double-click to delete · right-click for curve and value."));
     how->setStyleSheet("color:#8a8a90; font-size:11px;");
     bottom->addWidget(how, 1);
     mainLayout()->addLayout(bottom);

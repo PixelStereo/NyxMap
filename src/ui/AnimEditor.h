@@ -29,6 +29,44 @@ class AnimEditor;
 
 class QMenu;
 
+// One RGB track: the strip uses exactly the same interpolation as playback.
+class ColorLane : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ColorLane(QWidget *parent = nullptr);
+    void setTrack(const AnimTrack &track, double duration);
+    void setView(double t0, double t1);
+    void setPlayhead(double position, bool shown);
+    void setCurrentColor(std::function<std::array<double, 3>()> f) { m_current = std::move(f); }
+signals:
+    void edited(const AnimTrack &track, int gesture);
+    void zoomTime(double factor, double anchor);
+    void panTime(double seconds);
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
+    void contextMenuEvent(QContextMenuEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
+    void wheelEvent(QWheelEvent *) override;
+private:
+    double xOf(double time) const;
+    double tOf(double x) const;
+    int keyAt(QPointF pos) const;
+    void editColor(int key, double time = 0);
+    void removeKey(int key);
+    AnimTrack m_track;
+    double m_duration = 4, m_t0 = 0, m_t1 = 4, m_playhead = 0;
+    bool m_shown = false, m_panning = false, m_add = false;
+    int m_selected = -1, m_drag = -1, m_gesture = 0;
+    QPointF m_press;
+    double m_pressTime = 0;
+    std::function<std::array<double, 3>()> m_current;
+};
+
 // The name of a wave, of a key's curve
 QString animWaveName(AnimWave w);
 QString animCurveName(int curve);
@@ -168,6 +206,7 @@ private:
     NumberBox *m_period = nullptr, *m_center = nullptr, *m_amp = nullptr, *m_phase = nullptr;
     QPushButton *m_reseed = nullptr;
     class CurveLane *m_lane = nullptr;
+    ColorLane *m_colorLane = nullptr;
 };
 
 class AnimEditor : public QWidget

@@ -10,6 +10,7 @@
 #include <QString>
 #include <QtGlobal>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -36,6 +37,7 @@ struct AnimKey {
     double inDt = 0, inDv = 0, outDt = 0, outDv = 0;
     bool hasIn() const { return inDt != 0 || inDv != 0; }
     bool hasOut() const { return outDt != 0 || outDv != 0; }
+    std::array<double, 3> rgb{0, 0, 0}; // color tracks: one RGB value at this time, sharing the outgoing easing
 };
 
 struct AnimTrack {
@@ -54,6 +56,8 @@ struct AnimTrack {
     void bezierHandles(size_t k, double *t1, double *v1, double *t2, double *v2) const;
     // Where it is (not saved): the value read when the animation started, for a first key "current value"
     double captured = std::numeric_limits<double>::quiet_NaN();
+    bool color = false; // drives param/r, param/g, param/b together; alpha is left alone
+    std::array<double, 3> colorAt(double position) const;
 };
 
 struct Animation {

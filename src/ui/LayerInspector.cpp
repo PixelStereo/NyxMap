@@ -472,16 +472,18 @@ void LayerInspector::editEffects(const QString &text, const std::function<void()
         return;
     }
     const QJsonArray before = m_engine->effectsJson(m_layer);
+    const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(m_layer));
     op();
-    m_undo->push(new cmd::SetEffects(m_engine, m_layer, before, text));
+    m_undo->push(new cmd::SetEffects(m_engine, m_layer, before, text, beforeAnimations));
 }
 
 void LayerInspector::editSource(const QString &text, const std::function<void()> &op)
 {
     if (m_engine->isLocked(m_layer)) return;
     const QJsonObject before = m_engine->layerJson(m_layer);
+    const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(m_layer));
     op();
-    m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, before, text));
+    m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, before, text, beforeAnimations));
 }
 
 // --- Building ----------------------------------------------------------------
@@ -993,7 +995,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     // Text generator: the text typed here, and how it is set
     if (s.type == SourceType::Text) {
         // Edits apply at once; the undo step is pushed when the editing pauses
-        struct Pending { QJsonObject before; QString label; bool has = false; };
+        struct Pending { QJsonObject before; Engine::AnimationTargetState animations; QString label; bool has = false; };
         auto pend = std::make_shared<Pending>();
         auto *commit = new QTimer(g);
         commit->setSingleShot(true);
@@ -1001,13 +1003,14 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         connect(commit, &QTimer::timeout, this, [this, pend] {
             if (!pend->has) return;
             pend->has = false;
-            m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, pend->before, pend->label));
+            m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, pend->before, pend->label, pend->animations));
         });
         auto live = [this, pend, commit](const QString &label, const std::function<void()> &op) {
             if (m_engine->isLocked(m_layer)) return;
             if (!pend->has) {
                 pend->has = true;
                 pend->before = m_engine->layerJson(m_layer);
+                pend->animations = m_engine->captureAnimationTargets(m_engine->layerId(m_layer));
             }
             pend->label = label;
             op();
@@ -2464,6 +2467,7 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
         connect(picker, &SearchPicker::picked, this, [this](const QString &p) {
             if (m_engine->isLocked(m_layer)) return;
             const QJsonArray before = m_engine->effectsJson(m_layer);
+            const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(m_layer));
             QString err;
             const int fx = m_engine->addEffect(m_layer, p, &err);
             if (fx < 0) { // refused: the chain is unchanged, nothing to undo
@@ -2473,7 +2477,7 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
             }
             m_selectedEffect = fx;
             m_undo->push(new cmd::SetEffects(m_engine, m_layer, before,
-                                             QStringLiteral("Add FX %1").arg(QFileInfo(p).completeBaseName())));
+                                             QStringLiteral("Add FX %1").arg(QFileInfo(p).completeBaseName()), beforeAnimations));
             QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
         });
         picker->popup(add->mapToGlobal(QPoint(0, add->height())));
