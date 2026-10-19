@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "ColorInfo.h"
 #include "Commands.h"
+#include "color_reference.h"
 #include <QApplication>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -19,6 +20,15 @@ int main(int argc, char **argv)
     check(engine.parameterValue(id, "output/input_space") == "srgb" &&
           engine.parameterValue(id, "output/space") == "same" &&
           engine.parameterValue(id, "output/exposure").toDouble() == 0, "legacy projects default to unchanged output");
+    const auto gray=colorReference::convert({.5,.5,.5},"srgb","linear709");
+    check(std::abs(gray[0]-.21404114048223255)<1e-12, "reference matches the standard sRGB gray value");
+    const auto p3red=colorReference::solve(colorReference::rgbToXyz(false),
+        colorReference::multiply(colorReference::rgbToXyz(true),{1,0,0}));
+    check(std::abs(p3red[0]-1.22494017628056)<1e-10 &&
+          std::abs(p3red[1]+.0420569547096882)<1e-10,
+          "reference derives known P3-to-Rec709 gamut coordinates from chromaticities");
+    const auto gamma=colorReference::convert({.25,.25,.25},"linear709","rec709-g24");
+    check(std::abs(gamma[0]-.5612310241546865)<1e-12, "reference uses the analytical Gamma 2.4 curve");
     QUndoStack undo;
     check(cmd::setValues(&undo, &engine, id,
           {{"output/input_space", "displayp3"}, {"output/space", "linear709"}, {"output/exposure", 1.25}},

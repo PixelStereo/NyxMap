@@ -1,6 +1,6 @@
 #include "Engine.h"
 #include "ColorInfo.h"
-#include <QColorTransform>
+#include "color_reference.h"
 #include <QTemporaryDir>
 #include <cmath>
 #include <cstdio>
@@ -34,44 +34,49 @@ int runOutputColorTests(Engine &engine)
     QString error;
     check(engine.setLayerImage(layer,path,&error), "load reference image");
     engine.renderFrame();
-    auto read = [&](quint64 viewport) {
+    auto read = [&](quint64 viewport, bool preOutput=false) {
         std::vector<quint16> pixels(size_t(width)*4);
         engine.runGl([&] {
             Engine::Lock lock(&engine.mutex());
             Layer *v = engine.layer(engine.indexOfId(viewport));
             auto f=gl();
-            v->vpOut[v->vpPublished.load()].bind();
+            GLuint sourceFbo=0;
+            if(preOutput) {
+                f->glGenFramebuffers(1,&sourceFbo);
+                f->glBindFramebuffer(GL_FRAMEBUFFER,sourceFbo);
+                f->glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,v->finalTex,0);
+            } else v->vpOut[v->vpPublished.load()].bind();
             f->glReadPixels(0, height/2, width, 1, GL_RGBA, GL_UNSIGNED_SHORT,pixels.data());
             f->glBindFramebuffer(GL_FRAMEBUFFER,0);
+            if(sourceFbo) f->glDeleteFramebuffers(1,&sourceFbo);
         });
         return pixels;
     };
     const auto identity=read(first);
+    // Compare transforms against their actual input texture, before the neutral
+    // output mesh introduces any additional sampling/UNORM rounding.
+    const auto sourceSamples=read(first,true);
     const QImage composition=engine.grabOutput();
     int levels=1;
     for(int x=1;x<width;++x) if(identity[size_t(x)*4]>identity[size_t(x-1)*4]) ++levels;
     check(levels>1000,"16-bit reference gradient retains more than 1000 levels through compositing");
     const int added = engine.addViewport("Independent output", {width,height});
     const quint64 second = engine.layerId(added);
-    auto profile=[](const QString &key) {
-        if(key=="linear709") return QColorSpace(QColorSpace::SRgbLinear);
-        if(key=="displayp3") return QColorSpace(QColorSpace::DisplayP3);
-        if(key=="rec709-g24") return QColorSpace(QColorSpace::Primaries::SRgb,2.4f);
-        return QColorSpace(QColorSpace::SRgb);
-    };
-    // Qt's independent ICC transform is the reference, not a copy of our GLSL.
+    // Analytical D65/chromaticity reference: older Qt versions approximate
+    // gamma conversions and are not a stable oracle at 16-bit precision.
     for(const QString &input:outputColorSpaceKeys()) {
         for(const QString &output:outputColorSpaceKeys()) {
             engine.setParameter(first,"output/input_space",input);
             engine.setParameter(first,"output/space",output);
             engine.renderFrame();
             const auto actual=read(first);
-            const auto conversion=profile(input).transformationToColorSpace(profile(output));
             int worst=0;
             for(int x=0;x<width;++x) {
                 const size_t k=size_t(x)*4;
-                const auto reference=conversion.map(QRgba64::fromRgba64(identity[k],identity[k+1],identity[k+2],65535));
-                const int expected[]={reference.red(),reference.green(),reference.blue(),65535};
+                const auto reference=colorReference::convert(
+                    {sourceSamples[k]/65535.,sourceSamples[k+1]/65535.,sourceSamples[k+2]/65535.},input,output);
+                const int expected[]={int(std::lround(reference[0]*65535)),int(std::lround(reference[1]*65535)),
+                                      int(std::lround(reference[2]*65535)),65535};
                 for(int c=0;c<4;++c) worst=std::max(worst,std::abs(int(actual[k+c])-expected[c]));
             }
             if(worst>16) std::printf("Color transform %s -> %s: worst error %d/65535\n",qPrintable(input),qPrintable(output),worst);
@@ -88,7 +93,7 @@ int runOutputColorTests(Engine &engine)
     bool doubled=true;
     for(int x=0;x<width;++x) for(int c=0;c<3;++c) {
         const size_t k=size_t(x)*4+c;
-        doubled=doubled && std::abs(int(exposed[k])-std::min(65535,int(identity[k])*2))<=2;
+        doubled=doubled && std::abs(int(exposed[k])-std::min(65535,int(sourceSamples[k])*2))<=2;
     }
     check(doubled,"exposure doubles linear RGB before final encoding and clips SDR highlights");
 
