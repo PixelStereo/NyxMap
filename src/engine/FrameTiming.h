@@ -13,8 +13,22 @@
 #include <QtGlobal>
 #include <array>
 #include <atomic>
+#include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <vector>
+
+// Wall time advances show clocks without replaying missed frames. Shader integration
+// stays bounded; TIME still receives the whole elapsed interval. Manual renders keep
+// their historical bounded step, independent of how long the caller waited.
+struct FrameStep {
+    double elapsed = 0, shaderDelta = 0;
+    static FrameStep fromElapsed(double seconds, bool threaded) {
+        seconds = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+        const double bounded = std::min(seconds, 0.25);
+        return {threaded ? seconds : bounded, bounded};
+    }
+};
 
 // The render thread's pace without a vertical sync to wait for: absolute deadlines, one period apart
 struct FramePacer {

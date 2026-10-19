@@ -796,18 +796,27 @@ void Engine::setCompositionSize(QSize s)
     emit compositionSizeChanged(s);
 }
 
-void Engine::updateTimeScale() { timeScale() = m_paused.load() ? 0.0 : m_compositionSpeed.load(); }
+void Engine::updateTimeScale() { timeScale() = paused() ? 0.0 : m_compositionSpeed.load(); }
 
 void Engine::setCompositionSpeed(double speed)
 {
+    Lock lk(&m_mutex);
     m_compositionSpeed = std::clamp(speed, 0.0, 10.0);
     updateTimeScale();
 }
 
 void Engine::setPaused(bool on)
 {
+    Lock lk(&m_mutex);
+    m_emergencyHeld = false;
     m_paused = on;
     updateTimeScale();
+}
+
+void Engine::resumeAfterStop()
+{
+    Lock lk(&m_mutex);
+    if (m_emergencyHeld.exchange(false)) updateTimeScale();
 }
 
 double Engine::compositionOpacityTarget() const

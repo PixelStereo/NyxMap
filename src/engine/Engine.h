@@ -75,7 +75,7 @@ public:
     bool start();          // starts the render thread (returns false if the platform does not support it)
     void stop();
     // Emergency stop: cancel every sequence/WAIT, fade, running animation and media transport;
-    // retain the currently visible parameter values (no snap back to an earlier cue).
+    // retain parameter values and source/effect frames. GO/Play/recall or releasing Pause resumes rendering.
     void stopShowPlayback();
     bool isThreaded() const { return m_threaded; }
     // The render thread could not make its OpenGL context current: nothing is rendered (start() again to retry)
@@ -592,7 +592,7 @@ public:
     // sequences. Pause holds it at 0 and gives the speed back when released.
     double compositionSpeed() const { return m_compositionSpeed.load(); }
     void setCompositionSpeed(double speed);
-    bool paused() const { return m_paused.load(); }
+    bool paused() const { return m_paused.load() || m_emergencyHeld.load(); }
     void setPaused(bool on);
     double compositionOpacity() const { return m_compositionOpacity.load(); }
     double compositionOpacityTarget() const;
@@ -721,6 +721,7 @@ private:
     void applyParams(Layer &l, const QJsonObject &params, const QJsonObject &timing, const QJsonObject &easing, double fade,
                      FadeJob &job, bool showing, bool hiding, bool chain, const QJsonObject &delays = {});
     friend class RenderThread;
+    friend class Sequencer;
     friend struct ScopedCurrent;
 
     struct Garbage; // detached resources, released in the render thread
@@ -768,7 +769,7 @@ private:
     void scheduleRecall(quint64 layer, const QString &path, const QJsonValue &value, double seconds,
                         const QString &easing, double delay, bool showing = false, bool hiding = false);
     void cancelScheduledRecall(quint64 layer, const QString &path);
-    void stepShowRecalls(double dt, double compositionDt);
+    void stepShowRecalls(double dt);
     void stepScheduledRecall(double dt); // under engine mutex: execute due recalls only
 
     QJsonObject snapshotToJson(const Snapshot &m, const QString &projectDir) const;
@@ -881,7 +882,8 @@ private:
     std::vector<uint8_t> m_renderMark; // render pass: layer already rendered this frame (reused, no allocation)
 
     std::atomic<double> m_compositionSpeed{1.0};
-    std::atomic<bool> m_paused{false};
+    std::atomic<bool> m_paused{false}, m_emergencyHeld{false};
+    void resumeAfterStop(); // explicit recall/Play releases Escape, never an operator Pause
     void updateTimeScale();
     std::atomic<double> m_compositionOpacity{1.0};
     double m_compositionOpacityTarget = 1.0, m_compositionOpacitySpeed = 0.0; // units per second (0 = immediate)

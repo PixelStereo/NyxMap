@@ -119,7 +119,7 @@ QWidget *CompositionPanel::buildCompositionLevel()
     m_pause = new QPushButton(QStringLiteral("Pause"));
     m_pause->setCheckable(true);
     m_pause->setMinimumHeight(34);
-    m_pause->setToolTip(QStringLiteral("Stops everything that moves in time (speed 0) / back to the current speed"));
+    m_pause->setToolTip(QStringLiteral("Hold show clocks and source/effect frames, including live inputs. Release to resume; blackout stays available"));
     m_pause->setStyleSheet("QPushButton { font-weight:bold; } QPushButton:checked { background:#b8860b; color:white; }");
     m_speed = new SliderField;
     m_speed->setRange(0, 10);

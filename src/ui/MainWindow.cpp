@@ -1845,7 +1845,7 @@ void MainWindow::setInOutAtPosition(bool in)
 void MainWindow::emergencyStop()
 {
     m_engine->stopShowPlayback();
-    statusBar()->showMessage(QStringLiteral("STOP ALL — sequences, waits, fades, timelines and media paused"), 5000);
+    statusBar()->showMessage(QStringLiteral("STOP ALL — cues canceled, source/effect frames held. Play, recall or release Pause to resume"), 5000);
 }
 
 void MainWindow::sequenceGo() { m_engine->sequencer().go(); }

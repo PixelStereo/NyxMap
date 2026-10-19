@@ -3,6 +3,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import csv
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -56,6 +59,73 @@ class EnduranceAnalysisTest(unittest.TestCase):
         self.assertIn("older files may silently log zero", result)
         self.assertIn("9 telemetry events lost", result)
         self.assertIn("correlation is incomplete", result)
+
+
+class RealtimeAcceptanceTest(unittest.TestCase):
+    def rows(self):
+        base = {"frames": "60", "audio_callback_count_lifetime": "100",
+                "audio_callback_p99_ms_lifetime": "1", "audio_callback_over_quarter_lifetime": "1",
+                "audio_callback_over_budget_lifetime": "0", "render_lock_wait_p99_ms_lifetime": "1",
+                "render_lock_hold_p99_ms_lifetime": "8", "interaction_events_dropped_lifetime": "0",
+                "ffmpeg_errors_total": "0", "late_events_lost": "0", "journal_lost": "0"}
+        return [base, dict(base, audio_callback_count_lifetime="200")]
+
+    def test_roadmap_threshold_boundaries(self):
+        self.assertEqual(analysis.realtime_failures(self.rows()), [])
+        for key in ("audio_callback_p99_ms_lifetime", "render_lock_wait_p99_ms_lifetime",
+                    "render_lock_hold_p99_ms_lifetime", "interaction_events_dropped_lifetime",
+                    "audio_callback_over_budget_lifetime", "ffmpeg_errors_total", "journal_lost"):
+            rows = self.rows()
+            rows[-1][key] = str(float(rows[-1][key]) + .001)
+            self.assertTrue(analysis.realtime_failures(rows), key)
+        rows = self.rows()
+        rows[0]["audio_callback_over_quarter_lifetime"] = "2"
+        self.assertTrue(analysis.realtime_failures(rows))
+
+    def test_incomplete_or_invalid_data_never_passes(self):
+        self.assertTrue(analysis.realtime_failures([]))
+        for invalid in ("", "nan", "inf", "-1", "bad"):
+            rows = self.rows()
+            rows[-1]["render_lock_hold_p99_ms_lifetime"] = invalid
+            self.assertTrue(analysis.realtime_failures(rows), invalid)
+        rows = self.rows()
+        del rows[-1]["audio_callback_over_budget_lifetime"]
+        self.assertTrue(analysis.realtime_failures(rows))
+
+    def test_cli_exit_status_and_legacy_telemetry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.csv"
+            def write(rows):
+                with path.open("w", newline="", encoding="utf-8") as stream:
+                    stream.write('# {"schema":2}\n')
+                    writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+                    writer.writeheader()
+                    writer.writerows(rows)
+            rows = self.rows()
+            write(rows)
+            command = [sys.executable, str(Path(analysis.__file__)), str(path), "--fps", "60", "--check"]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Realtime acceptance: PASS", result.stdout)
+            rows[-1]["interaction_events_dropped_lifetime"] = "1"
+            write(rows)
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Realtime acceptance: FAIL", result.stdout)
+            write([{"frames": "60"}])
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("missing/invalid", result.stdout)
+
+    def test_stopped_audio_and_counter_reset_never_pass(self):
+        rows = self.rows()
+        rows[-1]["audio_callback_count_lifetime"] = "100"
+        self.assertTrue(analysis.realtime_failures(rows))
+        rows[-1]["audio_callback_count_lifetime"] = "50"
+        self.assertTrue(analysis.realtime_failures(rows))
+        for row in rows:
+            row["frames"] = "0"
+        self.assertTrue(analysis.realtime_failures(rows))
 
 
 if __name__ == "__main__":

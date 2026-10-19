@@ -421,6 +421,7 @@ void Engine::recallPreset(int i)
 {
     const Preset p = preset(i);
     if (!p.id) return;
+    resumeAfterStop();
     const double fade = std::max(0.0, p.fade);
     std::map<quint64, QJsonObject> meshes; // the meshes it holds, by layer: moved there below, not set at once
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) {
@@ -835,6 +836,8 @@ void Engine::stepCompositionFade(double dt)
 void Engine::recallSnapshot(int i)
 {
     const Snapshot m = snapshot(i);
+    if (!m.id) return;
+    resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
     if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && interactions().empty()) return;
     if (!m.layers.isEmpty()) applyLayers(m.layers, m.fade, true);
@@ -1122,6 +1125,8 @@ void Engine::stopShowPlayback()
 {
     m_sequencer->stopAll();
     Lock lk(&m_mutex);
+    m_emergencyHeld = true;
+    updateTimeScale();
     // Keep the current picture and numbers rather than fast-forwarding a snapshot.
     m_fades.clear();
     m_deferredRecall.clear();
@@ -1208,19 +1213,17 @@ void Engine::releaseFromFades(quint64 layer, const QString &path)
 
 // Split a coarse tick at each execution deadline. A delayed fade receives only the
 // time after its own deadline, so a late frame never adds a frame of drift to every delay.
-void Engine::stepShowRecalls(double dt, double compositionDt)
+void Engine::stepShowRecalls(double dt)
 {
     dt = std::isfinite(dt) ? std::max(0.0, dt) : 0.0;
-    compositionDt = std::isfinite(compositionDt) ? std::max(0.0, compositionDt) : 0.0;
     const double end = m_recallClock + dt;
     double remaining = dt;
-    const double ratio = dt > 0 ? compositionDt / dt : 0;
     auto advance = [&](double delta) {
         stepFade(delta);
         stepInteractionFades(delta);
         stepTransitions(delta);
         stepTypewriters(delta);
-        stepCompositionFade(delta * ratio);
+        stepCompositionFade(delta);
         stepAnimations(delta);
         m_recallClock += delta;
     };
@@ -1231,13 +1234,12 @@ void Engine::stepShowRecalls(double dt, double compositionDt)
         stepScheduledRecall(0);
     }
     advance(remaining);
-    if (dt == 0) stepCompositionFade(compositionDt); // blackout still responds while paused
 }
 
 void Engine::advanceFades(double dt)
 {
     Lock lk(&m_mutex);
-    stepShowRecalls(dt, dt);
+    stepShowRecalls(dt);
 }
 
 void Engine::stepTypewriters(double dt)

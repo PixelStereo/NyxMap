@@ -193,7 +193,7 @@ void Engine::blit(GLuint tex, const RenderTarget &target)
 
 void Engine::updateSource(Layer &l, double dt)
 {
-    if (!l.pendingImage.isNull()) {
+    if (timeScale() > 0 && !l.pendingImage.isNull()) {
         l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
     }
@@ -210,7 +210,7 @@ void Engine::updateSource(Layer &l, double dt)
     }
     if (l.audio)
         l.audio->setTransport(l.clock, l.playing, std::abs(l.speed) * timeScale(), l.timeline(), l.timelineId, l.audioGain(), m_frameStampNs);
-    if (!l.video) return;
+    if (!l.video || timeScale() <= 0) return;
     if (!l.videoTex) l.videoTex = std::make_unique<VideoTexture>();
     l.videoTex->feed(*l.video); // upload buffers the decoder writes its next frames into
     if (l.video->fetch(l.clock, l.frame)) l.frameUploaded = false;
@@ -1048,10 +1048,9 @@ double Engine::nextDt()
     double dt = (now - m_lastNs) / 1e9;
     m_lastNs = now;
     m_frameStampNs = AudioStream::clockNs();
-    // Render thread: playheads follow real time (up to 2 s), so that after a stall picture and sound stay together.
-    // Manual mode (tests, command-line rendering): frames are rendered on demand, the step stays clamped.
-    m_realDt = m_threaded ? std::clamp(dt, 0.0, 2.0) : std::clamp(dt, 0.0, 0.25);
-    dt = std::clamp(dt, 0.0, 0.25);
+    const FrameStep step = FrameStep::fromElapsed(dt, m_threaded);
+    m_realDt = step.elapsed;
+    dt = step.shaderDelta;
     if (dt > 0) m_fps = m_fps.load() * 0.95 + (1.0 / dt) * 0.05;
     return dt;
 }
@@ -1078,7 +1077,7 @@ void Engine::frame(double dt)
     if (m_compositionOpacitySpeed <= 0.0) {
         lvl = m_compositionOpacityTarget;
     } else {
-        const double step = dt * m_compositionOpacitySpeed;
+        const double step = m_realDt * m_compositionOpacitySpeed;
         lvl = lvl < m_compositionOpacityTarget ? std::min(m_compositionOpacityTarget, lvl + step) : std::max(m_compositionOpacityTarget, lvl - step);
     }
     m_compositionOpacity = lvl;
@@ -1086,13 +1085,15 @@ void Engine::frame(double dt)
     if (m_blackSpeed <= 0.0) {
         black = m_blackTarget;
     } else {
-        const double step = dt * m_blackSpeed;
+        const double step = m_realDt * m_blackSpeed;
         black = black < m_blackTarget ? std::min(m_blackTarget, black + step) : std::max(m_blackTarget, black - step);
     }
     m_blackLevel = black;
 
     IsfRenderContext rc;
-    rc.dt = dt * timeScale();
+    const double scale = timeScale();
+    rc.dt = dt * scale;
+    rc.elapsed = m_realDt * scale;
     rc.blackTex = m_blackTex;
     rc.drawQuad = [this] { drawQuad(); };
     rc.drawPoints = [this](int count) { drawPoints(count); };
@@ -1109,13 +1110,15 @@ void Engine::frame(double dt)
     }
     if (!m_fadesManual) {
         const double k = timeScale(); // paused or slowed: the fades, transitions and timelines move at that pace
-        stepShowRecalls(m_realDt * k, m_realDt);
+        stepShowRecalls(m_realDt * k);
     }
     stepInteractions(m_realDt); // after the animations: a controller moved wins (its own time: it follows the hand)
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
-    renderPass(rc);
+    // Retain the last source/effect outputs, including persistent ISF buffers and
+    // live input textures. dt=0 alone would still execute feedback and FRAMEINDEX.
+    if (scale > 0) renderPass(rc);
     composite();
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {

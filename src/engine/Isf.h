@@ -118,6 +118,7 @@ struct IsfImported {
 // Shared resources provided by the engine at render time.
 struct IsfRenderContext {
     double dt = 0;
+    double elapsed = -1; // TIME catch-up; negative uses dt (standalone callers)
     GLuint blackTex = 0;
     std::function<void()> drawQuad;                                // fullscreen quad (VAO bound)
     std::function<void(int count)> drawPoints;                     // count squares (6 vertices each), no attribute

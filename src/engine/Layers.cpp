@@ -1183,6 +1183,7 @@ void Engine::setLayerPlaying(int i, bool playing)
     Lock lk(&m_mutex);
     Layer *l = layer(i);
     if (!l || !l->hasTransport()) return;
+    if (playing) resumeAfterStop();
     if (playing && l->atEnd()) startMedia(*l); // played to the end: starts again
     l->playing = playing;
     if (playing) l->ended = false;
