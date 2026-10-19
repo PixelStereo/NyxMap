@@ -94,7 +94,7 @@ static int runSourceColorTests(Engine &engine)
     background.fill(QColor::fromRgba64(12000, 24000, 36000, 65535));
     const QString backgroundPath = files.path()+"/srgb16.png";
     check(background.save(backgroundPath), "write sRGB background");
-    const int backgroundRow = engine.addLayer("sRGB background");
+    const int backgroundRow = engine.addLayer("sRGB background", engine.layerCount());
     const quint64 backgroundId = engine.layerId(backgroundRow);
     check(engine.setLayerImage(backgroundRow, backgroundPath, &error), "mix an sRGB source with P3");
     engine.renderFrame();
@@ -114,7 +114,7 @@ static int runSourceColorTests(Engine &engine)
     source.setColorSpace(QColorSpace::AdobeRgb);
     check(source.save(path) && engine.setLayerImage(engine.indexOfId(id), path, &error), "load Adobe RGB ICC source");
     engine.renderFrame();
-    const auto converted = source.convertToFormat(QImage::Format_RGBA64).convertedToColorSpace(QColorSpace::SRgb);
+    const auto converted = QImage(path).convertToFormat(QImage::Format_RGBA64).convertedToColorSpace(QColorSpace::SRgb);
     const auto pixels = read(id);
     const auto *expected = reinterpret_cast<const quint16 *>(converted.constScanLine(height/2));
     bool equal = true;
