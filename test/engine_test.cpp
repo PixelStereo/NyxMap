@@ -6023,6 +6023,30 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     }
 
     if (area("interactions")) {
+    { // Graph patches use the same event queue, target writer and project/snapshot storage.
+        Interaction patch = Interaction::made(InteractionSource::Graph);
+        patch.name = "Reactive Opacity";
+        patch.layer = e.layerId(e.addLayer("Graph target")); patch.param = "opacity";
+        patch.graph.nodes[0].type = ModulationNode::Constant; patch.graph.nodes[0].value = .45;
+        patch.graph.nodes[8].seconds = 0; patch.graph.nodes[6].amplitude = 0;
+        patch.id = e.addInteraction(patch); e.renderFrame();
+        CHECK(std::abs(e.parameterValue(patch.layer,"opacity").toDouble()-.455)<1e-5);
+        InteractionEvent osc; osc.source=InteractionSource::Osc;osc.address="/control";osc.value=.3;e.feedInteraction(osc);
+        InteractionEvent midi;midi.source=InteractionSource::Midi;midi.message=MidiMessageKind::ControlChange;midi.number=7;midi.channel=1;midi.value=.8;e.feedInteraction(midi);
+        e.renderFrame();CHECK(std::abs(e.parameterValue(patch.layer,"opacity").toDouble()-.6)<1e-5);
+        midi.value=0;e.feedInteraction(midi);e.renderFrame();CHECK(std::abs(e.parameterValue(patch.layer,"opacity").toDouble()-.5)<1e-5);
+        CHECK(e.graphNodeValues(patch.id).size()==10);
+        const auto captured=e.captureInteractions();
+        CHECK(captured[0].toObject().value("params").toObject().contains("source/graph"));
+        const QString path=tmp+"/modulation.pinol";CHECK(e.saveProject(path,{},&err));
+        e.newProject();CHECK(e.loadProject(path,nullptr,&err));
+        CHECK(e.interactions().size()==1&&e.interactions()[0].graph.toJson()==patch.graph.toJson());
+        e.removeInteraction(patch.id);e.applyInteractions(captured,0);e.renderFrame();
+        CHECK(e.interactions().size()==1&&e.interactions()[0].source==InteractionSource::Graph&&e.interactions()[0].graph.validate());
+        CHECK(std::abs(e.parameterValue(patch.layer,"opacity").toDouble()-.455)<1e-5);
+        e.newProject();
+    }
+
     // An Audio interaction listening to the live input: a 440 Hz tone fed to the input drives it, not one listening
     // to the program mix (silent here); the choice survives a save
     {

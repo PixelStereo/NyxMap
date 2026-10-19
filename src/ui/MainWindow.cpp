@@ -1028,6 +1028,7 @@ void MainWindow::toggleSolo(int row)
 void MainWindow::refreshLayerList()
 {
     std::vector<LayerTable::Row> rows;
+    const auto modulationBindings = m_engine->interactions();
     {
         Engine::Lock lk(&m_engine->mutex());
         const std::vector<bool> leftOut = m_engine->soloLeftOut();
@@ -1035,6 +1036,11 @@ void MainWindow::refreshLayerList()
             Layer *l = m_engine->layer(i);
             LayerTable::Row r;
             r.name = l->name;
+            QStringList patches;
+            for (const auto &binding : modulationBindings)
+                if (binding.enabled && binding.layer == l->id && binding.source == InteractionSource::Graph)
+                    patches << binding.name + QStringLiteral(" / ") + binding.param;
+            r.modulation = patches.join(QStringLiteral(", "));
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
             r.tag = l->isViewport ? QStringLiteral("▭")
@@ -1632,6 +1638,15 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
         locked = m_engine->isLocked(row);
     }
     if (onLayer) {
+        const auto layerId = m_engine->layerId(row);
+        QMenu *patches = nullptr;
+        for (const auto &binding : m_engine->interactions()) {
+            if (binding.source != InteractionSource::Graph || binding.layer != layerId) continue;
+            if (!patches) patches = menu.addMenu(QStringLiteral("Modulation Graphs"));
+            patches->addAction(binding.name + QStringLiteral(" / ") + binding.param, this, [id=binding.id] {
+                if (auto *panel = InteractionPanel::instance()) panel->openGraph(id);
+            });
+        }
         menu.addAction(QStringLiteral("Rename"), this, [this, row] { m_layerTable->startRename(row); })->setEnabled(!locked);
         menu.addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
         menu.addAction(locked ? QStringLiteral("Unlock") : QStringLiteral("Lock"), this, &MainWindow::toggleLockCurrent);

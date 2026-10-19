@@ -1,5 +1,6 @@
 #include "InteractionPanel.h"
 #include "AudioSpectrum.h"
+#include "ModulationGraphEditor.h"
 #include <QDoubleSpinBox>
 #include "AnimEditor.h"
 #include "PresetEditor.h"
@@ -74,7 +75,7 @@ private:
 
 constexpr char kMime[] = "application/x-pinol-interaction-settings";
 const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi, InteractionSource::Osc,
-                                    InteractionSource::Internal, InteractionSource::Audio};
+                                    InteractionSource::Internal, InteractionSource::Audio, InteractionSource::Graph};
 
 QLabel *note(const QString &t)
 {
@@ -138,7 +139,7 @@ QJsonObject chainJson(const Interaction &it)
 {
     QJsonObject o = it.toJson();
     for (const char *k : {"id", "name", "enabled", "source", "key", "port", "channel", "message", "number", "address",
-                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"})
+                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "graph", "layer", "param"})
         o.remove(QLatin1String(k));
     return o;
 }
@@ -206,7 +207,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     });
     m_list->setColumnCount(4);
     m_list->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Source"), QStringLiteral("Target"), QStringLiteral("Value")});
-    m_list->setRootIsDecorated(false);
+    m_list->setRootIsDecorated(true);
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
@@ -249,7 +250,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     v->addWidget(split, 1);
 
     connect(m_kinds, &QTabBar::currentChanged, this, [this] {
-        const bool audio=shownKind()==InteractionSource::Audio;
+        const bool audio=shownKind()==InteractionSource::Audio || shownKind()==InteractionSource::Graph;
         if(audio)m_learn->setChecked(false);
         m_learn->setEnabled(!audio);
         rebuildList();
@@ -426,6 +427,7 @@ QString InteractionPanel::describe(const Interaction &it) const
     case InteractionSource::Osc:
         return it.oscAddress.isEmpty() ? QStringLiteral("OSC (no address)")
                                        : QStringLiteral("OSC %1").arg(it.oscAddress) + (it.oscArgument ? QStringLiteral(" [%1]").arg(it.oscArgument) : QString());
+    case InteractionSource::Graph: return QStringLiteral("%1 nodes / Output").arg(it.graph.nodes.size());
     case InteractionSource::Internal: return targetLabel(it.sourceLayer, it.sourceParam);
     case InteractionSource::Audio: {Interaction named=it;named.name.clear();return named.label();}
     }
@@ -454,6 +456,18 @@ void InteractionPanel::rebuildList()
         item->setToolTip(0, QStringLiteral("On / off · its name (double-click to rename): its address in OSC "
                                            "(/interaction/<name>/…), in the presets and the snapshots"));
         item->setCheckState(0, it.enabled ? Qt::Checked : Qt::Unchecked);
+        if (it.source == InteractionSource::Graph) {
+            for (const auto &node : it.graph.nodes) {
+                QStringList inputs;
+                for (int p = 0; p < node.ports().size(); ++p) {
+                    const auto *source = it.graph.find(node.inputs[size_t(p)]);
+                    inputs << node.ports()[p] + QStringLiteral(": ") + (source ? source->label() : QStringLiteral("0"));
+                }
+                auto *child = new QTreeWidgetItem(item, {node.label(), ModulationNode::typeName(node.type),
+                    node.id == it.graph.output ? QStringLiteral("Output → ") + dst : inputs.join(QStringLiteral(" · ")), QString()});
+                child->setFlags(Qt::ItemIsEnabled);
+            }
+        }
         if (keepAll.contains(it.id)) item->setSelected(true);
         if (it.id == keep) current = item;
     }
@@ -589,6 +603,7 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
         it.oscAddress = e->address;
         it.oscArgument = e->argument;
         break;
+    case InteractionSource::Graph:
     case InteractionSource::Audio:
     case InteractionSource::Internal: break;
     }
@@ -642,7 +657,7 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
     rebuildList();
     select(id);
     rebuildSettings();
-    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio) {
+    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio && kind != InteractionSource::Graph) {
         m_learnKind = kind;
         m_learn->setChecked(true); // the next source of that kind becomes its
     }
@@ -654,6 +669,11 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
 {
     if (paths.isEmpty()) return;
     auto one = [e, layer](QMenu *into, const QString &path) {
+        if (auto *panel = instance()) {
+            for (const auto &it : e->interactions())
+                if (it.source == InteractionSource::Graph && it.layer == layer && it.param == path)
+                    into->addAction(QStringLiteral("Edit Graph · %1").arg(it.name), panel, [panel, id=it.id] { panel->openGraph(id); });
+        }
         const QString addr = OscNamespace::addressOf(e, layer, path);
         if (!addr.isEmpty())
             into->addAction(QStringLiteral("Copy OSC Address  %1").arg(addr), into, [addr] { QApplication::clipboard()->setText(addr); });
@@ -764,6 +784,17 @@ void InteractionPanel::rebuildSettings()
     // The source
     double srcLo = 0, srcHi = 1; // the bar of the source range
     switch (it.source) {
+    case InteractionSource::Graph: {
+        auto *open = new QPushButton(QStringLiteral("Edit Graph…"));
+        open->setObjectName(QStringLiteral("editModulationGraph"));
+        form->addRow(QStringLiteral("Patch"), open);
+        auto *summary = note(QStringLiteral("%1 nodes → Output. The patch combines sources into one target binding.").arg(it.graph.nodes.size()));
+        form->addRow(summary);
+        QString graphError;
+        if (!it.graph.validate(&graphError)) form->addRow(note(graphError));
+        connect(open, &QPushButton::clicked, this, [this, id] { openGraph(id); });
+        break;
+    }
     case InteractionSource::Keyboard: {
         auto *key = new QKeySequenceEdit(QKeySequence::fromString(it.key, QKeySequence::PortableText));
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -1290,4 +1321,25 @@ void InteractionPanel::rebuildSettings()
         });
     }
     m_settingsLayout->addStretch();
+}
+
+void InteractionPanel::openGraph(quint64 id)
+{
+    for (const auto &it : m_engine->interactions()) {
+        if (it.id != id || it.source != InteractionSource::Graph) continue;
+        emit showRequested();
+        m_kinds->setCurrentIndex(int(InteractionSource::Graph));
+        select(id);
+        // The dialog applies each change through the same project undo stack.
+        editModulationGraph(m_engine, id, it.graph, [this, id](const ModulationGraph &graph) {
+            for (auto current : m_engine->interactions()) if (current.id == id) {
+                current.graph = graph;
+                commit(current, QStringLiteral("Edit Modulation Graph"), QStringLiteral("graph/%1").arg(id));
+                emit edited();
+                break;
+            }
+        }, this);
+        rebuildSettings();
+        return;
+    }
 }

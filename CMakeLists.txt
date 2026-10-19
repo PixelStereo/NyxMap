@@ -87,6 +87,7 @@ add_library(pinol_engine STATIC
   src/engine/TimecodeClock.cpp
   src/engine/TimecodeIo.cpp
   src/engine/TimecodeOutputs.cpp
+  src/engine/ModulationGraph.cpp
   src/engine/Interactions.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
@@ -317,6 +318,7 @@ set(APP_SOURCES
   src/ui/Widgets.cpp
   src/ui/ColorPicker.cpp
   src/ui/ColorPicker.h
+  src/ui/ModulationGraphEditor.cpp
   src/ui/InteractionPanel.cpp
   src/ui/AudioSpectrum.cpp
 )
@@ -425,6 +427,9 @@ if(PINOL_TESTS)
   # CTest: each area in a process of its own (a new engine), then every bundled shader compiled and rendered.
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(pinol_modulation_graph_test test/modulation_graph.cpp)
+  target_link_libraries(pinol_modulation_graph_test PRIVATE pinol_engine)
+  add_test(NAME modulation_graph COMMAND pinol_modulation_graph_test)
   # GNU-compatible Linux linkers inject failures at our FFmpeg call sites only.
   # No test hooks or extra branches are compiled into the production decoder.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -480,7 +485,7 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_audio_analysis_concurrency_test PRIVATE Threads::Threads)
   add_test(NAME audio_analysis_concurrency COMMAND pinol_audio_analysis_concurrency_test)
   set_tests_properties(audio_analysis_concurrency PROPERTIES TIMEOUT 60)
-  add_executable(pinol_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp)
+  add_executable(pinol_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/ModulationGraphEditor.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp)
   target_include_directories(pinol_audio_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_audio_interaction_ui_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME audio_interaction_ui COMMAND pinol_audio_interaction_ui_test)

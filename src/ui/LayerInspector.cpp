@@ -1,4 +1,5 @@
 #include "LayerInspector.h"
+#include "InteractionPanel.h"
 #include "PresetEditor.h"
 #include "ColorPicker.h"
 #include <QTabBar>
@@ -348,6 +349,9 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
         for (const Animation &a : m_engine->layerAnims(layer))
             if (!a.tracks.empty()) now << a.tracks.front().param;
         if (now != m_animated) QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+    });
+    connect(engine, &Engine::interactionsChanged, this, [this] {
+        QMetaObject::invokeMethod(this, &LayerInspector::refreshAfterRecall, Qt::QueuedConnection);
     });
     rebuild();
 }
@@ -2032,6 +2036,15 @@ QWidget *LayerInspector::buildCompositing(const LayerValues &s)
         setValue(QStringLiteral("opacity"), 1.0, QStringLiteral("Change Opacity"));
     });
     form->addRow(opacityLabel, opacity);
+    for (const auto &binding : m_engine->interactions()) {
+        if (binding.source != InteractionSource::Graph || binding.layer != s.id || binding.param != QStringLiteral("opacity")) continue;
+        auto *patch = new QPushButton(QStringLiteral("%1 · %2 / Output").arg(binding.enabled ? QStringLiteral("Modulated") : QStringLiteral("Disabled"), binding.name));
+        patch->setObjectName(QStringLiteral("opacityModulation"));
+        form->addRow(QStringLiteral("Modulation"), patch);
+        connect(patch, &QPushButton::clicked, this, [id=binding.id] {
+            if (auto *panel = InteractionPanel::instance()) panel->openGraph(id);
+        });
+    }
     m_animate->attach({opacityLabel, opacity}, {QStringLiteral("opacity")});
     connect(opacity, &SliderField::valueEdited, this, [this](double v) { setValue(QStringLiteral("opacity"), v / 100.0, QStringLiteral("Change Opacity")); });
     if (s.isViewport) return g; // drawn onto nothing: no blend, no routing
@@ -2843,6 +2856,9 @@ QString LayerInspector::layoutKey() const
         QString::number(layer->colorModels), QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap))};
     for (const auto &effect : layer->effects) key << effect->path();
+    for (const auto &binding : m_engine->interactions())
+        if (binding.source == InteractionSource::Graph && binding.layer == layer->id && binding.param == QStringLiteral("opacity"))
+            key << QString::number(binding.id) << binding.name << QString::number(binding.enabled);
     return key.join(QChar(0x1f));
 }
 

@@ -279,6 +279,7 @@ public:
     using InteractionLevel = InteractionTelemetry;
     // One nonblocking UI sample, sorted by id. Busy engine: keep the previous sample.
     bool sampleInteractionLevels(std::vector<InteractionLevel> *out) const;
+    std::vector<double> graphNodeValues(quint64 id) const;
     bool interactionLevels(quint64 id, double *level, double *output, double *curveIn = nullptr) const;
     void feedInteraction(const InteractionEvent &e); // a source's value (any thread)
     // An enabled OSC interaction listens on this exact address: it owns it. OSC then sends the message to the
@@ -989,6 +990,8 @@ private:
     std::vector<Interaction> m_interactions; // under m_mutex
     quint64 m_nextInteractionId = 1;
     struct InteractionRun {
+        ModulationProcessor graph;
+        bool graphConfigured = false;
         InteractionProcessor proc;
         InteractionTargetState target;
         std::optional<double> lastOut;

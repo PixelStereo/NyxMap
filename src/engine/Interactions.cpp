@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 // Names
 // ---------------------------------------------------------------------------
-static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "audio"};
+static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "audio", "graph"};
 static const char *const kFilters[] = {"average", "weighted_average", "pulse_detection", "attack_release", "damper"};
 static const char *const kMidi[] = {"cc", "note", "pitch_bend", "program"};
 
@@ -19,6 +19,7 @@ QString interactionSourceName(InteractionSource s)
     case InteractionSource::Osc: return QStringLiteral("OSC");
     case InteractionSource::Internal: return QStringLiteral("Internal");
     case InteractionSource::Audio: return QStringLiteral("Audio");
+    case InteractionSource::Graph: return QStringLiteral("Graph");
     }
     return QString();
 }
@@ -74,6 +75,7 @@ QString InteractionEvent::describe() const
     case InteractionSource::Osc: return QStringLiteral("OSC %1").arg(address) + (argument ? QStringLiteral(" [%1]").arg(argument) : QString());
     case InteractionSource::Internal: return QStringLiteral("Internal");
     case InteractionSource::Audio: return QStringLiteral("Audio");
+    case InteractionSource::Graph: return QStringLiteral("Graph");
     }
     return QString();
 }
@@ -92,6 +94,7 @@ bool Interaction::matches(const InteractionEvent &e) const
         if (e.message != midiMessage) return false;
         return midiMessage == MidiMessageKind::PitchBend || e.number == midiNumber;
     case InteractionSource::Osc: return !oscAddress.isEmpty() && e.address == oscAddress && e.argument == oscArgument;
+    case InteractionSource::Graph:
     case InteractionSource::Audio:
     case InteractionSource::Internal: return false; // read from the show each frame, not sent
     }
@@ -109,6 +112,7 @@ QString Interaction::label() const
                  midiMessage == MidiMessageKind::PitchBend ? QString() : QStringLiteral(" %1").arg(midiNumber));
     case InteractionSource::Osc: return oscAddress.isEmpty() ? QStringLiteral("OSC") : QStringLiteral("OSC %1").arg(oscAddress);
     case InteractionSource::Internal: return QStringLiteral("Internal %1").arg(id);
+    case InteractionSource::Graph: return QStringLiteral("Graph / Output");
     case InteractionSource::Audio: {
         const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : QStringLiteral("attacks");
         return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;
@@ -118,7 +122,7 @@ QString Interaction::label() const
 }
 
 static const char *const kNotState[] = {"id", "name", "source", "key", "port", "channel", "message", "number", "address",
-                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"};
+                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "graph", "layer", "param"};
 
 QJsonObject Interaction::stateJson() const
 {
@@ -155,6 +159,7 @@ Interaction Interaction::made(InteractionSource s)
     Interaction it;
     it.source = s;
     it.curve = straightCurve();
+    if (s == InteractionSource::Graph) it.graph = ModulationGraph::example();
     if(s==InteractionSource::Audio){it.filterOn=true;it.filter=InteractionFilter::AttackRelease;it.filterA=.012;it.filterB=.2;}
     // A fader or a knob: it waits to meet the value (pick-up); a key, a link: it sets it
     it.takeover = s == InteractionSource::Midi || s == InteractionSource::Osc ? Takeover::PickUp : Takeover::Jump;
@@ -169,6 +174,7 @@ QJsonObject Interaction::toJson() const
     o["enabled"] = enabled;
     o["source"] = kSources[int(source)];
     switch (source) {
+    case InteractionSource::Graph: o["graph"] = graph.toJson(); break;
     case InteractionSource::Keyboard: o["key"] = key; break;
     case InteractionSource::Midi:
         if (!midiPort.isEmpty()) o["port"] = midiPort;
@@ -228,6 +234,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.name = o.value("name").toString();
     it.enabled = o.value("enabled").toBool(true);
     it.source = InteractionSource(keyIndex(kSources, o.value("source").toString(), 0));
+    it.graph = ModulationGraph::fromJson(o.value("graph").toObject());
     it.key = o.value("key").toString();
     it.midiPort = o.value("port").toString();
     it.midiChannel = std::clamp(o.value("channel").toInt(0), 0, 16);

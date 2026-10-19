@@ -11,6 +11,11 @@
 #include <QMouseEvent>
 #include <QUndoStack>
 #include <cstdio>
+#include <QDialog>
+#include <QGraphicsView>
+#include <QGraphicsItem>
+#include <QTimer>
+#include <QPushButton>
 int main(int argc,char **argv){
     QApplication app(argc,argv);theme::applyToApplication(app);Engine engine;QUndoStack undo;int failures=0;
     auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL audio_interaction_ui: %s\n",why);}};
@@ -34,6 +39,37 @@ int main(int argc,char **argv){
     QMenu menu;InteractionPanel::fillValueMenu(&menu,&engine,0,{"opacity"});
     bool audioAction=false;for(auto *a:menu.actions())if(a->menu())for(auto *b:a->menu()->actions())if(b->text()=="Audio")audioAction=true;
     check(audioAction,"parameter right-click offers Audio mapping");
+    // The editor itself does not require a physical MIDI service in headless CI.
+    Interaction graph=Interaction::made(InteractionSource::Graph);graph.enabled=false;graph.param="opacity";
+    const auto graphId=engine.addInteraction(graph);
+    tabs->setCurrentIndex(int(InteractionSource::Graph));app.processEvents();
+    auto *listWidget=panel.findChild<QTreeWidget*>("interactionList");
+    if(listWidget&&listWidget->topLevelItemCount())listWidget->setCurrentItem(listWidget->topLevelItem(0));
+    app.processEvents();
+    check(tabs->tabText(tabs->currentIndex())=="Graph","Graph tab available for patch bindings");
+    check(panel.findChild<QPushButton*>("editModulationGraph")!=nullptr,"graph interaction has Edit Graph action");
+    QTimer::singleShot(0,&panel,[&]{
+        auto *dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        check(dialog&&dialog->objectName()=="modulationGraphEditor","native graph editor opens");
+        if(!dialog)return;
+        auto *view=dialog->findChild<QGraphicsView*>("modulationGraphView");
+        check(view&&view->scene()->items().size()>10,"graph nodes and connections rendered");
+        if(view){for(auto *item:view->scene()->items())if(item->data(0).toInt()==3){view->scene()->clearSelection();item->setSelected(true);break;}}
+        auto *initial=dialog->findChild<QDoubleSpinBox*>("graphInitialvalue");
+        check(initial!=nullptr,"MIDI node exposes initial value");
+        if(initial){initial->setValue(.1);check(engine.interactions().back().graph.nodes[2].value==.1,"node edit reaches interaction model");}
+        auto *add=dialog->findChild<QPushButton*>("graphAddNode");if(add)add->click();
+        check(engine.interactions().back().graph.nodes.size()==11,"node addition committed");
+        auto *remove=dialog->findChild<QPushButton*>("graphDeleteNode");if(remove)remove->click();
+        check(engine.interactions().back().graph.nodes.size()==10,"node deletion committed");
+        app.processEvents();
+        if(argc>2)dialog->grab().save(QString::fromLocal8Bit(argv[2]));
+        dialog->accept();
+    });
+    panel.openGraph(graphId);app.processEvents();
+    QMenu graphMenu;InteractionPanel::fillValueMenu(&graphMenu,&engine,0,{"opacity"});
+    bool graphAction=false;for(auto *a:graphMenu.actions())if(a->text().startsWith("Edit Graph"))graphAction=true;
+    check(graphAction,"target parameter menu opens existing graph");
     QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);app.processEvents();
     if(argc>1)panel.grab().save(QString::fromLocal8Bit(argv[1]));
     std::printf("audio_interaction_ui: %d failures\n",failures);return failures?1:0;

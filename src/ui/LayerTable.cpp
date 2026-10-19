@@ -558,8 +558,9 @@ void LayerTable::updateRow(int r, const Row &row)
     // Indented by depth (about kIndent px per level); a group starts with its fold arrow
     const QString prefix = QStringLiteral("        ").repeated(row.depth) +
                            (row.group ? (row.collapsed ? QStringLiteral("▸  ") : QStringLiteral("▾  ")) : QString());
-    QTableWidgetItem *name = text(ColName, prefix + row.tag + QStringLiteral("  ") + row.name,
-                                  row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
+    QTableWidgetItem *name = text(ColName, prefix + row.tag + (row.modulation.isEmpty() ? QStringLiteral("  ") : QStringLiteral("  ⊙  ")) + row.name,
+                                  row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source) +
+                                  (row.modulation.isEmpty() ? QString() : QStringLiteral("\nModulated: ") + row.modulation));
     QFont f = name->font();
     f.setBold(true);
     name->setFont(f);

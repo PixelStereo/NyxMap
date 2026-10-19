@@ -26,6 +26,7 @@
 // (its lock held) and sets the targets, as an animation does (the snapshots' fades let them go).
 
 #include "Anim.h"
+#include "ModulationGraph.h"
 
 #include <QJsonObject>
 #include <QString>
@@ -33,8 +34,8 @@
 #include <deque>
 #include <optional>
 
-enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio };
-inline constexpr int kInteractionSourceCount = 5;
+enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio, Graph };
+inline constexpr int kInteractionSourceCount = 6;
 enum class InteractionFilter { Average = 0, WeightedAverage, PulseDetection, AttackRelease, Damper };
 inline constexpr int kInteractionFilterCount = 5;
 enum class MidiMessageKind { ControlChange = 0, Note, PitchBend, ProgramChange };
@@ -72,6 +73,8 @@ struct Interaction {
     QString name; // its own (empty: described by its source and its target)
     bool enabled = true;
     InteractionSource source = InteractionSource::Keyboard;
+
+    ModulationGraph graph; // Graph source; the interaction remains its single target binding.
 
     // The source
     QString key;          // Keyboard

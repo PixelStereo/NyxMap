@@ -20,7 +20,7 @@ class LayerTable : public QWidget
     Q_OBJECT
 public:
     struct Row {
-        QString name, tag, source, effects, blend, playback;
+        QString name, tag, source, effects, blend, playback, modulation;
         bool enabled = true, error = false;
         bool noPicture = false; // audio layer: no opacity or blend
         float opacity = 1.f;

@@ -1400,7 +1400,7 @@ double Engine::snapshotDuration(quint64 id) const
 QStringList Engine::interactionKeys()
 {
     // What it is first (its source, its target: a recall that makes it again sets them before its values)
-    return {QStringLiteral("name"),          QStringLiteral("source/kind"),        QStringLiteral("source/key"),
+    return {QStringLiteral("name"),          QStringLiteral("source/kind"), QStringLiteral("source/graph"),        QStringLiteral("source/key"),
             QStringLiteral("source/midi/input"), QStringLiteral("source/midi/channel"), QStringLiteral("source/midi/message"),
             QStringLiteral("source/midi/number"), QStringLiteral("source/osc/address"), QStringLiteral("source/osc/argument"),
             QStringLiteral("source/internal"), QStringLiteral("target"),           QStringLiteral("enable"),

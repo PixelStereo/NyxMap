@@ -37,6 +37,7 @@ public:
     static InteractionPanel *instance() { return s_instance; } // the application's (none in the tests)
     // A new interaction driving this value (a layer's id, 0: the composition), its source learnt of that kind (Internal:
     // chosen in its settings); the tab is shown
+    void openGraph(quint64 id);
     void learnFor(quint64 layer, const QString &path, InteractionSource kind);
     // The end of any value's right-click menu: its OSC address (copied when chosen), and Learn Interaction ▸ a kind of
     // source. `paths`: the values the widget shows (x and y: one sub-menu each)

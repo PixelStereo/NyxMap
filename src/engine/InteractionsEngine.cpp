@@ -38,6 +38,16 @@ void Engine::setInteractions(const std::vector<Interaction> &list)
 {
     {
         Lock lk(&m_mutex);
+        for (const auto &it : list) {
+            const auto old = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const Interaction &x) { return x.id == it.id; });
+            if (old == m_interactions.end()) continue;
+            if (old->source != it.source && (old->source == InteractionSource::Graph || it.source == InteractionSource::Graph))
+                m_interactionRun.erase(it.id);
+            else if (it.source == InteractionSource::Graph && old->graph.toJson() != it.graph.toJson()) {
+                auto run = m_interactionRun.find(it.id);
+                if (run != m_interactionRun.end()) { run->second.graph.configure(it.graph); run->second.graphConfigured = true; }
+            }
+        }
         m_interactions = list;
         nameInteractions(m_interactions);
         for (const Interaction &it : m_interactions) m_nextInteractionId = std::max(m_nextInteractionId, it.id + 1);
@@ -79,6 +89,10 @@ bool Engine::setInteraction(const Interaction &it)
         const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->filterOn != it.filterOn ||
                                    f->filter != it.filter || f->layer != it.layer || f->param != it.param ||
                                    f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam;
+        if (!sourceChanged && it.source == InteractionSource::Graph && f->graph.toJson() != it.graph.toJson()) {
+            auto run = m_interactionRun.find(it.id);
+            if (run != m_interactionRun.end()) { run->second.graph.configure(it.graph); run->second.graphConfigured = true; }
+        }
         *f = it;
         nameInteractions(m_interactions);
         m_interactionParamsDirty = true;
@@ -102,6 +116,15 @@ void Engine::removeInteraction(quint64 id)
     }
     updateMidiInputs();
     emit interactionsChanged();
+}
+
+std::vector<double> Engine::graphNodeValues(quint64 id) const
+{
+    if (!m_mutex.tryLock()) return {};
+    const auto it = m_interactionRun.find(id);
+    const std::vector<double> result = it == m_interactionRun.end() ? std::vector<double>{} : it->second.graph.values();
+    m_mutex.unlock();
+    return result;
 }
 
 bool Engine::interactionLevels(quint64 id, double *level, double *output, double *curveIn) const
@@ -135,8 +158,12 @@ bool Engine::oscAddressClaimed(const QString &address) const
 {
     Lock lk(&m_mutex);
     return std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
-        return it.enabled && it.source == InteractionSource::Osc && !it.oscAddress.isEmpty() &&
-               it.oscAddress == address;
+        if (!it.enabled) return false;
+        if (it.source == InteractionSource::Graph) {
+            for (const auto &n : it.graph.nodes)
+                if (n.type == ModulationNode::Osc && n.address == address) return true;
+        }
+        return it.source == InteractionSource::Osc && !it.oscAddress.isEmpty() && it.oscAddress == address;
     });
 }
 
@@ -237,7 +264,12 @@ void Engine::updateMidiInputs()
     {
         Lock lk(&m_mutex);
         wanted = std::any_of(m_interactions.begin(), m_interactions.end(),
-                             [](const Interaction &it) { return it.enabled && it.source == InteractionSource::Midi; });
+                             [](const Interaction &it) {
+                                 if (!it.enabled) return false;
+                                 if (it.source == InteractionSource::Midi) return true;
+                                 return it.source == InteractionSource::Graph && std::any_of(it.graph.nodes.begin(), it.graph.nodes.end(),
+                                     [](const ModulationNode &n) { return n.type == ModulationNode::Midi; });
+                             });
     }
     {
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
@@ -291,7 +323,16 @@ void Engine::stepInteractions(double dt)
     }
     if (m_interactions.empty()) return;
     // The program mix and the live input, each read only when an Audio interaction measures its bands
-    auto needsSpectrum=[this](bool input){return std::any_of(m_interactions.begin(),m_interactions.end(),[input](const Interaction &it){return it.enabled && it.source==InteractionSource::Audio && it.audioInput==input && it.audioFeature==Interaction::AudioFeature::Band;});};
+    auto needsSpectrum = [this](bool input) {
+        for (const auto &it : m_interactions) {
+            if (!it.enabled) continue;
+            if (it.source == InteractionSource::Audio && it.audioInput == input && it.audioFeature == Interaction::AudioFeature::Band) return true;
+            if (it.source == InteractionSource::Graph)
+                for (const auto &n : it.graph.nodes)
+                    if (n.type == ModulationNode::Audio && n.audioInput == input && n.audioFeature == 0) return true;
+        }
+        return false;
+    };
     const AudioAnalysis::Spectrum spectra[2]={needsSpectrum(false)?m_audio->spectrum():AudioAnalysis::Spectrum{},
                                               needsSpectrum(true)?m_audioInput->spectrum():AudioAnalysis::Spectrum{}};
     const AudioAnalysis::Values audios[2]={m_audio->analysis(),m_audioInput->analysis()};
@@ -311,7 +352,31 @@ void Engine::stepInteractions(double dt)
         if (!it.enabled || it.param.isEmpty()) continue;
         InteractionRun &run = m_interactionRun[it.id];
         bool fresh = false;
-        if (it.source == InteractionSource::Audio) {
+        if (it.source == InteractionSource::Graph) {
+            if (!run.graphConfigured) {
+                run.graphConfigured = true;
+                run.graph.configure(it.graph);
+            }
+            for (const auto &n : it.graph.nodes) {
+                if (n.type != ModulationNode::Osc && n.type != ModulationNode::Midi) continue;
+                for (const auto &event : events) {
+                    const bool osc = n.type == ModulationNode::Osc && event.source == InteractionSource::Osc &&
+                        n.address == event.address && n.argument == event.argument;
+                    const bool midi = n.type == ModulationNode::Midi && event.source == InteractionSource::Midi &&
+                        event.message == MidiMessageKind::ControlChange && n.number == event.number &&
+                        (!n.channel || n.channel == event.channel) && (n.port.isEmpty() || n.port == event.port);
+                    if (osc || midi) run.graph.feed(n.id, event.value);
+                }
+            }
+            const auto value = run.graph.step(dt, [&](const ModulationNode &n) {
+                const auto &audio = audios[n.audioInput];
+                return n.audioFeature == 0 ? double(bandValue(n.audioInput, float(n.low), float(n.high))) :
+                       n.audioFeature == 1 ? double(audio.level) : double(audio.onset);
+            });
+            if (!value) continue; // An invalid saved patch cannot write its target.
+            run.proc.input(it, *value);
+            fresh = true;
+        } else if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
             const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
                 it.audioFeature==Interaction::AudioFeature::Level?audio.level:audio.onset;
@@ -640,12 +705,18 @@ void Engine::makeInteractionParams()
             *layer = colon < 0 ? 0 : s.left(colon).toULongLong();
             *path = colon < 0 ? QString() : s.mid(colon + 1);
         };
+        text(QStringLiteral("source/graph"), QStringLiteral("Modulation Graph"),
+             [](const Interaction &x) { return QString::fromUtf8(QJsonDocument(x.graph.toJson()).toJson(QJsonDocument::Compact)); },
+             [this](Interaction &x, const QString &value) {
+                 x.graph = ModulationGraph::fromJson(QJsonDocument::fromJson(value.toUtf8()).object());
+                 m_interactionRun.erase(x.id);
+             });
         text(QStringLiteral("name"), QStringLiteral("Name"), [](const Interaction &x) { return x.name; },
              [](Interaction &x, const QString &v) {
                  if (!v.trimmed().isEmpty()) x.name = v.trimmed();
              });
         choice(QStringLiteral("source/kind"), QStringLiteral("Source"),
-               {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"), QStringLiteral("audio")},
+               {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"), QStringLiteral("audio"), QStringLiteral("graph")},
                [](const Interaction &x) { return int(x.source); },
                [](Interaction &x, int k) { x.source = InteractionSource(k); });
         text(QStringLiteral("source/key"), QStringLiteral("Key"), [](const Interaction &x) { return x.key; },
