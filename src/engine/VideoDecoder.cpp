@@ -203,7 +203,7 @@ bool VideoDecoder::setupHardware(const AVCodec *dec)
 {
 #if defined(__APPLE__)
     // VideoToolbox's ProRes 4444 path can return opaque alpha even when RGB
-    // is correct (video-timing audit A5). Copying the surface does not restore
+    // is correct. Copying the surface does not restore
     // it. Preserve transparency with software decoding for these profiles.
     const AVPixFmtDescriptor *sourceFormat = av_pix_fmt_desc_get(m_codec->pix_fmt);
     if (m_codec->codec_id == AV_CODEC_ID_PRORES &&
