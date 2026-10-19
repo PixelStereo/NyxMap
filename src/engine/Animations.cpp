@@ -616,7 +616,18 @@ void Engine::restoreLayerAnims(quint64 layer, std::vector<Animation> anims)
         Lock lock(&m_mutex);
         const int index = indexOfId(layer);
         if (index < 0 || isLocked(index)) return;
-        m_layers[size_t(index)]->anims = std::move(anims);
+        auto &current = m_layers[size_t(index)]->anims;
+        for (Animation &restored : anims) {
+            if (restored.tracks.empty()) continue;
+            const auto shown = std::find_if(current.begin(), current.end(), [&](const Animation &a) {
+                return !a.tracks.empty() && a.tracks.front().param == restored.tracks.front().param;
+            });
+            if (shown != current.end()) {
+                restored.pinned = shown->pinned;
+                restored.folded = shown->folded;
+            }
+        }
+        current = std::move(anims);
     }
     emit layerAnimsChanged(layer);
 }

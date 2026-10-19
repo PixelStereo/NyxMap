@@ -123,12 +123,14 @@ int main(int argc, char **argv) {
         QUndoStack undo;
         undo.push(new cmd::RecallSnapshot(&engine, animatedIndex));
         engine.advanceFades(.4);
+        engine.setLayerAnimView(layer, "opacity", true, true);
         undo.undo();
         const auto restored = engine.layerAnims(layer)[0];
         check(restored.state == beforeAnimation.state && restored.clock == beforeAnimation.clock &&
                   restored.oscillatorOffset == beforeAnimation.oscillatorOffset &&
                   restored.reversed == beforeAnimation.reversed,
               "snapshot Undo restores paused transport and oscillator phase");
+        check(restored.pinned && restored.folded, "Undo preserves animation card UI changes made after the recall");
         check(std::abs(engine.parameterValue(layer, "opacity").toDouble() - beforeValue) < 1e-6,
               "snapshot Undo restores the displayed animated value");
         check(!engine.layerJson(row).value("anims").toArray()[0].toObject().contains("_undo_clock"),
