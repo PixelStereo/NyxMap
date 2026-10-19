@@ -114,7 +114,7 @@ static int runSourceColorTests(Engine &engine)
     source.setColorSpace(QColorSpace::AdobeRgb);
     check(source.save(path) && engine.setLayerImage(engine.indexOfId(id), path, &error), "load Adobe RGB ICC source");
     engine.renderFrame();
-    const auto converted = source.convertedToFormat(QImage::Format_RGBA64).convertedToColorSpace(QColorSpace::SRgb);
+    const auto converted = source.convertToFormat(QImage::Format_RGBA64).convertedToColorSpace(QColorSpace::SRgb);
     const auto pixels = read(id);
     const auto *expected = reinterpret_cast<const quint16 *>(converted.constScanLine(height/2));
     bool equal = true;
