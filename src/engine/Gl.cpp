@@ -183,6 +183,21 @@ void MsaaBuffer::destroy()
 
 void Texture2D::upload(const void *rgba, int nw, int nh)
 {
+    uploadPixels(rgba, nw, nh, GL_RGBA8, GL_UNSIGNED_BYTE);
+}
+
+void Texture2D::uploadImage(const QImage &image)
+{
+    if (image.isNull()) return;
+    QImage rgba = image.convertToFormat(imageUploadFormat(image));
+    if (rgba.bytesPerLine() != rgba.width() * (rgba.format() == QImage::Format_RGBA64 ? 8 : 4)) rgba = rgba.copy();
+    const bool high = rgba.format() == QImage::Format_RGBA64;
+    uploadPixels(rgba.constBits(), rgba.width(), rgba.height(), high ? GL_RGBA16 : GL_RGBA8,
+                 high ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE);
+}
+
+void Texture2D::uploadPixels(const void *rgba, int nw, int nh, GLenum format, GLenum type)
+{
     auto f = gl();
     if (!tex) {
         f->glGenTextures(1, &tex);
@@ -194,33 +209,19 @@ void Texture2D::upload(const void *rgba, int nw, int nh)
     }
     f->glBindTexture(GL_TEXTURE_2D, tex);
     f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    if (nw != w || nh != h) {
+    f->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    if (nw != w || nh != h || storageFormat != format) {
         w = nw; h = nh;
-        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        storageFormat = format;
+        f->glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, GL_RGBA, type, rgba);
     } else {
-        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, type, rgba);
     }
 }
 
 void Texture2D::uploadFloat(const float *rgba, int nw, int nh)
 {
-    auto f = gl();
-    if (!tex) {
-        f->glGenTextures(1, &tex);
-        f->glBindTexture(GL_TEXTURE_2D, tex);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    }
-    f->glBindTexture(GL_TEXTURE_2D, tex);
-    f->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    if (nw != w || nh != h) {
-        w = nw; h = nh;
-        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, rgba);
-    } else {
-        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, rgba);
-    }
+    uploadPixels(rgba, nw, nh, GL_RGBA32F, GL_FLOAT);
 }
 
 void Texture2D::destroy()
@@ -228,4 +229,5 @@ void Texture2D::destroy()
     if (tex) gl()->glDeleteTextures(1, &tex);
     tex = 0;
     w = h = 0;
+    storageFormat = 0;
 }

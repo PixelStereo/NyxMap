@@ -65,6 +65,24 @@ int main(int argc, char **argv)
     engine.setParameter(0, "opacity", .63);
     editor.updateSnapshot(target, 0, {"opacity"});
     check(std::abs(engine.snapshot(index).composition.value("opacity").toDouble()-.63)<1e-6, "composition value update");
+    const int matteRow = engine.addLayer("Matte");
+    engine.layer(engine.indexOfId(layer))->matte.layer = engine.layerId(matteRow);
+    editor.addToNew(layer, {QStringLiteral("category/%1").arg(Engine::PartMasks)});
+    const auto preset = engine.preset(engine.indexOfPreset(editor.selected()));
+    const auto masksCategory = preset.categories.value(QStringLiteral("%1:%2").arg(layer).arg(Engine::PartMasks)).toObject();
+    check(masksCategory.value("matte") == engine.layer(engine.indexOfId(layer))->matte.toJson(), "mask preset includes its layer matte");
+    editor.updateSnapshot(target, layer, {QStringLiteral("category/%1").arg(Engine::PartMasks)});
+    check(engine.snapshot(index).layers[0].toObject().value("matte") == engine.layer(engine.indexOfId(layer))->matte.toJson(),
+          "partial Masks snapshot update includes the matte");
+    undo.undo();
+    check(!engine.snapshot(index).layers[0].toObject().contains("matte"), "Undo removes a newly stored matte");
+    Engine::Snapshot matteSnapshot; matteSnapshot.name="Matte"; matteSnapshot.fade=0;
+    matteSnapshot.layers=engine.captureLayers(true);
+    const int mi=engine.addSnapshot(matteSnapshot);
+    engine.layer(engine.indexOfId(layer))->matte = {};
+    check(!engine.snapshotMatches(engine.snapshot(mi).id), "snapshot concordance detects a changed matte");
+    engine.recallSnapshot(mi);
+    check(engine.layer(engine.indexOfId(layer))->matte.layer == engine.layerId(matteRow), "snapshot recall restores its matte");
     std::printf("snapshot_update_ui: %d failures\n", failures);
     return failures ? 1 : 0;
 }

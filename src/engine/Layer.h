@@ -195,7 +195,7 @@ inline std::atomic<double> &timeScale()
     return k;
 }
 
-// A still image's declared sample depth, from the format Qt decodes it to (before its 8-bit upload): "16-bit",
+// A still image's declared sample depth, from the format Qt decodes it to (before upload conversion): "16-bit",
 // "10-bit", "float" (EXR, HDR…) or "8-bit or less"
 inline QString imageSourceDepth(QImage::Format f)
 {

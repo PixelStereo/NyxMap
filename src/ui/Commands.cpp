@@ -269,7 +269,7 @@ SetStructure::SetStructure(Engine *e, const LayerTree &before, const LayerTree &
     setText(text);
 }
 
-RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(snapshot)
+RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(e->snapshot(snapshot).id)
 {
     m_before = e->captureRecallLayers(snapshot);
     m_beforeComposition = e->captureComposition();
@@ -279,7 +279,7 @@ RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(sna
 
 RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before, const QJsonObject &beforeComposition,
                                const QJsonArray &beforeInteractions)
-    : m_e(e), m_snapshot(snapshot), m_before(before), m_beforeComposition(beforeComposition),
+    : m_e(e), m_snapshot(e->snapshot(snapshot).id), m_before(before), m_beforeComposition(beforeComposition),
       m_beforeInteractions(beforeInteractions), m_done(true)
 {
     setText(QStringLiteral("Recall \"%1\"").arg(e->snapshot(snapshot).name));
@@ -287,11 +287,13 @@ RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before
 
 void RecallSnapshot::redo()
 {
+    const int index = m_e->indexOfSnapshot(m_snapshot);
+    if (index < 0) return;
     if (m_first) {
         m_first = false;
-        if (!m_done) m_e->recallSnapshot(m_snapshot);
+        if (!m_done) m_e->recallSnapshot(index);
     } else {
-        const Engine::Snapshot m = m_e->snapshot(m_snapshot);
+        const Engine::Snapshot m = m_e->snapshot(index);
         if (!m.layers.isEmpty()) m_e->applyLayers(m.layers, 0, true);
         m_e->applyComposition(m.composition, 0);
         m_e->applyInteractions(m.interactions, 0);
@@ -411,15 +413,25 @@ void SetLayerAnim::apply(const std::optional<Animation> &a)
 
 RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
 {
+    Engine::Lock lock(&e->mutex()); // parameter outputs and animation clocks are one Undo state
     const Engine::Preset p = e->preset(e->indexOfPreset(preset));
     for (const Engine::PresetValue &v : p.values) m_before.push_back(e->presetValue(v.layer, v.path));
     for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) m_parts[it.key().toULongLong()] |= Engine::PartSpatial;
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) m_parts[it.key().section(':', 0, 0).toULongLong()] |= it.key().section(':', 1).toInt();
     for (const auto &animation : p.animations) if (!animation.tracks.empty()) {
         const quint64 layer = animation.tracks.front().layer;
+        if (p.indexOf(layer, animation.tracks.front().param) < 0)
+            m_before.push_back(e->presetValue(layer, animation.tracks.front().param));
         m_animations[layer] = e->layerAnims(layer);
+        m_animationParams[layer].push_back(animation.tracks.front().param);
     }
-    for (const auto &[id, parts] : m_parts) { (void)parts; m_layers[id] = e->layerJson(e->indexOfId(id)); }
+    for (const auto &[id, parts] : m_parts) {
+        m_layers[id] = e->layerJson(e->indexOfId(id));
+        if (parts & (Engine::PartAnimations | Engine::PartSource)) {
+            m_animations[id] = e->layerAnims(id);
+            m_animationParams.erase(id); // a source/animation category owns the complete list
+        }
+    }
     m_hasInteractions = !p.interactions.empty();
     if (m_hasInteractions) m_interactions = e->interactions();
     setText(QStringLiteral("Recall Preset \"%1\"").arg(p.name));
@@ -429,12 +441,35 @@ void RecallPreset::undo()
 {
     for (const auto &value : m_before) m_e->cancelParameterRecall(value.layer, value.path);
     for (const auto &[id, state] : m_layers) {
+        if (m_parts[id] & Engine::PartSpatial) m_e->cancelParameterRecall(id, QStringLiteral("mesh"));
         const int index = m_e->indexOfId(id);
         if (index >= 0) m_e->applyLayerParts(index, state, m_parts[id]);
     }
-    for (const auto &value : m_before)
-        if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
-    for (const auto &[id, animations] : m_animations) m_e->setLayerAnims(id, animations);
+    {
+        Engine::Lock lock(&m_e->mutex()); // keep output restoration and selective clock merge atomic
+        for (const auto &value : m_before)
+            if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
+        for (const auto &[id, animations] : m_animations) {
+            const auto paths = m_animationParams.find(id);
+            if (paths == m_animationParams.end()) {
+                m_e->restoreLayerAnims(id, animations);
+                continue;
+            }
+            auto current = m_e->layerAnims(id);
+            for (const QString &path : paths->second) {
+                const auto matches = [&](const Animation &a) {
+                    return !a.tracks.empty() && a.tracks.front().param == path;
+                };
+                const auto before = std::find_if(animations.begin(), animations.end(), matches);
+                const auto now = std::find_if(current.begin(), current.end(), matches);
+                if (before == animations.end()) {
+                    if (now != current.end()) current.erase(now);
+                } else if (now == current.end()) current.push_back(*before);
+                else *now = *before;
+            }
+            m_e->restoreLayerAnims(id, std::move(current));
+        }
+    }
     if (m_hasInteractions) m_e->setInteractions(m_interactions);
 }
 
