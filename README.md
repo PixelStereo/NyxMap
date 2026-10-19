@@ -65,7 +65,7 @@ These are engineering capabilities, **not a guarantee of a particular frame rate
 | Apple Silicon build; a `.app` in a ZIP | MSVC x64 build; Qt and FFmpeg DLLs included | Ubuntu 24.04 x86_64 archive; runtime packages required |
 | Ad-hoc signed; **not notarized** | Includes Visual C++ runtime installer | Not yet a self-contained AppImage |
 
-Optional NDI, OMT and DeckLink features require compatible vendor runtimes/drivers. Consult the [macOS signing notes](docs/macos-release-signing.md) for distribution details.
+Optional NDI, OMT and DeckLink features require compatible vendor runtimes/drivers. Consult the [distribution limitations](docs/README.md#known-limitations) for distribution details.
 
 ## Build from source
 
@@ -141,7 +141,7 @@ cmake --build build --target pinol_bench
 sh test/bench_4k.sh build
 ```
 
-CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites. See the [performance work plan](docs/performance-work-plan.md).
+CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites. See the [limitations and roadmap](docs/README.md).
 
 </details>
 

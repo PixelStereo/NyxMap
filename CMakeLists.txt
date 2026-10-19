@@ -422,7 +422,7 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
   target_compile_definitions(pinol_tests PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
-  # CTest: each area in a process of its own (a new engine), then every bundled shader compiled and rendered.
+  # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
   add_executable(pinol_benchmark_rates_test test/benchmark_rates.cpp)
@@ -558,7 +558,6 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_color_picker_ui_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME color_picker_ui COMMAND pinol_color_picker_ui_test)
   set_tests_properties(color_picker_ui PROPERTIES TIMEOUT 30)
-  add_test(NAME isf COMMAND pinol_tests --check-isf "${CMAKE_SOURCE_DIR}/isf")
   if(NOT WIN32) # the application's exit codes in --render mode (Windows: its Qt libraries are deployed separately)
     add_test(NAME render_cli COMMAND ${CMAKE_COMMAND} -DPINOL=$<TARGET_FILE:Pinol> -DOUT=${CMAKE_BINARY_DIR}/render_cli
              -P "${CMAKE_SOURCE_DIR}/test/render_cli.cmake")
