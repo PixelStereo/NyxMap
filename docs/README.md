@@ -3,6 +3,7 @@
 ## Known problems
 
 - **Color:** compositing and FX remain in encoded sRGB, not linear light.
+  Wide-gamut sources are clipped to sRGB even when the final output is P3.
   Unknown/live profiles require a declaration; unsupported video tags and HDR
   have no automatic normalization/tone mapping. ISF image inputs are not individually
   color-managed. Some decoder/readback paths lose

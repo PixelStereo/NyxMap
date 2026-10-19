@@ -388,6 +388,7 @@ int main(int argc, char **argv)
                 check(engine.parameterValue(ids[0], "source/color_space") == "auto" &&
                       engine.parameterValue(ids[2], "source/color_space") == "auto", "one Undo restores source interpretation");
                 app.processEvents();
+                undo->clear(); // the next scenario starts with no redo branch
             }
             auto *opacity = inspector->findChild<SliderField *>("inspectorOpacity");
             check(opacity != nullptr, "inspector opacity field present");
