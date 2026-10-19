@@ -69,6 +69,12 @@ inline QString imageSourceColorKey(const QColorSpace &space) {
     return {};
 }
 inline bool hdrImageColorSpace(const QColorSpace &space) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     return space.transferFunction() == QColorSpace::TransferFunction::St2084 ||
            space.transferFunction() == QColorSpace::TransferFunction::Hlg;
+#else
+    // Earlier supported Qt versions do not expose PQ/HLG profiles.
+    Q_UNUSED(space);
+    return false;
+#endif
 }

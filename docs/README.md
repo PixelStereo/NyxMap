@@ -4,7 +4,8 @@
 
 - **Color:** compositing and FX remain in encoded sRGB, not linear light.
   Unknown/live profiles require a declaration; unsupported video tags and HDR
-  have no automatic normalization/tone mapping. Some decoder/readback paths lose
+  have no automatic normalization/tone mapping. ISF image inputs are not individually
+  color-managed. Some decoder/readback paths lose
   precision. Output conversion clips SDR gamut and does not configure display
   ICC profiles or signal encoding; physical 10-bit output remains unverified.
 - **Timing:** long stalls skip feedback/simulation steps. Physical A/V recovery and

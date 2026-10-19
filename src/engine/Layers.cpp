@@ -1105,7 +1105,7 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err)
     if (profile.isValid() && imageSourceColorKey(profile).isEmpty() && !hdrImageColorSpace(profile)) {
         // Outside the render lock/thread. Preserve integer precision and alpha;
         // Qt handles ICC matrices, curves and chromatic adaptation here.
-        autoImage = prepareImageUpload(img.convertedToColorSpace(QColorSpace::SRgb, imageUploadFormat(img)));
+        autoImage = prepareImageUpload(img.convertedToFormat(imageUploadFormat(img)).convertedToColorSpace(QColorSpace::SRgb));
         if (autoImage.isNull()) {
             if (err) *err = QStringLiteral("Unable to convert the embedded image profile to sRGB");
             return false;

@@ -101,8 +101,10 @@ int main(int argc, char **argv)
           "layer taps cannot be decoded twice");
     sourceLayer.type = SourceType::Image;
     sourceLayer.sourceColorSpace = "auto";
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     sourceLayer.imageProfile = QColorSpace::Bt2100Pq;
     check(sourceColorStatus(sourceLayer).contains("no tone mapping"), "HDR image status explicitly reports the limitation");
+#endif
     sourceLayer.type = SourceType::Video;
     sourceLayer.video = std::make_unique<VideoDecoder>();
     auto frameLayout = std::make_shared<VideoLayout>();
