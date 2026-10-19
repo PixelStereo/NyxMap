@@ -1,11 +1,15 @@
 #include "ModulationGraphEditor.h"
 #include "Engine.h"
+#include "ModulationGraphView.h"
+#include "Widgets.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QFontMetricsF>
 #include <QFormLayout>
+#include <QGraphicsPathItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsScene>
 #include <QGraphicsSceneMouseEvent>
@@ -34,50 +38,109 @@ class GraphNode : public QGraphicsRectItem
     bool isOutput = false;
     std::function<void(int, int)> portClicked;
     std::function<void(int, QPointF)> moved;
+    std::function<void()> positionChanged;
     explicit GraphNode(const ModulationNode &n) : node(n)
     {
-        setRect(0, 0, 190, 86 + 28 * n.ports().size());
+        setRect(0, 0, 216, 104 + 28 * n.ports().size());
         setPos(n.position);
         setFlags(ItemIsMovable | ItemIsSelectable | ItemSendsGeometryChanges);
         setData(0, n.id);
     }
-    QPointF input(int p) const
+    QPointF input(int p) const { return mapToScene({0, 82. + 28 * p}); }
+    QPointF output() const { return mapToScene({216, rect().height() - 18}); }
+    QRectF boundingRect() const override
     {
-        return mapToScene({0, 65. + 28 * p});
+        // The input/output circles and selection stroke are painted outside the body.
+        return rect().adjusted(-8, -3, 8, 3);
     }
-    QPointF output() const
+    QPainterPath shape() const override
     {
-        return mapToScene({190, rect().height() - 14});
+        QPainterPath path;
+        path.addRoundedRect(rect(), 7, 7);
+        for (int port = 0; port < node.ports().size(); ++port)
+            path.addEllipse(QPointF(0, 82. + 28 * port), 7, 7);
+        path.addEllipse(QPointF(216, rect().height() - 18), 7, 7);
+        return path;
     }
     void paint(QPainter *p, const QStyleOptionGraphicsItem *, QWidget *) override
     {
+        p->save();
         const QPalette palette = QApplication::palette();
-        p->setPen(QPen(isSelected() ? palette.highlight().color() : palette.mid().color(), isSelected() ? 2 : 1));
-        p->setBrush(palette.base());
-        p->drawRoundedRect(rect(), 6, 6);
-        p->setPen(palette.text().color());
-        p->drawText(QRectF(10, 5, 170, 22), Qt::AlignLeft | Qt::AlignVCenter, node.label());
-        p->drawText(QRectF(10, 29, 170, 22), Qt::AlignLeft | Qt::AlignVCenter,
+        const bool dark = palette.window().color().lightness() < 128;
+        const QColor body = dark ? palette.window().color().lighter(118) : palette.base().color();
+        const QColor header = dark ? body.lighter(115) : body.darker(104);
+        const QColor border = dark ? body.lighter(165) : body.darker(125);
+        const QColor accent = theme::accent();
+        const QColor text = palette.text().color();
+        const QColor secondary = dark ? text.darker(125) : text.lighter(125);
+        p->setPen(Qt::NoPen);
+        p->setBrush(body);
+        p->drawRoundedRect(rect(), 7, 7);
+        QPainterPath clip;
+        clip.addRoundedRect(rect(), 7, 7);
+        p->save();
+        p->setClipPath(clip);
+        p->fillRect(QRectF(0, 0, rect().width(), 30), header);
+        p->restore();
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(isSelected() ? accent : border, isSelected() ? 1.8 : 1));
+        p->drawRoundedRect(rect(), 7, 7);
+        QFont titleFont = p->font();
+        titleFont.setWeight(QFont::Medium);
+        p->setFont(titleFont);
+        p->setPen(text);
+        const QFontMetricsF metrics(titleFont);
+        p->drawText(QRectF(13, 4, 190, 22), Qt::AlignLeft | Qt::AlignVCenter,
+                    metrics.elidedText(node.label(), Qt::ElideRight, 190));
+        QFont valueFont = titleFont;
+        valueFont.setPointSizeF(titleFont.pointSizeF() + 3);
+        p->setFont(valueFont);
+        p->drawText(QRectF(13, 38, 190, 25), Qt::AlignLeft | Qt::AlignVCenter,
                     node.condition() ? (value > .5 ? QStringLiteral("TRUE") : QStringLiteral("FALSE"))
                                      : QString::number(value, 'f', 3));
+        p->setFont(titleFont);
         const auto ports = node.ports();
+        auto port = [&](QPointF center, bool condition)
+        {
+            p->setPen(QPen(body, 1.5));
+            p->setBrush(condition ? secondary : accent);
+            if (condition)
+            {
+                QPolygonF diamond;
+                diamond << center + QPointF(0, -6) << center + QPointF(6, 0) << center + QPointF(0, 6)
+                        << center + QPointF(-6, 0);
+                p->drawPolygon(diamond);
+            }
+            else
+                p->drawEllipse(center, 5.5, 5.5);
+        };
         for (int i = 0; i < ports.size(); ++i)
         {
-            p->setBrush(node.acceptsCondition(i) ? palette.mid() : palette.highlight());
-            p->drawEllipse(QPointF(0, 65. + 28 * i), 5, 5);
-            p->drawText(QRectF(12, 55. + 28 * i, 160, 22), ports[i]);
+            port(QPointF(0, 82. + 28 * i), node.acceptsCondition(i));
+            p->setPen(secondary);
+            p->drawText(QRectF(13, 71. + 28 * i, 180, 22), ports[i]);
         }
-        p->setBrush(node.condition() ? palette.mid() : palette.highlight());
-        p->drawEllipse(QPointF(190, rect().height() - 14), 5, 5);
-        p->drawText(QRectF(10, rect().height() - 27, 166, 22), Qt::AlignRight | Qt::AlignVCenter,
-                    isOutput ? QStringLiteral("OUTPUT →") : QStringLiteral("→"));
+        port(QPointF(216, rect().height() - 18), node.condition());
+        p->setPen(isOutput ? accent : secondary);
+        p->drawText(QRectF(13, rect().height() - 29, 188, 22), Qt::AlignRight | Qt::AlignVCenter,
+                    isOutput           ? QStringLiteral("Output")
+                    : node.condition() ? QStringLiteral("Condition")
+                                       : QStringLiteral("Signal"));
+        p->restore();
     }
 
   protected:
+    QVariant itemChange(GraphicsItemChange change, const QVariant &value) override
+    {
+        const QVariant result = QGraphicsRectItem::itemChange(change, value);
+        if (change == ItemPositionHasChanged && positionChanged)
+            positionChanged();
+        return result;
+    }
     void mousePressEvent(QGraphicsSceneMouseEvent *e) override
     {
         const QPointF p = e->pos();
-        if (p.x() > 174 && p.y() > rect().height() - 30)
+        if (p.x() > 200 && p.y() > rect().height() - 34)
         {
             if (portClicked)
                 portClicked(node.id, -1);
@@ -86,7 +149,7 @@ class GraphNode : public QGraphicsRectItem
         }
         if (p.x() < 16)
             for (int i = 0; i < node.ports().size(); ++i)
-                if (std::abs(p.y() - (65 + 28 * i)) < 13)
+                if (std::abs(p.y() - (82 + 28 * i)) < 13)
                 {
                     if (portClicked)
                         portClicked(node.id, i);
@@ -131,20 +194,23 @@ class Editor : public QDialog
         bar->addWidget(fit);
         bar->addWidget(zoomIn);
         bar->addWidget(zoomOut);
+        auto *zoomLevel = new QLabel;
+        zoomLevel->setMinimumWidth(48);
+        bar->addWidget(zoomLevel);
         bar->addWidget(example);
         bar->addWidget(undo);
         bar->addStretch();
         layout->addLayout(bar);
-        status = new QLabel(QStringLiteral(
-            "Click an output port, then an input port. Edits apply live. MIDI nodes receive Control Change messages."));
+        status = new QLabel(
+            QStringLiteral("Pinch to zoom · two-finger scroll to pan · click an output, then an input to connect."));
         status->setWordWrap(true);
         layout->addWidget(status);
         auto *row = new QHBoxLayout;
         scene = new QGraphicsScene(this);
-        view = new QGraphicsView(scene);
+        view = new ModulationGraphView(scene);
         view->setObjectName("modulationGraphView");
-        view->setRenderHint(QPainter::Antialiasing);
-        view->setDragMode(QGraphicsView::RubberBandDrag);
+        view->zoomChanged = [zoomLevel](double value)
+        { zoomLevel->setText(QStringLiteral("%1%").arg(qRound(value * 100))); };
         row->addWidget(view, 1);
         scroll = new QScrollArea;
         scroll->setWidgetResizable(true);
@@ -161,10 +227,9 @@ class Editor : public QDialog
         footer->addWidget(close);
         layout->addLayout(footer);
         connect(close, &QPushButton::clicked, this, &QDialog::accept);
-        connect(zoomIn, &QPushButton::clicked, this, [this] { view->scale(1.25, 1.25); });
-        connect(zoomOut, &QPushButton::clicked, this, [this] { view->scale(.8, .8); });
-        connect(fit, &QPushButton::clicked, this, [this]
-                { view->fitInView(scene->itemsBoundingRect().adjusted(-30, -30, 30, 30), Qt::KeepAspectRatio); });
+        connect(zoomIn, &QPushButton::clicked, this, [this] { view->zoomAt(view->viewport()->rect().center(), 1.25); });
+        connect(zoomOut, &QPushButton::clicked, this, [this] { view->zoomAt(view->viewport()->rect().center(), .8); });
+        connect(fit, &QPushButton::clicked, this, [this] { view->fitGraph(scene->itemsBoundingRect()); });
         connect(add, &QPushButton::clicked, this,
                 [this]
                 {
@@ -188,7 +253,7 @@ class Editor : public QDialog
                     graph = ModulationGraph::example();
                     selected = 3;
                     changed(true);
-                    view->fitInView(scene->itemsBoundingRect().adjusted(-30, -30, 30, 30), Qt::KeepAspectRatio);
+                    view->fitGraph(scene->itemsBoundingRect());
                 });
         connect(undo, &QPushButton::clicked, this,
                 [this]
@@ -209,6 +274,7 @@ class Editor : public QDialog
                     if (items.empty())
                         return;
                     selected = static_cast<GraphNode *>(items.front())->node.id;
+                    updateEdges();
                     properties();
                 });
         selected = graph.nodes.empty() ? 0 : graph.nodes.front().id;
@@ -237,9 +303,7 @@ class Editor : public QDialog
                 }
             });
         timer->start();
-        QTimer::singleShot(
-            0, this,
-            [this] { view->fitInView(scene->itemsBoundingRect().adjusted(-30, -30, 30, 30), Qt::KeepAspectRatio); });
+        QTimer::singleShot(0, this, [this] { view->fitGraph(scene->itemsBoundingRect()); });
     }
 
   private:
@@ -250,9 +314,74 @@ class Editor : public QDialog
     QComboBox *kind;
     QLabel *status, *result;
     QGraphicsScene *scene;
-    QGraphicsView *view;
+    ModulationGraphView *view;
     QScrollArea *scroll;
     std::map<int, GraphNode *> items;
+    struct Edge
+    {
+        QGraphicsPathItem *item;
+        int source, target, port;
+    };
+    std::vector<Edge> edges;
+    void updateEdges()
+    {
+        for (const auto &edge : edges)
+        {
+            const auto *source = items.at(edge.source), *target = items.at(edge.target);
+            const auto a = source->output(), b = target->input(edge.port);
+            QPainterPath path(a);
+            const bool forward = b.x() > a.x();
+            bool blocked = false;
+            if (forward)
+            {
+                const qreal bend = std::max(12., (b.x() - a.x()) * .5);
+                path.cubicTo(a + QPointF(bend, 0), b - QPointF(bend, 0), b);
+                for (const auto &obstacle : items)
+                {
+                    if (obstacle.first == edge.source || obstacle.first == edge.target)
+                        continue;
+                    if (path.intersects(obstacle.second->sceneBoundingRect().adjusted(-4, -4, 4, 4)))
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+            if (!forward || blocked)
+            {
+                // Route obstructed links through the clear lanes outside the node bodies.
+                qreal top = a.y(), bottom = a.y();
+                for (const auto &item : items)
+                {
+                    top = std::min(top, item.second->sceneBoundingRect().top());
+                    bottom = std::max(bottom, item.second->sceneBoundingRect().bottom());
+                }
+                const qreal y = forward ? top - 28 : bottom + 28;
+                const qreal right = a.x() + 16, left = b.x() - 16;
+                const std::vector<QPointF> points{a, {right, a.y()}, {right, y}, {left, y}, {left, b.y()}, b};
+                path = QPainterPath(a);
+                for (size_t i = 1; i + 1 < points.size(); ++i)
+                {
+                    const QLineF incoming(points[i], points[i - 1]), outgoing(points[i], points[i + 1]);
+                    const double r = std::min({10., incoming.length() / 2, outgoing.length() / 2});
+                    if (incoming.length() < 1e-6 || outgoing.length() < 1e-6)
+                        continue;
+                    const auto before = incoming.pointAt(r / incoming.length()),
+                               after = outgoing.pointAt(r / outgoing.length());
+                    path.lineTo(before);
+                    path.quadTo(points[i], after);
+                }
+                path.lineTo(b);
+            }
+            QColor color = theme::accent();
+            const bool emphasized = source->isSelected() || target->isSelected();
+            color.setAlpha(emphasized ? 230 : 145);
+            QPen pen(color, emphasized ? 2. : 1.5);
+            pen.setCosmetic(true);
+            edge.item->setPen(pen);
+            edge.item->setPath(path);
+        }
+    }
     std::vector<ModulationGraph> history;
     int selected = 0, pending = 0;
     bool drawing = false;
@@ -317,12 +446,14 @@ class Editor : public QDialog
     void draw()
     {
         drawing = true;
+        edges.clear();
         scene->clear();
         items.clear();
         for (const auto &n : graph.nodes)
         {
             auto *item = new GraphNode(n);
             item->isOutput = n.id == graph.output;
+            item->positionChanged = [this] { updateEdges(); };
             item->portClicked = [this](int id, int p) { ports(id, p); };
             item->moved = [this](int id, QPointF pos)
             {
@@ -343,14 +474,17 @@ class Editor : public QDialog
                 const int id = n.inputs[size_t(p)];
                 if (!items.count(id))
                     continue;
-                const auto a = items[id]->output(), b = items[n.id]->input(p);
-                QPainterPath path(a);
-                const qreal bend = std::max(50., std::abs(b.x() - a.x()) * .5);
-                path.cubicTo(a + QPointF(bend, 0), b - QPointF(bend, 0), b);
-                auto *edge = scene->addPath(path, QPen(QApplication::palette().highlight().color(), 2));
+                QPen pen(theme::accent(), 1.8);
+                pen.setCosmetic(true);
+                auto *edge = scene->addPath(QPainterPath(), pen);
+                edge->setAcceptedMouseButtons(Qt::NoButton);
+                edge->setData(1, id);
+                edge->setData(2, n.id);
                 edge->setZValue(-1);
+                edges.push_back({edge, id, n.id, p});
             }
-        scene->setSceneRect(scene->itemsBoundingRect().adjusted(-100, -100, 300, 200));
+        updateEdges();
+        scene->setSceneRect(scene->itemsBoundingRect().adjusted(-1500, -1500, 1500, 1500));
         drawing = false;
     }
     void properties()

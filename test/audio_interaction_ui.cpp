@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "InteractionPanel.h"
 #include "AudioSpectrum.h"
+#include "ModulationGraphView.h"
 #include "Widgets.h"
 #include <QApplication>
 #include <QTabBar>
@@ -16,6 +17,13 @@
 #include <QGraphicsItem>
 #include <QTimer>
 #include <QPushButton>
+#include <QNativeGestureEvent>
+#include <QPointingDevice>
+#include <QPinchGesture>
+#include <QGestureEvent>
+#include <QGraphicsPathItem>
+#include <QLineF>
+#include <cmath>
 int main(int argc,char **argv){
     QApplication app(argc,argv);theme::applyToApplication(app);Engine engine;QUndoStack undo;int failures=0;
     auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL audio_interaction_ui: %s\n",why);}};
@@ -62,6 +70,52 @@ int main(int argc,char **argv){
         check(engine.interactions().back().graph.nodes.size()==11,"node addition committed");
         auto *remove=dialog->findChild<QPushButton*>("graphDeleteNode");if(remove)remove->click();
         check(engine.interactions().back().graph.nodes.size()==10,"node deletion committed");
+        app.processEvents();
+        if(view){
+            auto *canvas=dynamic_cast<ModulationGraphView*>(view);
+            check(canvas!=nullptr,"graph uses gesture-aware canvas");
+            if(canvas){
+                const QPoint point=canvas->viewport()->rect().center()+QPoint(60,-30);
+                const QPointF anchor=canvas->mapToScene(point);
+                const double before=canvas->zoom();
+                auto native=[&](Qt::NativeGestureType type,double amount){
+                    QNativeGestureEvent gesture(type,QPointingDevice::primaryPointingDevice(),2,point,point,canvas->viewport()->mapToGlobal(point),amount,{});
+                    QApplication::sendEvent(canvas->viewport(),&gesture);
+                    return gesture.isAccepted();
+                };
+                check(native(Qt::BeginNativeGesture,0)&&native(Qt::ZoomNativeGesture,.25),"native trackpad pinch accepted");
+                check(std::abs(canvas->zoom()-before*1.25)<1e-9,"pinch expands graph");
+                check(QLineF(anchor,canvas->mapToScene(point)).length()<3,"pinch keeps scene under gesture center");
+                native(Qt::ZoomNativeGesture,-.2);native(Qt::EndNativeGesture,0);
+                check(std::abs(canvas->zoom()-before)<1e-9,"pinch contracts graph");
+                canvas->viewport()->grabGesture(Qt::PinchGesture);
+                QPinchGesture pinch;pinch.setCenterPoint(point);pinch.setLastScaleFactor(1);pinch.setScaleFactor(1.2);pinch.setTotalScaleFactor(1.2);pinch.setChangeFlags(QPinchGesture::ScaleFactorChanged);
+                QGestureEvent fallback({&pinch});QApplication::sendEvent(canvas->viewport(),&fallback);
+                check(std::abs(canvas->zoom()-before*1.2)<1e-9,"Qt pinch fallback expands graph");
+                pinch.setScaleFactor(1.1);pinch.setLastScaleFactor(1.2);pinch.setTotalScaleFactor(1.32);
+                QGestureEvent nextPinch({&pinch});QApplication::sendEvent(canvas->viewport(),&nextPinch);
+                check(std::abs(canvas->zoom()-before*1.32)<1e-9,"successive pinch updates use total magnification once");
+                canvas->viewport()->ungrabGesture(Qt::PinchGesture);
+                canvas->zoomAt(point,1e9);check(std::abs(canvas->zoom()-3.5)<1e-9,"maximum zoom bounded");
+                canvas->zoomAt(point,1e-9);check(std::abs(canvas->zoom()-.2)<1e-9,"minimum zoom bounded");
+                canvas->zoomAt(point,-2);check(std::abs(canvas->zoom()-.2)<1e-9,"invalid scale cannot flip graph");
+                check(canvas->viewportUpdateMode()==QGraphicsView::FullViewportUpdate,"full canvas repaint avoids port trails");
+                QGraphicsRectItem *audioNode=nullptr;QGraphicsPathItem *audioWire=nullptr;
+                for(auto *item:canvas->scene()->items()){
+                    if(item->data(0).toInt()==1)audioNode=dynamic_cast<QGraphicsRectItem*>(item);
+                    if(item->data(1).toInt()==1)audioWire=dynamic_cast<QGraphicsPathItem*>(item);
+                }
+                check(audioNode&&audioNode->boundingRect().contains(QPointF(-6,82))&&audioNode->boundingRect().contains(QPointF(audioNode->rect().right()+6,audioNode->rect().bottom()-18)),"painted ports stay within declared item bounds");
+                if(audioNode&&audioWire){
+                    const QPointF old=audioNode->pos();audioNode->setPos(old+QPointF(40,20));
+                    const auto start=audioWire->path().elementAt(0);
+                    const auto port=audioNode->mapToScene(QPointF(audioNode->rect().right(),audioNode->rect().bottom()-18));
+                    check(QLineF(QPointF(start.x,start.y),port).length()<.01,"cable follows node before drag release");
+                    audioNode->setPos(old);
+                }
+                canvas->fitGraph(canvas->scene()->itemsBoundingRect());
+            }
+        }
         app.processEvents();
         if(argc>2)dialog->grab().save(QString::fromLocal8Bit(argv[2]));
         dialog->accept();

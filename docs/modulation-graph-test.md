@@ -15,7 +15,8 @@ The default example is `(Audio + OSC) × MIDI`, with a sine fallback when MIDI i
 
 Select a node to edit its properties and input connections. Click an output port, then an input port to connect
 nodes. Numeric and condition ports are distinct; cycles are rejected. Unconnected inputs are zero / false.
-Move nodes by dragging them; Fit and Zoom controls navigate the graph. Use as Output chooses its numeric output.
+Move nodes by dragging them; pinch to zoom around the gesture center, and use two-finger scrolling to pan.
+Fit and Zoom controls also navigate the graph. Use as Output chooses its numeric output.
 Changes apply live and go through the project undo stack. The editor also has local Undo.
 
 Graphs are saved in projects and captured by snapshots. Graph interactions can expand in the list to show their
@@ -34,6 +35,7 @@ in this first test. Multiple bindings to one parameter retain the existing inter
 
 - `pinol_modulation_graph_test`: DAG validation, event values, arithmetic, fallback, hysteresis, smoothing,
   serialization, state preservation on layout edits, invalid graphs and bounded simulation.
-- `pinol_audio_interaction_ui_test`: native editor, node properties, add/delete and target menu access.
+- `pinol_audio_interaction_ui_test`: native editor, node properties, add/delete, target menu access, native/Qt pinch
+  gestures, anchored and bounded zoom, port repaint bounds and cables following node movement.
 - `pinol_tests --area interactions`: real engine target writes, OSC/MIDI events, project round trip and snapshot
   reconstruction, alongside the existing interactions regression suite. Requires an OpenGL-capable session.
