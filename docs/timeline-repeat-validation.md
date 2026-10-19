@@ -33,7 +33,7 @@ ctest --test-dir build --output-on-failure -R '^timeline_repeat$'
    ```sh
    python3 scripts/analyze_timeline_endurance.py session.csv --fps 60
    ```
-4. Check `interval_max_ms`, one-second `interval_p99_ms`, output drops, and `frame_over_2x_budget` events around loop boundaries and cue triggers. Beware that the current endurance CSV's share-skip key may be mismatched; use `frameTimingJson()`'s `gpu_shares_skipped` until corrected.
+4. Check `interval_max_ms`, one-second `interval_p99_ms`, output drops, and `frame_over_2x_budget` events around loop boundaries and cue triggers. The schema-2 CSV reads `gpu_shares_skipped` into `shares_skipped_total`; the analyzer reports its increase and warns about legacy schemas and lost telemetry events.
 
 ## Merge criteria
 

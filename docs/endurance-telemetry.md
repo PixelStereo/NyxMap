@@ -15,3 +15,7 @@ The build SHA is regenerated at every build (`cmake/BuildSha.cmake`), not frozen
 5. **This does not validate receiver-side tearing**; test real receivers separately as described in `docs/gpu-share-validation.md` on the corresponding PR.
 
 Some GPU drivers do not expose free VRAM. If a project was not saved at startup, the header fingerprint reports `unsaved`; project changes are logged separately. Decoder error counters are exported by the engine in `resourcesJson()`.
+
+## Analyze a recording
+
+Run `python3 scripts/analyze_timeline_endurance.py session.csv --fps 60`. The report correlates late frames with `snapshot_recall` and timeline events within 250 ms, reports output-drop and GPU-sharing-skip counter increases, and marks incomplete correlation when telemetry events were lost. CSV schema 2 has the corrected sharing counter; legacy files may contain zero despite skipped shares. Correlation does not establish causality.

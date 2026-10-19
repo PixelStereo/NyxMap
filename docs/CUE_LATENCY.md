@@ -25,8 +25,9 @@ Ask OSCQuery `/composition/timing?VALUE` or read the OSC
 The three new work measures use fixed-size millisecond histograms with
 `count`, `mean_ms`, `p50_ms`, `p95_ms`, `p99_ms`, and `max_ms`.
 Each scheduled snapshot contributes one sample even if Undo recording is
-disabled. UI-initiated manual GO calls routed through the interface are **not**
-measured by these clock-thread work histograms.
+disabled. Calls executed directly on the Sequencer owner thread are **not** measured by
+these clock-thread work histograms. In a running threaded engine, GUI requests
+dispatched to the cue clock **are** measured, including manual recalls.
 
 Reset via OSC `/composition/timing/reset`. This resets frame, cue lateness,
 cue execution, and dropped-output statistics for the next test run.

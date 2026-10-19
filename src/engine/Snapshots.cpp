@@ -1084,6 +1084,7 @@ void Engine::stopShowPlayback()
     for (Animation &a : m_animations) {
         a.state = AnimState::Stopped;
         a.clock = 0;
+        a.oscillatorOffset = 0;
         a.reversed = false;
     }
     for (auto &lp : m_layers) {
@@ -1091,6 +1092,7 @@ void Engine::stopShowPlayback()
         for (Animation &a : l.anims) {
             a.state = AnimState::Stopped;
             a.clock = 0;
+            a.oscillatorOffset = 0;
             a.reversed = false;
         }
         if (l.hasTransport()) l.playing = false;
@@ -1403,7 +1405,8 @@ QStringList Engine::interactionKeys()
     return {QStringLiteral("name"),          QStringLiteral("source/kind"),        QStringLiteral("source/key"),
             QStringLiteral("source/midi/input"), QStringLiteral("source/midi/channel"), QStringLiteral("source/midi/message"),
             QStringLiteral("source/midi/number"), QStringLiteral("source/osc/address"), QStringLiteral("source/osc/argument"),
-            QStringLiteral("source/internal"), QStringLiteral("target"),           QStringLiteral("enable"),
+            QStringLiteral("source/internal"), QStringLiteral("source/audio/input"), QStringLiteral("source/audio/feature"),
+            QStringLiteral("source/audio/low"), QStringLiteral("source/audio/high"), QStringLiteral("target"), QStringLiteral("enable"),
             QStringLiteral("master"),        QStringLiteral("toggle"),             QStringLiteral("source/min"),
             QStringLiteral("source/max"),    QStringLiteral("target/min"),         QStringLiteral("target/max"),
             QStringLiteral("takeover"),      QStringLiteral("filter/enable"),      QStringLiteral("filter/type"),

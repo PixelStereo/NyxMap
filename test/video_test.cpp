@@ -438,7 +438,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         bool alpha;
     };
     const Case cases[] = {
-        {"fmt_yuv420p.mp4", "yuv420p", false},       {"fmt_yuv420p_odd.nut", "yuv420p", false},
+        {"fmt_yuv420p.mp4", "yuv420p|nv12", false},  {"fmt_yuv420p_odd.nut", "yuv420p", false},
         {"fmt_yuvj420p.mov", "yuvj420p", false},     {"fmt_yuv422p10.mov", "yuv422p10le|p210le", false},
         {"fmt_yuva444p10.mov", "yuva444p12le|ayuv64le", true}, {"fmt_nv12.nut", "nv12", false},
         {"fmt_yuv444p.nut", "yuv444p", false},
@@ -797,6 +797,9 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     e.newProject();
     {
         VCHECK(decodedBudget::used() == 0); // the layers' videos closed: none left counted
+        const bool hardware = VideoDecoder::hardwareDecoding();
+        // Zero-copy hardware frames are deliberately excluded from this CPU payload budget.
+        VideoDecoder::setHardwareDecoding(false);
         decodedBudget::setLimit(1);
         std::vector<std::unique_ptr<VideoDecoder>> decs;
         for (int k = 0; k < 3; ++k) {
@@ -828,6 +831,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         decs.clear();
         VCHECK(decodedBudget::used() == 0);
         decodedBudget::setLimit(size_t(512) << 20);
+        VideoDecoder::setHardwareDecoding(hardware);
     }
     // Corrupt every HAP frame payload while keeping a valid MOV container. In
     // Loop mode, legs without any valid frame (two in a row) must end playback instead of spinning forever.

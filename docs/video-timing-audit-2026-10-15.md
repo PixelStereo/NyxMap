@@ -1,5 +1,7 @@
 # Audit du moteur vidéo, du rendu et des timings — 15 octobre 2026
 
+> Audit historique. Voir [l’état vérifié au 19 octobre et les corrections](audit-status-2026-10-19.md) avant de considérer un constat comme encore ouvert.
+
 ## Version et conclusion
 
 Version auditée : `main` **35e73e837769cfba70d2ccfcd5ae884d430b35e9**, après fusion des PR #173–178. Machine locale : Mac Studio Apple M3 Ultra, macOS 26.7.1, Qt 6.11.2, FFmpeg 9. Les demandes d’interface ultérieures sont publiées séparément dans la [PR #179](https://github.com/PixelStereo/Pinol/pull/179).

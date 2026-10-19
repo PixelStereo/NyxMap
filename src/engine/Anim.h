@@ -9,6 +9,7 @@
 
 #include <QString>
 #include <QtGlobal>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -68,10 +69,12 @@ struct Animation {
     // Where it is (not saved)
     AnimState state = AnimState::Stopped;
     double clock = 0;      // seconds played since its start (or since its loop mode last changed)
+    double oscillatorOffset = 0; // keeps played time continuous when the pass clock is rebased (not saved)
     bool reversed = false; // the first pass goes backwards (a loop mode changed during a ping-pong's way back)
     double length() const; // the time it plays from the start (infinity: endless)
     double position(double clock) const; // within the pass: 0..duration
     double position() const { return position(clock); }
+    double played() const { return std::min(clock, length()) + oscillatorOffset; }
     bool backwardsAt(double clock) const; // the pass at that clock goes from the end to the start
     double clockAt(double position) const; // the clock giving `position` within the pass it is in now
     // A new loop mode / repeat while it runs: it goes on from where it is, the way it goes, and the passes

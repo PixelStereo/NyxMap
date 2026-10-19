@@ -8,6 +8,7 @@
 // --copy: hardware frames copied to upload buffers, as before zero copy (macOS), to compare.
 // --software: no hardware decoding.
 #include "Engine.h"
+#include "BenchmarkRates.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -96,6 +97,11 @@ int main(int argc, char **argv)
         std::printf("usage: pinol_bench [--seconds S] [--fps F] [--comp WxH] [--decode] [--copy] [--software] [--mipmaps] file...\n");
         return 1;
     }
+    if (!std::isfinite(seconds) || seconds <= 0 || !std::isfinite(fps) || fps <= 0 ||
+        comp.width() <= 0 || comp.height() <= 0) {
+        std::printf("Duration, frame rate and composition dimensions must be positive finite values.\n");
+        return 1;
+    }
     if (software) VideoDecoder::setHardwareDecoding(false);
     if (decode) return decodeOnly(files, seconds);
 
@@ -142,8 +148,6 @@ int main(int argc, char **argv)
     e.resetFrameTiming(); // the warm-up is not counted
     QElapsedTimer tm;
     tm.start();
-    double fpsSum = 0;
-    int fpsCount = 0;
     std::vector<double> waits; // how long the interface waits for the engine's lock (ms), sampled as it would
     while (tm.elapsed() < seconds * 1000) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
@@ -153,8 +157,6 @@ int main(int argc, char **argv)
         { Engine::Lock lk(&e.mutex()); }
         waits.push_back(w.nsecsElapsed() / 1e6);
         QThread::msleep(7);
-        fpsSum += e.fps();
-        ++fpsCount;
     }
     const double s = tm.elapsed() / 1000.0;
     const double renderFps = (e.frameCount() - frames0) / s;
@@ -190,9 +192,10 @@ int main(int argc, char **argv)
             fileFps = l->video->fps();
             format = l->frame.layout ? l->frame.layout->description : QString();
         }
-        const double rate = shown / s, want = std::min(fileFps, renderFps);
-        const bool good = rate >= want * 0.95;
-        allGood = allGood && good;
+        const double rate = shown / s;
+        const auto rates = benchmarkRates(fps, renderFps, fileFps, rate);
+        const bool good = rates.layerPassed;
+        allGood = allGood && rates.passed();
         VideoDecoder::Metrics m;
         uint64_t uploads = 0, fast = 0;
         {
@@ -204,8 +207,8 @@ int main(int argc, char **argv)
                 fast = l->videoTex->stagedUploads() + l->videoTex->surfaceUploads();
             }
         }
-        std::printf("  %-34s %-26s %6.1f frames/s of %.2f  %s  [%s]\n", qPrintable(QFileInfo(files[k]).fileName()),
-                    qPrintable(codec), rate, fileFps, good ? "ok" : "DROPS", qPrintable(format));
+        std::printf("  %-34s %-26s %6.1f frames/s; target %.2f (source %.2f)  %s  [%s]\n", qPrintable(QFileInfo(files[k]).fileName()),
+                    qPrintable(codec), rate, rates.layerTarget, fileFps, good ? "ok" : "DROPS", qPrintable(format));
         std::printf("      decode p95/p99/max %.2f/%.2f/%.2f ms, over a frame %llu; late %llu; skipped %llu; fetch misses %llu; queue high %llu\n",
                     m.decodeTimeP95Ms, m.decodeTimeP99Ms, m.decodeTimeMaxMs,
                     static_cast<unsigned long long>(m.decodesOverFrame),
@@ -220,7 +223,6 @@ int main(int argc, char **argv)
                     static_cast<unsigned long long>(uploads));
     }
     e.stop();
-    std::printf(allGood ? "Every layer kept its rate.\n" : "Some layers dropped frames.\n");
-    (void)fpsSum;
+    std::printf(allGood ? "Render and every layer met their requested rates.\n" : "Render or layer delivery missed its requested rate.\n");
     return allGood ? 0 : 2;
 }

@@ -155,15 +155,17 @@ void Animation::setLoop(AnimLoop l, int n)
         loop = l;
         repeat = n;
         clock = 0;
+        oscillatorOffset = 0;
         reversed = false;
         return;
     }
-    const double pos = position(), d = passDuration(duration);
+    const double pos = position(), d = passDuration(duration), elapsed = played();
     const bool back = backwardsAt(clock);
     loop = l;
     repeat = n;
     reversed = back;
     clock = back ? d - pos : pos; // within the first pass of the new mode
+    oscillatorOffset = elapsed - std::min(clock, length());
 }
 
 bool Animation::advance(double dt)
@@ -211,6 +213,7 @@ int Engine::addAnimation(const Animation &a, int at)
         m_nextAnimationId = std::max(m_nextAnimationId, x.id + 1);
         x.state = AnimState::Stopped;
         x.clock = 0;
+        x.oscillatorOffset = 0;
         for (AnimTrack &t : x.tracks) sortKeys(t);
         if (at < 0 || at > int(m_animations.size())) at = int(m_animations.size());
         m_animations.insert(m_animations.begin() + at, x);
@@ -231,6 +234,7 @@ void Engine::setAnimation(int i, const Animation &a)
         // Where it is stays: its clock, its way, the values captured when it started
         x.state = old.state;
         x.clock = old.clock;
+        x.oscillatorOffset = old.oscillatorOffset;
         x.reversed = old.reversed;
         x.loop = old.loop;
         x.repeat = old.repeat;
@@ -293,6 +297,7 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
     case AnimAction::Play:
         if (a->state == AnimState::Stopped) {
             a->clock = 0;
+            a->oscillatorOffset = 0;
             a->reversed = false;
             capture();
         }
@@ -305,10 +310,12 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
     case AnimAction::Stop:
         a->state = AnimState::Stopped;
         a->clock = 0;
+        a->oscillatorOffset = 0;
         a->reversed = false;
         break;
     case AnimAction::Rewind:
         a->clock = 0;
+        a->oscillatorOffset = 0;
         a->reversed = false;
         capture();
         apply();
@@ -320,6 +327,7 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
             capture();
         }
         a->clock = std::clamp(time, 0.0, std::min(a->length(), 1e9));
+        a->oscillatorOffset = 0; // an explicit seek deliberately sets the phase
         apply();
         break;
     case AnimAction::Speed:
@@ -333,7 +341,7 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
 
 void Engine::applyAnimation(Animation &a)
 {
-    const double pos = a.position(), played = std::min(a.clock, a.length());
+    const double pos = a.position(), played = a.played();
     for (const AnimTrack &t : a.tracks) {
         if (!t.enabled || t.param.isEmpty()) continue;
         const double v = t.valueAt(pos, played);
@@ -354,6 +362,7 @@ void Engine::stepAnimations(double dt)
             if (!going) { // over: its last values stay
                 a.state = AnimState::Stopped;
                 a.clock = 0;
+                a.oscillatorOffset = 0;
                 a.reversed = false;
             }
         }
@@ -365,6 +374,7 @@ void Engine::stepAnimations(double dt)
         if (!going) { // over: its last values stay
             a.state = AnimState::Stopped;
             a.clock = 0;
+            a.oscillatorOffset = 0;
             a.reversed = false;
         }
     }
@@ -512,7 +522,7 @@ void Engine::applyLayerAnim(Layer &l, Animation &a)
     if (a.tracks.empty()) return;
     const AnimTrack &t = a.tracks.front();
     if (!t.enabled || t.param.isEmpty()) return;
-    const double v = t.valueAt(a.position(), std::min(a.clock, a.length()));
+    const double v = t.valueAt(a.position(), a.played());
     Parameter *p = l.parameter(t.param);
     if (std::isfinite(v) && p && p->setNumber(v)) releaseFromFades(l.id, t.param);
 }
@@ -568,6 +578,7 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
         sortKeys(t);
         a.state = AnimState::Stopped;
         a.clock = 0;
+        a.oscillatorOffset = 0;
         a.reversed = false;
         const Animation *was = nullptr;
         for (const Animation &o : old)
@@ -579,6 +590,7 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
         if (was && was->tracks.front().enabled && t.enabled) { // it goes on from where it is
             a.state = was->state;
             a.clock = was->clock;
+            a.oscillatorOffset = was->oscillatorOffset;
             a.reversed = was->reversed;
             a.loop = was->loop;
             a.repeat = was->repeat;
