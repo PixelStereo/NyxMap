@@ -113,6 +113,12 @@ int runColorAnimationTests(Engine &engine, const QString &root)
     check(engine.animation(engine.indexOfAnimation(ftid)).tracks.size() == 1 &&
           engine.layerAnim(layer, "opacity", nullptr) && engine.layerAnim(layer, "param/color/r", nullptr),
           "chain replacement preserves unrelated layer/source animations");
+    auto pasted = engine.layerJson(index);
+    pasted["source"] = QJsonObject{{"type", "text"}};
+    check(engine.applyLayerParts(index, pasted, Engine::PartSource), "paste a replacement source");
+    check(!engine.layerAnim(layer, "param/color/r", nullptr) && engine.layerAnim(layer, "opacity", nullptr) &&
+          engine.animation(engine.indexOfAnimation(tid)).tracks.empty(),
+          "pasting a source cannot resurrect animations from the removed source");
     engine.newProject();
     return failures;
 }

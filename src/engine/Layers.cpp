@@ -577,6 +577,10 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
     // With the source, the layer is rebuilt from a merged state (the media is opened again, as when one is
     // loaded); the target keeps its identity and whatever the paste does not carry.
     if (parts & PartSource) {
+        {
+            Lock lk(&m_mutex);
+            if (Layer *l = layer(i)) removeSourceAnimations(*l);
+        }
         QJsonObject merged = layerJson(i);
         merged["source"] = o.value("source");
         if ((parts & PartTransport) && o.contains("play")) merged["play"] = o.value("play");
