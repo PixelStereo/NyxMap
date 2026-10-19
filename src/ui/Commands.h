@@ -332,6 +332,7 @@ private:
     std::map<quint64, int> m_parts;
     std::map<quint64, QJsonObject> m_layers;
     std::map<quint64, std::vector<Animation>> m_animations;
+    std::map<quint64, QStringList> m_animationParams;
     std::vector<Interaction> m_interactions;
     bool m_hasInteractions = false;
 };

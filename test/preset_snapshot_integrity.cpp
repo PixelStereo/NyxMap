@@ -137,21 +137,38 @@ int main(int argc, char **argv) {
               "Undo runtime metadata is not persisted in the project");
     }
     {
+        Animation unrelated = animation;
+        unrelated.tracks[0].param = "rotation";
+        auto running = engine.layerAnims(layer);
+        running.push_back(unrelated);
+        engine.setLayerAnims(layer, running);
+        engine.controlLayerAnim(layer, "opacity", AnimAction::Play);
         Engine::Preset drivers;
         drivers.name = "Drivers";
         drivers.fade = 0;
         drivers.animations = {animation};
         drivers.animations[0].tracks[0].layer = layer;
+        drivers.animations[0].tracks[0].center = .1;
+        drivers.animations[0].tracks[0].amplitude = .1;
         const int di = engine.addPreset(drivers);
         const auto before = engine.layerAnims(layer)[0];
+        const double outputBefore = engine.parameterValue(layer, "opacity").toDouble();
         QUndoStack undo;
         undo.push(new cmd::RecallPreset(&engine, engine.preset(di).id));
         engine.advanceFades(.4);
+        Animation rotation;
+        engine.layerAnim(layer, "rotation", &rotation);
         undo.undo();
         const auto restored = engine.layerAnims(layer)[0];
         check(restored.state == before.state && restored.clock == before.clock &&
                   restored.oscillatorOffset == before.oscillatorOffset && restored.reversed == before.reversed,
               "preset Undo restores exact animation transport");
+        Animation untouched;
+        engine.layerAnim(layer, "rotation", &untouched);
+        check(untouched.clock == rotation.clock && untouched.state == rotation.state,
+              "preset Undo does not rewind an animation outside the preset");
+        check(std::abs(engine.parameterValue(layer, "opacity").toDouble() - outputBefore) < 1e-6,
+              "driver-only preset Undo restores its parameter immediately");
     }
     const auto serialized = presetToJson(engine.preset(pi));
     check(presetToJson(presetFromJson(serialized)) == serialized,

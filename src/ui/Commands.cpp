@@ -413,17 +413,24 @@ void SetLayerAnim::apply(const std::optional<Animation> &a)
 
 RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
 {
+    Engine::Lock lock(&e->mutex()); // parameter outputs and animation clocks are one Undo state
     const Engine::Preset p = e->preset(e->indexOfPreset(preset));
     for (const Engine::PresetValue &v : p.values) m_before.push_back(e->presetValue(v.layer, v.path));
     for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) m_parts[it.key().toULongLong()] |= Engine::PartSpatial;
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) m_parts[it.key().section(':', 0, 0).toULongLong()] |= it.key().section(':', 1).toInt();
     for (const auto &animation : p.animations) if (!animation.tracks.empty()) {
         const quint64 layer = animation.tracks.front().layer;
+        if (p.indexOf(layer, animation.tracks.front().param) < 0)
+            m_before.push_back(e->presetValue(layer, animation.tracks.front().param));
         m_animations[layer] = e->layerAnims(layer);
+        m_animationParams[layer].push_back(animation.tracks.front().param);
     }
     for (const auto &[id, parts] : m_parts) {
         m_layers[id] = e->layerJson(e->indexOfId(id));
-        if (parts & Engine::PartAnimations) m_animations[id] = e->layerAnims(id);
+        if (parts & (Engine::PartAnimations | Engine::PartSource)) {
+            m_animations[id] = e->layerAnims(id);
+            m_animationParams.erase(id); // a source/animation category owns the complete list
+        }
     }
     m_hasInteractions = !p.interactions.empty();
     if (m_hasInteractions) m_interactions = e->interactions();
@@ -440,7 +447,26 @@ void RecallPreset::undo()
     }
     for (const auto &value : m_before)
         if (!value.value.isUndefined()) m_e->setParameter(value.layer, value.path, value.value);
-    for (const auto &[id, animations] : m_animations) m_e->restoreLayerAnims(id, animations);
+    for (const auto &[id, animations] : m_animations) {
+        const auto paths = m_animationParams.find(id);
+        if (paths == m_animationParams.end()) {
+            m_e->restoreLayerAnims(id, animations);
+            continue;
+        }
+        auto current = m_e->layerAnims(id);
+        for (const QString &path : paths->second) {
+            const auto matches = [&](const Animation &a) {
+                return !a.tracks.empty() && a.tracks.front().param == path;
+            };
+            const auto before = std::find_if(animations.begin(), animations.end(), matches);
+            const auto now = std::find_if(current.begin(), current.end(), matches);
+            if (before == animations.end()) {
+                if (now != current.end()) current.erase(now);
+            } else if (now == current.end()) current.push_back(*before);
+            else *now = *before;
+        }
+        m_e->restoreLayerAnims(id, std::move(current));
+    }
     if (m_hasInteractions) m_e->setInteractions(m_interactions);
 }
 
