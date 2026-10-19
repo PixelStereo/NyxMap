@@ -529,6 +529,7 @@ bool IsfInstance::parse(const QString &src, QString *body)
         case IsfInput::Image:
             in.isInputImage = in.name == QLatin1String("inputImage");
             if (in.isInputImage) m_isFilter = true;
+            in.layerOnly = !in.isInputImage && j.value("LAYER_ONLY").toBool();
             break;
         default: break;
         }
@@ -823,6 +824,10 @@ bool IsfInstance::setImageInput(int index, const QString &path, QString *err)
         in.imagePath.clear();
         return true;
     }
+    if (in.layerOnly) {
+        if (err) *err = QStringLiteral("%1 shows a layer, not an image file.").arg(in.label);
+        return false;
+    }
     if (!loadImageTexture(path, in.imageTex, err)) return false;
     in.imagePath = QFileInfo(path).absoluteFilePath();
     return true;
@@ -1008,7 +1013,7 @@ void IsfInstance::restore(const QJsonObject &o, const QString &projectDir)
     const QJsonObject images = o.value("images").toObject();
     for (int idx = 0; idx < int(m_inputs.size()); ++idx) {
         IsfInput &in = m_inputs[size_t(idx)];
-        if (in.type != IsfInput::Image || !images.contains(in.name)) continue;
+        if (in.type != IsfInput::Image || in.layerOnly || !images.contains(in.name)) continue;
         QString p = images.value(in.name).toString();
         if (!QFile::exists(p) && !projectDir.isEmpty()) {
             const QString alt = QDir(projectDir).absoluteFilePath(QFileInfo(p).fileName());

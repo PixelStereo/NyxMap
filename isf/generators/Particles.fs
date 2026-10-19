@@ -1,8 +1,8 @@
 /*{
- "ISFVSN":"2","DESCRIPTION":"Particles: up to 262 144 grains born by an emitter (sphere, shell, ring, point, line or the light of an image), moved by forces (gravity, wind, drag, turbulence, vortex) and by two attractors (a negative strength repels: it disperses them), drawn with motion streaks, depth of field and bloom, coloured over their life. Their state lives in float textures; Pinol draws them as points (POINTS pass).","CREDIT":"PINOL","CATEGORIES":["Particles","Audio Reactive"],
+ "ISFVSN":"2","DESCRIPTION":"Particles: up to 262 144 grains born by an emitter (sphere, shell, ring, point, line or the light of another layer), moved by forces (gravity, wind, drag, turbulence, vortex) and by two attractors (a negative strength repels: it disperses them), drawn with motion streaks, depth of field and bloom, coloured over their life. Their state lives in float textures; Pinol draws them as points (POINTS pass).","CREDIT":"PINOL","CATEGORIES":["Particles","Audio Reactive"],
  "INPUTS":[
  {"NAME":"count","LABEL":"Particles","TYPE":"float","DEFAULT":0.6,"MIN":0,"MAX":1},
- {"NAME":"emitShape","LABEL":"Emitter Shape","TYPE":"long","DEFAULT":1,"VALUES":[0,1,2,3,4,5],"LABELS":["Sphere","Shell","Ring","Point","Line","Image"]},
+ {"NAME":"emitShape","LABEL":"Emitter Shape","TYPE":"long","DEFAULT":1,"VALUES":[0,1,2,3,4,5],"LABELS":["Sphere","Shell","Ring","Point","Line","Layer"]},
  {"NAME":"emitPos","LABEL":"Emitter Position","TYPE":"point2D","DEFAULT":[0,0],"MIN":[-1,-1],"MAX":[1,1]},
  {"NAME":"emitSize","LABEL":"Emitter Size","TYPE":"float","DEFAULT":0.5,"MIN":0,"MAX":1},
  {"NAME":"life","LABEL":"Life (s)","TYPE":"float","DEFAULT":6,"MIN":0.2,"MAX":20},
@@ -39,8 +39,8 @@
  {"NAME":"streaks","LABEL":"Motion Streaks","TYPE":"float","DEFAULT":0.35,"MIN":0,"MAX":1},
  {"NAME":"dof","LABEL":"Depth of Field","TYPE":"float","DEFAULT":0.3,"MIN":0,"MAX":1},
  {"NAME":"bloom","LABEL":"Bloom","TYPE":"float","DEFAULT":0.5,"MIN":0,"MAX":1},
- {"NAME":"sprite","LABEL":"Grain Image","TYPE":"image"},
- {"NAME":"form","LABEL":"Form Image","TYPE":"image"},
+ {"NAME":"sprite","LABEL":"Grain Layer","TYPE":"image","LAYER_ONLY":true},
+ {"NAME":"form","LABEL":"Form Layer","TYPE":"image","LAYER_ONLY":true},
  {"NAME":"formPull","LABEL":"Form Hold","TYPE":"float","DEFAULT":0.6,"MIN":0,"MAX":1},
  {"NAME":"camYaw","LABEL":"Camera Direction","TYPE":"float","DEFAULT":0,"MIN":-1,"MAX":1},
  {"NAME":"camPitch","LABEL":"Camera Height","TYPE":"float","DEFAULT":0.25,"MIN":-1,"MAX":1},
@@ -76,7 +76,7 @@
 //   soft edge), Swirl (a sideways pull: the grains orbit it instead of falling in).
 // - Look: Size, Size Random (mostly fine dust, a few bigger grains), Size over Life (shrinks or grows), its colour
 //   from birth to death, warmed towards Color when Fast by its speed, Brightness, Trail, streaks, focus, bloom.
-// Pass 0: where the camera is along its path. Pass 1: each grain's home in a Form Image (Emitter Shape: Image).
+// Pass 0: where the camera is along its path. Pass 1: each grain's home in a Form Layer (Emitter Shape: Layer).
 // Pass 2: velocities (xyz, w: the life it was given). Pass 3: positions (xyz, w: life left, in seconds; 0: born
 // again). Passes 1 to 3 decide a birth the same way, from the position before this frame. Pass 4: what was drawn
 // fades (the trail). Pass 5: the grains, added as soft streaks (vertex shader: Particles.vs, with the camera).
@@ -119,7 +119,7 @@ float ptLife(uint id){
  return FRAMEINDEX<2?l*ptRand(id*5U+3U):l;
 }
 vec3 ptDir(uint s){float z=ptRand(s)*2.-1.,a=ptRand(s+1U)*6.2831853;return vec3(sqrt(1.-z*z)*cos(a),z,sqrt(1.-z*z)*sin(a));}
-// Its place in a Form Image, for good: on its light (the brighter, the likelier), as a thin relief
+// Its place in the Form Layer: on its light (the brighter, the likelier), as a thin relief
 vec3 ptFormPos(uint id){
  uint s=id*5U+1U;
  vec2 best=vec2(.5);float bestL=-1.;
@@ -133,7 +133,7 @@ vec3 ptFormPos(uint id){
  vec2 xy=(best-.5)*2.*ptEmitterSize()*vec2(min(aspect,1.6),min(1.,1.6/aspect));
  return ptEmitter()+vec3(xy,(ptRand(s+7U)-.5)*.12);
 }
-// What identifies the form its places were taken from (the image's size, the emitter's size and place)
+// What identifies the form its places were taken from (its picture's size, the emitter's size and place)
 float ptFormKey(){return _form_imgSize.x*7.+_form_imgSize.y+emitSize*13.+dot(emitPos,vec2(31.,57.));}
 // Where it is born on the emitter, and the way out of it there (the shape's normal)
 vec3 ptBirth(uint id,out vec3 n){
@@ -178,7 +178,7 @@ vec3 ptForces(vec3 p,vec3 v,uint id,ivec2 c){
  a+=e/max(re,1e-4)*burst*25.;
  a+=ptAttract(p,attr1Pos,attr1Strength,attr1Radius,attr1Swirl);
  a+=ptAttract(p,attr2Pos,attr2Strength,attr2Radius,attr2Swirl);
- // A Form Image holds each grain at its home, a damped spring: the forces shake the form, it comes back
+ // A Form Layer holds each grain at its home, a damped spring: the forces shake the form, it comes back
  if(ptFormShape())a+=((texelFetch(home,c,0).xyz-p)*40.-v*8.)*formPull*formPull;
  return a;
 }
@@ -198,8 +198,8 @@ void main(){
   bool born=P.w<=0.;
   float dt=min(TIMEDELTA,.1)*timeScale;
   if(PASSINDEX==1){
-   // Its home in the Form Image, taken again when the form changes (and once a second, for an image swapped for
-   // another of the same size), so that the whole cloud moves to a new form at once
+   // Its home in the Form Layer, taken again when the form changes size, and once a second: the cloud follows a
+   // moving picture
    vec4 H=texelFetch(home,c,0);
    if(ptFormShape()&&(born||H.w!=ptFormKey()||int(id%60U)==FRAMEINDEX%60))H=vec4(ptFormPos(id),ptFormKey());
    gl_FragColor=H;
@@ -228,7 +228,7 @@ void main(){
   gl_FragColor=texelFetch(glow,ivec2(gl_FragCoord.xy),0)*trail;
  }else if(PASSINDEX==5){
   // A capsule along its motion: a bright core and a soft halo when in focus, a disc with a brighter rim
-  // (bokeh) when not; or the Grain Image
+  // (bokeh) when not; or the Grain Layer
   vec2 q=isf_PointCoord*2.-1.;
   float ratio=max(pStreak.x,1.),blur=clamp(pStreak.y,0.,1.);
   vec2 s=vec2(q.x*ratio,q.y);

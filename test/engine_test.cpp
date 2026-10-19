@@ -442,8 +442,8 @@ void main(){
                     for (int x = 0; x < img.width(); ++x) lit += qGray(img.pixel(x, y)) > 8;
                 CHECK(lit > img.width() * img.height() / 20);
             }
-            // A Form Image (a white bar in the left half): the cloud takes its shape, its light there and not on
-            // the right; then a Grain Image draws each grain
+            // A Form Layer (a switched-off layer showing a white bar in its left half): the cloud takes its shape, its
+            // light there and not on the right; then a Grain Layer draws each grain. Both take a layer, never a file
             if (path) path->lValue = 0; // fixed, facing the form
             if (IsfInput *pitch = inst->input(QStringLiteral("camPitch"))) pitch->fValue = 0;
             auto setF = [&](const char *n, double v) {
@@ -502,15 +502,27 @@ void main(){
                 if (inst->inputs()[size_t(k)].name == QLatin1String("form")) formIndex = k;
                 if (inst->inputs()[size_t(k)].name == QLatin1String("sprite")) spriteIndex = k;
             }
-            CHECK(formIndex >= 0 && spriteIndex >= 0 && e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err));
-            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 5; // Image: the Form Image
+            CHECK(formIndex >= 0 && spriteIndex >= 0);
+            CHECK(!e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err) && err.contains("layer"));
+            auto hiddenImageLayer = [&](const char *name, const QString &file) {
+                const int i = e.addLayer(QLatin1String(name));
+                CHECK(e.setLayerImage(i, file, &err));
+                const quint64 id = e.layerId(i);
+                Engine::Lock lk(&e.mutex());
+                e.layer(i)->enabled = false; // not in the picture: drawn for the particles only
+                return id;
+            };
+            const quint64 formId = hiddenImageLayer("Form", tmp + "/form.png");
+            CHECK(e.setIsfImageLayer(inst, formIndex, formId, &err));
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 5; // Layer: the Form Layer
             for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
             QImage formed = e.grabViewport(e.mainViewportId());
             const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
             CHECK(left > 50 && left > 3 * right);
             QImage star(32, 32, QImage::Format_RGBA8888);
             star.fill(Qt::white);
-            CHECK(star.save(tmp + "/grain.png") && e.setIsfImageInput(inst, spriteIndex, tmp + "/grain.png", &err));
+            CHECK(star.save(tmp + "/grain.png"));
+            CHECK(e.setIsfImageLayer(inst, spriteIndex, hiddenImageLayer("Grain", tmp + "/grain.png"), &err));
             for (int k = 0; k < 4; ++k) e.renderFrame();
             formed = e.grabViewport(e.mainViewportId());
             CHECK(litIn(formed, 0, formed.width() / 2) > 50);

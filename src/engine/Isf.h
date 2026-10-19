@@ -49,6 +49,8 @@ struct IsfInput {
     // Or another layer's picture (after its effects), taken at every frame (0: none): its id, saved; the engine
     // binds the picture (extTex) before each render
     quint64 imageLayer = 0;
+    // A Pinol extension ("LAYER_ONLY": true): the input shows a layer, never an image file
+    bool layerOnly = false;
     Texture2D imageTex;
     // A picture of the engine for this input instead (transitions: startImage, endImage); 0: none
     GLuint extTex = 0;

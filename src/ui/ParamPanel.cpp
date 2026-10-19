@@ -262,6 +262,7 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
             clear->setFixedWidth(28);
             h->addWidget(name, 1);
             h->addWidget(pick);
+            pick->setVisible(!in.layerOnly); // a layer only (LAYER_ONLY): no image file
             h->addWidget(fromLayer);
             h->addWidget(clear);
             auto instance = [this] {

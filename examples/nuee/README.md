@@ -22,7 +22,7 @@ Les paramètres reprennent le vocabulaire des moteurs de particules courants (Tr
 | Paramètre | Rôle |
 |---|---|
 | Particles | Combien de grains (262 144 au maximum). Avec Life, il fixe le débit : Particles ÷ Life grains naissent chaque seconde. |
-| Emitter Shape | Sphere (le volume), Shell (la surface), Ring (un anneau horizontal), Point, Line (en travers de l'image), Image (les zones claires de Form Image). |
+| Emitter Shape | Sphere (le volume), Shell (la surface), Ring (un anneau horizontal), Point, Line (en travers de l'image), Layer (les zones claires du calque choisi dans Form Layer). |
 | Emitter Position / Size | Où se trouve l'émetteur, et sa taille. |
 | Life (s) / Life Random | Durée de vie d'un grain, et l'écart aléatoire autour d'elle. |
 | Emit Direction | Vers où partent les grains : Outward (vers l'extérieur de la forme), Up, Down, Left, Right (une fontaine, une pluie). |
@@ -71,10 +71,12 @@ La position sur le chemin s'accumule d'une image à l'autre : changer la vitesse
 
 Chaque grain laisse une traînée de mouvement (**Motion Streaks**). Hors du plan net, il devient un disque flou (**Depth of Field**). La lumière s'additionne puis passe par un halo (**Bloom**) et une courbe filmique. **Size Random** mêle à la poussière fine quelques grains plus gros et plus brillants.
 
-Deux images peuvent être choisies dans l'inspecteur de la source :
+Deux calques peuvent servir d'image, choisis dans l'inspecteur de la source :
 
-- **Grain Image** : chaque particule est dessinée avec cette image (une étoile, une tache d'encre…), sur sa luminosité.
-- **Form Image**, avec **Emitter Shape** sur *Image* : les particules prennent leur place sur les zones claires de l'image, et le nuage dessine l'image. **Form Hold** règle la fermeté du rappel : les forces et les attaques la déforment, puis elle revient. **Emitter Size** et **Emitter Position** règlent sa taille et sa place. Changer d'image fait migrer tout le nuage vers la nouvelle forme.
+- **Grain Layer** : chaque particule est dessinée avec l'image de ce calque (une étoile, une tache d'encre…), sur sa luminosité.
+- **Form Layer**, avec **Emitter Shape** sur *Layer* : les particules prennent leur place sur les zones claires de ce calque, et le nuage le dessine. Le calque est suivi en direct : une vidéo, un texte ou un générateur qui bouge entraîne le nuage, qui se remet en place en une seconde environ. **Form Hold** règle la fermeté du rappel : les forces et les attaques déforment la forme, puis elle revient. **Emitter Size** et **Emitter Position** règlent sa taille et sa place.
+
+Ces deux entrées ne prennent qu'un calque, jamais un fichier : pour une image fixe, la charger dans un calque (masqué si besoin, il est rendu quand même) puis le choisir avec le bouton **Layer**.
 
 ## Partition
 
