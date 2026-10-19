@@ -446,6 +446,52 @@ void main(){
             // the right; then a Grain Image draws each grain
             if (path) path->lValue = 0; // fixed, facing the form
             if (IsfInput *pitch = inst->input(QStringLiteral("camPitch"))) pitch->fValue = 0;
+            auto setF = [&](const char *n, double v) {
+                IsfInput *i = inst->input(QLatin1String(n));
+                CHECK(i != nullptr);
+                if (i) i->fValue = v;
+            };
+            auto setP = [&](const char *n, double x, double y) {
+                IsfInput *i = inst->input(QLatin1String(n));
+                CHECK(i != nullptr);
+                if (i) i->pValue = QPointF(x, y);
+            };
+            auto litIn = [](const QImage &img, int x0, int x1) {
+                int n = 0;
+                for (int y = 0; y < img.height(); ++y)
+                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
+                return n;
+            };
+            // An attractor on the left gathers the cloud there; a negative strength (a disperser) at the centre of a
+            // sphere of grains empties it
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 0; // Sphere
+            setF("vortex", 0);
+            setF("attr2Strength", 0);
+            setP("attr1Pos", -.7, 0);
+            setF("attr1Strength", .8);
+            setF("attr1Swirl", 0);
+            for (int k = 0; k < 60; ++k) e.renderFrame();
+            QImage pulled = e.grabViewport(e.mainViewportId());
+            const int pl = litIn(pulled, 0, pulled.width() / 2), pr = litIn(pulled, pulled.width() / 2, pulled.width());
+            std::printf("       attractor on the left: %d lit on the left, %d on the right\n", pl, pr);
+            CHECK(pl > 50 && pl > 2 * pr);
+            // A disperser (a negative strength) on the left of the point the grains are born at: they go right
+            setF("attr1Strength", 0);
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 3; // Point
+            setF("speed", 0);
+            setF("life", 1.5);
+            setP("attr2Pos", -.25, 0);
+            setF("attr2Radius", .5);
+            setF("attr2Strength", -1);
+            for (int k = 0; k < 40; ++k) e.renderFrame();
+            const QImage pushed = e.grabViewport(e.mainViewportId());
+            const int dl = litIn(pushed, 0, pushed.width() / 2), dr = litIn(pushed, pushed.width() / 2, pushed.width());
+            std::printf("       disperser on the left: %d lit on the left, %d on the right\n", dl, dr);
+            CHECK(dr > 50 && dr > 2 * dl);
+            setF("attr2Strength", 0);
+            setF("speed", .15);
+            setF("life", 6);
+            setF("attr2Strength", 0);
             QImage bar(256, 128, QImage::Format_RGBA8888);
             bar.fill(Qt::black);
             for (int y = 48; y < 80; ++y)
@@ -457,13 +503,8 @@ void main(){
                 if (inst->inputs()[size_t(k)].name == QLatin1String("sprite")) spriteIndex = k;
             }
             CHECK(formIndex >= 0 && spriteIndex >= 0 && e.setIsfImageInput(inst, formIndex, tmp + "/form.png", &err));
+            if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 5; // Image: the Form Image
             for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
-            auto litIn = [](const QImage &img, int x0, int x1) {
-                int n = 0;
-                for (int y = 0; y < img.height(); ++y)
-                    for (int x = x0; x < x1; ++x) n += qGray(img.pixel(x, y)) > 24;
-                return n;
-            };
             QImage formed = e.grabViewport(e.mainViewportId());
             const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
             CHECK(left > 50 && left > 3 * right);

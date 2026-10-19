@@ -9,33 +9,36 @@ import subprocess
 
 BASE_DURATION=180.0
 # Same landmarks as the score (examples/champ-de-rupture); scaled only when another recording is supplied.
-# Each cue: the cloud (amount, pull, trail, exposure, tint) and the camera (path, speed, path size, distance,
+# Each cue: the cloud (how many grains, the pull of Attractor 1 at the centre, negative when the field gives way,
+# the disperser Attractor 2, trail, brightness, colours) and the camera (path, speed, path size, distance,
 # direction). Paths: 0 Fixed, 1 Orbit, 2 Figure eight, 3 Spiral, 4 Pendulum, 5 Fly-through.
 COLD,BLUE,VIOLET,WHITE,AMBER=[.55,.72,1],[.4,.6,1],[.62,.5,1],[.9,.95,1],[1,.78,.55]
 MOMENTS=[
- (0,"01 · Émergence / poussière lointaine",1.5,dict(amount=.25,pull=.2,trail=.5,exposure=.3,tint=COLD,hot=WHITE,camPath=0,camSpeed=0,camSize=.3,camDistance=.85,camYaw=-.2)),
- (12,"02 · Premier corps / orbite lente",1.1,dict(amount=.4,pull=.3,trail=.55,exposure=.45,tint=COLD,hot=WHITE,camPath=1,camSpeed=.15,camSize=.4,camDistance=.6,camYaw=-.2)),
- (28,"03 · La poussière se souvient",1.8,dict(amount=.5,pull=.35,trail=.7,exposure=.5,tint=BLUE,hot=WHITE,camPath=2,camSpeed=.3,camSize=.5,camDistance=.5,camYaw=0)),
- (44,"04 · Peaux de résonance",1.2,dict(amount=.6,pull=.3,trail=.75,exposure=.5,tint=VIOLET,hot=WHITE,camPath=3,camSpeed=.35,camSize=.6,camDistance=.45,camYaw=.1)),
- (60,"05 · Première chambre / traversée",.15,dict(amount=.7,pull=.1,trail=.6,exposure=.55,tint=BLUE,hot=AMBER,camPath=5,camSpeed=.9,camSize=.9,camDistance=.5,camYaw=.1)),
- (76,"06 · Compression",1.7,dict(amount=.8,pull=.85,trail=.8,exposure=.55,tint=BLUE,hot=WHITE,camPath=1,camSpeed=.5,camSize=.5,camDistance=.3,camYaw=.1)),
- (91,"07 · Grêle métallique",.6,dict(amount=.75,pull=.4,trail=.4,exposure=.6,tint=WHITE,hot=WHITE,camPath=4,camSpeed=.9,camSize=.7,camDistance=.4,camYaw=.3)),
- (104,"08 · Fracture / silence",.12,dict(amount=.5,pull=.2,trail=.93,exposure=.5,tint=BLUE,hot=AMBER,camPath=0,camSpeed=0,camSize=.5,camDistance=.55,camYaw=.4)),
- (116,"09 · Mémoire oblique",2.2,dict(amount=.55,pull=.3,trail=.85,exposure=.5,tint=VIOLET,hot=WHITE,camPath=3,camSpeed=-.4,camSize=.5,camDistance=.5,camYaw=.4)),
- (128,"10 · Masse critique",.8,dict(amount=1,pull=.6,trail=.75,exposure=.5,tint=COLD,hot=AMBER,camPath=3,camSpeed=.6,camSize=.6,camDistance=.45,camYaw=.2)),
- (144,"11 · Le champ cède",.12,dict(amount=.9,pull=0,trail=.7,exposure=.75,tint=WHITE,hot=AMBER,camPath=2,camSpeed=1,camSize=1,camDistance=.5,camYaw=.2)),
- (160,"12 · Débris lents",2.8,dict(amount=.45,pull=.2,trail=.9,exposure=.4,tint=COLD,hot=WHITE,camPath=1,camSpeed=.08,camSize=.4,camDistance=.9,camYaw=0)),
- (172,"13 · Retour au noir",8.,dict(amount=.05,pull=.2,trail=.9,exposure=0,tint=COLD,hot=WHITE,camPath=0,camSpeed=0,camSize=.3,camDistance=1,camYaw=0)),
+ (0,"01 · Émergence / poussière lointaine",1.5,dict(count=.25,attr1Strength=0.26,attr2Strength=0,trail=.5,brightness=.3,colorBirth=COLD,colorFast=WHITE,camPath=0,camSpeed=0,camSize=.3,camDistance=.85,camYaw=-.2)),
+ (12,"02 · Premier corps / orbite lente",1.1,dict(count=.4,attr1Strength=0.34,attr2Strength=0,trail=.55,brightness=.45,colorBirth=COLD,colorFast=WHITE,camPath=1,camSpeed=.15,camSize=.4,camDistance=.6,camYaw=-.2)),
+ (28,"03 · La poussière se souvient",1.8,dict(count=.5,attr1Strength=0.38,attr2Strength=0,trail=.7,brightness=.5,colorBirth=BLUE,colorFast=WHITE,camPath=2,camSpeed=.3,camSize=.5,camDistance=.5,camYaw=0)),
+ (44,"04 · Peaux de résonance",1.2,dict(count=.6,attr1Strength=0.34,attr2Strength=0,trail=.75,brightness=.5,colorBirth=VIOLET,colorFast=WHITE,camPath=3,camSpeed=.35,camSize=.6,camDistance=.45,camYaw=.1)),
+ (60,"05 · Première chambre / traversée",.15,dict(count=.7,attr1Strength=0.18,attr2Strength=-0.6,trail=.6,brightness=.55,colorBirth=BLUE,colorFast=AMBER,camPath=5,camSpeed=.9,camSize=.9,camDistance=.5,camYaw=.1)),
+ (76,"06 · Compression",1.7,dict(count=.8,attr1Strength=0.78,attr2Strength=0,trail=.8,brightness=.55,colorBirth=BLUE,colorFast=WHITE,camPath=1,camSpeed=.5,camSize=.5,camDistance=.3,camYaw=.1)),
+ (91,"07 · Grêle métallique",.6,dict(count=.75,attr1Strength=0.42,attr2Strength=0,trail=.4,brightness=.6,colorBirth=WHITE,colorFast=WHITE,camPath=4,camSpeed=.9,camSize=.7,camDistance=.4,camYaw=.3)),
+ (104,"08 · Fracture / silence",.12,dict(count=.5,attr1Strength=0.26,attr2Strength=-0.9,trail=.93,brightness=.5,colorBirth=BLUE,colorFast=AMBER,camPath=0,camSpeed=0,camSize=.5,camDistance=.55,camYaw=.4)),
+ (116,"09 · Mémoire oblique",2.2,dict(count=.55,attr1Strength=0.34,attr2Strength=0,trail=.85,brightness=.5,colorBirth=VIOLET,colorFast=WHITE,camPath=3,camSpeed=-.4,camSize=.5,camDistance=.5,camYaw=.4)),
+ (128,"10 · Masse critique",.8,dict(count=1,attr1Strength=0.58,attr2Strength=0,trail=.75,brightness=.5,colorBirth=COLD,colorFast=AMBER,camPath=3,camSpeed=.6,camSize=.6,camDistance=.45,camYaw=.2)),
+ (144,"11 · Le champ cède",.12,dict(count=.9,attr1Strength=-0.5,attr2Strength=-0.8,trail=.7,brightness=.75,colorBirth=WHITE,colorFast=AMBER,camPath=2,camSpeed=1,camSize=1,camDistance=.5,camYaw=.2)),
+ (160,"12 · Débris lents",2.8,dict(count=.45,attr1Strength=0.26,attr2Strength=0,trail=.9,brightness=.4,colorBirth=COLD,colorFast=WHITE,camPath=1,camSpeed=.08,camSize=.4,camDistance=.9,camYaw=0)),
+ (172,"13 · Retour au noir",8.,dict(count=.05,attr1Strength=0.26,attr2Strength=0,trail=.9,brightness=0,colorBirth=COLD,colorFast=WHITE,camPath=0,camSpeed=0,camSize=.3,camDistance=1,camYaw=0)),
 ]
 # Slow motions owned by timelines (sine oscillators): name, centre, amplitude, period (s)
-MACROS=[("turbulence",.45,.25,47),("camPitch",.2,.25,71),("size",.3,.1,37),("camLens",.45,.15,89)]
-# Audio routes owned by interactions: band name, parameter, low Hz, high Hz, feature (0 level, 2 onset)
-ROUTES=[("level","energy",20,20000,0),("sub","bass",28,120,0),("metal","metal",700,3200,0),("air","air",6000,16000,0),("onset","hit",20,20000,2)]
+MACROS=[("turbEvolve",.3,.2,47),("camPitch",.2,.25,71),("size",.3,.1,37),("camLens",.45,.15,89)]
+# Audio routes owned by interactions: band name, parameter, low Hz, high Hz, feature (0 level, 2 onset), the
+# parameter's range
+ROUTES=[("level","timeScale",20,20000,0,[.5,1.5]),("sub","vortex",28,120,0,[0,.8]),("metal","heat",700,3200,0,[.2,1]),
+        ("air","turbulence",6000,16000,0,[.2,.9]),("onset","burst",20,20000,2,[0,.6])]
 
 def cue_params(values):
     params={}
     for key,value in values.items():
-        if key in ("tint","hot"):
+        if key in ("colorBirth","colorFast"):
             for component,v in zip("rgba",value+[1]):params[f"param/{key}/{component}"]=v
         else:params[f"param/{key}"]=value
     return params
@@ -66,9 +69,9 @@ def build(out,audio=None,duration=BASE_DURATION):
     for n,(macro,center,amplitude,period) in enumerate(MACROS,1):
         timelines.append({"id":str(n),"name":f"Nuée · {macro}","duration":period,"loop":"loop","tracks":[{"layer":"101","param":f"param/{macro}","oscillator":{"wave":"sine","period":period,"center":center,"amplitude":amplitude,"phase":n*.17,"seed":n},"keys":[]}]})
     interactions=[]
-    for source,param,lo,hi,feature in ROUTES:
+    for source,param,lo,hi,feature,target in ROUTES:
         onset=source=="onset"
-        interactions.append({"id":str(len(interactions)+1),"name":f"Audio {source} → Nuée","enabled":True,"source":"audio","audio_low":lo,"audio_high":hi,"audio_feature":feature,"layer":"101","param":f"param/{param}","source_range":[0,1 if onset else .55],"target_range":[0,1],"master":1,"filter_on":True,"filter":"attack_release","filter_settings":[.008 if onset else .025,.09 if onset else .24],"takeover":"jump"})
+        interactions.append({"id":str(len(interactions)+1),"name":f"Audio {source} → Nuée","enabled":True,"source":"audio","audio_low":lo,"audio_high":hi,"audio_feature":feature,"layer":"101","param":f"param/{param}","source_range":[0,1 if onset else .55],"target_range":target,"master":1,"filter_on":True,"filter":"attack_release","filter_settings":[.008 if onset else .025,.09 if onset else .24],"takeover":"jump"})
     audio_layer={"id":"102","name":"Nuée · bande sonore","enable":True,"source":{"type":"audio","path":audio_path,"relative_path":audio_path} if audio_path else {"type":"none"},"params":{"play":False,"play_mode":"oneshot","volume":1,"mute":False},"fx":[],"viewports":{}}
     layers=[cloud,audio_layer]
     steps=[{"timeline":timeline["id"],"action":"play","continue":"follow","text":"Armement des mouvements"} for timeline in timelines]
