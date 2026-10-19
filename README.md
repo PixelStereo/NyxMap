@@ -3,8 +3,9 @@
 # PINOL
 
 ## Pixels In New Open Logic - Pixels In New Optimal Layout
-Visual Software for live visuals.
+Visual Software for live visuals - From the first pixel to the final cue</p>
 
+<p>Built for projection, installations and live performance.</p>
 
 <p>
   <a href="https://github.com/PixelStereo/Pinol/actions/workflows/build.yml"><img alt="Build" src="https://github.com/PixelStereo/Pinol/actions/workflows/build.yml/badge.svg?branch=main"></a>
@@ -22,9 +23,8 @@ Visual Software for live visuals.
 
 ---
 
-> **Every surface is a canvas. Every cue matters.**
 >
-> PINOL brings video, generative visuals, spatial mapping, animation and live control together in one show environment. From a single projection to a multi-output installation, you can design the image and control what happens next—without changing tools.
+> PINOL brings video, generative visuals, spatial mapping, interactive animation of parameters and live control together in one show environment. From a single projection to a complex multi-output installation, you can design the image and control what happens next without changing tools.
 
 ## Built for the show
 
@@ -34,7 +34,7 @@ Visual Software for live visuals.
 | **03 — CUE**<br>**Build the moment. Then recall it.**<br>Snapshots, selective presets and sequences with waits, fades and auto-follow. Animate parameters with waveforms, Bézier keys and timelines. | **04 — CONTROL**<br>**Hands on. Eyes up.**<br>OSC, OSCQuery, MIDI, keyboard and internal interactions, with Learn, ranges, curves, filters and pick-up or jump takeover. |
 | **05 — SYNC**<br>**Keep the show on time.**<br>Time-of-day and transport-based clocks, LTC, MTC and ATC, plus routing to MIDI, audio and supported video destinations. | **06 — OUTPUT**<br>**From preview to projection.**<br>Fullscreen output windows, Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio—depending on your platform and installed runtimes. |
 
-### Made to be played live
+## Made to be played live
 
 **Build visually.** Combine videos, generators, images and effects in layers and groups. Correct color, animate parameters, and transform the composition to fit the space.
 
@@ -145,31 +145,3 @@ CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites.
 
 </details>
 
-## Before the doors open
-
-A few important current boundaries:
-
-- **Video:** HAP Q is optimized for compressed GPU textures. HAP R / HAP HDR may require CPU block decoding on macOS because its OpenGL path lacks BPTC support.
-- **Audio and control:** one stereo program-audio output; MIDI/OSC/keyboard interactions and timecode are available. DMX input is not yet implemented. ISF `audio` (waveform) and `audioFFT` (spectrum: log scale 20 Hz–20 kHz, 0 at −60 dB, 1 at 0 dB) inputs receive the live audio input or the program mix, chosen per input in the shader's parameters; their `MAX` sets the width (1024 samples / 512 bands by default).
-- **Output protocols:** NDI / OMT use GPU readback and add latency; DeckLink also buffers frames to the card's clock. Hardware outputs require their vendor software. DeckLink is currently video-only, 8-bit, without keying.
-- **Network:** the OSC/OSCQuery server has **no password authentication**. In **Settings → OSC → Listen on**, bind to localhost or a trusted network interface rather than exposing the server to an untrusted network.
-
-For details on dependencies, supported workflows and implementation, browse the [source](src/engine), [tests](test) and [build workflow](.github/workflows/build.yml).
-
----
-
-<div align="center">
-
-<h3>Bring the image to life.</h3>
-
-<p><strong>PINOL</strong> — from the first pixel to the final cue.</p>
-
-<p>
-<a href="https://github.com/PixelStereo/Pinol/issues">Report an issue</a> &nbsp;·&nbsp;
-<a href="https://github.com/PixelStereo/Pinol">Explore the code</a> &nbsp;·&nbsp;
-<a href="https://github.com/PixelStereo/Pinol/actions/workflows/build.yml">View builds</a>
-</p>
-
-<p><sub>Built for projection, installations and live performance.</sub></p>
-
-</div>
