@@ -9,6 +9,7 @@
 #include <QAbstractSlider>
 #include <QAbstractSpinBox>
 #include <QComboBox>
+#include <QScrollBar>
 #include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -1175,12 +1176,28 @@ void SliderField::mouseReleaseEvent(QMouseEvent *e)
     m_drag = false;
     emit editingFinished(m_value);
 }
-void SliderField::wheelEvent(QWheelEvent *e)
+namespace {
+class WheelPassThrough : public QObject
 {
-    if (!isEnabled()) return;
-    const double step = m_spin->singleStep() * (e->modifiers() & Qt::ShiftModifier ? 0.1 : 1.0);
-    apply(m_value + (e->angleDelta().y() > 0 ? step : -step), true);
-    e->accept();
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() != QEvent::Wheel) return false;
+        auto *w = qobject_cast<QWidget *>(o);
+        if (!w || !(qobject_cast<QAbstractSpinBox *>(w) || qobject_cast<QComboBox *>(w) ||
+                    (qobject_cast<QAbstractSlider *>(w) && !qobject_cast<QScrollBar *>(w))))
+            return false;
+        // To its parent instead (ignored there, it goes on up to the scroll area)
+        if (QWidget *p = w->parentWidget()) QCoreApplication::sendEvent(p, e);
+        return true;
+    }
+};
+} // namespace
+
+void ignoreWheelOnFields(QCoreApplication *app)
+{
+    app->installEventFilter(new WheelPassThrough(app));
 }
 
 // --- RangeField
