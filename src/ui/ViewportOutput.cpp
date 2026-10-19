@@ -130,7 +130,7 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndo
         m_encode->addItem(labels[i], keys[i]);
     }
     m_decode->setToolTip(QStringLiteral("Declare the space of the already composited RGB values. "
-                                       "Source profiles are displayed as metadata; they are not automatically normalized."));
+                                       "Native sources are normalized to sRGB: keep sRGB unless a viewport shader deliberately changes its encoding."));
     m_encode->setToolTip(QStringLiteral("Convert the declared rendered input space to this space, including primaries and transfer. "
                                        "Rec.709 / Gamma 2.4 assumes an ideal black display; values outside the target gamut are clipped."));
     m_exposure = new NumberBox;

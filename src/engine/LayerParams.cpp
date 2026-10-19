@@ -201,6 +201,12 @@ const std::vector<Parameter *> &Layer::parameters()
         flag("fx/enable", "FX › Enable", true, &effectsEnabled);
     }
 
+    if (!isViewport && !isGroup && type != SourceType::Layer && picture) {
+        add("source/color_space", "Source › Color Space", T::Choice)
+            .choices(sourceColorSpaceKeys()).byDefault("auto").animatable(false)
+            .bind([self] { return QVariant(self->sourceColorSpace); },
+                  [self](const QVariant &v) { self->sourceColorSpace = v.toString(); });
+    }
     if (isViewport) {
         add("output/input_space", "Output › Rendered Input Space", T::Choice)
             .choices(outputColorSpaceKeys()).byDefault("srgb")

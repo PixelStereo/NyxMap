@@ -44,3 +44,31 @@ inline int outputColorSpaceIndex(const QString &key) {
     if (key == QLatin1String("rec709-g24")) return 3;
     return 0;
 }
+
+inline QStringList sourceColorSpaceKeys() {
+    auto keys = outputColorSpaceKeys();
+    keys.prepend("auto");
+    keys.append("rec709");
+    return keys;
+}
+inline QStringList sourceColorSpaceLabels() {
+    auto labels = outputColorSpaceLabels();
+    labels.prepend("Auto (source profile)");
+    labels.append("Rec.709 / BT.709 transfer");
+    return labels;
+}
+inline int sourceColorSpaceIndex(const QString &key) {
+    return key == QLatin1String("rec709") ? 4 : outputColorSpaceIndex(key);
+}
+// Common image profiles use the GPU path. Other SDR ICC profiles are converted
+// once on load with Qt; retain the original samples for a later manual override.
+inline QString imageSourceColorKey(const QColorSpace &space) {
+    if (space == QColorSpace(QColorSpace::SRgb)) return "srgb";
+    if (space == QColorSpace(QColorSpace::SRgbLinear)) return "linear709";
+    if (space == QColorSpace(QColorSpace::DisplayP3)) return "displayp3";
+    return {};
+}
+inline bool hdrImageColorSpace(const QColorSpace &space) {
+    return space.transferFunction() == QColorSpace::TransferFunction::St2084 ||
+           space.transferFunction() == QColorSpace::TransferFunction::Hlg;
+}

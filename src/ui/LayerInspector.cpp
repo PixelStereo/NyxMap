@@ -15,6 +15,7 @@
 #include "SettingsPanel.h"
 #include "ViewportOutput.h"
 #include "Widgets.h"
+#include "SourceColor.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -88,6 +89,7 @@ struct LayerValues {
     QString codec;
     VideoDecoder::Info sourceVideoInfo;
     QString imageColorInfo;
+    QString sourceColorSpace, sourceColorStatus;
     bool hasAudio = false, muted = false;
     float volume = 1;
     AudioStream::Info audio;
@@ -146,7 +148,7 @@ struct LayerValues {
             s.videoH = l->video->height();
             s.fps = l->video->fps();
             s.codec = l->video->codecName();
-            s.sourceVideoInfo = l->video->sourceInfo();
+            s.sourceVideoInfo = effectiveVideoColorInfo(*l);
             s.duration = l->duration();
         }
         if (l->audio) {
@@ -168,6 +170,8 @@ struct LayerValues {
         s.srcW = l->srcWidth;
         s.srcH = l->srcHeight;
         s.imageColorInfo = l->imageColorInfo;
+        s.sourceColorSpace = l->sourceColorSpace;
+        s.sourceColorStatus = ::sourceColorStatus(*l);
         s.sourceLayer = l->sourceLayer;
         s.sourceTap = l->sourceTap;
         s.transition = l->transition;
@@ -493,6 +497,8 @@ void LayerInspector::rebuild()
 {
     m_layoutKey = layoutKey();
     m_tcTransport.reset();
+    m_sourceColorSpace = nullptr;
+    m_sourceColorStatus = nullptr;
     if (m_content) {
         m_content->hide();
         m_content->deleteLater();
@@ -834,6 +840,38 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         rebuild();
     });
     if (!s.error.isEmpty()) v->addWidget(errorLabel(s.error));
+
+    if (s.type == SourceType::Image || s.type == SourceType::Video || s.type == SourceType::Input ||
+        s.type == SourceType::Isf || s.type == SourceType::Text) {
+        auto *row = new QHBoxLayout;
+        auto *pick = new QComboBox;
+        pick->setObjectName(QStringLiteral("sourceColorSpace"));
+        m_sourceColorSpace = pick;
+        const auto keys = sourceColorSpaceKeys(), labels = sourceColorSpaceLabels();
+        for (int i = 0; i < keys.size(); ++i) pick->addItem(labels[i], keys[i]);
+        pick->setCurrentIndex(std::max(0, pick->findData(s.sourceColorSpace)));
+        pick->setEnabled(!m_locked);
+        pick->setToolTip(QStringLiteral("Interpret the source RGB in this space, then convert to sRGB before Color, FX and compositing. "
+                                       "This changes pixels; it does not edit the file's profile. SDR only."));
+        auto *label = new ResetLabel(QStringLiteral("Source color space"), [this] {
+            setValue("source/color_space", "auto", "Reset Source Color Space");
+            rebuild();
+        });
+        row->addWidget(label);
+        row->addWidget(pick, 1);
+        v->addLayout(row);
+        auto *status = new QLabel(s.sourceColorStatus);
+        m_sourceColorStatus = status;
+        status->setObjectName(QStringLiteral("sourceColorStatus"));
+        status->setWordWrap(true);
+        status->setTextFormat(Qt::PlainText);
+        v->addWidget(status);
+        connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+            setValue("source/color_space", pick->itemData(i).toString(), "Change Source Color Space");
+            refreshDynamic();
+            emit layerChanged();
+        });
+    }
 
     // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose)
     if (s.type != SourceType::Audio) {
@@ -2721,6 +2759,21 @@ void LayerInspector::refreshTimecodeTransport()
 
 void LayerInspector::refreshDynamic()
 {
+    if (m_sourceColorSpace || m_sourceColorStatus) {
+        QString space, status;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId))) {
+                space = l->sourceColorSpace;
+                status = sourceColorStatus(*l);
+            }
+        }
+        if (m_sourceColorSpace && !m_sourceColorSpace->view()->isVisible()) {
+            const QSignalBlocker blocker(m_sourceColorSpace);
+            m_sourceColorSpace->setCurrentIndex(m_sourceColorSpace->findData(space));
+        }
+        if (m_sourceColorStatus) m_sourceColorStatus->setText(status);
+    }
     // The fields show the values as they move (a snapshot's fade), unless Settings keeps them still until it is over
     const bool follow = SettingsPanel::followFades() || !m_engine->isFading();
     if (follow) refreshSpatial();

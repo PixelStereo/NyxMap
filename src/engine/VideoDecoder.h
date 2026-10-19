@@ -199,10 +199,11 @@ private:
 
     // Layouts already made (decode thread)
     struct LayoutKey {
-        int format, w, h, space, range, loc;
+        int format, w, h, space, range, loc, primaries = 0, transfer = 0;
         bool operator<(const LayoutKey &o) const
         {
-            return std::tie(format, w, h, space, range, loc) < std::tie(o.format, o.w, o.h, o.space, o.range, o.loc);
+            return std::tie(format, w, h, space, range, loc, primaries, transfer) <
+                   std::tie(o.format, o.w, o.h, o.space, o.range, o.loc, o.primaries, o.transfer);
         }
     };
     std::map<LayoutKey, std::shared_ptr<const VideoLayout>> m_layouts;

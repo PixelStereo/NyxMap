@@ -2,11 +2,11 @@
 
 ## Known problems
 
-- **Color:** source profiles are displayed but not normalized before compositing.
-  Mixed profiles can produce inconsistent colors. Output conversion assumes the
-  declared input space, clips out-of-gamut SDR values and does not configure display
-  ICC profiles or signal output encoding. HDR tone mapping and physical 10-bit
-  output are unverified; some readbacks and decoder fallbacks lose precision.
+- **Color:** compositing and FX remain in encoded sRGB, not linear light.
+  Unknown/live profiles require a declaration; unsupported video tags and HDR
+  have no automatic normalization/tone mapping. Some decoder/readback paths lose
+  precision. Output conversion clips SDR gamut and does not configure display
+  ICC profiles or signal encoding; physical 10-bit output remains unverified.
 - **Timing:** long stalls skip feedback/simulation steps. Physical A/V recovery and
   clock stability remain unmeasured. Input acquisition continues while paused.
 - **Resources:** soft budgets miss some FFmpeg/driver/GPU allocations. Render-lock
@@ -22,5 +22,5 @@
 |---|---|---|
 | P1 | Profile load and fix measured bottlenecks. | 18 × 1080p layers, 60 Hz, two outputs; zero control drops/overruns. Callback p99 ≤1 ms and ≤25% of its period; lock wait p99 ≤1 ms, hold p99 ≤8 ms. |
 | P1 | Validate endurance, receivers and reconnection. | Eight hours without crash/stuck transport/decoder errors; A/V offset <40 ms without growth. Twenty reconnects recover within 5 s or report an actionable error. Receiver frame IDs remain correct under load. |
-| P2 | Normalize mixed source profiles in an explicit working space; allow untagged-source overrides. | sRGB/P3/video reference patches agree before compositing. Verify output encoding and precision on physical hardware. |
+| P2 | Extend color management to linear compositing, HDR and output signaling. | Reference patches agree through FX/blending and on physical receivers; verify gamut, alpha and 10-bit precision. |
 | P2 | Sign and notarize macOS releases. | A downloaded release opens on a clean Mac without a Gatekeeper workaround. |

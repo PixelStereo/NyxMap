@@ -374,6 +374,21 @@ int main(int argc, char **argv)
             check(inspector->coTargets() == QList<quint64>{ids[2]}, "inspector knows the other selected layer");
             auto *note = inspector->findChild<QLabel *>("multiSelectionNote");
             check(note && note->isVisible(), "inspector says the edit applies to the whole selection");
+            auto *sourceSpace = inspector->findChild<QComboBox *>("sourceColorSpace");
+            check(sourceSpace && sourceSpace->findData("displayp3") >= 0, "source interpretation control is present");
+            if (sourceSpace) {
+                const int p3 = sourceSpace->findData("displayp3");
+                sourceSpace->setCurrentIndex(p3);
+                QMetaObject::invokeMethod(sourceSpace, "activated", Qt::DirectConnection, Q_ARG(int, p3));
+                check(engine.parameterValue(ids[0], "source/color_space") == "displayp3" &&
+                      engine.parameterValue(ids[2], "source/color_space") == "displayp3" &&
+                      engine.parameterValue(ids[1], "source/color_space") == "auto",
+                      "source declaration reaches the selection only");
+                undo->undo();
+                check(engine.parameterValue(ids[0], "source/color_space") == "auto" &&
+                      engine.parameterValue(ids[2], "source/color_space") == "auto", "one Undo restores source interpretation");
+                app.processEvents();
+            }
             auto *opacity = inspector->findChild<SliderField *>("inspectorOpacity");
             check(opacity != nullptr, "inspector opacity field present");
             if (opacity) {

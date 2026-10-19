@@ -423,6 +423,8 @@ void Engine::releaseLayer(Layer &l)
     l.videoTex.reset();
     releaseAudio(*m_audio, l.audio);
     l.sourceTex.destroy();
+    l.imageAutoTex.destroy();
+    l.sourceColorTarget.destroy();
     l.textTex.destroy();
     if (l.generator) l.generator->releaseGl();
     l.generator.reset();
@@ -544,7 +546,7 @@ int Engine::partOf(const QString &path)
         under("scale/") || under("corner/"))
         return PartSpatial;
     if (under("fx/")) return PartEffects;
-    if (path == "opacity" || path == "blend_mode") return PartCompositing;
+    if (path == "opacity" || path == "blend_mode" || under("output/")) return PartCompositing;
     if (path == "speed" || path == "play_mode" || path == "in" || path == "out" || path == "play" || path == "restart" ||
         path == "volume" || path == "mute")
         return PartTransport;
@@ -692,6 +694,13 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->audio = std::move(l.audio);
     g->tex = l.sourceTex;
     l.sourceTex = Texture2D{};
+    g->imageAutoTex = l.imageAutoTex;
+    l.imageAutoTex = Texture2D{};
+    l.imageProfile = QColorSpace();
+    l.imageColorInfo.clear();
+    l.sourceColorSpace = QStringLiteral("auto");
+    l.pendingAutoImage = QImage();
+    l.sourceColorCachedKey.clear();
     g->textTex = l.textTex;
     l.textTex = Texture2D{};
     l.textKey.clear();
@@ -721,6 +730,7 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
     releaseAudio(*m_audio, g->audio);
     runGl([g] {
         g->tex.destroy();
+        g->imageAutoTex.destroy();
         g->textTex.destroy();
         if (g->videoTex) g->videoTex->destroy();
         if (g->generator) g->generator->releaseGl();
@@ -1091,6 +1101,16 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err)
     }
     const QColorSpace profile = img.colorSpace();
     const QString colorInfo = imageSourceDepth(img.format()) + QStringLiteral(" source · ") + imageColorDescription(profile);
+    QImage autoImage;
+    if (profile.isValid() && imageSourceColorKey(profile).isEmpty() && !hdrImageColorSpace(profile)) {
+        // Outside the render lock/thread. Preserve integer precision and alpha;
+        // Qt handles ICC matrices, curves and chromatic adaptation here.
+        autoImage = prepareImageUpload(img.convertedToColorSpace(QColorSpace::SRgb, imageUploadFormat(img)));
+        if (autoImage.isNull()) {
+            if (err) *err = QStringLiteral("Unable to convert the embedded image profile to sRGB");
+            return false;
+        }
+    }
     img = prepareImageUpload(img);
     std::shared_ptr<Garbage> g;
     {
@@ -1100,6 +1120,8 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err)
         g = detachSource(*l);
         l->pendingImage = img; // uploaded to the GPU by the render thread
         l->imageColorInfo = colorInfo;
+        l->imageProfile = profile;
+        l->pendingAutoImage = autoImage;
         l->srcWidth = img.width();
         l->srcHeight = img.height();
         l->type = SourceType::Image;

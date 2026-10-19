@@ -39,7 +39,8 @@ void videoDecoderYuvMatrix(AVColorSpace space, int height, float m[9], QString *
 
 std::shared_ptr<const VideoLayout> VideoDecoder::layoutFor(const AVFrame *fr)
 {
-    const LayoutKey key{fr->format, fr->width, fr->height, int(fr->colorspace), int(fr->color_range), int(fr->chroma_location)};
+    const LayoutKey key{fr->format, fr->width, fr->height, int(fr->colorspace), int(fr->color_range), int(fr->chroma_location),
+                        int(fr->color_primaries), int(fr->color_trc)};
     const auto found = m_layouts.find(key);
     if (found != m_layouts.end()) return found->second;
     return m_layouts[key] = layoutOf(fr);
@@ -86,6 +87,12 @@ std::shared_ptr<const VideoLayout> VideoDecoder::layoutOf(const AVFrame *fr)
     }
 
     L = std::make_shared<VideoLayout>();
+    L->primariesTag = int(fr->color_primaries);
+    L->transferTag = int(fr->color_trc);
+    if (fr->color_primaries != AVCOL_PRI_UNSPECIFIED)
+        if (const char *name = av_color_primaries_name(fr->color_primaries)) L->primaries = QString::fromLatin1(name);
+    if (fr->color_trc != AVCOL_TRC_UNSPECIFIED)
+        if (const char *name = av_color_transfer_name(fr->color_trc)) L->transfer = QString::fromLatin1(name);
     L->width = fr->width;
     L->height = fr->height;
     L->planeCount = planes;

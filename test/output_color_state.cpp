@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "ColorInfo.h"
+#include "SourceColor.h"
 #include "Commands.h"
 #include "color_reference.h"
 #include <QApplication>
@@ -49,6 +50,12 @@ int main(int argc, char **argv)
     check(!engine.setParameter(id, "output/space", "invalid"), "unknown output spaces are rejected");
     check(engine.setParameter(id, "output/exposure", 100) &&
           engine.parameterValue(id, "output/exposure") == 10, "exposure is bounded");
+    const int copiedViewport = engine.addViewport("Copied color", {32,32});
+    check(engine.applyLayerParts(copiedViewport, engine.layerJson(engine.indexOfId(id)), Engine::PartCompositing),
+          "copy viewport compositing settings");
+    check(engine.layer(copiedViewport)->outputSpace == "linear709" &&
+          engine.layer(copiedViewport)->outputInputSpace == "displayp3" &&
+          engine.layer(copiedViewport)->outputExposure == 10, "viewport paste carries output color settings");
     const int normal = engine.addLayer("Not a viewport");
     check(engine.parameterValue(engine.layerId(normal), "output/space").isUndefined(), "output calibration is viewport-only");
 
@@ -73,5 +80,37 @@ int main(int argc, char **argv)
     video.primaries = "bt2020"; video.transfer = "smpte2084"; video.range = "limited (TV)";
     check(video.colorSpaceSummary().contains("bt2020") && video.colorSpaceSummary().contains("smpte2084") &&
           video.colorDescription().contains("limited"), "video tags expose HDR transfer, primaries and range without guessing");
+    check(videoSourceColorKey(video).isEmpty(), "HDR video is never silently treated as an SDR profile");
+    video.primaries = "bt709"; video.transfer = "bt709";
+    check(videoSourceColorKey(video) == "rec709", "tagged Rec709 uses its own transfer, distinct from sRGB/gamma 2.4");
+    video.primaries.clear();
+    check(videoSourceColorKey(video).isEmpty(), "video Auto requires both primaries and transfer tags");
+    Layer sourceLayer;
+    sourceLayer.type = SourceType::Image;
+    check(sourceColorStatus(sourceLayer).contains("assumed sRGB"), "untagged Auto reports its assumption");
+    sourceLayer.imageProfile = QColorSpace::DisplayP3;
+    check(sourceColorKey(sourceLayer) == "displayp3", "Auto recognizes the embedded P3 profile");
+    sourceLayer.parameter("source/color_space")->setValue("linear709");
+    const auto sourceParams = parametersToJson(sourceLayer.parameters());
+    Layer restoredSource;
+    restoredSource.type = SourceType::Image;
+    parametersFromJson(restoredSource.parameters(), sourceParams);
+    check(restoredSource.sourceColorSpace == "linear709", "source declarations survive parameter serialization");
+    sourceLayer.type = SourceType::Layer;
+    check(!sourceLayer.parameter("source/color_space") && sourceColorKey(sourceLayer) == "srgb",
+          "layer taps cannot be decoded twice");
+    sourceLayer.type = SourceType::Image;
+    sourceLayer.sourceColorSpace = "auto";
+    sourceLayer.imageProfile = QColorSpace::Bt2100Pq;
+    check(sourceColorStatus(sourceLayer).contains("no tone mapping"), "HDR image status explicitly reports the limitation");
+    sourceLayer.type = SourceType::Video;
+    sourceLayer.video = std::make_unique<VideoDecoder>();
+    auto frameLayout = std::make_shared<VideoLayout>();
+    frameLayout->primaries = "bt709"; frameLayout->transfer = "bt709";
+    sourceLayer.frame.layout = frameLayout;
+    check(sourceColorKey(sourceLayer) == "rec709", "frame tags work even when the container has no color tags");
+    frameLayout->primaries = "bt2020"; frameLayout->transfer = "smpte2084";
+    check(sourceColorKey(sourceLayer) == "srgb" && sourceColorStatus(sourceLayer).contains("unsupported"),
+          "a change to unsupported HDR frame tags is reported without an incorrect SDR conversion");
     return failures ? 1 : 0;
 }

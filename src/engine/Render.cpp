@@ -4,6 +4,7 @@
 #include "EngineInternal.h"
 #include "TimecodeClock.h"
 #include "ColorInfo.h"
+#include "SourceColor.h"
 
 #include <map>
 #include <set>
@@ -197,6 +198,10 @@ void Engine::updateSource(Layer &l, double dt)
     if (timeScale() > 0 && !l.pendingImage.isNull()) {
         l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
+        if (!l.pendingAutoImage.isNull()) {
+            l.imageAutoTex.uploadImage(l.pendingAutoImage);
+            l.pendingAutoImage = QImage();
+        }
     }
     (void)dt;
     if ((l.type != SourceType::Video && l.type != SourceType::Audio) || !l.hasTransport()) return;
@@ -395,7 +400,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         }
         break;
     case SourceType::Image:
-        tex = l.sourceTex.tex;
+        tex = l.sourceColorSpace == QLatin1String("auto") && l.imageAutoTex.tex ? l.imageAutoTex.tex : l.sourceTex.tex;
         w = l.sourceTex.w;
         h = l.sourceTex.h;
         break;
@@ -446,6 +451,31 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     default: break;
     }
     if (!tex) return;
+    const QString colorKey = sourceColorKey(l);
+    if (colorKey != QLatin1String("srgb")) {
+        const bool changed = l.sourceColorTarget.ensure(w, h);
+        if (!l.sourceColorTarget.ready(w, h)) return; // fail closed, never display incorrectly interpreted pixels
+        if (l.type != SourceType::Image || changed || l.sourceColorCachedKey != colorKey) {
+            auto f = gl();
+            l.sourceColorTarget.bind();
+            f->glDisable(GL_BLEND);
+            f->glUseProgram(m_outputColorProgram);
+            f->glActiveTexture(GL_TEXTURE0);
+            f->glBindTexture(GL_TEXTURE_2D, tex);
+            f->glUniform1i(m_outputTexLoc, 0);
+            f->glUniform1i(m_outputSourceLoc, 1);
+            f->glUniform1i(m_outputDecodeLoc, sourceColorSpaceIndex(colorKey));
+            f->glUniform1i(m_outputEncodeLoc, 0);
+            f->glUniform1f(m_outputGainLoc, 1);
+            f->glUniform1f(m_outputOpacityLoc, 1);
+            drawQuad();
+            l.sourceColorCachedKey = colorKey;
+        }
+        tex = l.sourceColorTarget.tex;
+    } else if (l.sourceColorTarget.tex) {
+        l.sourceColorTarget.destroy();
+        l.sourceColorCachedKey.clear();
+    }
     processLayer(l, tex, w, h, false, rc);
 }
 
@@ -1029,6 +1059,7 @@ void Engine::composite()
                 f->glUniform1i(m_outputTexLoc, 0);
                 f->glUniform1f(m_outputOpacityLoc, v.opacity);
                 f->glUniform1i(m_outputDecodeLoc, outputColorSpaceIndex(v.outputInputSpace));
+                f->glUniform1i(m_outputSourceLoc, 0);
                 f->glUniform1i(m_outputEncodeLoc, outputColorSpaceIndex(targetSpace));
                 f->glUniform1f(m_outputGainLoc, float(std::exp2(v.outputExposure)));
                 drawQuad();
@@ -1091,12 +1122,15 @@ void Engine::frame(double dt)
     m_renderLockWait.record(lockAcquired - lockRequested);
     setRenderBits(effectiveRender().depth);
 
+    // Manual faders use command-relative wall time, including render-lock waits.
+    const double faderDt = m_compositionFaderClock.step(lockAcquired, m_threaded);
+    const double blackoutDt = m_blackoutClock.step(lockAcquired, m_threaded);
     // Composition opacity
     double lvl = m_compositionOpacity.load();
     if (m_compositionOpacitySpeed <= 0.0) {
         lvl = m_compositionOpacityTarget;
     } else {
-        const double step = m_realDt * m_compositionOpacitySpeed;
+        const double step = faderDt * m_compositionOpacitySpeed;
         lvl = lvl < m_compositionOpacityTarget ? std::min(m_compositionOpacityTarget, lvl + step) : std::max(m_compositionOpacityTarget, lvl - step);
     }
     m_compositionOpacity = lvl;
@@ -1104,7 +1138,7 @@ void Engine::frame(double dt)
     if (m_blackSpeed <= 0.0) {
         black = m_blackTarget;
     } else {
-        const double step = m_realDt * m_blackSpeed;
+        const double step = blackoutDt * m_blackSpeed;
         black = black < m_blackTarget ? std::min(m_blackTarget, black + step) : std::max(m_blackTarget, black - step);
     }
     m_blackLevel = black;

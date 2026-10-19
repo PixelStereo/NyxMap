@@ -653,6 +653,8 @@ std::shared_ptr<const VideoLayout> VideoDecoder::surfaceLayout(const AVFrame *hw
     probe->colorspace = hw->colorspace;
     probe->color_range = hw->color_range;
     probe->chroma_location = hw->chroma_location;
+    probe->color_primaries = hw->color_primaries;
+    probe->color_trc = hw->color_trc;
     const std::shared_ptr<const VideoLayout> base = layoutFor(probe);
     av_frame_free(&probe);
     if (!base || base->mode != VideoLayout::Mode::Yuv) return nullptr;

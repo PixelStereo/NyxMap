@@ -47,6 +47,7 @@ inline Matrix rgbToXyz(bool p3) {
 inline Vector convert(Vector rgb, const QString &input, const QString &output) {
     for(double &c:rgb) {
         if(input=="rec709-g24") c=std::pow(c,2.4);
+        else if(input=="rec709") c=c<.081?c/4.5:std::pow((c+.099)/1.099,1/.45);
         else if(input!="linear709") c=c<=.04045?c/12.92:std::pow((c+.055)/1.055,2.4);
     }
     rgb=solve(rgbToXyz(output=="displayp3"),multiply(rgbToXyz(input=="displayp3"),rgb));

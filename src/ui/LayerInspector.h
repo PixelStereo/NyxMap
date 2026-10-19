@@ -118,6 +118,8 @@ private:
 
     QPointer<QWidget> m_fxDetail;
     QPointer<SliderField> m_position, m_speed;
+    QPointer<QComboBox> m_sourceColorSpace;
+    QPointer<QLabel> m_sourceColorStatus;
     QPointer<RangeField> m_loop;
     QPointer<QButtonGroup> m_playButtons;
     QPointer<RoiEditor> m_roi;

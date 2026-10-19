@@ -65,8 +65,15 @@ bool VideoDecoder::deliver(AVFrame *src, VideoFrame &f, bool mapped)
     const int w = src->width, h = src->height;
     const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(AVPixelFormat(src->format));
     const bool alpha = d && (d->flags & AV_PIX_FMT_FLAG_ALPHA);
-    if (!m_rgbaLayout || m_rgbaLayout->width != w || m_rgbaLayout->height != h || m_rgbaLayout->alpha != alpha) {
+    if (!m_rgbaLayout || m_rgbaLayout->width != w || m_rgbaLayout->height != h || m_rgbaLayout->alpha != alpha ||
+        m_rgbaLayout->primariesTag != int(src->color_primaries) || m_rgbaLayout->transferTag != int(src->color_trc)) {
         auto L = std::make_shared<VideoLayout>();
+        L->primariesTag = int(src->color_primaries);
+        L->transferTag = int(src->color_trc);
+        if (src->color_primaries != AVCOL_PRI_UNSPECIFIED)
+            if (const char *name = av_color_primaries_name(src->color_primaries)) L->primaries = QString::fromLatin1(name);
+        if (src->color_trc != AVCOL_TRC_UNSPECIFIED)
+            if (const char *name = av_color_transfer_name(src->color_trc)) L->transfer = QString::fromLatin1(name);
         L->mode = VideoLayout::Mode::Rgb;
         L->width = w;
         L->height = h;

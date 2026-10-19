@@ -27,6 +27,18 @@ int main(int argc, char **argv)
         check(std::abs(show - wall) < 1e-10, "repeated stalls do not accumulate show-clock drift at 60/120 Hz");
     }
     check(FrameStep::fromElapsed(8, false).elapsed == .25, "manual renders retain their bounded step");
+    {
+        FaderClock clock;
+        clock.reset(1'900'000'000); // command near the end of a two-second frame
+        check(std::abs(clock.step(2'000'000'000, true) - .1) < 1e-12,
+              "a new fader excludes time before its command");
+        check(std::abs(clock.step(2'500'000'000, true) - .5) < 1e-12,
+              "the fader counts each subsequent wall interval once");
+        clock.reset(2'550'000'000); // operator interrupts/reverses it
+        check(std::abs(clock.step(2'600'000'000, true) - .05) < 1e-12,
+              "a replacement fader starts at its own command");
+        check(clock.step(5'000'000'000, false) == .25, "manual render faders retain the bounded step");
+    }
     check(FrameStep::fromElapsed(-1, true).elapsed == 0 &&
           FrameStep::fromElapsed(std::numeric_limits<double>::infinity(), true).elapsed == 0,
           "invalid elapsed times cannot poison the clocks");
