@@ -490,11 +490,11 @@ void main(){
             setF("attr2Radius", .5);
             setF("attr2Strength", -1);
             {
-                // Rendered for 3 s of real time (the simulation's clock): every grain born again at the point, with
-                // the disperser there, whatever the machine's frame rate
+                // Rendered for 3 s of real time (the simulation's clock) and 30 frames at least (a slow software
+                // renderer draws few in 3 s): every grain born at the point, with the disperser there
                 QElapsedTimer t;
                 t.start();
-                for (int k = 0; k < 400 && t.elapsed() < 3000; ++k) {
+                for (int k = 0; k < 400 && (t.elapsed() < 3000 || k < 30); ++k) {
                     e.renderFrame();
                     QThread::msleep(10);
                 }
