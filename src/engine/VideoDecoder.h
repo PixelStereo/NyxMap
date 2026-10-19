@@ -59,6 +59,7 @@ public:
         QString transfer;       // EOTF / gamma tag
         QString range;          // full / limited
         QString colorDescription() const;
+        QString colorSpaceSummary() const;
     };
     static bool probe(const QString &path, Info *info, QString *err = nullptr);
     void close();

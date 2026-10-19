@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QColorSpace>
+#include "ColorInfo.h"
 #include <QJsonArray>
 #include <cmath>
 
@@ -1089,11 +1090,7 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err)
         return false;
     }
     const QColorSpace profile = img.colorSpace();
-    const QString colorInfo = QStringLiteral("%1 source · %2").arg(
-        imageSourceDepth(img.format()),
-        profile.isValid() ? QStringLiteral("ICC: ") +
-            (profile.description().isEmpty() ? QStringLiteral("embedded profile") : profile.description())
-                          : QStringLiteral("color profile: untagged/unknown"));
+    const QString colorInfo = imageSourceDepth(img.format()) + QStringLiteral(" source · ") + imageColorDescription(profile);
     img = prepareImageUpload(img);
     std::shared_ptr<Garbage> g;
     {

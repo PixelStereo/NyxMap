@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QColorSpace>
+#include "ColorInfo.h"
 #include <QComboBox>
 #include <QToolButton>
 #include <QImageReader>
@@ -140,8 +141,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
 
     auto *tree = new BinTree;
     m_tree = tree;
-    m_tree->setColumnCount(3);
-    m_tree->setHeaderLabels({QStringLiteral("File"), QStringLiteral("Info"), QStringLiteral("Layers")});
+    m_tree->setColumnCount(4);
+    m_tree->setHeaderLabels({QStringLiteral("File"), QStringLiteral("Info"), QStringLiteral("Layers"), QStringLiteral("Color space")});
     m_tree->setRootIsDecorated(true);
     m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_tree->setDragEnabled(true);
@@ -157,6 +158,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_tree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
     m_tree->setColumnWidth(1, 120);
     m_tree->setColumnWidth(2, 56);
+    m_tree->header()->setSectionResizeMode(3, QHeaderView::Interactive);
+    m_tree->setColumnWidth(3, 170);
     m_tree->setTextElideMode(Qt::ElideMiddle);
     m_tree->setToolTip(QStringLiteral("Drag an item onto a layer (layer list, or the Source tab of the layer) to load it.\n"
                                       "ISF FX dragged onto a layer join its FX chain.\n"
@@ -275,12 +278,15 @@ void MediaBin::refresh()
         it->setText(0, QFileInfo(r.path).fileName());
         if (r.missing) {
             it->setText(1, QStringLiteral("missing"));
+            it->setText(3, QStringLiteral("Unavailable"));
             m_info.remove(r.path);
         } else {
             if (!m_info.contains(r.path)) probe(r.path);
             const QString info = m_info.value(r.path, QStringLiteral("…"));
             it->setText(1, info.section('\t', 0, 0));
-            it->setToolTip(1, info.contains('\t') ? info.section('\t', 0, 0) + QStringLiteral(" · ") + info.section('\t', 1) : info);
+            it->setText(3, info.contains('\t') ? info.section('\t', 2, 2) : QStringLiteral("…"));
+            it->setToolTip(3, info.section('\t', 1, 1));
+            it->setToolTip(1, info.contains('\t') ? info.section('\t', 0, 0) + QStringLiteral(" · ") + info.section('\t', 1, 1) : info);
         }
         if (r.missing) it->setToolTip(1, QStringLiteral("File not found: ") + r.path);
         // Layer count; details are in the tooltip
@@ -291,7 +297,7 @@ void MediaBin::refresh()
         it->setToolTip(0, r.path + QStringLiteral("\n\n") + usedBy);
         it->setToolTip(2, usedBy);
         const QColor fg = r.missing ? QColor(255, 110, 95) : (r.users.isEmpty() ? QColor(140, 140, 145) : QColor(225, 225, 228));
-        for (int c = 0; c < 3; ++c) it->setForeground(c, fg);
+        for (int c = 0; c < 4; ++c) it->setForeground(c, fg);
     }
     for (auto e = existing.begin(); e != existing.end(); ++e)
         if (!seen.contains(e.key())) delete e.value();
@@ -405,6 +411,7 @@ void MediaBin::refreshIsf()
         it->setData(0, UsedRole, g->inLibrary || !g->users.isEmpty()); // library shaders stay; imported ones can be removed
         it->setData(0, UsersRole, int(g->users.size()));
         it->setText(0, g->name);
+        it->setText(3, QStringLiteral("Unknown (shader RGB)"));
         it->setText(1, missing ? QStringLiteral("missing") : g->inLibrary ? QString() : g->imported ? QStringLiteral("imported") : QStringLiteral("outside library"));
         it->setText(2, g->users.isEmpty() ? QStringLiteral("—") : QString::number(g->users.size()));
         it->setTextAlignment(2, Qt::AlignCenter);
@@ -415,7 +422,7 @@ void MediaBin::refreshIsf()
         it->setToolTip(1, g->description);
         it->setToolTip(2, usedBy);
         const QColor fg = missing ? QColor(255, 110, 95) : (g->users.isEmpty() ? QColor(170, 170, 175) : QColor(225, 225, 228));
-        for (int c = 0; c < 3; ++c) it->setForeground(c, fg);
+        for (int c = 0; c < 4; ++c) it->setForeground(c, fg);
     }
     qDeleteAll(existing);
     for (auto c = categories.begin(); c != categories.end(); ++c)
@@ -478,6 +485,7 @@ void MediaBin::refreshInputs()
         it->setData(0, UsedRole, true); // not removable: it is there or it is not
         it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         it->setText(0, r.name);
+        it->setText(3, QStringLiteral("Unknown (live input)"));
         it->setText(1, r.present ? r.kind : r.kind + QStringLiteral(" — not found"));
         if (!r.present) it->setForeground(1, QColor(255, 110, 95));
         const QStringList u = users.value(r.uri);
@@ -508,6 +516,7 @@ void MediaBin::refreshText()
         const QString usedBy = users.isEmpty() ? QStringLiteral("Not used by any layer") : QStringLiteral("Used by:\n") + users.join('\n');
         it->setToolTip(0, what + QStringLiteral("\n\n") + usedBy);
         it->setToolTip(2, usedBy);
+        it->setText(3, QStringLiteral("Unspecified (generated)"));
     };
     show(m_text, texts, QStringLiteral("Text generator: type a text; a snapshot that holds another text types it (typewriter)"));
     show(m_timecode, timecodes,
@@ -525,6 +534,7 @@ void MediaBin::probe(const QString &path)
     // Read metadata off the UI thread (files on network drives, etc.)
     QThreadPool::globalInstance()->start([self, path, image] {
         QString info;
+        QString color = QStringLiteral("Unknown");
         AudioStream::Info ai;
         const bool sound = !image && AudioStream::probe(path, &ai);
         const QString soundText = sound ? QStringLiteral("%1 %2 kHz %3")
@@ -538,6 +548,7 @@ void MediaBin::probe(const QString &path)
             VideoDecoder::Info vi;
             if (Engine::isAudioFile(path) || !VideoDecoder::probe(path, &vi)) {
                 // Sound only
+                if (sound) color = QStringLiteral("Not applicable");
                 info = sound ? (ai.duration > 0 ? fmtDuration(ai.duration) + QStringLiteral(" · ") : QString()) +
                                    QStringLiteral("%1 kHz").arg(ai.sampleRate / 1000.0, 0, 'g', 3) + QStringLiteral("\t") +
                                    soundText
@@ -550,6 +561,7 @@ void MediaBin::probe(const QString &path)
                 if (vi.fps > 0) more << QStringLiteral("%1 fps").arg(vi.fps, 0, 'g', 4);
                 if (!vi.codec.isEmpty()) more << vi.codec;
                 more << vi.colorDescription();
+                color = vi.colorSpaceSummary();
                 more << (sound ? QStringLiteral("sound: ") + soundText : QStringLiteral("no sound"));
                 if (vi.bitDepth > 0) info += QStringLiteral(" · %1-bit").arg(vi.bitDepth);
                 if (!vi.matrix.isEmpty()) info += QStringLiteral(" · ") + vi.matrix;
@@ -570,15 +582,18 @@ void MediaBin::probe(const QString &path)
                     r.setScaledSize(QSize(1, 1));
                     const QImage sample = r.read();
                     const QColorSpace space = sample.colorSpace();
-                    tags << (space.isValid() ? QStringLiteral("ICC: ") +
-                                (space.description().isEmpty() ? QStringLiteral("embedded profile") : space.description())
-                                             : QStringLiteral("color profile: untagged/unknown"));
+                    tags << imageColorDescription(space);
+                    color = imageColorSpaceName(space);
                 } else {
                     tags << QStringLiteral("color profile: not probed (large image)");
+                    color = QStringLiteral("Not probed (large image)");
                 }
                 info += QStringLiteral("\t") + tags.join(QStringLiteral(" · "));
             }
         }
+        // Three fields: short info, tooltip details, explicit source color tags.
+        if (!info.contains('\t')) info += '\t';
+        info += '\t' + color;
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
             [self, path, info] {

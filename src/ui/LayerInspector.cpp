@@ -653,7 +653,7 @@ void LayerInspector::rebuild()
     m_output = nullptr;
     if (s.isViewport) m_routeFields.clear();
     if (s.isViewport) { // its size, screen and publishing
-        m_output = new ViewportOutputPanel(m_engine, s.id);
+        m_output = new ViewportOutputPanel(m_engine, s.id, m_undo);
         connect(m_output, &ViewportOutputPanel::edited, this, &LayerInspector::projectEdited);
         connect(m_output, &ViewportOutputPanel::edited, this, &LayerInspector::layerChanged);
         tabs->addTab(page(m_output), QStringLiteral("Output"));
@@ -754,7 +754,8 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         kind = QStringLiteral("Video");
         name = QFileInfo(s.sourcePath).fileName();
         d << QStringLiteral("%1 × %2").arg(s.videoW).arg(s.videoH) << QStringLiteral("%1 fps").arg(s.fps, 0, 'f', 2)
-          << fmtTime(s.duration) << s.codec << s.sourceVideoInfo.colorDescription()
+          << fmtTime(s.duration) << s.codec << (QStringLiteral("Color space: ") + s.sourceVideoInfo.colorSpaceSummary())
+          << s.sourceVideoInfo.colorDescription()
           << (s.hasAudio ? QStringLiteral("sound: ") + audioText(s.audio) : QStringLiteral("no sound"));
         break;
     case SourceType::Audio:
@@ -769,11 +770,13 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
           << s.imageColorInfo;
         break;
     case SourceType::Isf:
+        d << QStringLiteral("Color space: Unknown (shader RGB)");
         kind = QStringLiteral("ISF Generator");
         name = QFileInfo(s.sourcePath).completeBaseName();
         d << QStringLiteral("%1 × %2").arg(s.genW).arg(s.genH);
         break;
     case SourceType::Input:
+        d << QStringLiteral("Color space: Unknown (live input)");
         kind = liveInputKind(s.sourcePath) + QStringLiteral(" Input");
         name = liveInputName(s.sourcePath);
         if (s.srcW > 0) d << QStringLiteral("%1 × %2").arg(s.srcW).arg(s.srcH);

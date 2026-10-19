@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include "EngineInternal.h"
 #include "TimecodeClock.h"
+#include "ColorInfo.h"
 
 #include <map>
 #include <set>
@@ -1015,26 +1016,44 @@ void Engine::composite()
         if (!o.fbo) continue; // keep the previously published viewport frame
         o.clear(0, 0, 0, 1);
         if (v.finalTex && v.opacity > 0.0f) {
-            // The viewport's own picture fills its output, at its opacity
-            o.bind();
-            f->glEnable(GL_BLEND);
-            f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            f->glUseProgram(m_compProgram);
-            f->glUniform1i(m_compTexLoc, 0);
-            f->glUniform4f(m_compViewLoc, 1, 1, 0, 0);
-            f->glUniform1f(m_compOpacityLoc, v.opacity);
-            // Its picture as it is: none of what the last layer composited left set in the program (its composition
-            // masks, its matte, a turned view)
-            f->glUniform1i(m_compMaskOnLoc, 0);
-            f->glUniform1i(m_compMatteModeLoc, 0);
-            f->glUniform4f(m_compRotLoc, 1, 0, 0, 0);
-            f->glActiveTexture(GL_TEXTURE0);
-            f->glBindVertexArray(m_meshVao);
-            bindMeshBuffer(m_meshVbo); // the whole frame, built once
-            f->glBindTexture(GL_TEXTURE_2D, v.finalTex);
-            f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
-            f->glDisable(GL_BLEND);
-            f->glBindVertexArray(0);
+            const QString &targetSpace = v.outputSpace == QLatin1String("same") ? v.outputInputSpace : v.outputSpace;
+            const bool transform = targetSpace != v.outputInputSpace || v.outputExposure != 0;
+            if (transform) {
+                // Black-matte the viewport first, then decode/expose/encode once.
+                // All consumers (screen, preview and publishers) use this same target.
+                o.bind();
+                f->glDisable(GL_BLEND);
+                f->glUseProgram(m_outputColorProgram);
+                f->glActiveTexture(GL_TEXTURE0);
+                f->glBindTexture(GL_TEXTURE_2D, v.finalTex);
+                f->glUniform1i(m_outputTexLoc, 0);
+                f->glUniform1f(m_outputOpacityLoc, v.opacity);
+                f->glUniform1i(m_outputDecodeLoc, outputColorSpaceIndex(v.outputInputSpace));
+                f->glUniform1i(m_outputEncodeLoc, outputColorSpaceIndex(targetSpace));
+                f->glUniform1f(m_outputGainLoc, float(std::exp2(v.outputExposure)));
+                drawQuad();
+            } else {
+                // The viewport's own picture fills its output, at its opacity
+                o.bind();
+                f->glEnable(GL_BLEND);
+                f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                f->glUseProgram(m_compProgram);
+                f->glUniform1i(m_compTexLoc, 0);
+                f->glUniform4f(m_compViewLoc, 1, 1, 0, 0);
+                f->glUniform1f(m_compOpacityLoc, v.opacity);
+                // Its picture as it is: none of what the last layer composited left set in the program (its composition
+                // masks, its matte, a turned view)
+                f->glUniform1i(m_compMaskOnLoc, 0);
+                f->glUniform1i(m_compMatteModeLoc, 0);
+                f->glUniform4f(m_compRotLoc, 1, 0, 0, 0);
+                f->glActiveTexture(GL_TEXTURE0);
+                f->glBindVertexArray(m_meshVao);
+                bindMeshBuffer(m_meshVbo); // the whole frame, built once
+                f->glBindTexture(GL_TEXTURE_2D, v.finalTex);
+                f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+                f->glDisable(GL_BLEND);
+                f->glBindVertexArray(0);
+            }
         }
         o.bind();
         applyOpacity();

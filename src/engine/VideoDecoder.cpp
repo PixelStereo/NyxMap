@@ -273,6 +273,12 @@ static void readSourceColor(const AVCodecParameters *par, VideoDecoder::Info *ou
     else if (par->color_range == AVCOL_RANGE_JPEG) out->range = QStringLiteral("full (PC)");
 }
 
+QString VideoDecoder::Info::colorSpaceSummary() const
+{
+    return (primaries.isEmpty() ? QStringLiteral("Unknown primaries") : primaries) + QStringLiteral(" / ") +
+           (transfer.isEmpty() ? QStringLiteral("Unknown transfer") : transfer);
+}
+
 QString VideoDecoder::Info::colorDescription() const
 {
     QStringList fields;

@@ -52,6 +52,7 @@ int runCueLifecycleTests(Engine &e);
 int runGpuTargetTests(Engine &e); // gpu_targets.cpp
 int runImagePrecisionTests(Engine &engine);
 int runShowHoldTests(Engine &engine);
+int runOutputColorTests(Engine &engine);
 int runRecallIntegrityTests(Engine &engine);
 int runGoldenRenderTests(Engine &e, const QString &root, const QString &tmp); // golden_render.cpp
 int runOperatorStateTests(Engine &e);
@@ -172,6 +173,7 @@ int main(int argc, char **argv)
     } // cue_capture
     if (area("cue_lifecycle")) failures += runCueLifecycleTests(e);
     if (area("recall_integrity")) failures += runRecallIntegrityTests(e);
+    if (area("output_color")) failures += runOutputColorTests(e);
     if (area("show_hold")) failures += runShowHoldTests(e);
     if (area("image_precision")) failures += runImagePrecisionTests(e);
     if (area("gpu_targets")) {

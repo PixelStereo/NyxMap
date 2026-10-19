@@ -232,6 +232,10 @@ struct Layer {
     QString vpScreen;                    // screen it is shown on (empty: the main one)
     int vpMode = 0;                      // 0 hidden, 1 windowed, 2 fullscreen
     bool testCard = false;               // a viewport shows its test card instead (a setup aid: not saved)
+    // Output-only calibration, after viewport effects/opacity and before the
+    // composition fader/blackout. Raw defaults preserve legacy pixel values.
+    QString outputInputSpace = QStringLiteral("srgb"), outputSpace = QStringLiteral("same");
+    double outputExposure = 0; // stops, applied between decode and encode
     PublishSettings vpPublish;           // NDI, OMT, Syphon, Spout of this viewport
     // How much of this item each viewport shows (an item at the top of the list; inside a group, the group decides).
     // A viewport that is not in the map shows it fully, so a viewport created later shows everything.

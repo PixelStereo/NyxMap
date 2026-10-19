@@ -8,6 +8,11 @@
 #include "LayerInspector.h"
 #include "PresetEditor.h"
 #include "ColorPicker.h"
+#include "ViewportOutput.h"
+#include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QThread>
+#include <QColorSpace>
 #include <QComboBox>
 #include "Commands.h"
 #include "LayerTable.h"
@@ -97,6 +102,32 @@ int main(int argc, char **argv)
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             check(mainTabs && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition", "Viewports sits between Layer and Composition");
             check(viewportList && viewportList->currentRow() == 0 && viewportInspector && viewportInspector->layerIndex() == engine.viewports().front(), "first viewport selected by default");
+            {
+                const quint64 viewport = engine.layerId(engine.viewports().front());
+                QUndoStack colorUndo;
+                ViewportOutputPanel panel(&engine, viewport, &colorUndo);
+                auto *input = panel.findChild<QComboBox *>("outputDecode");
+                auto *output = panel.findChild<QComboBox *>("outputEncode");
+                auto *exposure = panel.findChild<QDoubleSpinBox *>("outputExposure");
+                auto *reset = panel.findChild<QPushButton *>("resetOutputColor");
+                check(input && output && exposure && reset, "viewport output exposes named input/output spaces and exposure");
+                if (input && output && exposure && reset) {
+                    output->setCurrentIndex(output->findData("displayp3"));
+                    output->activated(output->currentIndex());
+                    exposure->setValue(1);
+                    check(engine.parameterValue(viewport,"output/space") == "displayp3" &&
+                          engine.parameterValue(viewport,"output/exposure").toDouble() == 1,
+                          "output color widgets write viewport parameters");
+                    reset->click();
+                    check(engine.parameterValue(viewport,"output/space") == "same" && exposure->value() == 0,
+                          "one reset restores neutral output and refreshes the widgets");
+                    colorUndo.undo();
+                    panel.refreshStatus();
+                    check(output->currentData() == "displayp3" && exposure->value() == 1,
+                          "Undo restores color controls as well as the rendered settings");
+                    colorUndo.undo(); colorUndo.undo();
+                }
+            }
             auto *update = window.findChild<QPushButton *>("snapshotUpdate");
             check(update && lists->isAncestorOf(update), "snapshot Update is in library toolbar");
             auto *remove = window.findChild<QPushButton *>("presetDelete");
@@ -126,6 +157,8 @@ int main(int argc, char **argv)
                 }
                 // Media Bin filters: by type, used / unused; the rebuild button; Replace… for an ISF generator
                 auto *tree = bin->findChild<QTreeWidget *>();
+                check(tree && tree->columnCount() == 4 && tree->headerItem()->text(3) == "Color space",
+                      "media bin has an explicit source color-space column");
                 auto *type = bin->findChild<QComboBox *>("typeFilter");
                 auto *usage = bin->findChild<QComboBox *>("usageFilter");
                 auto *rebuild = bin->findChild<QToolButton *>("rebuild");
@@ -141,6 +174,28 @@ int main(int argc, char **argv)
                 };
                 if (tree && type && usage && rebuild && loaded >= 0) {
                     bin->refresh();
+                    {
+                        QTemporaryDir profiles;
+                        const QString tagged = profiles.path() + "/tagged.png", untagged = profiles.path() + "/untagged.png";
+                        QImage image(16,16,QImage::Format_RGBA64);
+                        image.fill(Qt::gray);
+                        check(image.save(untagged), "create untagged media-bin fixture");
+                        image.setColorSpace(QColorSpace::DisplayP3);
+                        check(image.save(tagged), "create Display P3 media-bin fixture");
+                        engine.addBinItems({tagged,untagged}); bin->refresh();
+                        QElapsedTimer wait; wait.start();
+                        while(wait.elapsed()<5000) {
+                            app.processEvents();
+                            auto *a=itemOf(tagged), *b=itemOf(untagged);
+                            if(a && b && a->text(3)!="…" && b->text(3)!="…") break;
+                            QThread::msleep(1);
+                        }
+                        auto *a=itemOf(tagged), *b=itemOf(untagged);
+                        check(a && a->text(3).contains("P3") && a->toolTip(3).contains("primaries:"),
+                              "media-bin async probe displays the embedded source profile and detailed primaries");
+                        check(b && b->text(3).contains("Unknown"), "media-bin async probe keeps untagged source space unknown");
+                        engine.removeBinItem(tagged); engine.removeBinItem(untagged); bin->refresh();
+                    }
                     QTreeWidgetItem *gen = itemOf(shaderPath);
                     check(gen && shown(gen), "used ISF generator listed in the media bin");
                     usage->setCurrentIndex(2); // Unused
