@@ -21,6 +21,11 @@ CELLAR = Path(subprocess.check_output(["brew", "--cellar"], text=True).strip())
 # Not from Homebrew: built or fetched for the package, their licences travel with them (OMT-LICENSES.txt, NDI-NOTICE.txt)
 OWN = re.compile(r"^lib(omt|vmx|ndi)\b")
 FFMPEG = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.\d+\.dylib$")
+# Libraries whose licence is not their formula's: gettext's programs are GPL, its libintl is LGPL (gettext's
+# COPYING and its manual, "The GNU libintl library is covered by the GNU Lesser General Public License")
+LIBRARY_LICENCE = {"libintl": "LGPL-2.1-or-later"}
+# The licence texts the package already has, for a formula that installs none (Qt's modules)
+SHIPPED_TEXTS = {"LGPL-3.0": "licenses/LGPL-3.0.txt", "LGPL-2.1": "licenses/LGPL-2.1.txt", "GPL-3.0": "licenses/GPL-3.0.txt"}
 LICENCE_FILE = re.compile(r"^(LICEN[CS]E|COPYING|COPYRIGHT|NOTICE|UNLICENSE|LGPL|GPL)", re.I)
 
 
@@ -117,8 +122,11 @@ def main():
         f = info[formula]
         version = (f.get("installed") or [{}])[0].get("version") or f["versions"]["stable"]
         licence = f.get("license")
+        stems = {re.sub(r"\.\d+.*$", "", n) for n in by_formula[formula]}
         if formula == "ffmpeg":
             licence = "LGPL-2.1-or-later"  # this build: no --enable-gpl
+        elif stems <= LIBRARY_LICENCE.keys() and len({LIBRARY_LICENCE[x] for x in stems}) == 1:
+            licence = LIBRARY_LICENCE[next(iter(stems))]
         elif gpl_only(licence):
             errors.append(f"{formula} ({', '.join(by_formula[formula])}) is {describe(licence)}: GPL only")
         keg = CELLAR / formula / version
@@ -128,9 +136,13 @@ def main():
                 (out / formula).mkdir(exist_ok=True)
                 shutil.copy2(p, out / formula / p.name)
                 copied.append(p.name)
+        texts = [f"licenses/macos/{formula}/{n}" for n in copied]
         if not copied:
-            print(f"warning: {formula}: no licence file in its keg ({keg})")
-        texts = ", ".join(f"`licenses/macos/{formula}/{n}`" for n in copied) or "see its home page"
+            texts = sorted({t for spdx, t in SHIPPED_TEXTS.items()
+                            if any(tok.startswith(spdx) for tok in flatten(licence))})
+            if not texts:
+                print(f"warning: {formula}: no licence file in its keg ({keg})")
+        texts = ", ".join(f"`{t}`" for t in texts) or "see its home page"
         rows.append(f"| {formula} | {version} | {describe(licence)} | {texts} | {f.get('homepage', '')} | "
                     f"{', '.join(sorted(by_formula[formula]))} |")
     if errors:
