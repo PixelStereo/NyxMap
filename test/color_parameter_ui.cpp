@@ -316,6 +316,16 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     if (cyclic) for (auto *action : cyclic->actions()) if (action->text() == "Caller") disabled = !action->isEnabled();
     check(disabled, "sequence choices disable circular calls before they can be added");
     sequencer.clear();
+    const quint64 interactionId = engine.addInteraction(Interaction::made(InteractionSource::Osc));
+    const QString master = QStringLiteral("interaction/%1/master").arg(interactionId);
+    QMenu masterMenu;
+    TimelineWindow::fillParameterMenu(&masterMenu, &engine, &undo, 0, {master}, &inspector);
+    auto *masterTimeline = submenu(submenu(&masterMenu, "Animate"), "Timeline");
+    if (masterTimeline && !masterTimeline->actions().isEmpty()) masterTimeline->actions().first()->trigger();
+    const auto masterTracks = engine.animation(engine.animationCount() - 1).tracks;
+    check(masterTracks.size() == 1 && masterTracks[0].layer == 0 && masterTracks[0].param == master,
+          "interaction settings can also be added to a timeline from their parameter menu");
+    undo.undo(); engine.removeInteraction(interactionId);
     inspector.hide(); timeline.hide(); pump();
     std::printf("color_parameter_ui: %d failures\n", failures);
     return failures;

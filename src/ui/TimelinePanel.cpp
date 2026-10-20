@@ -275,12 +275,14 @@ TimelineEditor::TimelineEditor(Engine *engine, QUndoStack *undo, QWidget *parent
         rebuildRows();
         applyView();
     });
-    connect(m_engine, &Engine::layersChanged, this, [this] {
+    auto refreshTargets = [this] {
         if (QApplication::mouseButtons() & Qt::LeftButton) return;
         forgetParams(); // a layer's numbers (another source, another effect)
         rebuildRows();  // the names of the layers
         applyView();
-    });
+    };
+    connect(m_engine, &Engine::layersChanged, this, refreshTargets);
+    connect(m_engine, &Engine::interactionsChanged, this, refreshTargets);
 }
 
 void TimelineEditor::setTimeline(quint64 id)
