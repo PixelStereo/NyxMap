@@ -20,7 +20,7 @@ def classify(paths, event="pull_request", ref_type="branch", full=False):
         "tsan": engine or force,
         "fuzz": fuzz or force,
         # Allocation lifetime complements ASan, but does not need a second full workspace build on every PR.
-        "valgrind": force or any(p == "test/valgrind.supp" for p in paths),
+        "valgrind": force or any(p in ("test/valgrind.supp", "test/workspace_ui.cpp") for p in paths),
     }
     result["media"] = any(result[k] for k in ("build", "ui", "tsan", "fuzz"))
     return result
