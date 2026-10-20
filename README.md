@@ -80,7 +80,7 @@ cd Pinol
 <summary><strong>macOS — Homebrew</strong></summary>
 
 ```bash
-brew install qt ffmpeg cmake pkg-config
+brew install qt ffmpeg cmake pkg-config dotnet
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --build build -j
 ```
@@ -116,6 +116,11 @@ cmake --build build --config Release
 See [the CI workflow](.github/workflows/build.yml) for the tested toolchain and deployment steps.
 
 </details>
+
+The first build also puts NDI and OMT next to the program, as in the packages: the NDI runtime is downloaded from the
+NDI SDK (its licence agreement is accepted for you) and OMT is built from source, which needs git, clang and the
+[.NET SDK](https://dotnet.microsoft.com/download), version 8 or later (without it, CMake warns and OMT is left out). They go to
+`build/runtimes`; `-DPINOL_BUNDLE_RUNTIMES=OFF` leaves them out.
 
 <details>
 <summary><strong>Tests, benchmarking and command-line render</strong></summary>

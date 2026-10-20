@@ -44,9 +44,13 @@ def run(cmd, **kw):
 
 def download(url: Path, dest: Path) -> str:
     print(f"downloading {url}", flush=True)
-    req = urllib.request.Request(url, headers={"User-Agent": "Pinol-CI"})
-    with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
+    # curl when there is one: it uses the system's certificates (a python.org Python on macOS has none of its own)
+    if shutil.which("curl"):
+        subprocess.run(["curl", "-fsSL", "--retry", "3", "-A", "Pinol", "-o", str(dest), url], check=True)
+    else:
+        req = urllib.request.Request(url, headers={"User-Agent": "Pinol"})
+        with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f)
     return hashlib.sha256(dest.read_bytes()).hexdigest()
 
 
