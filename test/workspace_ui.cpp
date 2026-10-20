@@ -11,6 +11,7 @@
 #include "ViewportOutput.h"
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QThread>
 #include <QColorSpace>
 #include <QComboBox>
@@ -191,12 +192,19 @@ int main(int argc, char **argv)
                         engine.addBinItems({tagged,untagged}); bin->refresh();
                         QElapsedTimer wait; wait.start();
                         while(wait.elapsed()<5000) {
-                            app.processEvents();
+                            // Deliver queued probe results without repainting the whole workspace.
+                            // Under Valgrind, unrelated render timers can consume the entire deadline
+                            // in one processEvents() call, before the second result is delivered.
+                            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
                             auto *a=itemOf(tagged), *b=itemOf(untagged);
                             if(a && b && a->text(3)!="…" && b->text(3)!="…") break;
                             QThread::msleep(1);
                         }
                         auto *a=itemOf(tagged), *b=itemOf(untagged);
+                        if (!a || !b || a->text(3) == "…" || b->text(3) == "…")
+                            std::printf("Media-bin probe timeout after %lld ms: tagged=%s, untagged=%s\n",
+                                        static_cast<long long>(wait.elapsed()),
+                                        a ? qPrintable(a->text(3)) : "missing", b ? qPrintable(b->text(3)) : "missing");
                         check(a && a->text(3).contains("P3") && a->toolTip(3).contains("primaries:"),
                               "media-bin async probe displays the embedded source profile and detailed primaries");
                         check(b && b->text(3).contains("Unknown"), "media-bin async probe keeps untagged source space unknown");

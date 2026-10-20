@@ -24,6 +24,8 @@ class ScopeTest(unittest.TestCase):
         self.assertTrue(all(classify([], ref_type="tag").values()))
     def test_manual_full_runs_everything(self):
         self.assertTrue(all(classify([], "workflow_dispatch", full=True).values()))
+    def test_workspace_lifetime_test_changes_run_valgrind(self):
+        self.assertTrue(classify(["test/workspace_ui.cpp"])["valgrind"])
 
 if __name__ == "__main__":
     unittest.main()
