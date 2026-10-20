@@ -38,7 +38,7 @@ int main(int argc, char **argv)
     editor.fillMenu(&menu, layer, {"opacity"});
     QAction *selected = nullptr;
     QMenu *choices = nullptr;
-    for (auto *action : menu.actions()) {
+    for (auto *action : menu.findChildren<QAction *>()) {
         if (action->text() == "Update in Selected Snapshot (Cue A)") selected = action;
         if (action->text() == "Update in Snapshot") choices = action->menu();
     }
@@ -57,7 +57,7 @@ int main(int argc, char **argv)
     QMenu category;
     editor.fillCategoryMenu(&category, layer, "Masks");
     QAction *categoryUpdate = nullptr;
-    for (auto *action : category.actions()) if (action->text() == "Update in Selected Snapshot (Cue A)") categoryUpdate = action;
+    for (auto *action : category.findChildren<QAction *>()) if (action->text() == "Update in Selected Snapshot (Cue A)") categoryUpdate = action;
     check(categoryUpdate, "category menu has snapshot update");
     if (categoryUpdate) categoryUpdate->trigger();
     check(engine.snapshot(index).layers[0].toObject().value("masks") == masks::toJson({mask}), "Masks tab captures geometry");
@@ -83,6 +83,34 @@ int main(int argc, char **argv)
     check(!engine.snapshotMatches(engine.snapshot(mi).id), "snapshot concordance detects a changed matte");
     engine.recallSnapshot(mi);
     check(engine.layer(engine.indexOfId(layer))->matte.layer == engine.layerId(matteRow), "snapshot recall restores its matte");
+    Engine::Preset firstPreset; firstPreset.name = "First preset";
+    auto opacityValue = engine.presetValue(layer, "opacity"); opacityValue.time = .8; firstPreset.values = {opacityValue};
+    const int firstIndex = engine.addPreset(firstPreset);
+    const auto firstId = engine.preset(firstIndex).id;
+    Engine::Preset otherPreset; otherPreset.name = "Other preset";
+    otherPreset.values = {engine.presetValue(layer, "spatial/rotation")};
+    const int otherIndex = engine.addPreset(otherPreset);
+    const auto otherId = engine.preset(otherIndex).id;
+    editor.select(firstId); engine.setParameter(layer, "opacity", .42);
+    QMenu presetMenu; editor.fillMenu(&presetMenu, layer, {"opacity", "spatial/rotation"});
+    QAction *updatePreset = nullptr;
+    QMenu *presetChoices = nullptr;
+    for (auto *action : presetMenu.findChildren<QAction *>()) {
+        if (action->text() == "Update in Selected Preset (First preset)") updatePreset = action;
+        if (action->text() == "Add / Update in Preset") presetChoices = action->menu();
+    }
+    check(updatePreset && updatePreset->isEnabled() && presetChoices, "preset menu offers named selected update and target list");
+    editor.select(otherId); // actions must retain the target whose name was shown when opened
+    if (updatePreset) updatePreset->trigger();
+    const auto updatedPreset = engine.preset(firstIndex);
+    check(updatedPreset.values.size() == 1 && std::abs(updatedPreset.values[0].value.toDouble() - .42) < 1e-6 &&
+          updatedPreset.values[0].time == .8, "Update changes only existing entries of the originally selected preset and keeps their timing");
+    undo.undo();
+    check(engine.preset(firstIndex).values[0].value == opacityValue.value, "preset update is undoable");
+    if (presetChoices) for (auto *action : presetChoices->actions()) if (action->text() == otherPreset.name) action->trigger();
+    check(engine.preset(otherIndex).values.size() == 2 && engine.preset(otherIndex).indexOf(layer, "opacity") >= 0,
+          "preset list adds the clicked values to any chosen preset without losing existing entries");
+    undo.undo(); check(engine.preset(otherIndex).values.size() == 1, "adding to an arbitrary preset is undoable");
     std::printf("snapshot_update_ui: %d failures\n", failures);
     return failures ? 1 : 0;
 }

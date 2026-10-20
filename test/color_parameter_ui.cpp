@@ -2,13 +2,16 @@
 #include "LayerInspector.h"
 #include "ParamAnimPanel.h"
 #include "TimelinePanel.h"
+#include "SequencePanel.h"
 #include "ColorPicker.h"
 #include "PresetEditor.h"
+#include "InteractionPanel.h"
 #include "Widgets.h"
 #include "Commands.h"
 #include "Osc.h"
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QClipboard>
 #include <QDoubleSpinBox>
 #include <QJsonArray>
 #include <QMenu>
@@ -69,7 +72,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
         return qobject_cast<QMenu *>(QApplication::activePopupWidget());
     };
     auto colorAction = [](QMenu *menu) -> QAction * {
-        if (menu) for (auto *action : menu->actions()) if (action->text() == "Animate Color (RGB)") return action;
+        if (menu) for (auto *action : menu->findChildren<QAction *>()) if (action->text() == "Animate Color (RGB)") return action;
         return nullptr;
     };
     const QString start = "param/" + osc::safeName("startColor");
@@ -232,6 +235,87 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     for (auto *widget : inspector.findChildren<QWidget *>()) if (widget->property("animColorPath").toString() == "text/color")
         check(!widget->isEnabled(), "locked text color cannot start an animation");
     engine.layer(index)->locked = false;
+    check(engine.setLayerIsf(index, root + "/../isf/generators/Clouds.fs", &error), "load the reported Clouds source");
+    inspector.rebuild(); pump(); selectTab("Source");
+    InteractionPanel interactions(&engine, &undo);
+    const QString shadow = "param/" + osc::safeName("colorA"), wind = "param/" + osc::safeName("direction");
+    auto submenu = [](QMenu *menu, const QString &name) -> QMenu * {
+        if (menu) for (auto *action : menu->actions()) if (action->text() == name) return action->menu();
+        return nullptr;
+    };
+    QWidget *shadowControl = findControl(shadow);
+    check(shadowControl && shadowControl->property("valuePaths").toStringList() ==
+          QStringList{shadow + "/r", shadow + "/g", shadow + "/b", shadow + "/a"},
+          "Clouds color widgets register only their real RGBA components");
+    auto *cloudMenu = openMenu(shadowControl);
+    check(cloudMenu && cloudMenu->actions().size() == 4 && submenu(cloudMenu, "Preset") && submenu(cloudMenu, "Snapshot") &&
+          submenu(cloudMenu, "Animate") && submenu(cloudMenu, "Copy OSC Address"), "parameter context menu has the four requested groups");
+    auto *animateMenu = submenu(cloudMenu, "Animate");
+    check(submenu(animateMenu, "Layer Animation") && submenu(animateMenu, "Timeline") && submenu(animateMenu, "Interaction"),
+          "Animate offers local animation, timeline and interaction protocols");
+    bool hasCoordinates = false;
+    if (cloudMenu) for (auto *action : cloudMenu->findChildren<QAction *>())
+        hasCoordinates |= action->text() == "x" || action->text() == "y";
+    check(colorAction(cloudMenu) && !hasCoordinates, "Clouds color menu never offers point coordinates");
+    auto *timelineMenu = submenu(animateMenu, "Timeline");
+    const int timelineCount = engine.animationCount();
+    if (timelineMenu && !timelineMenu->actions().isEmpty()) timelineMenu->actions().first()->trigger();
+    check(engine.animationCount() == timelineCount + 1, "right-click creates a timeline directly from the color");
+    const auto newTimeline = engine.animation(engine.animationCount() - 1);
+    check(newTimeline.tracks.size() == 1 && newTimeline.tracks[0].color && newTimeline.tracks[0].param == shadow,
+          "new timeline receives a whole RGB color track");
+    closeMenus(); undo.undo(); pump();
+    check(engine.indexOfAnimation(newTimeline.id) < 0, "new timeline from a parameter is undoable");
+    undo.redo(); pump();
+    QWidget *windX = nullptr, *windY = nullptr;
+    for (auto *widget : inspector.findChildren<QDoubleSpinBox *>()) if (widget->isVisible()) {
+        const auto paths = widget->property("valuePaths").toStringList();
+        if (paths == QStringList{wind + "/x"}) windX = widget;
+        if (paths == QStringList{wind + "/y"}) windY = widget;
+    }
+    check(windX && windY, "Wind X and Y register separate typed targets");
+    auto *windMenu = openMenu(windX);
+    check(windMenu && !colorAction(windMenu), "Wind X never offers RGB color animation");
+    if (windMenu) for (auto *action : windMenu->actions()) if (action->text() == "Copy OSC Address") action->trigger();
+    check(QApplication::clipboard()->text() == OscNamespace::addressOf(&engine, id, wind + "/x"),
+          "Copy OSC Address uses exactly the clicked component");
+    auto *windTimeline = submenu(submenu(windMenu, "Animate"), "Timeline");
+    auto addWind = [&](QMenu *menu) {
+        if (menu) for (auto *action : menu->actions()) if (action->text() == newTimeline.name) { action->trigger(); return; }
+    };
+    addWind(windTimeline); closeMenus(); pump();
+    const int newIndex = engine.indexOfAnimation(newTimeline.id);
+    auto tracks = engine.animation(newIndex).tracks;
+    check(tracks.size() == 2 && tracks[0].color && !tracks[1].color && tracks[1].param == wind + "/x",
+          "an existing timeline keeps its color track and adds only the clicked Wind X parameter");
+    windMenu = openMenu(windX); addWind(submenu(submenu(windMenu, "Animate"), "Timeline")); closeMenus();
+    check(engine.animation(newIndex).tracks.size() == 2, "adding the same timeline parameter twice does not duplicate its track");
+    undo.undo(); pump();
+    check(engine.animation(newIndex).tracks.size() == 1, "adding a parameter to an existing timeline is one undo step");
+    Engine::Preset cuePreset; cuePreset.name = "Cue preset"; cuePreset.values = {engine.presetValue(id, wind + "/x")};
+    const int cuePresetIndex = engine.addPreset(cuePreset);
+    auto &sequencer = engine.sequencer(); sequencer.clear();
+    Sequencer::Sequence caller; caller.name = "Caller"; caller.steps.resize(1);
+    Sequencer::Sequence child; child.name = "Child"; child.steps.resize(1);
+    sequencer.add(caller); const int childIndex = sequencer.add(child); sequencer.setCurrent(0);
+    SequenceWindow sequences(&engine);
+    QMenu cueMenu; sequences.fillStepMenu(&cueMenu, 0);
+    auto *presetMenu = submenu(&cueMenu, "Preset of this step");
+    if (presetMenu) for (auto *action : presetMenu->actions()) if (action->text() == cuePreset.name) action->trigger();
+    check(sequencer.sequence(0).steps[0].preset == engine.preset(cuePresetIndex).id,
+          "step context menu chooses a preset target");
+    QMenu sequenceMenu; sequences.fillStepMenu(&sequenceMenu, 0);
+    auto *playSequence = submenu(&sequenceMenu, "Play sequence");
+    if (playSequence) for (auto *action : playSequence->actions()) if (action->text() == "Child") action->trigger();
+    check(sequencer.sequence(0).steps[0].sequence == sequencer.sequenceId(childIndex) && !sequencer.sequence(0).steps[0].preset,
+          "step context menu plays another sequence and clears the previous preset target");
+    sequencer.setCurrent(childIndex);
+    QMenu cyclicMenu; sequences.fillStepMenu(&cyclicMenu, 0);
+    auto *cyclic = submenu(&cyclicMenu, "Play sequence");
+    bool disabled = false;
+    if (cyclic) for (auto *action : cyclic->actions()) if (action->text() == "Caller") disabled = !action->isEnabled();
+    check(disabled, "sequence choices disable circular calls before they can be added");
+    sequencer.clear();
     inspector.hide(); timeline.hide(); pump();
     std::printf("color_parameter_ui: %d failures\n", failures);
     return failures;

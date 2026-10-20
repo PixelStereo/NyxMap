@@ -353,7 +353,9 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
             emit rebuildRequested();
         });
         form->addRow(name, field);
-        m_rows.push_back({in.name, {name, field}, pointX, pointY});
+        const QStringList suffixes = in.type == IsfInput::Color ? QStringList{"/r", "/g", "/b", "/a"}
+                                  : in.type == IsfInput::Point2D ? QStringList{"/x", "/y"} : QStringList{QString()};
+        m_rows.push_back({in.name, {name, field}, pointX, pointY, suffixes});
     }
 
     if (!(options & NoReset)) {
@@ -418,8 +420,8 @@ void ParamPanel::attachAnimate(AnimateMenu *menu)
             continue;
         }
         const QString p = base + osc::safeName(r.input);
-        // Every number this input has (only the ones declared animatable are offered)
-        const QStringList all{p, p + "/x", p + "/y", p + "/r", p + "/g", p + "/b", p + "/a"};
+        QStringList all;
+        for (const QString &suffix : r.suffixes) all << p + suffix;
         for (QWidget *w : r.all) menu->attach(w, all);
         menu->attach(r.x, {p + "/x"});
         menu->attach(r.y, {p + "/y"});

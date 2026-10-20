@@ -502,6 +502,8 @@ std::vector<ParamInfo> Engine::parameters(quint64 layer) const
         if (l->id == layer) list = &l->parameters();
     if (list)
         for (const Parameter *p : *list) out.push_back(p->info());
+    if (!layer)
+        for (const auto &p : self->interactionParams()) out.push_back(p->info());
     return out;
 }
 

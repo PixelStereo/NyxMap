@@ -1,4 +1,5 @@
 #include "InteractionPanel.h"
+#include "TimelinePanel.h"
 #include "AudioSpectrum.h"
 #include <QDoubleSpinBox>
 #include "AnimEditor.h"
@@ -653,25 +654,44 @@ InteractionPanel *InteractionPanel::s_instance = nullptr;
 void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, const QStringList &paths)
 {
     if (paths.isEmpty()) return;
-    auto one = [e, layer](QMenu *into, const QString &path) {
-        const QString addr = OscNamespace::addressOf(e, layer, path);
-        if (!addr.isEmpty())
-            into->addAction(QStringLiteral("Copy OSC Address  %1").arg(addr), into, [addr] { QApplication::clipboard()->setText(addr); });
-        InteractionPanel *panel = instance();
-        if (!panel) return;
-        QMenu *learn = into->addMenu(QStringLiteral("Learn Interaction"));
-        for (InteractionSource k : kKinds)
-            learn->addAction(interactionSourceName(k), panel, [panel, layer, path, k] { panel->learnFor(layer, path, k); });
-    };
-    if (!menu->isEmpty()) menu->addSeparator();
-    if (paths.size() == 1) {
-        one(menu, paths.front());
-        return;
-    }
-    for (const QString &path : paths) { // a sub-menu for each number (x, y…)
+    std::vector<ParamInfo> params;
+    for (const auto &path : paths) {
         ParamInfo info;
-        const QString name = e->parameterInfo(layer, path, &info) ? info.name() : path.section('/', -1);
-        one(menu->addMenu(name), path);
+        if (e->parameterInfo(layer, path, &info)) params.push_back(info);
+    }
+    if (params.empty()) return;
+    if (auto *panel = instance()) {
+        QMenu *animate = nullptr;
+        for (auto *action : menu->actions()) if (action->text() == QLatin1String("Animate")) animate = action->menu();
+        QMenu *interaction = nullptr;
+        for (const auto &param : params) {
+            if (!(param.access & ParamInfo::Write) || param.type == ParamInfo::Type::Text) continue;
+            if (!interaction) {
+                if (!animate) animate = menu->addMenu(QStringLiteral("Animate"));
+                interaction = animate->addMenu(QStringLiteral("Interaction"));
+                for (InteractionSource kind : kKinds) {
+                    if (params.size() == 1)
+                        interaction->addAction(interactionSourceName(kind), panel, [panel, layer, path = param.path, kind] {
+                            panel->learnFor(layer, path, kind);
+                        });
+                    else interaction->addMenu(interactionSourceName(kind));
+                }
+            }
+            if (params.size() > 1) for (int i = 0; i < interaction->actions().size(); ++i) {
+                const auto kind = kKinds[i];
+                interaction->actions()[i]->menu()->addAction(param.name(), panel, [panel, layer, path = param.path, kind] {
+                    panel->learnFor(layer, path, kind);
+                });
+            }
+        }
+    }
+    QMenu *addresses = params.size() > 1 ? menu->addMenu(QStringLiteral("Copy OSC Address")) : menu;
+    for (const auto &param : params) {
+        const QString addr = OscNamespace::addressOf(e, layer, param.path);
+        if (addr.isEmpty()) continue;
+        auto *action = addresses->addAction(params.size() > 1 ? param.name() : QStringLiteral("Copy OSC Address"),
+                                            menu, [addr] { QApplication::clipboard()->setText(addr); });
+        action->setToolTip(addr);
     }
 }
 
@@ -703,6 +723,7 @@ bool InteractionPanel::eventFilter(QObject *o, QEvent *e)
     auto *menu = new QMenu(w);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     pe->fillMenu(menu, 0, w->property("presetPaths").toStringList()); // Add to New Preset / to Selected Preset
+    TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, w->property("presetPaths").toStringList(), w);
     fillValueMenu(menu, m_engine, 0, w->property("presetPaths").toStringList());
     if (menu->isEmpty()) {
         delete menu;

@@ -1,5 +1,6 @@
 #pragma once
 #include <QList>
+#include <QStringList>
 #include <QWidget>
 #include <functional>
 #include <vector>
@@ -48,6 +49,7 @@ private:
         QString input;              // the input's name ("" : the speed)
         std::vector<QWidget *> all; // the name and the whole field: every number of the input
         QWidget *x = nullptr, *y = nullptr;
+        QStringList suffixes; // only the components declared by this ISF input's type
     };
     std::vector<Row> m_rows;
 };

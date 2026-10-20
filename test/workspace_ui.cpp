@@ -262,7 +262,7 @@ int main(int argc, char **argv)
             snapshotEditor->fillMenu(&valueMenu, surfaceId, {"opacity"});
             QAction *selectedUpdate = nullptr;
             QMenu *snapshotChoices = nullptr;
-            for (auto *action : valueMenu.actions()) {
+            for (auto *action : valueMenu.findChildren<QAction *>()) {
                 if (action->text() == "Update in Selected Snapshot (Target cue)") selectedUpdate = action;
                 if (action->text() == "Update in Snapshot") snapshotChoices = action->menu();
             }

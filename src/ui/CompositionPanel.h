@@ -7,6 +7,7 @@
 #include <QWidget>
 
 class Engine;
+class QUndoStack;
 class SliderField;
 class QSlider;
 class QPushButton;
@@ -26,6 +27,7 @@ class CompositionPanel : public QWidget
     Q_OBJECT
 public:
     explicit CompositionPanel(Engine *engine, QWidget *parent = nullptr);
+    void setUndoStack(QUndoStack *undo) { m_undo = undo; }
 
     void setBlackout(bool on);
     bool isBlackout() const;
@@ -59,6 +61,7 @@ private:
     void refreshTimecodeStatus();
 
     Engine *m_engine;
+    QUndoStack *m_undo = nullptr;
     SliderField *m_composition = nullptr;
     QLabel *m_compositionLabel = nullptr;
     QPushButton *m_blackout = nullptr;

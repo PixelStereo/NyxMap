@@ -11,11 +11,81 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QPointer>
 #include <QTimer>
 #include <QUndoStack>
 #include <QVBoxLayout>
 
 static const QColor kPlaying(76, 217, 100);
+
+void TimelineWindow::fillParameterMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
+                                      const QStringList &paths, QWidget *anchor)
+{
+    QStringList targets;
+    for (const auto &path : paths) {
+        ParamInfo info;
+        if (engine->parameterInfo(layer, path, &info) && info.animatable) targets << path;
+    }
+    if (targets.isEmpty()) return;
+    QMenu *animate = nullptr;
+    for (auto *action : menu->actions()) if (action->text() == QLatin1String("Animate")) animate = action->menu();
+    if (!animate) animate = menu->addMenu(QStringLiteral("Animate"));
+    fillValueMenu(animate->addMenu(QStringLiteral("Timeline")), engine, undo, layer, targets, anchor);
+}
+
+void TimelineWindow::fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
+                                  const QStringList &paths, QWidget *anchor)
+{
+    const QPointer<QWidget> widget = anchor;
+    auto add = [engine, undo, layer, paths, widget](quint64 id) {
+        if (layer && engine->isLocked(engine->indexOfId(layer))) return;
+        const int index = engine->indexOfAnimation(id);
+        if (id && index < 0) return; // a target deleted while the menu was open
+        const Animation before = index >= 0 ? engine->animation(index) : Animation();
+        Animation after = before;
+        if (!id) after.name = QStringLiteral("Timeline %1").arg(engine->animationCount() + 1);
+        bool changed = false;
+        const auto numbers = engine->animatableParams(layer);
+        const auto colors = engine->animatableColors(layer);
+        for (const auto &path : paths) {
+            const bool color = std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == path; });
+            if (!color && std::none_of(numbers.begin(), numbers.end(), [&](const auto &p) { return p.path == path; })) continue;
+            if (std::any_of(after.tracks.begin(), after.tracks.end(), [&](const AnimTrack &t) {
+                return t.layer == layer && t.param == path && t.color == color;
+            })) continue;
+            const auto created = engine->makeLayerAnim(layer, path, -1);
+            AnimTrack track = created.tracks.front();
+            for (auto &key : track.keys) key.t *= after.duration / created.duration;
+            after.tracks.erase(std::remove_if(after.tracks.begin(), after.tracks.end(), [&](const AnimTrack &t) {
+                return t.layer == layer && (track.color ? track.drives(t.param) : t.color && t.drives(track.param));
+            }), after.tracks.end());
+            after.tracks.push_back(track);
+            changed = true;
+        }
+        if (!id && !changed) return;
+        if (!id) {
+            auto *command = new cmd::AddAnimation(engine, after, engine->animationCount(), QStringLiteral("New Timeline from Parameter"));
+            if (undo) undo->push(command); else command->redo();
+            id = command->animationId();
+            if (!undo) delete command;
+        } else if (changed) {
+            if (undo) undo->push(new cmd::SetAnimation(engine, id, before, after, QStringLiteral("Add Parameter to Timeline")));
+            else engine->setAnimation(index, after);
+        }
+        QWidget *root = widget.data();
+        while (root && root->parentWidget()) root = root->parentWidget();
+        if (auto *window = root ? root->findChild<TimelineWindow *>() : nullptr) {
+            window->selectTimeline(id);
+            emit window->showRequested();
+        }
+    };
+    menu->addAction(QStringLiteral("New Timeline"), menu, [add] { add(0); });
+    if (engine->animationCount()) menu->addSeparator();
+    for (int i = 0; i < engine->animationCount(); ++i) {
+        const auto timeline = engine->animation(i);
+        menu->addAction(timeline.name, menu, [add, id = timeline.id] { add(id); });
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TimelineList

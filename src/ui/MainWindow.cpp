@@ -103,6 +103,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_view->setUndoStack(m_undo);
     m_inspector = new LayerInspector(m_engine, m_undo);
     m_composition = new CompositionPanel(m_engine);
+    m_composition->setUndoStack(m_undo);
     m_tabs = new QTabWidget;
     m_tabs->setObjectName(QStringLiteral("mainInspectorTabs"));
     m_tabs->addTab(scrolled(m_inspector), QStringLiteral("Layer"));
@@ -504,6 +505,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_seqWindow, &SequenceWindow::stopAllRequested, &m_engine->sequencer(), &Sequencer::stopAll);
     m_timelineWindow->addActions({m_undoAction, m_redoAction}); // undo / redo from the Timelines window too
     connect(m_timelineWindow, &TimelineWindow::edited, this, &MainWindow::markDirty);
+    connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
     connect(m_seqWindow, &SequenceWindow::timelinesRequested, this, &MainWindow::openTimelines);
     connect(m_seqWindow, &SequenceWindow::timelineRequested, this, [this](quint64 id) { openTimelines(); m_timelineWindow->selectTimeline(id); });
     connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
@@ -517,6 +519,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
+    });
+    m_engine->sequencer().setPresetRecaller([this](int preset) {
+        if (preset >= 0 && preset < m_engine->presetCount())
+            m_undo->push(new cmd::RecallPreset(m_engine, m_engine->preset(preset).id));
     });
     // A step the cue clock fired (its pre-wait, a follow): already recalled on time, recorded here for undo
     m_engine->sequencer().setRecallRecorder([this](int snapshot, const Sequencer::RecallBefore &before) {
@@ -602,6 +608,7 @@ MainWindow::~MainWindow()
     // deleted, which must not reach this window's slots (they use members already destroyed, m_binTimer…)
     m_undo->disconnect(this);
     m_engine->sequencer().setRecaller(nullptr);
+    m_engine->sequencer().setPresetRecaller(nullptr);
     m_engine->sequencer().setRecallRecorder(nullptr);
     if (m_oscThread) {
         QMetaObject::invokeMethod(m_osc, [this] { m_osc->stop(); }, Qt::BlockingQueuedConnection);

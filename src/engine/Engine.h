@@ -415,6 +415,7 @@ public:
     void removePreset(int i);
     int indexOfPreset(quint64 id) const;
     void recallPreset(int i);
+    double presetDuration(quint64 id) const;
     void cancelParameterRecall(quint64 layer, const QString &path); // undo of an outstanding preset recall
     // A value as it is now, to put in a preset (an undefined value: it has none at that address)
     PresetValue presetValue(quint64 layer, const QString &path) const;

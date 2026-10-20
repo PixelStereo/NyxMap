@@ -1,6 +1,7 @@
 #include "ParamAnimPanel.h"
 #include "PresetEditor.h"
 #include "InteractionPanel.h"
+#include "TimelinePanel.h"
 #include "Commands.h"
 #include "Widgets.h"
 
@@ -280,7 +281,7 @@ void fillMenu(QMenu *menu, Engine *e, QUndoStack *undo, quint64 layer, const QSt
         menu->addAction(QStringLiteral("Animate Color (RGB)"), menu, make(-1));
         return;
     }
-    QMenu *sub = menu->addMenu(QStringLiteral("Animate"));
+    QMenu *sub = menu;
     for (int w = 0; w < kAnimWaveCount; ++w) sub->addAction(animWaveName(AnimWave(w)), menu, make(w));
     sub->addSeparator();
     sub->addAction(QStringLiteral("Keys (draw the curve)"), menu, make(-1));
@@ -351,25 +352,37 @@ bool AnimateMenu::eventFilter(QObject *o, QEvent *e)
     // inspector be rebuilt meanwhile
     auto *menu = new QMenu(w);
     menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, m_layer, values);
+    auto *animate = (!paths.isEmpty() || !color.isEmpty()) ? menu->addMenu(QStringLiteral("Animate")) : nullptr;
+    auto *local = animate ? animate->addMenu(QStringLiteral("Layer Animation")) : nullptr;
     if (!color.isEmpty()) {
-        paramanim::fillMenu(menu, m_e, m_undo, m_layer, color, w, m_edit);
+        paramanim::fillMenu(local, m_e, m_undo, m_layer, color, w, m_edit);
         if (!paths.isEmpty()) {
-            auto *channels = menu->addMenu(QStringLiteral("Individual Parameters"));
+            auto *channels = local->addMenu(QStringLiteral("Individual Channels"));
             for (const QString &path : paths) {
                 auto *sub = channels->addMenu(shortLabel(paramanim::label(m_e, m_layer, path)));
                 paramanim::fillMenu(sub, m_e, m_undo, m_layer, path, w, m_edit);
             }
         }
     } else if (paths.size() == 1) {
-        paramanim::fillMenu(menu, m_e, m_undo, m_layer, paths.front(), w, m_edit);
+        paramanim::fillMenu(local, m_e, m_undo, m_layer, paths.front(), w, m_edit);
     } else { // a sub-menu for each number (X, Y; R, G, B…)
         for (const QString &p : paths) {
-            QMenu *sub = menu->addMenu(shortLabel(paramanim::label(m_e, m_layer, p)) +
+            QMenu *sub = local->addMenu(shortLabel(paramanim::label(m_e, m_layer, p)) +
                                        (m_animated.contains(p) ? QStringLiteral("  ∿") : QString()));
             paramanim::fillMenu(sub, m_e, m_undo, m_layer, p, w, m_edit);
         }
     }
-    if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, m_layer, values);
+    if (animate) {
+        auto *timeline = animate->addMenu(QStringLiteral("Timeline"));
+        TimelineWindow::fillValueMenu(timeline, m_e, m_undo, m_layer, color.isEmpty() ? paths : QStringList{color}, w);
+        if (!color.isEmpty()) {
+            auto *channels = timeline->addMenu(QStringLiteral("Individual Channels"));
+            for (const auto &path : paths)
+                TimelineWindow::fillValueMenu(channels->addMenu(shortLabel(paramanim::label(m_e, m_layer, path))),
+                                               m_e, m_undo, m_layer, {path}, w);
+        }
+    }
     InteractionPanel::fillValueMenu(menu, m_e, m_layer, values); // its OSC address, Learn Interaction
     if (menu->isEmpty()) {
         delete menu;

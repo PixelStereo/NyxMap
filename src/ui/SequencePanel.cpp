@@ -23,6 +23,7 @@
 #include <QTimer>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSet>
 #include <QTableWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -67,6 +68,14 @@ static QString timelineName(Engine *e, quint64 id)
 // What a step does: its snapshot (with its number), or its timeline and the action on it
 static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = true)
 {
+    if (st.sequence) {
+        const int index = e->sequencer().indexOfSequence(st.sequence);
+        return index < 0 ? QStringLiteral("(sequence gone)") : QStringLiteral("▶ Sequence · %1").arg(e->sequencer().sequence(index).name);
+    }
+    if (st.preset) {
+        const int index = e->indexOfPreset(st.preset);
+        return index < 0 ? QStringLiteral("(preset gone)") : QStringLiteral("Preset · %1").arg(e->preset(index).name);
+    }
     if (st.timeline) return QStringLiteral("≋ %1 · %2").arg(timelineName(e, st.timeline), actionName(st));
     if (numbered) return snapshotName(e, st.snapshot);
     const int mi = e->indexOfSnapshot(st.snapshot);
@@ -75,6 +84,8 @@ static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = 
 
 static bool targetGone(Engine *e, const Sequencer::Step &st)
 {
+    if (st.sequence) return e->sequencer().indexOfSequence(st.sequence) < 0;
+    if (st.preset) return e->indexOfPreset(st.preset) < 0;
     return st.timeline ? e->indexOfAnimation(st.timeline) < 0 : st.snapshot && e->indexOfSnapshot(st.snapshot) < 0;
 }
 
@@ -670,13 +681,13 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
 
     // Steps
     auto *right = new QVBoxLayout;
-    right->addWidget(new QLabel(QStringLiteral("<b>Steps</b> — drag a snapshot or a timeline onto a step (or below the last one to add one)")));
+    right->addWidget(new QLabel(QStringLiteral("<b>Steps</b> — right-click to choose a snapshot, preset, timeline or sequence")));
     m_status = new QLabel;
     m_status->setTextFormat(Qt::RichText);
     right->addWidget(m_status);
     right->addWidget(new RecallProgressBar(m_engine));
     m_steps = new QTableWidget(0, ColCount);
-    m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Snapshot / Timeline"), QStringLiteral("Pre-wait"),
+    m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre-wait"),
                                         QStringLiteral("Action"), QStringLiteral("Post-wait"), QStringLiteral("Continue"),
                                         QStringLiteral("Comment"), QStringLiteral("Description")});
     m_steps->horizontalHeaderItem(ColPre)->setToolTip(QStringLiteral("Seconds between the step's GO and its snapshot"));
@@ -708,7 +719,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     m_steps->setContextMenuPolicy(Qt::CustomContextMenu);
     m_steps->setToolTip(QStringLiteral("Double-click a number to play that step · double-click a wait, a continuation "
                                        "or a text to edit it · double-click a timeline step: its action · right-click: "
-                                       "choose the snapshot or the timeline"));
+                                       "choose a snapshot, preset, timeline or sequence"));
     right->addWidget(m_steps, 1);
     auto *activity = new TimelineActivity(m_engine);
     right->addWidget(activity);
@@ -812,31 +823,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     connect(m_steps, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         const int row = m_steps->rowAt(pos.y());
         QMenu menu;
-        QMenu *mem = menu.addMenu(row >= 0 ? QStringLiteral("Snapshot of this step") : QStringLiteral("New step with snapshot"));
-        for (int i = 0; i < m_engine->snapshotCount(); ++i) {
-            const Engine::Snapshot m = m_engine->snapshot(i);
-            mem->addAction(QStringLiteral("%1  %2").arg(i + 1).arg(m.name), this, [this, row, id = m.id] {
-                if (row >= 0) setStepSnapshot(row, id);
-                else addStep(-1, id);
-            });
-        }
-        mem->setEnabled(!mem->isEmpty());
-        QMenu *tl = menu.addMenu(row >= 0 ? QStringLiteral("Timeline of this step") : QStringLiteral("New step with timeline"));
-        for (int i = 0; i < m_engine->animationCount(); ++i) {
-            const Engine::Animation a = m_engine->animation(i);
-            tl->addAction(a.name, this, [this, row, id = a.id] {
-                if (row >= 0) setStepTimeline(row, id);
-                else addStep(-1, 0, id);
-            });
-        }
-        tl->setEnabled(!tl->isEmpty());
-        const Sequencer::Sequence cs = m_engine->sequencer().sequence(m_engine->sequencer().current());
-        if (row >= 0 && row < int(cs.steps.size()) && cs.steps[size_t(row)].timeline)
-            fillActionMenu(menu.addMenu(QStringLiteral("Timeline action")), row);
-        if (row >= 0) {
-            menu.addAction(QStringLiteral("Play this step"), this, [this, row] { emit goToRequested(row); });
-            menu.addAction(QStringLiteral("Delete"), this, &SequenceWindow::removeSteps);
-        }
+        if (row >= 0) m_steps->setCurrentCell(row, ColSnapshot);
+        fillStepMenu(&menu, row);
         menu.exec(m_steps->viewport()->mapToGlobal(pos));
     });
     connect(m_stepAdd, &QPushButton::clicked, this, [this] {
@@ -850,7 +838,68 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     connect(&m_engine->sequencer(), &Sequencer::positionChanged, this, &SequenceWindow::refreshTransport);
     connect(m_engine, &Engine::snapshotsChanged, this, &SequenceWindow::refresh);
     connect(m_engine, &Engine::animationsChanged, this, &SequenceWindow::refresh);
+    connect(m_engine, &Engine::presetsChanged, this, &SequenceWindow::refresh);
     refresh();
+}
+
+void SequenceWindow::fillStepMenu(QMenu *menu, int row)
+{
+    QMenu *mem = menu->addMenu(row >= 0 ? QStringLiteral("Snapshot of this step") : QStringLiteral("New step with snapshot"));
+    for (int i = 0; i < m_engine->snapshotCount(); ++i) {
+        const Engine::Snapshot m = m_engine->snapshot(i);
+        mem->addAction(QStringLiteral("%1  %2").arg(i + 1).arg(m.name), this, [this, row, id = m.id] {
+            if (row >= 0) setStepSnapshot(row, id);
+            else addStep(-1, id);
+        });
+    }
+    mem->setEnabled(!mem->isEmpty());
+    QMenu *tl = menu->addMenu(row >= 0 ? QStringLiteral("Timeline of this step") : QStringLiteral("New step with timeline"));
+    for (int i = 0; i < m_engine->animationCount(); ++i) {
+        const Engine::Animation a = m_engine->animation(i);
+        tl->addAction(a.name, this, [this, row, id = a.id] {
+            if (row >= 0) setStepTimeline(row, id);
+            else addStep(-1, 0, id);
+        });
+    }
+    tl->setEnabled(!tl->isEmpty());
+    auto *presets = menu->addMenu(row >= 0 ? QStringLiteral("Preset of this step") : QStringLiteral("New step with preset"));
+    for (const auto &preset : m_engine->presets())
+        presets->addAction(preset.name, this, [this, row, id = preset.id] {
+            if (row >= 0) setStepLibraryTarget(row, id, 0); else addStep(-1, 0, 0, id);
+        });
+    presets->setEnabled(!presets->isEmpty());
+    auto *sequences = menu->addMenu(row >= 0 ? QStringLiteral("Play sequence") : QStringLiteral("New step playing sequence"));
+    const auto &sq = m_engine->sequencer();
+    const quint64 caller = sq.sequenceId(sq.current());
+    for (int i = 0; i < sq.count(); ++i) {
+        if (i == sq.current()) continue;
+        const auto sequence = sq.sequence(i);
+        const quint64 id = sq.sequenceId(i);
+        QSet<quint64> visited;
+        std::function<bool(quint64)> callsBack = [&](quint64 target) {
+            if (target == caller) return true;
+            if (!target || visited.contains(target)) return false;
+            visited.insert(target);
+            for (const auto &step : sq.sequence(sq.indexOfSequence(target)).steps)
+                if (callsBack(step.sequence)) return true;
+            return false;
+        };
+        auto *action = sequences->addAction(sequence.name, this, [this, row, id] {
+            if (row >= 0) setStepLibraryTarget(row, 0, id); else addStep(-1, 0, 0, 0, id);
+        });
+        const bool cycle = callsBack(id);
+        action->setEnabled(!sequence.steps.empty() && !cycle);
+        action->setToolTip(cycle ? QStringLiteral("Would create a circular sequence call")
+            : QStringLiteral("Starts from the first step, using this sequence's own waits and continuation"));
+    }
+    sequences->setEnabled(!sequences->isEmpty());
+    const Sequencer::Sequence cs = m_engine->sequencer().sequence(m_engine->sequencer().current());
+    if (row >= 0 && row < int(cs.steps.size()) && cs.steps[size_t(row)].timeline)
+        fillActionMenu(menu->addMenu(QStringLiteral("Timeline action")), row);
+    if (row >= 0) {
+        menu->addAction(QStringLiteral("Play this step"), this, [this, row] { emit goToRequested(row); });
+        menu->addAction(QStringLiteral("Delete"), this, &SequenceWindow::removeSteps);
+    }
 }
 
 // The actions a timeline step can have; the one it has is checked
@@ -1023,7 +1072,7 @@ void SequenceWindow::refresh()
     m_filling = false;
 }
 
-void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline)
+void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline, quint64 preset, quint64 sequence)
 {
     int cur = m_engine->sequencer().current();
     if (cur < 0) { // a first sequence for it
@@ -1037,6 +1086,8 @@ void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline)
     Sequencer::Step st;
     st.snapshot = timeline ? 0 : snapshot;
     st.timeline = timeline; // Play, by default
+    st.preset = preset;
+    st.sequence = sequence;
     s.steps.insert(s.steps.begin() + at, st);
     // The step played keeps being the same one
     const int pos = m_engine->sequencer().position();
@@ -1053,6 +1104,7 @@ void SequenceWindow::setStepSnapshot(int step, quint64 snapshot)
     if (step < 0 || step >= int(s.steps.size())) return;
     s.steps[size_t(step)].snapshot = snapshot;
     s.steps[size_t(step)].timeline = 0;
+    s.steps[size_t(step)].preset = s.steps[size_t(step)].sequence = 0;
     m_engine->sequencer().setSequence(cur, s);
     emit edited();
 }
@@ -1066,6 +1118,20 @@ void SequenceWindow::setStepTimeline(int step, quint64 timeline)
     if (!st.timeline) st.action = Engine::AnimAction::Play; // a step that recalled a snapshot: Play
     st.timeline = timeline;
     st.snapshot = 0;
+    st.preset = st.sequence = 0;
+    m_engine->sequencer().setSequence(cur, s);
+    emit edited();
+}
+
+void SequenceWindow::setStepLibraryTarget(int step, quint64 preset, quint64 sequence)
+{
+    const int cur = m_engine->sequencer().current();
+    auto s = m_engine->sequencer().sequence(cur);
+    if (step < 0 || step >= int(s.steps.size())) return;
+    auto &target = s.steps[size_t(step)];
+    target.snapshot = target.timeline = 0;
+    target.preset = preset;
+    target.sequence = sequence;
     m_engine->sequencer().setSequence(cur, s);
     emit edited();
 }
