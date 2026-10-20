@@ -163,7 +163,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     Animation restored;
     check(engine.layerAnim(id, start, &restored) && restored.tracks[0].color, "project reload preserves grouped local RGB animation");
     const int index = engine.indexOfId(id);
-    check(engine.setLayerText(index), "switch to native text source"); inspector.setLayer(index); inspector.rebuild(); pump();
+    check(engine.setLayerText(index), "switch to native text source"); inspector.setLayer(index); inspector.rebuild(); inspector.show(); pump();
     const auto textColors = engine.animatableColors(id);
     int offered = 0;
     selectTab("Source");
