@@ -651,6 +651,11 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
 
 InteractionPanel *InteractionPanel::s_instance = nullptr;
 
+InteractionPanel::~InteractionPanel()
+{
+    if (s_instance == this) s_instance = nullptr;
+}
+
 void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, const QStringList &paths)
 {
     if (paths.isEmpty()) return;

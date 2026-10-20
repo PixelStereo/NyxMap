@@ -97,6 +97,9 @@ int runCueLifecycleTests(Engine &engine)
     auto value = engine.presetValue(layer, "opacity"); value.value = .9; value.time = .7; value.delay = .3;
     preset.values = {value};
     const int pi = engine.addPreset(preset);
+    auto cut = preset; cut.name = "Cut preset"; cut.fade = 10; cut.values[0].time = cut.values[0].delay = 0;
+    const int cutIndex = engine.addPreset(cut);
+    check(engine.presetDuration(engine.preset(cutIndex).id) == 0, "explicit per-value cuts do not wait for an unused default preset fade");
     Sequencer::Step recall; recall.preset = engine.preset(pi).id; recall.preWait = .2;
     recall.next = Sequencer::StepContinue::AutoFollow;
     Sequencer::Step afterPreset; afterPreset.snapshot = engine.snapshot(0).id;
@@ -128,14 +131,18 @@ int runCueLifecycleTests(Engine &engine)
     check(seq.positionOf(ci) == 0, "calling an already used sequence restarts it from the first step");
     seq.stopAll(); seq.advance(10); check(fired.empty(), "Stop all cancels called sequence pre-waits");
 
-    Sequencer::Sequence inserted; inserted.name = "Inserted"; seq.add(inserted, 0);
+    Sequencer::Sequence insertedSequence; insertedSequence.name = "Inserted"; seq.add(insertedSequence, 0);
     child = seq.sequence(seq.indexOfSequence(childId)); child.name = "Renamed child";
     seq.setSequence(seq.indexOfSequence(childId), child);
+    s = seq.sequence(seq.indexOfSequence(callerId));
+    Sequencer::Step savedPreset; savedPreset.preset = engine.preset(pi).id;
+    s.steps.push_back(savedPreset); seq.setSequence(seq.indexOfSequence(callerId), s);
     const auto saved = seq.toJson();
     const int callerIndex = seq.indexOfSequence(callerId);
     std::thread stale([&] { seq.goToStepOf(callerIndex, 0); }); stale.join();
     seq.fromJson(saved, callerIndex); drain();
     check(seq.toJson() == saved && seq.sequence(seq.indexOfSequence(callerId)).steps[0].sequence == childId &&
+          seq.sequence(seq.indexOfSequence(callerId)).steps[1].preset == engine.preset(pi).id &&
           seq.positionOf(seq.indexOfSequence(callerId)) == -1, "sequence links survive insert/rename/reload and stale commands are canceled");
     seq.remove(seq.indexOfSequence(childId));
     seq.add(child);
