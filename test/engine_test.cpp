@@ -4706,9 +4706,30 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.setCompositionSize(QSize(640, 360));
         int v2 = e.addLayer("v");
         CHECK(e.setLayerVideo(v2, root + "/media/h264.mp4", &err));
-        CHECK(waitFrames(20));
-        Engine::Lock lk(&e.mutex());
-        CHECK(e.layer(v2)->videoTex && e.layer(v2)->videoTex->width() == 1280);
+        // Wait for actual video uploads, not an arbitrary number of composition frames:
+        // software GPUs may render slowly even though decoding and uploading work correctly.
+        // Two uploads also prove playback progresses beyond the first decoded picture.
+        QElapsedTimer videoWait;
+        videoWait.start();
+        uint64_t uploads = 0;
+        QSize videoSize;
+        while (videoWait.elapsed() < 10000) {
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *layer = e.layer(v2);
+                if (layer && layer->videoTex) {
+                    uploads = layer->videoTex->uploads();
+                    videoSize = QSize(layer->videoTex->width(), layer->videoTex->height());
+                }
+            }
+            if (uploads >= 2 && videoSize == QSize(1280, 720)) break;
+            QThread::msleep(5); // never hold the engine lock while waiting for the render thread
+        }
+        std::printf("       %llu video uploads, %dx%d, after %lld ms\n",
+                    static_cast<unsigned long long>(uploads), videoSize.width(), videoSize.height(),
+                    static_cast<long long>(videoWait.elapsed()));
+        CHECK(uploads >= 2);
+        CHECK(videoSize == QSize(1280, 720));
     }
     // Master: full blackout
     {
