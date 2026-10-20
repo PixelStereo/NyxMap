@@ -124,6 +124,7 @@ private:
     QPointer<QButtonGroup> m_playButtons;
     QPointer<RoiEditor> m_roi;
     QPointer<ColorEditor> m_colorAdd, m_colorRemove;
+    std::vector<std::pair<QPointer<QPushButton>, QString>> m_textColors;
     QPointer<SliderField> m_temp, m_tint;
     // Followed while a snapshot fades them (as temp / tint)
     QPointer<SliderField> m_opacity, m_volume;

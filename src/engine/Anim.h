@@ -8,6 +8,7 @@
 // absolute.
 
 #include <QString>
+#include <QStringList>
 #include <QtGlobal>
 #include <algorithm>
 #include <array>
@@ -58,6 +59,11 @@ struct AnimTrack {
     double captured = std::numeric_limits<double>::quiet_NaN();
     bool color = false; // drives param/r, param/g, param/b together; alpha is left alone
     std::array<double, 3> colorAt(double position) const;
+    QStringList drivenParams() const
+    {
+        return color ? QStringList{param + "/r", param + "/g", param + "/b"} : QStringList{param};
+    }
+    bool drives(const QString &path) const { return path == param || (color && drivenParams().contains(path)); }
 };
 
 struct Animation {

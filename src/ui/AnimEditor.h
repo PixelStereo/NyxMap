@@ -74,6 +74,8 @@ QString animCurveName(int curve);
 // each number (into: its menu; text: its name there).
 void addParamMenu(QMenu *menu, const std::vector<Engine::AnimParam> &params,
                   const std::function<void(QMenu *into, const Engine::AnimParam &p, const QString &text)> &item);
+// Keep a whole color beside its component entries in the same Source / Color / FX category.
+std::vector<Engine::AnimParam> animationMenuParams(Engine *engine, quint64 layer);
 
 // One track's curve (or its oscillator's wave) over the duration. A click adds a key, a key is dragged; dragging over an
 // empty place draws: the keys under the stroke are replaced by the drawn ones. Double-click on a key: deleted;

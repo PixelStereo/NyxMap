@@ -99,7 +99,10 @@ public:
         v->addLayout(head);
         m_editor = new ParamAnimEditor(e, undo, layer, param, AnimEditor::Layout::Side, this);
         v->addWidget(m_editor, 1);
-        auto *how = new QLabel(QStringLiteral("Lane: click: a key · drag a key: move it (Shift: one axis) · drag elsewhere: draw · "
+        std::array<double, 3> rgb;
+        const bool color = e->animColorValue(layer, param, &rgb);
+        auto *how = new QLabel(color ? QStringLiteral("Color lane: click to add · drag to move in time · double-click to edit color · right-click for transitions") :
+                               QStringLiteral("Lane: click: a key · drag a key: move it (Shift: one axis) · drag elsewhere: draw · "
                                               "double-click a key: delete · right-click: curve (Bézier…), value · "
                                               "⌘/Ctrl+wheel: zoom time · Alt+wheel: zoom values"));
         how->setStyleSheet("color:#8a8a90; font-size:11px;");
@@ -166,6 +169,8 @@ namespace paramanim {
 
 QString label(Engine *e, quint64 layer, const QString &param)
 {
+    for (const auto &p : e->animatableColors(layer))
+        if (p.path == param) return p.label;
     for (const Engine::AnimParam &p : e->animatableParams(layer))
         if (p.path == param) return p.label;
     return param;
@@ -182,9 +187,40 @@ static void setAnim(Engine *e, QUndoStack *undo, quint64 layer, const QString &p
 
 void animate(Engine *e, QUndoStack *undo, quint64 layer, const QString &param, int wave)
 {
-    if (e->layerAnim(layer, param, nullptr)) return; // one animation per number
-    setAnim(e, undo, layer, param, std::nullopt, e->makeLayerAnim(layer, param, wave),
-            QStringLiteral("Animate %1").arg(shortLabel(label(e, layer, param))));
+    if (e->layerAnim(layer, param, nullptr)) return; // one animation per target
+    if (e->isLocked(e->indexOfId(layer))) return;
+    Animation created = e->makeLayerAnim(layer, param, wave);
+    const QString text = QStringLiteral("Animate %1").arg(shortLabel(label(e, layer, param)));
+    const auto before = e->layerAnims(layer);
+    auto after = before;
+    // One local driver per RGB channel: choosing a color replaces its separate R/G/B animations,
+    // and explicitly animating one RGB channel replaces the grouped color. Alpha remains independent.
+    const auto &target = created.tracks.front();
+    after.erase(std::remove_if(after.begin(), after.end(), [&](const Animation &a) {
+        if (a.tracks.empty()) return false;
+        const auto &t = a.tracks.front();
+        return target.color ? target.drives(t.param) : t.color && t.drives(target.param);
+    }), after.end());
+    if (after.size() == before.size()) {
+        setAnim(e, undo, layer, param, std::nullopt, created, text);
+        return;
+    }
+    created.state = AnimState::Playing;
+    after.push_back(created);
+    class ReplaceDrivers final : public QUndoCommand {
+    public:
+        ReplaceDrivers(Engine *engine, quint64 id, std::vector<Animation> before, std::vector<Animation> after,
+                       const QString &text)
+            : QUndoCommand(text), e(engine), layer(id), previous(std::move(before)), next(std::move(after)) {}
+        void undo() override { e->restoreLayerAnims(layer, previous); }
+        void redo() override { e->restoreLayerAnims(layer, next); }
+    private:
+        Engine *e;
+        quint64 layer;
+        std::vector<Animation> previous, next;
+    };
+    if (undo) undo->push(new ReplaceDrivers(e, layer, before, after, text));
+    else e->restoreLayerAnims(layer, after);
 }
 
 void setOn(Engine *e, QUndoStack *undo, quint64 layer, const QString &param, bool on)
@@ -232,13 +268,19 @@ void fillMenu(QMenu *menu, Engine *e, QUndoStack *undo, quint64 layer, const QSt
         menu->addAction(QStringLiteral("Remove Animation"), menu, [e, undo, layer, param] { remove(e, undo, layer, param); });
         return;
     }
-    QMenu *sub = menu->addMenu(QStringLiteral("Animate"));
     auto make = [=](int wave) {
         return [=] {
             animate(e, undo, layer, param, wave);
             if (edit) edit(param);
         };
     };
+    const auto colors = e->animatableColors(layer);
+    if (std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == param; })) {
+        // A color is a vector of keys, never a scalar oscillator.
+        menu->addAction(QStringLiteral("Animate Color (RGB)"), menu, make(-1));
+        return;
+    }
+    QMenu *sub = menu->addMenu(QStringLiteral("Animate"));
     for (int w = 0; w < kAnimWaveCount; ++w) sub->addAction(animWaveName(AnimWave(w)), menu, make(w));
     sub->addSeparator();
     sub->addAction(QStringLiteral("Keys (draw the curve)"), menu, make(-1));
@@ -252,6 +294,7 @@ void fillMenu(QMenu *menu, Engine *e, QUndoStack *undo, quint64 layer, const QSt
 AnimateMenu::AnimateMenu(Engine *e, QUndoStack *undo, quint64 layer, std::function<void(const QString &)> edit, QObject *parent)
     : QObject(parent), m_e(e), m_undo(undo), m_layer(layer), m_edit(std::move(edit))
 {
+    m_colors = e->animatableColors(layer);
     for (const Engine::AnimParam &p : e->animatableParams(layer)) m_animatable << p.path;
     for (const Animation &a : e->layerAnims(layer))
         if (!a.tracks.empty()) m_animated << a.tracks.front().param;
@@ -265,13 +308,23 @@ void AnimateMenu::attach(QWidget *w, const QStringList &paths)
     QStringList offered;
     for (const QString &p : paths)
         if (m_animatable.contains(p)) offered << p;
+    QString colorPath;
+    for (const auto &color : m_colors) {
+        if (paths.contains(color.path) || (paths.contains(color.path + "/r") && paths.contains(color.path + "/g") &&
+                                          paths.contains(color.path + "/b"))) {
+            colorPath = color.path;
+            break;
+        }
+    }
     w->setProperty("valuePaths", paths);
     w->setProperty("animPaths", offered);
+    w->setProperty("animColorPath", colorPath);
     w->installEventFilter(this);
     for (QWidget *c : w->findChildren<QWidget *>()) c->installEventFilter(this);
     auto *label = qobject_cast<QLabel *>(w);
-    if (!label || offered.isEmpty()) return;
+    if (!label || (offered.isEmpty() && colorPath.isEmpty())) return;
     QString tip = label->toolTip();
+    if (!colorPath.isEmpty()) offered.prepend(colorPath);
     for (const QString &p : offered)
         if (m_animated.contains(p)) {
             label->setText(label->text() + QStringLiteral(" <span style='color:%1'>∿</span>").arg(theme::css()));
@@ -293,11 +346,21 @@ bool AnimateMenu::eventFilter(QObject *o, QEvent *e)
     while (w && !w->property("valuePaths").isValid()) w = w->parentWidget();
     if (!w || !w->isEnabled()) return false;
     const QStringList paths = w->property("animPaths").toStringList(), values = w->property("valuePaths").toStringList();
+    const QString color = w->property("animColorPath").toString();
     // Shown without waiting here (no event loop inside this event): the menu goes with the widget, should the
     // inspector be rebuilt meanwhile
     auto *menu = new QMenu(w);
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    if (paths.size() == 1) {
+    if (!color.isEmpty()) {
+        paramanim::fillMenu(menu, m_e, m_undo, m_layer, color, w, m_edit);
+        if (!paths.isEmpty()) {
+            auto *channels = menu->addMenu(QStringLiteral("Individual Parameters"));
+            for (const QString &path : paths) {
+                auto *sub = channels->addMenu(shortLabel(paramanim::label(m_e, m_layer, path)));
+                paramanim::fillMenu(sub, m_e, m_undo, m_layer, path, w, m_edit);
+            }
+        }
+    } else if (paths.size() == 1) {
         paramanim::fillMenu(menu, m_e, m_undo, m_layer, paths.front(), w, m_edit);
     } else { // a sub-menu for each number (X, Y; R, G, B…)
         for (const QString &p : paths) {
@@ -416,7 +479,8 @@ public:
         m_filling = true;
         m_on->setChecked(t.enabled);
         m_filling = false;
-        const QString what = t.oscillator ? QStringLiteral("%1 · %2 s").arg(animWaveName(t.wave)).arg(t.period, 0, 'g', 3)
+        const QString what = t.color ? QStringLiteral("Color Keys · %1 s").arg(a.duration, 0, 'g', 3)
+                            : t.oscillator ? QStringLiteral("%1 · %2 s").arg(animWaveName(t.wave)).arg(t.period, 0, 'g', 3)
                                           : QStringLiteral("Keys · %1 s").arg(a.duration, 0, 'g', 3);
         const bool playing = a.state == AnimState::Playing && t.enabled;
         m_summary->setText(QStringLiteral("%1 <span style='color:%2'>●</span>").arg(what, playing ? kPlaying.name() : QStringLiteral("#55555c")));
@@ -454,13 +518,23 @@ ParamAnimPanel::ParamAnimPanel(Engine *engine, QUndoStack *undo, quint64 layer, 
     v->setSpacing(6);
     auto *top = new QHBoxLayout;
     auto *add = new QPushButton(QStringLiteral("+ Animate"));
-    add->setToolTip(QStringLiteral("Animate a number of this layer (also: right-click a parameter in the other tabs)"));
+    add->setToolTip(QStringLiteral("Animate a color or number of this layer (also: right-click a parameter in the other tabs)"));
     auto *menu = new QMenu(add);
     add->setMenu(menu);
     connect(menu, &QMenu::aboutToShow, this, [this, menu] {
         qDeleteAll(menu->findChildren<QMenu *>(QString(), Qt::FindDirectChildrenOnly)); // the sub-menus of the last time
         menu->clear();
-        addParamMenu(menu, m_engine->animatableParams(m_layer), [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+        const auto colors = m_engine->animatableColors(m_layer);
+        if (!colors.empty()) {
+            auto *group = menu->addMenu(QStringLiteral("Colors (RGB)"));
+            addParamMenu(group, colors, [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+                auto *sub = into->addMenu(text);
+                paramanim::fillMenu(sub, m_engine, m_undo, m_layer, p.path, this,
+                                    [this](const QString &param) { reveal(param); });
+            });
+            menu->addSeparator();
+        }
+        addParamMenu(menu, animationMenuParams(m_engine, m_layer), [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
             QMenu *sub = into->addMenu(text);
             paramanim::fillMenu(sub, m_engine, m_undo, m_layer, p.path, this, [this](const QString &param) { reveal(param); });
         });

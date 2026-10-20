@@ -62,7 +62,10 @@ QStringList PresetEditor::stored(quint64 layer, const QStringList &paths) const
 {
     QStringList out;
     if (layer && m_engine->indexOfId(layer) < 0) return out;
+    const auto colors = m_engine->animatableColors(layer);
     for (const QString &p : paths) {
+        const auto color = std::find_if(colors.begin(), colors.end(), [&](const auto &c) { return c.path == p; });
+        if (color != colors.end()) { out << p + "/r" << p + "/g" << p + "/b"; continue; }
         if (layer && p.startsWith(QLatin1String("category/"))) { out << p; continue; }
         if (layer && p == QLatin1String("geometry/mesh")) { out << p; continue; }
         ParamInfo info;
@@ -70,6 +73,7 @@ QStringList PresetEditor::stored(quint64 layer, const QStringList &paths) const
             (info.access & ParamInfo::Write))
             out << p;
     }
+    out.removeDuplicates();
     return out;
 }
 
@@ -104,13 +108,14 @@ bool PresetEditor::inSelected(quint64 layer, const QStringList &paths) const
 // Captures all drivers of the selected parameters, without affecting other preset entries.
 void PresetEditor::capturePresetDrivers(Engine::Preset &preset, quint64 layer, const QStringList &paths) const
 {
+    auto matches = [&](const Animation &a) {
+        return !a.tracks.empty() && a.tracks.front().layer == layer &&
+               std::any_of(paths.begin(), paths.end(), [&](const QString &p) { return a.tracks.front().drives(p); });
+    };
+    preset.animations.erase(std::remove_if(preset.animations.begin(), preset.animations.end(), matches), preset.animations.end());
+    for (const auto &animation : m_engine->layerAnims(layer))
+        if (matches(animation)) preset.animations.push_back(animation);
     for (const QString &path : paths) {
-        preset.animations.erase(std::remove_if(preset.animations.begin(), preset.animations.end(), [&](const Animation &a) {
-            return !a.tracks.empty() && a.tracks.front().layer == layer && a.tracks.front().param == path;
-        }), preset.animations.end());
-        Animation a;
-        if (layer && m_engine->layerAnim(layer, path, &a)) preset.animations.push_back(a);
-
         preset.interactions.erase(std::remove_if(preset.interactions.begin(), preset.interactions.end(), [&](const Interaction &it) {
             return it.layer == layer && it.param == path;
         }), preset.interactions.end());
@@ -179,7 +184,7 @@ void PresetEditor::removeFromSelected(quint64 layer, const QStringList &paths)
                     v.end());
             for (const QString &path : paths) {
                 p.animations.erase(std::remove_if(p.animations.begin(), p.animations.end(), [&](const Animation &a) {
-                    return !a.tracks.empty() && a.tracks.front().layer == layer && a.tracks.front().param == path;
+                    return !a.tracks.empty() && a.tracks.front().layer == layer && a.tracks.front().drives(path);
                 }), p.animations.end());
                 p.interactions.erase(std::remove_if(p.interactions.begin(), p.interactions.end(), [&](const Interaction &it) {
                     return it.layer == layer && it.param == path;
@@ -319,7 +324,7 @@ void PresetEditor::updateMarks()
         t.driven = false;
         for (const Animation &animation : m_engine->layerAnims(t.layer)) {
             for (const AnimTrack &track : animation.tracks) {
-                if (track.enabled && t.paths.contains(track.param)) {
+                if (track.enabled && std::any_of(t.paths.begin(), t.paths.end(), [&](const QString &p) { return track.drives(p); })) {
                     t.driven = true;
                     break;
                 }

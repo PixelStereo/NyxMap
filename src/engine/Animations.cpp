@@ -917,6 +917,20 @@ void Engine::waveAround(quint64 layer, const QString &param, double *center, dou
 
 Animation Engine::makeLayerAnim(quint64 layer, const QString &param, int wave) const
 {
+    const auto colors = animatableColors(layer);
+    if (std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == param; })) {
+        Animation a;
+        AnimTrack t;
+        t.layer = layer;
+        t.param = param;
+        t.color = true;
+        AnimKey start{0, 0, 0}, end{a.duration, 0, 0};
+        animColorValue(layer, param, &start.rgb);
+        end.rgb = start.rgb;
+        t.keys = {start, end};
+        a.tracks = {t};
+        return a;
+    }
     double v = 0, center = 0, amp = 0;
     waveAround(layer, param, &center, &amp);
     if (!animParamValue(layer, param, &v)) v = center;

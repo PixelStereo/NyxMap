@@ -36,6 +36,7 @@
 #include <QTemporaryDir>
 #include <cstdio>
 #include <cmath>
+int runColorParameterUiTests(Engine &engine, const QString &root);
 int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
@@ -49,14 +50,19 @@ int main(int argc, char **argv)
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
-    // Two CTest entries share this program: workspace_ui (no argument; also run under Valgrind, where every window
-    // costs minutes) and selection_ui (--selection: multiple selections and reopened projects, never under Valgrind)
-    bool selection = false;
+    // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
+    bool selection = false, colorAnimation = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
         if (arg == QLatin1String("--selection")) selection = true;
+        else if (arg == QLatin1String("--color-animation")) colorAnimation = true;
         else capture = arg;
+    }
+    if (colorAnimation) {
+        const int failures = runColorParameterUiTests(engine, QStringLiteral(TEST_DIR));
+        engine.shutdown();
+        return failures ? 1 : 0;
     }
     int failures = 0;
     auto check = [&](bool ok, const char *reason) {

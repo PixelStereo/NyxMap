@@ -639,7 +639,8 @@ QJsonArray Engine::captureLayers(bool withAnimated) const
         if (!withAnimated) {
             QJsonObject params = o.value("params").toObject();
             for (const Animation &an : m_layers[size_t(i)]->anims)
-                for (const AnimTrack &t : an.tracks) params.remove(t.param);
+                for (const AnimTrack &t : an.tracks)
+                    for (const QString &path : t.drivenParams()) params.remove(path);
             o["params"] = params;
         }
         o["included"] = true;
@@ -1603,7 +1604,8 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     std::set<std::pair<quint64, QString>> driven;
     auto collect = [&](const Animation &animation) {
         if (animation.state == AnimState::Stopped) return;
-        for (const auto &track : animation.tracks) if (track.enabled) driven.insert({track.layer, track.param});
+        for (const auto &track : animation.tracks) if (track.enabled)
+            for (const auto &path : track.drivenParams()) driven.insert({track.layer, path});
     };
     for (const auto &animation : m_animations) collect(animation);
     for (const auto &layer : m_layers) for (const auto &animation : layer->anims) collect(animation);
