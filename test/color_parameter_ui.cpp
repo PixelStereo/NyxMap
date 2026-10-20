@@ -5,6 +5,7 @@
 #include "ColorPicker.h"
 #include "PresetEditor.h"
 #include "Widgets.h"
+#include "Commands.h"
 #include "Osc.h"
 #include <QApplication>
 #include <QContextMenuEvent>
@@ -150,6 +151,34 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     const auto preset = engine.preset(engine.presetCount() - 1);
     check(preset.values.size() == 3 && preset.animations.size() == 1 && preset.animations[0].tracks[0].color,
           "a color preset stores RGB values and one color driver");
+    paramanim::animate(&engine, &undo, id, start + "/r", -1);
+    paramanim::animate(&engine, &undo, id, start + "/g", -1);
+    const auto beforeRecall = engine.layerAnims(id);
+    undo.push(new cmd::RecallPreset(&engine, preset.id)); pump();
+    check(engine.layerAnim(id, start, nullptr) && !engine.layerAnim(id, start + "/r", nullptr) &&
+          !engine.layerAnim(id, start + "/g", nullptr) && engine.layerAnim(id, start + "/a", nullptr),
+          "recalling a color preset replaces component drivers and preserves Alpha");
+    undo.undo(); pump();
+    check(!engine.layerAnim(id, start, nullptr) && engine.layerAnim(id, start + "/r", nullptr) &&
+          engine.layerAnim(id, start + "/g", nullptr) && engine.layerAnims(id).size() == beforeRecall.size(),
+          "Undo of a color preset restores the previous component drivers");
+    undo.redo(); pump();
+    check(engine.layerAnim(id, start, nullptr) && !engine.layerAnim(id, start + "/r", nullptr), "Redo restores the single color driver");
+    Engine::Preset component;
+    component.name = "Red channel";
+    component.fade = 0;
+    component.animations = {engine.makeLayerAnim(id, start + "/r", -1)};
+    const int ci = engine.addPreset(component);
+    std::array<double, 3> beforeComponent;
+    engine.animColorValue(id, start, &beforeComponent);
+    undo.push(new cmd::RecallPreset(&engine, engine.preset(ci).id)); pump();
+    check(!engine.layerAnim(id, start, nullptr) && engine.layerAnim(id, start + "/r", nullptr) &&
+          engine.layerAnim(id, start + "/a", nullptr), "a component preset replaces a competing RGB driver");
+    undo.undo(); pump();
+    std::array<double, 3> afterComponent;
+    check(engine.layerAnim(id, start, nullptr) && !engine.layerAnim(id, start + "/r", nullptr) &&
+          engine.animColorValue(id, start, &afterComponent) && beforeComponent == afterComponent,
+          "Undo of a component preset restores the previous RGB driver and its complete output");
     const auto capture = engine.captureLayers();
     for (const auto &value : capture) if (value.toObject().value("id").toString() == QString::number(id)) {
         const auto params = value.toObject().value("params").toObject();

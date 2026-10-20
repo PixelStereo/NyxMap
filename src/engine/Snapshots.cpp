@@ -530,12 +530,26 @@ void Engine::recallPreset(int i)
         if (!job->done()) m_fades.push_back(std::move(job));
     }
     // Restore the captured modulation definitions after writing static values.
-    // Only the drivers explicitly held by the preset are changed; all others stay intact.
+    // Replace the held drivers and any RGB drivers competing for their channels.
     for (const Animation &a : p.animations) {
         if (a.tracks.empty()) continue;
-        const quint64 layerId = a.tracks.front().layer;
+        Lock lock(&m_mutex); // preserve unrelated clocks across the read/replace
+        const auto &target = a.tracks.front();
+        const quint64 layerId = target.layer;
         const int idx = indexOfId(layerId);
-        if (idx >= 0 && !isLocked(idx)) setLayerAnim(layerId, a.tracks.front().param, &a);
+        if (idx < 0 || isLocked(idx)) continue;
+        auto current = layerAnims(layerId);
+        const auto paths = target.drivenParams();
+        current.erase(std::remove_if(current.begin(), current.end(), [&](const Animation &other) {
+            return !other.tracks.empty() && other.tracks.front().param != target.param &&
+                   std::any_of(paths.begin(), paths.end(), [&](const QString &path) { return other.tracks.front().drives(path); });
+        }), current.end());
+        const auto same = std::find_if(current.begin(), current.end(), [&](const Animation &other) {
+            return !other.tracks.empty() && other.tracks.front().param == target.param;
+        });
+        if (same == current.end()) current.push_back(a);
+        else *same = a;
+        setLayerAnims(layerId, current);
     }
     if (!p.interactions.empty()) {
         std::vector<Interaction> current = interactions();
