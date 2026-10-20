@@ -98,7 +98,8 @@ def main():
         sys.exit(f"{LIBRARY[system]} not found in the NDI SDK ({tree})")
     lib = libs[0].resolve()
     shutil.copy2(lib, out / LIBRARY[system])
-    licences = find(tree, "Processing.NDI.Lib.Licenses.txt")
+    # Named after the library on Windows; libndi_licenses.txt in the Linux and Apple SDKs
+    licences = find(tree, "Processing.NDI.Lib.Licenses.txt") or find(tree, "libndi_licenses.txt")
     if not licences:
         sys.exit("Processing.NDI.Lib.Licenses.txt not found in the NDI SDK: the library may not be distributed without it")
     shutil.copy2(licences[0], out / "Processing.NDI.Lib.Licenses.txt")
