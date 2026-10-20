@@ -32,8 +32,16 @@ int main(int argc,char **argv){
         check(panel.findChild<AudioSpectrum*>()!=nullptr,"the live input's spectrum is shown");
         undo.undo();check(!engine.interactions()[0].audioInput,"the input choice undoes");undo.redo();}
     QMenu menu;InteractionPanel::fillValueMenu(&menu,&engine,0,{"opacity"});
-    bool audioAction=false;for(auto *a:menu.actions())if(a->menu())for(auto *b:a->menu()->actions())if(b->text()=="Audio")audioAction=true;
-    check(audioAction,"parameter right-click offers Audio mapping");
+    QAction *audioAction=nullptr;
+    for(auto *a:menu.actions())if(a->text()=="Animate"&&a->menu())
+        for(auto *b:a->menu()->actions())if(b->text()=="Interaction"&&b->menu())
+            for(auto *protocol:b->menu()->actions())if(protocol->text()=="Audio")audioAction=protocol;
+    check(audioAction,"parameter right-click offers Audio mapping under Animate / Interaction");
+    const auto beforeMapping=engine.interactions().size();
+    if(audioAction)audioAction->trigger();
+    check(engine.interactions().size()==beforeMapping+1&&engine.interactions().back().source==InteractionSource::Audio&&
+          engine.interactions().back().param=="opacity","nested Audio action maps the clicked parameter");
+    undo.undo();check(engine.interactions().size()==beforeMapping,"mapping created through the nested menu is undoable");
     QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);app.processEvents();
     if(argc>1)panel.grab().save(QString::fromLocal8Bit(argv[1]));
     std::printf("audio_interaction_ui: %d failures\n",failures);return failures?1:0;
