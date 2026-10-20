@@ -26,9 +26,16 @@ REPOS = {
 }
 
 
-def run(cmd, cwd):
+def run(cmd, cwd, env=None):
     print("+", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run([str(c) for c in cmd], cwd=cwd, check=True)
+    subprocess.run([str(c) for c in cmd], cwd=cwd, check=True, env=env)
+
+
+def dotnet(args, cwd):
+    # The MSVC environment (Windows) sets Platform=x64, which MSBuild takes for the project's platform: the outputs
+    # would land in bin/x64/..., not where libomt looks for libomtnet
+    env = {k: v for k, v in os.environ.items() if k.lower() != "platform"}
+    run(["dotnet", *args], cwd, env)
 
 
 def fetch(root: Path):
@@ -69,16 +76,18 @@ def build_vmx(src: Path, out: Path):
 
 def build_omt(root: Path, out: Path):
     # libomt references ../libomtnet/bin/Release/netstandard2.0/libomtnet.dll
-    run(["dotnet", "build", root / "libomtnet" / "libomtnet.csproj", "-c", "Release", "-f", "netstandard2.0"], root)
+    dotnet(["build", root / "libomtnet" / "libomtnet.csproj", "-c", "Release", "-f", "netstandard2.0"], root)
     omt = root / "libomt"
     system = platform.system()
     rids = {"Darwin": ["osx-arm64", "osx-x64"], "Windows": ["win-x64"]}.get(system, ["linux-x64"])
     natives = []
     for rid in rids:
-        run(["dotnet", "publish", omt / "libomt.csproj", "-r", rid, "-c", "Release"], omt)
-        native = omt / "bin" / "Release" / "net8.0" / rid / "native"
-        lib = next(p for p in native.iterdir() if p.name.startswith("libomt.") and p.suffix in (".dylib", ".dll", ".so"))
-        natives.append(lib)
+        dotnet(["publish", omt / "libomt.csproj", "-r", rid, "-c", "Release"], omt)
+        lib = [p for p in (omt / "bin").rglob("libomt.*")
+               if p.parent.name == "native" and rid in p.parts and p.suffix in (".dylib", ".dll", ".so")]
+        if len(lib) != 1:
+            sys.exit(f"libomt for {rid}: expected one native library, found {lib}")
+        natives.append(lib[0])
     if system == "Darwin":
         target = out / "libomt.dylib"
         run(["lipo", "-create", "-output", target, *natives], root)
