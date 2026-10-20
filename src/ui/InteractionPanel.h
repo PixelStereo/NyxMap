@@ -31,6 +31,7 @@ class InteractionPanel : public QWidget
     Q_OBJECT
 public:
     InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *parent = nullptr);
+    ~InteractionPanel() override;
     // A key of the keyboard, pressed or let go, while no text is typed (the main window passes them all)
     void keyEvent(int key, Qt::KeyboardModifiers mods, bool pressed);
     static QString keyName(int key, Qt::KeyboardModifiers mods); // "Space", "Shift+A" (portable)

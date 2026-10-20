@@ -417,6 +417,23 @@ void Engine::stepScheduledRecall(double dt)
 // A preset's recall
 // Each layer's values on their way, as a snapshot's are (only these: the other values, the source, the visibility
 // are left alone); the composition's level and volume with its own fade, its other values at once
+double Engine::presetDuration(quint64 id) const
+{
+    Lock lock(&m_mutex);
+    const int index = indexOfPreset(id);
+    if (index < 0) return 0;
+    const auto p = preset(index);
+    double duration = p.geometry.isEmpty() ? 0.0 : std::max(0.0, p.fade);
+    for (auto it = p.categories.begin(); it != p.categories.end(); ++it) {
+        const int parts = it.key().section(':', 1).toInt();
+        if ((parts & PartSpatial) && !(parts & PartSource) && it.value().toObject().contains("mesh"))
+            duration = std::max(duration, std::max(0.0, p.fade));
+    }
+    for (const auto &value : p.values)
+        duration = std::max(duration, std::max(0.0, value.delay) + std::max(0.0, value.time < 0 ? p.fade : value.time));
+    return duration;
+}
+
 void Engine::recallPreset(int i)
 {
     const Preset p = preset(i);

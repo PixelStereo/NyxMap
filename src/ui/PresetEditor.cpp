@@ -151,10 +151,25 @@ void PresetEditor::addToNew(quint64 layer, const QStringList &paths)
 void PresetEditor::addToSelected(quint64 layer, const QStringList &paths)
 {
     if (!m_selected) return addToNew(layer, paths);
-    const QStringList keep = stored(layer, paths);
-    cmd::editPresets(m_undo, m_engine, QStringLiteral("Add to Preset"), [&](std::vector<Engine::Preset> &all) {
+    addToPreset(m_selected, layer, paths);
+}
+
+void PresetEditor::addToPreset(quint64 target, quint64 layer, const QStringList &paths, bool updateOnly)
+{
+    const int index = m_engine->indexOfPreset(target);
+    if (index < 0) return;
+    QStringList keep = stored(layer, paths);
+    const auto preset = m_engine->preset(index);
+    if (updateOnly) keep.erase(std::remove_if(keep.begin(), keep.end(), [&](const QString &path) {
+        if (path.startsWith(QLatin1String("category/")))
+            return !preset.categories.contains(QStringLiteral("%1:%2").arg(layer).arg(path.section('/', 1)));
+        if (path == QLatin1String("geometry/mesh")) return !preset.geometry.contains(QString::number(layer));
+        return preset.indexOf(layer, path) < 0;
+    }), keep.end());
+    if (keep.isEmpty()) return;
+    cmd::editPresets(m_undo, m_engine, updateOnly ? QStringLiteral("Update Preset") : QStringLiteral("Add to Preset"), [&](std::vector<Engine::Preset> &all) {
         for (Engine::Preset &p : all) {
-            if (p.id != m_selected) continue;
+            if (p.id != target) continue;
             for (const QString &path : keep) {
                 if (path.startsWith(QLatin1String("category/"))) { captureCategory(p, layer, path); continue; }
                 if (path == QLatin1String("geometry/mesh")) {
@@ -174,9 +189,14 @@ void PresetEditor::addToSelected(quint64 layer, const QStringList &paths)
 
 void PresetEditor::removeFromSelected(quint64 layer, const QStringList &paths)
 {
+    removeFromPreset(m_selected, layer, paths);
+}
+
+void PresetEditor::removeFromPreset(quint64 target, quint64 layer, const QStringList &paths)
+{
     cmd::editPresets(m_undo, m_engine, QStringLiteral("Remove from Preset"), [&](std::vector<Engine::Preset> &all) {
         for (Engine::Preset &p : all) {
-            if (p.id != m_selected) continue;
+            if (p.id != target) continue;
             if (paths.contains(QStringLiteral("geometry/mesh"))) p.geometry.remove(QString::number(layer));
             auto &v = p.values;
             v.erase(std::remove_if(v.begin(), v.end(),
@@ -198,10 +218,33 @@ void PresetEditor::fillMenu(QMenu *menu, quint64 layer, const QStringList &paths
 {
     const QStringList keep = stored(layer, paths);
     if (keep.isEmpty()) return;
-    if (!menu->isEmpty()) menu->addSeparator();
-    menu->addAction(QStringLiteral("Add to New Preset"), this, [this, layer, keep] { addToNew(layer, keep); });
+    auto *presets = menu->addMenu(QStringLiteral("Preset"));
+    presets->addAction(QStringLiteral("Add to New Preset"), this, [this, layer, keep] { addToNew(layer, keep); });
+    const int i = m_engine->indexOfPreset(m_selected);
+    const QString name = i >= 0 ? m_engine->preset(i).name : QString();
+    auto *updatePreset = presets->addAction(i >= 0 ? QStringLiteral("Update in Selected Preset (%1)").arg(name)
+                                                  : QStringLiteral("Update in Selected Preset"), this,
+        [this, target = m_selected, layer, keep] { addToPreset(target, layer, keep, true); });
+    updatePreset->setEnabled(i >= 0 && (inSelected(layer, keep) ||
+        std::any_of(keep.begin(), keep.end(), [&](const QString &path) {
+            return path.startsWith(QLatin1String("category/"))
+                ? m_engine->preset(i).categories.contains(QStringLiteral("%1:%2").arg(layer).arg(path.section('/', 1)))
+                : path == QLatin1String("geometry/mesh") && m_engine->preset(i).geometry.contains(QString::number(layer));
+        })));
+    auto *add = presets->addAction(i >= 0 ? QStringLiteral("Add to Selected Preset (%1)").arg(name)
+                                         : QStringLiteral("Add to Selected Preset"), this,
+        [this, target = m_selected, layer, keep] { addToPreset(target, layer, keep); });
+    add->setEnabled(i >= 0);
+    auto *choices = presets->addMenu(QStringLiteral("Add / Update in Preset"));
+    for (const auto &preset : m_engine->presets())
+        choices->addAction(preset.name, this, [this, target = preset.id, layer, keep] { addToPreset(target, layer, keep); });
+    choices->setEnabled(!choices->isEmpty());
+    if (i >= 0 && inSelected(layer, keep))
+        presets->addAction(QStringLiteral("Remove from Selected Preset (%1)").arg(name), this,
+                          [this, target = m_selected, layer, keep] { removeFromPreset(target, layer, keep); });
+    auto *snapshotMenu = menu->addMenu(QStringLiteral("Snapshot"));
     const int selectedSnapshot = m_engine->indexOfSnapshot(m_selectedSnapshot);
-    auto *update = menu->addAction(selectedSnapshot >= 0
+    auto *update = snapshotMenu->addAction(selectedSnapshot >= 0
         ? QStringLiteral("Update in Selected Snapshot (%1)").arg(m_engine->snapshot(selectedSnapshot).name)
         : QStringLiteral("Update in Selected Snapshot"), this,
         [this, target = m_selectedSnapshot, layer, keep] { updateSnapshot(target, layer, keep); });
@@ -212,21 +255,13 @@ void PresetEditor::fillMenu(QMenu *menu, quint64 layer, const QStringList &paths
         return false;
     };
     update->setEnabled(selectedSnapshot >= 0 && containsLayer(m_engine->snapshot(selectedSnapshot)));
-    auto *snapshots = menu->addMenu(QStringLiteral("Update in Snapshot"));
+    auto *snapshots = snapshotMenu->addMenu(QStringLiteral("Update in Snapshot"));
     for (int row = 0; row < m_engine->snapshotCount(); ++row) {
         const auto snapshot = m_engine->snapshot(row);
         auto *action = snapshots->addAction(snapshot.name, this, [this, target = snapshot.id, layer, keep] { updateSnapshot(target, layer, keep); });
         action->setEnabled(containsLayer(snapshot));
     }
     snapshots->setEnabled(!snapshots->isEmpty());
-    const int i = m_engine->indexOfPreset(m_selected);
-    const QString name = i >= 0 ? m_engine->preset(i).name : QString();
-    QAction *add = menu->addAction(i >= 0 ? QStringLiteral("Add to Preset \"%1\"").arg(name) : QStringLiteral("Add to Selected Preset"),
-                                   this, [this, layer, keep] { addToSelected(layer, keep); });
-    add->setEnabled(i >= 0);
-    if (i >= 0 && inSelected(layer, keep))
-        menu->addAction(QStringLiteral("Remove from Preset \"%1\"").arg(name), this,
-                        [this, layer, keep] { removeFromSelected(layer, keep); });
 }
 
 const PresetEditor::Tracked *PresetEditor::trackedFor(QObject *o) const

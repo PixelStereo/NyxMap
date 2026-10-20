@@ -262,7 +262,7 @@ int main(int argc, char **argv)
             snapshotEditor->fillMenu(&valueMenu, surfaceId, {"opacity"});
             QAction *selectedUpdate = nullptr;
             QMenu *snapshotChoices = nullptr;
-            for (auto *action : valueMenu.actions()) {
+            for (auto *action : valueMenu.findChildren<QAction *>()) {
                 if (action->text() == "Update in Selected Snapshot (Target cue)") selectedUpdate = action;
                 if (action->text() == "Update in Snapshot") snapshotChoices = action->menu();
             }
@@ -291,7 +291,8 @@ int main(int argc, char **argv)
             QMenu category;
             presets->fillCategoryMenu(&category, surfaceId, "Spatial");
             check(!category.actions().empty(), "Spatial tab offers preset capture");
-            if (!category.actions().empty()) category.actions().first()->trigger();
+            for (auto *action : category.findChildren<QAction *>())
+                if (action->text() == "Add to New Preset") { action->trigger(); break; }
             const quint64 presetId = presets->selected();
             int presetIndex = engine.indexOfPreset(presetId);
             check(presetIndex >= 0 && engine.preset(presetIndex).geometry.contains(QString::number(surfaceId)), "Spatial capture includes mesh");

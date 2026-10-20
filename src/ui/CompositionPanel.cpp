@@ -4,6 +4,7 @@
 #include "Engine.h"
 #include "InteractionPanel.h"
 #include "PresetEditor.h"
+#include "TimelinePanel.h"
 #include <QContextMenuEvent>
 
 #include <QCheckBox>
@@ -775,6 +776,7 @@ bool CompositionPanel::eventFilter(QObject *o, QEvent *e)
     auto *menu = new QMenu(w);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, 0, paths);
+    TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, paths, w);
     InteractionPanel::fillValueMenu(menu, m_engine, 0, paths);
     if (menu->isEmpty()) {
         delete menu;

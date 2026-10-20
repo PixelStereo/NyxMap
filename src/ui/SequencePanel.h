@@ -105,6 +105,7 @@ public:
     explicit SequenceWindow(Engine *engine, QWidget *parent = nullptr);
     void refresh();
     void setModified(bool on); // something changed since the current step was played
+    void fillStepMenu(QMenu *menu, int row); // row -1: append a new step with the chosen target
 
 signals:
     void goToRequested(int step); // play that step of the current sequence
@@ -118,9 +119,10 @@ protected:
     bool eventFilter(QObject *o, QEvent *e) override; // snapshots dropped onto the steps
 
 private:
-    void addStep(int at, quint64 snapshot, quint64 timeline = 0);
+    void addStep(int at, quint64 snapshot, quint64 timeline = 0, quint64 preset = 0, quint64 sequence = 0);
     void setStepSnapshot(int step, quint64 snapshot);
     void setStepTimeline(int step, quint64 timeline); // Play, unless it was already a timeline step
+    void setStepLibraryTarget(int step, quint64 preset, quint64 sequence);
     void fillActionMenu(QMenu *menu, int row);
     void removeSteps();
     void moveStep(int delta);

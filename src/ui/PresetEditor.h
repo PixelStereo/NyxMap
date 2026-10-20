@@ -49,7 +49,9 @@ public:
     void capturePresetDrivers(Engine::Preset &preset, quint64 layer, const QStringList &paths) const;
     void addToNew(quint64 layer, const QStringList &paths);
     void addToSelected(quint64 layer, const QStringList &paths);
+    void addToPreset(quint64 preset, quint64 layer, const QStringList &paths, bool updateOnly = false);
     void removeFromSelected(quint64 layer, const QStringList &paths);
+    void removeFromPreset(quint64 preset, quint64 layer, const QStringList &paths);
     bool inSelected(quint64 layer, const QStringList &paths) const; // one of them at least
 
 signals:

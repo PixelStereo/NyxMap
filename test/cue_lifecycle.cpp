@@ -5,6 +5,7 @@
 #include <QEvent>
 #include <cstdio>
 #include <thread>
+#include <cmath>
 
 int runCueLifecycleTests(Engine &engine)
 {
@@ -88,6 +89,82 @@ int runCueLifecycleTests(Engine &engine)
     seq.advance(1);
     check(fired == std::vector<int>({0}), "STOP during first recall cancels remaining actions in the same batch");
 
-    seq.setRecaller(nullptr); seq.clear(); engine.setFadesManual(false); engine.newProject();
+    reset();
+    const int surface = engine.addLayer("Preset cue surface");
+    const auto layer = engine.layerId(surface);
+    engine.setParameter(layer, "opacity", .1);
+    Engine::Preset preset; preset.name = "Delayed preset"; preset.fade = .2;
+    auto value = engine.presetValue(layer, "opacity"); value.value = .9; value.time = .7; value.delay = .3;
+    preset.values = {value};
+    const int pi = engine.addPreset(preset);
+    auto cut = preset; cut.name = "Cut preset"; cut.fade = 10; cut.values[0].time = cut.values[0].delay = 0;
+    const int cutIndex = engine.addPreset(cut);
+    check(engine.presetDuration(engine.preset(cutIndex).id) == 0, "explicit per-value cuts do not wait for an unused default preset fade");
+    Sequencer::Step recall; recall.preset = engine.preset(pi).id; recall.preWait = .2;
+    recall.next = Sequencer::StepContinue::AutoFollow;
+    Sequencer::Step afterPreset; afterPreset.snapshot = engine.snapshot(0).id;
+    s = seq.sequence(0); s.steps = {recall, afterPreset}; seq.setSequence(0, s);
+    check(std::abs(seq.stepDuration(recall) - 1.0) < 1e-9, "preset action includes per-value delay and fade");
+    seq.go(); seq.advance(.19);
+    check(std::abs(engine.parameterValue(layer, "opacity").toDouble() - .1) < 1e-6, "preset cue honors pre-wait");
+    seq.advance(.01); engine.advanceFades(1.0); seq.advance(.99);
+    check(fired.empty() && std::abs(engine.parameterValue(layer, "opacity").toDouble() - .9) < 1e-6,
+          "preset cue applies its live stored values and AutoFollow waits for its action");
+    seq.advance(.02); check(fired == std::vector<int>({0}), "preset cue AutoFollow reaches the next cue");
+
+    reset();
+    Sequencer::Sequence child; child.name = "Child";
+    Sequencer::Step first; first.snapshot = engine.snapshot(1).id; first.preWait = .5;
+    first.next = Sequencer::StepContinue::Follow; first.postWait = .2;
+    Sequencer::Step second; second.snapshot = engine.snapshot(2).id; second.preWait = .1;
+    child.steps = {first, second};
+    const int ci = seq.add(child);
+    const quint64 childId = seq.sequenceId(ci), callerId = seq.sequenceId(0);
+    Sequencer::Step playSequence; playSequence.sequence = childId; playSequence.preWait = .25;
+    s = seq.sequence(0); s.name = "Caller"; s.steps = {playSequence}; seq.setSequence(0, s);
+    seq.go(); seq.advance(.25);
+    check(seq.current() == 0 && seq.positionOf(ci) == 0 && fired.empty(), "sequence call starts at the first step without changing selection");
+    seq.advance(.49); check(fired.empty(), "called sequence honors its own pre-wait");
+    seq.advance(.02); seq.advance(.2); seq.advance(.11);
+    check(fired == std::vector<int>({1, 2}), "called sequence uses its own Follow and next-step pre-wait");
+    seq.goToStepOf(ci, 1); fired.clear(); seq.goTo(0); seq.advance(.25);
+    check(seq.positionOf(ci) == 0, "calling an already used sequence restarts it from the first step");
+    const auto firedBeforeStop = fired;
+    seq.stopAll(); seq.advance(10);
+    check(fired == firedBeforeStop && !seq.anyActive(), "Stop all cancels called sequence pre-waits without replaying already fired cues");
+
+    Sequencer::Sequence insertedSequence; insertedSequence.name = "Inserted"; seq.add(insertedSequence, 0);
+    child = seq.sequence(seq.indexOfSequence(childId)); child.name = "Renamed child";
+    seq.setSequence(seq.indexOfSequence(childId), child);
+    s = seq.sequence(seq.indexOfSequence(callerId));
+    Sequencer::Step savedPreset; savedPreset.preset = engine.preset(pi).id;
+    s.steps.push_back(savedPreset); seq.setSequence(seq.indexOfSequence(callerId), s);
+    const auto saved = seq.toJson();
+    const int callerIndex = seq.indexOfSequence(callerId);
+    std::thread stale([&] { seq.goToStepOf(callerIndex, 0); }); stale.join();
+    seq.fromJson(saved, callerIndex); drain();
+    check(seq.toJson() == saved && seq.sequence(seq.indexOfSequence(callerId)).steps[0].sequence == childId &&
+          seq.sequence(seq.indexOfSequence(callerId)).steps[1].preset == engine.preset(pi).id &&
+          seq.positionOf(seq.indexOfSequence(callerId)) == -1, "sequence links survive insert/rename/reload and stale commands are canceled");
+    seq.remove(seq.indexOfSequence(childId));
+    seq.add(child);
+    check(seq.indexOfSequence(childId) < 0 && seq.sequenceId(seq.count() - 1) != childId,
+          "deleting a called sequence does not retarget the link to another sequence");
+    fired.clear(); seq.setCurrent(seq.indexOfSequence(callerId)); seq.go(); seq.advance(1);
+    check(fired.empty(), "a missing called sequence performs no action");
+
+    reset();
+    Sequencer::Sequence cycle; cycle.name = "Cycle"; cycle.steps.resize(1);
+    const int cycleIndex = seq.add(cycle);
+    s = seq.sequence(0); s.steps.resize(1); s.steps[0] = {};
+    s.steps[0].sequence = seq.sequenceId(cycleIndex); seq.setSequence(0, s);
+    cycle = seq.sequence(cycleIndex); cycle.steps[0].sequence = seq.sequenceId(0); seq.setSequence(cycleIndex, cycle);
+    seq.go(); seq.advance(1);
+    check(fired.empty() && !seq.anyActive(), "indirect sequence call cycles terminate without recursive GO");
+    cycle.steps[0].sequence = seq.sequenceId(cycleIndex); seq.setSequence(cycleIndex, cycle);
+    seq.goSequence(cycleIndex);
+    check(!seq.anyActive(), "direct sequence self-calls are rejected");
+
+    seq.setRecaller(nullptr); seq.setPresetRecaller(nullptr); seq.clear(); engine.setFadesManual(false); engine.newProject();
     return failures;
 }

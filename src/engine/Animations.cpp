@@ -507,9 +507,15 @@ std::vector<ParamInfo> Engine::parameters(quint64 layer) const
 
 std::vector<Engine::AnimParam> Engine::animatableParams(quint64 layer) const
 {
+    Lock lock(&m_mutex);
     std::vector<AnimParam> out;
     for (const ParamInfo &i : parameters(layer))
         if (i.animatable) out.push_back(i);
+    // Interactions are addressed alongside composition values, but remain a separate stored category.
+    if (!layer) for (const auto &p : const_cast<Engine *>(this)->interactionParams()) {
+        const auto info = p->info();
+        if (info.animatable) out.push_back(info);
+    }
     return out;
 }
 

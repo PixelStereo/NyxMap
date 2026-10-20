@@ -60,6 +60,8 @@ public:
         double preWait = 0, postWait = 0; // seconds
         StepContinue next = StepContinue::Wait;
         quint64 runtimeId = 0; // stable across edits; assigned by Sequencer, not serialized
+        quint64 preset = 0;
+        quint64 sequence = 0; // starts this sequence from its first step; stable identity across edits/save/load
     };
     // A step on its way: since its GO, through its pre-wait, its action, and until the next step's GO
     struct Run {
@@ -73,6 +75,7 @@ public:
         StepContinue next = StepContinue::Wait;
         bool fired = false, continued = false;
         bool trackPending = false, tracking = false; // a Play: its action lasts as long as the timeline does
+        std::vector<quint64> callers; // reference ancestry, carried through follows to reject cyclic calls
         // When the next step gets its GO, counted from this one's GO (< 0: never — Wait)
         double continueAt() const
         {
@@ -120,6 +123,8 @@ public:
 
     int count() const;
     Sequence sequence(int i) const;
+    quint64 sequenceId(int index) const;
+    int indexOfSequence(quint64 id) const;
     void setSequence(int i, const Sequence &s);
     int add(const Sequence &s, int at = -1);
     void remove(int i);
@@ -154,6 +159,7 @@ public:
     void advance(double dt);       // moves the waits on (a timer does, except with Engine::setFadesManual)
     // The snapshot a step recalls goes through this (the interface: its undo stack); Engine::recallSnapshot by default
     void setRecaller(std::function<void(int snapshotIndex)> f);
+    void setPresetRecaller(std::function<void(int presetIndex)> f);
     // A recall the cue clock made (its thread, on time): told afterwards on the Sequencer's thread, with the state it
     // replaced. None: the recall is made all the same, without undo
     void setRecallRecorder(std::function<void(int snapshotIndex, const RecallBefore &before)> f);
@@ -213,6 +219,7 @@ private:
     quint64 m_generation = 0;
     std::vector<Run> m_runs; // all active sequences; each run owns a stable sequenceId
     std::function<void(int)> m_recaller;                         // under m_mutex
+    std::function<void(int)> m_presetRecaller;
     std::function<void(int, const RecallBefore &)> m_recorder;   // under m_mutex
     std::unique_ptr<QThread> m_clockThread;
     QObject *m_clockContext = nullptr; // lives in m_clockThread

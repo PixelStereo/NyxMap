@@ -6,6 +6,7 @@
 
 class QPushButton;
 class QUndoStack;
+class QMenu;
 
 // A timeline dragged from the list of the timelines carries its id (onto a step of a sequence)
 inline constexpr const char *kTimelineMime = "application/x-pinol-timeline";
@@ -57,10 +58,15 @@ public:
     QWidget *listPanel() const { return m_listPanel; }
     TimelineEditor *editor() const { return m_editor; }
     void selectTimeline(quint64 id);
+    static void fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
+                              const QStringList &paths, QWidget *anchor);
+    static void fillParameterMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
+                                  const QStringList &paths, QWidget *anchor);
     void setCurrentLayer(quint64 id) { m_editor->setCurrentLayer(id); } // the layer a new track drives
 
 signals:
     void edited(); // the timelines changed: the project is modified
+    void showRequested();
 
 private:
     void refreshList();

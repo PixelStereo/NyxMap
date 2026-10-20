@@ -14,6 +14,7 @@ SequenceFeedback::SequenceFeedback(Engine *engine, QObject *parent) : QObject(pa
     connect(&m_e->sequencer(), &Sequencer::positionChanged, this, [this] { sendNow(false); }, Qt::QueuedConnection);
     connect(&m_e->sequencer(), &Sequencer::changed, this, [this] { sendNow(false); }, Qt::QueuedConnection);
     connect(m_e, &Engine::snapshotsChanged, this, [this] { sendNow(false); });
+    connect(m_e, &Engine::presetsChanged, this, [this] { sendNow(false); });
     connect(m_e, &Engine::animationsChanged, this, [this] { sendNow(false); });
 }
 
@@ -142,7 +143,13 @@ std::vector<osc::Message> SequenceFeedback::state() const
         Sequencer::Step st;
         if (valid) st = s.steps[size_t(k)];
         QString name;
-        if (valid && st.timeline) {
+        if (valid && st.sequence) {
+            const int index = sq.indexOfSequence(st.sequence);
+            name = index >= 0 ? QStringLiteral("Sequence · %1").arg(sq.sequence(index).name) : QStringLiteral("(sequence gone)");
+        } else if (valid && st.preset) {
+            const int index = m_e->indexOfPreset(st.preset);
+            name = index >= 0 ? QStringLiteral("Preset · %1").arg(m_e->preset(index).name) : QStringLiteral("(preset gone)");
+        } else if (valid && st.timeline) {
             const int a = m_e->indexOfAnimation(st.timeline);
             name = (a >= 0 ? m_e->animation(a).name : QStringLiteral("(timeline gone)")) + QStringLiteral(" · ") + actionWord(st);
         } else if (valid && st.snapshot) {
