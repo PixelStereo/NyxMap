@@ -25,3 +25,5 @@
 | P1 | Validate endurance, receivers and reconnection. | Eight hours without crash/stuck transport/decoder errors; A/V offset <40 ms without growth. Twenty reconnects recover within 5 s or report an actionable error. Receiver frame IDs remain correct under load. |
 | P2 | Evaluate optional linear-light compositing and verify output signaling. | Reference patches blend correctly, existing projects keep their appearance, and alpha handling and physical 10-bit precision are verified. |
 | P2 | Sign and notarize macOS releases. | A downloaded release opens on a clean Mac without a Gatekeeper workaround. |
+
+Additional proposals: [Workflow and performance ideas](ideas.md).
