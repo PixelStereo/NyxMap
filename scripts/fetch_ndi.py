@@ -52,9 +52,10 @@ def download(url: Path, dest: Path) -> str:
 
 def find(root: Path, name: str):
     hits = [p for p in root.rglob(name) if p.is_file() or p.is_symlink()]
-    # The 64-bit Intel / universal build: not an ARM-only or 32-bit one
-    hits = [p for p in hits if not any(part.lower() in ("x86", "aarch64-rpi4-linux-gnueabi", "arm-rpi4-linux-gnueabihf")
-                                       for part in p.parts)]
+    # The 64-bit Intel / universal build: not an ARM-only or 32-bit one (the Linux SDK has lib/<triplet>/ for each)
+    hits = [p for p in hits if "x86" not in (part.lower() for part in p.parts)
+            and not any(part.endswith(("-linux-gnu", "-linux-gnueabi", "-linux-gnueabihf")) and part != "x86_64-linux-gnu"
+                        for part in p.parts)]
     return sorted(hits, key=lambda p: len(p.parts))
 
 
