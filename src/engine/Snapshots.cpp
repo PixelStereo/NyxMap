@@ -700,6 +700,9 @@ QJsonArray Engine::captureRecallLayers(int snapshotIndex) const
             state["_undo_oscillator_offset"] = a.oscillatorOffset;
             state["_undo_reversed"] = a.reversed;
             if (std::isfinite(a.tracks.front().captured)) state["_undo_captured"] = a.tracks.front().captured;
+            const auto &rgb = a.tracks.front().capturedRgb;
+            if (std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }))
+                state["_undo_captured_rgb"] = QJsonArray{rgb[0], rgb[1], rgb[2]};
             animations[int(k)] = state;
         }
         if (!animations.isEmpty()) o["anims"] = animations; // Undo-only metadata, never project/snapshot JSON
@@ -742,6 +745,8 @@ void Engine::restoreRecallLayers(const QJsonArray &states)
             a.oscillatorOffset = saved.value("_undo_oscillator_offset").toDouble();
             a.reversed = saved.value("_undo_reversed").toBool();
             if (saved.contains("_undo_captured")) a.tracks.front().captured = saved.value("_undo_captured").toDouble();
+            const auto rgb = saved.value("_undo_captured_rgb").toArray();
+            if (rgb.size() == 3) for (int c = 0; c < 3; ++c) a.tracks.front().capturedRgb[c] = rgb[c].toDouble();
             animations.push_back(std::move(a));
         }
         restoreLayerAnims(id, std::move(animations));

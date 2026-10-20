@@ -77,9 +77,13 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     check(colors.size() == 5, "both gradient colors, both Color adjustments and the FX color are available");
     check(std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == start; }), "startColor is a whole RGB target");
     Animation global; AnimTrack opacity; opacity.layer = id; opacity.param = "opacity"; opacity.keys = {{0, 1, 0}};
+    opacity.keys[0].isCurrentValue = true;
     global.tracks = {opacity};
     const int gi = engine.addAnimation(global);
     TimelineEditor timeline(&engine, &undo); timeline.setTimeline(engine.animation(gi).id); timeline.resize(1000, 350); timeline.show(); pump();
+    auto *numericMode = timeline.findChild<QPushButton *>("startFromCurrent");
+    check(numericMode && numericMode->isVisible() && numericMode->isChecked() && numericMode->text().contains("CURRENT VALUE") &&
+          numericMode->styleSheet().contains("#f6c453"), "numeric current-value mode has a persistent highlighted badge");
     auto inlineTarget = [&](const Engine::AnimParam &target) -> QAction * {
         const int cut = target.label.lastIndexOf(QStringLiteral(" › "));
         for (auto *button : timeline.findChildren<QPushButton *>()) {
@@ -114,16 +118,38 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
             if (editor->param() == target.path)
                 for (auto *lane : editor->findChildren<ColorLane *>()) hasLane |= lane->isVisible();
         check(hasLane, "Anim tab reveals the color strip for the new local animation");
+        if (!animated.tracks.empty()) {
+            animated.tracks.front().keys.front().isCurrentValue = true;
+            engine.setLayerAnim(id, target.path, &animated); pump();
+            bool visibleMode = false;
+            for (auto *editor : inspector.findChildren<ParamAnimEditor *>()) if (editor->param() == target.path)
+                for (auto *button : editor->findChildren<QPushButton *>("startFromCurrent"))
+                    visibleMode |= button->isVisible() && button->isChecked() && button->text().contains("CURRENT VALUE") &&
+                                   button->styleSheet().contains("#f6c453");
+            check(visibleMode, "RGB current-value mode stays visible in the inspector header");
+        }
         undo.undo(); pump(); check(!engine.layerAnim(id, target.path, nullptr), "Undo removes the complete color animation");
         undo.redo(); pump(); check(engine.layerAnim(id, target.path, &animated) && animated.tracks.front().color, "Redo restores RGB type");
         if (!animated.tracks.empty()) {
             const auto from = animated.tracks.front().keys.front().rgb;
+            animated.tracks.front().keys.front().isCurrentValue = true; // activated during playback, before a fresh capture
             animated.tracks.front().keys.back().rgb = {.1, .8, .3};
             engine.setLayerAnim(id, target.path, &animated);
             engine.controlLayerAnim(id, target.path, AnimAction::Seek, animated.duration / 2);
-            std::array<double, 3> rgb;
+            std::array<double, 3> rgb{};
             check(engine.animColorValue(id, target.path, &rgb) && std::abs(rgb[0] - (from[0] + .1) / 2) < 1e-4 &&
                   std::abs(rgb[1] - (from[1] + .8) / 2) < 1e-4, "local RGB animation evaluates all channels together");
+            pump();
+            for (auto *editor : inspector.findChildren<ParamAnimEditor *>()) if (editor->param() == target.path) {
+                editor->poll();
+                for (auto *lane : editor->findChildren<ColorLane *>()) if (lane->isVisible()) {
+                    const QImage preview = lane->grab().toImage();
+                    const QColor midpoint = preview.pixelColor(preview.width() / 2 + 4, 48); // beside the playhead
+                    check(std::abs(midpoint.redF() - rgb[0]) < .02 && std::abs(midpoint.greenF() - rgb[1]) < .02 &&
+                          std::abs(midpoint.blueF() - rgb[2]) < .02,
+                          "mid-play current-value preview matches the engine without feeding back its moving output");
+                }
+            }
         }
         paramanim::remove(&engine, &undo, id, target.path); pump();
     }

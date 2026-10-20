@@ -57,7 +57,10 @@ struct AnimTrack {
     void bezierHandles(size_t k, double *t1, double *v1, double *t2, double *v2) const;
     // Where it is (not saved): the value read when the animation started, for a first key "current value"
     double captured = std::numeric_limits<double>::quiet_NaN();
+    std::array<double, 3> capturedRgb{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
+                                      std::numeric_limits<double>::quiet_NaN()};
     bool color = false; // drives param/r, param/g, param/b together; alpha is left alone
+    std::array<double, 3> keyColor(size_t k) const;
     std::array<double, 3> colorAt(double position) const;
     QStringList drivenParams() const
     {

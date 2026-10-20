@@ -120,5 +120,72 @@ int runColorAnimationTests(Engine &engine, const QString &root)
           engine.animation(engine.indexOfAnimation(tid)).tracks.empty(),
           "pasting a source cannot resurrect animations from the removed source");
     engine.newProject();
+    const int currentLayer = engine.addLayer("Current RGB");
+    const quint64 currentId = engine.layerId(currentLayer);
+    check(engine.setLayerIsf(currentLayer, root + "/../isf/generators/SolidColor.fs", &error), "load source for current RGB transition");
+    auto setRgb = [&](const QString &path, std::array<double, 3> value) {
+        for (int c = 0; c < 3; ++c) engine.setParameter(currentId, path + '/' + QChar("rgb"[c]), value[c]);
+    };
+    auto nearRgb = [](const std::array<double, 3> &a, const std::array<double, 3> &b) {
+        for (int c = 0; c < 3; ++c) if (std::abs(a[c] - b[c]) > 1e-4) return false;
+        return true;
+    };
+    setRgb("param/color", {.2, .4, .6});
+    engine.setParameter(currentId, "param/color/a", .37);
+    auto currentAnim = engine.makeLayerAnim(currentId, "param/color", -1);
+    currentAnim.loop = AnimLoop::Once;
+    currentAnim.tracks[0].keys[0].rgb = {1, 0, 0}; // deliberately different placeholder
+    currentAnim.tracks[0].keys[0].isCurrentValue = true;
+    currentAnim.tracks[0].keys[1].rgb = {0, 0, 1};
+    const int currentTimeline = engine.addAnimation(currentAnim);
+    const quint64 currentTimelineId = engine.animation(currentTimeline).id;
+    engine.controlAnimation(currentTimelineId, AnimAction::Play);
+    check(engine.animColorValue(currentId, "param/color", &rgb) && nearRgb(rgb, {.2, .4, .6}), "RGB current start has no initial jump");
+    engine.advanceFades(2);
+    check(engine.animColorValue(currentId, "param/color", &rgb) && nearRgb(rgb, {.1, .2, .8}), "RGB transition uses the captured start in every channel");
+    Engine::AnimationPlayback sample;
+    check(engine.sampleAnimation(currentTimelineId, 0, {}, &sample) && sample.capturedRgb.size() == 1 &&
+          nearRgb(sample.capturedRgb[0], {.2, .4, .6}), "UI telemetry exposes the captured start, not the moving output");
+    engine.controlAnimation(currentTimelineId, AnimAction::Pause);
+    setRgb("param/color", {.9, .1, .2});
+    engine.controlAnimation(currentTimelineId, AnimAction::Play);
+    check(engine.animColorValue(currentId, "param/color", &rgb) && nearRgb(rgb, {.1, .2, .8}), "pause/resume keeps the original color capture");
+    auto changed = engine.animation(currentTimeline);
+    changed.tracks[0].keys[1].rgb = {0, 1, 0};
+    engine.setAnimation(currentTimeline, changed);
+    check(nearRgb(engine.animation(currentTimeline).tracks[0].capturedRgb, {.2, .4, .6}), "editing a running color track preserves its capture");
+    setRgb("param/color", {.6, .2, .4});
+    engine.controlAnimation(currentTimelineId, AnimAction::Rewind);
+    check(engine.animColorValue(currentId, "param/color", &rgb) && nearRgb(rgb, {.6, .2, .4}), "rewind captures a fresh RGB starting color");
+    engine.controlAnimation(currentTimelineId, AnimAction::Stop);
+    setRgb("param/color", {.8, .6, .2});
+    engine.controlAnimation(currentTimelineId, AnimAction::Play);
+    check(nearRgb(engine.animation(currentTimeline).tracks[0].capturedRgb, {.8, .6, .2}), "restart captures a fresh full color");
+    check(std::abs(engine.parameterValue(currentId, "param/color/a").toDouble() - .37) < 1e-4, "current RGB start preserves Alpha");
+    setRgb("add", {.3, .5, .7});
+    auto localCurrent = engine.makeLayerAnim(currentId, "add", -1);
+    localCurrent.tracks[0].keys[0].isCurrentValue = true;
+    localCurrent.tracks[0].keys[1].rgb = {1, 1, 1};
+    engine.setLayerAnim(currentId, "add", &localCurrent);
+    engine.advanceFades(1);
+    Animation capturedLocal;
+    check(engine.layerAnim(currentId, "add", &capturedLocal) && nearRgb(capturedLocal.tracks[0].capturedRgb, {.3, .5, .7}),
+          "local color animation captures its complete starting value");
+    Engine::Snapshot cue; cue.layers = engine.captureLayers();
+    const int cueIndex = engine.addSnapshot(cue);
+    const auto beforeRecall = engine.captureRecallLayers(cueIndex);
+    engine.controlLayerAnim(currentId, "add", AnimAction::Rewind);
+    engine.restoreRecallLayers(beforeRecall);
+    Animation restoredLocal;
+    check(engine.layerAnim(currentId, "add", &restoredLocal) && restoredLocal.clock == capturedLocal.clock &&
+          nearRgb(restoredLocal.tracks[0].capturedRgb, capturedLocal.tracks[0].capturedRgb), "snapshot Undo restores RGB capture and clock exactly");
+    check(!engine.layerJson(engine.indexOfId(currentId)).value("anims").toArray()[0].toObject().contains("_undo_captured_rgb"),
+          "runtime RGB capture is absent from persisted layer JSON");
+    check(engine.saveProject(files.filePath("current-rgb.pinol"), {}, &error), "save current RGB mode");
+    check(engine.loadProject(files.filePath("current-rgb.pinol"), nullptr, &error), "reload current RGB mode");
+    check(engine.animation(engine.indexOfAnimation(currentTimelineId)).tracks[0].keys[0].isCurrentValue &&
+          engine.layerAnim(currentId, "add", &restoredLocal) && restoredLocal.tracks[0].keys[0].isCurrentValue,
+          "project reload retains current-value mode for global and local RGB tracks");
+    engine.newProject();
     return failures;
 }

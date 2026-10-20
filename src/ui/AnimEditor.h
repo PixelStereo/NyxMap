@@ -38,6 +38,7 @@ public:
     void setTrack(const AnimTrack &track, double duration);
     void setView(double t0, double t1);
     void setPlayhead(double position, bool shown);
+    void setLive(const std::array<double, 3> &rgb);
     void setCurrentColor(std::function<std::array<double, 3>()> f) { m_current = std::move(f); }
 signals:
     void edited(const AnimTrack &track, int gesture);
@@ -56,9 +57,11 @@ private:
     double xOf(double time) const;
     double tOf(double x) const;
     int keyAt(QPointF pos) const;
+    AnimTrack shown() const;
     void editColor(int key, double time = 0);
     void removeKey(int key);
     AnimTrack m_track;
+    std::array<double, 3> m_live = AnimTrack().capturedRgb;
     double m_duration = 4, m_t0 = 0, m_t1 = 4, m_playhead = 0;
     bool m_shown = false, m_panning = false, m_add = false;
     int m_selected = -1, m_drag = -1, m_gesture = 0;
@@ -184,7 +187,7 @@ public:
     TrackRow(AnimEditor *editor, int index);
     void build(); // the widgets: called once, right after construction (buildHeader is virtual)
     void setPlayhead(double pos, bool shown);
-    void setLive(double captured, bool running); // what a "current value" first key starts from
+    void setLive(double captured, const std::array<double, 3> &capturedRgb, bool running);
     void applyView();                            // the editor's zoom
     std::pair<double, double> fullRange() const;
     virtual void fill(); // the widgets from the track
@@ -207,6 +210,8 @@ private:
     QWidget *m_osc = nullptr;
     NumberBox *m_period = nullptr, *m_center = nullptr, *m_amp = nullptr, *m_phase = nullptr;
     QPushButton *m_reseed = nullptr;
+    QPushButton *m_startCurrent = nullptr;
+    void updateStartMode();
     class CurveLane *m_lane = nullptr;
     ColorLane *m_colorLane = nullptr;
 };

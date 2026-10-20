@@ -96,23 +96,31 @@ double AnimTrack::keyValue(size_t k) const
     return k < keys.size() ? keys[k].v : std::numeric_limits<double>::quiet_NaN();
 }
 
+std::array<double, 3> AnimTrack::keyColor(size_t k) const
+{
+    if (k == 0 && !keys.empty() && keys.front().isCurrentValue &&
+        std::all_of(capturedRgb.begin(), capturedRgb.end(), [](double v) { return std::isfinite(v); })) return capturedRgb;
+    return k < keys.size() ? keys[k].rgb : AnimTrack().capturedRgb;
+}
+
 std::array<double, 3> AnimTrack::colorAt(double position) const
 {
     if (keys.empty()) {
         const double nan = std::numeric_limits<double>::quiet_NaN();
         return {nan, nan, nan};
     }
-    if (position <= keys.front().t) return keys.front().rgb;
+    if (position <= keys.front().t) return keyColor(0);
     for (size_t k = 0; k + 1 < keys.size(); ++k) {
         const AnimKey &a = keys[k], &b = keys[k + 1];
         if (position >= b.t) continue;
-        if (a.curve == kAnimHold || b.t - a.t <= 1e-9) return a.rgb;
+        const auto from = keyColor(k), to = keyColor(k + 1);
+        if (a.curve == kAnimHold || b.t - a.t <= 1e-9) return from;
         const double u = easeCurve((position - a.t) / (b.t - a.t), a.curve);
         std::array<double, 3> rgb;
-        for (int c = 0; c < 3; ++c) rgb[c] = a.rgb[c] + (b.rgb[c] - a.rgb[c]) * u;
+        for (int c = 0; c < 3; ++c) rgb[c] = from[c] + (to[c] - from[c]) * u;
         return rgb;
     }
-    return keys.back().rgb;
+    return keyColor(keys.size() - 1);
 }
 
 static double passDuration(double d) { return std::max(kMinDuration, d); }
@@ -262,8 +270,12 @@ void Engine::setAnimation(int i, const Animation &a)
         for (AnimTrack &t : x.tracks) {
             sortKeys(t);
             t.captured = std::numeric_limits<double>::quiet_NaN();
+            t.capturedRgb = AnimTrack().capturedRgb;
             for (const AnimTrack &o : old.tracks)
-                if (o.layer == t.layer && o.param == t.param) t.captured = o.captured;
+                if (o.layer == t.layer && o.param == t.param && o.color == t.color) {
+                    t.captured = o.captured;
+                    t.capturedRgb = o.capturedRgb;
+                }
         }
     }
     emit animationsChanged();
@@ -310,7 +322,9 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
         for (AnimTrack &t : a->tracks) {
             double v = 0;
             const bool cur = !t.oscillator && !t.keys.empty() && t.keys.front().isCurrentValue;
-            t.captured = cur && animParamValue(t.layer, t.param, &v) ? v : std::numeric_limits<double>::quiet_NaN();
+            t.captured = cur && !t.color && animParamValue(t.layer, t.param, &v) ? v : std::numeric_limits<double>::quiet_NaN();
+            t.capturedRgb = AnimTrack().capturedRgb;
+            if (cur && t.color) animColorValue(t.layer, t.param, &t.capturedRgb);
         }
     };
     switch (action) {
@@ -760,6 +774,7 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
             a.setLoop(in.loop, in.repeat);
             a.clock = std::min(a.clock, a.length());
             t.captured = was->tracks.front().captured;
+            t.capturedRgb = was->tracks.front().capturedRgb;
         }
         l.anims.push_back(a);
     }
@@ -1059,7 +1074,6 @@ static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
     if (t.color) {
         t.oscillator = false;
         for (auto &key : t.keys) {
-            key.isCurrentValue = false;
             if (key.curve == kAnimBezier) key.curve = 3;
         }
     }
@@ -1205,7 +1219,14 @@ Engine::AnimationPlayback playbackOf(const Animation &a, bool captures)
     out.position = a.position(); out.duration = a.duration; out.clock = a.clock;
     out.speed = a.speed; out.length = a.length(); out.tracks = int(a.tracks.size());
     out.pass = int(std::min(1e9, std::floor(std::min(a.clock, a.length()) / std::max(.05, a.duration)))) + 1;
-    if (captures) { out.captured.reserve(a.tracks.size()); for (const auto &track : a.tracks) out.captured.push_back(track.captured); }
+    if (captures) {
+        out.captured.reserve(a.tracks.size());
+        out.capturedRgb.reserve(a.tracks.size());
+        for (const auto &track : a.tracks) {
+            out.captured.push_back(track.captured);
+            out.capturedRgb.push_back(track.capturedRgb);
+        }
+    }
     return out;
 }
 }
