@@ -530,12 +530,26 @@ void Engine::recallPreset(int i)
         if (!job->done()) m_fades.push_back(std::move(job));
     }
     // Restore the captured modulation definitions after writing static values.
-    // Only the drivers explicitly held by the preset are changed; all others stay intact.
+    // Replace the held drivers and any RGB drivers competing for their channels.
     for (const Animation &a : p.animations) {
         if (a.tracks.empty()) continue;
-        const quint64 layerId = a.tracks.front().layer;
+        Lock lock(&m_mutex); // preserve unrelated clocks across the read/replace
+        const auto &target = a.tracks.front();
+        const quint64 layerId = target.layer;
         const int idx = indexOfId(layerId);
-        if (idx >= 0 && !isLocked(idx)) setLayerAnim(layerId, a.tracks.front().param, &a);
+        if (idx < 0 || isLocked(idx)) continue;
+        auto current = layerAnims(layerId);
+        const auto paths = target.drivenParams();
+        current.erase(std::remove_if(current.begin(), current.end(), [&](const Animation &other) {
+            return !other.tracks.empty() && other.tracks.front().param != target.param &&
+                   std::any_of(paths.begin(), paths.end(), [&](const QString &path) { return other.tracks.front().drives(path); });
+        }), current.end());
+        const auto same = std::find_if(current.begin(), current.end(), [&](const Animation &other) {
+            return !other.tracks.empty() && other.tracks.front().param == target.param;
+        });
+        if (same == current.end()) current.push_back(a);
+        else *same = a;
+        setLayerAnims(layerId, current);
     }
     if (!p.interactions.empty()) {
         std::vector<Interaction> current = interactions();
@@ -639,7 +653,8 @@ QJsonArray Engine::captureLayers(bool withAnimated) const
         if (!withAnimated) {
             QJsonObject params = o.value("params").toObject();
             for (const Animation &an : m_layers[size_t(i)]->anims)
-                for (const AnimTrack &t : an.tracks) params.remove(t.param);
+                for (const AnimTrack &t : an.tracks)
+                    for (const QString &path : t.drivenParams()) params.remove(path);
             o["params"] = params;
         }
         o["included"] = true;
@@ -1603,7 +1618,8 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     std::set<std::pair<quint64, QString>> driven;
     auto collect = [&](const Animation &animation) {
         if (animation.state == AnimState::Stopped) return;
-        for (const auto &track : animation.tracks) if (track.enabled) driven.insert({track.layer, track.param});
+        for (const auto &track : animation.tracks) if (track.enabled)
+            for (const auto &path : track.drivenParams()) driven.insert({track.layer, path});
     };
     for (const auto &animation : m_animations) collect(animation);
     for (const auto &layer : m_layers) for (const auto &animation : layer->anims) collect(animation);

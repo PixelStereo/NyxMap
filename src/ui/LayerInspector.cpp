@@ -506,6 +506,7 @@ void LayerInspector::rebuild()
         m_content->deleteLater();
     }
     m_content = new QWidget;
+    m_textColors.clear();
     auto *v = new QVBoxLayout(m_content);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(10);
@@ -1493,10 +1494,14 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                  {size, "text/size"}, {lineSp, "text/line_height"},
                  {letterSp, "text/letter_spacing"}, {outline, "text/outline/width"}})
             m_animate->attach(field, {QString::fromLatin1(path)});
-        m_animate->attach(fmt->labelForField(colorRow), {QStringLiteral("text/size")});
+        m_animate->attach(textColor, {"text/color/r", "text/color/g", "text/color/b", "text/color/a"});
+        m_animate->attach(outlineColor, {"text/outline/color/r", "text/outline/color/g", "text/outline/color/b", "text/outline/color/a"});
+        m_textColors.push_back({textColor, QStringLiteral("text/color")});
+        m_textColors.push_back({outlineColor, QStringLiteral("text/outline/color")});
+        m_animate->attach(fmt->labelForField(colorRow), {"text/size", "text/color/r", "text/color/g", "text/color/b", "text/color/a"});
         m_animate->attach(fmt->labelForField(lineSp), {QStringLiteral("text/line_height")});
         m_animate->attach(fmt->labelForField(letterSp), {QStringLiteral("text/letter_spacing")});
-        m_animate->attach(fmt->labelForField(outlineRow), {QStringLiteral("text/outline/width")});
+        m_animate->attach(fmt->labelForField(outlineRow), {"text/outline/width", "text/outline/color/r", "text/outline/color/g", "text/outline/color/b", "text/outline/color/a"});
 
         // Shadow
         auto *shadow = new FlagBox(QStringLiteral("Enable"));
@@ -1522,7 +1527,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                     shadowRow);
         m_animate->attach(sx, {QStringLiteral("text/shadow/x")});
         m_animate->attach(sy, {QStringLiteral("text/shadow/y")});
-        m_animate->attach(fmt->labelForField(shadowRow), {QStringLiteral("text/shadow/x"), QStringLiteral("text/shadow/y")});
+        m_animate->attach(shadowColor, {"text/shadow/color/r", "text/shadow/color/g", "text/shadow/color/b", "text/shadow/color/a"});
+        m_textColors.push_back({shadowColor, QStringLiteral("text/shadow/color")});
+        m_animate->attach(fmt->labelForField(shadowRow), {"text/shadow/x", "text/shadow/y", "text/shadow/color/r", "text/shadow/color/g", "text/shadow/color/b", "text/shadow/color/a"});
         connect(shadow, &QCheckBox::toggled, this, [style](bool on) {
             style(QStringLiteral("Text Shadow"), [on](Layer &l) { l.text.shadow = on; });
         });
@@ -2780,6 +2787,15 @@ void LayerInspector::refreshDynamic()
     }
     // The fields show the values as they move (a snapshot's fade), unless Settings keeps them still until it is over
     const bool follow = SettingsPanel::followFades() || !m_engine->isFading();
+    if (follow) for (const auto &[button, path] : m_textColors) {
+        if (!button) continue;
+        std::array<double, 3> rgb;
+        if (!m_engine->animColorValue(m_layerId, path, &rgb)) continue;
+        const QColor color = QColor::fromRgbF(rgb[0], rgb[1], rgb[2], m_engine->parameterValue(m_layerId, path + "/a").toDouble(1));
+        if (button->property("color").value<QColor>() == color) continue;
+        button->setProperty("color", color);
+        button->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #666; border-radius: 2px;").arg(color.name()));
+    }
     if (follow) refreshSpatial();
     if (m_output) m_output->refreshStatus(); // mode set by ⌘F or a closed window, publishing states
     if (m_timecodeStatus) m_timecodeStatus->setText(m_engine->layerTimecodeStatus(m_layer));

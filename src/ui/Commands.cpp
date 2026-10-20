@@ -451,11 +451,19 @@ RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
     for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it) m_parts[it.key().toULongLong()] |= Engine::PartSpatial;
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) m_parts[it.key().section(':', 0, 0).toULongLong()] |= it.key().section(':', 1).toInt();
     for (const auto &animation : p.animations) if (!animation.tracks.empty()) {
-        const quint64 layer = animation.tracks.front().layer;
-        if (p.indexOf(layer, animation.tracks.front().param) < 0)
-            m_before.push_back(e->presetValue(layer, animation.tracks.front().param));
+        const auto &target = animation.tracks.front();
+        const quint64 layer = target.layer;
         m_animations[layer] = e->layerAnims(layer);
-        m_animationParams[layer].push_back(animation.tracks.front().param);
+        QStringList paths = target.drivenParams();
+        for (const auto &old : m_animations[layer]) if (!old.tracks.empty())
+            if (std::any_of(paths.begin(), paths.end(), [&](const QString &path) { return old.tracks.front().drives(path); }))
+                paths += old.tracks.front().drivenParams();
+        paths.removeDuplicates();
+        for (const QString &path : paths) {
+            if (std::none_of(m_before.begin(), m_before.end(), [&](const auto &value) { return value.layer == layer && value.path == path; }))
+                m_before.push_back(e->presetValue(layer, path));
+            m_animationParams[layer].push_back(path);
+        }
     }
     for (const auto &[id, parts] : m_parts) {
         m_layers[id] = e->layerJson(e->indexOfId(id));
@@ -488,17 +496,13 @@ void RecallPreset::undo()
                 continue;
             }
             auto current = m_e->layerAnims(id);
-            for (const QString &path : paths->second) {
-                const auto matches = [&](const Animation &a) {
-                    return !a.tracks.empty() && a.tracks.front().param == path;
-                };
-                const auto before = std::find_if(animations.begin(), animations.end(), matches);
-                const auto now = std::find_if(current.begin(), current.end(), matches);
-                if (before == animations.end()) {
-                    if (now != current.end()) current.erase(now);
-                } else if (now == current.end()) current.push_back(*before);
-                else *now = *before;
-            }
+            const auto matches = [&](const Animation &a) {
+                return !a.tracks.empty() && std::any_of(paths->second.begin(), paths->second.end(),
+                    [&](const QString &path) { return a.tracks.front().drives(path); });
+            };
+            current.erase(std::remove_if(current.begin(), current.end(), matches), current.end());
+            for (size_t i = 0; i < animations.size(); ++i)
+                if (matches(animations[i])) current.insert(current.begin() + std::min(i, current.size()), animations[i]);
             m_e->restoreLayerAnims(id, std::move(current));
         }
     }

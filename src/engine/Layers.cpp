@@ -539,8 +539,8 @@ int Engine::partOf(const QString &path)
 {
     auto under = [&path](const char *base) { return path.startsWith(QLatin1String(base)); };
     if (under("roi/")) return PartRoi;
-    if (path == "color/enable" || path == "temp" || path == "tint" || under("temp/") || under("tint/") || under("add/") ||
-        under("remove/") || path == "mask/invert")
+    if (path == "color/enable" || path == "temp" || path == "tint" || under("temp/") || under("tint/") || path == "add" ||
+        path == "remove" || under("add/") || under("remove/") || path == "mask/invert")
         return PartColor;
     if (path == "rotation" || path == "width" || path == "height" || under("pivot/") || under("position/") ||
         under("scale/") || under("corner/"))

@@ -154,7 +154,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           LP_NUM_THREADS: '1'
-        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure -R '^workspace_ui$'
+        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure -R '^(workspace_ui|color_parameter_ui)$'
 
   workspace-valgrind:
     if: needs.scope.outputs.valgrind == 'true'

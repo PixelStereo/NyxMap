@@ -116,10 +116,11 @@ void TimelineTrackRow::fillParams()
         });
         menu->addSeparator();
     }
-    addParamMenu(menu, m_ed->paramsOf(track().layer), [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
-        QAction *a = into->addAction(text, this, [this, path = p.path] { selectParam(path); });
+    addParamMenu(menu, animationMenuParams(m_e, track().layer), [this, colors](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+        const bool color = std::any_of(colors.begin(), colors.end(), [&](const auto &c) { return c.path == p.path; });
+        QAction *a = into->addAction(text, this, [this, path = p.path, color] { if (color) selectColor(path); else selectParam(path); });
         a->setCheckable(true);
-        a->setChecked(!track().color && p.path == track().param);
+        a->setChecked(color == track().color && p.path == track().param);
     });
 }
 

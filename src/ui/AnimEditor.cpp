@@ -80,6 +80,18 @@ static QString num(double v)
     return std::abs(v) >= 100 ? QString::number(v, 'f', 0) : QString::number(v, 'f', std::abs(v) >= 10 ? 1 : 2);
 }
 
+std::vector<Engine::AnimParam> animationMenuParams(Engine *engine, quint64 layer)
+{
+    const auto colors = engine->animatableColors(layer);
+    std::vector<Engine::AnimParam> out;
+    for (const auto &p : engine->animatableParams(layer)) {
+        for (const auto &color : colors)
+            if (p.path == color.path + "/r") out.push_back(color);
+        out.push_back(p);
+    }
+    return out;
+}
+
 // A step between the ticks of the seconds, at least `px` pixels apart
 static double tickStep(double duration, double width, double px)
 {
