@@ -245,7 +245,7 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndo
     auto *grid = new QGridLayout;
     grid->setColumnStretch(1, 1);
     const QString tips[kPublishKindCount] = {
-        QStringLiteral("NDI: network. Requires NDI Tools or the NDI Runtime installed on this machine."),
+        QStringLiteral("NDI®: network video. NDI® is a registered trademark of Vizrt NDI AB (ndi.video)."),
         QStringLiteral("OMT (Open Media Transport): network, free and open. Requires libomt and libvmx."),
         QStringLiteral("Syphon: shares the picture with apps on the same Mac (MadMapper, Resolume, OBS…)."),
         QStringLiteral("Spout: shares the picture with apps on the same PC (Resolume, TouchDesigner, OBS…)."),
@@ -312,6 +312,12 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndo
     }
     pv->addWidget(note(QStringLiteral("NDI and OMT send the picture at the viewport's size; "
                                       "Syphon and Spout share it directly on the GPU.")));
+    // The NDI SDK licence asks for its site next to where NDI is chosen
+    auto *ndiLink = note(QStringLiteral("NDI® is a registered trademark of Vizrt NDI AB: "
+                                        "<a href=\"https://ndi.video\" style=\"color:#888\">ndi.video</a>"));
+    ndiLink->setTextFormat(Qt::RichText);
+    ndiLink->setOpenExternalLinks(true);
+    pv->addWidget(ndiLink);
     v->addWidget(pub);
 
     // --- DeckLink: SDI / HDMI out of a Blackmagic card (shown when this machine has a port that plays out)
