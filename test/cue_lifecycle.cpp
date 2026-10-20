@@ -129,7 +129,9 @@ int runCueLifecycleTests(Engine &engine)
     check(fired == std::vector<int>({1, 2}), "called sequence uses its own Follow and next-step pre-wait");
     seq.goToStepOf(ci, 1); fired.clear(); seq.goTo(0); seq.advance(.25);
     check(seq.positionOf(ci) == 0, "calling an already used sequence restarts it from the first step");
-    seq.stopAll(); seq.advance(10); check(fired.empty(), "Stop all cancels called sequence pre-waits");
+    const auto firedBeforeStop = fired;
+    seq.stopAll(); seq.advance(10);
+    check(fired == firedBeforeStop && !seq.anyActive(), "Stop all cancels called sequence pre-waits without replaying already fired cues");
 
     Sequencer::Sequence insertedSequence; insertedSequence.name = "Inserted"; seq.add(insertedSequence, 0);
     child = seq.sequence(seq.indexOfSequence(childId)); child.name = "Renamed child";
