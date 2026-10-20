@@ -703,12 +703,32 @@ void MainWindow::buildMenus()
     auto *about = help->addAction(QStringLiteral("About PINOL"), this, [this] {
         QMessageBox box(this);
         box.setWindowTitle(QStringLiteral("About PINOL"));
-        box.setText(QStringLiteral("<h2>PINOL</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>")
-                    .arg(QCoreApplication::applicationVersion()));
+        // The licence files travel with the program: Contents/Resources on macOS, next to it elsewhere
+#ifdef Q_OS_MACOS
+        const QString docs = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../Resources"));
+#else
+        const QString docs = QCoreApplication::applicationDirPath();
+#endif
+        const auto link = [&](const QString &file, const QString &label) {
+            const QString path = QDir(docs).absoluteFilePath(file);
+            return QFileInfo::exists(path)
+                       ? QStringLiteral("<a href=\"%1\">%2</a>").arg(QUrl::fromLocalFile(path).toString(), label)
+                       : label;
+        };
+        box.setTextFormat(Qt::RichText);
+        box.setTextInteractionFlags(Qt::TextBrowserInteraction);
+        box.setText(QStringLiteral("<h2>PINOL</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
+                                   "<p>© 2025-2026 PIXEL STEREO. Released under the %2.</p>"
+                                   "<p>Built with Qt and FFmpeg (GNU LGPL) and other open source components: see the %3.</p>"
+                                   "<p>NDI® is a registered trademark of Vizrt NDI AB. "
+                                   "<a href=\"https://ndi.video\">ndi.video</a></p>")
+                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("MIT License")),
+                             link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
         box.setIconPixmap(QPixmap(QStringLiteral(":/branding/pinol.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();
     });
     about->setMenuRole(QAction::AboutRole);
+    help->addAction(QStringLiteral("About Qt"), qApp, &QApplication::aboutQt)->setMenuRole(QAction::AboutQtRole);
     QMenu *file = menuBar()->addMenu(QStringLiteral("&File"));
     file->addAction(QStringLiteral("New Project"), QKeySequence::New, this, &MainWindow::newProject);
     file->addAction(QStringLiteral("Open…"), QKeySequence::Open, this, &MainWindow::openProjectDialog);

@@ -374,6 +374,21 @@ jobs:
         run: |
           { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; brew list --versions qt ffmpeg; } \
             | tee deps-macos.txt
+      - name: Homebrew FFmpeg version
+        id: ffmpeg
+        run: echo "version=$(brew list --versions ffmpeg | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ runner.arch }}-${{ steps.ffmpeg.outputs.version }}-${{ hashFiles('scripts/build_ffmpeg_lgpl.py') }}
+      - name: FFmpeg without GPL components, for the package
+        run: |
+          # Homebrew's is built with --enable-gpl (x264, x265): the package ships the same version rebuilt LGPL,
+          # in place of Homebrew's libraries from here on (the tests above ran with Homebrew's)
+          python3 scripts/build_ffmpeg_lgpl.py build ~/ffmpeg-lgpl
+          python3 scripts/build_ffmpeg_lgpl.py replace ~/ffmpeg-lgpl
+          { echo; echo "FFmpeg in the package: built from source without GPL components (LGPL v2.1 or later)"; \
+            cat ~/ffmpeg-lgpl/VERSION; } | tee -a deps-macos.txt
       - name: Package .app with runtime dependencies
         shell: bash
         run: |
@@ -442,6 +457,9 @@ jobs:
           test -x "$EXE"
           test -d "$APP/Contents/Resources/isf"
           cp LICENSE THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
+          # Only LGPL FFmpeg libraries and no GPL-only one; the notices of every library copied from Homebrew
+          python3 scripts/build_ffmpeg_lgpl.py check "$APP"
+          python3 scripts/macos_notices.py "$APP"
           cat > "$APP/Contents/Resources/README-Dependencies.txt" <<'EOF'
           Pinol macOS runtime notes
 
