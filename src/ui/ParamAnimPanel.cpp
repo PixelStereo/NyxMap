@@ -483,7 +483,9 @@ public:
                             : t.oscillator ? QStringLiteral("%1 · %2 s").arg(animWaveName(t.wave)).arg(t.period, 0, 'g', 3)
                                           : QStringLiteral("Keys · %1 s").arg(a.duration, 0, 'g', 3);
         const bool playing = a.state == AnimState::Playing && t.enabled;
-        m_summary->setText(QStringLiteral("%1 <span style='color:%2'>●</span>").arg(what, playing ? kPlaying.name() : QStringLiteral("#55555c")));
+        const QString current = !t.oscillator && !t.keys.empty() && t.keys.front().isCurrentValue ?
+            QStringLiteral(" <span style='background-color:#f6c453; color:#19191d; font-weight:bold'> ↗ CURRENT </span>") : QString();
+        m_summary->setText(QStringLiteral("%1%2 <span style='color:%3'>●</span>").arg(what, current, playing ? kPlaying.name() : QStringLiteral("#55555c")));
         m_summary->setToolTip(playing ? QStringLiteral("Playing") : QStringLiteral("Not playing"));
     }
     ParamAnimEditor *editor;

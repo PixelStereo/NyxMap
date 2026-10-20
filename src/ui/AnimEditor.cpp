@@ -32,6 +32,7 @@ static const QColor kCurve(86, 196, 255);
 static const QColor kWave(224, 180, 58);
 static const QColor kHandle(235, 235, 240);
 static const QColor kPlayhead(76, 217, 100);
+static const QColor kCurrentStart(246, 196, 83);
 
 QString animWaveName(AnimWave w)
 {
@@ -321,11 +322,13 @@ void CurveLane::paintEvent(QPaintEvent *)
             if (c.x() < -6 || c.x() > width() + 6) continue;
             const QColor fill = int(k) == m_dragKey ? QColor(Qt::white) : kCurve;
             if (k == 0 && key.isCurrentValue) {
-                p.setPen(QPen(fill, 2));
+                p.setPen(QPen(kCurrentStart, 2.5));
                 p.setBrush(QColor(26, 26, 30));
-                p.drawEllipse(c, 5, 5);
-                p.setPen(fill);
-                p.drawText(QRectF(c.x() + 7, c.y() - 16, 60, 14), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("current"));
+                p.drawEllipse(c, 7, 7);
+                p.drawEllipse(c, 3, 3);
+                p.setPen(kCurrentStart);
+                QFont bold = p.font(); bold.setBold(true); p.setFont(bold);
+                p.drawText(QRectF(c.x() + 11, c.y() - 20, 90, 16), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("CURRENT"));
                 continue;
             }
             p.setPen(QPen(QColor(20, 20, 24), 1));
@@ -746,6 +749,7 @@ ColorLane::ColorLane(QWidget *parent) : QWidget(parent)
 
 void ColorLane::setTrack(const AnimTrack &track, double duration)
 {
+    if (track.layer != m_track.layer || track.param != m_track.param) m_live = track.capturedRgb;
     m_track = track;
     m_duration = std::max(.05, duration);
     if (m_selected >= int(track.keys.size())) m_selected = -1;
@@ -753,6 +757,23 @@ void ColorLane::setTrack(const AnimTrack &track, double duration)
 }
 
 void ColorLane::setView(double t0, double t1) { m_t0 = t0; m_t1 = std::max(t0 + 1e-6, t1); update(); }
+void ColorLane::setLive(const std::array<double, 3> &rgb)
+{
+    if (!startsFromCurrent(m_track) || rgb == m_live) return;
+    m_live = rgb;
+    update();
+}
+
+AnimTrack ColorLane::shown() const
+{
+    AnimTrack track = m_track;
+    if (startsFromCurrent(track)) {
+        if (std::all_of(m_live.begin(), m_live.end(), [](double v) { return std::isfinite(v); })) track.capturedRgb = m_live;
+        else if (!std::isfinite(track.capturedRgb[0]) && m_current) track.capturedRgb = m_current();
+    }
+    return track;
+}
+
 void ColorLane::setPlayhead(double position, bool shown)
 {
     if (position == m_playhead && shown == m_shown) return;
@@ -777,13 +798,14 @@ int ColorLane::keyAt(QPointF pos) const
 void ColorLane::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
+    const AnimTrack drawn = shown();
     p.fillRect(rect(), QColor(26, 26, 30));
     const QRect strip(CurveLane::kMargin, 38, std::max(1, width() - 2 * CurveLane::kMargin), std::max(20, height() - 60));
     p.setClipRect(strip);
     if (!m_track.keys.empty()) {
         // Sample the engine's RGB interpolation: hold and easing previews cannot diverge from playback.
         for (int x = strip.left(); x <= strip.right(); ++x) {
-            p.setPen(rgbColor(m_track.colorAt(tOf(x))));
+            p.setPen(rgbColor(drawn.colorAt(tOf(x))));
             p.drawLine(x, strip.top(), x, strip.bottom());
         }
     } else {
@@ -805,16 +827,22 @@ void ColorLane::paintEvent(QPaintEvent *)
         const double x = xOf(key.t);
         if (x < 0 || x > width()) continue;
         const bool selected = int(i) == m_selected;
-        p.setPen(QPen(selected ? QColor(Qt::white) : QColor(110, 110, 120), selected ? 2 : 1));
-        p.setBrush(rgbColor(key.rgb));
-        p.drawRoundedRect(QRectF(x - 7, 11, 14, 21), 3, 3);
+        const bool current = i == 0 && key.isCurrentValue;
+        p.setPen(QPen(current ? kCurrentStart : selected ? QColor(Qt::white) : QColor(110, 110, 120), current ? 2.5 : selected ? 2 : 1));
+        p.setBrush(rgbColor(drawn.keyColor(i)));
+        if (current) {
+            p.drawPolygon(QPolygonF({QPointF(x, 8), QPointF(x + 9, 21), QPointF(x, 34), QPointF(x - 9, 21)}));
+            QFont bold = p.font(); bold.setBold(true); p.setFont(bold);
+            p.drawText(QRectF(x + 14, 11, 100, 20), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("CURRENT"));
+        } else p.drawRoundedRect(QRectF(x - 7, 11, 14, 21), 3, 3);
         p.drawLine(QPointF(x, 32), QPointF(x, strip.bottom()));
         p.setBrush(selected ? Qt::white : QColor(160, 160, 170));
         p.drawPolygon(QPolygonF({QPointF(x - 4, 33), QPointF(x + 4, 33), QPointF(x, 38)}));
         if (selected) {
             p.setPen(QColor(210, 210, 220));
             p.drawText(QRectF(12, height() - 18, width() - 24, 16), Qt::AlignLeft | Qt::AlignVCenter,
-                       QStringLiteral("%1 s   %2").arg(key.t, 0, 'f', 2).arg(rgbColor(key.rgb).name().toUpper()));
+                       QStringLiteral("%1 s   %2%3").arg(key.t, 0, 'f', 2).arg(current ? QStringLiteral("CURRENT · ") : QString())
+                           .arg(rgbColor(drawn.keyColor(i)).name().toUpper()));
         }
     }
     if (m_shown) {
@@ -826,7 +854,8 @@ void ColorLane::paintEvent(QPaintEvent *)
 void ColorLane::editColor(int key, double time)
 {
     const bool existing = key >= 0 && key < int(m_track.keys.size());
-    auto rgb = existing ? m_track.keys[size_t(key)].rgb : m_track.colorAt(time);
+    const AnimTrack drawn = shown();
+    auto rgb = existing ? drawn.keyColor(size_t(key)) : drawn.colorAt(time);
     if (!std::isfinite(rgb[0])) rgb = m_current ? m_current() : std::array<double, 3>{1, 1, 1};
     const QPointer<ColorLane> guard(this);
     const QColor color = ColorPicker::getColor(rgbColor(rgb), window(), QStringLiteral("Color Key"),
@@ -839,6 +868,7 @@ void ColorLane::editColor(int key, double time)
         m_track.keys.insert(it, added);
     }
     m_track.keys[size_t(key)].rgb = {color.redF(), color.greenF(), color.blueF()};
+    m_track.keys[size_t(key)].isCurrentValue = false; // choosing an explicit color returns to a fixed key
     m_selected = key;
     update();
     emit edited(m_track, 0);
@@ -919,6 +949,17 @@ void ColorLane::contextMenuEvent(QContextMenuEvent *e)
     if (key < 0) menu->addAction(QStringLiteral("Add Color Key…"), this, [this, t = tOf(e->pos().x())] { editColor(-1, t); });
     else {
         m_selected = key; update();
+        if (key == 0) {
+            auto *current = menu->addAction(QStringLiteral("Start from the current value"), this, [this](bool on) {
+                m_track.keys.front().isCurrentValue = on;
+                if (on && m_current) m_live = m_track.keys.front().rgb = m_current();
+                update(); emit edited(m_track, 0);
+            });
+            current->setCheckable(true);
+            current->setChecked(m_track.keys.front().isCurrentValue);
+            current->setToolTip(QStringLiteral("Capture the full RGB color when playback starts; keep Alpha independent"));
+            menu->addSeparator();
+        }
         menu->addAction(QStringLiteral("Color…"), this, [this, key] { editColor(key); });
         menu->addAction(QStringLiteral("Time…"), this, [this, key] {
             const double lo = key > 0 ? m_track.keys[size_t(key - 1)].t + 1e-6 : 0;
@@ -1039,7 +1080,23 @@ void TrackRow::build()
     kindRow->addWidget(m_reseed);
     g->addLayout(kindRow, r, 0, 1, 4);
     g->addWidget(m_osc, r + 1, 0, 1, 4);
-    if (side) g->setRowStretch(r + 2, 1);
+    m_startCurrent = new QPushButton;
+    m_startCurrent->setObjectName(QStringLiteral("startFromCurrent"));
+    m_startCurrent->setCheckable(true);
+    m_startCurrent->setToolTip(QStringLiteral("Start from the current value: capture the parameter when playback starts, instead of using a fixed first key"));
+    g->addWidget(m_startCurrent, r + 2, 0, 1, 4);
+    connect(m_startCurrent, &QPushButton::clicked, this, [this](bool on) {
+        if (track().oscillator || track().keys.empty()) return;
+        auto &key = track().keys.front();
+        key.isCurrentValue = on;
+        if (on) {
+            if (track().color) m_e->animColorValue(track().layer, track().param, &key.rgb);
+            else key.v = currentValue();
+        }
+        updateStartMode();
+        changed();
+    });
+    if (side) g->setRowStretch(r + 3, 1);
     g->setColumnStretch(1, 1);
     m_lane = new CurveLane;
     m_lane->setMinimumHeight(side ? 70 : std::max(70, m_ed->laneHeight()));
@@ -1055,6 +1112,7 @@ void TrackRow::build()
     box->addWidget(m_colorLane, 1);
     connect(m_colorLane, &ColorLane::edited, this, [this](const AnimTrack &t, int gesture) {
         track().keys = t.keys;
+        updateStartMode();
         changed(false, gesture ? QStringLiteral("lane%1").arg(gesture) : QString());
     });
     connect(m_colorLane, &ColorLane::zoomTime, m_ed, &AnimEditor::zoomTime);
@@ -1089,6 +1147,7 @@ void TrackRow::build()
     value(m_amp, &AnimTrack::amplitude, "amplitude");
     connect(m_lane, &CurveLane::edited, this, [this](const AnimTrack &t, int gesture) {
         track().keys = t.keys;
+        updateStartMode();
         changed(false, gesture ? QStringLiteral("lane%1").arg(gesture) : QString());
     });
     connect(m_lane, &CurveLane::zoomTime, m_ed, &AnimEditor::zoomTime);
@@ -1129,14 +1188,30 @@ void TrackRow::fill()
     m_center->setValue(t.center);
     m_amp->setValue(t.amplitude);
     m_filling = false;
+    updateStartMode();
     updateLane();
+}
+
+void TrackRow::updateStartMode()
+{
+    const bool current = startsFromCurrent(track());
+    m_startCurrent->setVisible(!track().oscillator && !track().keys.empty());
+    m_startCurrent->setChecked(current);
+    m_startCurrent->setText(current ? QStringLiteral("↗ CURRENT VALUE") : QStringLiteral("Start: first key"));
+    m_startCurrent->setAccessibleName(current ? QStringLiteral("Start from current value enabled") : QStringLiteral("Start from current value disabled"));
+    m_startCurrent->setStyleSheet(current ? QStringLiteral("QPushButton { background:#f6c453; color:#19191d; border:2px solid #ffe4a1; border-radius:4px; font-weight:bold; padding:4px 6px; }") : QString());
 }
 
 void TrackRow::setPlayhead(double pos, bool shown) { m_lane->setPlayhead(pos, shown); m_colorLane->setPlayhead(pos, shown); }
 
-void TrackRow::setLive(double captured, bool running)
+void TrackRow::setLive(double captured, const std::array<double, 3> &capturedRgb, bool running)
 {
-    if (!m_lane->track().keys.empty() && m_lane->track().keys.front().isCurrentValue)
+    if (track().color) {
+        auto rgb = capturedRgb;
+        if (!running || !std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }))
+            m_e->animColorValue(track().layer, track().param, &rgb);
+        m_colorLane->setLive(rgb);
+    } else if (!m_lane->track().keys.empty() && m_lane->track().keys.front().isCurrentValue)
         m_lane->setLive(running && std::isfinite(captured) ? captured : currentValue());
 }
 
@@ -1485,7 +1560,8 @@ void AnimEditor::poll()
     m_ruler->setPlayhead(pos, shown);
     for (size_t k = 0; k < m_rows.size(); ++k) {
         m_rows[k]->setPlayhead(pos, shown);
-        m_rows[k]->setLive(k < a.captured.size() ? a.captured[k] : std::numeric_limits<double>::quiet_NaN(), shown);
+        m_rows[k]->setLive(k < a.captured.size() ? a.captured[k] : std::numeric_limits<double>::quiet_NaN(),
+                          k < a.capturedRgb.size() ? a.capturedRgb[k] : AnimTrack().capturedRgb, shown);
     }
     const double d = std::max(0.05, a.duration);
     const int pass = a.pass;

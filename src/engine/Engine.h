@@ -447,6 +447,7 @@ public:
         double position = 0, duration = 0, clock = 0, speed = 1, length = 0;
         int tracks = 0, pass = 1;
         std::vector<double> captured;
+        std::vector<std::array<double, 3>> capturedRgb;
     };
     bool sampleAnimations(std::vector<AnimationPlayback> *out) const;
     bool sampleAnimation(quint64 timeline, quint64 layer, const QString &param, AnimationPlayback *out) const;

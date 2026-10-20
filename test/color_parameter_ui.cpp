@@ -77,9 +77,13 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     check(colors.size() == 5, "both gradient colors, both Color adjustments and the FX color are available");
     check(std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == start; }), "startColor is a whole RGB target");
     Animation global; AnimTrack opacity; opacity.layer = id; opacity.param = "opacity"; opacity.keys = {{0, 1, 0}};
+    opacity.keys[0].isCurrentValue = true;
     global.tracks = {opacity};
     const int gi = engine.addAnimation(global);
     TimelineEditor timeline(&engine, &undo); timeline.setTimeline(engine.animation(gi).id); timeline.resize(1000, 350); timeline.show(); pump();
+    auto *numericMode = timeline.findChild<QPushButton *>("startFromCurrent");
+    check(numericMode && numericMode->isVisible() && numericMode->isChecked() && numericMode->text().contains("CURRENT VALUE") &&
+          numericMode->styleSheet().contains("#f6c453"), "numeric current-value mode has a persistent highlighted badge");
     auto inlineTarget = [&](const Engine::AnimParam &target) -> QAction * {
         const int cut = target.label.lastIndexOf(QStringLiteral(" › "));
         for (auto *button : timeline.findChildren<QPushButton *>()) {
@@ -114,6 +118,16 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
             if (editor->param() == target.path)
                 for (auto *lane : editor->findChildren<ColorLane *>()) hasLane |= lane->isVisible();
         check(hasLane, "Anim tab reveals the color strip for the new local animation");
+        if (!animated.tracks.empty()) {
+            animated.tracks.front().keys.front().isCurrentValue = true;
+            engine.setLayerAnim(id, target.path, &animated); pump();
+            bool visibleMode = false;
+            for (auto *editor : inspector.findChildren<ParamAnimEditor *>()) if (editor->param() == target.path)
+                for (auto *button : editor->findChildren<QPushButton *>("startFromCurrent"))
+                    visibleMode |= button->isVisible() && button->isChecked() && button->text().contains("CURRENT VALUE") &&
+                                   button->styleSheet().contains("#f6c453");
+            check(visibleMode, "RGB current-value mode stays visible in the inspector header");
+        }
         undo.undo(); pump(); check(!engine.layerAnim(id, target.path, nullptr), "Undo removes the complete color animation");
         undo.redo(); pump(); check(engine.layerAnim(id, target.path, &animated) && animated.tracks.front().color, "Redo restores RGB type");
         if (!animated.tracks.empty()) {
