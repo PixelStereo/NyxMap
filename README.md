@@ -145,3 +145,7 @@ CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites.
 
 </details>
 
+
+## License
+
+Pinol is released under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
