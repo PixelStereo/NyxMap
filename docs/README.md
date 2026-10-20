@@ -2,6 +2,7 @@
 
 ## Known problems
 
+- **Parameter control:** competing drivers can overwrite each other without a durable takeover. See [current rules and proposed improvements](parameter-control.md).
 - **Color:** compositing and FX remain in encoded sRGB, not linear light.
   Unknown/live profiles require a declaration; some video tags are unsupported.
   ISF image inputs are not individually color-managed. Some decoder/readback
