@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "EnduranceLogger.h"
 #include "MainWindow.h"
+#include "NetVideo.h"
 #include "Permissions.h"
 #include "Widgets.h"
 
@@ -63,11 +64,22 @@ int main(int argc, char *argv[])
     cli.addOption(framesOpt);
     cli.addOption(shotOpt);
     cli.addOption(enduranceOpt);
+    QCommandLineOption libsOpt("check-libraries", "Load the NDI and OMT libraries as publishing does, print where they "
+                                                  "were found, then quit (exit code 5 if one does not load).");
+    cli.addOption(libsOpt);
     cli.addPositionalArgument("project", ".pinol project to open");
     // --render exit codes: 0 rendered, 1 OpenGL unavailable, 2 output not written, 3 project not loaded,
     // 4 a layer or an effect in error (--strict)
     cli.process(app);
     const QString project = cli.positionalArguments().value(0);
+
+    // The packages ship NDI and OMT: their smoke test checks that both load from where they were put
+    if (cli.isSet(libsOpt)) {
+        const ndi::Lib &n = ndi::lib(QString());
+        const omt::Lib &o = omt::lib(QString());
+        std::printf("NDI: %s\nOMT: %s\n", qPrintable(n.ok ? n.path : n.error), qPrintable(o.ok ? o.path : o.error));
+        return n.ok && o.ok ? 0 : 5;
+    }
 
     Engine engine;
     QString err;

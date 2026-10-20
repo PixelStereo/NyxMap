@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Smoke test of a packaged Pinol, run from the extracted archive on the CI runner (not the build tree).
 
-Renders a small project headless (--render --strict): an ISF generator from the package's own isf folder, an image
-and a video decoded by the package's FFmpeg. Fails if the program cannot start (a library missing), the project does
+Checks that the NDI and OMT libraries shipped with it load (--check-libraries), then renders a small project headless
+(--render --strict): an ISF generator from the package's own isf folder, an image and a video decoded by the package's
+FFmpeg. Fails if the program cannot start (a library missing), the project does
 not load, a layer or an effect is in error, or no picture is written.
 
 usage: smoke_package.py <Pinol executable> <isf folder> <test media folder> <work folder> [--allow-no-gl]
@@ -43,6 +44,16 @@ def main():
     out = os.path.join(work, 'smoke.png')
     if os.path.exists(out):
         os.remove(out)
+    # NDI and OMT ship with the package: both must load from where it put them
+    try:
+        libs = subprocess.run([exe, '--check-libraries'], timeout=60, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        print('FAIL: --check-libraries did not finish within a minute')
+        return 1
+    print(libs.stdout + libs.stderr, end='', flush=True)
+    if libs.returncode != 0:
+        print(f'FAIL: the NDI or OMT library of the package does not load (exit code {libs.returncode})')
+        return 1
     cmd = [exe, '--render', out, '--frames', '10', '--strict', proj]
     print(' '.join(cmd), flush=True)
     try:

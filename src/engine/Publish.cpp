@@ -198,23 +198,22 @@ static QStringList appFolders()
     return f;
 }
 
-// Tries a list of paths / names; returns the loaded library (never unloaded).
-static QLibrary *loadFirst(const QStringList &candidates, QString *triedOut)
+// Tries a list of paths / names; returns the loaded library (never unloaded). failedOut: the first file there that
+// would not load, with the system's reason (a library found but refused is not a missing one)
+static QLibrary *loadFirst(const QStringList &candidates, QString *failedOut)
 {
-    QStringList tried;
+    QString failed;
     for (const QString &c : candidates) {
         if (c.isEmpty()) continue;
-        if (QFileInfo(c).isAbsolute() && !QFileInfo::exists(c)) {
-            tried << c;
-            continue;
-        }
+        const bool file = QFileInfo(c).isAbsolute();
+        if (file && !QFileInfo::exists(c)) continue;
         auto *lib = new QLibrary(c);
         lib->setLoadHints(QLibrary::ExportExternalSymbolsHint);
         if (lib->load()) return lib;
-        tried << c + " (" + lib->errorString() + ")";
+        if (file && failed.isEmpty()) failed = QDir::toNativeSeparators(c) + ": " + lib->errorString();
         delete lib;
     }
-    if (triedOut) *triedOut = tried.join("\n");
+    if (failedOut) *failedOut = failed;
     return nullptr;
 }
 
@@ -298,10 +297,12 @@ Lib &lib(const QString &extra)
     QMutexLocker lk(&mutex);
     if (tried && (l.ok || extra.isEmpty())) return l;
     tried = true;
-    QString triedPaths;
-    QLibrary *q = loadFirst(ndiCandidates(extra), &triedPaths);
+    QString failed;
+    QLibrary *q = loadFirst(ndiCandidates(extra), &failed);
     if (!q) {
-        l.error = QStringLiteral("NDI library not found: install \"NDI Tools\" or the \"NDI Runtime\" (ndi.video).");
+        l.error = failed.isEmpty() ? QStringLiteral("NDI library not found: it comes with Pinol's packages, next to the "
+                                                    "application; or install the NDI Runtime (ndi.video).")
+                                   : QStringLiteral("NDI library found but not loaded: ") + failed;
         return l;
     }
     l.path = q->fileName();
@@ -408,11 +409,13 @@ Lib &lib(const QString &extra)
         }
         break;
     }
-    QString triedPaths;
-    QLibrary *q = loadFirst(candidates, &triedPaths);
+    QString failed;
+    QLibrary *q = loadFirst(candidates, &failed);
     if (!q) {
-        l.error = QStringLiteral("OMT library not found: place libomt and libvmx (github.com/openmediatransport) "
-                                 "next to the application or in the chosen folder.");
+        l.error = failed.isEmpty() ? QStringLiteral("OMT library not found: it comes with Pinol's packages, next to the "
+                                                    "application; or place libomt and libvmx (github.com/openmediatransport) "
+                                                    "in the chosen folder.")
+                                   : QStringLiteral("OMT library found but not loaded: ") + failed;
         return l;
     }
     l.path = q->fileName();
