@@ -1,8 +1,8 @@
 # Third-party notices
 
-Pinol is proprietary software (see LICENSE.md). It uses the following third-party components, each under its own
-licence; their full texts are in the `licenses` folder (and, for those fetched at packaging time, next to the library).
-Pinol's licence does not restrict any right these licences give you.
+Pinol's own code is under the MIT licence (see LICENSE). It uses the following third-party components, each under its
+own licence; their full texts are in the `licenses` folder (and, for those fetched at packaging time, next to the
+library).
 
 | Component | Use in Pinol | Licence | Licence text | Source |
 |---|---|---|---|---|
@@ -19,10 +19,15 @@ Pinol's licence does not restrict any right these licences give you.
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
+**NDI runtime in the packages.** The NDI runtime is not covered by Pinol's MIT licence: it is provided by Vizrt NDI AB
+under the NDI SDK License Agreement. You may not modify, disassemble, decompile or separately distribute the NDI
+components, nor use them outside Pinol. Vizrt NDI AB and its licensors provide them "as is", without warranty of any
+kind, and disclaim all liability for them to the extent permitted by law.
+
 **LGPL components (Qt, FFmpeg).** They are dynamically linked: you may replace the libraries shipped with Pinol by
 compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next to `Pinol.exe` on Windows). Their
 corresponding source code is available from the links above; the exact versions used by a package are listed in its
-`DEPENDENCIES.txt`, and the source of those versions can also be requested from the rights holder of Pinol for three years.
+`DEPENDENCIES.txt`, and the source of those versions can also be requested from Pinol's maintainers for three years.
 
 **To be completed before distribution.** The macOS package also contains the libraries Qt and FFmpeg depend on
 (image, font, compression, encryption and codec libraries), copied from the build machine: their list and licences are

@@ -106,7 +106,7 @@ jobs:
           mkdir -p dist
           install -Dm755 build/Pinol dist/Pinol
           cp -R build/isf dist/isf
-          cp LICENSE.md THIRD-PARTY-NOTICES.md dist/ && cp -R licenses dist/licenses
+          cp LICENSE THIRD-PARTY-NOTICES.md dist/ && cp -R licenses dist/licenses
           # Open Media Transport, next to the program where Pinol looks for it first (MIT, built from source)
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
           cp "$RUNNER_TEMP/omt/libomt.so" "$RUNNER_TEMP/omt/libvmx.so" "$RUNNER_TEMP/omt/OMT-LICENSES.txt" dist/
@@ -431,7 +431,7 @@ jobs:
           done < <(find "$APP/Contents" -type f -print0)
           test -x "$EXE"
           test -d "$APP/Contents/Resources/isf"
-          cp LICENSE.md THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
+          cp LICENSE THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
           cat > "$APP/Contents/Resources/README-Dependencies.txt" <<'EOF'
           Pinol macOS runtime notes
 
@@ -544,7 +544,7 @@ jobs:
 
           Copy-Item build\Pinol.exe dist\Pinol.exe -Force
           Copy-Item -Recurse -Force build\isf dist\isf
-          Copy-Item LICENSE.md, THIRD-PARTY-NOTICES.md -Destination dist -Force
+          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 
           # Deploy Qt libraries, platform plugins, multimedia plugins and the MSVC runtime.
