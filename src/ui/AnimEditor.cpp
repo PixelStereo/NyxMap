@@ -1208,11 +1208,12 @@ void TrackRow::setLive(double captured, const std::array<double, 3> &capturedRgb
 {
     if (track().color) {
         auto rgb = capturedRgb;
-        if (!running || !std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }))
-            m_e->animColorValue(track().layer, track().param, &rgb);
+        if (!running) m_e->animColorValue(track().layer, track().param, &rgb);
+        else if (!std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }) && !track().keys.empty())
+            rgb = track().keys.front().rgb; // enabled mid-play: the engine uses this placeholder until the next start
         m_colorLane->setLive(rgb);
     } else if (!m_lane->track().keys.empty() && m_lane->track().keys.front().isCurrentValue)
-        m_lane->setLive(running && std::isfinite(captured) ? captured : currentValue());
+        m_lane->setLive(running ? (std::isfinite(captured) ? captured : track().keys.front().v) : currentValue());
 }
 
 std::pair<double, double> TrackRow::fullRange() const { return {m_lane->fullLo(), m_lane->fullHi()}; }

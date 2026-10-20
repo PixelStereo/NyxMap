@@ -132,12 +132,24 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
         undo.redo(); pump(); check(engine.layerAnim(id, target.path, &animated) && animated.tracks.front().color, "Redo restores RGB type");
         if (!animated.tracks.empty()) {
             const auto from = animated.tracks.front().keys.front().rgb;
+            animated.tracks.front().keys.front().isCurrentValue = true; // activated during playback, before a fresh capture
             animated.tracks.front().keys.back().rgb = {.1, .8, .3};
             engine.setLayerAnim(id, target.path, &animated);
             engine.controlLayerAnim(id, target.path, AnimAction::Seek, animated.duration / 2);
-            std::array<double, 3> rgb;
+            std::array<double, 3> rgb{};
             check(engine.animColorValue(id, target.path, &rgb) && std::abs(rgb[0] - (from[0] + .1) / 2) < 1e-4 &&
                   std::abs(rgb[1] - (from[1] + .8) / 2) < 1e-4, "local RGB animation evaluates all channels together");
+            pump();
+            for (auto *editor : inspector.findChildren<ParamAnimEditor *>()) if (editor->param() == target.path) {
+                editor->poll();
+                for (auto *lane : editor->findChildren<ColorLane *>()) if (lane->isVisible()) {
+                    const QImage preview = lane->grab().toImage();
+                    const QColor midpoint = preview.pixelColor(preview.width() / 2 + 4, 48); // beside the playhead
+                    check(std::abs(midpoint.redF() - rgb[0]) < .02 && std::abs(midpoint.greenF() - rgb[1]) < .02 &&
+                          std::abs(midpoint.blueF() - rgb[2]) < .02,
+                          "mid-play current-value preview matches the engine without feeding back its moving output");
+                }
+            }
         }
         paramanim::remove(&engine, &undo, id, target.path); pump();
     }
