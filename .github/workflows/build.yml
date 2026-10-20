@@ -414,6 +414,10 @@ jobs:
           done < <(brew list --formula | sort -u)
 
           "$QT_PREFIX/bin/macdeployqt" "$APP" -verbose=2 -always-overwrite "${LIBPATH_ARGS[@]}"
+          # Qt Virtual Keyboard is GPL-3.0 only in Qt's open source edition, and Pinol has no use for it: macdeployqt
+          # copies it with the input context plugins, take it out before the dependencies are resolved
+          rm -rf "$APP"/Contents/Frameworks/QtVirtualKeyboard*.framework "$APP/Contents/PlugIns/virtualkeyboard" \
+            "$APP"/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin*.dylib
 
           # Open Media Transport (MIT, built from source, universal): in Frameworks, where Pinol looks for it first
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
