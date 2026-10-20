@@ -65,7 +65,7 @@ These are engineering capabilities, **not a guarantee of a particular frame rate
 | Apple Silicon build; a `.app` in a ZIP | MSVC x64 build; Qt and FFmpeg DLLs included | Ubuntu 24.04 x86_64 archive; runtime packages required |
 | Ad-hoc signed; **not notarized** | Includes Visual C++ runtime installer | Not yet a self-contained AppImage |
 
-OMT (Open Media Transport) is included in the packages, built from source (MIT). Optional NDI and DeckLink features require compatible vendor runtimes/drivers. Consult the [distribution limitations](docs/README.md#known-limitations) for distribution details.
+OMT (Open Media Transport, built from source, MIT) and the NDI runtime (from the NDI SDK, under its licence agreement) are included in the packages. Optional DeckLink features require Blackmagic Desktop Video. Consult the [distribution limitations](docs/README.md#known-limitations) for distribution details.
 
 ## Build from source
 

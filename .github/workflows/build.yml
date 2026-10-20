@@ -80,7 +80,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
-            libasound2-dev ffmpeg xvfb clang zlib1g-dev
+            libasound2-dev ffmpeg xvfb clang zlib1g-dev libavahi-client3
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
@@ -110,6 +110,10 @@ jobs:
           # Open Media Transport, next to the program where Pinol looks for it first (MIT, built from source)
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
           cp "$RUNNER_TEMP/omt/libomt.so" "$RUNNER_TEMP/omt/libvmx.so" "$RUNNER_TEMP/omt/OMT-LICENSES.txt" dist/
+          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
+          python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
+          cp "$RUNNER_TEMP/ndi/libndi.so.6" "$RUNNER_TEMP/ndi/Processing.NDI.Lib.Licenses.txt" "$RUNNER_TEMP/ndi/NDI-NOTICE.txt" dist/
+          cat "$RUNNER_TEMP/ndi/NDI-SDK.txt" >> deps-linux.txt
           cat > dist/README-Linux.txt <<'EOF'
           Pinol Linux x86_64 — runtime requirements
 
@@ -119,7 +123,8 @@ jobs:
 
           Extract the archive and run ./Pinol from this directory so the adjacent ./isf shaders can be found.
           OMT (Open Media Transport) is included: libomt.so and libvmx.so, licences in OMT-LICENSES.txt.
-          NDI and Blackmagic DeckLink still need their vendor runtimes installed.
+          NDI is included: libndi.so.6 from the NDI SDK (NDI-NOTICE.txt, Processing.NDI.Lib.Licenses.txt).
+          Blackmagic DeckLink still needs its vendor driver installed.
           Other Linux distributions may require equivalent runtime packages.
           EOF
           TAG_SUFFIX=""
@@ -414,6 +419,11 @@ jobs:
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
           cp "$RUNNER_TEMP/omt/libomt.dylib" "$RUNNER_TEMP/omt/libvmx.dylib" "$APP/Contents/Frameworks/"
           cp "$RUNNER_TEMP/omt/OMT-LICENSES.txt" "$APP/Contents/Resources/"
+          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
+          python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
+          cp "$RUNNER_TEMP/ndi/libndi.dylib" "$APP/Contents/Frameworks/"
+          cp "$RUNNER_TEMP/ndi/Processing.NDI.Lib.Licenses.txt" "$RUNNER_TEMP/ndi/NDI-NOTICE.txt" "$APP/Contents/Resources/"
+          cat "$RUNNER_TEMP/ndi/NDI-SDK.txt" >> deps-macos.txt
 
           # Resolve and bundle every non-system dependency recursively, including @rpath libraries
           # (e.g. WebP -> SharpYUV). The helper fails closed when a dependency is missing/ambiguous.
@@ -459,11 +469,10 @@ jobs:
           OMT (Open Media Transport) is included: libomt and libvmx in Contents/Frameworks, built from
           source (MIT licences in Contents/Resources/OMT-LICENSES.txt).
 
-          Some optional hardware/network features may still require vendor software installed separately:
-          - Blackmagic DeckLink: Blackmagic Desktop Video driver/runtime.
-          - NDI: the NDI runtime, subject to its own redistribution terms.
+          NDI is included: libndi.dylib in Contents/Frameworks, from the NDI SDK under its licence agreement
+          (Contents/Resources/NDI-NOTICE.txt and Processing.NDI.Lib.Licenses.txt).
 
-          These vendor runtimes are not part of this repository and are not bundled automatically.
+          Blackmagic DeckLink still requires the Blackmagic Desktop Video driver, installed separately.
           EOF
           # The archive is intentionally not notarized. macOS users may need to approve
           # this app manually because it is not signed with a paid Developer ID certificate.
@@ -587,6 +596,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "OMT build failed" }
           Copy-Item "$env:RUNNER_TEMP\omt\libomt.dll", "$env:RUNNER_TEMP\omt\libvmx.dll", "$env:RUNNER_TEMP\omt\OMT-LICENSES.txt" -Destination dist -Force
 
+          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
+          python scripts/fetch_ndi.py "$env:RUNNER_TEMP\ndi"
+          if ($LASTEXITCODE -ne 0) { throw "NDI fetch failed" }
+          Copy-Item "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.x64.dll", "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.Licenses.txt", "$env:RUNNER_TEMP\ndi\NDI-NOTICE.txt" -Destination dist -Force
+
           # Include Microsoft's official x64 Visual C++ Redistributable installer.
           Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "dist\vc_redist.x64.exe"
 
@@ -611,9 +625,11 @@ jobs:
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
 
-          Some optional hardware/network features may require vendor software installed separately:
+          NDI is included: Processing.NDI.Lib.x64.dll from the NDI SDK under its licence agreement
+          (NDI-NOTICE.txt and Processing.NDI.Lib.Licenses.txt).
+
+          Some optional hardware features may require vendor software installed separately:
           - Blackmagic DeckLink: Blackmagic Desktop Video driver/runtime.
-          - NDI: the NDI runtime, subject to its own redistribution terms.
 
           These vendor runtimes are not part of this repository and are not bundled automatically.
           '@ | Set-Content -Encoding utf8 dist\README-Dependencies.txt
@@ -622,7 +638,8 @@ jobs:
           $ffv = (& "$ffmpegBin\ffmpeg.exe" -version | Select-Object -First 1)
           $sha = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash
           @("Built on Windows (MSVC 2022), commit $env:GITHUB_SHA", "Qt 6.8.3 (win64_msvc2022_64, Qt Multimedia)",
-            "FFmpeg: $env:FFMPEG_ZIP from BtbN/FFmpeg-Builds release '$env:FFMPEG_RELEASE'", "  $ffv", "  zip SHA-256 $sha") |
+            "FFmpeg: $env:FFMPEG_ZIP from BtbN/FFmpeg-Builds release '$env:FFMPEG_RELEASE'", "  $ffv", "  zip SHA-256 $sha",
+            (Get-Content "$env:RUNNER_TEMP\ndi\NDI-SDK.txt")) |
             Set-Content -Encoding utf8 dist\DEPENDENCIES.txt
           Get-Content dist\DEPENDENCIES.txt
 
