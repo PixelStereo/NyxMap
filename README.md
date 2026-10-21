@@ -54,7 +54,7 @@ Latest published build: **[v0.2](https://github.com/PixelStereo/Pinol/releases/t
 
 The next Linux release provides a self-contained **AppImage** and **portable archive** for Ubuntu 24.04 or newer, including Qt, FFmpeg, NDI and OMT. The portable archive runs without FUSE or installation. The older v0.2 Linux archive above still needs system libraries; see the [launch instructions](docs/build.md#get-started).
 
-For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
+To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds Pinol and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
 
 ## License
 

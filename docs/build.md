@@ -50,6 +50,32 @@ CI checks both final packages in unprivileged **Ubuntu 24.04 and 26.04** contain
 
 ## Build from source
 
+### In one command
+
+Clone the repository, then run the build script: it installs what is missing, builds Pinol (with OMT, and NDI if you
+accept the NDI SDK licence when it asks) and opens it.
+
+```bash
+git clone https://github.com/PixelStereo/Pinol.git
+cd Pinol
+./build.sh          # macOS, Linux (Ubuntu/Debian), and Windows in Git Bash
+```
+
+On Windows without Git Bash, double-click `build.cmd` (or run `build.cmd` in a terminal).
+
+| | What it installs |
+|---|---|
+| macOS | Apple's command line tools, [Homebrew](https://brew.sh) if missing, then `qt ffmpeg cmake pkg-config dotnet git` |
+| Ubuntu/Debian | the apt packages listed below (it asks for your password) |
+| Windows | with winget: Git, CMake, Ninja, Python, LLVM, the .NET 8 SDK and the Visual Studio 2022 Build Tools (C++); then Qt and an LGPL FFmpeg build in `build-deps\`, at the versions the CI uses |
+
+Options (the same on every system): `--no-install` (use what is installed), `--no-run` (do not open Pinol),
+`--accept-ndi-license` or `--no-ndi` (do not ask about NDI), `--clean` (start from an empty build folder), `--debug`.
+Run it again after `git pull` to rebuild. CI runs the scripts on fresh macOS, Ubuntu and Windows machines
+(`.github/workflows/build-scripts.yml`).
+
+### Step by step
+
 **Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Clone with submodules:
 
 ```bash
