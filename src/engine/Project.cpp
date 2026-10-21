@@ -190,6 +190,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["path"] = l.sourcePath;
         if (!projectDir.isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
+    if (type == SourceType::Image && l.psdLayer >= 0) { // one layer of a Photoshop file
+        src["psd_layer"] = l.psdLayer;
+        src["psd_layer_name"] = l.psdLayerName;
+    }
     if (!l.transition.isEmpty()) src["transition"] = l.transition;
     o["source"] = src;
     QJsonArray fx;
@@ -268,11 +272,18 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             markMissing(*layer(index), video ? SourceType::Video : SourceType::Audio, path, err);
         }
     } else if (type == "image") {
-        const bool ok = setLayerImage(index, path, &err);
+        const int psdLayer = src.value("psd_layer").toInt(-1);
+        const QString psdLayerName = src.value("psd_layer_name").toString();
+        const bool ok = setLayerImage(index, path, &err, psdLayer, psdLayerName);
         if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
-        if (!ok) {
-            Lock lk(&m_mutex);
-            markMissing(*layer(index), SourceType::Image, path, err);
+        Lock lk(&m_mutex);
+        Layer *l = layer(index);
+        if (l && !ok) {
+            markMissing(*l, SourceType::Image, path, err);
+            l->psdLayer = psdLayer; // kept with its path, for when the file is there again
+            l->psdLayerName = psdLayerName;
+        } else if (l && !l->error.isEmpty() && warnings) { // its Photoshop layer is not there any more
+            *warnings << name + ": " + l->error;
         }
     } else if (type == "layer") {
         // The referenced layer may not be loaded yet: the id is kept as it is and checked once the project is read

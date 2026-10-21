@@ -2,6 +2,7 @@
 #include "LiveInput.h"
 #include "Engine.h"
 #include "ImageFile.h"
+#include "Psd.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -618,6 +619,20 @@ void MediaBin::refreshText()
     m_inputs->setText(0, QStringLiteral("Inputs (%1)").arg(m_inputs->childCount()));
 }
 
+// A Photoshop file as a layer reads it: its size and how many layers it has to choose from (empty when it cannot)
+static QString psdInfo(const QString &path)
+{
+    QSize canvas;
+    const QVector<PsdLayerInfo> layers = isPsdFile(path) ? psdLayers(path, nullptr, &canvas) : QVector<PsdLayerInfo>();
+    if (!canvas.isValid()) return {};
+    const auto count = std::count_if(layers.begin(), layers.end(), [](const PsdLayerInfo &l) { return !l.group; });
+    return QStringLiteral("%1×%2 · PSD, %3 layer%4\tAll its layers, or one of them chosen in the layer's Source tab")
+        .arg(canvas.width())
+        .arg(canvas.height())
+        .arg(count)
+        .arg(count == 1 ? QString() : QStringLiteral("s"));
+}
+
 void MediaBin::probe(const QString &path)
 {
     if (m_probing.value(path)) return;
@@ -660,6 +675,8 @@ void MediaBin::probe(const QString &path)
                 if (!vi.matrix.isEmpty()) info += QStringLiteral(" · ") + vi.matrix;
                 info += QStringLiteral("\t") + more.join(QStringLiteral(" · "));
             }
+        } else if (const QString psd = psdInfo(path); !psd.isEmpty()) {
+            info = psd;
         } else {
             QImageReader r(path);
             const QSize s = r.size();

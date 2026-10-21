@@ -3,6 +3,7 @@
 #include "EngineInternal.h"
 #include "Midi.h"
 #include "ImageFile.h"
+#include "Psd.h"
 
 #include <QFontDatabase>
 #include <QDir>
@@ -825,6 +826,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.pendingImage = QImage();
     l.type = SourceType::None;
     l.sourcePath.clear();
+    l.psdLayer = -1;
+    l.psdLayerName.clear();
     l.error.clear();
     l.srcWidth = l.srcHeight = 0;
     l.missingType = SourceType::None;
@@ -1202,45 +1205,129 @@ bool Engine::setLayerAudio(int i, const QString &path, QString *err)
     return true;
 }
 
-bool Engine::setLayerImage(int i, const QString &path, QString *err)
+// A picture read for a layer, outside the lock: ready for its upload, and in sRGB too when its profile needs it
+struct DecodedImage {
+    QImage image, autoImage;
+    QColorSpace profile;
+    QString colorInfo;
+};
+
+static bool decodeImage(const QString &path, int psdLayer, DecodedImage &out, QString *err)
 {
-    if (!layer(i)) return false;
-    QImage img = readImageFile(path);
+    QString why;
+    QImage img = readImageFile(path, psdLayer, &why);
     if (img.isNull()) {
-        if (err) *err = QStringLiteral("Unreadable image: ") + path;
+        if (err) *err = psdLayer >= 0 && !why.isEmpty() ? why : QStringLiteral("Unreadable image: ") + path;
         return false;
     }
-    const QColorSpace profile = img.colorSpace();
-    const QString colorInfo = imageSourceDepth(img.format()) + QStringLiteral(" source · ") + imageColorDescription(profile);
-    QImage autoImage;
-    if (profile.isValid() && imageSourceColorKey(profile).isEmpty() && !hdrImageColorSpace(profile)) {
+    out.profile = img.colorSpace();
+    out.colorInfo = imageSourceDepth(img.format()) + QStringLiteral(" source · ") + imageColorDescription(out.profile);
+    if (out.profile.isValid() && imageSourceColorKey(out.profile).isEmpty() && !hdrImageColorSpace(out.profile)) {
         // Outside the render lock/thread. Preserve integer precision and alpha;
         // Qt handles ICC matrices, curves and chromatic adaptation here.
-        autoImage = prepareImageUpload(img.convertToFormat(imageUploadFormat(img)).convertedToColorSpace(QColorSpace::SRgb));
-        if (autoImage.isNull()) {
+        out.autoImage = prepareImageUpload(img.convertToFormat(imageUploadFormat(img)).convertedToColorSpace(QColorSpace::SRgb));
+        if (out.autoImage.isNull()) {
             if (err) *err = QStringLiteral("Unable to convert the embedded image profile to sRGB");
             return false;
         }
     }
-    img = prepareImageUpload(img);
+    out.image = prepareImageUpload(img);
+    return true;
+}
+
+// The layer of a Photoshop file a layer was showing: at its index while the layer there has its name, else the first
+// one with that name; -1 (all of them) with a warning when it is not in the file any more
+static int findPsdLayer(const QString &path, int index, const QString &name, QString *found, QString *warning)
+{
+    if (index < 0 || !isPsdFile(path)) return -1;
+    QString why;
+    const QVector<PsdLayerInfo> layers = psdLayers(path, &why);
+    auto fits = [&](int k) { return k >= 0 && k < layers.size() && !layers[k].group && (name.isEmpty() || layers[k].name == name); };
+    int k = fits(index) ? index : -1;
+    for (int c = 0; k < 0 && !name.isEmpty() && c < layers.size(); ++c)
+        if (fits(c)) k = c;
+    if (k < 0) {
+        *warning = why.isEmpty() ? QStringLiteral("Photoshop layer \"%1\" not found in %2: all its layers are shown")
+                                       .arg(name.isEmpty() ? QString::number(index) : name, QFileInfo(path).fileName())
+                                 : why;
+        return -1;
+    }
+    *found = layers[k].name;
+    return k;
+}
+
+bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLayer, const QString &psdLayerName)
+{
+    if (!layer(i)) return false;
+    QString name, warning;
+    psdLayer = findPsdLayer(path, psdLayer, psdLayerName, &name, &warning);
+    DecodedImage img;
+    if (psdLayer >= 0 && !decodeImage(path, psdLayer, img, &warning)) psdLayer = -1; // all of them, said so
+    if (psdLayer < 0 && !decodeImage(path, -1, img, err)) return false;
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
         if (!l) return false;
         g = detachSource(*l);
-        l->pendingImage = img; // uploaded to the GPU by the render thread
-        l->imageColorInfo = colorInfo;
-        l->imageProfile = profile;
-        l->pendingAutoImage = autoImage;
-        l->srcWidth = img.width();
-        l->srcHeight = img.height();
+        l->pendingImage = img.image; // uploaded to the GPU by the render thread
+        l->imageColorInfo = img.colorInfo;
+        l->imageProfile = img.profile;
+        l->pendingAutoImage = img.autoImage;
+        l->srcWidth = img.image.width();
+        l->srcHeight = img.image.height();
         l->type = SourceType::Image;
         l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->psdLayer = psdLayer;
+        l->psdLayerName = psdLayer >= 0 ? name : QString();
+        l->error = warning;
         if (isDefaultMapping(l->mapping))
-            l->mapping.fitAspect(double(img.width()) / img.height(), double(m_compSize.width()) / m_compSize.height());
+            l->mapping.fitAspect(double(img.image.width()) / img.image.height(), double(m_compSize.width()) / m_compSize.height());
     }
     releaseGarbage(g);
+    return true;
+}
+
+bool Engine::setLayerPsdLayer(int i, int psdLayer, QString *err)
+{
+    psdLayer = std::max(psdLayer, -1);
+    QString path;
+    {
+        Lock lk(&m_mutex);
+        const Layer *l = layer(i);
+        if (!l || l->type != SourceType::Image || !isPsdFile(l->sourcePath)) return false;
+        if (l->psdLayer == psdLayer && l->error.isEmpty()) return true;
+        path = l->sourcePath;
+    }
+    QString name;
+    if (psdLayer >= 0) {
+        QString why;
+        const QVector<PsdLayerInfo> layers = psdLayers(path, &why);
+        if (psdLayer >= layers.size() || layers[psdLayer].group) {
+            if (err) *err = why.isEmpty() ? QStringLiteral("This layer is not in the Photoshop file any more") : why;
+            return false;
+        }
+        name = layers[psdLayer].name;
+    }
+    // Read outside the lock; the picture, of the same file, takes the place of the one shown (its texture reused)
+    DecodedImage img;
+    if (!decodeImage(path, psdLayer, img, err)) return false;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Image || l->sourcePath != path) return false; // another source meanwhile
+        l->pendingImage = img.image;
+        l->imageColorInfo = img.colorInfo;
+        l->imageProfile = img.profile;
+        l->pendingAutoImage = img.autoImage;
+        l->sourceColorCachedKey.clear(); // its source color conversion is made again
+        l->srcWidth = img.image.width();
+        l->srcHeight = img.image.height();
+        l->psdLayer = psdLayer;
+        l->psdLayerName = name;
+        l->error.clear();
+    }
+    emit layersChanged();
     return true;
 }
 

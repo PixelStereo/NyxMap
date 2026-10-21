@@ -19,7 +19,7 @@ QString folderFor(const QString &path)
 {
     static const QSet<QString> movies = {"mov", "mp4", "m4v", "avi", "mkv", "mxf", "webm", "mpg", "mpeg", "nut",
                                          "wmv", "ts", "mts", "m2ts", "flv", "3gp", "ogv", "dv", "hap"};
-    static const QSet<QString> picts = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "exr", "psd",
+    static const QSet<QString> picts = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "exr", "psd", "psb",
                                         "tga", "heic", "heif", "svg", "dds", "hdr", "jp2"};
     static const QSet<QString> audio = {"wav", "aif", "aiff", "mp3", "aac", "m4a", "flac", "ogg", "opus", "wma", "caf"};
     static const QSet<QString> isf = {"fs", "frag", "vs", "vert"};

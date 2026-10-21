@@ -16,10 +16,13 @@
 #include "ViewportOutput.h"
 #include "Widgets.h"
 #include "SourceColor.h"
+#include "Psd.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
+#include <QHash>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFontComboBox>
@@ -41,6 +44,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
@@ -97,6 +101,7 @@ struct LayerValues {
     int genW = 0, genH = 0;
     double genSpeed = 1;
     int srcW = 0, srcH = 0; // an image's
+    int psdLayer = -1;      // the layer of its Photoshop file it shows (-1: all of them)
     // Another layer as the source, and the layers that could be chosen (id, name; cycles left out)
     quint64 sourceLayer = 0;
     LayerTap sourceTap = LayerTap::PostFx;
@@ -169,6 +174,7 @@ struct LayerValues {
         s.genSpeed = l->generator ? l->generator->speed : 1.0;
         s.srcW = l->srcWidth;
         s.srcH = l->srcHeight;
+        s.psdLayer = l->psdLayer;
         s.imageColorInfo = l->imageColorInfo;
         s.sourceColorSpace = l->sourceColorSpace;
         s.sourceColorStatus = ::sourceColorStatus(*l);
@@ -210,6 +216,28 @@ static QString fmtTime(double s)
     const int m = int(s) / 60;
     const double r = s - m * 60;
     return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(r, 5, 'f', 2, QLatin1Char('0'));
+}
+
+// The layers of a Photoshop file, read again only when the file changes (the inspector is rebuilt often)
+static QVector<PsdLayerInfo> cachedPsdLayers(const QString &path, QString *err)
+{
+    struct Entry {
+        QDateTime modified;
+        qint64 size = -1;
+        QVector<PsdLayerInfo> layers;
+        QString error;
+    };
+    static QHash<QString, Entry> cache;
+    const QFileInfo info(path);
+    Entry &e = cache[path];
+    if (e.modified != info.lastModified() || e.size != info.size()) {
+        e.modified = info.lastModified();
+        e.size = info.size();
+        e.error.clear();
+        e.layers = psdLayers(path, &e.error);
+    }
+    if (err) *err = e.error;
+    return e.layers;
 }
 
 // Empties a layout, the rows nested in it too (their widgets would stay, hidden, with their connections)
@@ -1005,6 +1033,46 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         hint->setStyleSheet("color:#888; font-size:11px;");
         v->addWidget(hint);
         return g;
+    }
+
+    // A Photoshop file: all its layers, or one of them alone at its place on the canvas (groups are not a choice).
+    // Listed from the top, as Photoshop lists them.
+    if (s.type == SourceType::Image && isPsdFile(s.sourcePath)) {
+        QString why;
+        const QVector<PsdLayerInfo> layers = cachedPsdLayers(s.sourcePath, &why);
+        auto *row = new QHBoxLayout;
+        auto *pick = new QComboBox;
+        pick->setObjectName(QStringLiteral("psdLayer"));
+        pick->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        pick->addItem(QStringLiteral("All layers"), -1);
+        for (int k = int(layers.size()) - 1; k >= 0; --k)
+            if (!layers[k].group)
+                pick->addItem(layers[k].path + (layers[k].visible ? QString() : QStringLiteral(" (hidden)")), k);
+        pick->setCurrentIndex(std::max(0, pick->findData(s.psdLayer)));
+        pick->setEnabled(!m_locked && pick->count() > 1); // a flat file: nothing else to choose
+        pick->setToolTip(!why.isEmpty() ? why
+                         : QStringLiteral("All layers: the picture as Photoshop shows it (the file's merged image)\n"
+                                          "A layer: that layer alone, at its place on the canvas, transparent elsewhere"));
+        auto apply = [this, id = s.id](int chosen) {
+            if (m_layerId != id || m_engine->isLocked(m_layer)) return; // rebuilt for another layer meanwhile
+            const QJsonObject before = m_engine->layerJson(m_layer);
+            const auto beforeAnimations = m_engine->captureAnimationTargets(id);
+            QString err;
+            if (!m_engine->setLayerPsdLayer(m_layer, chosen, &err)) {
+                if (!err.isEmpty()) QMessageBox::warning(this, QStringLiteral("PSD layer"), err);
+            } else if (m_engine->layerJson(m_layer) != before) {
+                m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, before, QStringLiteral("Change PSD Layer"), beforeAnimations));
+            }
+            emit layerChanged();
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+        };
+        row->addWidget(new ResetLabel(QStringLiteral("PSD layer"), [apply] { apply(-1); }));
+        row->addWidget(pick, 1);
+        v->addLayout(row);
+        // The inspector may be rebuilt while the list is open
+        connect(pick, &QComboBox::activated, this, [apply, guard = QPointer<QComboBox>(pick)](int k) {
+            if (guard) apply(guard->itemData(k).toInt());
+        });
     }
 
     // Text generator: the text typed here, and how it is set
@@ -2930,7 +2998,7 @@ QString LayerInspector::layoutKey() const
     if (!layer) return {};
     QStringList key{QString::number(layer->id), QString::number(int(layer->type)), layer->sourcePath,
         QString::number(layer->colorModels), QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
-        QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap))};
+        QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer)};
     for (const auto &effect : layer->effects) key << effect->path();
     return key.join(QChar(0x1f));
 }
