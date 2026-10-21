@@ -246,6 +246,7 @@ private:
     Engine *m_e;
     quint64 m_layer, m_viewport;
     float m_before, m_after;
+    qint64 m_time;
 };
 
 // A timeline (animation) edited: tracks, keys, duration, loop, repeat, speed, name. By id (the list may change).

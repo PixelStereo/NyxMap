@@ -212,6 +212,20 @@ static QString fmtTime(double s)
     return QStringLiteral("%1:%2").arg(m, 2, 10, QLatin1Char('0')).arg(r, 5, 'f', 2, QLatin1Char('0'));
 }
 
+// Empties a layout, the rows nested in it too (their widgets would stay, hidden, with their connections)
+static void clearLayout(QLayout *lay)
+{
+    while (QLayoutItem *item = lay->takeAt(0)) {
+        if (QWidget *w = item->widget()) {
+            w->setParent(nullptr);
+            w->deleteLater();
+        } else if (QLayout *l = item->layout()) {
+            clearLayout(l);
+        }
+        delete item;
+    }
+}
+
 // Thin rule between the blocks of a panel
 static QWidget *separator()
 {
@@ -1036,9 +1050,10 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             b->setEnabled(!m_locked);
             paint(b, c);
             connect(b, &QPushButton::clicked, this, [this, b, label, set, applyColor] {
+                const QPointer<QPushButton> guard(b); // the inspector may be rebuilt while the picker is open
                 const QColor picked = ColorPicker::getColor(b->property("color").value<QColor>(), this, label,
                     QStringLiteral("ui/colorPickerMode/layer/%1/text/%2").arg(m_layerId).arg(label));
-                if (picked.isValid()) applyColor(b, picked, label, set);
+                if (guard && picked.isValid()) applyColor(b, picked, label, set);
             });
             return b;
         };
@@ -2409,6 +2424,8 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
                     [id](Mapping &m) { m.meshMode = id == 1; });
     });
     connect(apply, &QPushButton::clicked, this, [this, cols, rows] {
+        const int c = cols->value(), r = rows->value(); // read before the question: rebuilt meanwhile, they are gone
+        const quint64 layer = m_layerId;
         bool deformed = false;
         for (const QPointF &o : cmd::SetMapping::read(m_engine, m_layer).offsets) deformed |= !o.isNull();
         if (deformed && QMessageBox::question(this, QStringLiteral("Mesh"),
@@ -2416,7 +2433,7 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
                                                              "(undoable with Ctrl+Z). Continue?"))
                             != QMessageBox::Yes)
             return;
-        const int c = cols->value(), r = rows->value();
+        if (m_layerId != layer) return; // another layer shown meanwhile
         editMapping(QStringLiteral("Mesh Density"), [c, r](Mapping &m) {
             m.resetMesh(c, r);
             m.meshMode = true;
@@ -2589,13 +2606,7 @@ void LayerInspector::showEffectParams()
 {
     if (!m_fxDetail) return;
     auto *lay = static_cast<QVBoxLayout *>(m_fxDetail->layout());
-    while (QLayoutItem *item = lay->takeAt(0)) {
-        if (QWidget *w = item->widget()) {
-            w->setParent(nullptr);
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(lay); // the Speed and Mask rows are layouts of their own
     QString name, error;
     bool valid = false;
     quint64 maskId = 0, selfId = 0;
