@@ -2,6 +2,7 @@
 #include "LiveInput.h"
 #include "Engine.h"
 
+#include <QAction>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QSet>
@@ -38,7 +39,46 @@
 
 namespace {
 // UsedRole: not removable (used, or always there); UsersRole: how many layers use it
-enum Role { PathRole = Qt::UserRole + 1, MissingRole, UsedRole, IsfRole, CategoryRole, UsersRole };
+enum Role { PathRole = Qt::UserRole + 1, MissingRole, UsedRole, IsfRole, CategoryRole, UsersRole, GroupOrderRole };
+
+class BinItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        const auto *tree = treeWidget();
+        const int column = tree ? tree->sortColumn() : 0;
+        const QVariant group = data(0, GroupOrderRole), otherGroup = other.data(0, GroupOrderRole);
+        if (group.isValid() && otherGroup.isValid()) {
+            // Sorting media must not shuffle their top-level type groups.
+            return tree && tree->header()->sortIndicatorOrder() == Qt::DescendingOrder
+                       ? group.toInt() > otherGroup.toInt() : group.toInt() < otherGroup.toInt();
+        }
+        if (column == 2) {
+            const int count = data(0, UsersRole).toInt(), otherCount = other.data(0, UsersRole).toInt();
+            if (count != otherCount) return count < otherCount;
+        } else {
+            const int compared = QString::localeAwareCompare(text(column), other.text(column));
+            if (compared) return compared < 0;
+        }
+        const int name = QString::localeAwareCompare(text(0), other.text(0));
+        return name ? name < 0 : data(0, PathRole).toString() < other.data(0, PathRole).toString();
+    }
+};
+
+// Updating a sort key can move an item immediately. Batch updates keep child
+// iteration safe and sort once after usage/metadata/discovery changes are complete.
+class SortingPause
+{
+public:
+    explicit SortingPause(QTreeWidget *tree) : m_tree(tree), m_enabled(tree->isSortingEnabled())
+    { if (m_enabled) m_tree->setSortingEnabled(false); }
+    ~SortingPause() { if (m_enabled) m_tree->setSortingEnabled(true); }
+private:
+    QTreeWidget *m_tree;
+    bool m_enabled;
+};
 
 // Replace… works on files: media, and ISF generators (not Text, Timecode or the live inputs)
 bool replaceable(const QTreeWidgetItem *it)
@@ -141,6 +181,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
 
     auto *tree = new BinTree;
     m_tree = tree;
+    m_tree->setObjectName(QStringLiteral("mediaBinTree"));
     m_tree->setColumnCount(4);
     m_tree->setHeaderLabels({QStringLiteral("File"), QStringLiteral("Info"), QStringLiteral("Layers"), QStringLiteral("Color space")});
     m_tree->setRootIsDecorated(true);
@@ -160,19 +201,65 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_tree->setColumnWidth(2, 56);
     m_tree->header()->setSectionResizeMode(3, QHeaderView::Interactive);
     m_tree->setColumnWidth(3, 170);
+    auto *header = m_tree->header();
+    header->setSectionsClickable(true);
+    header->setSortIndicatorShown(true);
+    header->setContextMenuPolicy(Qt::CustomContextMenu);
+    header->setToolTip(QStringLiteral("Click to sort; click again to reverse. Right-click to choose visible columns."));
+    auto *columns = new QToolButton;
+    columns->setObjectName(QStringLiteral("mediaBinColumns"));
+    columns->setText(QStringLiteral("Columns"));
+    columns->setToolTip(QStringLiteral("Choose visible columns; File is always shown"));
+    columns->setPopupMode(QToolButton::InstantPopup);
+    auto *columnMenu = new QMenu(columns);
+    columns->setMenu(columnMenu);
+    head->insertWidget(1, columns);
+    const QStringList columnKeys{QStringLiteral("file"), QStringLiteral("info"), QStringLiteral("layers"), QStringLiteral("colorSpace")};
+    QSettings preferences;
+    for (int column = 0; column < m_tree->columnCount(); ++column) {
+        const QString key = QStringLiteral("mediaBin/columns/") + columnKeys[column];
+        const bool visible = column == 0 || preferences.value(key, true).toBool();
+        m_tree->setColumnHidden(column, !visible);
+        auto *action = columnMenu->addAction(m_tree->headerItem()->text(column));
+        action->setCheckable(true);
+        action->setChecked(visible);
+        action->setEnabled(column != 0);
+        if (column == 0) continue;
+        connect(action, &QAction::toggled, this, [this, column, key](bool shown) {
+            m_tree->setColumnHidden(column, !shown);
+            QSettings().setValue(key, shown);
+            if (!shown && m_tree->sortColumn() == column) m_tree->sortItems(0, Qt::AscendingOrder);
+        });
+    }
+    connect(header, &QHeaderView::customContextMenuRequested, this, [header, columnMenu](const QPoint &pos) {
+        columnMenu->exec(header->mapToGlobal(pos));
+    });
+    int sortColumn = preferences.value(QStringLiteral("mediaBin/sortColumn"), 0).toInt();
+    auto sortOrder = preferences.value(QStringLiteral("mediaBin/sortOrder"), int(Qt::AscendingOrder)).toInt() == int(Qt::DescendingOrder)
+                         ? Qt::DescendingOrder : Qt::AscendingOrder;
+    if (sortColumn < 0 || sortColumn >= m_tree->columnCount() || m_tree->isColumnHidden(sortColumn)) {
+        sortColumn = 0;
+        sortOrder = Qt::AscendingOrder;
+    }
+    header->setSortIndicator(sortColumn, sortOrder);
+    connect(header, &QHeaderView::sortIndicatorChanged, this, [](int column, Qt::SortOrder order) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("mediaBin/sortColumn"), column);
+        settings.setValue(QStringLiteral("mediaBin/sortOrder"), int(order));
+    });
     m_tree->setTextElideMode(Qt::ElideMiddle);
     m_tree->setToolTip(QStringLiteral("Drag an item onto a layer (layer list, or the Source tab of the layer) to load it.\n"
                                       "ISF FX dragged onto a layer join its FX chain.\n"
                                       "Double-click: load into the selected layer."));
     tree->onDrop = [this](const QStringList &p) { importFiles(p); };
-    m_videos = new QTreeWidgetItem(m_tree, {QStringLiteral("Videos")});
-    m_images = new QTreeWidgetItem(m_tree, {QStringLiteral("Images")});
-    m_audios = new QTreeWidgetItem(m_tree, {QStringLiteral("Audio")});
+    m_videos = new BinItem(m_tree, {QStringLiteral("Videos")});
+    m_images = new BinItem(m_tree, {QStringLiteral("Images")});
+    m_audios = new BinItem(m_tree, {QStringLiteral("Audio")});
     // The generators, built in, always there: Text, Timecode
-    m_generators = new QTreeWidgetItem(m_tree, m_audios);
+    m_generators = new BinItem(m_tree, m_audios);
     m_generators->setText(0, QStringLiteral("Generators"));
     auto generator = [this](const QString &name, const QString &path) {
-        auto *it = new QTreeWidgetItem(m_generators);
+        auto *it = new BinItem(m_generators);
         it->setData(0, PathRole, path);
         it->setData(0, IsfRole, true); // no file: not relinked
         it->setData(0, MissingRole, false);
@@ -184,10 +271,13 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     };
     m_text = generator(QStringLiteral("Text"), kTextGeneratorPath);
     m_timecode = generator(QStringLiteral("Timecode"), kTimecodeGeneratorPath);
-    m_inputs = new QTreeWidgetItem(m_tree, m_generators);
+    m_inputs = new BinItem(m_tree, m_generators);
     m_inputs->setText(0, QStringLiteral("Inputs"));
-    m_isf = new QTreeWidgetItem(m_tree, {QStringLiteral("ISF")});
-    m_isfGenerators = new QTreeWidgetItem(m_isf, {QStringLiteral("Generators")});
+    m_isf = new BinItem(m_tree, {QStringLiteral("ISF")});
+    m_isfGenerators = new BinItem(m_isf, {QStringLiteral("Generators")});
+    int groupOrder = 0;
+    for (QTreeWidgetItem *group : {m_videos, m_images, m_audios, m_generators, m_inputs, m_isf})
+        group->setData(0, GroupOrderRole, groupOrder++);
     for (QTreeWidgetItem *cat : {m_videos, m_images, m_audios, m_generators, m_inputs, m_isf, m_isfGenerators}) {
         QFont f = cat->font(0);
         f.setBold(true);
@@ -238,6 +328,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         if (!p.isEmpty() && !it->data(0, MissingRole).toBool()) emit useAsSourceRequested(p);
     });
     refresh();
+    m_tree->setSortingEnabled(true);
 }
 
 QString MediaBin::selectedPath() const
@@ -248,6 +339,7 @@ QString MediaBin::selectedPath() const
 
 void MediaBin::refresh()
 {
+    const SortingPause sorting(m_tree);
     const auto usage = m_engine->mediaUsage();
     const QString selected = selectedPath();
 
@@ -265,7 +357,7 @@ void MediaBin::refresh()
             it = nullptr;
         }
         if (!it) {
-            it = new QTreeWidgetItem(cat);
+            it = new BinItem(cat);
             it->setData(0, PathRole, r.path);
             it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         }
@@ -301,7 +393,6 @@ void MediaBin::refresh()
     }
     for (auto e = existing.begin(); e != existing.end(); ++e)
         if (!seen.contains(e.key())) delete e.value();
-    for (QTreeWidgetItem *cat : {m_videos, m_images, m_audios}) cat->sortChildren(0, Qt::AscendingOrder);
     m_videos->setText(0, QStringLiteral("Videos (%1)").arg(nv));
     m_images->setText(0, QStringLiteral("Images (%1)").arg(ni));
     m_audios->setText(0, QStringLiteral("Audio (%1)").arg(na));
@@ -338,6 +429,7 @@ static QString isfCategory(const QStringList &categories)
 // by layers, filed by their ISF category.
 void MediaBin::refreshIsf()
 {
+    const SortingPause sorting(m_tree);
     struct Gen {
         QString name, category, description;
         QStringList users;
@@ -383,7 +475,7 @@ void MediaBin::refreshIsf()
     for (auto g = gens.cbegin(); g != gens.cend(); ++g) {
         QTreeWidgetItem *cat = categories.value(g->category);
         if (!cat) {
-            cat = new QTreeWidgetItem(m_isfGenerators);
+            cat = new BinItem(m_isfGenerators);
             cat->setData(0, CategoryRole, g->category);
             cat->setFlags(Qt::ItemIsEnabled);
             cat->setFirstColumnSpanned(true);
@@ -401,7 +493,7 @@ void MediaBin::refreshIsf()
             it = nullptr;
         }
         if (!it) {
-            it = new QTreeWidgetItem(cat);
+            it = new BinItem(cat);
             it->setData(0, PathRole, g.key());
             it->setData(0, IsfRole, true);
             it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
@@ -437,11 +529,9 @@ void MediaBin::refreshIsf()
     int total = 0;
     for (int c = 0; c < m_isfGenerators->childCount(); ++c) {
         QTreeWidgetItem *cat = m_isfGenerators->child(c);
-        cat->sortChildren(0, Qt::AscendingOrder);
         cat->setText(0, QStringLiteral("%1 (%2)").arg(cat->data(0, CategoryRole).toString()).arg(cat->childCount()));
         total += cat->childCount();
     }
-    m_isfGenerators->sortChildren(0, Qt::AscendingOrder);
     m_isfGenerators->setText(0, QStringLiteral("Generators (%1)").arg(total));
 }
 
@@ -475,10 +565,11 @@ void MediaBin::refreshInputs()
     QStringList signature;
     for (const Row &r : rows) signature << r.uri + (r.present ? "+" : "-") + users.value(r.uri).join(',');
     if (signature == m_inputsSignature && m_inputs->childCount() == int(rows.size())) return; // as it is: no flicker
+    const SortingPause sorting(m_tree);
     m_inputsSignature = signature;
     while (m_inputs->childCount()) delete m_inputs->takeChild(0);
     for (const Row &r : rows) {
-        auto *it = new QTreeWidgetItem(m_inputs);
+        auto *it = new BinItem(m_inputs);
         it->setData(0, PathRole, liveInputPath(r.uri));
         it->setData(0, IsfRole, true); // no file: not relinked
         it->setData(0, MissingRole, !r.present);
@@ -502,6 +593,7 @@ void MediaBin::refreshInputs()
 // The generators: the layers that use each
 void MediaBin::refreshText()
 {
+    const SortingPause sorting(m_tree);
     QStringList texts, timecodes;
     {
         Engine::Lock lk(&m_engine->mutex());
@@ -752,6 +844,7 @@ void MediaBin::contextMenu(const QPoint &pos)
 
 void MediaBin::rebuild()
 {
+    const SortingPause sorting(m_tree);
     // Read again: what the files are now (a file found again, a new version), the inputs there, the library's shaders
     m_info.clear();
     for (auto p = m_probing.begin(); p != m_probing.end();) p = p.value() ? std::next(p) : m_probing.erase(p);
