@@ -1285,7 +1285,8 @@ bool Engine::setLayerIsf(int i, const QString &path, QString *err, IsfFailure on
         Lock lk(&m_mutex);
         Layer *l = layer(i);
         if (!l) {
-            runGl([raw] { raw->releaseGl(); });
+            // Not waited for under the lock: the render thread may need it before it runs its tasks
+            runGl([gone = std::shared_ptr<IsfInstance>(std::move(inst))] { gone->releaseGl(); }, false);
             return false;
         }
         g = detachSource(*l);
@@ -1833,13 +1834,13 @@ bool Engine::setIsfImageInput(IsfInstance *inst, int input, const QString &path,
     if (!inst) return false;
     bool ok = false;
     QString e;
-    {
-        // As reloadIsfFile: the instance stays alive, and its inputs are not walked meanwhile, while the GL task runs
-        // without taking this lock again
+    // The GL task takes the lock itself: the instance stays alive and its inputs are not walked meanwhile, and no
+    // thread waits for the render thread while holding the lock (the render thread takes it outside its tasks too)
+    runGl([&] {
         Lock lk(&m_mutex);
-        if (!ownsIsfLocked(inst)) return false; // replaced or removed meanwhile
-        runGl([&] { ok = inst->setImageInput(input, path, &e); });
-    }
+        if (!ownsIsfLocked(inst)) return; // replaced or removed meanwhile
+        ok = inst->setImageInput(input, path, &e);
+    });
     if (err) *err = e;
     return ok;
 }
@@ -1895,24 +1896,23 @@ bool Engine::reloadIsf(IsfInstance *inst)
 {
     if (!inst) return false;
     bool ok = false;
-    // As reloadIsfFile: the instance stays alive, and its inputs (swapped by the reload) are not walked by a parameter
-    // meanwhile, while the GL task runs without taking this lock again
-    Lock lk(&m_mutex);
-    if (!ownsIsfLocked(inst)) return false; // replaced or removed meanwhile
+    // As setIsfImageInput: the GL task holds the lock, so the instance stays alive and its inputs (swapped by the
+    // reload) are not walked by a parameter meanwhile
     runGl([&] {
+        Lock lk(&m_mutex);
+        if (!ownsIsfLocked(inst)) return; // replaced or removed meanwhile
         // Transactional reload: the previous shader, its uniforms, images
         // and last good output survive any parse/compile failure.
         ok = inst->reloadSafely();
-    });
-    for
- (auto &l : m_layers) {
-        if (l->generator.get() == inst) {
-            l->error = inst->error();
-            if (ok) l->paramKey = 0; // changed input defaults/ranges need a new Parameter registry
+        for (auto &l : m_layers) {
+            if (l->generator.get() == inst) {
+                l->error = inst->error();
+                if (ok) l->paramKey = 0; // changed input defaults/ranges need a new Parameter registry
+            }
+            for (auto &fx : l->effects)
+                if (fx.get() == inst && ok) l->paramKey = 0;
         }
-        for (auto &fx : l->effects)
-            if (fx.get() == inst && ok) l->paramKey = 0;
-    }
+    });
     return ok;
 }
 
@@ -1921,8 +1921,9 @@ int Engine::reloadIsfFile(const QString &path, QString *error)
     const QString absolute = QFileInfo(path).absoluteFilePath();
     int reloaded = 0;
     QStringList errors;
-    Lock lock(&m_mutex); // keep instances alive while the GL task runs without taking this lock again
+    // The GL task holds the lock (instances kept alive); nothing waits for the render thread while holding it
     runGl([&] {
+        Lock lock(&m_mutex);
         for (auto &layer : m_layers) {
             auto reload = [&](IsfInstance *shader) {
                 if (!shader || QFileInfo(shader->path()).absoluteFilePath() != absolute) return;
