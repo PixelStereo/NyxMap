@@ -1,6 +1,7 @@
 #include "MediaBin.h"
 #include "LiveInput.h"
 #include "Engine.h"
+#include "ImageFile.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -681,6 +682,12 @@ void MediaBin::probe(const QString &path)
                     color = QStringLiteral("Not probed (large image)");
                 }
                 info += QStringLiteral("\t") + tags.join(QStringLiteral(" · "));
+            } else if (const QImage img = readImageFile(path); !img.isNull()) {
+                // No Qt plugin for it (OpenEXR, Photoshop, TIFF on Linux): FFmpeg decodes it, as the layer will
+                info = QStringLiteral("%1×%2 · FFmpeg\t%3 · %4")
+                           .arg(img.width()).arg(img.height())
+                           .arg(imageSourceDepth(img.format()), imageColorDescription(img.colorSpace()));
+                color = imageColorSpaceName(img.colorSpace());
             }
         }
         // Three fields: short info, tooltip details, explicit source color tags.

@@ -1,4 +1,5 @@
 #include "Isf.h"
+#include "ImageFile.h"
 #include "Osc.h"
 
 #include <QDateTime>
@@ -710,7 +711,7 @@ void IsfInstance::cacheLocations()
 
 static bool loadImageTexture(const QString &path, Texture2D &tex, QString *err)
 {
-    QImage img(path);
+    QImage img = readImageFile(path);
     if (img.isNull()) {
         if (err) *err = QStringLiteral("Unreadable image: ") + path;
         return false;

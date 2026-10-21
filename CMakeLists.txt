@@ -43,6 +43,7 @@ endif()
 add_library(pinol_engine STATIC
   src/engine/Gl.cpp
   src/engine/Isf.cpp
+  src/engine/ImageFile.cpp
   src/engine/IsfLibrary.cpp
   src/engine/Mapping.cpp
   src/engine/VideoDecoder.cpp

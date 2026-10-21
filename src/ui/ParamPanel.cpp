@@ -274,7 +274,7 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
                 const QPointer<QLabel> guard(name); // the panel may be rebuilt while the dialog is open
                 const QString f = QFileDialog::getOpenFileName(
                     this, QStringLiteral("Image for %1").arg(label), s.value("dirs/image").toString(),
-                    QStringLiteral("Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.gif *.webp *.tga)"));
+                    QStringLiteral("Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.gif *.webp *.tga *.exr *.psd)"));
                 if (!guard || f.isEmpty()) return;
                 s.setValue("dirs/image", QFileInfo(f).absolutePath());
                 QString err;
