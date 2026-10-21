@@ -256,7 +256,9 @@ void Engine::updateMidiInputs()
     }
     if (!m_midiScan->isActive()) m_midiScan->start();
     const QStringList names = midi::inputNames();
-    if (names == m_midiInNames && m_midiIns.size() == size_t(names.size())) return;
+    // m_midiInNames: every port tried, opened or not. A port that failed to open is not retried every scan (that
+    // would close and reopen all the others, losing their messages), only when the list of devices changes
+    if (names == m_midiInNames) return;
     m_midiIns.clear();
     m_midiInNames.clear();
     for (const QString &name : names) {

@@ -87,6 +87,8 @@ public:
     virtual ~CpuPublisher() = default;
     virtual bool start(const QString &name, const PublishSettings &s, QString *err) = 0;
     virtual void send(const CpuFrame &f) = 0;
+    // Done with the last frame sent: an asynchronous sender (NDI) waits until it no longer reads that buffer
+    virtual void flush() {}
     int receivers() const { return m_receivers.load(); }
     // Its state as it goes (what it plays, an error found after its start): false to keep the one given at its start
     virtual bool liveState(PublishState *) const { return false; }

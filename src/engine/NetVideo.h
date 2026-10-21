@@ -70,7 +70,8 @@ struct Lib {
     void (*recv_free_video_v2)(void *, const VideoFrameV2 *) = nullptr;
     bool canReceive() const { return ok && find_create_v2 && find_get_current_sources && recv_create_v3 && recv_capture_v2 && recv_free_video_v2; }
 };
-Lib &lib(const QString &extraFolder);
+// Loaded once (never unloaded), else tried again with a folder given. The record returned is never modified.
+const Lib &lib(const QString &extraFolder);
 } // namespace ndi
 
 namespace omt {
@@ -111,5 +112,6 @@ struct Lib {
     MediaFrame *(*receive)(void *, int, int) = nullptr;
     bool canReceive() const { return ok && discovery_getaddresses && receive_create && receive_destroy && receive; }
 };
-Lib &lib(const QString &extraFolder);
+// Loaded once (never unloaded), else tried again with a folder given. The record returned is never modified.
+const Lib &lib(const QString &extraFolder);
 } // namespace omt

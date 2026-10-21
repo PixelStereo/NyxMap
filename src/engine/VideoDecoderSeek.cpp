@@ -13,8 +13,11 @@ bool VideoDecoder::doSeek(double t)
 {
     int64_t ts = int64_t((t + m_startTime) / m_timeBase);
     int result = av_seek_frame(m_fmt, m_stream, ts, AVSEEK_FLAG_BACKWARD);
-    if (result < 0)
-        result = av_seek_frame(m_fmt, -1, int64_t(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+    if (result < 0) {
+        // The file's time (as the stream's seek above): its start time added, when it has one
+        const int64_t start = m_fmt->start_time != AV_NOPTS_VALUE ? m_fmt->start_time : 0;
+        result = av_seek_frame(m_fmt, -1, start + int64_t(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+    }
     if (result < 0) {
         markDecodeError(result, true, true);
         std::lock_guard<std::mutex> lk(m_mutex);

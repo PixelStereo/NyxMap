@@ -16,9 +16,11 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <new>
 #include <set>
 
 static constexpr size_t kMaxQueue = 6;
+static constexpr int kMaxVideoSide = 16384; // a picture's width or height, at most (the largest GPU textures)
 static constexpr size_t kMinQueue = 2; // frames a stream keeps ahead whatever the memory used by the others
 static constexpr size_t kStagingBudget = size_t(128) << 20; // upload buffers of one stream, at most
 static constexpr size_t kBytePool = 8;
@@ -325,6 +327,13 @@ bool VideoDecoder::open(const QString &path, QString *err)
             close();
             return false;
         }
+        // Its textures are allocated at this size: a damaged or hostile header must not ask for gigabytes
+        if (m_width > kMaxVideoSide || m_height > kMaxVideoSide
+            || av_image_check_size(unsigned(m_width), unsigned(m_height), 0, nullptr) < 0) {
+            if (err) *err = QStringLiteral("HAP video of an unsupported size (%1 × %2).").arg(m_width).arg(m_height);
+            close();
+            return false;
+        }
     } else {
         const AVCodec *dec = avcodec_find_decoder(par->codec_id);
         if (!dec) {
@@ -364,6 +373,12 @@ bool VideoDecoder::open(const QString &path, QString *err)
         m_codecName = QString::fromUtf8(dec->name);
         m_width = m_codec->width;
         m_height = m_codec->height;
+        if (m_width > kMaxVideoSide || m_height > kMaxVideoSide
+            || (m_width > 0 && m_height > 0 && av_image_check_size(unsigned(m_width), unsigned(m_height), 0, nullptr) < 0)) {
+            if (err) *err = QStringLiteral("Video of an unsupported size (%1 × %2).").arg(m_width).arg(m_height);
+            close();
+            return false;
+        }
     }
 
     m_timeBase = av_q2d(st->time_base);
@@ -615,6 +630,25 @@ std::vector<int> VideoDecoder::takeFreeStaging()
         m_stagingById.erase(s.id);
     }
     m_freeStaging.clear();
+    return ids;
+}
+
+// A frame of the old size recycled here after the size changed (skipped, or dropped by a seek) gives its buffer
+// back after takeFreeStaging() ran: never used again (too small) nor destroyed, it would stay counted as the
+// stream's (no new ones made, the frames uploaded from memory) and mapped
+std::vector<int> VideoDecoder::takeStaleStaging(size_t size)
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    std::vector<int> ids;
+    for (auto it = m_freeStaging.begin(); it != m_freeStaging.end();) {
+        if (it->size == size) {
+            ++it;
+            continue;
+        }
+        ids.push_back(it->id);
+        m_stagingById.erase(it->id);
+        it = m_freeStaging.erase(it);
+    }
     return ids;
 }
 
@@ -991,6 +1025,22 @@ void VideoDecoder::produceBackwardWindow()
 }
 
 void VideoDecoder::run()
+{
+    for (;;) {
+        try {
+            runLoop();
+            return;
+        } catch (const std::bad_alloc &) {
+            // A picture too large for the memory (a damaged or hostile file): reported, never std::terminate. The
+            // loop starts again and waits, as after a fatal error, for the next seek
+            markDecodeError(AVERROR(ENOMEM), false, true);
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_eof = true;
+        }
+    }
+}
+
+void VideoDecoder::runLoop()
 {
     uint64_t gen = 0;
     {

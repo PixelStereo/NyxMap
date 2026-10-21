@@ -21,6 +21,7 @@ constexpr double kJumpThreshold = 0.04;  // gap beyond which the stream jumps (f
 constexpr double kSeekThreshold = 0.5;   // realigning further than this needs a seek in the file
 constexpr double kMaxRateCorrection = 0.005;
 constexpr double kFadeSeconds = 0.008;
+constexpr int kMaxReadRetries = 5;       // consecutive demux errors retried before the track is taken as ended
 
 int64_t nowNs()
 {
@@ -115,16 +116,8 @@ bool AudioStream::open(const QString &path, int outputRate, QString *err)
         return false;
     }
 
-    AVChannelLayout in;
-    if (m_codec->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || m_codec->ch_layout.nb_channels <= 0)
-        av_channel_layout_default(&in, std::max(1, m_codec->ch_layout.nb_channels));
-    else
-        av_channel_layout_copy(&in, &m_codec->ch_layout);
-    AVChannelLayout out = AV_CHANNEL_LAYOUT_STEREO;
-    r = swr_alloc_set_opts2(&m_swr, &out, AV_SAMPLE_FMT_FLT, m_rate, &in, m_codec->sample_fmt, m_codec->sample_rate, 0,
-                            nullptr);
-    av_channel_layout_uninit(&in);
-    if (r < 0 || !m_swr || swr_init(m_swr) < 0) {
+    m_swrInLayout = new AVChannelLayout{};
+    if (!configureResampler(&m_codec->ch_layout, m_codec->sample_fmt, m_codec->sample_rate)) {
         if (err) *err = QStringLiteral("Audio resampler unavailable.");
         close();
         return false;
@@ -185,6 +178,13 @@ void AudioStream::close()
     m_head = m_tail = 0;
     m_queuedFrames = 0;
     if (m_swr) swr_free(&m_swr);
+    if (m_swrInLayout) {
+        av_channel_layout_uninit(m_swrInLayout);
+        delete m_swrInLayout;
+        m_swrInLayout = nullptr;
+    }
+    m_swrInFormat = -1;
+    m_swrInRate = 0;
     if (m_frame) av_frame_free(&m_frame);
     if (m_packet) av_packet_free(&m_packet);
     if (m_codec) avcodec_free_context(&m_codec);
@@ -193,6 +193,35 @@ void AudioStream::close()
 }
 
 int64_t AudioStream::clockNs() { return nowNs(); }
+
+// A layout without its channels' order (or none) is taken as the default one of its channel count
+static void normalizedLayout(AVChannelLayout *out, const AVChannelLayout *in)
+{
+    *out = AVChannelLayout{}; // a fresh one (av_channel_layout_copy releases what it held)
+    if (in->order == AV_CHANNEL_ORDER_UNSPEC || in->nb_channels <= 0 || av_channel_layout_copy(out, in) < 0)
+        av_channel_layout_default(out, std::max(1, in->nb_channels));
+}
+
+bool AudioStream::configureResampler(const AVChannelLayout *layout, int format, int rate)
+{
+    if (m_swr) swr_free(&m_swr);
+    av_channel_layout_uninit(m_swrInLayout);
+    m_swrInFormat = -1;
+    m_swrInRate = 0;
+    AVChannelLayout in{};
+    normalizedLayout(&in, layout);
+    AVChannelLayout out = AV_CHANNEL_LAYOUT_STEREO;
+    int r = swr_alloc_set_opts2(&m_swr, &out, AV_SAMPLE_FMT_FLT, m_rate, &in, AVSampleFormat(format), rate, 0, nullptr);
+    if (r < 0 || !m_swr || swr_init(m_swr) < 0) {
+        av_channel_layout_uninit(&in);
+        if (m_swr) swr_free(&m_swr);
+        return false;
+    }
+    *m_swrInLayout = in; // its ownership moves here
+    m_swrInFormat = format;
+    m_swrInRate = rate;
+    return true;
+}
 
 void AudioStream::setTransport(double clock, bool playing, double speed, const Timeline &timeline,
                                uint64_t timelineId, float gain, int64_t stampNs)
@@ -216,17 +245,23 @@ bool AudioStream::doSeek(double t)
 {
     const int64_t ts = int64_t((t + m_startTime) / m_timeBase);
     int result = av_seek_frame(m_fmt, m_stream, ts, AVSEEK_FLAG_BACKWARD);
-    if (result < 0)
-        result = av_seek_frame(m_fmt, -1, int64_t(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+    if (result < 0) {
+        // The file's time (as the stream's seek above): its start time added, when it has one
+        const int64_t start = m_fmt->start_time != AV_NOPTS_VALUE ? m_fmt->start_time : 0;
+        result = av_seek_frame(m_fmt, -1, start + int64_t(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+    }
     if (result < 0) {
         m_lastSeekError = result;
         qWarning("Pinol audio seek failed (%s): playback stops until the next seek", qPrintable(avErr(result)));
         return false;
     }
     avcodec_flush_buffers(m_codec);
-    swr_close(m_swr);
-    swr_init(m_swr);
+    if (m_swr) {
+        swr_close(m_swr);
+        swr_init(m_swr);
+    }
     m_draining = false;
+    m_readRetries = 0;
     m_nextPts = t;
     m_lastSeekError = 0;
     return true;
@@ -235,6 +270,15 @@ bool AudioStream::doSeek(double t)
 // Decode thread: into the next slot of the ring (waits while the ring is full; dropped if a seek came meanwhile)
 void AudioStream::pushSamples(const float *s, int frames, double pts)
 {
+    // In pieces of 0.25 s at most: a chunk always fits in the mixer's buffer (2 s), however large the decoded frame
+    const int most = std::max(1, int(m_rate * 0.25));
+    while (frames > most) {
+        pushSamples(s, most, pts);
+        if (m_quit || seekAsked()) return; // obsolete
+        s += size_t(most) * 2;
+        frames -= most;
+        pts += double(most) / m_rate;
+    }
     if (frames <= 0) return;
     const size_t head = m_head.load(std::memory_order_relaxed);
     while (head - m_tail.load(std::memory_order_acquire) >= kSlots) {
@@ -298,6 +342,20 @@ bool AudioStream::decodeRaw(const float **samples, int *frames, double *local)
             int64_t ts = m_frame->best_effort_timestamp;
             if (ts == AV_NOPTS_VALUE) ts = m_frame->pts;
             double t = ts != AV_NOPTS_VALUE ? ts * m_timeBase - m_startTime : m_nextPts;
+            // Its layout, sample format or rate changed (AC-3 channel changes, HE-AAC's SBR...): the resampler is
+            // set up again for it, as ffplay does, else it would read planes the frame does not have
+            AVChannelLayout layout{};
+            normalizedLayout(&layout, &m_frame->ch_layout);
+            const bool same = m_swr && m_frame->format == m_swrInFormat && m_frame->sample_rate == m_swrInRate
+                              && av_channel_layout_compare(&layout, m_swrInLayout) == 0;
+            av_channel_layout_uninit(&layout);
+            if (!same && (m_frame->sample_rate <= 0 || m_frame->format < 0
+                          || !configureResampler(&m_frame->ch_layout, m_frame->format, m_frame->sample_rate))) {
+                qWarning("Pinol audio: no resampler for a frame's format (%d Hz, %d channels): skipped",
+                         m_frame->sample_rate, m_frame->ch_layout.nb_channels);
+                av_frame_unref(m_frame);
+                continue;
+            }
             const int maxOut = swr_get_out_samples(m_swr, m_frame->nb_samples) + 32;
             if (m_convert.size() < size_t(maxOut) * 2) m_convert.resize(size_t(maxOut) * 2);
             uint8_t *outp = reinterpret_cast<uint8_t *>(m_convert.data());
@@ -322,11 +380,27 @@ bool AudioStream::decodeRaw(const float **samples, int *frames, double *local)
         if (r != AVERROR(EAGAIN)) return false;
         if (m_draining) return false;
         r = av_read_frame(m_fmt, m_packet);
+        if (r < 0 && r != AVERROR_EOF && m_readRetries < kMaxReadRetries) {
+            // Not the end of the file (EAGAIN, a disk / NAS error): read again after a pause, as the video does
+            const int delayMs = std::min(800, 50 << m_readRetries); // 50, 100, 200, 400, 800 ms
+            ++m_readRetries;
+            if (r != AVERROR(EAGAIN)) qWarning("Pinol audio read error (%s): retrying", qPrintable(avErr(r)));
+            if (m_fmt->pb) { // the demuxer keeps its error: cleared so that the next read reaches the file again
+                m_fmt->pb->error = 0;
+                m_fmt->pb->eof_reached = 0;
+            }
+            const int64_t until = nowNs() + int64_t(delayMs) * 1000000;
+            while (!m_quit && !seekAsked() && nowNs() < until) waitForWork();
+            if (m_quit) return false;
+            continue;
+        }
         if (r < 0) {
+            if (r != AVERROR_EOF) qWarning("Pinol audio read error (%s): the track ends here", qPrintable(avErr(r)));
             avcodec_send_packet(m_codec, nullptr); // flush
             m_draining = true;
             continue;
         }
+        m_readRetries = 0;
         if (m_packet->stream_index == m_stream) avcodec_send_packet(m_codec, m_packet);
         av_packet_unref(m_packet);
     }
@@ -532,7 +606,9 @@ void AudioStream::mix(float *out, int frames, double latency)
             if (c.generation == m_mixGeneration) {
                 // Aligning: a chunk that ends before the target position is useless
                 const bool behind = m_aligning && m_bufFrames == 0 && gap(c.pts) >= double(n) / m_rate;
-                if (!behind) {
+                if (!behind && n > capacity) {
+                    // Never fits (pushSamples splits larger ones): dropped, the stream would stall on it forever
+                } else if (!behind) {
                     if (m_bufFrames + n > capacity) break;
                     if (m_bufFrames == 0) {
                         m_bufPts = c.pts;
