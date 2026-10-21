@@ -29,6 +29,13 @@ compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next 
 corresponding source code is available from the links above; the exact versions used by a package are listed in its
 `DEPENDENCIES.txt`, and the source of those versions can also be requested from Pinol's maintainers for three years.
 
+**Linux package.** Qt, FFmpeg and their dependencies are bundled as shared libraries in `usr/lib` of the portable
+directory (extract an AppImage with `--appimage-extract` to obtain the same directory). Compatible modified LGPL
+libraries can be substituted there, then the application launched with `AppRun`. `usr/bin/THIRD-PARTY-LINUX.md`
+records the bundled binaries and their source package versions; copyright and licence texts are in
+`usr/bin/licenses/linux`. FFmpeg is built from checksummed source without GPL components; its exact source URL,
+version and configuration are recorded in `usr/bin/DEPENDENCIES.txt`.
+
 **macOS package.** It also contains the libraries Qt and FFmpeg depend on (images, fonts, compression, encryption,
 AV1 decoding…), copied from Homebrew when the package is built. Their list, versions, licences and licence texts are
 generated with the package: `THIRD-PARTY-MACOS.md` and `licenses/macos/` in `Pinol.app/Contents/Resources`. The

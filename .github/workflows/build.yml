@@ -80,10 +80,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
-            libasound2-dev ffmpeg xvfb clang zlib1g-dev libavahi-client3
+            libasound2-dev ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
+            nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-lgpl-linux
+          key: ffmpeg-lgpl-linux-ubuntu24-x86_64-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
+      - name: Shared LGPL FFmpeg
+        run: |
+          python3 scripts/build_ffmpeg_linux.py "$HOME/ffmpeg-lgpl-linux"
+          echo "PKG_CONFIG_PATH=$HOME/ffmpeg-lgpl-linux/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/ffmpeg-lgpl-linux/lib" >> "$GITHUB_ENV"
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -101,46 +112,29 @@ jobs:
             dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev libavcodec-dev libavformat-dev \
               libswscale-dev libswresample-dev libavutil-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
-      - name: Package Linux archive
+      - name: Package autonomous Linux distributions
         run: |
-          mkdir -p dist
-          install -Dm755 build/Pinol dist/Pinol
-          cp -R build/isf dist/isf
-          cp LICENSE THIRD-PARTY-NOTICES.md dist/ && cp -R licenses dist/licenses
-          # Open Media Transport, next to the program where Pinol looks for it first (MIT, built from source)
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
-          cp "$RUNNER_TEMP/omt/libomt.so" "$RUNNER_TEMP/omt/libvmx.so" "$RUNNER_TEMP/omt/OMT-LICENSES.txt" dist/
-          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
           python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
-          cp "$RUNNER_TEMP/ndi/libndi.so.6" "$RUNNER_TEMP/ndi/Processing.NDI.Lib.Licenses.txt" "$RUNNER_TEMP/ndi/NDI-NOTICE.txt" dist/
-          cat "$RUNNER_TEMP/ndi/NDI-SDK.txt" >> deps-linux.txt
-          cat > dist/README-Linux.txt <<'EOF'
-          Pinol Linux x86_64 — runtime requirements
-
-          This archive is built on Ubuntu 24.04 and is not a fully self-contained AppImage.
-          On Ubuntu 24.04, install the runtime libraries with:
-            sudo apt install libqt6widgets6 libqt6openglwidgets6 libqt6opengl6 libqt6multimedia6 qt6-qpa-plugins libgl1 libasound2t64 libavformat60 libavcodec60 libswscale7 libswresample4 libavutil58
-
-          Extract the archive and run ./Pinol from this directory so the adjacent ./isf shaders can be found.
-          OMT (Open Media Transport) is included: libomt.so and libvmx.so, licences in OMT-LICENSES.txt.
-          NDI is included: libndi.so.6 from the NDI SDK (NDI-NOTICE.txt, Processing.NDI.Lib.Licenses.txt).
-          Blackmagic DeckLink still needs its vendor driver installed.
-          Other Linux distributions may require equivalent runtime packages.
-          EOF
-          TAG_SUFFIX=""
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then TAG_SUFFIX="-$GITHUB_REF_NAME"; fi
-          cp deps-linux.txt dist/DEPENDENCIES.txt
-          tar -czf "Pinol-linux-x86_64${TAG_SUFFIX}.tar.gz" -C dist .
-      - name: Smoke test of the extracted archive
+          python3 scripts/package_linux.py build "$HOME/ffmpeg-lgpl-linux" "$RUNNER_TEMP/omt" "$RUNNER_TEMP/ndi" "$PWD/dist"
+      - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
         run: |
-          # Extracted elsewhere, run from there: its own ISF folder, a picture, a video decoded through FFmpeg
-          mkdir -p "$RUNNER_TEMP/clean" && tar -xzf Pinol-linux-x86_64*.tar.gz -C "$RUNNER_TEMP/clean"
-          xvfb-run -a python3 scripts/smoke_package.py "$RUNNER_TEMP/clean/Pinol" "$RUNNER_TEMP/clean/isf" \
-            "$PWD/test/media" "$RUNNER_TEMP/smoke"
+          docker build -t pinol-clean-runtime -f packaging/linux/smoke.Dockerfile packaging/linux
+          # Only distribution files, fixtures and the test harness cross this boundary.
+          mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
+          cp dist/Pinol-linux-x86_64*.AppImage dist/Pinol-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
+          cp scripts/smoke_package.py scripts/smoke_linux_package.py "$RUNNER_TEMP/linux-smoke-scripts/"
+          docker run --rm --network none \
+            -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
+            -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
+            -v "$PWD/test/media:/media:ro" \
+            pinol-clean-runtime xvfb-run -a python3 /scripts/smoke_linux_package.py /packages /media /tmp/check
       - uses: actions/upload-artifact@v4
         with:
           name: Pinol-linux
-          path: Pinol-linux-x86_64*.tar.gz
+          path: |
+            dist/Pinol-linux-x86_64*.AppImage
+            dist/Pinol-linux-x86_64*.tar.gz
 
   workspace-memory:
     if: needs.scope.outputs.memory == 'true'
@@ -669,7 +663,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
-    needs: [linux, macos, windows]
+    needs: [linux, macos, windows, validation]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -689,6 +683,7 @@ jobs:
           files: |
             dist/**/*.zip
             dist/**/*.tar.gz
+            dist/**/*.AppImage
 
   validation:
     name: Validation
