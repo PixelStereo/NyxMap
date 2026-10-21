@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QUndoStack>
 #include <QListWidget>
+#include <QLabel>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolButton>
@@ -31,10 +32,14 @@
 #include <QPushButton>
 #include <QApplication>
 #include <QSettings>
+#include <QScreen>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QStackedWidget>
 #include <QSurfaceFormat>
 #include <QTabBar>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 int runColorParameterUiTests(Engine &engine, const QString &root);
@@ -89,6 +94,60 @@ int main(int argc, char **argv)
         auto *sequences = window.findChild<SequenceWindow *>();
         auto *timelines = window.findChild<TimelineWindow *>();
         check(tabs && pages && lists && inspector && sequences && timelines, "all docked workspace controls present");
+        // Regressions: pane minima and long status strings used to force the
+        // native window wider than a screen, preventing macOS half-screen tiling.
+        {
+            const QSize original = window.size();
+            const QRect available = window.screen()->availableGeometry();
+            check(available.adjusted(-2, -2, 2, 2).contains(window.frameGeometry()),
+                  "initial window including its title bar fits the available screen");
+            auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
+            auto *libraryArea = window.findChild<QScrollArea *>("mainLibraryScroll");
+            auto *libraryTabs = libraryArea ? qobject_cast<QTabWidget *>(libraryArea->widget()) : nullptr;
+            const QSize halfScreen(std::max(320, available.width() / 2 - 16), std::max(320, available.height() - 80));
+            for (const QSize &compact : {halfScreen, QSize(640, 480), QSize(480, 360)}) {
+                window.resize(compact);
+                app.processEvents();
+                for (int mode : {0, 1, 2}) {
+                    if (tabs) tabs->setCurrentIndex(mode);
+                    if (mainTabs) mainTabs->setCurrentIndex(mode);
+                    if (libraryTabs) libraryTabs->setCurrentIndex(mode);
+                    app.processEvents();
+                    check(window.width() <= compact.width() && window.height() <= compact.height(),
+                          "switching workspace and inspector pages preserves a compact window size");
+                }
+            }
+            if (auto *status = window.findChild<QLabel *>("mainStatus")) {
+                const QString before = status->text();
+                status->setText(QString(1000, QLatin1Char('W')));
+                app.processEvents();
+                check(window.width() <= 480 && window.height() <= 360,
+                      "long output status cannot increase the window minimum size");
+                status->setText(before);
+            }
+            auto *editor = window.findChild<QScrollArea *>("showEditorScroll");
+            check(editor && editor->horizontalScrollBar()->maximum() > 0,
+                  "wide show controls remain reachable through horizontal scrolling");
+            if (editor) {
+                editor->horizontalScrollBar()->setValue(editor->horizontalScrollBar()->maximum());
+                check(editor->horizontalScrollBar()->value() == editor->horizontalScrollBar()->maximum(),
+                      "the right edge of a wide editor is reachable in a tiled window");
+            }
+            // A saved window from a larger/disconnected screen must also recover.
+            QWidget saved;
+            saved.setGeometry(10000, 10000, 9000, 9000);
+            window.hide();
+            check(window.restoreGeometry(saved.saveGeometry()), "restore saved geometry from a larger screen");
+            window.show();
+            app.processEvents();
+            check(window.screen()->availableGeometry().adjusted(-2, -2, 2, 2).contains(window.frameGeometry()),
+                  "oversized restored geometry is brought back inside the available screen");
+            window.resize(original);
+            if (tabs) tabs->setCurrentIndex(0);
+            if (mainTabs) mainTabs->setCurrentIndex(0);
+            if (libraryTabs) libraryTabs->setCurrentIndex(1);
+            app.processEvents();
+        }
         if (tabs && pages && lists && inspector && sequences && timelines) {
             check(!sequences->isWindow() && !timelines->isWindow(), "editors embedded rather than floating");
             check(tabs->count() == 3 && tabs->tabText(0) == "Snapshots" && tabs->tabText(1) == "Presets" && tabs->tabText(2) == "Timelines", "three named workspace tabs");

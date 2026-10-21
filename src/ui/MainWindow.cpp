@@ -59,6 +59,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QShortcut>
+#include <QShowEvent>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -70,6 +71,7 @@
 #include <QUndoStack>
 #include <QVBoxLayout>
 #include <QUrl>
+#include <algorithm>
 #include <cmath>
 
 static const QStringList kIsfExt = {"fs", "frag"};
@@ -79,9 +81,19 @@ static QScrollArea *scrolled(QWidget *w)
     auto *s = new QScrollArea;
     s->setWidget(w);
     s->setWidgetResizable(true);
-    s->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    s->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     s->setFrameShape(QFrame::NoFrame);
     return s;
+}
+
+// A pane may need more room than a tiled window can give it. Keep its controls
+// reachable through scrollbars instead of propagating their minimum to the window.
+static QScrollArea *workspacePane(QWidget *w, const QString &name)
+{
+    auto *area = scrolled(w);
+    area->setObjectName(name);
+    area->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    return area;
 }
 
 MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m_engine(engine)
@@ -226,7 +238,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs->setCurrentIndex(1);
 
     auto *top = new QSplitter(Qt::Horizontal);
-    top->addWidget(m_leftTabs);
+    top->addWidget(workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll")));
     // The preview, with the sequences' bar under it
     m_seqBar = new SequenceBar(m_engine);
     auto *center = new QWidget;
@@ -237,8 +249,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     cv->addWidget(previews, 1);
     connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
     cv->addWidget(m_seqBar);
-    top->addWidget(center);
-    top->addWidget(m_tabs);
+    top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
+    top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
     top->setStretchFactor(0, 0);
     top->setStretchFactor(1, 1);
     top->setStretchFactor(2, 0);
@@ -277,11 +289,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *librarySplit = new QSplitter(Qt::Horizontal);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
-    librarySplit->addWidget(library);
-    librarySplit->addWidget(workspacePages);
+    librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
+    librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
     librarySplit->setStretchFactor(0, 1);
     librarySplit->setStretchFactor(1, 3);
-    librarySplit->setSizes({300, 700});
+    librarySplit->setSizes({360, 700});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -292,7 +304,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         m_workspaceTabs->setCurrentIndex(mode);
     });
     auto *bottom = new QSplitter(Qt::Horizontal);
-    bottom->addWidget(m_seqWindow);
+    bottom->addWidget(workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll")));
     bottom->addWidget(workspace);
     bottom->setStretchFactor(0, 1);
     bottom->setStretchFactor(1, 2);
@@ -311,6 +323,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     setCentralWidget(split);
 
     m_status = new QLabel;
+    m_status->setObjectName(QStringLiteral("mainStatus"));
+    // Output names and live status can be arbitrarily long; they must not grow the window.
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(m_status);
 
     buildMenus();
@@ -600,6 +615,29 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     restoreGeometry(s.value("ui/geometry").toByteArray());
     split->restoreState(s.value("ui/mainSplit2").toByteArray());
     top->restoreState(s.value("ui/topSplit2").toByteArray());
+    fitToAvailableScreen();
+}
+
+void MainWindow::fitToAvailableScreen()
+{
+    if (!screen() || isMaximized() || isFullScreen()) return;
+    const QRect available = screen()->availableGeometry();
+    if (available.isEmpty()) return;
+    const QSize frameExtra = (frameGeometry().size() - size()).expandedTo(QSize(0, 0));
+    const QSize bounded = size().boundedTo((available.size() - frameExtra).expandedTo(QSize(1, 1)));
+    if (bounded != size()) resize(bounded);
+    const QRect frame = frameGeometry();
+    const QPoint position(std::clamp(frame.left(), available.left(), std::max(available.left(), available.right() - frame.width() + 1)),
+                          std::clamp(frame.top(), available.top(), std::max(available.top(), available.bottom() - frame.height() + 1)));
+    if (position != frame.topLeft()) move(position);
+}
+
+void MainWindow::showEvent(QShowEvent *e)
+{
+    QMainWindow::showEvent(e);
+    // Native title-bar/frame margins are known after the window has been shown.
+    // Do not enforce a preferred size during later user resizing or macOS tiling.
+    QTimer::singleShot(0, this, &MainWindow::fitToAvailableScreen);
 }
 
 MainWindow::~MainWindow()
