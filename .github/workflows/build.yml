@@ -133,11 +133,11 @@ jobs:
           for ubuntu_version in 24.04 26.04; do
             docker build -t pinol-clean-runtime --build-arg "UBUNTU_VERSION=$ubuntu_version" \
               -f packaging/linux/smoke.Dockerfile packaging/linux
-            docker run --rm --network none \
+            docker run --rm --init --network none \
               -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
               -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
               -v "$PWD/test/media:/media:ro" \
-              pinol-clean-runtime xvfb-run -a python3 /scripts/smoke_linux_package.py /packages /media /tmp/check
+              pinol-clean-runtime python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
           done
       - uses: actions/upload-artifact@v4
         with:

@@ -10,6 +10,8 @@ import re
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 
 HOST = re.compile(r"^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|anl)\.so.*|"
                   r"lib(GL|EGL|GLX|GLdispatch|OpenGL|GLESv[12]|glapi|gbm|drm[^.]*|"
@@ -25,7 +27,7 @@ def check_tree(tree):
         with path.open("rb") as stream:
             if stream.read(4) != b"\x7fELF":
                 continue
-        output = subprocess.check_output(["ldd", str(path)], env=env, text=True)
+        output = subprocess.check_output(["ldd", str(path)], env=env, text=True, timeout=15)
         if "not found" in output:
             sys.exit(f"Missing library for {path}:\n{output}")
         for name, location in re.findall(r"^\s*(\S+) => (/.+?)\s+\(0x[0-9a-fA-F]+\)", output, re.M):
@@ -82,4 +84,27 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # xvfb-run waits for a SIGUSR1 readiness handshake which can stall as a
+    # container entrypoint. Start the display directly and bound its readiness.
+    with tempfile.TemporaryDirectory(prefix="pinol-xvfb-") as tmp:
+        log = Path(tmp) / "server.log"
+        with log.open("w") as output:
+            print("Starting the isolated X11 display", flush=True)
+            server = subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+                                      stdout=output, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 15
+                while not Path("/tmp/.X11-unix/X99").exists():
+                    if server.poll() is not None or time.monotonic() > deadline:
+                        sys.exit("Xvfb did not become ready:\n" + log.read_text())
+                    time.sleep(0.1)
+                os.environ["DISPLAY"] = ":99"
+                print("Display ready; checking the packages", flush=True)
+                main()
+            finally:
+                server.terminate()
+                try:
+                    server.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.wait()
