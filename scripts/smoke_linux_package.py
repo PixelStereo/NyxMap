@@ -50,6 +50,21 @@ def main():
     check_tree(tree)
     smoke = Path(__file__).with_name("smoke_package.py")
     subprocess.run([sys.executable, smoke, tree / "AppRun", tree / "usr/bin/isf", media, work / "portable-render"], check=True)
+    # The desktop window also starts with these libraries, fonts and device plugins.
+    log = work / "desktop.log"
+    with log.open("w") as output:
+        desktop = subprocess.Popen([tree / "AppRun"], stdout=output, stderr=subprocess.STDOUT, cwd=work)
+        try:
+            desktop.wait(timeout=5)
+            sys.exit(f"Desktop exited during startup ({desktop.returncode}):\n{log.read_text()}")
+        except subprocess.TimeoutExpired:
+            desktop.terminate()
+            try:
+                desktop.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                desktop.kill()
+                desktop.wait()
+    print(log.read_text())
 
     # Exercise the actual AppImage runtime, including its FUSE-free launch path.
     image = next(packages.glob("*.AppImage"))

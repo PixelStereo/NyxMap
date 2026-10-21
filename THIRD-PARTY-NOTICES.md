@@ -16,6 +16,7 @@ library).
 | Blackmagic DeckLink SDK headers | DeckLink output (the driver is installed separately) | Boost Software License 1.0 | `licenses/decklink.txt` | https://www.blackmagicdesign.com/developer |
 | Open Media Transport: libomtnet, libomt, libvmx | OMT input and output | MIT | `OMT-LICENSES.txt` (in the package) | https://github.com/openmediatransport |
 | NDI® runtime | NDI input and output | NDI SDK License Agreement | `NDI-NOTICE.txt`, `Processing.NDI.Lib.Licenses.txt` (in the package) | https://ndi.video |
+| AppImage runtime (Linux) | Portable executable launcher | MIT; linked libfuse under LGPL v2.1, other linked libraries under permissive licences | `licenses/appimage-runtime.txt`, `licenses/LGPL-2.1.txt` | https://github.com/AppImage/type2-runtime |
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 

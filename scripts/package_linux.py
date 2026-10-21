@@ -16,6 +16,8 @@ import sys
 import tarfile
 import urllib.request
 
+from PIL import Image
+
 from build_ffmpeg_lgpl import GPL_ONLY, licence_problem
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,12 +95,20 @@ def package(build, ffmpeg, omt, ndi, output):
             sys.exit(f"Required Qt plugin missing: {required}")
     (binary / "qt.conf").write_text("[Paths]\nPrefix=..\nPlugins=plugins\n")
     gst = Path("/usr/lib/x86_64-linux-gnu/gstreamer-1.0")
-    for source in gst.glob("*.so"):
-        copy(source, library / "gstreamer-1.0" / source.name)
+    # Do not pick up arbitrary plugins preinstalled on a CI runner (bad/ugly,
+    # libav or x264 plugins could bring GPL code or the system FFmpeg along).
+    for package_name in ("libgstreamer1.0-0", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"):
+        for item in subprocess.check_output(["dpkg-query", "-L", package_name], text=True).splitlines():
+            source = Path(item)
+            if source.parent == gst and source.suffix == ".so":
+                copy(source, library / "gstreamer-1.0" / source.name)
     scanner = Path("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner")
     copy(scanner, app / "usr/libexec/gst-plugin-scanner")
     shutil.copytree("/usr/share/alsa", app / "usr/share/alsa")
+    for name in ("libasound_module_pcm_pulse.so", "libasound_module_ctl_pulse.so"):
+        copy(Path("/usr/lib/x86_64-linux-gnu/alsa-lib") / name, library / "alsa-lib" / name)
     copy(Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), app / "usr/share/fonts/DejaVuSans.ttf")
+    copy(ROOT / "packaging/linux/fonts.conf", app / "usr/share/fontconfig/fonts.conf")
 
     # Libraries loaded with dlopen() by audio, NDI and Native AOT are invisible to ldd.
     for pattern in ("libasound.so.2", "libpulse.so.0", "libavahi-client.so.3", "libudev.so.1",
@@ -107,15 +117,22 @@ def package(build, ffmpeg, omt, ndi, output):
         if not sources:
             sys.exit(f"Required runtime library missing: {pattern}")
         for source in sources:
-            copy(source, library / source.name)
+            # Keep SONAME links relative and store large ICU data only once.
+            copy(source.resolve(), library / source.resolve().name)
+            if source.is_symlink():
+                (library / source.name).symlink_to(source.resolve().name)
 
     tool = tools(output / "tools")
+    # Freedesktop icon sizes stop at 512 in linuxdeploy; the source artwork is larger.
+    icon = output / "pinol.png"
+    with Image.open(ROOT / "assets/pinol-app.png") as artwork:
+        artwork.resize((512, 512), Image.Resampling.LANCZOS).save(icon)
     env = {**os.environ, "APPIMAGE_EXTRACT_AND_RUN": "1", "NO_STRIP": "1",
            "LD_LIBRARY_PATH": f"{ffmpeg}/lib:{library}:{binary}"}
     # linuxdeploy handles desktop metadata and ELF rpaths; the closure below also
     # includes libraries its portable-baseline exclusion list would leave out.
     run([tool["linuxdeploy"], "--appdir", app, "--executable", binary / "Pinol",
-         "--desktop-file", ROOT / "packaging/linux/pinol.desktop", "--icon-file", ROOT / "assets/pinol-app.png",
+         "--desktop-file", ROOT / "packaging/linux/pinol.desktop", "--icon-file", icon,
          "--icon-filename", "pinol"], env=env)
 
     origins = {}
@@ -146,6 +163,15 @@ def package(build, ffmpeg, omt, ndi, output):
     launcher.chmod(0o755)
     notices = []
     packages = {}
+
+    def record_package(owner):
+        if owner not in packages:
+            packages[owner] = subprocess.check_output(
+                ["dpkg-query", "-W", "-f=${binary:Package} ${Version} (source: ${source:Package} ${source:Version})", owner], text=True)
+            copyright = Path("/usr/share/doc") / owner.split(":")[0] / "copyright"
+            copy(copyright, binary / "licenses/linux" / owner / "copyright")
+        return packages[owner]
+
     for path in sorted(p for p in app.rglob("*") if elf(p)):
         if GPL_ONLY.match(path.name):
             sys.exit(f"GPL-only library in package: {path}")
@@ -167,12 +193,13 @@ def package(build, ffmpeg, omt, ndi, output):
         if not owners:
             sys.exit(f"Cannot identify the source package of {path}")
         for owner in sorted(owners):
-            if owner not in packages:
-                record = subprocess.check_output(["dpkg-query", "-W", "-f=${binary:Package} ${Version} (source: ${source:Package} ${source:Version})", owner], text=True)
-                packages[owner] = record
-                copyright = Path("/usr/share/doc") / owner.split(":")[0] / "copyright"
-                copy(copyright, binary / "licenses/linux" / owner / "copyright")
-            notices.append(f"| {path.relative_to(app)} | {packages[owner]} |")
+            notices.append(f"| {path.relative_to(app)} | {record_package(owner)} |")
+    for pattern, label in (("/usr/share/alsa/*", "ALSA configuration data"),
+                           ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans fallback font")):
+        result = subprocess.check_output(["dpkg-query", "-S", pattern], text=True)
+        owners = {line.split(": ", 1)[0] for line in result.splitlines() if ": " in line}
+        for owner in sorted(owners):
+            notices.append(f"| {label} | {record_package(owner)} |")
     shutil.copytree("/usr/share/common-licenses", binary / "licenses/linux/common-licenses")
     (binary / "THIRD-PARTY-LINUX.md").write_text(
         "# Libraries in the Linux package\n\nQt, FFmpeg and their dependencies are dynamically linked. "
@@ -184,7 +211,7 @@ def package(build, ffmpeg, omt, ndi, output):
         "Pinol — Ubuntu 24.04 or newer, x86_64\n\n"
         "Portable archive: extract the whole folder, then run ./AppRun. No installation or FUSE needed.\n"
         "AppImage: chmod +x Pinol-linux-x86_64*.AppImage, then run it.\n"
-        "If FUSE is unavailable: ./Pinol-linux-x86_64.AppImage --appimage-extract-and-run\n"
+        "If FUSE is unavailable: ./Pinol-linux-x86_64*.AppImage --appimage-extract-and-run\n"
         "Qt, FFmpeg, audio/camera plugins, NDI and OMT are included. The host provides glibc, a desktop session "
         "and OpenGL 3.3 graphics drivers. Optional Blackmagic hardware needs Desktop Video.\n"
         "OMT discovery needs a running Avahi service; the application reports its absence.\n"

@@ -40,11 +40,11 @@ OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, un
 
 The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components, then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, GStreamer camera plugins, audio libraries, NDI and Native AOT OMT. It closes ELF dependencies, including dynamically loaded runtimes; only glibc and the host graphics stack are excluded.
 
-`packaging/linux/tools.json` pins SHA-256 checksums for the official [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy), [appimagetool](https://github.com/AppImage/appimagetool) and [static AppImage runtime](https://github.com/AppImage/type2-runtime) binaries. An upstream binary change fails packaging until the pin is reviewed. The static runtime does not require the `libfuse2` package; the portable archive and extraction launch work without FUSE.
+`packaging/linux/tools.json` pins fixed releases and SHA-256 checksums for the official [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy), [appimagetool](https://github.com/AppImage/appimagetool) and [static AppImage runtime](https://github.com/AppImage/type2-runtime) binaries. A checksum mismatch fails packaging. The static runtime does not require the `libfuse2` package; the portable archive and extraction launch work without FUSE.
 
 Every package contains `DEPENDENCIES.txt`, source package/version records, distribution copyright files and licence texts. To replace an LGPL library, extract the portable archive (or use `--appimage-extract`), replace compatible shared libraries in `usr/lib`, then launch `AppRun`.
 
-CI checks both final packages in an unprivileged Ubuntu container with **no Qt, FFmpeg, .NET or FUSE installed**, no network and no build tree mounted. It verifies dependency closure, loads the bundled NDI/OMT runtimes and renders a project with an image, a video and a packaged shader. Tag publication waits for platform packaging and the full validation gate.
+CI checks both final packages in unprivileged **Ubuntu 24.04 and 26.04** containers with **no Qt, FFmpeg, .NET or FUSE installed**, no network and no build tree mounted. It verifies dependency closure, loads the bundled NDI/OMT runtimes and renders a project with an image, a video and a packaged shader. Tag publication waits for platform packaging and the full validation gate.
 
 ## Build from source
 

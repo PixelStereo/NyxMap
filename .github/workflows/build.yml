@@ -80,13 +80,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
-            libasound2-dev ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
-            nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins \
+            libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
+            nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: ffmpeg-cache
         with:
           path: ~/ffmpeg-lgpl-linux
           key: ffmpeg-lgpl-linux-ubuntu24-x86_64-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
@@ -95,6 +96,11 @@ jobs:
           python3 scripts/build_ffmpeg_linux.py "$HOME/ffmpeg-lgpl-linux"
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-lgpl-linux/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$HOME/ffmpeg-lgpl-linux/lib" >> "$GITHUB_ENV"
+      - uses: actions/cache/save@v4
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/ffmpeg-lgpl-linux
+          key: ffmpeg-lgpl-linux-ubuntu24-x86_64-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -119,16 +125,19 @@ jobs:
           python3 scripts/package_linux.py build "$HOME/ffmpeg-lgpl-linux" "$RUNNER_TEMP/omt" "$RUNNER_TEMP/ndi" "$PWD/dist"
       - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
         run: |
-          docker build -t pinol-clean-runtime -f packaging/linux/smoke.Dockerfile packaging/linux
           # Only distribution files, fixtures and the test harness cross this boundary.
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
           cp dist/Pinol-linux-x86_64*.AppImage dist/Pinol-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
           cp scripts/smoke_package.py scripts/smoke_linux_package.py "$RUNNER_TEMP/linux-smoke-scripts/"
-          docker run --rm --network none \
-            -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
-            -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
-            -v "$PWD/test/media:/media:ro" \
-            pinol-clean-runtime xvfb-run -a python3 /scripts/smoke_linux_package.py /packages /media /tmp/check
+          for ubuntu_version in 24.04 26.04; do
+            docker build -t pinol-clean-runtime --build-arg "UBUNTU_VERSION=$ubuntu_version" \
+              -f packaging/linux/smoke.Dockerfile packaging/linux
+            docker run --rm --network none \
+              -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
+              -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
+              -v "$PWD/test/media:/media:ro" \
+              pinol-clean-runtime xvfb-run -a python3 /scripts/smoke_linux_package.py /packages /media /tmp/check
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: Pinol-linux

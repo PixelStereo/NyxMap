@@ -10,7 +10,9 @@ export GST_PLUGIN_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
 export GST_PLUGIN_SCANNER="$APPDIR/usr/libexec/gst-plugin-scanner"
 export ALSA_CONFIG_DIR="$APPDIR/usr/share/alsa"
 export ALSA_CONFIG_PATH="$ALSA_CONFIG_DIR/alsa.conf"
+export ALSA_PLUGIN_DIR="$APPDIR/usr/lib/alsa-lib"
 # Keep system fonts available, with a bundled fallback on minimal desktops.
 export QT_QPA_FONTDIR="$APPDIR/usr/share/fonts"
+export FONTCONFIG_FILE="$APPDIR/usr/share/fontconfig/fonts.conf"
 export QT_MEDIA_BACKEND=gstreamer
 exec "$APPDIR/usr/bin/Pinol" "$@"
