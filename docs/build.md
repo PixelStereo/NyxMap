@@ -88,11 +88,15 @@ cd Pinol
 
 ```bash
 brew install qt ffmpeg cmake pkg-config dotnet
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" \
+  -DPINOL_ACCEPT_NDI_SDK_LICENSE=ON  # NDI included: you accept the NDI SDK licence (see below)
 cmake --build build -j
 ```
 
 Run `build/Pinol.app`. The build is not Developer ID signed or notarized.
+
+Without `-DPINOL_ACCEPT_NDI_SDK_LICENSE=ON` the build works the same, without NDI. A build directory configured
+before keeps its options: run the `cmake -S …` line again to change them.
 
 </details>
 
@@ -104,7 +108,8 @@ sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev
   qt6-multimedia-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
   libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
   git clang dotnet-sdk-8.0  # OMT (see below)
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DPINOL_ACCEPT_NDI_SDK_LICENSE=ON  # NDI included: you accept the NDI SDK licence (see below)
 cmake --build build -j
 ./build/Pinol
 ```
@@ -114,10 +119,12 @@ cmake --build build -j
 <details>
 <summary><strong>Windows — MSVC 2022</strong></summary>
 
-Install Qt 6 (MSVC 2022, including Qt Multimedia), shared FFmpeg and CMake. From an MSVC developer shell:
+Install Qt 6 (MSVC 2022, including Qt Multimedia), shared FFmpeg (an LGPL build), CMake, and for OMT git, LLVM's
+clang and the .NET SDK. From an MSVC developer shell:
 
 ```powershell
-cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg"
+cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg" `
+  -DPINOL_ACCEPT_NDI_SDK_LICENSE=ON  # NDI included: you accept the NDI SDK licence (see below)
 cmake --build build --config Release
 ```
 

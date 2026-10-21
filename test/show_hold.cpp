@@ -1,6 +1,8 @@
 #include "Engine.h"
 #include "LiveInput.h"
+#include <QColor>
 #include <QFile>
+#include <QImage>
 #include <QTemporaryDir>
 #include <cmath>
 #include <cstdio>
@@ -85,6 +87,25 @@ void main() {
     engine.setCompositionSpeed(1);
     engine.renderFrame();
     check(counter->frames == received + 1, "resume consumes the newest external frame once");
+
+    // A picture loaded while paused shows at once, the other layers keep their held frame
+    const QString yellow = files.path() + "/yellow.png";
+    {
+        QImage image(32, 32, QImage::Format_RGB32);
+        image.fill(Qt::yellow);
+        check(image.save(yellow), "write a picture");
+    }
+    engine.setPaused(true);
+    engine.renderFrame();
+    const int receivedPaused = counter->frames;
+    const int picture = engine.addLayer("Picture", 0); // at the top of the list: drawn over the others
+    check(engine.setLayerImage(picture, yellow, &error), "load a picture while paused");
+    engine.renderFrame();
+    const QColor shown = engine.grabOutput().pixelColor(16, 16);
+    check(shown.red() > 250 && shown.green() > 250 && shown.blue() < 5, "a picture loaded while paused shows at once");
+    check(counter->frames == receivedPaused, "the other layers stay held");
+    engine.removeLayer(engine.indexOfId(engine.layerId(picture)));
+    engine.setPaused(false);
 
     // Exercise the shader uniforms themselves, without wall-clock sleeps or a
     // rendering thread: long elapsed time reaches TIME but not TIMEDELTA.

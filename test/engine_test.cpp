@@ -5,6 +5,7 @@
 #include "LogModel.h"
 #include "DeckLink.h"
 #include "Engine.h"
+#include "ImageFile.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
 #include "LayerTree.h"
@@ -5027,6 +5028,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     // 7. Media: usage, missing file kept, relink, media bin
     {
         e.newProject();
+        // A picture Qt has usually no reader for (OpenEXR): decoded by FFmpeg then, deeper than 8 bits
+        {
+            const QImage exr = readImageFile(root + "/media/red.exr");
+            CHECK(exr.width() == 32 && exr.height() == 16 && exr.depth() > 32);
+            const QColor c = exr.pixelColor(16, 8);
+            CHECK(c.red() > 250 && c.green() < 5 && c.blue() < 5);
+        }
         QFile::copy(root + "/media/h264.mp4", tmp + "/clip.mp4");
         int v = e.addLayer("Clip");
         CHECK(e.setLayerVideo(v, tmp + "/clip.mp4", &err));

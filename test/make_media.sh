@@ -5,6 +5,8 @@ ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -t 4 -pix_f
 ffmpeg -loglevel error -y -f lavfi -i testsrc=size=1920x1080:rate=25 -t 2 -c:v prores_ks -profile:v 2 prores.mov
 ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -t 2 -c:v hap hap.mov
 ffmpeg -loglevel error -y -f lavfi -i "smptebars=size=1024x768" -frames:v 1 bars.png
+# A picture Qt has no reader for: OpenEXR (32-bit float, linear), decoded through FFmpeg
+ffmpeg -loglevel error -y -f lavfi -i "color=c=0xff0000:s=32x16" -frames:v 1 -pix_fmt gbrpf32le -c:v exr red.exr
 # Sound: 440 Hz then 880 Hz from 2 s (44.1 kHz mono: exercises resampling), and a video with an audio track (660 Hz)
 ffmpeg -loglevel error -y -f lavfi -i "aevalsrc=0.5*sin(2*PI*if(lt(t\,2)\,440\,880)*t):s=44100:d=4" tone.wav
 ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=640x360:rate=25 -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=4" \
