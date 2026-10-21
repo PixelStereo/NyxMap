@@ -195,7 +195,8 @@ void Engine::blit(GLuint tex, const RenderTarget &target)
 
 void Engine::updateSource(Layer &l, double dt)
 {
-    if (timeScale() > 0 && !l.pendingImage.isNull()) {
+    // An image has no time: uploaded paused or not (its previous texture is already gone)
+    if (!l.pendingImage.isNull()) {
         l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
         if (!l.pendingAutoImage.isNull()) {
@@ -262,29 +263,31 @@ std::vector<bool> Engine::soloLeftOut() const
 void Engine::markNeeded()
 {
     for (auto &l : m_layers) l->referenced = false;
-    for (auto &l : m_layers) {
-        if (l->type == SourceType::Layer && l->sourceLayer) {
-            const int si = indexOfId(l->sourceLayer);
+    auto refer = [this](const Layer &l) { // the layers its picture is made from
+        if (l.type == SourceType::Layer && l.sourceLayer) {
+            const int si = indexOfId(l.sourceLayer);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         }
-        for (const auto &fx : l->effects)
+        for (const auto &fx : l.effects)
             if (fx->enabled && fx->maskLayer) {
                 const int mi = indexOfId(fx->maskLayer);
                 if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
             }
-        if (l->color.enabled && l->color.maskLayer) {
-            const int mi = indexOfId(l->color.maskLayer);
+        if (l.color.enabled && l.color.maskLayer) {
+            const int mi = indexOfId(l.color.maskLayer);
             if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
         }
-        if (l->matte.layer) {
-            const int mi = indexOfId(l->matte.layer);
+        if (l.matte.layer) {
+            const int mi = indexOfId(l.matte.layer);
             if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
         }
-        forEachImageLayer(*l, [&](quint64 id) {
+        forEachImageLayer(l, [&](quint64 id) {
             const int si = indexOfId(id);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
-    }
+    };
+    for (auto &l : m_layers) refer(*l);
+    for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
     const std::vector<bool> leftOut = soloLeftOut();
     for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloHidden = leftOut[i];
     // A group comes before its members: its verdict is known when they are reached
@@ -319,27 +322,32 @@ void Engine::renderPass(const IsfRenderContext &rc)
         if (m_renderMark[i] != Todo) return; // done, or being rendered (cycle)
         m_renderMark[i] = Doing;
         Layer &l = *m_layers[i];
-        if (l.type == SourceType::Layer && l.sourceLayer) {
-            const int si = indexOfId(l.sourceLayer);
-            if (si >= 0) render(size_t(si));
-        }
-        for (const auto &fx : l.effects) // the masks of its effects, before it
-            if (fx->enabled && fx->maskLayer) {
-                const int mi = indexOfId(fx->maskLayer);
+        auto dependencies = [&](const Layer &d) { // the layers its picture is made from, before it
+            if (d.type == SourceType::Layer && d.sourceLayer) {
+                const int si = indexOfId(d.sourceLayer);
+                if (si >= 0) render(size_t(si));
+            }
+            for (const auto &fx : d.effects) // the masks of its effects
+                if (fx->enabled && fx->maskLayer) {
+                    const int mi = indexOfId(fx->maskLayer);
+                    if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
+                }
+            if (d.color.enabled && d.color.maskLayer) { // the mask of its color
+                const int mi = indexOfId(d.color.maskLayer);
                 if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
             }
-        if (l.color.enabled && l.color.maskLayer) { // the mask of its color, before it
-            const int mi = indexOfId(l.color.maskLayer);
-            if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
-        }
-        if (l.matte.layer) { // its matte, before it
-            const int mi = indexOfId(l.matte.layer);
-            if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
-        }
-        forEachImageLayer(l, [&](quint64 id) { // the layers its shaders show as images, before it
-            const int si = indexOfId(id);
-            if (si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
-        });
+            if (d.matte.layer) { // its matte
+                const int mi = indexOfId(d.matte.layer);
+                if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
+            }
+            forEachImageLayer(d, [&](quint64 id) { // the layers its shaders show as images
+                const int si = indexOfId(id);
+                if (si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
+            });
+        };
+        dependencies(l);
+        const auto transition = l.isGroup || l.isViewport ? m_transitions.end() : m_transitions.find(l.id);
+        if (transition != m_transitions.end()) dependencies(*transition->second->from); // the outgoing source's too
         if (l.isViewport) {
             // What it sees: the items at the top of the list it shows, all rendered by now
             std::vector<Layer *> shown;
@@ -362,8 +370,7 @@ void Engine::renderPass(const IsfRenderContext &rc)
             else l.finalTex = l.rawTex = l.preFxTex = 0;
         } else {
             renderLayer(l, rc);
-            auto t = m_transitions.find(l.id);
-            if (t != m_transitions.end()) renderTransition(l, *t->second, rc);
+            if (transition != m_transitions.end()) renderTransition(l, *transition->second, rc);
         }
         if (!l.isViewport) prepareMatte(l); // before it is composited (a viewport or a group draws it later)
         m_renderMark[i] = Done;
@@ -483,14 +490,11 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
 // layer's picture; the layer's mapping, opacity and blend then apply to the mix.
 void Engine::renderTransition(Layer &l, SourceTransition &t, const IsfRenderContext &rc)
 {
-    if (t.frozen && t.target.tex) {
-        l.finalTex = t.target.tex;
-        l.finalW = t.target.w;
-        l.finalH = t.target.h;
-        return;
-    }
     renderLayer(*t.from, rc);
     const GLuint a = t.from->finalTex, b = l.finalTex;
+    t.incomingTex = b;
+    t.incomingW = l.finalW;
+    t.incomingH = l.finalH;
     const int w = b ? l.finalW : t.from->finalW, h = b ? l.finalH : t.from->finalH;
     if (w <= 0 || h <= 0) return;
     if (!t.loaded) {
@@ -1169,6 +1173,8 @@ void Engine::frame(double dt)
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
+    releaseRetired(false); // transitions over whose decoders are closed by now
+
     // Retain the last source/effect outputs, including persistent ISF buffers and
     // live input textures. dt=0 alone would still execute feedback and FRAMEINDEX.
     if (scale > 0) renderPass(rc);

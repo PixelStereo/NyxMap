@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QJsonArray>
 #include <QSet>
+#include <QThread>
+#include <QThreadPool>
 #include <functional>
 #include <set>
 
@@ -266,13 +268,6 @@ static QStringList effectPaths(const QJsonArray &a)
 void Engine::takeOverFades(quint64 id, const QSet<QString> &paths, bool all)
 {
     Lock lk(&m_mutex);
-    // A deliberate new recall releases a picture held by the emergency stop.
-    const auto frozen = m_transitions.find(id);
-    if (frozen != m_transitions.end() && frozen->second->frozen) {
-        if (Layer *l = layer(indexOfId(id))) l->transitionGain = 1.0f;
-        retireTransition(std::move(frozen->second));
-        m_transitions.erase(frozen);
-    }
     for (auto it = m_fades.begin(); it != m_fades.end();) {
         FadeJob &j = **it;
         if (j.id == id) {
@@ -886,7 +881,7 @@ void Engine::recallSnapshot(int i)
         double total = 0;
         for (const auto &job : m_fades)
             if (job->elapsed <= 0) total = std::max(total, job->longest()); // this recall's, not the older ones
-        for (const auto &[id, t] : m_transitions) if (!t->frozen) total = std::max(total, t->duration - t->elapsed);
+        for (const auto &[id, t] : m_transitions) total = std::max(total, t->duration - t->elapsed);
         if (m_compFade.opacity && m_compFade.opacityElapsed <= 0) total = std::max(total, m_compFade.opacityDur);
         if (m_compFade.volume && m_compFade.volumeElapsed <= 0) total = std::max(total, m_compFade.volumeDur);
         for (const InteractionFade &f : m_interactionFades)
@@ -976,8 +971,18 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
                 } else cancelScheduledRecall(id, it.key());
             }
         };
-        int idx = indexOfId(id);
-        if (idx >= 0 && isLocked(idx)) continue; // a locked layer is not changed by a snapshot
+        // The layer is found by its id in every step below: its index may change between them (another thread may
+        // edit the list meanwhile)
+        int idx;
+        bool locked;
+        QJsonObject cur;
+        {
+            Lock lk(&m_mutex);
+            idx = indexOfId(id);
+            locked = idx >= 0 && isLocked(idx);
+            if (idx >= 0 && !locked) cur = layerJson(idx);
+        }
+        if (locked) continue; // a locked layer is not changed by a snapshot
         if (idx < 0) { // removed since: recreated at the bottom (its animations as the snapshot has them)
             takeOver(id, {}, true);
             const int at = insertLayerJson(layerCount(), incomingState({}));
@@ -986,7 +991,6 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
             if (Layer *l = layer(at)) recallLayerAnims(*l, o.value("anims").toArray());
             continue;
         }
-        const QJsonObject cur = layerJson(idx);
         const QJsonObject curSrc = cur.value("source").toObject(), src = o.value("source").toObject();
         const bool group = o.value("group").toBool();
         auto job = std::make_shared<FadeJob>();
@@ -1014,7 +1018,9 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
             std::vector<Animation> anims;
             {
                 Lock lk(&m_mutex);
-                anims = layer(idx)->anims;
+                Layer *l = layer(indexOfId(id));
+                if (!l) continue; // removed meanwhile
+                anims = l->anims;
             }
             auto keepAnims = [this, id, &anims, &o] {
                 Lock lk(&m_mutex);
@@ -1024,12 +1030,12 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
                 }
             };
             if (t <= 0) {
-                replaceLayerJson(idx, incomingState(cur));
+                replaceLayerById(id, incomingState(cur));
                 scheduleIncoming();
                 keepAnims();
                 continue;
             }
-            startSourceTransition(idx, incomingState(cur), t);
+            startSourceTransition(id, incomingState(cur), t);
             scheduleIncoming();
             keepAnims();
             // The layer now holds the snapshot's state; where it is, how it looks and its level move there from the
@@ -1066,7 +1072,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         }
         // Another chain of effects: at once, with its values
         const bool chain = effectPaths(cur.value("fx").toArray()) != effectPaths(o.value("fx").toArray());
-        if (chain) setEffectsJson(idx, o.value("fx").toArray());
+        if (chain) setEffectsJsonById(id, o.value("fx").toArray());
 
         // The values this state sets: their fades from other snapshots stop here
         QSet<QString> owned;
@@ -1077,7 +1083,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         takeOver(id, owned);
 
         Lock lk(&m_mutex);
-        Layer *l = layer(idx);
+        Layer *l = layer(indexOfId(id));
         if (!l) continue;
         l->name = o.value("name").toString(l->name);
         recallLayerAnims(*l, o.value("anims").toArray());
@@ -1197,12 +1203,10 @@ void Engine::stopShowPlayback()
             l.text.stopTyping();
         }
     }
-    // Preserve the last mixed frame instead of jumping onto the incoming source.
-    for (auto &[id, transition] : m_transitions) {
-        transition->frozen = true;
-        transition->from->playing = false;
-        if (transition->from->tcClock) transition->from->tcClock->setPlaying(false);
-    }
+    // Source transitions in progress end now, as they would at their end: the outgoing source goes, the incoming one is
+    // shown alone, at its full level
+    for (auto &[id, transition] : m_transitions) endTransition(layer(indexOfId(id)), std::move(transition));
+    m_transitions.clear();
     // Cancel filter tails and input events already queued before Escape.
     for (auto &[id, run] : m_interactionRun) {
         run.proc.reset();
@@ -1308,49 +1312,58 @@ QString Engine::defaultTransition() const
 bool Engine::isTransitioning(quint64 layer) const
 {
     Lock lk(&m_mutex);
-    const auto it = m_transitions.find(layer);
-    return it != m_transitions.end() && !it->second->frozen;
+    return m_transitions.count(layer) > 0;
 }
 
 // The layer keeps its place and its id; the object that held the outgoing source becomes the transition's
 // `from` and goes on playing (picture and sound) until the transition is over.
-void Engine::startSourceTransition(int index, const QJsonObject &state, double duration)
+// The incoming layer is made aside (its media opened), then takes the outgoing one's place in one step: no frame is
+// drawn without the layer or with it half made.
+void Engine::startSourceTransition(quint64 id, const QJsonObject &state, double duration)
 {
-    std::unique_ptr<Layer> old;
     {
         Lock lk(&m_mutex);
-        if (index < 0 || index >= int(m_layers.size()) || m_layers[size_t(index)]->isGroup) return;
-        const quint64 id = m_layers[size_t(index)]->id;
-        // A transition already running there: its outgoing source goes, what is shown now becomes the outgoing one
-        auto it = m_transitions.find(id);
-        if (it != m_transitions.end()) {
-            retireTransition(std::move(it->second));
-            m_transitions.erase(it);
+        const Layer *l = layer(indexOfId(id));
+        if (!l || l->isGroup) return;
+    }
+    std::unique_ptr<Layer> fresh = buildLayer(state, id), old;
+    {
+        Lock lk(&m_mutex);
+        const int index = indexOfId(id);
+        if (index >= 0 && !m_layers[size_t(index)]->isGroup) {
+            // A transition already running there: its outgoing source goes, what is shown now becomes the outgoing one
+            auto it = m_transitions.find(id);
+            if (it != m_transitions.end()) {
+                retireTransition(std::move(it->second));
+                m_transitions.erase(it);
+            }
+            old = std::move(m_layers[size_t(index)]);
+            const quint64 nid = fresh->id;
+            m_layers[size_t(index)] = std::move(fresh);
+            Layer *now = m_layers[size_t(index)].get();
+            loadLayerAnims(*now, state.value("anims").toArray());
+            normalizeLocked();
+            auto t = std::make_unique<SourceTransition>();
+            if (nid != id) { // could not keep its id: no transition, it simply replaces it
+                now->transitionGain = 1.0f;
+                t->from = std::move(old);
+                retireTransition(std::move(t));
+            } else {
+                // A sound on either side (no picture to mix): the levels cross, no shader; else the layer's transition
+                // or the default one
+                const bool pictures = now->hasPicture() && old->hasPicture();
+                t->shaderPath = !pictures ? QString() : now->transition.isEmpty() ? m_defaultTransition : now->transition;
+                t->crossfadeOnly = !pictures;
+                t->duration = std::max(1e-3, duration);
+                old->transitionGain = 1.0f;
+                now->transitionGain = 0.0f;
+                t->from = std::move(old);
+                m_transitions[id] = std::move(t);
+            }
         }
-        old = std::move(m_layers[size_t(index)]);
-        m_layers.erase(m_layers.begin() + index);
     }
-    const quint64 id = old->id;
-    insertLayerJson(index, state); // same id: free again
-    Lock lk(&m_mutex);
-    Layer *now = layer(indexOfId(id));
-    if (!now || now->id != id) { // could not take its place: no transition
-        auto t = std::make_unique<SourceTransition>();
-        t->from = std::move(old);
-        retireTransition(std::move(t));
-        return;
-    }
-    auto t = std::make_unique<SourceTransition>();
-    // A sound on either side (no picture to mix): the levels cross, no shader; else the layer's transition or the
-    // default one
-    const bool pictures = now->hasPicture() && old->hasPicture();
-    t->shaderPath = !pictures ? QString() : now->transition.isEmpty() ? m_defaultTransition : now->transition;
-    t->crossfadeOnly = !pictures;
-    t->duration = std::max(1e-3, duration);
-    old->transitionGain = 1.0f;
-    now->transitionGain = 0.0f;
-    t->from = std::move(old);
-    m_transitions[id] = std::move(t);
+    discardLayer(std::move(fresh)); // its place gone meanwhile
+    emit layersChanged();
 }
 
 // The outgoing sources go on (clock, sound); a transition whose layer is gone, or that is over, ends
@@ -1361,11 +1374,9 @@ void Engine::stepTransitions(double dt)
         Layer *l = nullptr;
         for (auto &x : m_layers)
             if (x->id == it->first) l = x.get();
-        if (t.frozen) { ++it; continue; }
         t.elapsed += std::max(0.0, dt);
         if (!l || t.elapsed >= t.duration) {
-            if (l) l->transitionGain = 1.0f;
-            retireTransition(std::move(it->second));
+            endTransition(l, std::move(it->second));
             it = m_transitions.erase(it);
             continue;
         }
@@ -1378,23 +1389,62 @@ void Engine::stepTransitions(double dt)
     }
 }
 
+void Engine::endTransition(Layer *l, std::unique_ptr<SourceTransition> t)
+{
+    if (!t) return;
+    if (l) {
+        l->transitionGain = 1.0f;
+        // Its picture was the mix, released now: the incoming picture until it is drawn again (a frame held by a
+        // pause or the emergency stop composites it as it is)
+        if (t->target.tex && l->finalTex == t->target.tex) {
+            l->finalTex = t->incomingTex;
+            l->finalW = t->incomingW;
+            l->finalH = t->incomingH;
+        }
+    }
+    retireTransition(std::move(t));
+}
+
+// Closing a decoder joins its thread: never on the render thread nor under the lock (a frame would wait). The sound
+// leaves the mix now, the decoders are closed on a worker, then the render thread releases the rest (releaseRetired).
 void Engine::retireTransition(std::unique_ptr<SourceTransition> t)
 {
     if (!t) return;
-    if (t->from) {
-        if (t->from->video) t->from->video->close();
-        releaseAudio(*m_audio, t->from->audio);
+    if (t->from && t->from->audio) m_audio->removeStream(t->from->audio.get());
+    auto r = std::make_shared<RetiringTransition>();
+    r->t = std::move(t);
+    {
+        Lock lk(&m_mutex);
+        m_retiring.push_back(r);
     }
-    auto holder = std::make_shared<std::unique_ptr<SourceTransition>>(std::move(t));
-    runGl(
-        [this, holder] {
-            SourceTransition &x = **holder;
-            if (x.from) releaseLayer(*x.from);
-            if (x.shader) x.shader->releaseGl();
-            x.target.destroy();
-        },
-        false);
+    QThreadPool::globalInstance()->start([r] {
+        if (Layer *from = r->t->from.get()) {
+            if (from->video) from->video->close();
+            if (from->audio) from->audio->close();
+        }
+        r->closed = true;
+    });
 }
+
+void Engine::releaseRetired(bool wait)
+{
+    for (auto it = m_retiring.begin(); it != m_retiring.end();) {
+        RetiringTransition &r = **it;
+        if (!r.closed) {
+            if (!wait) {
+                ++it;
+                continue;
+            }
+            while (!r.closed) QThread::yieldCurrentThread();
+        }
+        SourceTransition &x = *r.t;
+        if (x.from) releaseLayer(*x.from);
+        if (x.shader) x.shader->releaseGl();
+        x.target.destroy();
+        it = m_retiring.erase(it);
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // Project file: paths also relative to the project, thumbnail as PNG

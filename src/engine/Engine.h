@@ -805,6 +805,16 @@ private:
     QString resolvePath(const QJsonObject &o, const QString &projectDir) const;
     QJsonObject layerToJson(Layer &l, const QString &projectDir) const;
     void layerFromJson(int index, const QJsonObject &o, const QString &projectDir, QStringList *warnings);
+    void loadLayerAnims(Layer &l, const QJsonArray &anims); // a state's animations, the ones on started (lock held)
+    std::unique_ptr<Layer> makeLayerLocked(const QString &name); // a new layer, not in the list yet
+    // A layer made from a state off the list, to take the place of layer `replaces` (its id, unless the state names
+    // another free one): the render thread never sees it half made. Its animations are not started (loadLayerAnims,
+    // once it is in place); its sound waits silent (transitionGain 0).
+    std::unique_ptr<Layer> buildLayer(const QJsonObject &o, quint64 replaces);
+    void discardLayer(std::unique_ptr<Layer> l); // not (or no longer) in the list: released as removeLayer does
+    void replaceLayerById(quint64 id, const QJsonObject &o);
+    void setEffectsJsonById(quint64 id, const QJsonArray &a);
+    bool ownsIsfLocked(const IsfInstance *inst) const; // a layer's generator or effect, still there (lock held)
     double nextDt();
 
     mutable Mutex m_mutex;
@@ -951,17 +961,28 @@ private:
         QString shaderPath;
         std::unique_ptr<IsfInstance> shader; // loaded by the render thread (none: a crossfade)
         bool loaded = false;
-        bool frozen = false; // emergency stop retains the last mixed picture
         bool crossfadeOnly = false; // a sound on either side: no shader, the levels cross (tests: transitionUsesShader)
         RenderTarget target;
+        GLuint incomingTex = 0; // the incoming picture mixed last (what the layer shows once it is over)
+        int incomingW = 0, incomingH = 0;
         double elapsed = 0, duration = 1;
     };
+    // An outgoing source whose decoders are closed on a worker (joining their threads), then released by the
+    // render thread once they are (lock held)
+    struct RetiringTransition {
+        std::unique_ptr<SourceTransition> t;
+        std::atomic<bool> closed{false};
+    };
     std::map<quint64, std::unique_ptr<SourceTransition>> m_transitions; // by layer id
+    std::vector<std::shared_ptr<RetiringTransition>> m_retiring;
     QString m_defaultTransition;
-    void startSourceTransition(int index, const QJsonObject &state, double duration);
+    void startSourceTransition(quint64 id, const QJsonObject &state, double duration);
     void stepTransitions(double dt);                                      // render thread, lock held
     void renderTransition(Layer &l, SourceTransition &t, const IsfRenderContext &rc);
-    void retireTransition(std::unique_ptr<SourceTransition> t);           // sound now, OpenGL on the render thread
+    // Over (at its time, or at once): the layer `l` (if still there) shows its incoming source alone (lock held)
+    void endTransition(Layer *l, std::unique_ptr<SourceTransition> t);
+    void retireTransition(std::unique_ptr<SourceTransition> t);           // sound now, decoders closed off the render thread
+    void releaseRetired(bool wait);                                       // render thread, lock held: their OpenGL
     double m_fadeElapsed = 0; // seconds since the last recall
     quint64 m_recalledSnapshot = 0;
     double m_recallTotal = 0;

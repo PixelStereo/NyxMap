@@ -535,13 +535,14 @@ void Engine::releaseAll()
     m_msaa.clear();
     // Output windows: their contexts (the windows themselves belong to the interface)
     for (auto &[id, o] : m_outWindows) releaseOutputSurface(o);
-    // Source transitions in progress (render thread: released here at once)
+    // Source transitions in progress, and those over (render thread: released here at once, their decoders closed)
     for (auto &[id, t] : m_transitions) retireTransition(std::move(t));
     m_transitions.clear();
     // Publishers: GPU (current context required), then the send threads
     m_publishing.release();
     {
         Lock lk(&m_mutex);
+        releaseRetired(true);
         for (auto &l : m_layers) releaseLayer(*l);
         m_layers.clear();
     }

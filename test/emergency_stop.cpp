@@ -70,7 +70,7 @@ int runEmergencyStopTests(Engine &engine)
           "parameters do not continue fading after stop");
     check(!engine.sequencer().anyActive(), "canceled follow never fires on future tick");
 
-    // A source crossfade must hold its actual mixed pixels, rather than jumping to the new source.
+    // A source crossfade in progress is finished by the stop: the incoming source is shown alone, at once.
     engine.newProject();
     engine.setCompositionSize(QSize(64, 64));
     engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), QSize(64, 64));
@@ -95,11 +95,12 @@ int runEmergencyStopTests(Engine &engine)
     check(before.red() > 10 && before.blue() > 10, "mixed frame exists before stop");
     const quint64 imageId = engine.layerId(imageLayer);
     engine.stopShowPlayback();
-    check(!engine.isTransitioning(imageId), "frozen source transition is no longer a running transport");
+    check(!engine.isTransitioning(imageId), "the source transition is over after stop");
+    check(engine.layer(engine.indexOfId(imageId))->transitionGain == 1.0f, "the incoming source is at its full level");
     engine.advanceFades(10);
     engine.renderFrame();
     const QColor after = engine.grabOutput().pixelColor(32, 32);
-    check(before == after, "Escape preserves exact source-transition pixels on subsequent frames");
+    check(after.blue() > 240 && after.red() < 15, "Escape finishes the source transition: the incoming picture is shown");
 
     engine.recallSnapshot(mi);
     engine.advanceFades(3); engine.renderFrame();

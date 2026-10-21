@@ -9,7 +9,18 @@
 #include <QJsonObject>
 #include <QRectF>
 
+#include <limits>
+
 inline constexpr int kMeshSubdiv = 40;
+
+// A layer being made off the list (Engine::buildLayer): the index that names it to layer(), on the thread making it
+// only, and the layer whose place it takes
+inline constexpr int kBuildSlot = std::numeric_limits<int>::min();
+struct LayerBuild {
+    Layer *layer = nullptr;
+    quint64 replaces = 0;
+};
+inline thread_local LayerBuild t_layerBuild;
 
 // Resources removed from the composition (under lock), then released in the render thread.
 // The Text generator's settings in a layer state (Project.cpp)

@@ -316,8 +316,15 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         }
         if (src.contains("timecode")) { // a Timecode generator: its clock (its text style comes with the values)
             TimecodeSettings ts = TimecodeSettings::fromJson(src.value("timecode").toObject());
-            // One layer per output (a copy drives none), and an output of the composition
-            if (ts.output && (timecodeOutputUser(ts.output) >= 0 || !hasTimecodeOutput(ts.output))) ts.output = 0;
+            // One layer per output (a copy drives none), and an output of the composition. A layer made to take the
+            // place of another (buildLayer) takes over the output that one drives.
+            if (ts.output) {
+                Lock lk(&m_mutex);
+                const int user = timecodeOutputUser(ts.output);
+                const bool replaced = user >= 0 && index == kBuildSlot && t_layerBuild.replaces &&
+                                      m_layers[size_t(user)]->id == t_layerBuild.replaces;
+                if ((user >= 0 && !replaced) || !hasTimecodeOutput(ts.output)) ts.output = 0;
+            }
             auto clock = std::make_shared<TimecodeClock>(ts);
             Lock lk(&m_mutex);
             Layer *l = layer(index);
@@ -352,8 +359,14 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->playing = params.value("restart").toBool(false) || params.value("play").toBool(o.value("play").toBool(true));
         startMedia(*l); // its speed: backwards starts from the end
     }
+    loadLayerAnims(*l, o.value("anims").toArray());
+}
+
+void Engine::loadLayerAnims(Layer &layer, const QJsonArray &anims)
+{
+    Layer *l = &layer;
     l->anims.clear();
-    for (const QJsonValue &v : o.value("anims").toArray()) {
+    for (const QJsonValue &v : anims) {
         const Animation a = layerAnimFromJson(v.toObject(), l->id);
         const QString &param = a.tracks.front().param;
         const bool twice = std::any_of(l->anims.begin(), l->anims.end(), [&](const Animation &x) { return x.tracks.front().param == param; });
@@ -362,6 +375,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     for (Animation &a : l->anims)
         if (a.tracks.front().enabled) startLayerAnim(a);
 }
+
 
 bool Engine::saveProject(const QString &path, const QJsonObject &uiState, QString *err)
 {

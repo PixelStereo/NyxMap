@@ -96,6 +96,7 @@ int Engine::layerCount() const
 
 Layer *Engine::layer(int i)
 {
+    if (i == kBuildSlot) return t_layerBuild.layer; // the one this thread is making (buildLayer)
     Lock lk(&m_mutex);
     return (i >= 0 && i < int(m_layers.size())) ? m_layers[size_t(i)].get() : nullptr;
 }
@@ -108,18 +109,24 @@ int Engine::indexOf(const Layer *l) const
     return -1;
 }
 
+std::unique_ptr<Layer> Engine::makeLayerLocked(const QString &name)
+{
+    auto l = std::make_unique<Layer>();
+    l->compSize = &m_compSize;
+    l->mapping.aspect = double(m_compSize.width()) / std::max(1, m_compSize.height());
+    l->id = newIdLocked();
+    l->colorModels = m_defaultColorModels;
+    l->name = name.isEmpty() ? QStringLiteral("Layer %1").arg(m_layers.size() + 1) : name;
+    l->genWidth = m_compSize.width();
+    l->genHeight = m_compSize.height();
+    return l;
+}
+
 int Engine::addLayer(const QString &name, int at)
 {
     {
         Lock lk(&m_mutex);
-        auto l = std::make_unique<Layer>();
-        l->compSize = &m_compSize;
-        l->mapping.aspect = double(m_compSize.width()) / std::max(1, m_compSize.height());
-        l->id = newIdLocked();
-        l->colorModels = m_defaultColorModels;
-        l->name = name.isEmpty() ? QStringLiteral("Layer %1").arg(m_layers.size() + 1) : name;
-        l->genWidth = m_compSize.width();
-        l->genHeight = m_compSize.height();
+        auto l = makeLayerLocked(name);
         at = std::clamp(at, viewportCountLocked(), int(m_layers.size()));
         // Inserted inside a group's block: the new layer joins that group
         if (at < int(m_layers.size())) l->parent = m_layers[size_t(at)]->parent;
@@ -437,6 +444,8 @@ void Engine::releaseLayer(Layer &l)
     l.maskTarget[1].destroy();
     l.groupTarget.destroy();
     l.prepTarget.destroy();
+    l.matteTarget.destroy();
+    l.mattePicture.destroy();
     l.shapeMaskSurface.destroy();
     l.shapeMaskComp.destroy();
     l.shapeMaskTarget.destroy();
@@ -517,20 +526,73 @@ int Engine::insertLayerJson(int at, const QJsonObject &o)
 
 void Engine::replaceLayerJson(int i, const QJsonObject &o)
 {
-    if (i < 0 || i >= layerCount()) return;
-    const QList<int> members = groupMembers(i);
-    std::vector<quint64> memberIds;
-    for (int m : members) memberIds.push_back(layerId(m));
-    removeLayer(i);
-    const int ni = insertLayerJson(i, o);
-    if (memberIds.empty()) return;
+    quint64 id = 0;
     {
         Lock lk(&m_mutex);
-        const quint64 gid = layerId(ni);
-        for (auto &l : m_layers)
-            if (std::find(memberIds.begin(), memberIds.end(), l->id) != memberIds.end()) l->parent = gid;
-        normalizeLocked();
+        if (i < 0 || i >= int(m_layers.size())) return;
+        id = m_layers[size_t(i)]->id;
     }
+    replaceLayerById(id, o);
+}
+
+std::unique_ptr<Layer> Engine::buildLayer(const QJsonObject &o, quint64 replaces)
+{
+    std::unique_ptr<Layer> l;
+    {
+        Lock lk(&m_mutex);
+        l = makeLayerLocked(QStringLiteral("Layer %1").arg(m_layers.size()));
+        if (replaces) l->id = replaces; // kept unless the state names another free id (layerFromJson)
+    }
+    l->transitionGain = 0.0f; // its sound is heard once it is in place
+    struct Scope {
+        LayerBuild saved = t_layerBuild;
+        Scope(Layer *l, quint64 replaces) { t_layerBuild = {l, replaces}; }
+        ~Scope() { t_layerBuild = saved; }
+    } scope(l.get(), replaces);
+    QJsonObject state = o;
+    state.remove(QStringLiteral("anims")); // started once it is in place (they act on the layer of their id)
+    layerFromJson(kBuildSlot, state, QString(), nullptr);
+    return l;
+}
+
+void Engine::discardLayer(std::unique_ptr<Layer> l)
+{
+    if (!l) return;
+    auto g = std::make_shared<Garbage>();
+    g->layer = std::move(l);
+    if (g->layer->video) g->layer->video->close(); // stop the decode thread outside the render thread
+    releaseAudio(*m_audio, g->layer->audio);
+    runGl([this, g] { releaseLayer(*g->layer); }, false);
+}
+
+// The layer made again from a state: built aside (its media opened), then put in the place of the one it replaces in
+// one step, so that no frame is drawn without it or with it half made. Its group keeps its members.
+void Engine::replaceLayerById(quint64 id, const QJsonObject &o)
+{
+    if (indexOfId(id) < 0) return;
+    std::unique_ptr<Layer> fresh = buildLayer(o, id), old;
+    {
+        Lock lk(&m_mutex);
+        const int i = indexOfId(id);
+        if (i >= 0) {
+            old = std::move(m_layers[size_t(i)]);
+            // A source transition running on it ends with it (as when it is removed)
+            if (auto t = m_transitions.find(id); t != m_transitions.end()) {
+                retireTransition(std::move(t->second));
+                m_transitions.erase(t);
+            }
+            fresh->transitionGain = 1.0f;
+            const quint64 nid = fresh->id;
+            m_layers[size_t(i)] = std::move(fresh);
+            if (nid != id)
+                for (auto &l : m_layers)
+                    if (l->parent == id) l->parent = nid;
+            loadLayerAnims(*m_layers[size_t(i)], o.value("anims").toArray());
+            normalizeLocked();
+        }
+    }
+    discardLayer(std::move(fresh)); // its place gone meanwhile
+    discardLayer(std::move(old));
     emit layersChanged();
 }
 
@@ -665,30 +727,51 @@ QJsonArray Engine::effectsJson(int i) const
 
 void Engine::setEffectsJson(int i, const QJsonArray &a)
 {
-    auto g = std::make_shared<Garbage>();
-    std::vector<std::pair<QString, QString>> before; // old prefix and shader path, matched by occurrence
     quint64 id = 0;
     {
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_layers.size())) return;
         id = m_layers[size_t(i)]->id;
-        for (int fx = 0; fx < int(m_layers[size_t(i)]->effects.size()); ++fx)
-            before.push_back({shaderPrefix(id, fx).chopped(1), m_layers[size_t(i)]->effects[size_t(fx)]->path()});
-        g->effects = std::move(m_layers[size_t(i)]->effects);
-        m_layers[size_t(i)]->effects.clear();
+    }
+    setEffectsJsonById(id, a);
+}
+
+// The layer is found by its id at every step (a recall from the cue clock may run meanwhile); each effect is loaded
+// and given its values before it joins the chain, so that no other thread can free it while it is being set.
+void Engine::setEffectsJsonById(quint64 id, const QJsonArray &a)
+{
+    auto g = std::make_shared<Garbage>();
+    std::vector<std::pair<QString, QString>> before; // old prefix and shader path, matched by occurrence
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(indexOfId(id));
+        if (!l) return;
+        for (int fx = 0; fx < int(l->effects.size()); ++fx)
+            before.push_back({shaderPrefix(id, fx).chopped(1), l->effects[size_t(fx)]->path()});
+        g->effects = std::move(l->effects);
+        l->effects.clear();
     }
     runGl([g] { for (auto &e : g->effects) e->releaseGl(); }, false);
     for (const QJsonValue &v : a) {
         const QJsonObject e = v.toObject();
         // An undo, a snapshot: the chain as it was, a broken effect included (its path and values are not lost)
-        const int fi = addEffect(i, resolvePath(e, QString()), nullptr, IsfFailure::KeepWithError);
-        if (fi < 0) continue;
-        IsfInstance *inst;
+        auto inst = std::make_unique<IsfInstance>();
+        IsfInstance *raw = inst.get();
+        const QString path = resolvePath(e, QString());
+        runGl([raw, path, e] {
+            raw->load(path);
+            raw->restore(e, QString());
+        });
+        std::shared_ptr<IsfInstance> unused;
         {
             Lock lk(&m_mutex);
-            inst = m_layers[size_t(i)]->effects[size_t(fi)].get();
+            if (Layer *l = layer(indexOfId(id))) l->effects.push_back(std::move(inst));
+            else unused.reset(inst.release()); // the layer is gone
         }
-        runGl([inst, e] { inst->restore(e, QString()); });
+        if (unused) {
+            runGl([unused] { unused->releaseGl(); }, false);
+            return;
+        }
     }
     {
         Lock lk(&m_mutex);
@@ -1734,12 +1817,29 @@ void Engine::moveEffect(int li, int from, int to)
     remapAnimationTargets(l->id, targets);
 }
 
+bool Engine::ownsIsfLocked(const IsfInstance *inst) const
+{
+    if (!inst) return false;
+    for (const auto &l : m_layers) {
+        if (l->generator.get() == inst) return true;
+        for (const auto &fx : l->effects)
+            if (fx.get() == inst) return true;
+    }
+    return false;
+}
+
 bool Engine::setIsfImageInput(IsfInstance *inst, int input, const QString &path, QString *err)
 {
     if (!inst) return false;
     bool ok = false;
     QString e;
-    runGl([&] { ok = inst->setImageInput(input, path, &e); });
+    {
+        // As reloadIsfFile: the instance stays alive, and its inputs are not walked meanwhile, while the GL task runs
+        // without taking this lock again
+        Lock lk(&m_mutex);
+        if (!ownsIsfLocked(inst)) return false; // replaced or removed meanwhile
+        runGl([&] { ok = inst->setImageInput(input, path, &e); });
+    }
     if (err) *err = e;
     return ok;
 }
@@ -1752,21 +1852,23 @@ bool Engine::setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QSt
     };
     {
         Lock lk(&m_mutex);
-        if (!inst || input < 0 || input >= int(inst->inputs().size())) return false;
-        IsfInput &in = inst->inputs()[size_t(input)];
-        if (in.type != IsfInput::Image || in.isInputImage) return false;
+        if (!inst) return false;
         const Layer *owner = nullptr;
         for (const auto &l : m_layers) {
             if (l->generator.get() == inst) owner = l.get();
             for (const auto &fx : l->effects)
                 if (fx.get() == inst) owner = l.get();
         }
+        if (!owner) return false; // replaced or removed meanwhile: not to be touched
+        if (input < 0 || input >= int(inst->inputs().size())) return false;
+        IsfInput &in = inst->inputs()[size_t(input)];
+        if (in.type != IsfInput::Image || in.isInputImage) return false;
         if (layerId) {
             const int si = indexOfId(layerId);
             if (si < 0) return fail(QStringLiteral("That layer no longer exists."));
             if (m_layers[size_t(si)]->isViewport) return fail(QStringLiteral("A viewport cannot be an image."));
-            if (owner && layerId == owner->id) return fail(QStringLiteral("A layer cannot be its own image."));
-            if (owner && layerDependsOn(layerId, owner->id))
+            if (layerId == owner->id) return fail(QStringLiteral("A layer cannot be its own image."));
+            if (layerDependsOn(layerId, owner->id))
                 return fail(QStringLiteral("\"%1\" already uses this layer: the picture would feed back on itself.")
                                 .arg(m_layers[size_t(si)]->name));
         }
@@ -1793,13 +1895,17 @@ bool Engine::reloadIsf(IsfInstance *inst)
 {
     if (!inst) return false;
     bool ok = false;
+    // As reloadIsfFile: the instance stays alive, and its inputs (swapped by the reload) are not walked by a parameter
+    // meanwhile, while the GL task runs without taking this lock again
+    Lock lk(&m_mutex);
+    if (!ownsIsfLocked(inst)) return false; // replaced or removed meanwhile
     runGl([&] {
         // Transactional reload: the previous shader, its uniforms, images
         // and last good output survive any parse/compile failure.
         ok = inst->reloadSafely();
     });
-    Lock lk(&m_mutex);
-    for (auto &l : m_layers) {
+    for
+ (auto &l : m_layers) {
         if (l->generator.get() == inst) {
             l->error = inst->error();
             if (ok) l->paramKey = 0; // changed input defaults/ranges need a new Parameter registry
