@@ -79,8 +79,13 @@ if (-not $vs) {
     if (-not $vs) { Fail "the C++ build tools are not found after their installation: run build again in a new window" }
 }
 foreach ($c in "git", "cmake", "ninja") { if (-not (Have $c)) { Fail "$c is not installed (open a new window if it was just installed)" } }
-$python = if (Have py) { @("py", "-3") } elseif (Have python) { @("python") } else { Fail "Python 3 is not installed" }
-function Py { & $python[0] @($python | Select-Object -Skip 1) @args }
+# Python by its executable's path: PowerShell names are case-insensitive, a function "py" would call itself
+$launcher = Get-Command py -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$pythonExe = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $launcher -and -not $pythonExe) { Fail "Python 3 is not installed" }
+function Invoke-Python {
+    if ($launcher) { & $launcher.Source -3 @args } else { & $pythonExe.Source @args }
+}
 
 # The compiler's environment (cl, link, the Windows SDK), for x64
 Step "Visual Studio: $vs"
@@ -108,8 +113,8 @@ $qtDir = Join-Path $deps "Qt\$qtVersion\$($qtArch -replace '^win64_', '')"
 if (-not (Test-Path "$qtDir\bin\qmake.exe")) {
     if (-not $Install) { Fail "Qt $qtVersion is not in $qtDir" }
     Step "Installing Qt $qtVersion ($qtArch, with Qt Multimedia) in build-deps\Qt"
-    Py -m pip install --user --upgrade aqtinstall; Native "pip install aqtinstall"
-    Py -m aqt install-qt windows desktop $qtVersion $qtArch -m qtmultimedia -O (Join-Path $deps "Qt"); Native "Qt installation"
+    Invoke-Python -m pip install --user --upgrade aqtinstall; Native "pip install aqtinstall"
+    Invoke-Python -m aqt install-qt windows desktop $qtVersion $qtArch -m qtmultimedia -O (Join-Path $deps "Qt"); Native "Qt installation"
 }
 
 # --- FFmpeg: the LGPL shared build the CI uses, checksummed
