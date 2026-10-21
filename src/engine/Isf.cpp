@@ -56,9 +56,12 @@ static QJsonObject parseLooseJson(QString json, QString *err)
 static bool isIdentChar(QChar c) { return c.isLetterOrNumber() || c == QLatin1Char('_'); }
 
 // Rewrites IMG_PIXEL / IMG_NORM_PIXEL / IMG_THIS_PIXEL / IMG_THIS_NORM_PIXEL / IMG_SIZE
-// into standard GLSL calls. Parses parentheses to support nested arguments.
-static QString rewriteImgFuncs(const QString &s)
+// into standard GLSL calls. Parses parentheses to support nested arguments. Nested deeper than kMaxDepth, the text is
+// left as it is (the shader then fails to compile, with its error) rather than overflowing the stack.
+static QString rewriteImgFuncs(const QString &s, int depth = 0)
 {
+    constexpr int kMaxDepth = 64;
+    if (depth > kMaxDepth) return s;
     static const QStringList names = {QStringLiteral("IMG_THIS_NORM_PIXEL"), QStringLiteral("IMG_THIS_PIXEL"),
                                       QStringLiteral("IMG_NORM_PIXEL"), QStringLiteral("IMG_PIXEL"),
                                       QStringLiteral("IMG_SIZE")};
@@ -117,7 +120,7 @@ static QString rewriteImgFuncs(const QString &s)
             out += s.mid(i);
             break;
         }
-        for (QString &a : args) a = rewriteImgFuncs(a).trimmed();
+        for (QString &a : args) a = rewriteImgFuncs(a, depth + 1).trimmed();
         out += s.mid(i, j - i);
         const QString img = args.value(0);
         if (matched == QLatin1String("IMG_SIZE"))
@@ -146,11 +149,14 @@ static QString cleanBody(QString body)
 
 // ---------------------------------------------------------------------------
 // Small expression evaluator for pass WIDTH/HEIGHT ("$WIDTH/2.0", "floor($HEIGHT*0.25)").
+// A failure anywhere fails the whole (the size falls back); nested deeper than kMaxDepth, it fails.
 // ---------------------------------------------------------------------------
 namespace {
 struct ExprParser {
+    static constexpr int kMaxDepth = 64;
     QString s;
     int p = 0;
+    int depth = 0;
     const QMap<QString, double> *vars = nullptr;
     bool ok = true;
 
@@ -179,11 +185,19 @@ struct ExprParser {
             else return v;
         }
     }
-    double unary()
+    double unary() // every nesting (parentheses, signs, function arguments) goes through here
     {
-        if (eat('-')) return -unary();
-        if (eat('+')) return unary();
-        return primary();
+        if (depth >= kMaxDepth) {
+            ok = false;
+            return 0;
+        }
+        ++depth;
+        double v;
+        if (eat('-')) v = -unary();
+        else if (eat('+')) v = unary();
+        else v = primary();
+        --depth;
+        return v;
     }
     double primary()
     {
@@ -192,7 +206,11 @@ struct ExprParser {
         if (p < s.size() && (s[p].isDigit() || s[p] == '.')) {
             int st = p;
             while (p < s.size() && (s[p].isDigit() || s[p] == '.' || s[p] == 'e' || s[p] == 'E')) ++p;
-            return s.mid(st, p - st).toDouble(&ok);
+            bool number = false;
+            const double v = s.mid(st, p - st).toDouble(&number);
+            if (!number) ok = false; // never clears an earlier failure
+            return v;
+
         }
         bool dollar = eat('$');
         int st = p;
