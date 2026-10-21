@@ -146,7 +146,7 @@ def package(build, ffmpeg, omt, ndi, output):
             result = subprocess.run(["ldd", str(path)], env=env, text=True, capture_output=True)
             if "not found" in result.stdout or result.returncode:
                 sys.exit(f"Unresolved dependencies of {path}:\n{result.stdout}\n{result.stderr}")
-            for name, source in re.findall(r"^\s*(\S+) => (/\S+)", result.stdout, re.M):
+            for name, source in re.findall(r"^\s*(\S+) => (/.+?)\s+\(0x[0-9a-fA-F]+\)", result.stdout, re.M):
                 source = Path(source)
                 if source.is_relative_to(app) or HOST_LIB.match(name):
                     continue

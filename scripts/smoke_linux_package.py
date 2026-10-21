@@ -17,6 +17,7 @@ HOST = re.compile(r"^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|anl)\.so.*
 
 
 def check_tree(tree):
+    print(f"Checking ELF dependencies in {tree}", flush=True)
     env = {**os.environ, "LD_LIBRARY_PATH": f"{tree}/usr/lib:{tree}/usr/bin"}
     for path in tree.rglob("*"):
         if not path.is_file() or path.is_symlink():
@@ -27,7 +28,7 @@ def check_tree(tree):
         output = subprocess.check_output(["ldd", str(path)], env=env, text=True)
         if "not found" in output:
             sys.exit(f"Missing library for {path}:\n{output}")
-        for name, location in re.findall(r"^\s*(\S+) => (/\S+)", output, re.M):
+        for name, location in re.findall(r"^\s*(\S+) => (/.+?)\s+\(0x[0-9a-fA-F]+\)", output, re.M):
             if not Path(location).is_relative_to(tree) and not HOST.match(name):
                 sys.exit(f"Unbundled dependency: {path}: {name} => {location}")
     for plugin in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
@@ -44,6 +45,7 @@ def main():
         sys.exit("The clean runtime image must not supply Qt, FFmpeg, .NET or FUSE")
     portable = work / "portable with spaces"
     portable.mkdir()
+    print("Extracting the portable archive", flush=True)
     with tarfile.open(next(packages.glob("*.tar.gz"))) as archive:
         archive.extractall(portable, filter="data")
     tree = portable / "Pinol"
@@ -68,6 +70,7 @@ def main():
 
     # Exercise the actual AppImage runtime, including its FUSE-free launch path.
     image = next(packages.glob("*.AppImage"))
+    print("Extracting and checking the AppImage", flush=True)
     extracted = work / "image"
     extracted.mkdir()
     subprocess.run([image, "--appimage-extract"], cwd=extracted, check=True, stdout=subprocess.DEVNULL)

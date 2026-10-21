@@ -48,7 +48,7 @@ CI checks both final packages in unprivileged **Ubuntu 24.04 and 26.04** contain
 
 ## Build from source
 
-**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 4+, C++17 and OpenGL 3.3 core. Clone with submodules:
+**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/PixelStereo/Pinol.git
@@ -69,7 +69,7 @@ Run `build/Pinol.app`. The build is not Developer ID signed or notarized.
 </details>
 
 <details>
-<summary><strong>Linux — Ubuntu</strong></summary>
+<summary><strong>Linux — Ubuntu 24.04 or newer</strong></summary>
 
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \

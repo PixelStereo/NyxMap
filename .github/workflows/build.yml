@@ -124,6 +124,7 @@ jobs:
           python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
           python3 scripts/package_linux.py build "$HOME/ffmpeg-lgpl-linux" "$RUNNER_TEMP/omt" "$RUNNER_TEMP/ndi" "$PWD/dist"
       - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
+        timeout-minutes: 15
         run: |
           # Only distribution files, fixtures and the test harness cross this boundary.
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
