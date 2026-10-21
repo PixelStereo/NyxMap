@@ -38,11 +38,13 @@ OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, un
 
 ### Linux release packaging
 
-The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components, then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, GStreamer camera plugins, audio libraries, NDI and Native AOT OMT. It closes ELF dependencies, including dynamically loaded runtimes; only glibc and the host graphics stack are excluded.
+The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components, then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, an explicit list of GStreamer plugins for camera capture, audio libraries, NDI and Native AOT OMT. It closes the ELF dependencies of everything it copies (`ldd`), plus an explicit list of libraries that are loaded with `dlopen()` (ALSA, PulseAudio, Avahi, udev, OpenSSL, ICU); glibc and the host graphics stack are left out on purpose. Other dynamically loaded modules are not bundled: GIO modules, VA-API (libva) drivers and GStreamer's network, audio and playback plugins come from the host or are absent. The Qt TIFF image plugin is left out (Ubuntu's libtiff links the GPL-only libjbig).
+
+The packaging fails if a library in the package comes from a Debian package whose copyright file declares only GPL licences (no LGPL or permissive one), or is one of the known GPL-only libraries; packages it cannot read correctly are reviewed by hand in `LICENCE_OVERRIDE`. The launcher (`AppRun`) sets library, plugin and GStreamer/ALSA/fontconfig variables for Pinol only: programs Pinol opens through `xdg-open` (browser, file manager) get the environment it was started with back, and GStreamer uses its own registry in `~/.cache/pinol`.
 
 `packaging/linux/tools.json` pins fixed releases and SHA-256 checksums for the official [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy), [appimagetool](https://github.com/AppImage/appimagetool) and [static AppImage runtime](https://github.com/AppImage/type2-runtime) binaries. A checksum mismatch fails packaging. The static runtime does not require the `libfuse2` package; the portable archive and extraction launch work without FUSE.
 
-Every package contains `DEPENDENCIES.txt`, source package/version records, distribution copyright files and licence texts. To replace an LGPL library, extract the portable archive (or use `--appimage-extract`), replace compatible shared libraries in `usr/lib`, then launch `AppRun`.
+Every package contains `DEPENDENCIES.txt` and licence texts. The Linux package also records each bundled library's Ubuntu binary and source package versions (`THIRD-PARTY-LINUX.md`) with their distribution copyright files; the macOS package lists the libraries copied from Homebrew in `THIRD-PARTY-MACOS.md`; the Windows package's versions (Qt, FFmpeg and its licence, NDI SDK, Visual C++ Redistributable) are in its `DEPENDENCIES.txt`. To replace an LGPL library, extract the portable archive (or use `--appimage-extract`), replace compatible shared libraries in `usr/lib`, then launch `AppRun`.
 
 CI checks both final packages in unprivileged **Ubuntu 24.04 and 26.04** containers with **no Qt, FFmpeg, .NET or FUSE installed**, no network and no build tree mounted. It verifies dependency closure, loads the bundled NDI/OMT runtimes and renders a project with an image, a video and a packaged shader. Tag publication waits for platform packaging and the full validation gate.
 
@@ -74,7 +76,8 @@ Run `build/Pinol.app`. The build is not Developer ID signed or notarized.
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \
   qt6-multimedia-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
-  libswscale-dev libswresample-dev libavutil-dev libasound2-dev
+  libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
+  git clang dotnet-sdk-8.0  # OMT (see below)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/Pinol
@@ -96,10 +99,14 @@ See [the CI workflow](../.github/workflows/build.yml) for the tested toolchain a
 
 </details>
 
-The first build also puts NDI and OMT next to the program, as in the packages: the NDI runtime is downloaded from the
-NDI SDK (its licence agreement is accepted for you) and OMT is built from source, which needs git, clang and the
-[.NET SDK](https://dotnet.microsoft.com/download), version 8 or later (without it, CMake warns and OMT is left out). They go to
-`build/runtimes`; `-DPINOL_BUNDLE_RUNTIMES=OFF` leaves them out.
+The first build also puts OMT next to the program, as in the packages: it is built from source, which needs git,
+clang++ (Xcode's on macOS) and the [.NET SDK](https://dotnet.microsoft.com/download), version 8 or later (without one of
+them, CMake warns and OMT is left out). The NDI runtime is only downloaded from the NDI SDK if you accept the
+[NDI SDK License Agreement](https://ndi.video/sdk/): the download accepts it on your behalf, so it is off by default;
+configure with `-DPINOL_ACCEPT_NDI_SDK_LICENSE=ON` to accept it (or point Pinol at an installed NDI runtime). Both go to
+`build/runtimes`; `-DPINOL_BUNDLE_RUNTIMES=OFF` leaves them out. `PINOL_BUNDLE_RUNTIMES` defaults to OFF when the `CI`
+environment variable is set (the CI packaging steps fetch and build them themselves), and `PINOL_ACCEPT_NDI_SDK_LICENSE` to
+ON.
 
 <details>
 <summary><strong>Tests, benchmarking and command-line render</strong></summary>
