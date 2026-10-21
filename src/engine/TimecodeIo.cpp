@@ -133,7 +133,8 @@ struct TimecodeIo::Impl {
 
     void startNdiIn()
     {
-        ndi::Lib &lib = ndi::lib(QString());
+        const QString defaultFolders; // a named argument: the reference returned is not to a temporary's
+        const ndi::Lib &lib = ndi::lib(defaultFolders);
         if (!lib.ok || !lib.canReceive()) {
             clock->setInputStatus(lib.ok ? QStringLiteral("this NDI library cannot receive") : lib.error);
             return;
