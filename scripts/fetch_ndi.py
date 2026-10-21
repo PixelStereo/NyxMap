@@ -104,8 +104,12 @@ def main():
     sha = download(url, archive)
     print(f"NDI SDK: {url}\n  SHA-256 {sha}")
     if expected and sha != expected:
-        sys.exit(f"NDI SDK checksum mismatch: expected {expected}, got {sha}. The vendor may have published a new SDK "
-                 f"at the same URL: review it, then update {LOCK.name}")
+        message = (f"NDI SDK checksum mismatch: expected {expected}, got {sha}. The vendor may have published a new SDK "
+                   f"at the same URL: review it, then update packaging/{LOCK.name}")
+        # The packages ship only the reviewed SDK; a local build goes on with a warning (its owner accepted the licence)
+        if os.environ.get("CI"):
+            sys.exit(message)
+        print("warning: " + message, flush=True)
     if not expected:
         # A GitHub Actions annotation on CI, a plain warning elsewhere
         print(f"::warning::NDI SDK download not verified: no SHA-256 pinned for {system} in packaging/{LOCK.name}. "

@@ -45,6 +45,7 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <set>
 #include <array>
 #include <functional>
 #include <mutex>
@@ -748,7 +749,9 @@ private:
     void releaseGarbage(const std::shared_ptr<Garbage> &g);
     void updateSource(Layer &l, double dt);
     void markNeeded(); // which layers are drawn this frame (shown, or used by another one)
-    void renderPass(const IsfRenderContext &rc); // every layer, in dependency order
+    // every layer, in dependency order; `only`: just these (by id), the others keep the frame they have
+    void renderPass(const IsfRenderContext &rc, const std::set<quint64> *only = nullptr);
+    void renderPausedSources(const IsfRenderContext &rc); // paused: the pictures loaded since, and what shows them
     void renderLayer(Layer &l, const IsfRenderContext &rc);
     void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
     void renderGroup(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);

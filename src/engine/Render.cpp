@@ -199,6 +199,7 @@ void Engine::updateSource(Layer &l, double dt)
     if (!l.pendingImage.isNull()) {
         l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
+        l.renderPaused = true; // seen at once, even while paused
         if (!l.pendingAutoImage.isNull()) {
             l.imageAutoTex.uploadImage(l.pendingAutoImage);
             l.pendingAutoImage = QImage();
@@ -313,13 +314,17 @@ void Engine::markNeeded()
 // and a group after its members. A layer used as a source is rendered even when it is hidden.
 // A reference cycle (A on B, B on A) is not broken by an error: the layer reached a second time keeps the
 // texture of the previous frame, which gives a one-frame feedback loop.
-void Engine::renderPass(const IsfRenderContext &rc)
+void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *only)
 {
     const size_t n = m_layers.size();
     enum { Todo = 0, Doing = 1, Done = 2 };
     m_renderMark.assign(n, Todo);
     std::function<void(size_t)> render = [&](size_t i) {
         if (m_renderMark[i] != Todo) return; // done, or being rendered (cycle)
+        if (only && !only->count(m_layers[i]->id)) { // held: its picture stays as it is
+            m_renderMark[i] = Done;
+            return;
+        }
         m_renderMark[i] = Doing;
         Layer &l = *m_layers[i];
         auto dependencies = [&](const Layer &d) { // the layers its picture is made from, before it
@@ -376,6 +381,28 @@ void Engine::renderPass(const IsfRenderContext &rc)
         m_renderMark[i] = Done;
     };
     for (size_t i = 0; i < n; ++i) render(i);
+}
+
+// Paused, nothing is rendered (feedback buffers and FRAMEINDEX hold too), except a picture loaded meanwhile: that layer,
+// the groups it is in and the viewports that show it are drawn once, the others keep their frame
+void Engine::renderPausedSources(const IsfRenderContext &rc)
+{
+    std::set<quint64> only;
+    for (auto &lp : m_layers) {
+        if (!lp->renderPaused) continue;
+        lp->renderPaused = false;
+        for (const Layer *x = lp.get(); x && only.insert(x->id).second; x = x->parent ? layer(indexOfId(x->parent)) : nullptr) {}
+    }
+    if (only.empty()) return;
+    for (auto &vp : m_layers) {
+        if (!vp->isViewport) continue;
+        for (auto &o : m_layers)
+            if (!o->isViewport && !o->parent && only.count(o->id) && o->shownIn(vp->id)) {
+                only.insert(vp->id);
+                break;
+            }
+    }
+    renderPass(rc, &only);
 }
 
 void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
@@ -1177,7 +1204,12 @@ void Engine::frame(double dt)
 
     // Retain the last source/effect outputs, including persistent ISF buffers and
     // live input textures. dt=0 alone would still execute feedback and FRAMEINDEX.
-    if (scale > 0) renderPass(rc);
+    if (scale > 0) {
+        renderPass(rc);
+        for (auto &l : m_layers) l->renderPaused = false;
+    } else {
+        renderPausedSources(rc);
+    }
     composite();
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {
