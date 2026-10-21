@@ -1,0 +1,29 @@
+#!/bin/sh
+# Installed as usr/libexec/pinol-path/xdg-open, first in the PATH AppRun gives Pinol: Qt opens URLs and folders with
+# the xdg-open it finds there. The browser or file manager it starts must not inherit Pinol's libraries, Qt plugins
+# or GStreamer/ALSA/fontconfig settings, which can crash it: restore the variables AppRun saved, then run the
+# system's xdg-open.
+set -eu
+# This folder, as it is in Pinol's PATH (Qt runs the absolute path it found there); shell built-ins only until PATH
+# is restored
+self=${0%/*}
+for name in ${PINOL_ENV_VARS:-}; do
+  if eval "[ -n \"\${PINOL_ORIG_SET_$name+set}\" ]"; then
+    eval "export $name=\"\$PINOL_ORIG_$name\""
+  else
+    unset "$name"
+  fi
+  unset "PINOL_ORIG_SET_$name" "PINOL_ORIG_$name"
+done
+unset PINOL_ENV_VARS
+# The real xdg-open: the first one in the restored PATH that is not this one
+IFS=:
+for dir in ${PATH:-/usr/local/bin:/usr/bin:/bin}; do
+  [ -n "$dir" ] || continue
+  if [ "$dir" != "$self" ] && [ -x "$dir/xdg-open" ] && [ ! -d "$dir/xdg-open" ]; then
+    unset IFS
+    exec "$dir/xdg-open" "$@"
+  fi
+done
+echo "xdg-open: not found on this system (install xdg-utils)" >&2
+exit 3
