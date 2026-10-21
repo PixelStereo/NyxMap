@@ -2,6 +2,7 @@
 // layer), transport, effect chain, and the copy of parameters from one layer to another.
 #include "EngineInternal.h"
 #include "Midi.h"
+#include "ImageFile.h"
 
 #include <QFontDatabase>
 #include <QDir>
@@ -1121,7 +1122,7 @@ bool Engine::setLayerAudio(int i, const QString &path, QString *err)
 bool Engine::setLayerImage(int i, const QString &path, QString *err)
 {
     if (!layer(i)) return false;
-    QImage img(path);
+    QImage img = readImageFile(path);
     if (img.isNull()) {
         if (err) *err = QStringLiteral("Unreadable image: ") + path;
         return false;
