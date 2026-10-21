@@ -16,6 +16,7 @@ library).
 | Blackmagic DeckLink SDK headers | DeckLink output (the driver is installed separately) | Boost Software License 1.0 | `licenses/decklink.txt` | https://www.blackmagicdesign.com/developer |
 | Open Media Transport: libomtnet, libomt, libvmx | OMT input and output | MIT | `OMT-LICENSES.txt` (in the package) | https://github.com/openmediatransport |
 | NDI® runtime | NDI input and output | NDI SDK License Agreement | `NDI-NOTICE.txt`, `Processing.NDI.Lib.Licenses.txt` (in the package) | https://ndi.video |
+| AppImage runtime (Linux) | Portable executable launcher | MIT; linked libfuse under LGPL v2.1, other linked libraries under permissive licences | `licenses/appimage-runtime.txt`, `licenses/LGPL-2.1.txt` | https://github.com/AppImage/type2-runtime |
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
@@ -28,6 +29,13 @@ kind, and disclaim all liability for them to the extent permitted by law.
 compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next to `Pinol.exe` on Windows). Their
 corresponding source code is available from the links above; the exact versions used by a package are listed in its
 `DEPENDENCIES.txt`, and the source of those versions can also be requested from Pinol's maintainers for three years.
+
+**Linux package.** Qt, FFmpeg and their dependencies are bundled as shared libraries in `usr/lib` of the portable
+directory (extract an AppImage with `--appimage-extract` to obtain the same directory). Compatible modified LGPL
+libraries can be substituted there, then the application launched with `AppRun`. `usr/bin/THIRD-PARTY-LINUX.md`
+records the bundled binaries and their source package versions; copyright and licence texts are in
+`usr/bin/licenses/linux`. FFmpeg is built from checksummed source without GPL components; its exact source URL,
+version and configuration are recorded in `usr/bin/DEPENDENCIES.txt`.
 
 **macOS package.** It also contains the libraries Qt and FFmpeg depend on (images, fonts, compression, encryption,
 AV1 decoding…), copied from Homebrew when the package is built. Their list, versions, licences and licence texts are

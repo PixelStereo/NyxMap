@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pinol
+Comment=Live visuals, mapping and show control
+Exec=Pinol %F
+Icon=pinol
+Categories=AudioVideo;Video;Graphics;
+Terminal=false
