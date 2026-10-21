@@ -104,7 +104,7 @@ private:
     void pasteLayerParams(int parts, const QString &what);     // Engine::LayerParts, onto the selected layers
     void togglePlayCurrent();
     // Sequences: GO plays the next step of the current sequence, GO BACK the previous one (Space, Shift+Space)
-    void emergencyStop(); // Escape from the interface or any output window
+    void emergencyStop(); // Ctrl+Esc (Cmd+Esc on macOS) from the interface or any output window
     void sequenceGo();
     void sequenceBack();
     void sequenceGoTo(int step);
@@ -168,6 +168,8 @@ private:
     bool m_forceDirty = false;          // change outside the undo stack (composition, publishing, media bin)
     bool m_autosaveEnabled = true;
     bool m_quiet = false;
-    int m_autosaveIndex = -1;           // undo stack index at the last autosave
+    quint64 m_undoChanges = 0;          // undo stack moves (indexChanged), whatever the index
+    quint64 m_autosaveChanges = 0;      // m_undoChanges at the last autosave
     bool m_autosaveDone = false;
+    bool m_keepAutosave = false;        // an autosave that could not be restored: kept for the next launch
 };

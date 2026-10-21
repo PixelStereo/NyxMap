@@ -53,6 +53,7 @@ public:
     void setMode(int mode); // 0 Snapshots, 1 Presets; the main bottom tab controls which list/inspector is shown
     void recall(int i);
     int activeSnapshot() const { return m_active; } // last recalled (-1: none)
+    void clearActive(); // another project: nothing recalled yet
 
 signals:
     void modeChanged(int mode); // if selection changes from an inspector/preset editor
@@ -116,6 +117,7 @@ private:
     std::vector<MemField> m_fields;
     QSet<QString> m_expanded; // unfolded nodes (layer id / section), kept across refreshes
     QString m_selectedKey;    // value selected in the tree, kept across refreshes
-    int m_active = -1;        // last recalled
+    int m_active = -1;        // last recalled: its row
+    quint64 m_activeId = 0;   // and its id, which the row follows (0: none)
     bool m_filling = false, m_applying = false;
 };

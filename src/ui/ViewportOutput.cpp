@@ -18,6 +18,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QSignalBlocker>
@@ -369,9 +370,10 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndo
     connect(m_omtQuality, qOverload<int>(&QComboBox::activated), this, &ViewportOutputPanel::applyPublish);
     connect(m_libFolder, &QLineEdit::editingFinished, this, &ViewportOutputPanel::applyPublish);
     connect(browse, &QPushButton::clicked, this, [this] {
+        const QPointer<ViewportOutputPanel> guard(this); // the panel may be rebuilt while the dialog is open
         const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("NDI / OMT Library Folder"),
                                                             m_libFolder->text());
-        if (d.isEmpty()) return;
+        if (!guard || d.isEmpty()) return;
         m_libFolder->setText(d);
         applyPublish();
     });
