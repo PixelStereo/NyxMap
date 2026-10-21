@@ -1,0 +1,80 @@
+name: Build scripts
+
+# build.sh / build.ps1 / build.cmd as a user runs them on a fresh machine: install, build (NDI and OMT included), no
+# launch. When they, the build or the dependencies change, and once a week (Homebrew, apt and winget move on).
+on:
+  pull_request:
+    paths:
+      - build.sh
+      - build.ps1
+      - build.cmd
+      - CMakeLists.txt
+      - scripts/build_omt.py
+      - scripts/fetch_ndi.py
+      - packaging/ndi-sdk.json
+      - .github/workflows/build-scripts.yml
+  push:
+    branches: [main]
+    paths:
+      - build.sh
+      - build.ps1
+      - build.cmd
+      - CMakeLists.txt
+      - scripts/build_omt.py
+      - scripts/fetch_ndi.py
+      - packaging/ndi-sdk.json
+      - .github/workflows/build-scripts.yml
+  schedule:
+    - cron: '41 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Script checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck and PowerShell syntax
+        run: |
+          shellcheck build.sh
+          pwsh -NoProfile -Command '$e = $null; [System.Management.Automation.Language.Parser]::ParseFile("build.ps1", [ref]$null, [ref]$e) | Out-Null; if ($e) { $e; exit 1 }'
+
+  unix:
+    name: build.sh (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4 # without submodules: the script fetches them
+      - name: ./build.sh --no-run --accept-ndi-license
+        run: ./build.sh --no-run --accept-ndi-license
+      - name: The program, NDI and OMT are there
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then dir=build/Pinol.app/Contents/Frameworks; test -x build/Pinol.app/Contents/MacOS/Pinol
+          else dir=build; test -x build/Pinol; fi
+          ls "$dir" | grep -E '^lib(ndi|omt|vmx)'
+          for lib in ndi omt vmx; do ls "$dir" | grep -q "^lib$lib" || { echo "lib$lib missing"; exit 1; }; done
+
+  windows:
+    name: build.sh (windows-2022, Git Bash)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: ./build.sh --no-run --accept-ndi-license (runs build.ps1)
+        shell: bash
+        run: ./build.sh --no-run --accept-ndi-license
+      - name: The program, Qt, FFmpeg, NDI and OMT are there
+        shell: pwsh
+        run: |
+          foreach ($f in "Pinol.exe", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
+            if (-not (Test-Path "build\$f")) { throw "build\$f missing" }
+          }
+          if (-not (Get-ChildItem build\avcodec-*.dll)) { throw "FFmpeg DLLs missing" }
