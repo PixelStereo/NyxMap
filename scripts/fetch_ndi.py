@@ -9,9 +9,15 @@ licence lets an application distribute these binaries when its own terms cover t
 party licences of the library (Processing.NDI.Lib.Licenses.txt) beside it; both are written to OUT_DIR, with a notice
 (NDI-NOTICE.txt). The SDK's download is the vendor's and changes with its versions: the SHA-256 of what was used is
 printed, for DEPENDENCIES.txt.
+
+packaging/ndi-sdk.json holds each platform's SDK URL and its expected SHA-256. When one is set, a download that does
+not match it fails (the vendor replaces the file at the same URL with each SDK release: check the new one, then update
+the hash). When it is empty, the download is used with a warning that prints its hash, to pin it there. NDI_SDK_URL
+(and NDI_SDK_SHA256) override them.
 """
 import ctypes
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -21,11 +27,8 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-URLS = {
-    "Windows": "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe",
-    "Darwin": "https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg",
-    "Linux": "https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz",
-}
+# {"Windows": {"url": ..., "sha256": ...}, "Darwin": ..., "Linux": ...}
+LOCK = Path(__file__).resolve().parents[1] / "packaging" / "ndi-sdk.json"
 LIBRARY = {"Windows": "Processing.NDI.Lib.x64.dll", "Darwin": "libndi.dylib", "Linux": "libndi.so.6"}
 
 NOTICE = """NDI runtime bundled with Pinol
@@ -73,7 +76,11 @@ def unpack(system: str, archive: Path, work: Path) -> Path:
         run([archive, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", f"/DIR={tree}"])
         return tree
     with tarfile.open(archive) as t:
-        t.extractall(work)
+        # No absolute paths, links out of the folder or device files (Python 3.12+, and recent 3.8-3.11 releases)
+        if hasattr(tarfile, "data_filter"):
+            t.extractall(work, filter="data")
+        else:
+            t.extractall(work)
     script = next(work.glob("Install_NDI_SDK_v6_Linux.sh"))
     # It shows the licence and asks for its acceptance: accepted for Pinol
     run(["bash", script], input=b"y\n", cwd=work, env={**os.environ, "PAGER": "cat"})
@@ -90,10 +97,19 @@ def main():
         shutil.rmtree(work)
     work.mkdir(parents=True)
     system = platform.system()
-    url = os.environ.get("NDI_SDK_URL", URLS[system])
+    pinned = json.loads(LOCK.read_text(encoding="utf-8"))[system]
+    url = os.environ.get("NDI_SDK_URL", pinned["url"])
+    expected = os.environ.get("NDI_SDK_SHA256", pinned["sha256"] if url == pinned["url"] else "").strip().lower()
     archive = work / Path(url.replace("%20", " ")).name
     sha = download(url, archive)
     print(f"NDI SDK: {url}\n  SHA-256 {sha}")
+    if expected and sha != expected:
+        sys.exit(f"NDI SDK checksum mismatch: expected {expected}, got {sha}. The vendor may have published a new SDK "
+                 f"at the same URL: review it, then update {LOCK.name}")
+    if not expected:
+        # A GitHub Actions annotation on CI, a plain warning elsewhere
+        print(f"::warning::NDI SDK download not verified: no SHA-256 pinned for {system} in packaging/{LOCK.name}. "
+              f"This download's is {sha}", flush=True)
     tree = unpack(system, archive, work)
 
     libs = find(tree, LIBRARY[system])
@@ -114,7 +130,8 @@ def main():
         getattr(ndi, symbol)
     print("the NDI library loads and exports its sender, finder and receiver")
     (out / "NDI-NOTICE.txt").write_text(NOTICE, encoding="utf-8")
-    (out / "NDI-SDK.txt").write_text(f"NDI SDK: {url}\n  SHA-256 {sha}\n  library: {lib.name}\n", encoding="utf-8")
+    (out / "NDI-SDK.txt").write_text(f"NDI SDK: {url}\n  SHA-256 {sha} ({'pinned' if expected else 'not pinned'})\n"
+                                     f"  library: {lib.name}\n", encoding="utf-8")
     for p in sorted(out.iterdir()):
         print(f"{p.name}: {p.stat().st_size} bytes")
 

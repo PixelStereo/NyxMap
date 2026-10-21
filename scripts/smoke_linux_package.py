@@ -36,6 +36,27 @@ def check_tree(tree):
     for plugin in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
         if not (tree / "usr/plugins" / plugin).is_file():
             sys.exit(f"Missing plugin: {plugin}")
+    check_xdg_open(tree)
+
+
+def check_xdg_open(tree):
+    """The xdg-open AppRun puts first in Pinol's PATH gives the system's xdg-open the environment of the launch."""
+    wrapper = tree / "usr/libexec/pinol-path/xdg-open"
+    if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        sys.exit(f"Missing or not executable: {wrapper}")
+    with tempfile.TemporaryDirectory(prefix="pinol-xdg-") as tmp:
+        system = Path(tmp) / "xdg-open"
+        system.write_text("#!/bin/sh\nenv\n")
+        system.chmod(0o755)
+        env = {"PINOL_ENV_VARS": "PATH LD_LIBRARY_PATH QT_PLUGIN_PATH",
+               "PATH": f"{wrapper.parent}:{tmp}", "LD_LIBRARY_PATH": "/pinol", "QT_PLUGIN_PATH": "/pinol",
+               "PINOL_ORIG_SET_PATH": "1", "PINOL_ORIG_PATH": f"{tmp}:/usr/bin:/bin",
+               "PINOL_ORIG_SET_LD_LIBRARY_PATH": "1", "PINOL_ORIG_LD_LIBRARY_PATH": "/host lib"}
+        output = subprocess.check_output([wrapper, "https://example.org"], env=env, text=True, timeout=15)
+        child = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        if (child.get("LD_LIBRARY_PATH") != "/host lib" or "QT_PLUGIN_PATH" in child
+                or child.get("PATH") != f"{tmp}:/usr/bin:/bin" or any(k.startswith("PINOL_") for k in child)):
+            sys.exit(f"xdg-open wrapper did not restore the launch environment:\n{output}")
 
 
 def main():

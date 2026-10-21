@@ -106,7 +106,7 @@ private:
 class NdiInput : public LiveInput
 {
 public:
-    NdiInput(ndi::Lib *lib, const QString &name) : m_lib(lib), m_name(name.toUtf8())
+    NdiInput(const ndi::Lib *lib, const QString &name) : m_lib(lib), m_name(name.toUtf8())
     {
         m_thread = std::thread([this] { run(); });
     }
@@ -140,7 +140,7 @@ private:
         }
         m_lib->recv_destroy(recv);
     }
-    ndi::Lib *m_lib;
+    const ndi::Lib *m_lib;
     QByteArray m_name;
     LatestFrame m_frame;
     std::atomic<bool> m_quit{false}, m_connected{false};
@@ -151,7 +151,7 @@ private:
 std::vector<LiveInputInfo> ndiSources(const QString &folder)
 {
     std::vector<LiveInputInfo> out;
-    ndi::Lib &lib = ndi::lib(folder);
+    const ndi::Lib &lib = ndi::lib(folder);
     if (!lib.canReceive()) return out;
     static void *finder = nullptr;
     static QMutex mutex;
@@ -174,7 +174,7 @@ std::vector<LiveInputInfo> ndiSources(const QString &folder)
 class OmtInput : public LiveInput
 {
 public:
-    OmtInput(omt::Lib *lib, const QString &address) : m_lib(lib), m_address(address.toUtf8())
+    OmtInput(const omt::Lib *lib, const QString &address) : m_lib(lib), m_address(address.toUtf8())
     {
         m_thread = std::thread([this] { run(); });
     }
@@ -199,7 +199,7 @@ private:
         }
         m_lib->receive_destroy(recv);
     }
-    omt::Lib *m_lib;
+    const omt::Lib *m_lib;
     QByteArray m_address;
     LatestFrame m_frame;
     std::atomic<bool> m_quit{false}, m_connected{false};
@@ -213,7 +213,7 @@ std::vector<LiveInputInfo> omtSources(const QString &folder)
     if (!QFile::exists(QStringLiteral("/run/avahi-daemon/socket")) && !QFile::exists(QStringLiteral("/var/run/avahi-daemon/socket")))
         return out;
 #endif
-    omt::Lib &lib = omt::lib(folder);
+    const omt::Lib &lib = omt::lib(folder);
     if (!lib.canReceive()) return out;
     int n = 0;
     char **a = lib.discovery_getaddresses(&n);
@@ -393,13 +393,13 @@ std::unique_ptr<LiveInput> createLiveInput(const QString &uri, const QString &fo
         return std::make_unique<TestInput>(QColor(c.value(0).toInt(), c.value(1).toInt(), c.value(2).toInt()));
     }
     if (kind == QLatin1String("ndi")) {
-        ndi::Lib &lib = ndi::lib(folder);
+        const ndi::Lib &lib = ndi::lib(folder);
         if (!lib.ok) return fail(lib.error);
         if (!lib.canReceive()) return fail(QStringLiteral("This NDI library cannot receive: ") + lib.path);
         return std::make_unique<NdiInput>(&lib, what);
     }
     if (kind == QLatin1String("omt")) {
-        omt::Lib &lib = omt::lib(folder);
+        const omt::Lib &lib = omt::lib(folder);
         if (!lib.ok) return fail(lib.error);
         if (!lib.canReceive()) return fail(QStringLiteral("This OMT library cannot receive: ") + lib.path);
         return std::make_unique<OmtInput>(&lib, what);

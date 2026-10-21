@@ -592,22 +592,26 @@ void CurveLane::contextMenuEvent(QContextMenuEvent *e)
             });
         }
         QAction *value = menu->addAction(QStringLiteral("Value…"), this, [this, k] {
+            if (k >= int(m_track.keys.size())) return; // reloaded meanwhile
             bool ok = false;
+            const QPointer<CurveLane> guard(this);
             const double v = QInputDialog::getDouble(this, QStringLiteral("Key"), QStringLiteral("Value"), m_track.keys[size_t(k)].v,
                                                      -1e9, 1e9, 3, &ok);
-            if (!ok) return;
+            if (!guard || !ok || k >= int(m_track.keys.size())) return;
             m_track.keys[size_t(k)].v = v;
             update();
             emitEdited();
         });
         value->setEnabled(!(k == 0 && m_track.keys[0].isCurrentValue));
         menu->addAction(QStringLiteral("Time…"), this, [this, k] {
+            if (k >= int(m_track.keys.size())) return; // reloaded meanwhile
             bool ok = false;
             const double lo = k > 0 ? m_track.keys[size_t(k - 1)].t : 0.0;
             const double hi = k + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(k + 1)].t : m_duration;
+            const QPointer<CurveLane> guard(this);
             const double t = QInputDialog::getDouble(this, QStringLiteral("Key"), QStringLiteral("Time (s)"), m_track.keys[size_t(k)].t,
                                                      lo, hi, 3, &ok);
-            if (!ok) return;
+            if (!guard || !ok || k >= int(m_track.keys.size())) return;
             m_track.keys[size_t(k)].t = t;
             update();
             emitEdited();
@@ -962,6 +966,7 @@ void ColorLane::contextMenuEvent(QContextMenuEvent *e)
         }
         menu->addAction(QStringLiteral("Color…"), this, [this, key] { editColor(key); });
         menu->addAction(QStringLiteral("Time…"), this, [this, key] {
+            if (key < 0 || key >= int(m_track.keys.size())) return; // reloaded meanwhile
             const double lo = key > 0 ? m_track.keys[size_t(key - 1)].t + 1e-6 : 0;
             const double hi = key + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(key + 1)].t - 1e-6 : m_duration;
             if (lo > hi) return;
@@ -969,13 +974,14 @@ void ColorLane::contextMenuEvent(QContextMenuEvent *e)
             const QPointer<ColorLane> guard(this);
             const double t = QInputDialog::getDouble(window(), QStringLiteral("Color Key"), QStringLiteral("Time (s)"),
                                                      m_track.keys[size_t(key)].t, lo, hi, 3, &ok);
-            if (!guard || !ok) return;
+            if (!guard || !ok || key >= int(m_track.keys.size())) return;
             m_track.keys[size_t(key)].t = t;
             update(); emit edited(m_track, 0);
         });
         auto *curve = menu->addMenu(QStringLiteral("Transition to the next key"));
         for (int c : {0, 1, 2, 3, 4, 5, int(kAnimHold)}) {
             auto *action = curve->addAction(animCurveName(c), this, [this, key, c] {
+                if (key < 0 || key >= int(m_track.keys.size())) return;
                 m_track.keys[size_t(key)].curve = c;
                 update(); emit edited(m_track, 0);
             });

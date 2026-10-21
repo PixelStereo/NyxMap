@@ -10,6 +10,7 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 // ---------------------------------------------------------------------------
@@ -432,7 +433,15 @@ public:
                 if (err) *err = QStringLiteral("%1 does not play this mode").arg(m_port.name);
                 return false;
             }
-            return play(*it, err);
+            bool inUse = false;
+            if (play(*it, err, &inUse)) return true;
+            if (!inUse) return false;
+            // The port may still be held by the publisher this one replaces (a mode change): that one goes in the
+            // send thread, before this one's first picture. Played then, as the automatic mode does (an error
+            // then, if the port is still in use, shown by liveState)
+            m_deferred = *it;
+            if (err) err->clear();
+            return true;
         }
         return true; // automatic: the mode of the first picture's size and rate
     }
@@ -441,7 +450,8 @@ public:
     {
         if (!m_playing && !m_failed) {
             comInit();
-            const decklink::Mode *m = decklink::bestMode(m_modes, QSize(f.width, f.height), double(f.fpsN) / std::max(1, f.fpsD));
+            const decklink::Mode *m = m_deferred ? &*m_deferred
+                                                 : decklink::bestMode(m_modes, QSize(f.width, f.height), double(f.fpsN) / std::max(1, f.fpsD));
             QString err;
             if (!m || !play(*m, &err)) {
                 std::lock_guard<std::mutex> lk(m_mutex);
@@ -499,7 +509,8 @@ public:
 private:
     static constexpr int kQueued = 3; // frames ahead of what is shown (the latency, in frames)
 
-    bool play(const decklink::Mode &mode, QString *err)
+    // inUse: false returned because the port would not enable its output (another publisher or application has it)
+    bool play(const decklink::Mode &mode, QString *err, bool *inUse = nullptr)
     {
         const BMDDisplayMode code = modeCode(mode.key);
         const BMDPixelFormat format = supports(m_output.p, code, bmdFormat8BitBGRA) ? bmdFormat8BitBGRA : bmdFormat8BitYUV;
@@ -520,6 +531,7 @@ private:
         if (m_output->EnableVideoOutput(code, BMDVideoOutputFlags(m_tcFlags)) != S_OK) m_tcFlags = 0;
         if (!m_tcFlags && m_output->EnableVideoOutput(code, bmdVideoOutputFlagDefault) != S_OK) {
             if (err) *err = QStringLiteral("%1 is in use (another viewport or application?)").arg(m_port.name);
+            if (inUse) *inUse = true;
             return false;
         }
         m_enabled = true;
@@ -662,6 +674,7 @@ private:
 
     bool m_outField = false;
     QString m_wantMode;
+    std::optional<decklink::Mode> m_deferred; // the mode chosen, played at the first picture (its port was busy)
     decklink::Port m_port;
     std::vector<decklink::Mode> m_modes;
     Ref<IDeckLink> m_device;

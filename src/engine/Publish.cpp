@@ -10,6 +10,7 @@
 #include <QMutex>
 #include <QStringList>
 #include <QtGlobal>
+#include <algorithm>
 #include <climits>
 
 QString publishKindName(PublishKind k)
@@ -151,13 +152,19 @@ void CpuSendThread::run()
         m_cv.wait(lk, [&] { return m_quit || m_changed || m_pending; });
         if (m_quit) break;
         if (m_changed) {
-            // Old publishers are destroyed here, before their last buffer is reused.
+            // Old publishers are destroyed here, before their last buffer is reused. The ones kept may still read
+            // it (NDI's asynchronous send, until its next send): they let it go first.
             auto old = std::move(m_pubs);
             m_pubs = std::move(m_next);
             m_next.clear();
             m_changed = false;
+            std::vector<std::shared_ptr<CpuPublisher>> kept;
+            for (const auto &p : m_pubs)
+                if (std::find(old.begin(), old.end(), p) != old.end()) kept.push_back(p);
             lk.unlock();
             old.clear();
+            for (auto &p : kept) p->flush();
+            kept.clear();
             lk.lock();
             if (m_inflight) {
                 m_free.push_back(m_inflight);
@@ -289,14 +296,17 @@ QString omtLibraryPath(const QString &extra)
 // NDI (structures matching Processing.NDI.structs.h / Send.h, SDK v5 and v6)
 // ---------------------------------------------------------------------------
 namespace ndi {
-Lib &lib(const QString &extra)
+// Each attempt fills a record of its own, published under the lock and never written again: a caller keeps
+// reading the one it was given (outside the lock) while a retry with another folder makes the next. A loaded
+// library is never replaced; the records of failed attempts (a few, made by the user) are kept, as the libraries.
+const Lib &lib(const QString &extra)
 {
     static QMutex mutex;
-    static Lib l;
-    static bool tried = false;
+    static const Lib *current = nullptr;
     QMutexLocker lk(&mutex);
-    if (tried && (l.ok || extra.isEmpty())) return l;
-    tried = true;
+    if (current && (current->ok || extra.isEmpty())) return *current;
+    Lib &l = *new Lib;
+    current = &l;
     QString failed;
     QLibrary *q = loadFirst(ndiCandidates(extra), &failed);
     if (!q) {
@@ -328,7 +338,6 @@ Lib &lib(const QString &extra)
         return l;
     }
     l.ok = true;
-    l.error.clear();
     return l;
 }
 } // namespace ndi
@@ -370,13 +379,18 @@ public:
         v.timecode = f.timecode ? int64_t(std::llround(f.timecode->toSeconds() * 1e7)) : INT64_MAX;
         v.p_data = const_cast<uint8_t *>(f.bgra.data());
         v.line_stride_in_bytes = f.stride;
-        // The buffer stays valid until the next send (handled by CpuSendThread)
+        // The buffer stays valid until the next send, or flush() (handled by CpuSendThread)
         m_lib->send_video_async_v2(m_send, &v);
         if (m_lib->send_get_no_connections && (++m_count % 30) == 1) m_receivers = m_lib->send_get_no_connections(m_send, 0);
     }
+    void flush() override
+    {
+        // A null frame: NDI waits until the previous asynchronous send no longer needs its buffer
+        if (m_send) m_lib->send_video_async_v2(m_send, nullptr);
+    }
 
 private:
-    ndi::Lib *m_lib = nullptr;
+    const ndi::Lib *m_lib = nullptr;
     void *m_send = nullptr;
     QByteArray m_name;
     unsigned m_count = 0;
@@ -388,14 +402,15 @@ std::unique_ptr<CpuPublisher> createNdiPublisher() { return std::make_unique<Ndi
 // OMT (structures matching libomt.h, Open Media Transport, MIT license)
 // ---------------------------------------------------------------------------
 namespace omt {
-Lib &lib(const QString &extra)
+// As ndi::lib(): one record per attempt, never written again once published
+const Lib &lib(const QString &extra)
 {
     static QMutex mutex;
-    static Lib l;
-    static bool tried = false;
+    static const Lib *current = nullptr;
     QMutexLocker lk(&mutex);
-    if (tried && (l.ok || extra.isEmpty())) return l;
-    tried = true;
+    if (current && (current->ok || extra.isEmpty())) return *current;
+    Lib &l = *new Lib;
+    current = &l;
     QString vmxName;
     const QStringList candidates = omtCandidates(extra, &vmxName);
     // libomt loads the libvmx codec: preload it from the same folder.
@@ -432,7 +447,6 @@ Lib &lib(const QString &extra)
         return l;
     }
     l.ok = true;
-    l.error.clear();
     return l;
 }
 } // namespace omt
@@ -486,7 +500,7 @@ public:
     }
 
 private:
-    omt::Lib *m_lib = nullptr;
+    const omt::Lib *m_lib = nullptr;
     void *m_send = nullptr;
     unsigned m_count = 0;
 };

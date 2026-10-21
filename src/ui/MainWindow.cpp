@@ -76,6 +76,12 @@
 
 static const QStringList kIsfExt = {"fs", "frag"};
 
+// STOP ALL: Ctrl+Esc, Cmd+Esc on macOS (Qt's Control is Cmd there), as the platform writes it ("Ctrl+Esc", "⌘Esc")
+static QString emergencyStopKeyText()
+{
+    return QKeySequence(Qt::CTRL | Qt::Key_Escape).toString(QKeySequence::NativeText);
+}
+
 static QScrollArea *scrolled(QWidget *w)
 {
     auto *s = new QScrollArea;
@@ -493,6 +499,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_engine->acknowledgeFrame();
     connect(m_undo, &QUndoStack::cleanChanged, this, [this] { updateTitle(); });
     connect(m_undo, &QUndoStack::indexChanged, this, [this] {
+        ++m_undoChanges;      // any move, undo then a new command too (5 → 4 → 5): autosave again
         refreshLayerList();   // in-place update (opacity, visibility, name…)
         m_binTimer.start();   // the media bin follows sources and shader images
         m_inspector->refreshMasks();
@@ -672,11 +679,12 @@ bool MainWindow::eventFilter(QObject *o, QEvent *e)
     // output window shown fullscreen — a QWindow of its own, not a widget's)
     const bool keyTarget = o == QApplication::focusWidget() || (!QApplication::focusWidget() && o == this) ||
                            (o->isWindowType() && !o->inherits("QWidgetWindow"));
-    // Escape is a show-wide safety command, including when an editor has keyboard focus.
+    // Ctrl+Esc (Cmd+Esc on macOS) is a show-wide safety command, including when an editor has keyboard focus.
+    // Plain Esc is left to the widgets (cancel a drawing, a rename, close a dialog).
     // Only the actual target sees it, once per physical key press (no repeats).
     if (e->type() == QEvent::KeyPress && keyTarget) {
         const auto *k = static_cast<QKeyEvent *>(e);
-        if (k->key() == Qt::Key_Escape) {
+        if (k->key() == Qt::Key_Escape && (k->modifiers() & Qt::ControlModifier)) {
             if (!k->isAutoRepeat()) emergencyStop();
             return true;
         }
@@ -714,7 +722,7 @@ bool MainWindow::handleControlKey(int key, Qt::KeyboardModifiers mods)
 {
     const bool ctrl = mods & Qt::ControlModifier;
     const bool shift = mods & Qt::ShiftModifier;
-    if (key == Qt::Key_Escape) emergencyStop();
+    if (ctrl && key == Qt::Key_Escape) emergencyStop();
     else if (ctrl && key == Qt::Key_B) setBlackout(!m_composition->isBlackout());
     else if (ctrl && shift && key == Qt::Key_F) toggleAllOutputs(1);
     else if (ctrl && key == Qt::Key_F) toggleAllOutputs(2);
@@ -791,7 +799,9 @@ void MainWindow::buildMenus()
     QMenu *edit = menuBar()->addMenu(QStringLiteral("&Edit"));
     m_undoAction = edit->addAction(QStringLiteral("Undo"));
     m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setObjectName(QStringLiteral("editUndo")); // also in the animation windows
     m_redoAction = edit->addAction(QStringLiteral("Redo"));
+    m_redoAction->setObjectName(QStringLiteral("editRedo"));
     {
         // Ctrl+Shift+Z and Ctrl+Y everywhere (Cmd on Mac), without duplicating the native shortcut
         QList<QKeySequence> redo = QKeySequence::keyBindings(QKeySequence::Redo);
@@ -860,7 +870,8 @@ void MainWindow::buildMenus()
     seq->addAction(QStringLiteral("GO — next step (Space)"), this, &MainWindow::sequenceGo);
     seq->addAction(QStringLiteral("GO BACK — previous step (Shift+Space)"), this, &MainWindow::sequenceBack);
     seq->addAction(QStringLiteral("Stop the waits (pre-waits and follows still to come)"), &m_engine->sequencer(), &Sequencer::stop);
-    seq->addAction(QStringLiteral("STOP ALL — Escape"), this, &MainWindow::emergencyStop);
+    // The key is handled by the event filter (also from the output windows): only shown here, after the tab
+    seq->addAction(QStringLiteral("STOP ALL\t%1").arg(emergencyStopKeyText()), this, &MainWindow::emergencyStop);
     seq->addSeparator();
     seq->addAction(QStringLiteral("Sequences…"), this, &MainWindow::openSequences);
     seq->addAction(QStringLiteral("Timelines…"), this, &MainWindow::openTimelines);
@@ -1918,7 +1929,8 @@ void MainWindow::setInOutAtPosition(bool in)
 void MainWindow::emergencyStop()
 {
     m_engine->stopShowPlayback();
-    statusBar()->showMessage(QStringLiteral("STOP ALL — cues canceled, source/effect frames held. Play, recall or release Pause to resume"), 5000);
+    statusBar()->showMessage(QStringLiteral("STOP ALL (%1) — cues canceled, source/effect frames held. Play, recall or release Pause to resume")
+                                 .arg(emergencyStopKeyText()), 5000);
 }
 
 void MainWindow::sequenceGo() { m_engine->sequencer().go(); }
@@ -2065,6 +2077,7 @@ void MainWindow::afterProjectLoaded(const QJsonObject &ui)
     m_modesBefore.clear();
     m_composition->syncFromEngine();
     m_bin->refresh();
+    m_snapshots->clearActive(); // the "recalled last" marker belonged to the previous project
     selectLayer(qBound(-1, ui.value("selected_layer").toInt(0), m_engine->layerCount() - 1));
     updateTitle();
 }
@@ -2190,15 +2203,15 @@ QString MainWindow::autosavePath()
 
 void MainWindow::autosave()
 {
-    if (!m_autosaveEnabled) return;
-    if (m_autosaveDone && m_undo->index() == m_autosaveIndex) return; // nothing new
+    if (!m_autosaveEnabled || m_keepAutosave) return;
+    if (m_autosaveDone && m_undoChanges == m_autosaveChanges) return; // nothing new
     QJsonObject ui = uiState();
     ui["autosave_of"] = m_engine->projectPath();
     ui["autosave_time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
     ui["autosave_dirty"] = isDirty();
     QString err;
     if (m_engine->saveProject(autosavePath(), ui, &err)) {
-        m_autosaveIndex = m_undo->index();
+        m_autosaveChanges = m_undoChanges;
         m_autosaveDone = true;
     } else {
         statusBar()->showMessage(QStringLiteral("Autosave failed: ") + err, 6000);
@@ -2230,7 +2243,19 @@ bool MainWindow::offerRecovery()
     }
     QJsonObject loadedUi;
     QString err;
-    m_engine->loadProject(path, &loadedUi, &err);
+    if (!m_engine->loadProject(path, &loadedUi, &err)) {
+        // Not restored: an empty project, never "Save" over the original one. The autosave stays as it is
+        // (neither autosaved over nor removed on quit) to be offered again on the next launch.
+        m_keepAutosave = true;
+        m_engine->newProject();
+        m_forceDirty = false;
+        afterProjectLoaded({});
+        QMessageBox::warning(this, QStringLiteral("Recovery"),
+                             QStringLiteral("The autosaved session could not be restored:\n\n%1\n\nIt is kept (%2) and "
+                                            "will be offered again on the next launch.")
+                                 .arg(err.isEmpty() ? path : err, QDir::toNativeSeparators(path)));
+        return false;
+    }
     m_engine->setProjectPath(original); // "Save" writes to the original project
     m_forceDirty = ui.value("autosave_dirty").toBool(true);
     afterProjectLoaded(loadedUi);
@@ -2308,7 +2333,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
     if (auto *top = findChild<QSplitter *>("topSplit2")) s.setValue("ui/topSplit2", top->saveState());
     for (auto &[id, o] : m_outputs) o.window->hideOutput();
     // Normal exit: no recovery to offer on next launch.
-    if (m_autosaveEnabled) QFile::remove(autosavePath());
+    if (m_autosaveEnabled && !m_keepAutosave) QFile::remove(autosavePath());
     e->accept();
 }
 

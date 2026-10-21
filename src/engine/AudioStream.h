@@ -23,6 +23,7 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 struct SwrContext;
+struct AVChannelLayout;
 
 class AudioStream
 {
@@ -97,6 +98,8 @@ private:
     void requestSeek(double t);   // audio callback
     // Converted samples of the next decoded frame (start at local time *local). False at the end of the file.
     bool decodeRaw(const float **samples, int *frames, double *local);
+    // The resampler for this input (layout, sample format, rate), to the mixer's stereo float at m_rate
+    bool configureResampler(const AVChannelLayout *layout, int format, int rate);
     void produceBackwardWindow(); // backward leg: reversed samples of a short window
     void startLeg(const Timeline::Leg &leg, double position);
     double legClock(double position) const; // clock of a position on the forward leg being decoded
@@ -107,6 +110,9 @@ private:
     AVFrame *m_frame = nullptr;
     AVPacket *m_packet = nullptr;
     SwrContext *m_swr = nullptr;
+    AVChannelLayout *m_swrInLayout = nullptr; // what m_swr converts from: a frame otherwise reconfigures it
+    int m_swrInFormat = -1, m_swrInRate = 0;
+    int m_readRetries = 0; // consecutive demux errors retried (not the end of the file)
     int m_stream = -1;
     double m_timeBase = 0, m_startTime = 0;
     int m_rate = 48000;

@@ -6,8 +6,8 @@ library).
 
 | Component | Use in Pinol | Licence | Licence text | Source |
 |---|---|---|---|---|
-| Qt 6 | User interface, OpenGL, multimedia | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source |
-| FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample…) | Video and audio decoding | GNU LGPL v2.1 or later (dynamically linked; built without GPL components) | `licenses/LGPL-2.1.txt` | https://ffmpeg.org/download.html |
+| Qt 6 | User interface, OpenGL, multimedia | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source (Linux package: Ubuntu's Qt, see below) |
+| FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample…) | Video and audio decoding | GNU LGPL v2.1 or later (dynamically linked; built without GPL components). The Windows package's FFmpeg may be built with `--enable-version3`, which makes it LGPL v3 or later; its `DEPENDENCIES.txt` states which | `licenses/LGPL-2.1.txt`; `licenses/LGPL-3.0.txt` for an LGPL v3 build | https://ffmpeg.org/download.html (Windows: https://github.com/BtbN/FFmpeg-Builds) |
 | miniaudio | Audio input and output | Public domain (Unlicense) or MIT No Attribution | `licenses/miniaudio.txt` | https://github.com/mackron/miniaudio |
 | RtMidi | MIDI | MIT-style (RtMidi licence) | `licenses/rtmidi.txt` | https://github.com/thestk/rtmidi |
 | bcdec | BC texture decoding (HAP) | MIT or Unlicense | `licenses/bcdec.txt` | https://github.com/iOrange/bcdec |
@@ -26,15 +26,18 @@ components, nor use them outside Pinol. Vizrt NDI AB and its licensors provide t
 kind, and disclaim all liability for them to the extent permitted by law.
 
 **LGPL components (Qt, FFmpeg).** They are dynamically linked: you may replace the libraries shipped with Pinol by
-compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next to `Pinol.exe` on Windows). Their
+compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next to `Pinol.exe` on Windows, in
+`usr/lib` on Linux). Their
 corresponding source code is available from the links above; the exact versions used by a package are listed in its
 `DEPENDENCIES.txt`, and the source of those versions can also be requested from Pinol's maintainers for three years.
 
 **Linux package.** Qt, FFmpeg and their dependencies are bundled as shared libraries in `usr/lib` of the portable
 directory (extract an AppImage with `--appimage-extract` to obtain the same directory). Compatible modified LGPL
-libraries can be substituted there, then the application launched with `AppRun`. `usr/bin/THIRD-PARTY-LINUX.md`
-records the bundled binaries and their source package versions; copyright and licence texts are in
-`usr/bin/licenses/linux`. FFmpeg is built from checksummed source without GPL components; its exact source URL,
+libraries can be substituted there, then the application launched with `AppRun`. Its Qt is not the qt.io build but
+Ubuntu's Qt packages: their source is on Launchpad (https://launchpad.net/ubuntu/+source/, e.g. `qt6-base`), at the
+versions listed in `usr/bin/THIRD-PARTY-LINUX.md`. That file records every bundled binary with its Ubuntu binary and
+source package versions and licences; copyright and licence texts are in `usr/bin/licenses/linux`. The build checks
+that none of them comes from a package under the GPL only. FFmpeg is built from checksummed source without GPL components; its exact source URL,
 version and configuration are recorded in `usr/bin/DEPENDENCIES.txt`.
 
 **macOS package.** It also contains the libraries Qt and FFmpeg depend on (images, fonts, compression, encryption,
@@ -42,3 +45,8 @@ AV1 decoding…), copied from Homebrew when the package is built. Their list, ve
 generated with the package: `THIRD-PARTY-MACOS.md` and `licenses/macos/` in `Pinol.app/Contents/Resources`. The
 package's FFmpeg is built from source without GPL components (Homebrew's own includes x264 and x265); the build checks
 that every FFmpeg library in it is LGPL and that no GPL-only library is in it.
+
+**Windows package.** Its FFmpeg DLLs come from a pinned, checksummed BtbN/FFmpeg-Builds "lgpl-shared" archive; the
+build checks that each one declares LGPL v2.1 or later or LGPL v3 or later and was configured without GPL or non-free
+parts, and records that licence in `DEPENDENCIES.txt`. Microsoft's `vc_redist.x64.exe` is included unmodified, under
+its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.

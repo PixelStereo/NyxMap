@@ -6,6 +6,8 @@ Usage:
   build_ffmpeg_lgpl.py replace PREFIX  put PREFIX's libraries in place of Homebrew's, for the packaging that follows
   build_ffmpeg_lgpl.py check APP       every FFmpeg library in the app is LGPL, and none of the GPL-only
                                        libraries (x264, x265, postproc…) is in it
+  build_ffmpeg_lgpl.py check-dlls DIR  Windows: every FFmpeg DLL in DIR is LGPL v2.1 or later, or LGPL v3 or later
+                                       (BtbN's lgpl builds may use --enable-version3); prints the licence last
 
 Homebrew builds FFmpeg with --enable-gpl (libx264, libx265…): an application that ships it is a GPL work, which the
 NDI runtime and Pinol's own terms do not allow. This build has no --enable-gpl and no --enable-nonfree, so it is
@@ -73,15 +75,24 @@ def build(prefix: Path):
     check_licence(prefix / "lib")
 
 
-def licence_problem(dylib: Path):
-    """Why this FFmpeg library is not LGPL, or None. Each one carries its licence ("libavcodec license: LGPL version
-    2.1 or later", "GPL version 2 or later" in a GPL build) and its configure line."""
-    data = dylib.read_bytes()
-    licences = set(re.findall(rb"lib\w+ license: ([^\0]+)", data))
-    if licences != {b"LGPL version 2.1 or later"}:
+def licences_of(lib: Path):
+    """The licences an FFmpeg library declares: each one carries its licence ("libavcodec license: LGPL version 2.1 or
+    later", "LGPL version 3 or later" with --enable-version3, "GPL version 2 or later" in a GPL build)"""
+    return {x.decode() for x in re.findall(rb"lib\w+ license: ([^\0]+)", lib.read_bytes())}
+
+
+def licence_problem(lib: Path, allow_version3=False):
+    """Why this FFmpeg library is not LGPL v2.1 or later, or None. With allow_version3 (the Windows package, whose
+    licence texts include LGPL v3) LGPL v3 or later is accepted too. GPL and non-free parts never are: the configure
+    line each library carries must not have them. macOS and Linux stay strict."""
+    data = lib.read_bytes()
+    accepted = [{"LGPL version 2.1 or later"}] + ([{"LGPL version 3 or later"}] if allow_version3 else [])
+    if (licences := licences_of(lib)) not in accepted:
         return f"licence {sorted(licences)}"
-    if re.search(rb"--enable-(gpl|nonfree|version3)\b", data):
+    if re.search(rb"--enable-(gpl|nonfree)\b", data):
         return "configured with GPL or non-free parts"
+    if not allow_version3 and re.search(rb"--enable-version3\b", data):
+        return "configured with LGPL v3 parts"
     return None
 
 
@@ -130,6 +141,22 @@ def check(app: Path):
     print(f"{found} FFmpeg libraries in the package, all LGPL; no GPL-only library")
 
 
+def check_dlls(folder: Path):
+    """Windows: the FFmpeg DLLs next to Pinol.exe (avcodec-62.dll…), and no GPL-only postproc"""
+    files = sorted(p for p in folder.glob("*.dll") if re.match(r"^(av\w+|sw\w+|postproc)-\d+\.dll$", p.name, re.I))
+    errors = [f"GPL-only library in the package: {p.name}" for p in files if p.name.lower().startswith("postproc")]
+    errors += [f"{p.name}: {why}" for p in files if (why := licence_problem(p, allow_version3=True))]
+    if errors or not files:
+        sys.exit("\n".join(errors) or f"no FFmpeg DLL in {folder}")
+    licences = set()
+    for p in files:
+        licences |= licences_of(p)
+        print(f"{p.name}: {', '.join(sorted(licences_of(p)))}")
+    print(f"{len(files)} FFmpeg DLLs, without GPL or non-free parts; licence:")
+    # Together they are under the stricter one
+    print("LGPL version 3 or later" if "LGPL version 3 or later" in licences else "LGPL version 2.1 or later")
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "build":
         build(Path(sys.argv[2]).resolve())
@@ -137,6 +164,8 @@ def main():
         replace(Path(sys.argv[2]).resolve())
     elif len(sys.argv) == 3 and sys.argv[1] == "check":
         check(Path(sys.argv[2]).resolve())
+    elif len(sys.argv) == 3 and sys.argv[1] == "check-dlls":
+        check_dlls(Path(sys.argv[2]).resolve())
     else:
         sys.exit(__doc__)
 

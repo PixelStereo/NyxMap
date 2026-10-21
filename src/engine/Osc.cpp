@@ -37,7 +37,30 @@ static bool oscColorTupleIsBytes(const QVariantList &a, int channels)
 static double num(const QVariant &v)
 {
     if (v.typeId() == QMetaType::Bool) return v.toBool() ? 1.0 : 0.0;
-    return v.toDouble();
+    const double d = v.toDouble();
+    // NaN passes std::clamp and would stay in the show (a NaN speed: every layer's clock NaN for good). The messages
+    // carrying one are refused (OscServer::handleMessage): this only guards a value that reaches here anyway
+    return std::isfinite(d) ? d : 0.0;
+}
+
+// No argument a numeric value is read from is NaN or infinite: a float / double, or a string sent where the node
+// takes a number ("nan", "inf"). False: the message is ignored, the values it targets stay as they were.
+static bool finiteArgs(const QVariantList &a, const QString &types = QString())
+{
+    for (int k = 0; k < a.size(); ++k) {
+        const QVariant &v = a[k];
+        const int t = v.typeId();
+        if (t == QMetaType::Double || t == QMetaType::Float) {
+            if (!std::isfinite(v.toDouble())) return false;
+        } else if (t == QMetaType::QString) {
+            const QChar tag = k < types.size() ? types[k] : QChar();
+            if (tag == QLatin1Char('s') || tag == QLatin1Char('S')) continue; // text: a name may be "inf"
+            bool ok = false;
+            const double d = v.toString().toDouble(&ok);
+            if (ok && !std::isfinite(d)) return false;
+        }
+    }
+    return true;
 }
 
 static bool truth(const QVariant &v)
@@ -1170,6 +1193,8 @@ bool OscServer::handleMessage(const osc::Message &m)
         EventLog::instance().append(EventLog::OscIn, line);
         emit eventObserved(QStringLiteral("OSC IN"), line);
     }
+    // NaN / infinity: neither an interaction's input nor a value of the show (it would stay there for good)
+    if (!finiteArgs(m.args, m.types)) return false;
     // A full OSC RGB(A) value must remain one Interaction event, so it can
     // drive a complete ISF color. Individual scalar arguments remain learnable.
     const auto numeric = [](const QVariant &a) {
@@ -1247,6 +1272,7 @@ bool OscServer::handleMessage(const osc::Message &m)
     for (const QString &p : targets) {
         const OscNode *n = m_ns.node(p);
         if (!n || !(n->access & 2) || !n->set) continue;
+        if (!finiteArgs(m.args, n->type)) continue; // a number written as text: "nan", "inf"
         any |= n->set(m.args);
     }
     if (any) m_e->noteInput(FrameTiming::Osc); // a value changed: how long until a frame has it

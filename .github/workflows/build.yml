@@ -113,10 +113,11 @@ jobs:
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure -L timing
       - name: Dependency versions
         run: |
+          # The build machine only (package_linux.py labels it so). Ubuntu's FFmpeg (GPL) makes the test fixtures and is
+          # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
           {
             echo "Built on $(lsb_release -ds) $(uname -m), commit $GITHUB_SHA"
-            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev libavcodec-dev libavformat-dev \
-              libswscale-dev libswresample-dev libavutil-dev libasound2-dev cmake gcc
+            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
         run: |
@@ -551,9 +552,14 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
+          # pwsh stops on cmdlet errors only: every native command's exit code is checked
+          $ErrorActionPreference = "Stop"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT="C:\ffmpeg\$env:FFMPEG_ZIP"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
           cmake --build build
+          if ($LASTEXITCODE -ne 0) { throw "Pinol build failed" }
           cmake --build build --target pinol_tests
+          if ($LASTEXITCODE -ne 0) { throw "Test build failed" }
       - uses: actions/download-artifact@v4
         with:
           name: test-media
@@ -587,6 +593,7 @@ jobs:
           # Keep the official MSVC redistributable installer in the archive instead of copying
           # compiler-runtime DLLs individually.
           windeployqt --release --no-compiler-runtime --no-ffmpeg -multimedia dist\Pinol.exe
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
           # Bundle the FFmpeg DLL set used by this build, including companion DLLs.
           $ffmpegBin = "C:\ffmpeg\$env:FFMPEG_ZIP\bin"
@@ -598,6 +605,12 @@ jobs:
             throw "No FFmpeg DLLs found in $ffmpegBin"
           }
           $ffmpegDlls | Copy-Item -Destination dist -Force
+          # Only LGPL FFmpeg, as on macOS and Linux: v2.1 or later, or v3 or later (BtbN's lgpl builds may use
+          # --enable-version3; licenses\LGPL-3.0.txt is in the package), never GPL or non-free parts
+          $ffmpegCheck = @(python scripts/build_ffmpeg_lgpl.py check-dlls dist)
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg DLL licence check failed" }
+          $ffmpegCheck
+          $ffmpegLicence = $ffmpegCheck[-1]
 
           # Open Media Transport (MIT, built from source): next to Pinol.exe, where Pinol looks for it first
           python scripts/build_omt.py "$env:RUNNER_TEMP\omt"
@@ -610,7 +623,16 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.x64.dll", "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.Licenses.txt", "$env:RUNNER_TEMP\ndi\NDI-NOTICE.txt" -Destination dist -Force
 
           # Include Microsoft's official x64 Visual C++ Redistributable installer.
+          # aka.ms always serves the latest one, so no fixed checksum: its Authenticode signature must be valid and
+          # Microsoft's, and its version and SHA-256 are recorded in DEPENDENCIES.txt
           Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "dist\vc_redist.x64.exe"
+          $vcSignature = Get-AuthenticodeSignature "dist\vc_redist.x64.exe"
+          if ($vcSignature.Status -ne 'Valid' -or $vcSignature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "vc_redist.x64.exe: signature $($vcSignature.Status), signer '$($vcSignature.SignerCertificate.Subject)'"
+          }
+          $vcVersion = (Get-Item "dist\vc_redist.x64.exe").VersionInfo.FileVersion
+          $vcSha = (Get-FileHash "dist\vc_redist.x64.exe" -Algorithm SHA256).Hash
+          "vc_redist.x64.exe $vcVersion, SHA-256 $vcSha, signed by $($vcSignature.SignerCertificate.Subject)"
 
           # Basic packaging assertions.
           if (-not (Test-Path dist\Pinol.exe)) { throw "Pinol.exe missing" }
@@ -644,9 +666,13 @@ jobs:
 
           # The FFmpeg build actually used (BtbN's archive is rebuilt daily: its version and checksum, to rebuild it)
           $ffv = (& "$ffmpegBin\ffmpeg.exe" -version | Select-Object -First 1)
+          if (-not $ffv) { throw "ffmpeg -version failed" }
           $sha = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash
           @("Built on Windows (MSVC 2022), commit $env:GITHUB_SHA", "Qt 6.8.3 (win64_msvc2022_64, Qt Multimedia)",
             "FFmpeg: $env:FFMPEG_ZIP from BtbN/FFmpeg-Builds release '$env:FFMPEG_RELEASE'", "  $ffv", "  zip SHA-256 $sha",
+            "  licence of the DLLs: $ffmpegLicence (no GPL or non-free parts)",
+            "Microsoft Visual C++ Redistributable: vc_redist.x64.exe $vcVersion", "  SHA-256 $vcSha",
+            "  signed by $($vcSignature.SignerCertificate.Subject)",
             (Get-Content "$env:RUNNER_TEMP\ndi\NDI-SDK.txt")) |
             Set-Content -Encoding utf8 dist\DEPENDENCIES.txt
           Get-Content dist\DEPENDENCIES.txt
