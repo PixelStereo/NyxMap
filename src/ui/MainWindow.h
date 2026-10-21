@@ -48,6 +48,7 @@ public:
 
 protected:
     bool event(QEvent *e) override;
+    void showEvent(QShowEvent *e) override;
     void closeEvent(QCloseEvent *e) override;
     void dragEnterEvent(QDragEnterEvent *e) override;
     void dropEvent(QDropEvent *e) override;
@@ -55,6 +56,7 @@ protected:
 
 private:
     bool m_quitting = false; // closing: the project question is asked once, the outputs leave fullscreen first
+    void fitToAvailableScreen();
     void buildMenus();
     void refreshLayerList();
     void scheduleRecallRefresh();
