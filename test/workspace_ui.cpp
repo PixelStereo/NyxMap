@@ -20,7 +20,10 @@
 #include "Widgets.h"
 #include <QTableWidget>
 #include <QAction>
+#include <QHeaderView>
+#include <QMouseEvent>
 #include <QMenu>
+#include <QMap>
 #include <QUndoStack>
 #include <QListWidget>
 #include <QLabel>
@@ -42,7 +45,114 @@
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <functional>
+#include <utility>
 int runColorParameterUiTests(Engine &engine, const QString &root);
+
+static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, const char *)> &check)
+{
+    QSettings settings;
+    settings.beginGroup("mediaBin");
+    QMap<QString, QVariant> saved;
+    for (const QString &key : settings.allKeys()) saved.insert(key, settings.value(key));
+    settings.remove("");
+    QTemporaryDir files;
+    const QString alpha = files.filePath("alpha.png"), bravo = files.filePath("bravo.png"), charlie = files.filePath("charlie.png");
+    for (const auto &entry : {std::make_pair(alpha, 32), std::make_pair(bravo, 16), std::make_pair(charlie, 8)}) {
+        QImage image(entry.second, entry.second, QImage::Format_RGBA8888);
+        image.fill(Qt::gray);
+        if (entry.first != charlie) image.setColorSpace(entry.first == alpha ? QColorSpace::DisplayP3 : QColorSpace::SRgb);
+        check(image.save(entry.first), "create media-bin sorting fixture");
+    }
+    engine.addBinItems({alpha, bravo, charlie});
+    QString error;
+    for (int i = 0; i < 12; ++i)
+        check(engine.setLayerImage(engine.addLayer(QStringLiteral("Use %1").arg(i)), i < 10 ? alpha : bravo, &error),
+              "create different media usage counts");
+    {
+        MediaBin bin(&engine);
+        bin.resize(1000, 500); bin.show(); QApplication::processEvents();
+        auto *tree = bin.findChild<QTreeWidget *>("mediaBinTree");
+        auto *columns = bin.findChild<QToolButton *>("mediaBinColumns");
+        check(tree && columns && columns->menu(), "media bin exposes a Columns menu");
+        if (tree && columns && columns->menu()) {
+            const auto actions = columns->menu()->actions();
+            check(actions.size() == 4 && actions[0]->text() == "File" && actions[0]->isChecked() && !actions[0]->isEnabled(),
+                  "File is always visible and cannot be hidden in the Columns menu");
+            auto itemOf = [tree](const QString &path) -> QTreeWidgetItem * {
+                for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                    if ((*it)->data(0, Qt::UserRole + 1).toString() == path) return *it;
+                return nullptr;
+            };
+            auto *a = itemOf(alpha), *b = itemOf(bravo), *c = itemOf(charlie);
+            check(a && b && c, "sorting fixtures appear in the media bin");
+            if (a && b && c && actions.size() == 4) {
+                auto *group = a->parent();
+                QList<QTreeWidgetItem *> groups;
+                for (int i = 0; i < tree->topLevelItemCount(); ++i) groups << tree->topLevelItem(i);
+                auto orderIs = [group](QTreeWidgetItem *first, QTreeWidgetItem *second, QTreeWidgetItem *third) {
+                    return group->childCount() == 3 && group->child(0) == first && group->child(1) == second && group->child(2) == third;
+                };
+                tree->setCurrentItem(a);
+                tree->sortItems(3, Qt::AscendingOrder);
+                QElapsedTimer wait; wait.start();
+                while (wait.elapsed() < 5000 && (a->text(3) == "…" || b->text(3) == "…" || c->text(3) == "…")) {
+                    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+                    QThread::msleep(1);
+                }
+                check(a->text(3).contains("P3") && b->text(3).contains("sRGB") && c->text(3).contains("Unknown"),
+                      "asynchronous media-bin color metadata arrives");
+                check(tree->sortColumn() == 3 && group->child(0) == a && bin.selectedPath() == alpha,
+                      "metadata updates preserve color sorting and selection");
+                tree->sortItems(0, Qt::AscendingOrder);
+                check(orderIs(a, b, c), "File sorts media by name");
+                auto clickHeader = [tree](int column) {
+                    auto *header = tree->header();
+                    const QPointF pos(header->sectionViewportPosition(column) + header->sectionSize(column) / 2, header->height() / 2);
+                    const QPointF global = header->viewport()->mapToGlobal(pos.toPoint());
+                    QMouseEvent down(QEvent::MouseButtonPress, pos, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                    QMouseEvent up(QEvent::MouseButtonRelease, pos, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                    QApplication::sendEvent(header->viewport(), &down); QApplication::sendEvent(header->viewport(), &up);
+                };
+                clickHeader(0);
+                check(tree->header()->sortIndicatorOrder() == Qt::DescendingOrder && orderIs(c, b, a),
+                      "clicking a header reverses its sort order");
+                a->setText(1, "Zulu"); b->setText(1, "Alpha"); c->setText(1, "Mike");
+                tree->sortItems(1, Qt::AscendingOrder);
+                check(orderIs(b, c, a), "Info sorts by the displayed description");
+                for (int column = 0; column < 4; ++column) {
+                    clickHeader(column);
+                    check(tree->sortColumn() == column, "every column header selects its sort key");
+                    bin.refresh();
+                    check(tree->sortColumn() == column, "refresh preserves the selected sort key");
+                    for (int i = 0; i < groups.size(); ++i)
+                        check(tree->topLevelItem(i) == groups[i], "sorting keeps media type groups in place");
+                }
+                tree->sortItems(2, Qt::AscendingOrder);
+                check(orderIs(c, b, a), "Layers sorts zero, two and ten numerically");
+                tree->sortItems(2, Qt::DescendingOrder); bin.refresh();
+                check(orderIs(a, b, c) && tree->header()->sortIndicatorOrder() == Qt::DescendingOrder,
+                      "descending numeric sorting survives a usage refresh");
+                actions[2]->trigger();
+                check(tree->isColumnHidden(2) && tree->sortColumn() == 0, "hiding the active sort column returns to File");
+                actions[1]->trigger(); actions[3]->trigger();
+                check(!tree->isColumnHidden(0) && tree->isColumnHidden(1) && tree->isColumnHidden(2) && tree->isColumnHidden(3),
+                      "all optional columns can be hidden independently");
+                actions[2]->trigger(); tree->sortItems(2, Qt::DescendingOrder);
+                MediaBin reopened(&engine);
+                auto *restored = reopened.findChild<QTreeWidget *>("mediaBinTree");
+                check(restored && !restored->isColumnHidden(0) && restored->isColumnHidden(1) &&
+                          !restored->isColumnHidden(2) && restored->isColumnHidden(3) && restored->sortColumn() == 2 &&
+                          restored->header()->sortIndicatorOrder() == Qt::DescendingOrder,
+                      "a new Media Bin restores column visibility and sorting");
+            }
+        }
+    }
+    engine.newProject();
+    settings.remove("");
+    for (auto it = saved.cbegin(); it != saved.cend(); ++it) settings.setValue(it.key(), it.value());
+}
+
 int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
@@ -75,6 +185,7 @@ int main(int argc, char **argv)
         if (!ok) { ++failures; std::printf("FAIL %s: %s\n", selection ? "selection_ui" : "workspace_ui", reason); }
     };
     if (!selection) {
+        mediaBinColumnTests(engine, check);
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();
         auto *defaultColorView = window.findChild<QComboBox *>("defaultColorPickerView");
