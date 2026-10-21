@@ -109,7 +109,7 @@ jobs:
       - name: Engine tests
         run: |
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
-          xvfb-run -a ctest --test-dir build --output-on-failure -LE timing
+          xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure -L timing
       - name: Dependency versions
         run: |
@@ -373,7 +373,7 @@ jobs:
           cmake --build build --target pinol_tests -j4
       - name: Engine tests
         run: |
-          ctest --test-dir build --output-on-failure -LE timing
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure -L timing
       - name: Dependency versions
         run: |
@@ -573,7 +573,7 @@ jobs:
         run: |
           $env:PATH = "C:\ffmpeg\$env:FFMPEG_ZIP\bin;$env:PATH"
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
-          ctest --test-dir build --output-on-failure -LE timing
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
