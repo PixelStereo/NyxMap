@@ -349,7 +349,7 @@ void SetEffects::redo()
 }
 
 SetOpacityIn::SetOpacityIn(Engine *e, quint64 layer, quint64 viewport, float before, float after, const QString &text)
-    : m_e(e), m_layer(layer), m_viewport(viewport), m_before(before), m_after(after)
+    : m_e(e), m_layer(layer), m_viewport(viewport), m_before(before), m_after(after), m_time(nowMs())
 {
     setText(text);
 }
@@ -357,8 +357,9 @@ SetOpacityIn::SetOpacityIn(Engine *e, quint64 layer, quint64 viewport, float bef
 bool SetOpacityIn::mergeWith(const QUndoCommand *o)
 {
     auto *c = dynamic_cast<const SetOpacityIn *>(o);
-    if (!c || c->m_layer != m_layer || c->m_viewport != m_viewport) return false;
+    if (!c || c->m_layer != m_layer || c->m_viewport != m_viewport || c->m_time - m_time > kMergeWindowMs) return false;
     m_after = c->m_after;
+    m_time = c->m_time;
     return true;
 }
 

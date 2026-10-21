@@ -8,6 +8,9 @@ class ScopeTest(unittest.TestCase):
         scope = classify(["src/ui/TimelineActivity.cpp"])
         self.assertTrue(scope["build"] and scope["ui"] and scope["memory"])
         self.assertFalse(scope["tsan"] or scope["fuzz"] or scope["valgrind"])
+    def test_packaging_rebuilds_the_packages(self):
+        for path in ("packaging/linux/AppRun", "packaging/ndi-sdk.json", "licenses/LGPL-3.0.txt", "THIRD-PARTY-NOTICES.md"):
+            self.assertTrue(classify([path])["build"], path)
     def test_threading_keeps_tsan(self):
         self.assertTrue(classify(["src/engine/Sequencer.cpp"])["tsan"])
     def test_codec_keeps_fuzzing(self):

@@ -656,6 +656,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     connect(m_engine, &Engine::snapshotRecalled, this, [this](int i) {
         const int previous = m_active;
         m_active = i;
+        m_activeId = i >= 0 && i < m_engine->snapshotCount() ? m_engine->snapshot(i).id : 0;
         // Playback moves a marker; it does not replace the list or the parameter inspector.
         for (int row : {previous, m_active}) if (auto *item = itemOf(row)) {
             const bool active = row == m_active;
@@ -778,14 +779,20 @@ void SnapshotPanel::setMode(int mode)
     emit modeChanged(mode);
 }
 
+void SnapshotPanel::clearActive()
+{
+    m_activeId = 0;
+    refresh();
+}
+
 void SnapshotPanel::refresh()
 {
+    // The marker follows its snapshot, wherever it went (added before it, moved, undone, removed: none)
+    m_active = m_activeId ? m_engine->indexOfSnapshot(m_activeId) : -1;
     if (m_applying) return; // our own edit: the panel already shows it
     const QString keep = nodeKey(m_list->currentItem());
     m_filling = true;
     m_list->clear();
-    const int n = m_engine->snapshotCount();
-    if (m_active >= n) m_active = -1;
     QTreeWidgetItem *current = nullptr;
     std::function<void(const std::vector<Engine::SnapshotNode> &, QTreeWidgetItem *)> add =
         [&](const std::vector<Engine::SnapshotNode> &nodes, QTreeWidgetItem *parent) {
@@ -1549,8 +1556,6 @@ void SnapshotPanel::updateSnapshot(int i)
 void SnapshotPanel::removeSnapshot(int i)
 {
     if (i < 0 || i >= m_engine->snapshotCount()) return;
-    if (m_active == i) m_active = -1;
-    else if (m_active > i) --m_active;
     m_engine->removeSnapshot(i);
     emit edited();
 }

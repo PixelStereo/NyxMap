@@ -388,15 +388,21 @@ if(WIN32 AND FFMPEG_ROOT)
 endif()
 
 # NDI and OMT next to the program, as in the packages: Pinol looks there first (Publish.cpp). Built once into
-# build/runtimes: OMT from source (scripts/build_omt.py: git, the .NET SDK 8 or later, clang), the NDI runtime from the NDI SDK
-# (scripts/fetch_ndi.py, which accepts its licence for you). Off on CI, whose packaging steps do it themselves.
+# build/runtimes: OMT from source (scripts/build_omt.py: git, the .NET SDK 8 or later, clang++), the NDI runtime from the
+# NDI SDK (scripts/fetch_ndi.py, which accepts the NDI SDK licence agreement on your behalf: only with
+# PINOL_ACCEPT_NDI_SDK_LICENSE). Off on CI, whose packaging steps do it themselves.
 if(DEFINED ENV{CI})
   set(_runtimes_default OFF)
+  set(_ndi_licence_default ON)
 else()
   set(_runtimes_default ON)
+  set(_ndi_licence_default OFF)
 endif()
-option(PINOL_BUNDLE_RUNTIMES "Put the NDI runtime and OMT next to the program (downloads; OMT needs the .NET SDK)"
+option(PINOL_BUNDLE_RUNTIMES "Put the NDI runtime and OMT next to the program (downloads; OMT needs git, clang++ and the .NET SDK)"
        ${_runtimes_default})
+option(PINOL_ACCEPT_NDI_SDK_LICENSE
+       "Accept the NDI SDK License Agreement (https://ndi.video/sdk/), so that the build downloads the NDI runtime"
+       ${_ndi_licence_default})
 if(PINOL_BUNDLE_RUNTIMES)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   set(RUNTIMES "${CMAKE_BINARY_DIR}/runtimes")
@@ -413,26 +419,48 @@ if(PINOL_BUNDLE_RUNTIMES)
     set(NDI_FILE libndi.so.6)
     set(OMT_FILES libomt.so libvmx.so)
   endif()
-  add_custom_command(OUTPUT "${RUNTIMES}/ndi/${NDI_FILE}"
-    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/fetch_ndi.py" "${RUNTIMES}/ndi"
-    COMMENT "NDI runtime from the NDI SDK" VERBATIM)
-  set(RUNTIME_FILES "${RUNTIMES}/ndi/${NDI_FILE}")
+  set(RUNTIME_FILES)
+  if(PINOL_ACCEPT_NDI_SDK_LICENSE)
+    add_custom_command(OUTPUT "${RUNTIMES}/ndi/${NDI_FILE}"
+      COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/fetch_ndi.py" "${RUNTIMES}/ndi"
+      COMMENT "NDI runtime from the NDI SDK" VERBATIM)
+    list(APPEND RUNTIME_FILES "${RUNTIMES}/ndi/${NDI_FILE}")
+  else()
+    message(NOTICE "The NDI runtime is not downloaded: fetching it from the NDI SDK means accepting the NDI SDK License "
+                   "Agreement (https://ndi.video/sdk/). If you accept it, configure again with "
+                   "-DPINOL_ACCEPT_NDI_SDK_LICENSE=ON, or set an NDI library folder in Pinol.")
+  endif()
+  # What scripts/build_omt.py runs: git, the .NET SDK and clang++ (Xcode's on macOS)
   find_program(DOTNET dotnet)
-  if(DOTNET)
+  find_program(PINOL_OMT_CLANGXX clang++)
+  find_program(PINOL_OMT_GIT git)
+  set(_omt_missing)
+  foreach(_tool DOTNET PINOL_OMT_CLANGXX PINOL_OMT_GIT)
+    if(NOT ${_tool})
+      list(APPEND _omt_missing ${_tool})
+    endif()
+  endforeach()
+  if(NOT _omt_missing)
     list(TRANSFORM OMT_FILES PREPEND "${RUNTIMES}/omt/" OUTPUT_VARIABLE OMT_PATHS)
     add_custom_command(OUTPUT ${OMT_PATHS}
       COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/build_omt.py" "${RUNTIMES}/omt"
       COMMENT "OMT (libomt, libvmx) from source" VERBATIM)
     list(APPEND RUNTIME_FILES ${OMT_PATHS})
   else()
-    message(WARNING "OMT is not built next to Pinol: it needs the .NET SDK, version 8 or later (https://dotnet.microsoft.com/download). "
-                    "Install it and configure again, or set an OMT library folder in Pinol.")
+    list(TRANSFORM _omt_missing REPLACE "^DOTNET$" "the .NET SDK, version 8 or later (https://dotnet.microsoft.com/download)")
+    list(TRANSFORM _omt_missing REPLACE "^PINOL_OMT_CLANGXX$" "clang++")
+    list(TRANSFORM _omt_missing REPLACE "^PINOL_OMT_GIT$" "git")
+    list(JOIN _omt_missing ", " _omt_missing)
+    message(WARNING "OMT is not built next to Pinol: it needs ${_omt_missing}. "
+                    "Install what is missing and configure again, or set an OMT library folder in Pinol.")
   endif()
-  add_custom_target(pinol_runtimes DEPENDS ${RUNTIME_FILES})
-  add_dependencies(Pinol pinol_runtimes)
-  add_custom_command(TARGET Pinol POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${RUNTIME_DEST}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_FILES} "${RUNTIME_DEST}" VERBATIM)
+  if(RUNTIME_FILES)
+    add_custom_target(pinol_runtimes DEPENDS ${RUNTIME_FILES})
+    add_dependencies(Pinol pinol_runtimes)
+    add_custom_command(TARGET Pinol POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${RUNTIME_DEST}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RUNTIME_FILES} "${RUNTIME_DEST}" VERBATIM)
+  endif()
 endif()
 
 target_compile_options(pinol_engine PRIVATE ${PINOL_WARNINGS})

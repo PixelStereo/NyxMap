@@ -4,6 +4,7 @@
 Usage: package_linux.py BUILD_DIR FFMPEG_PREFIX OMT_DIR NDI_DIR OUTPUT_DIR
 Run on Ubuntu 24.04 after building Pinol with build_ffmpeg_linux.py's FFmpeg.
 Only glibc and the host's graphics driver stack are intentionally external.
+Fails when a bundled library comes from a Debian package whose copyright file is GPL only (see package_licence).
 """
 import hashlib
 import json
@@ -25,6 +26,37 @@ HOST_LIB = re.compile(r"^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|anl)\.
                       r"lib(GL|EGL|GLX|GLdispatch|OpenGL|GLESv[12]|glapi|gbm|drm[^.]*|"
                       r"vulkan[^.]*|nvidia[^.]*)\.so.*)$")
 FFMPEG_LIB = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.so\.")
+GST_DIR = Path("/usr/lib/x86_64-linux-gnu/gstreamer-1.0")
+# The GStreamer plugins Qt Multimedia's GStreamer backend (Qt 6.4 on Ubuntu 24.04) needs for camera capture into a
+# QVideoSink, and nothing else: every other plugin's dependencies would come along too (aasink/cacasink pull GPL-only
+# libgpm and libslang, others hundreds of unneeded libraries). Pinol plays sound with miniaudio and decodes media with
+# its own FFmpeg, so no audio or playback plugin. A missing plugin fails packaging.
+GST_PLUGINS = {
+    # queue, tee, capsfilter, identity: the capture session and video sink pipelines
+    "libgstreamer1.0-0": ["coreelements"],
+    # videotestsrc: the camera pipeline's placeholder source; videoconvert/videoscale (one plugin since 1.22);
+    # videorate; appsrc/appsink; caps detection
+    "gstreamer1.0-plugins-base": ["videotestsrc", "videoconvertscale", "videorate", "app", "typefindfunctions"],
+    # v4l2src and the V4L2 device provider (camera list); jpegdec for MJPEG cameras; autovideosrc/autovideosink;
+    # videoflip (camera mirroring/rotation in newer Qt versions)
+    "gstreamer1.0-plugins-good": ["video4linux2", "jpeg", "autodetect", "videofilter"],
+}
+# Qt plugins left out: libqtiff needs Ubuntu's libtiff, which links libjbig (GPL-2+)
+QT_PLUGIN_EXCLUDED = re.compile(r"ffmpeg|virtualkeyboard|^libqtiff\.so$")
+# Libraries the package may never contain, whatever their package's copyright file also lists (readline's has an ISC
+# stanza for one example file): GPL-only on Debian/Ubuntu
+GPL_ONLY_LINUX = re.compile(r"^lib(gpm|slang|readline|history|jbig|lzo2|cdio\w*|fftw3\w*)\.so")
+# Short licence names (DEP-5 "License:" fields) under which a library may be shipped with Pinol
+PERMITTED_LICENCE = re.compile(
+    r"\b(LGPL|MIT|BSD|0BSD|Apache|ISC|Zlib|MPL|public[ -]?domain|X11|Expat|Unlicense|CC0|BSL|Boost|OpenSSL|SSLeay|"
+    r"curl|FTL|OFL|bzip2|libpng|IJG|Unicode|ICU|PSF|HPND|MIT-CMU)", re.I)
+GPL_LICENCE = re.compile(r"(?<![\w-])A?GPL", re.I)
+# Packages whose copyright file the check cannot read correctly, reviewed by hand: package -> the licence of the
+# libraries shipped from it, and why
+LICENCE_OVERRIDE = {
+    # alsa-lib is LGPL-2.1+ (its COPYING); Ubuntu's copyright file misspells the short name "LPGL-2.1+"
+    "libasound2t64": "LGPL-2.1+",
+}
 
 
 def run(cmd, **kwargs):
@@ -42,6 +74,31 @@ def elf(path):
         return False
     with path.open("rb") as stream:
         return stream.read(4) == b"\x7fELF"
+
+
+def package_licence(owner):
+    """(licence summary, problem or None) for a Debian package, from its /usr/share/doc/<package>/copyright.
+    GPL-only means: some License field is GPL and none is LGPL or a permissive licence. Coarse (a package with GPL
+    tools and a permissive test file passes), hence GPL_ONLY_LINUX for the known cases."""
+    name = owner.split(":")[0]
+    if name in LICENCE_OVERRIDE:
+        return LICENCE_OVERRIDE[name] + " (reviewed)", None
+    text = (Path("/usr/share/doc") / name / "copyright").read_text(errors="replace")
+    licences = sorted({m.strip() for m in re.findall(r"^License:[ \t]*(\S.*)$", text, re.M | re.I)})
+    if not licences:
+        # Not machine-readable (no DEP-5 fields): the licence texts it quotes
+        if re.search(r"GNU (Lesser|Library) General Public|Permission is hereby granted|Permission to use, copy, "
+                     r"modify|Redistribution and use in source and binary forms|public domain", text, re.I):
+            return "free-form, LGPL or permissive", None
+        if re.search(r"GNU General Public License", text, re.I):
+            return "free-form, GPL", "GPL only"
+        return "free-form", "licence not recognised"
+    summary = ", ".join(licences).replace("|", "/")
+    if any(PERMITTED_LICENCE.search(x) for x in licences):
+        return summary, None
+    if any(GPL_LICENCE.search(x) for x in licences):
+        return summary, "GPL only"
+    return summary, "licence not recognised"
 
 
 def tools(folder):
@@ -75,11 +132,15 @@ def package(build, ffmpeg, omt, ndi, output):
                           (ndi, ["libndi.so.6", "Processing.NDI.Lib.Licenses.txt", "NDI-NOTICE.txt"])):
         for name in names:
             copy(folder / name, binary / name)
-    copy(ROOT / "deps-linux.txt", binary / "DEPENDENCIES.txt")
-    with (binary / "DEPENDENCIES.txt").open("a") as versions:
-        versions.write("\nFFmpeg built from source (LGPL):\n" + (ffmpeg / "VERSION").read_text())
-        versions.write("\n" + (ndi / "NDI-SDK.txt").read_text())
-        versions.write("\nPackaging tools:\n" + (ROOT / "packaging/linux/tools.json").read_text())
+    # What the package ships first; the build machine's own packages (compiler, Qt headers) after, labelled as such.
+    # Ubuntu's FFmpeg (GPL) is only used to make test fixtures and is neither linked nor shipped.
+    (binary / "DEPENDENCIES.txt").write_text(
+        "FFmpeg in the package: built from source without GPL components (LGPL v2.1 or later):\n"
+        + (ffmpeg / "VERSION").read_text()
+        + "\n" + (ndi / "NDI-SDK.txt").read_text()
+        + "\nQt, GStreamer and the other bundled libraries: Ubuntu packages, versions in THIRD-PARTY-LINUX.md\n"
+        + "\nPackaging tools:\n" + (ROOT / "packaging/linux/tools.json").read_text()
+        + "\nBuild machine packages (not shipped):\n" + (ROOT / "deps-linux.txt").read_text())
 
     # Camera capture uses Qt's GStreamer backend. Never ship Ubuntu's GPL FFmpeg via
     # an optional Qt FFmpeg backend. Only the LGPL Qt modules/plugins needed here.
@@ -88,22 +149,27 @@ def package(build, ffmpeg, omt, ndi, output):
                      "wayland-graphics-integration-client", "wayland-decoration-client", "wayland-shell-integration",
                      "platforminputcontexts", "networkinformation", "tls"):
         for source in (plugins / category).glob("*.so"):
-            if "ffmpeg" not in source.name and "virtualkeyboard" not in source.name:
+            if not QT_PLUGIN_EXCLUDED.search(source.name):
                 copy(source, app / "usr/plugins" / category / source.name)
     for required in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
         if not (app / "usr/plugins" / required).is_file():
             sys.exit(f"Required Qt plugin missing: {required}")
     (binary / "qt.conf").write_text("[Paths]\nPrefix=..\nPlugins=plugins\n")
-    gst = Path("/usr/lib/x86_64-linux-gnu/gstreamer-1.0")
-    # Do not pick up arbitrary plugins preinstalled on a CI runner (bad/ugly,
+    # Only the listed plugins, each from its package: never arbitrary plugins preinstalled on a CI runner (bad/ugly,
     # libav or x264 plugins could bring GPL code or the system FFmpeg along).
-    for package_name in ("libgstreamer1.0-0", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"):
-        for item in subprocess.check_output(["dpkg-query", "-L", package_name], text=True).splitlines():
-            source = Path(item)
-            if source.parent == gst and source.suffix == ".so":
-                copy(source, library / "gstreamer-1.0" / source.name)
+    for package_name, names in GST_PLUGINS.items():
+        files = set(subprocess.check_output(["dpkg-query", "-L", package_name], text=True).splitlines())
+        for name in names:
+            source = GST_DIR / f"libgst{name}.so"
+            if str(source) not in files:
+                sys.exit(f"GStreamer plugin {name} not found in {package_name} ({source})")
+            copy(source, library / "gstreamer-1.0" / source.name)
     scanner = Path("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner")
     copy(scanner, app / "usr/libexec/gst-plugin-scanner")
+    # Child processes (xdg-open: the browser, the file manager) get the environment Pinol was started with, not the
+    # one AppRun made for Pinol's own libraries
+    copy(ROOT / "packaging/linux/xdg-open", app / "usr/libexec/pinol-path/xdg-open")
+    (app / "usr/libexec/pinol-path/xdg-open").chmod(0o755)
     shutil.copytree("/usr/share/alsa", app / "usr/share/alsa")
     for name in ("libasound_module_pcm_pulse.so", "libasound_module_ctl_pulse.so"):
         copy(Path("/usr/lib/x86_64-linux-gnu/alsa-lib") / name, library / "alsa-lib" / name)
@@ -163,6 +229,7 @@ def package(build, ffmpeg, omt, ndi, output):
     launcher.chmod(0o755)
     notices = []
     packages = {}
+    licences = {}  # package -> (licence summary, problem), for every package an ELF file comes from
 
     def record_package(owner):
         if owner not in packages:
@@ -173,12 +240,13 @@ def package(build, ffmpeg, omt, ndi, output):
         return packages[owner]
 
     for path in sorted(p for p in app.rglob("*") if elf(p)):
-        if GPL_ONLY.match(path.name):
+        if GPL_ONLY.match(path.name) or GPL_ONLY_LINUX.match(path.name):
             sys.exit(f"GPL-only library in package: {path}")
         if FFMPEG_LIB.match(path.name):
             if problem := licence_problem(path):
                 sys.exit(f"{path}: {problem}")
-            notices.append(f"| {path.relative_to(app)} | FFmpeg { (ffmpeg / 'VERSION').read_text().splitlines()[0] } (LGPL) |")
+            notices.append(f"| {path.relative_to(app)} | FFmpeg { (ffmpeg / 'VERSION').read_text().splitlines()[0] } "
+                           "| LGPL-2.1+ (built without GPL components) |")
             continue
         if path.name in ("Pinol", "libndi.so.6", "libomt.so", "libvmx.so"):
             continue
@@ -193,20 +261,30 @@ def package(build, ffmpeg, omt, ndi, output):
         if not owners:
             sys.exit(f"Cannot identify the source package of {path}")
         for owner in sorted(owners):
-            notices.append(f"| {path.relative_to(app)} | {record_package(owner)} |")
+            licences.setdefault(owner, package_licence(owner))
+            notices.append(f"| {path.relative_to(app)} | {record_package(owner)} | {licences[owner][0]} |")
+    # Like macOS (macos_notices.py): no library whose package is GPL only
+    width = max(len(owner) for owner in licences)
+    for owner, (summary, problem) in sorted(licences.items()):
+        print(f"{owner:<{width}}  {'FAIL: ' + problem if problem else 'ok'}  {summary}")
+    if problems := [f"{owner}: {problem} ({summary})" for owner, (summary, problem) in licences.items() if problem]:
+        sys.exit("Libraries that may not be shipped (review, then fix or add to LICENCE_OVERRIDE):\n"
+                 + "\n".join(sorted(problems)))
     for pattern, label in (("/usr/share/alsa/*", "ALSA configuration data"),
                            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans fallback font")):
         result = subprocess.check_output(["dpkg-query", "-S", pattern], text=True)
         owners = {line.split(": ", 1)[0] for line in result.splitlines() if ": " in line}
         for owner in sorted(owners):
-            notices.append(f"| {label} | {record_package(owner)} |")
+            notices.append(f"| {label} | {record_package(owner)} | see its copyright file |")
     shutil.copytree("/usr/share/common-licenses", binary / "licenses/linux/common-licenses")
     (binary / "THIRD-PARTY-LINUX.md").write_text(
         "# Libraries in the Linux package\n\nQt, FFmpeg and their dependencies are dynamically linked. "
         "Distribution copyright notices and licence texts are in `licenses/linux`. "
         "FFmpeg source, configuration and checksums are in DEPENDENCIES.txt. "
         "Ubuntu source packages: https://launchpad.net/ubuntu/+source/ (names/versions below).\n\n"
-        "| File | Component / binary and source package versions |\n|---|---|\n" + "\n".join(notices) + "\n")
+        "Licences are the short names in each package's copyright file (all of its parts, tools included).\n\n"
+        "| File | Component / binary and source package versions | Licences |\n|---|---|---|\n"
+        + "\n".join(notices) + "\n")
     (app / "README-Linux.txt").write_text(
         "Pinol — Ubuntu 24.04 or newer, x86_64\n\n"
         "Portable archive: extract the whole folder, then run ./AppRun. No installation or FUSE needed.\n"

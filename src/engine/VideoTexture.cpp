@@ -246,6 +246,7 @@ void VideoTexture::feed(VideoDecoder &dec)
         m_pboSize = want;
     }
     if (!want) return;
+    for (int id : dec.takeStaleStaging(want)) destroyPbo(id); // of the old size, recycled by the decoder since
     // Its share: fewer when other layers come (the extra ones go as they come back from an upload)
     const int count = m_pboAllowed = fairPboCount(want, dec.stagingCount());
     for (int guard = 0; m_live < count && guard < count; ++guard) {

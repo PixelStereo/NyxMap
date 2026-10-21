@@ -108,11 +108,18 @@ public:
                                               "⌘/Ctrl+wheel: zoom time · Alt+wheel: zoom values"));
         how->setStyleSheet("color:#8a8a90; font-size:11px;");
         v->addWidget(how);
-        if (undo) { // undo / redo from this window too
-            QAction *u = undo->createUndoAction(this);
-            u->setShortcut(QKeySequence::Undo);
-            QAction *r = undo->createRedoAction(this);
-            r->setShortcut(QKeySequence::Redo);
+        if (undo) { // undo / redo from this window too: the main window's, which refresh the whole UI afterwards
+            QAction *u = nullptr, *r = nullptr;
+            for (QWidget *w : QApplication::topLevelWidgets()) {
+                if (!u) u = w->findChild<QAction *>(QStringLiteral("editUndo"));
+                if (!r) r = w->findChild<QAction *>(QStringLiteral("editRedo"));
+            }
+            if (!u || !r) { // no main window: the stack's own
+                u = undo->createUndoAction(this);
+                u->setShortcut(QKeySequence::Undo);
+                r = undo->createRedoAction(this);
+                r->setShortcut(QKeySequence::Redo);
+            }
             addActions({u, r});
         }
         connect(m_on, &QCheckBox::toggled, this, [this, undo](bool on) {

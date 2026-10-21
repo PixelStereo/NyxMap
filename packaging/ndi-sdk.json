@@ -1,0 +1,14 @@
+{
+  "Windows": {
+    "url": "https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20SDK.exe",
+    "sha256": ""
+  },
+  "Darwin": {
+    "url": "https://downloads.ndi.tv/SDK/NDI_SDK_Mac/Install_NDI_SDK_v6_Apple.pkg",
+    "sha256": ""
+  },
+  "Linux": {
+    "url": "https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz",
+    "sha256": ""
+  }
+}

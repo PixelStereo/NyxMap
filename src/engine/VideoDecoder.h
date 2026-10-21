@@ -126,6 +126,7 @@ public:
     int stagingCount() const;                                   // how many buffers it can use
     void addStaging(int id, uint8_t *ptr, size_t size);         // a mapped buffer, free to be written
     std::vector<int> takeFreeStaging();                         // the free ones, given back (size change)
+    std::vector<int> takeStaleStaging(size_t size);             // the free ones of another size, given back
 
     // --- Settings, for the decoders opened afterwards
     static void setHardwareDecoding(bool on);
@@ -153,6 +154,7 @@ public:
 
 private:
     void run();
+    void runLoop(); // run(): restarted after an allocation failure, which stops playback until the next seek
     bool doSeek(double t);
     int decodeNext(VideoFrame &f, double skipBefore = -1e9); // 1 = frame, 2 = skipped, 0 = end, -1 = error,
                                                              // 3 = transient I/O error (retry after a pause)
