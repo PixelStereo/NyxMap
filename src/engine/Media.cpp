@@ -13,7 +13,7 @@ QStringList Engine::videoExtensions()
 
 QStringList Engine::imageExtensions()
 {
-    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd"};
+    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"};
     return e;
 }
 
@@ -143,6 +143,8 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
     PlayMode mode = PlayMode::Loop;
     double in = 0, out = -1;
     QJsonObject kept; // the values it kept while its file was missing (its speed, its range…)
+    int psdLayer = -1; // the layer of a Photoshop file it showed (found again by its name in the new file)
+    QString psdLayerName;
     QJsonObject values; // an ISF generator's: its inputs' values, kept by the shader replacing it where the names match
     std::vector<std::pair<IsfInstance *, int>> inputs;
     {
@@ -160,6 +162,8 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
         in = l->inPoint;
         out = l->outPoint;
         kept = l->extraParams;
+        psdLayer = l->psdLayer;
+        psdLayerName = l->psdLayerName;
         auto collect = [&](IsfInstance *inst) {
             if (!inst) return;
             for (int k = 0; k < int(inst->inputs().size()); ++k) {
@@ -188,7 +192,7 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
         ok = target == SourceType::Video   ? setLayerVideo(i, to, err)
              : target == SourceType::Audio ? setLayerAudio(i, to, err)
              : target == SourceType::Isf   ? setLayerIsf(i, to, err)
-                                           : setLayerImage(i, to, err);
+                                           : setLayerImage(i, to, err, psdLayer, psdLayerName);
         if (ok && target == SourceType::Isf && kind == SourceType::Isf) {
             IsfInstance *gen;
             {

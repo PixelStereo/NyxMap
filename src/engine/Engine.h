@@ -167,7 +167,14 @@ public:
     bool applyLayerParts(int i, const QJsonObject &o, int parts);
 
     bool setLayerVideo(int i, const QString &path, QString *err = nullptr);
-    bool setLayerImage(int i, const QString &path, QString *err = nullptr);
+    // From a Photoshop file: all its layers (psdLayer -1), or one of them, by its index in the file checked against
+    // its name (found again by its name when the file has changed; all of them, with the layer's error saying so,
+    // when it is not there any more)
+    bool setLayerImage(int i, const QString &path, QString *err = nullptr, int psdLayer = -1,
+                       const QString &psdLayerName = QString());
+    // The layer of its Photoshop file an image layer shows (-1 all of them), the rest of its source unchanged. False
+    // with err when it cannot be read: the picture stays.
+    bool setLayerPsdLayer(int i, int psdLayer, QString *err = nullptr);
     // What a shader that does not load (missing, does not compile) does to the layer:
     //  - Refuse (an operator replacing a source, live): nothing changes, the source shown stays; false and err;
     //  - KeepWithError (a project opened, an undo, a snapshot): it takes its place all the same, with its path, its

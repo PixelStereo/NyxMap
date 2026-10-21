@@ -15,6 +15,11 @@
   measurement. Readback waits accumulate per output; slow IO can delay shutdown.
 - **Media/editing:** FFT startup adds 85 ms at 48 kHz. ProRes 4444/XQ software
   decoding increases CPU load. Recall delays do not cover source/topology changes.
+- **Photoshop files:** a `.psd`/`.psb` layer shows all its layers or one chosen in
+  its Source tab (RGB or grayscale, 8/16-bit). All layers use the file's merged
+  image when present; otherwise visible layers are composited with normal blending
+  only. Other blend modes, clipping, masks, layer effects, adjustment layers and
+  smart objects are not reproduced.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

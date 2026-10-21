@@ -261,6 +261,10 @@ struct Layer {
     SourceType type = SourceType::None;
     QString sourcePath;
     QString error;
+    // An image from a Photoshop file: the layer of the file it shows, -1 all of them; its name finds it again when
+    // the file has changed since
+    int psdLayer = -1;
+    QString psdLayerName;
     // SourceType::Layer: the layer whose picture is used, and where it is tapped
     quint64 sourceLayer = 0;
     LayerTap sourceTap = LayerTap::PostFx;

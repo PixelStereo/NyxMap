@@ -1,4 +1,5 @@
 #include "ImageFile.h"
+#include "Psd.h"
 
 #include <QColorSpace>
 #include <QFile>
@@ -58,8 +59,12 @@ static QImage decodeWithFfmpeg(const QString &path)
     return out;
 }
 
-QImage readImageFile(const QString &path)
+QImage readImageFile(const QString &path, int psdLayer, QString *err)
 {
+    if (isPsdFile(path)) {
+        QImage img = readPsd(path, psdLayer, err);
+        return img.isNull() && psdLayer < 0 ? decodeWithFfmpeg(path) : img;
+    }
     QImage img(path);
     return img.isNull() ? decodeWithFfmpeg(path) : img;
 }

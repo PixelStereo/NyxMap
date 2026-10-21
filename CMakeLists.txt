@@ -44,6 +44,7 @@ add_library(pinol_engine STATIC
   src/engine/Gl.cpp
   src/engine/Isf.cpp
   src/engine/ImageFile.cpp
+  src/engine/Psd.cpp
   src/engine/IsfLibrary.cpp
   src/engine/Mapping.cpp
   src/engine/VideoDecoder.cpp
@@ -494,7 +495,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(PINOL_TESTS "Build the engine tests" ON)
 if(PINOL_TESTS)
-  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(pinol_tests PRIVATE src/ui)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
@@ -608,7 +609,7 @@ if(PINOL_TESTS)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
   foreach(area color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
-          media sound layersource timecode interactions)
+          media sound layersource timecode interactions psd)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()
   # Areas depending on real time (sound clocks, threads, waits, publishers): label "timing".
