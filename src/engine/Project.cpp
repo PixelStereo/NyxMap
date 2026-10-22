@@ -185,6 +185,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["type"] = "input";
         src["uri"] = l.sourcePath;
         break;
+    case SourceType::Web:
+        src = l.web.toJson();
+        src["type"] = "web";
+        break;
     default: src["type"] = "none"; break;
     }
     if (type == SourceType::Video || type == SourceType::Audio) o["play"] = l.playing;
@@ -320,6 +324,14 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             l->sourcePath = uri;
             l->error = err;
         }
+    } else if (type == "web") { // a web page: kept even where there is no browser (its error says so)
+        QSize comp;
+        {
+            Lock lk(&m_mutex);
+            comp = m_compSize;
+        }
+        setLayerWeb(index, WebSource::fromJson(src, comp), &err, true);
+        if (!err.isEmpty() && warnings) *warnings << name + ": " + err;
     } else if (type == "text") {
         {
             Lock lk(&m_mutex);
@@ -566,10 +578,10 @@ static QString projectPreflightError(const QJsonObject &root)
                 (type != QLatin1String("none") && type != QLatin1String("video") &&
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
-                 type != QLatin1String("input") && type != QLatin1String("text")))
+                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
-                                         QStringLiteral("uri"), QStringLiteral("layer")}) {
+                                         QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {
                 const QJsonValue value = src.value(field);
                 if (!value.isUndefined() && !value.isString())
                     return invalid(where + QStringLiteral("/source/") + field, QStringLiteral("string"));

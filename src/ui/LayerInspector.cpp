@@ -117,6 +117,8 @@ struct LayerValues {
     TextSource text; // Text generator
     std::optional<TimecodeSettings> timecode; // a Timecode generator
     std::optional<ClockSettings> clock;       // a Countdown, Stopwatch or Clock generator
+    WebSource web;     // Web Page generator
+    QString webStatus; // what its page is doing (empty: shown)
 
     static LayerValues take(Engine *e, int index)
     {
@@ -197,6 +199,8 @@ struct LayerValues {
         s.text = l->text;
         s.timecode = l->timecode;
         if (l->clockGen) s.clock = l->clockGen->settings();
+        s.web = l->web;
+        s.webStatus = l->webPage ? l->webPage->status() : l->error;
         if (!l->isViewport) {
             const Layer *top = l;
             while (top->parent) {
@@ -876,6 +880,12 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
                             : s.text.content.section('\n', 0, 0).left(40);
         d << QStringLiteral("%1 × %2").arg(s.text.width).arg(s.text.height);
         break;
+    case SourceType::Web:
+        d << QStringLiteral("Color space: sRGB (web page)");
+        kind = QStringLiteral("Web Page");
+        name = s.web.url.isEmpty() ? QStringLiteral("(blank page)") : s.web.url;
+        d << QStringLiteral("%1 × %2 · %3 fps").arg(s.web.width).arg(s.web.height).arg(s.web.fps);
+        break;
     case SourceType::Layer: {
         d << QStringLiteral("Color space: Inherited (not tagged)");
         kind = QStringLiteral("Layer");
@@ -924,7 +934,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
     if (!s.error.isEmpty()) v->addWidget(errorLabel(s.error));
 
     if (s.type == SourceType::Image || s.type == SourceType::Video || s.type == SourceType::Input ||
-        s.type == SourceType::Isf || s.type == SourceType::Text) {
+        s.type == SourceType::Isf || s.type == SourceType::Text || s.type == SourceType::Web) {
         auto *row = new QHBoxLayout;
         auto *pick = new QComboBox;
         pick->setObjectName(QStringLiteral("sourceColorSpace"));
@@ -1110,6 +1120,117 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         connect(pick, &QComboBox::activated, this, [apply, guard = QPointer<QComboBox>(pick)](int k) {
             if (guard) apply(guard->itemData(k).toInt());
         });
+    }
+
+    // Web Page generator: its address, size, frame rate, zoom and background; each one a parameter (undoable, held by
+    // snapshots and presets, reached by OSC)
+    if (s.type == SourceType::Web) {
+        auto *box = new QGroupBox(QStringLiteral("Web Page"));
+        auto *wf = new QFormLayout(box);
+        wf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        const WebSource def;
+        auto *url = new QLineEdit(s.web.url);
+        url->setObjectName(QStringLiteral("webUrl"));
+        url->setPlaceholderText(QStringLiteral("https://… or a local .html file"));
+        url->setToolTip(QStringLiteral("The page shown: an address, or the path of a local HTML file. Return loads it."));
+        url->setEnabled(!m_locked);
+        connect(url, &QLineEdit::editingFinished, this, [this, url] {
+            setValue(QStringLiteral("web/url"), url->text().trimmed(), QStringLiteral("Change Web Page URL"));
+            emit layerChanged();
+        });
+        auto *reload = new QPushButton(QStringLiteral("Reload"));
+        reload->setToolTip(QStringLiteral("Load the page again (also: the web/reload parameter, by OSC or an interaction)"));
+        reload->setEnabled(!m_locked);
+        connect(reload, &QPushButton::clicked, this, [this] { m_engine->reloadLayerWeb(m_layer); });
+        auto *urlRow = new QHBoxLayout;
+        urlRow->addWidget(url, 1);
+        urlRow->addWidget(reload);
+        wf->addRow(QStringLiteral("URL"), urlRow);
+        auto intBox = [this](int value, const QString &suffix) {
+            auto *x = new IntBox;
+            x->setRange(1, WebSource::kMaxSize);
+            x->setValue(value);
+            x->setSuffix(suffix);
+            x->setEnabled(!m_locked);
+            return x;
+        };
+        auto *w = intBox(s.web.width, QStringLiteral(" px"));
+        auto *h = intBox(s.web.height, QStringLiteral(" px"));
+        w->setToolTip(QStringLiteral("The size of its picture, in pixels of the page (CSS pixels)"));
+        h->setToolTip(w->toolTip());
+        auto *sizeRow = new QHBoxLayout;
+        sizeRow->addWidget(w);
+        sizeRow->addWidget(new QLabel(QStringLiteral("×")));
+        sizeRow->addWidget(h);
+        sizeRow->addStretch(1);
+        wf->addRow(new ResetLabel(QStringLiteral("Size"), [this] {
+                       const QSize c = m_engine->compositionSize(); // the composition's, by default
+                       setValues({{QStringLiteral("web/width"), c.width()}, {QStringLiteral("web/height"), c.height()}},
+                                 QStringLiteral("Reset Web Page Size"));
+                       rebuild();
+                   }),
+                   sizeRow);
+        connect(w, &QSpinBox::editingFinished, this, [this, w] {
+            setValue(QStringLiteral("web/width"), w->value(), QStringLiteral("Change Web Page Width"));
+            emit layerChanged();
+        });
+        connect(h, &QSpinBox::editingFinished, this, [this, h] {
+            setValue(QStringLiteral("web/height"), h->value(), QStringLiteral("Change Web Page Height"));
+            emit layerChanged();
+        });
+        auto number = [this](double value, double lo, double hi, double step, const QString &suffix) {
+            auto *x = new NumberBox;
+            x->setRange(lo, hi);
+            x->setSingleStep(step);
+            x->setDecimals(0);
+            x->setSuffix(suffix);
+            x->setValue(value);
+            x->setEnabled(!m_locked);
+            return x;
+        };
+        auto *fps = number(s.web.fps, WebSource::kMinFps, WebSource::kMaxFps, 1, QStringLiteral(" fps"));
+        fps->setToolTip(QStringLiteral("The pictures taken of the page per second"));
+        wf->addRow(new ResetLabel(QStringLiteral("Frame rate"),
+                                  [this, def] {
+                                      setValue(QStringLiteral("web/fps"), def.fps, QStringLiteral("Reset Web Page Frame Rate"));
+                                      rebuild();
+                                  }),
+                   fps);
+        connect(fps, &QDoubleSpinBox::editingFinished, this, [this, fps] {
+            setValue(QStringLiteral("web/fps"), fps->value(), QStringLiteral("Change Web Page Frame Rate"));
+        });
+        auto *zoom = number(s.web.zoom * 100, WebSource::kMinZoom * 100, WebSource::kMaxZoom * 100, 5, QStringLiteral(" %"));
+        zoom->setToolTip(QStringLiteral("The page's zoom: its content larger or smaller, its picture the same size"));
+        wf->addRow(new ResetLabel(QStringLiteral("Zoom"),
+                                  [this, def] {
+                                      setValue(QStringLiteral("web/zoom"), def.zoom, QStringLiteral("Reset Web Page Zoom"));
+                                      rebuild();
+                                  }),
+                   zoom);
+        connect(zoom, &QDoubleSpinBox::editingFinished, this, [this, zoom] {
+            setValue(QStringLiteral("web/zoom"), zoom->value() / 100.0, QStringLiteral("Change Web Page Zoom"));
+        });
+        auto *transparent = new FlagBox(QStringLiteral("Transparent background"));
+        transparent->setChecked(s.web.transparent);
+        transparent->setEnabled(!m_locked);
+        transparent->setToolTip(QStringLiteral("Where the page paints no background of its own, the layers below show through"));
+        wf->addRow(QString(), transparent);
+        connect(transparent, &QCheckBox::toggled, this, [this](bool on) {
+            setValue(QStringLiteral("web/transparent"), on, QStringLiteral("Change Web Page Background"));
+        });
+        auto *status = new QLabel(s.webStatus);
+        status->setObjectName(QStringLiteral("webStatus"));
+        status->setWordWrap(true);
+        status->setTextFormat(Qt::PlainText);
+        wf->addRow(QString(), status);
+        auto *poll = new QTimer(status); // its loading goes on by itself
+        poll->setInterval(500);
+        connect(poll, &QTimer::timeout, status, [this, status] { status->setText(m_engine->layerWebStatus(m_layer)); });
+        poll->start();
+        auto *note = new QLabel(QStringLiteral("Its sound is muted, and it does not take clicks or keys."));
+        note->setWordWrap(true);
+        wf->addRow(QString(), note);
+        v->addWidget(box);
     }
 
     // Text generator: the text typed here, and how it is set

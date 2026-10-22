@@ -79,6 +79,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+            qt6-webengine-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
             nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins python3-pil \
@@ -117,7 +118,7 @@ jobs:
           # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
           {
             echo "Built on $(lsb_release -ds) $(uname -m), commit $GITHUB_SHA"
-            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev libasound2-dev cmake gcc
+            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-webengine-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
         run: |
@@ -360,6 +361,7 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
+        # Homebrew's qt includes Qt WebEngine (the Web Page generator) on macOS 14 or later
         run: brew install qt ffmpeg pkg-config
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
@@ -445,10 +447,18 @@ jobs:
             codesign --force --sign - "$binary"
           done < <(find "$APP/Contents/Frameworks" "$APP/Contents/PlugIns" -type f -print0)
 
+          # Qt WebEngine (the Web Page generator): macdeployqt deploys QtWebEngineCore.framework with its helper
+          # process and its resources; a build with it must have them
+          if [[ -d "$APP/Contents/Frameworks/QtWebEngineCore.framework" ]]; then
+            test -n "$(find "$APP/Contents/Frameworks/QtWebEngineCore.framework" -path '*Helpers/QtWebEngineProcess.app' -print -quit)"
+            test -n "$(find "$APP/Contents/Frameworks/QtWebEngineCore.framework" -name 'qtwebengine_resources.pak' -print -quit)"
+          fi
+
           # Sign framework/plugin bundles after their inner Mach-O files, deepest bundles first.
           while IFS= read -r -d '' bundle; do
             codesign --force --sign - "$bundle"
-          done < <(find "$APP/Contents/Frameworks" "$APP/Contents/PlugIns" -depth -type d \( -name "*.framework" -o -name "*.bundle" \) -print0)
+          done < <(find "$APP/Contents/Frameworks" "$APP/Contents/PlugIns" -depth -type d \( -name "*.framework" -o -name "*.bundle" \
+            -o -name "*.app" \) -print0) # *.app: Qt WebEngine's helper, QtWebEngineCore.framework/Helpers/QtWebEngineProcess.app
 
           # Sign the executable and outer app last, then verify bundle integrity.
           codesign --force --sign - "$EXE"
@@ -539,7 +549,8 @@ jobs:
         with:
           version: '6.8.3'
           arch: 'win64_msvc2022_64'
-          modules: 'qtmultimedia'
+          # Qt WebEngine (the Web Page generator) and the modules aqt needs installed with it
+          modules: 'qtmultimedia qtwebengine qtwebchannel qtpositioning'
           cache: true
       - name: FFmpeg
         shell: pwsh
@@ -643,6 +654,13 @@ jobs:
           if (-not (Get-ChildItem dist -Filter "*.dll")) {
             throw "No runtime DLLs were deployed"
           }
+          # Qt WebEngine (the Web Page generator): windeployqt deploys Chromium's helper process, resources and locales
+          # next to Qt6WebEngineCore.dll; the whole dist folder goes into the archive
+          if (Test-Path dist\Qt6WebEngineCore.dll) {
+            foreach ($f in @("QtWebEngineProcess.exe", "resources\qtwebengine_resources.pak", "translations\qtwebengine_locales\en-US.pak")) {
+              if (-not (Test-Path "dist\$f")) { throw "Qt WebEngine file missing after windeployqt: $f" }
+            }
+          }
 
           @'
           Pinol Windows x64 runtime notes
@@ -668,7 +686,7 @@ jobs:
           $ffv = (& "$ffmpegBin\ffmpeg.exe" -version | Select-Object -First 1)
           if (-not $ffv) { throw "ffmpeg -version failed" }
           $sha = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash
-          @("Built on Windows (MSVC 2022), commit $env:GITHUB_SHA", "Qt 6.8.3 (win64_msvc2022_64, Qt Multimedia)",
+          @("Built on Windows (MSVC 2022), commit $env:GITHUB_SHA", "Qt 6.8.3 (win64_msvc2022_64, Qt Multimedia, Qt WebEngine)",
             "FFmpeg: $env:FFMPEG_ZIP from BtbN/FFmpeg-Builds release '$env:FFMPEG_RELEASE'", "  $ffv", "  zip SHA-256 $sha",
             "  licence of the DLLs: $ffmpegLicence (no GPL or non-free parts)",
             "Microsoft Visual C++ Redistributable: vc_redist.x64.exe $vcVersion", "  SHA-256 $vcSha",

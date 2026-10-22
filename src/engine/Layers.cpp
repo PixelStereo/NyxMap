@@ -819,6 +819,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.text.stopTyping();
     g->generator = std::move(l.generator);
     g->input = std::move(l.input);
+    g->webPage = std::move(l.webPage);
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();
@@ -1353,6 +1354,51 @@ bool Engine::setLayerInput(int i, const QString &uri, QString *err)
     }
     releaseGarbage(g);
     return true;
+}
+
+bool Engine::setLayerWeb(int i, const WebSource &settings, QString *err, bool keepWithoutBrowser)
+{
+    if (!layer(i)) return false;
+    WebSource s = settings;
+    s.sanitize();
+    QString e;
+    std::unique_ptr<WebPage> page = createWebPage(s, &e); // it starts loading on the application's thread
+    if (!page && !keepWithoutBrowser) {
+        if (err) *err = e;
+        return false;
+    }
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Web;
+        l->web = s;
+        l->webPage = std::move(page);
+        l->error = e;
+        l->srcWidth = s.width;
+        l->srcHeight = s.height;
+        if (isDefaultMapping(l->mapping))
+            l->mapping.fitAspect(double(s.width) / s.height, double(m_compSize.width()) / m_compSize.height());
+    }
+    releaseGarbage(g);
+    if (err) *err = e;
+    return true;
+}
+
+void Engine::reloadLayerWeb(int i)
+{
+    Lock lk(&m_mutex);
+    if (Layer *l = layer(i); l && l->webPage) l->webPage->reload();
+}
+
+QString Engine::layerWebStatus(int i) const
+{
+    Lock lk(&m_mutex);
+    if (i < 0 || i >= int(m_layers.size())) return {};
+    const Layer &l = *m_layers[size_t(i)];
+    return l.webPage ? l.webPage->status() : l.error;
 }
 
 bool Engine::setLayerIsf(int i, const QString &path, QString *err, IsfFailure onFailure)

@@ -69,6 +69,7 @@ add_library(pinol_engine STATIC
   src/engine/DeckLink.cpp
   src/engine/Midi.cpp
   src/engine/LiveInput.cpp
+  src/engine/WebPage.cpp
   src/engine/Permissions.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
@@ -322,6 +323,7 @@ set(APP_SOURCES
   src/ui/ColorPicker.h
   src/ui/InteractionPanel.cpp
   src/ui/AudioSpectrum.cpp
+  src/ui/WebPageQt.cpp
 )
 
 if(APPLE)
@@ -373,6 +375,22 @@ add_dependencies(Pinol pinol_build_sha)
 target_include_directories(Pinol PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_include_directories(Pinol PRIVATE src src/ui)
 target_link_libraries(Pinol PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
+
+# Web pages (the Web Page generator, src/ui/WebPageQt.cpp): Qt WebEngine when it is there, in the application only
+# (pinol_engine has no browser: the application gives it one at startup). Without it the generator is not offered.
+option(PINOL_WEB "Web Page generator (Qt WebEngine, when found)" ON)
+set(PINOL_WEB_LIBS)
+if(PINOL_WEB)
+  find_package(Qt6 QUIET COMPONENTS WebEngineWidgets Quick QuickWidgets)
+endif()
+if(PINOL_WEB AND Qt6WebEngineWidgets_FOUND AND Qt6QuickWidgets_FOUND)
+  set(PINOL_WEB_LIBS Qt6::WebEngineWidgets Qt6::Quick Qt6::QuickWidgets)
+  target_link_libraries(Pinol PRIVATE ${PINOL_WEB_LIBS})
+  target_compile_definitions(Pinol PRIVATE PINOL_HAS_WEB)
+  message(STATUS "Qt WebEngine found: Web Page generator")
+else()
+  message(STATUS "Qt WebEngine not found: no Web Page generator")
+endif()
 
 # Copy the bundled ISF shaders next to the executable (or into the macOS bundle).
 # The folder is emptied first so renamed or deleted shaders do not linger in the build.
@@ -605,6 +623,17 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_timeline_activity_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME timeline_activity COMMAND pinol_timeline_activity_test)
   set_tests_properties(timeline_activity PROPERTIES TIMEOUT 30)
+  # The Web Page generator: settings, parameters, persistence; a real page too when Qt WebEngine is there (it needs a
+  # display: xvfb-run on Linux; Chromium's sandbox is turned off in the test only)
+  add_executable(pinol_web_page_test test/web_page.cpp src/ui/WebPageQt.cpp)
+  target_include_directories(pinol_web_page_test PRIVATE src/ui)
+  target_link_libraries(pinol_web_page_test PRIVATE pinol_engine Qt6::Widgets ${PINOL_WEB_LIBS})
+  target_compile_options(pinol_web_page_test PRIVATE ${PINOL_WARNINGS})
+  if(PINOL_WEB_LIBS)
+    target_compile_definitions(pinol_web_page_test PRIVATE PINOL_HAS_WEB)
+  endif()
+  add_test(NAME web_page COMMAND pinol_web_page_test)
+  set_tests_properties(web_page PROPERTIES TIMEOUT 120)
   add_executable(pinol_cue_dispatch_test test/cue_dispatch.cpp)
   target_link_libraries(pinol_cue_dispatch_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
@@ -633,6 +662,7 @@ if(PINOL_TESTS)
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
   add_executable(pinol_workspace_ui_test test/workspace_ui.cpp test/color_parameter_ui.cpp ${WORKSPACE_TEST_SOURCES})
   target_include_directories(pinol_workspace_ui_test PRIVATE src src/ui "${CMAKE_BINARY_DIR}/generated")
+  # Without Qt WebEngine (WebPageQt.cpp compiled empty): the Media Bin then does not offer the Web Page generator
   target_link_libraries(pinol_workspace_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   target_compile_definitions(pinol_workspace_ui_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   if(APPLE)

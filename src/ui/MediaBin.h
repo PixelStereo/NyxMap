@@ -48,7 +48,7 @@ private:
 
     Engine *m_engine;
     QTreeWidget *m_tree;
-    QTreeWidgetItem *m_videos, *m_images, *m_audios, *m_generators, *m_text, *m_timecode, *m_inputs, *m_isf, *m_isfGenerators;
+    QTreeWidgetItem *m_videos, *m_images, *m_audios, *m_generators, *m_text, *m_timecode, *m_web, *m_inputs, *m_isf, *m_isfGenerators;
     QTreeWidgetItem *m_clocks[3] = {}; // Countdown, Stopwatch, Clock (ClockKind)
     QPushButton *m_relink, *m_remove, *m_reveal;
     QLabel *m_summary;

@@ -451,6 +451,15 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         w = l.sourceTex.w;
         h = l.sourceTex.h;
         break;
+    case SourceType::Web: // the newest picture taken of the page (its size: the page's, set in its settings)
+        if (l.webPage && l.webPage->update(l.sourceTex)) {
+            l.srcWidth = l.sourceTex.w;
+            l.srcHeight = l.sourceTex.h;
+        }
+        tex = l.sourceTex.tex;
+        w = l.sourceTex.w;
+        h = l.sourceTex.h;
+        break;
     case SourceType::Isf:
         if (l.generator) {
             bindLayerImages(*l.generator);
