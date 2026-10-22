@@ -281,8 +281,8 @@ static void clearLayout(QLayout *lay)
 static QWidget *separator()
 {
     auto *line = new QFrame;
-    line->setFrameShape(QFrame::HLine);
-    line->setStyleSheet("color:#3a3a3f;");
+    line->setFrameShape(QFrame::NoFrame);
+    line->setStyleSheet("background:#62626e;");
     line->setFixedHeight(1);
     return line;
 }
@@ -1728,6 +1728,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             m_clockUi = std::make_shared<ClockUi>();
             auto *shown = new QLabel;
             shown->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            shown->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
             m_clockUi->shown = shown;
             if (kind != ClockKind::Clock) { // Start, Pause, Reset: its values clock/play, clock/reset (OSC, cues…)
                 auto button = [](const QIcon &icon, const QString &tip, bool checkable) {
