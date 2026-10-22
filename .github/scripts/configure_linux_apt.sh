@@ -13,10 +13,10 @@ if [[ ! -f /etc/apt/apt-mirrors.txt ]]; then
 fi
 
 # Keep Ubuntu's official archives and the runner's signed repository metadata.
-sudo tee /etc/apt/apt-mirrors.txt >/dev/null <<'MIRRORS'
-https://archive.ubuntu.com/ubuntu/ priority:1
-https://security.ubuntu.com/ubuntu/ priority:2
-MIRRORS
+# APT separates mirror metadata with a tab, not spaces.
+printf '%s\tpriority:1\n%s\tpriority:2\n' \
+    'https://archive.ubuntu.com/ubuntu/' \
+    'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
 sudo tee /etc/apt/apt.conf.d/80pinol-ci-network >/dev/null <<'APT'
 Acquire::Retries "2";
 Acquire::http::Timeout "30";
