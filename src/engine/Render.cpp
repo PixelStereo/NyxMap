@@ -431,6 +431,14 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
             tex = l.videoTex->texture();
             w = l.videoTex->width();
             h = l.videoTex->height();
+            // A live stream's size is known at its first picture (and may change when it connects again)
+            if (l.videoSource.live && w > 0 && h > 0 && (w != l.srcWidth || h != l.srcHeight)) {
+                const bool first = !l.srcWidth;
+                l.srcWidth = w;
+                l.srcHeight = h;
+                if (first && l.mapping.isIdentity())
+                    l.mapping.fitAspect(double(w) / h, double(m_compSize.width()) / m_compSize.height());
+            }
         }
         break;
     case SourceType::Image:

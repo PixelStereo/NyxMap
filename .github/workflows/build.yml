@@ -78,10 +78,10 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
-            nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins python3-pil \
+            nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
@@ -117,7 +117,7 @@ jobs:
           # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
           {
             echo "Built on $(lsb_release -ds) $(uname -m), commit $GITHUB_SHA"
-            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev libasound2-dev cmake gcc
+            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-svg-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
         run: |
@@ -160,7 +160,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb
       - name: Build with AddressSanitizer
@@ -188,7 +188,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind
       - name: Build with debug symbols
@@ -231,7 +231,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
+            qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb
       - name: Build
         run: |
@@ -284,7 +284,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
@@ -325,7 +325,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |

@@ -265,6 +265,8 @@ struct Layer {
     // the file has changed since
     int psdLayer = -1;
     QString psdLayerName;
+    // A video: an image sequence's pattern, first number and rate, or a live stream (its URL in sourcePath)
+    VideoSource videoSource;
     // SourceType::Layer: the layer whose picture is used, and where it is tapped
     quint64 sourceLayer = 0;
     LayerTap sourceTap = LayerTap::PostFx;

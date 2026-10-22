@@ -166,7 +166,13 @@ public:
     static int partOf(const QString &path); // the part (Part…) a parameter of a layer belongs to, by its address
     bool applyLayerParts(int i, const QJsonObject &o, int parts);
 
-    bool setLayerVideo(int i, const QString &path, QString *err = nullptr);
+    // A video file; an image sequence (path: its folder; without a pattern in `source`, the folder's numbered series is
+    // found, at `source.fps`); a live stream (source.live, path: its URL — opened at once, connected by its decoder)
+    bool setLayerVideo(int i, const QString &path, QString *err = nullptr, const VideoSource &source = VideoSource());
+    // A live network stream (rtsp, rtmp, srt, udp, rtp, http(s)… URL); rtspTcp: RTSP over TCP rather than UDP
+    bool setLayerStream(int i, const QString &url, bool rtspTcp = true, QString *err = nullptr);
+    // An image sequence's frame rate, or a stream's RTSP transport: the media opened again, the rest of the layer kept
+    bool setLayerVideoSource(int i, const VideoSource &source, QString *err = nullptr);
     // From a Photoshop file: all its layers (psdLayer -1), or one of them, by its index in the file checked against
     // its name (found again by its name when the file has changed; all of them, with the layer's error saying so,
     // when it is not there any more)
@@ -582,8 +588,26 @@ public:
     static bool isImageFile(const QString &path);
     static bool isAudioFile(const QString &path);
     static QStringList videoExtensions();
-    static QStringList imageExtensions();
+    static QStringList imageExtensions(); // svg / svgz when Qt SVG is there
     static QStringList audioExtensions();
+    // Image sequences: a folder of numbered pictures (name0001.exr…) played as a clip
+    static QStringList sequenceExtensions();
+    struct SequenceInfo {
+        QString pattern; // file name pattern in the folder, for FFmpeg ("name%04d.exr")
+        int start = 0;   // first number
+        int frames = 0;  // pictures from it without a gap (a gap ends the clip)
+    };
+    // The folder's numbered series of pictures, when most of its pictures are one series (at least two of them)
+    static bool detectImageSequence(const QString &folder, SequenceInfo *out = nullptr);
+    static bool isSequenceFolder(const QString &path) { return detectImageSequence(path); }
+    // Live network streams: an URL whose scheme FFmpeg reads live (rtsp, rtmp, srt, udp, rtp, http(s)…)
+    static bool isStreamUrl(const QString &s);
+    static QString streamPath(const QString &url);       // as a (virtual) path, dragged like a file
+    static QString streamUrlOfPath(const QString &path); // the URL of such a path, or the path when it is an URL
+    static QString streamName(const QString &url);       // as shown: host and path, no credentials
+    // A stream in the Media Bin, with the RTSP transport it is loaded with
+    void addBinStream(const QString &url, bool rtspTcp);
+    bool binStreamTcp(const QString &url) const;
 
     // --- Sound: one output device, mixing the audio of every layer
     bool startAudio(const QString &device, QString *err, bool nullDevice = false); // empty = system default
@@ -1098,6 +1122,7 @@ private:
     QString m_projectPath;
     IsfLibrary m_library;
     QStringList m_binItems;
+    QSet<QString> m_binStreamsUdp; // streams of the Media Bin loaded with RTSP over UDP
 
     // Publishing: the viewports' publishers (Publishing.h)
     Publishing m_publishing{[this] { drawQuad(); }};

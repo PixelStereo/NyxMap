@@ -1425,12 +1425,16 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     if (kIsfExt.contains(ext)) {
         if (!m_engine->setLayerIsf(i, path, &err)) return fail(err);
     } else if (!m_engine->setLayerFile(i, path, &err)) return fail(err);
+    // Its name: a stream's host and path, a sequence's folder, a file's name
+    const QString streamUrl = Engine::streamUrlOfPath(path);
+    const QString shown = !streamUrl.isEmpty() ? Engine::streamName(streamUrl) : fi.isDir() ? fi.fileName() : fi.completeBaseName();
     {
         Engine::Lock lk(&m_engine->mutex());
         Layer *l = m_engine->layer(i);
-        if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = fi.completeBaseName();
+        if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = shown;
     }
-    m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(fi.fileName()), beforeAnimations));
+    m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(streamUrl.isEmpty() ? fi.fileName() : shown),
+                                       beforeAnimations));
     selectLayer(i);
     refreshAll();
     if (!err.isEmpty()) statusBar()->showMessage(fi.fileName() + QStringLiteral(": ") + err.section('\n', 0, 0), 8000);
@@ -1446,7 +1450,8 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
     for (const QString &p : paths) {
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
-        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty()) { // built in, or live: never imported into the Media Bin
+        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty() ||
+            !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
         } else if (effect) {
             loadIntoLayer(layer, p);

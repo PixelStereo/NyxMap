@@ -2,7 +2,12 @@
 """Build the Linux release's shared LGPL FFmpeg, before configuring Pinol.
 
 Usage: build_ffmpeg_linux.py PREFIX
-Needs build-essential, nasm, pkg-config, libdav1d-dev, libva-dev, libdrm-dev and zlib1g-dev.
+Needs build-essential, nasm, pkg-config, libdav1d-dev, libva-dev, libdrm-dev, zlib1g-dev, libssl-dev and
+libsrt-openssl-dev.
+--disable-autodetect: only what is listed is linked. FFmpeg's own demuxers, decoders and network protocols are all
+built (image2 for image sequences, TIFF/DPX/EXR/TGA/PNG/JPEG, RTSP/RTP/UDP/TCP/HTTP/HLS/RTMP); OpenSSL (Apache-2.0)
+adds TLS (https, rtmps, HLS over https) and libsrt (MPL-2.0) the srt:// protocol, both from Ubuntu, bundled by
+package_linux.py with their licences. Neither needs --enable-gpl, --enable-nonfree or --enable-version3.
 The system ffmpeg program is only used to generate test fixtures; it is never packaged.
 """
 import hashlib
@@ -23,7 +28,8 @@ def main():
     url = f"https://ffmpeg.org/releases/ffmpeg-{VERSION}.tar.xz"
     configure = [f"--prefix={prefix}", "--enable-shared", "--disable-static", "--disable-programs",
                  "--disable-doc", "--disable-autodetect", "--enable-pthreads", "--enable-zlib",
-                 "--enable-libdav1d", "--enable-vaapi", "--enable-libdrm"]
+                 "--enable-libdav1d", "--enable-vaapi", "--enable-libdrm",
+                 "--enable-openssl", "--enable-libsrt"]
     stamp = f"{VERSION}\n{url}\nSHA-256 {SHA256}\nconfigure {' '.join(configure)}\n"
     if (prefix / "VERSION").is_file() and (prefix / "VERSION").read_text() == stamp:
         print(f"Using cached LGPL FFmpeg {VERSION}")

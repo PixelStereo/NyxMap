@@ -1009,6 +1009,8 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         if (!group && (curSrc.value("type") != src.value("type") || curSrc.value("layer") != src.value("layer") ||
                        curSrc.value("tap") != src.value("tap") || curSrc.value("uri") != src.value("uri") ||
                        curSrc.value("psd_layer") != src.value("psd_layer") ||
+                       curSrc.value("sequence") != src.value("sequence") || curSrc.value("live") != src.value("live") ||
+                       curSrc.value("rtsp_tcp") != src.value("rtsp_tcp") ||
                        QDir::cleanPath(curSrc.value("path").toString()) != QDir::cleanPath(src.value("path").toString()))) {
             // Another media: it comes in with the layer's transition over the source's time (the snapshot's
             // fade unless it has its own), or at once for a cut

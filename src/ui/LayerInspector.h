@@ -138,6 +138,7 @@ private:
     bool m_previewing = false;
     QPointer<QProgressBar> m_meter;
     QPointer<QLabel> m_pictureFact; // known once frames are decoded: kept up to date
+    QPointer<QLabel> m_streamState; // a live stream: connecting, live, reconnecting (and why)
     QPointer<QLabel> m_timecodeStatus; // a Timecode generator: where its timecode comes from, kept up to date
     struct TcTransport { // a free run's transport, kept up to date
         QPointer<QAbstractButton> play, pause;

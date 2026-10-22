@@ -80,7 +80,7 @@ elif [[ $OS == Linux ]]; then
       [[ $(id -u) == 0 ]] || SUDO=sudo
       $SUDO apt-get update
       $SUDO apt-get install -y build-essential cmake pkg-config git qt6-base-dev libqt6opengl6-dev \
-        qt6-multimedia-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+        qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
         libavutil-dev libasound2-dev clang
       # .NET for OMT: in Ubuntu's own packages (22.04 and later); elsewhere OMT is left out
       $SUDO apt-get install -y dotnet-sdk-8.0 || echo "No dotnet-sdk-8.0 package here: Pinol is built without OMT."

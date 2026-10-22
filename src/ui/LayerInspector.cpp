@@ -40,6 +40,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QDoubleValidator>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -102,6 +103,7 @@ struct LayerValues {
     double genSpeed = 1;
     int srcW = 0, srcH = 0; // an image's
     int psdLayer = -1;      // the layer of its Photoshop file it shows (-1: all of them)
+    VideoSource videoSource; // a video's image sequence or live stream
     // Another layer as the source, and the layers that could be chosen (id, name; cycles left out)
     quint64 sourceLayer = 0;
     LayerTap sourceTap = LayerTap::PostFx;
@@ -175,6 +177,7 @@ struct LayerValues {
         s.srcW = l->srcWidth;
         s.srcH = l->srcHeight;
         s.psdLayer = l->psdLayer;
+        s.videoSource = l->videoSource;
         s.imageColorInfo = l->imageColorInfo;
         s.sourceColorSpace = l->sourceColorSpace;
         s.sourceColorStatus = ::sourceColorStatus(*l);
@@ -543,6 +546,7 @@ void LayerInspector::rebuild()
     m_tcTransport.reset();
     m_sourceColorSpace = nullptr;
     m_sourceColorStatus = nullptr;
+    m_streamState = nullptr;
     if (m_content) {
         m_content->hide();
         m_content->deleteLater();
@@ -1073,6 +1077,93 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         connect(pick, &QComboBox::activated, this, [apply, guard = QPointer<QComboBox>(pick)](int k) {
             if (guard) apply(guard->itemData(k).toInt());
         });
+    }
+
+    // A video source opened again with other settings (a sequence's rate, a stream's transport), as one undo step
+    auto reopen = [this, id = s.id](const VideoSource &source, const QString &label) {
+        if (m_layerId != id || m_engine->isLocked(m_layer)) return; // rebuilt for another layer meanwhile
+        const QJsonObject before = m_engine->layerJson(m_layer);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(id);
+        QString err;
+        if (!m_engine->setLayerVideoSource(m_layer, source, &err)) {
+            if (!err.isEmpty()) QMessageBox::warning(this, label, err);
+        } else if (m_engine->layerJson(m_layer) != before) {
+            m_undo->push(new cmd::ReplaceLayer(m_engine, m_layer, before, label, beforeAnimations));
+        }
+        emit layerChanged();
+        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+    };
+
+    // An image sequence: the rate its pictures are played at (a sequence has none of its own)
+    if (s.type == SourceType::Video && s.videoSource.isSequence()) {
+        auto *row = new QHBoxLayout;
+        auto *rate = new QComboBox;
+        rate->setObjectName(QStringLiteral("sequenceFps"));
+        rate->setEditable(true);
+        rate->setInsertPolicy(QComboBox::NoInsert);
+        for (double f : {23.976, 24.0, 25.0, 29.97, 30.0, 48.0, 50.0, 59.94, 60.0})
+            rate->addItem(QString::number(f, 'g', 5), f);
+        rate->setValidator(new QDoubleValidator(1, 240, 3, rate));
+        const int k = rate->findData(s.videoSource.fps);
+        if (k >= 0) rate->setCurrentIndex(k);
+        else rate->setEditText(QString::number(s.videoSource.fps, 'g', 5));
+        rate->setEnabled(!m_locked);
+        rate->setToolTip(QStringLiteral("Frames per second of the image sequence %1 (from %2). A gap in the numbering "
+                                        "ends the clip.")
+                             .arg(s.videoSource.pattern)
+                             .arg(s.videoSource.start));
+        auto apply = [reopen, source = s.videoSource](double fps) {
+            if (fps < 1 || fps > 240) return;
+            VideoSource v = source;
+            v.fps = fps;
+            reopen(v, QStringLiteral("Change Sequence Frame Rate"));
+        };
+        row->addWidget(new ResetLabel(QStringLiteral("Frame rate"), [apply] { apply(25); }));
+        row->addWidget(rate, 1);
+        row->addWidget(new QLabel(QStringLiteral("fps")));
+        v->addLayout(row);
+        connect(rate, &QComboBox::activated, this, [apply, guard = QPointer<QComboBox>(rate)](int i) {
+            if (guard) apply(guard->itemData(i).toDouble());
+        });
+        connect(rate->lineEdit(), &QLineEdit::editingFinished, this, [apply, guard = QPointer<QComboBox>(rate)] {
+            bool ok = false;
+            const double f = guard ? guard->currentText().toDouble(&ok) : 0;
+            if (ok) apply(f);
+        });
+    }
+
+    // A live stream: its URL, its state, RTSP's transport
+    if (s.type == SourceType::Video && s.videoSource.live) {
+        auto *form = new QFormLayout;
+        form->setContentsMargins(0, 2, 0, 2);
+        auto *url = new QLabel(s.sourcePath);
+        url->setObjectName(QStringLiteral("streamUrl"));
+        url->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        url->setWordWrap(true);
+        form->addRow(QStringLiteral("Stream"), url);
+        m_streamState = new QLabel(QStringLiteral("…"));
+        m_streamState->setObjectName(QStringLiteral("streamState"));
+        m_streamState->setWordWrap(true);
+        m_streamState->setToolTip(QStringLiteral("Played live: no duration, no seeking, the newest picture shown. When "
+                                                 "the stream drops or stalls (%1 s without data) it is connected again, "
+                                                 "after a pause that grows to 10 s.")
+                                      .arg(VideoDecoder::kLiveTimeoutUs / 1000000));
+        form->addRow(QStringLiteral("State"), m_streamState);
+        v->addLayout(form);
+        if (s.sourcePath.startsWith(QLatin1String("rtsp"), Qt::CaseInsensitive)) {
+            auto *tcp = new QCheckBox(QStringLiteral("TCP for RTSP"));
+            tcp->setObjectName(QStringLiteral("streamTcp"));
+            tcp->setChecked(s.videoSource.rtspTcp);
+            tcp->setEnabled(!m_locked);
+            tcp->setToolTip(QStringLiteral("RTSP over TCP: through firewalls and without lost packets. Off: UDP, lower "
+                                           "latency on a clean network. The stream connects again."));
+            connect(tcp, &QCheckBox::toggled, this, [reopen, source = s.videoSource](bool on) {
+                VideoSource v = source;
+                v.rtspTcp = on;
+                reopen(v, QStringLiteral("Change RTSP Transport"));
+            });
+            v->addWidget(tcp);
+        }
     }
 
     // Text generator: the text typed here, and how it is set
@@ -2876,6 +2967,30 @@ void LayerInspector::refreshDynamic()
         button->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #666; border-radius: 2px;").arg(color.name()));
     }
     if (follow) refreshSpatial();
+    if (m_streamState) { // a live stream's state, as its decoder reports it
+        QString text;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId));
+            if (l && l->video && l->video->isLive()) {
+                const VideoDecoder::LiveStatus st = l->video->liveStatus();
+                switch (st.state) {
+                case VideoDecoder::LiveState::Connecting: text = QStringLiteral("Connecting…"); break;
+                case VideoDecoder::LiveState::Live: {
+                    const QString codec = l->video->codecName();
+                    text = QStringLiteral("Live") + (l->srcWidth > 0 ? QStringLiteral(" · %1×%2").arg(l->srcWidth).arg(l->srcHeight) : QString()) +
+                           (codec.isEmpty() ? QString() : QStringLiteral(" · ") + codec);
+                    break;
+                }
+                case VideoDecoder::LiveState::Reconnecting:
+                    text = QStringLiteral("Reconnecting (attempt %1)").arg(st.attempts + 1) +
+                           (st.reason.isEmpty() ? QString() : QStringLiteral(": ") + st.reason);
+                    break;
+                }
+            }
+        }
+        if (m_streamState->text() != text) m_streamState->setText(text);
+    }
     if (m_output) m_output->refreshStatus(); // mode set by ⌘F or a closed window, publishing states
     if (m_timecodeStatus) m_timecodeStatus->setText(m_engine->layerTimecodeStatus(m_layer));
     refreshTimecodeTransport();
@@ -2998,7 +3113,9 @@ QString LayerInspector::layoutKey() const
     if (!layer) return {};
     QStringList key{QString::number(layer->id), QString::number(int(layer->type)), layer->sourcePath,
         QString::number(layer->colorModels), QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
-        QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer)};
+        QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
+        layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
+        QString::number(layer->videoSource.rtspTcp)};
     for (const auto &effect : layer->effects) key << effect->path();
     return key.join(QChar(0x1f));
 }
