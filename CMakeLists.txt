@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
-project(Pinol VERSION 0.1.0 LANGUAGES CXX)
+include(cmake/Version.cmake)
+project(Pinol VERSION ${PINOL_VERSION_NUMERIC} LANGUAGES CXX)
+configure_file(cmake/Version.h.in generated/PinolVersion.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -352,6 +354,8 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME "Pinol"
     MACOSX_BUNDLE_GUI_IDENTIFIER "fr.pinol.app"
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+    MACOSX_BUNDLE_LONG_VERSION_STRING "${PINOL_VERSION}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in") # with the camera's usage text
   set(ISF_DEST "$<TARGET_FILE_DIR:Pinol>/../Resources/isf")
 elseif(WIN32)

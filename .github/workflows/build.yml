@@ -36,6 +36,8 @@ jobs:
           fetch-depth: 0
       - name: Test change routing
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
+      - name: Test release metadata and tag versions
+        run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
         id: scope
         env:
@@ -738,6 +740,15 @@ jobs:
             dist/**/*.zip
             dist/**/*.tar.gz
             dist/**/*.AppImage
+
+  # A release published with GITHUB_TOKEN does not trigger another release
+  # workflow. Call it explicitly once all package uploads have completed.
+  release-metadata:
+    if: github.ref_type == 'tag'
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-metadata.yml
 
   validation:
     name: Validation

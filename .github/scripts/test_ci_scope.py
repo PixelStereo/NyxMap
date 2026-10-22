@@ -25,6 +25,8 @@ class ScopeTest(unittest.TestCase):
         self.assertTrue(all(v for k,v in scope.items() if k != "build"))
     def test_release_runs_everything(self):
         self.assertTrue(all(classify([], ref_type="tag").values()))
+    def test_source_version_rebuilds_all_platforms(self):
+        self.assertTrue(classify(["VERSION"])["build"])
     def test_manual_full_runs_everything(self):
         self.assertTrue(all(classify([], "workflow_dispatch", full=True).values()))
     def test_workspace_lifetime_test_changes_run_valgrind(self):

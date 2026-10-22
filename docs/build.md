@@ -178,6 +178,10 @@ sh test/bench_4k.sh build
 
 CI runs platform tests, the HAP/OSC fuzzers and selected ThreadSanitizer suites. See the [limitations and roadmap](README.md).
 
+Release versions come from the build's Git tag (`v0.3.0` or `0.3.0`), including preview suffixes in About and `--version`. CMake also uses its numeric part for the macOS bundle. Untagged source builds fall back to `VERSION`; `-DPINOL_VERSION=0.3.0` supports source archives and explicit builds.
+
+After the tag workflow has validated and uploaded all four packages, it calls the **Release metadata** workflow. This updates only the marked download block in the root README and `VERSION` on the default branch, using real asset URLs from the newest complete published release. Published, edited or deleted releases also run this synchronization; it can be run manually from Actions. The workflow uses `GITHUB_TOKEN` with `contents: write` and ordinary fast-forward pushes. The default branch must allow those bot commits. No token with additional permissions is needed.
+
 </details>
 
 
