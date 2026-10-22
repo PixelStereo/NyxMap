@@ -231,6 +231,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     const int transportIndex = engine.addAnimation(transport);
     const quint64 transportId = engine.animation(transportIndex).id;
     engine.setLayerAnim(transportLayer, "opacity", &transport);
+    engine.controlLayerAnim(transportLayer, "opacity", AnimAction::Pause); // layer animations start enabled and playing
     TimelineEditor wide(&engine, &undo); wide.setTimeline(transportId); wide.resize(1000, 420);
     ParamAnimEditor narrow(&engine, &undo, transportLayer, "opacity", AnimEditor::Layout::Stacked); narrow.resize(420, 520);
     auto checkTransport = [&](AnimEditor &editor, auto seek, auto read, const QString &captureName) {

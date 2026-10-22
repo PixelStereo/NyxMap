@@ -107,9 +107,13 @@ std::vector<Engine::AnimParam> animationMenuParams(Engine *engine, quint64 layer
 // A step between the ticks of the seconds, at least `px` pixels apart
 static double tickStep(double duration, double width, double px)
 {
-    for (double s : {0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0})
-        if (duration <= 0 || width / (duration / s) >= px) return s;
-    return 1200;
+    const double minimum = std::max(0.0, duration) * px / std::max(1.0, width);
+    for (double s : {0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+                     1200.0, 1800.0, 3600.0, 7200.0, 14400.0, 21600.0, 43200.0, 86400.0})
+        if (s >= minimum) return s;
+    double step = 86400;
+    while (step < minimum && std::isfinite(step * 2)) step *= 2;
+    return step;
 }
 
 static bool sameKeys(const std::vector<AnimKey> &a, const std::vector<AnimKey> &b)
@@ -702,17 +706,25 @@ void TimeRuler::paintEvent(QPaintEvent *)
     p.fillRect(rect(), QColor(34, 34, 38));
     const double m = CurveLane::kMargin, w = width() - 2 * m;
     auto x = [&](double t) { return m + (t - m_t0) / (m_t1 - m_t0) * w; };
-    const double step = tickStep(m_t1 - m_t0, w, 50);
     QFont f = font();
     f.setPointSizeF(f.pointSizeF() * 0.8);
     p.setFont(f);
+    const int labelSpace = p.fontMetrics().horizontalAdvance(QString::number(std::max(std::abs(m_t0), std::abs(m_t1)), 'f', 2)) + 12;
+    const double step = tickStep(m_t1 - m_t0, w, std::max(50, labelSpace));
     const int decimals = step < 0.5 ? 2 : step < 1 ? 1 : 0;
+    double lastLabelRight = -10;
     for (long long i = std::max(0LL, (long long)std::ceil(m_t0 / step)); i * step <= std::min(m_t1, m_duration) + 1e-9; ++i) {
         const double t = i * step;
         p.setPen(QColor(90, 90, 98));
         p.drawLine(QPointF(x(t), height() - 6), QPointF(x(t), height()));
-        p.setPen(QColor(150, 150, 158));
-        p.drawText(QRectF(x(t) + 2, 0, 60, height() - 4), Qt::AlignLeft | Qt::AlignVCenter, QString::number(t, 'f', decimals));
+        const QString label = QString::number(t, 'f', decimals);
+        const int labelWidth = p.fontMetrics().horizontalAdvance(label);
+        const double labelX = std::clamp(x(t) + 2, 0.0, std::max(0.0, double(width() - labelWidth - 2)));
+        if (labelX >= lastLabelRight + 8) {
+            p.setPen(QColor(194, 194, 204));
+            p.drawText(QRectF(labelX, 0, labelWidth + 1, height() - 4), Qt::AlignLeft | Qt::AlignVCenter, label);
+            lastLabelRight = labelX + labelWidth;
+        }
     }
     if (m_shown) {
         p.setRenderHint(QPainter::Antialiasing);
