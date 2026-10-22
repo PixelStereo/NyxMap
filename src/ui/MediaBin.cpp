@@ -289,7 +289,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         cat->setFirstColumnSpanned(true);
     }
     v->addWidget(m_tree, 1);
-    m_inputs->setToolTip(0, QStringLiteral("Cameras, and the NDI, OMT and Syphon sources found on this machine and the network"));
+    m_inputs->setToolTip(0, QStringLiteral("Cameras, screens and windows, DeckLink inputs, and the NDI, OMT, Syphon and Spout sources "
+                                          "found on this machine and the network"));
     auto *look = new QTimer(this); // the network's sources come and go
     look->setInterval(3000);
     connect(look, &QTimer::timeout, this, [this] {
@@ -537,8 +538,8 @@ void MediaBin::refreshIsf()
     m_isfGenerators->setText(0, QStringLiteral("Generators (%1)").arg(total));
 }
 
-// Inputs: the cameras, and the NDI, OMT and Syphon sources announced now (looked for again every few seconds while the
-// Media Bin is shown), with the layers that use them
+// Inputs: the cameras, the screens and windows, the DeckLink inputs, and the NDI, OMT, Syphon and Spout sources
+// announced now (looked for again every few seconds while the Media Bin is shown), with the layers that use them
 void MediaBin::refreshInputs()
 {
     const std::vector<LiveInputInfo> found = Engine::liveInputs();

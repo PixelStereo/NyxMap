@@ -1,3 +1,4 @@
+#include <CoreGraphics/CoreGraphics.h>
 #include <Network/Network.h>
 #include <dispatch/dispatch.h>
 
@@ -17,4 +18,15 @@ void requestLocalNetworkAccess()
         nw_browser_set_queue(browser, queue);
         nw_browser_start(browser);
     }
+}
+
+// Screen Recording: no usage description in Info.plist for it, the system names the application. Not asked at startup
+// (most shows need no screen input): asked when a screen or window input is made
+bool screenCaptureAllowed(bool request)
+{
+    if (@available(macOS 10.15, *)) {
+        if (CGPreflightScreenCaptureAccess()) return true;
+        return request && CGRequestScreenCaptureAccess();
+    }
+    return true;
 }

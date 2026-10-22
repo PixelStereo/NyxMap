@@ -438,7 +438,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         w = l.sourceTex.w;
         h = l.sourceTex.h;
         break;
-    case SourceType::Input: // the newest frame of the camera, NDI, OMT or Syphon source
+    case SourceType::Input: // the newest frame of the camera, screen, window, DeckLink, NDI, OMT, Syphon or Spout source
         if (l.input && l.input->update(l.sourceTex)) {
             const bool first = !l.srcWidth;
             l.srcWidth = l.sourceTex.w;

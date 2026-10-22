@@ -94,6 +94,7 @@ struct LayerValues {
     VideoDecoder::Info sourceVideoInfo;
     QString imageColorInfo;
     QString sourceColorSpace, sourceColorStatus;
+    QString inputStatus; // a live input's: why there is no picture (empty: fine)
     bool hasAudio = false, muted = false;
     float volume = 1;
     AudioStream::Info audio;
@@ -174,6 +175,7 @@ struct LayerValues {
         s.genSpeed = l->generator ? l->generator->speed : 1.0;
         s.srcW = l->srcWidth;
         s.srcH = l->srcHeight;
+        if (l->input) s.inputStatus = l->input->status();
         s.psdLayer = l->psdLayer;
         s.imageColorInfo = l->imageColorInfo;
         s.sourceColorSpace = l->sourceColorSpace;
@@ -831,7 +833,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         kind = liveInputKind(s.sourcePath) + QStringLiteral(" Input");
         name = liveInputName(s.sourcePath);
         if (s.srcW > 0) d << QStringLiteral("%1 × %2").arg(s.srcW).arg(s.srcH);
-        else d << QStringLiteral("waiting for its first picture");
+        d << (s.inputStatus.isEmpty() && s.srcW <= 0 ? QStringLiteral("waiting for its first picture") : s.inputStatus);
         break;
     case SourceType::Text:
         d << QStringLiteral("Color space: Unspecified (generated)");

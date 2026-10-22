@@ -2,3 +2,7 @@
 // macOS privacy prompts, asked at startup so that a camera, an NDI or an OMT source works when it is dragged:
 // the camera (Qt permission) and the local network (Bonjour browsing shows the prompt once). Nothing elsewhere.
 void requestSystemPermissions();
+// Screen Recording (macOS): whether Pinol may capture the screens and the other applications' windows (a screen or
+// window input). request: the system's prompt when it was never asked (once; granted, it applies at the next launch).
+// Elsewhere: always true
+bool screenCaptureAllowed(bool request);

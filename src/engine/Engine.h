@@ -307,7 +307,8 @@ public:
     static QStringList audioOutputDevices();
     static QStringList audioInputDevices(); // (LTC in)
     TimecodeRouter &timecodeRouter() { return *m_tcRouter; }   // tests
-    // A live input (LiveInput.h) as the layer's source: a camera, an NDI or OMT source, a Syphon server
+    // A live input (LiveInput.h) as the layer's source: a camera, a screen or window, a DeckLink input, an NDI or OMT
+    // source, a Syphon server, a Spout sender
     bool setLayerInput(int i, const QString &uri, QString *err = nullptr);
     static std::vector<LiveInputInfo> liveInputs(const QString &libraryFolder = QString()) { return listLiveInputs(libraryFolder); }
     void setLayerTextContent(int i, const QString &text);

@@ -63,6 +63,7 @@ int runPreviewSourceTests(Engine &e, const QString &tmp);
 int runColorAnimationTests(Engine &engine, const QString &root);
 int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cpp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
+int runLiveInputTests(Engine &e); // live_inputs.cpp
 #define CHECK(cond)                                                                 \
     do {                                                                            \
         if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); ++failures; } \
@@ -192,6 +193,7 @@ int main(int argc, char **argv)
     } // golden
     if (area("preview_sources")) failures += runPreviewSourceTests(e, tmp);
     if (area("psd")) failures += runPsdLayerTests(e, tmp);
+    if (area("live_inputs")) failures += runLiveInputTests(e);
     if (area("timeline_repeat")) {
         failures += runTimelineRepeatTests(e, tmp);
     } // timeline_repeat

@@ -1,7 +1,9 @@
 #pragma once
-// Live inputs: a layer's source that comes in as it is made — a camera (Qt Multimedia), an NDI or OMT source on the
-// network, a Syphon server (macOS). Each one by a URI, stored in the project:
+// Live inputs: a layer's source that comes in as it is made — a camera, a screen or another application's window (Qt
+// Multimedia), an NDI or OMT source on the network, a DeckLink card's input (SDI / HDMI), a Syphon server (macOS), a
+// Spout sender (Windows). Each one by a URI, stored in the project:
 //   input:camera:<device id>   input:ndi:<source name>   input:omt:<address>   input:syphon:<server name>
+//   input:spout:<sender name>  input:decklink:<port id>  input:screen:<screen name>  input:window:<window title>
 //   input:test:<r>,<g>,<b>     (a solid color, made here: the tests)
 // Frames arrive on threads of their own; the render thread takes the newest one (update) into the layer's texture.
 
@@ -15,10 +17,11 @@
 struct LiveInputInfo {
     QString uri;
     QString name; // as shown
-    QString kind; // "Camera", "NDI", "OMT", "Syphon"
+    QString kind; // "Camera", "NDI", "OMT", "Syphon", "Spout", "DeckLink", "Screen", "Window"
 };
 
-// What can be received now (cameras plugged in, NDI and OMT sources announced on the network, Syphon servers). The
+// What can be received now (cameras plugged in, NDI and OMT sources announced on the network, Syphon servers, Spout
+// senders, DeckLink inputs, the screens and the other applications' windows: Qt 6.5 and 6.6 or later). The
 // network ones take a moment to be found: listing again a little later finds more. libraryFolder: where NDI / OMT
 // may be (as for publishing)
 std::vector<LiveInputInfo> listLiveInputs(const QString &libraryFolder = QString());
