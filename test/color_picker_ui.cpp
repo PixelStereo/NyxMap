@@ -54,7 +54,7 @@ int main(int argc, char **argv)
     invalid.setSettingsKey("ui/colorPickerMode/invalid");
     check(invalid.view() == ColorPicker::HSV, "invalid local preferences fall back to the global default");
     ColorPicker::setDefaultView(ColorPicker::HSL);
-    following.setColor(QColor::fromHslF(1.0 / 3.0, 1, .5, .4));
+    following.setColor(QColor::fromHslF(1.0f / 3.0f, 1.0f, .5f, .4f));
     int edits = 0;
     QObject::connect(&following, &ColorPicker::colorEdited, &following, [&](const QColor &) { ++edits; });
     const QColor original = following.color();

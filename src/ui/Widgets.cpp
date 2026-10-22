@@ -698,7 +698,7 @@ namespace {
 QColor flagEdge(bool hover, bool enabled)
 {
     QColor c = hover ? QColor(165, 165, 172) : QColor(105, 105, 112);
-    if (!enabled) c.setAlphaF(0.45);
+    if (!enabled) c.setAlphaF(0.45f);
     return c;
 }
 } // namespace
@@ -739,12 +739,12 @@ void FlagBox::paintEvent(QPaintEvent *)
     const QRectF box(1.5, (height() - 14) / 2.0, 14, 14);
     if (on) {
         QColor a = theme::accent();
-        if (!en) a.setAlphaF(0.4);
+        if (!en) a.setAlphaF(0.4f);
         p.setPen(Qt::NoPen);
         p.setBrush(a);
         p.drawRoundedRect(box, 3, 3);
         QColor tick = theme::onAccent();
-        if (!en) tick.setAlphaF(0.6);
+        if (!en) tick.setAlphaF(0.6f);
         p.setPen(QPen(tick, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(Qt::NoBrush);
         QPainterPath path;
@@ -781,7 +781,7 @@ void ToggleButton::paintEvent(QPaintEvent *)
     QColor fill = on ? theme::accent() : QColor(52, 52, 57);
     if (!on && underMouse()) fill = QColor(66, 66, 72);
     if (on && isDown()) fill = fill.darker(115);
-    if (!en) fill.setAlphaF(0.45);
+    if (!en) fill.setAlphaF(0.45f);
     p.setPen(on ? Qt::NoPen : QPen(QColor(90, 90, 97), 1));
     p.setBrush(fill);
     p.drawRoundedRect(r, 4, 4);

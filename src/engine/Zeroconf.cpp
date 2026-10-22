@@ -265,7 +265,7 @@ QByteArray Zeroconf::answerQuery(const QByteArray &q, bool *unicast) const
         const quint16 type = qFromBigEndian<quint16>(q.constData() + pos);
         const quint16 cls = qFromBigEndian<quint16>(q.constData() + pos + 2);
         pos += 4;
-        wantsUnicast |= cls & 0x8000;
+        wantsUnicast = wantsUnicast || (cls & 0x8000) != 0;
         const bool any = type == TypeAny;
         if (name == "_services._dns-sd._udp.local" && (type == TypePtr || any)) {
             for (const Service &s : m_services)

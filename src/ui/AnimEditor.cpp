@@ -286,7 +286,7 @@ void CurveLane::paintEvent(QPaintEvent *)
             else path.lineTo(pt);
         }
         QColor c = m_track.oscillator ? kWave : kCurve;
-        if (!m_track.enabled) c.setAlphaF(0.35);
+        if (!m_track.enabled) c.setAlphaF(0.35f);
         p.save();
         p.setClipRect(QRectF(x0, 0, x1 - x0, height()));
         p.setPen(QPen(c, 1.8));
