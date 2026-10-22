@@ -31,6 +31,22 @@ static QString missingMessage(const QString &path, const QString &err)
     return QFileInfo::exists(path) ? err : QStringLiteral("File not found: ") + path;
 }
 
+// A video source's sequence or stream settings, from a layer's "source" object
+static VideoSource videoSourceFromJson(const QJsonObject &src)
+{
+    VideoSource v;
+    if (src.value("type").toString() != QLatin1String("video")) return v;
+    v.live = src.value("live").toBool(false);
+    v.rtspTcp = src.value("rtsp_tcp").toBool(true);
+    const QJsonObject seq = src.value("sequence").toObject();
+    if (!v.live && !seq.isEmpty()) {
+        v.pattern = seq.value("pattern").toString();
+        v.start = seq.value("start").toInt(0);
+        v.fps = std::clamp(seq.value("fps").toDouble(25.0), 1.0, 240.0);
+    }
+    return v;
+}
+
 static void markMissing(Layer &l, SourceType type, const QString &path, const QString &err)
 {
     l.missingType = type;
@@ -59,6 +75,7 @@ void Engine::clearProject()
         old.swap(m_layers);
         m_projectPath.clear();
         m_binItems.clear();
+        m_binStreamsUdp.clear();
         m_snapshots.clear();
         m_nextSnapshotId = 1;
         m_snapshotTree.clear();
@@ -178,6 +195,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Text:
         src["type"] = "text";
         if (l.timecode) src["timecode"] = l.timecode->toJson();
+        // A Countdown, Stopwatch or Clock: its kind (its settings and its transport come with the values: clock/*)
+        if (l.clockGen) src["clock"] = clockKindKey(l.clockGen->kind());
         break;
     case SourceType::Input:
         src["type"] = "input";
@@ -190,10 +209,17 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     default: src["type"] = "none"; break;
     }
     if (type == SourceType::Video || type == SourceType::Audio) o["play"] = l.playing;
-    if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf) {
+    if (type == SourceType::Video && l.videoSource.live) { // a stream: its URL, nothing relative
+        src["path"] = l.sourcePath;
+        src["live"] = true;
+        src["rtsp_tcp"] = l.videoSource.rtspTcp;
+    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf) {
         src["path"] = l.sourcePath;
         if (!projectDir.isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
+    if (type == SourceType::Video && l.videoSource.isSequence()) // an image sequence: the folder is the path
+        src["sequence"] = QJsonObject{{"pattern", l.videoSource.pattern}, {"start", l.videoSource.start},
+                                      {"fps", l.videoSource.fps}};
     if (type == SourceType::Image && l.psdLayer >= 0) { // one layer of a Photoshop file
         src["psd_layer"] = l.psdLayer;
         src["psd_layer_name"] = l.psdLayerName;
@@ -265,15 +291,20 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
 
     const QJsonObject src = o.value("source").toObject();
     const QString type = src.value("type").toString();
-    const QString path = type != "none" ? resolvePath(src, projectDir) : QString();
+    const VideoSource videoSource = videoSourceFromJson(src);
+    // A stream's URL is used as it is (no file to look for)
+    const QString path = videoSource.live ? src.value("path").toString().trimmed()
+                         : type != "none"  ? resolvePath(src, projectDir)
+                                           : QString();
     QString err;
     if (type == "video" || type == "audio") {
         const bool video = type == "video";
-        const bool ok = video ? setLayerVideo(index, path, &err) : setLayerAudio(index, path, &err);
-        if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
+        const bool ok = video ? setLayerVideo(index, path, &err, videoSource) : setLayerAudio(index, path, &err);
+        if (!ok && warnings) *warnings << name + ": " + (videoSource.live ? err : missingMessage(path, err));
         if (!ok) {
             Lock lk(&m_mutex);
             markMissing(*layer(index), video ? SourceType::Video : SourceType::Audio, path, err);
+            if (video) layer(index)->videoSource = videoSource; // kept with its path, for when it is there again
         }
     } else if (type == "image") {
         const int psdLayer = src.value("psd_layer").toInt(-1);
@@ -336,6 +367,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->type = SourceType::Text;
             l->text = TextSource{};
+            l->clockGen.reset();
         }
         if (src.contains("timecode")) { // a Timecode generator: its clock (its text style comes with the values)
             TimecodeSettings ts = TimecodeSettings::fromJson(src.value("timecode").toObject());
@@ -353,6 +385,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->timecode = ts;
             l->tcClock = clock;
+        } else if (const std::optional<ClockKind> kind = clockKindFromKey(src.value("clock").toString())) {
+            // A Countdown, Stopwatch or Clock: its values (below) set it as it was saved, paused or running from there
+            Lock lk(&m_mutex);
+            layer(index)->clockGen = std::make_shared<ClockGenerator>(*kind);
         }
     }
 
@@ -431,7 +467,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["layers"] = layers;
         QJsonArray bin;
         for (const QString &p : m_binItems)
-            bin.append(QJsonObject{{"path", p}, {"relative_path", QDir(dir).relativeFilePath(p)}});
+            bin.append(isStreamUrl(p) ? QJsonObject{{"path", p}, {"live", true}, {"rtsp_tcp", !m_binStreamsUdp.contains(p)}}
+                                      : QJsonObject{{"path", p}, {"relative_path", QDir(dir).relativeFilePath(p)}});
         root["bin"] = bin;
         root["audio"] = QJsonObject{{"volume", double(m_audio->volume())}};
         QJsonArray mems;
@@ -676,7 +713,11 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         Lock lk(&m_mutex);
     }
     QStringList bin;
-    for (const QJsonValue &v : root.value("bin").toArray()) bin << resolvePath(v.toObject(), dir);
+    for (const QJsonValue &v : root.value("bin").toArray()) {
+        const QJsonObject item = v.toObject();
+        if (item.value("live").toBool()) addBinStream(item.value("path").toString(), item.value("rtsp_tcp").toBool(true));
+        else bin << resolvePath(item, dir);
+    }
     addBinItems(bin);
     const QJsonObject audio = root.value("audio").toObject();
     m_audio->setVolume(float(std::clamp(audio.value("volume").toDouble(1.0), 0.0, 2.0)));

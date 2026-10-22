@@ -822,6 +822,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->webPage = std::move(l.webPage);
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
+    l.clockGen.reset();
     g->generatorTarget = l.generatorTarget;
     l.generatorTarget = RenderTarget{};
     l.pendingImage = QImage();
@@ -829,6 +830,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.sourcePath.clear();
     l.psdLayer = -1;
     l.psdLayerName.clear();
+    l.videoSource = VideoSource();
     l.error.clear();
     l.srcWidth = l.srcHeight = 0;
     l.missingType = SourceType::None;
@@ -1130,17 +1132,37 @@ bool Engine::setLayerTap(int i, LayerTap tap)
 
 static bool isDefaultMapping(const Mapping &m) { return m.isIdentity(); }
 
-bool Engine::setLayerVideo(int i, const QString &path, QString *err)
+bool Engine::setLayerVideo(int i, const QString &path, QString *err, const VideoSource &given)
 {
     if (!layer(i)) return false;
+    VideoSource source = given;
+    if (source.live && !isStreamUrl(path)) {
+        if (err) *err = QStringLiteral("Not a stream URL (rtsp://, rtmp://, srt://, udp://, rtp://, http(s)://…): ") + path;
+        return false;
+    }
+    if (!source.live && !source.isSequence() && QFileInfo(path).isDir()) { // a folder: its numbered pictures
+        SequenceInfo seq;
+        if (!detectImageSequence(path, &seq)) {
+            if (err)
+                *err = QStringLiteral("No image sequence in this folder (numbered pictures: %1).")
+                           .arg(sequenceExtensions().join(QStringLiteral(", ")));
+            return false;
+        }
+        source.pattern = seq.pattern;
+        source.start = seq.start;
+    }
+    if (source.isSequence()) source.fps = source.fps > 0 ? std::clamp(source.fps, 1.0, 240.0) : 25.0;
     auto dec = std::make_unique<VideoDecoder>();
     QString e;
-    if (!dec->open(path, &e)) { // opened outside the lock: may take a while
+    if (!dec->open(path, &e, source)) { // opened outside the lock: may take a while (a stream connects later)
         if (err) *err = e;
         return false;
     }
-    auto sound = std::make_shared<AudioStream>(); // the file's sound, if it has any
-    if (!sound->open(path, AudioOutput::kSampleRate, nullptr)) sound.reset();
+    std::shared_ptr<AudioStream> sound;
+    if (!source.live && !source.isSequence()) { // the file's sound, if it has any (a stream's is not played)
+        sound = std::make_shared<AudioStream>();
+        if (!sound->open(path, AudioOutput::kSampleRate, nullptr)) sound.reset();
+    }
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
@@ -1153,7 +1175,9 @@ bool Engine::setLayerVideo(int i, const QString &path, QString *err)
         l->srcHeight = dec->height();
         l->video = std::move(dec);
         l->type = SourceType::Video;
-        l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->sourcePath = source.live ? path.trimmed() : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->videoSource = source;
+        if (source.live) l->mode = PlayMode::Loop; // no end to reach
         l->playing = true;
         l->inPoint = 0; // a new media is played whole
         l->outPoint = -1;
@@ -1166,8 +1190,52 @@ bool Engine::setLayerVideo(int i, const QString &path, QString *err)
     return true;
 }
 
+bool Engine::setLayerStream(int i, const QString &url, bool rtspTcp, QString *err)
+{
+    VideoSource source;
+    source.live = true;
+    source.rtspTcp = rtspTcp;
+    return setLayerVideo(i, url, err, source);
+}
+
+bool Engine::setLayerVideoSource(int i, const VideoSource &source, QString *err)
+{
+    QString path;
+    PlayMode mode = PlayMode::Loop;
+    double in = 0, out = -1;
+    bool playing = true;
+    Mapping mapping;
+    {
+        Lock lk(&m_mutex);
+        const Layer *l = layer(i);
+        if (!l || l->type != SourceType::Video || !l->video) return false;
+        if (l->videoSource == source) return true;
+        if (l->videoSource.live != source.live || l->videoSource.isSequence() != source.isSequence()) return false;
+        path = l->sourcePath;
+        mode = l->mode;
+        in = l->inPoint;
+        out = l->outPoint;
+        playing = l->playing;
+        mapping = l->mapping;
+    }
+    if (!setLayerVideo(i, path, err, source)) return false;
+    // The same media at another rate (or through another transport): the layer keeps its mode, range and mapping
+    setLayerPlayMode(i, mode);
+    setLayerInOut(i, in, out);
+    if (!playing) setLayerPlaying(i, false);
+    Lock lk(&m_mutex);
+    if (Layer *l = layer(i)) {
+        const unsigned rev = l->mapping.revision;
+        l->mapping = mapping;
+        l->mapping.revision = rev + 1;
+    }
+    return true;
+}
+
 bool Engine::setLayerFile(int i, const QString &path, QString *err)
 {
+    if (const QString url = streamUrlOfPath(path); !url.isEmpty()) return setLayerStream(i, url, binStreamTcp(url), err);
+    if (QFileInfo(path).isDir()) return setLayerVideo(i, path, err); // an image sequence
     if (isImageFile(path)) return setLayerImage(i, path, err);
     if (isAudioFile(path)) return setLayerAudio(i, path, err);
     QString e;
@@ -1213,12 +1281,13 @@ struct DecodedImage {
     QString colorInfo;
 };
 
-static bool decodeImage(const QString &path, int psdLayer, DecodedImage &out, QString *err)
+// svgLongSide: an SVG drawing is rendered at least this large (the composition's longer side: crisp)
+static bool decodeImage(const QString &path, int psdLayer, DecodedImage &out, QString *err, int svgLongSide = 0)
 {
     QString why;
-    QImage img = readImageFile(path, psdLayer, &why);
+    QImage img = readImageFile(path, psdLayer, &why, svgLongSide);
     if (img.isNull()) {
-        if (err) *err = psdLayer >= 0 && !why.isEmpty() ? why : QStringLiteral("Unreadable image: ") + path;
+        if (err) *err = (psdLayer >= 0 || isSvgFile(path)) && !why.isEmpty() ? why : QStringLiteral("Unreadable image: ") + path;
         return false;
     }
     out.profile = img.colorSpace();
@@ -1264,7 +1333,8 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLaye
     psdLayer = findPsdLayer(path, psdLayer, psdLayerName, &name, &warning);
     DecodedImage img;
     if (psdLayer >= 0 && !decodeImage(path, psdLayer, img, &warning)) psdLayer = -1; // all of them, said so
-    if (psdLayer < 0 && !decodeImage(path, -1, img, err)) return false;
+    const QSize comp = compositionSize();
+    if (psdLayer < 0 && !decodeImage(path, -1, img, err, std::max(comp.width(), comp.height()))) return false;
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
@@ -1548,6 +1618,44 @@ bool Engine::setLayerTimecode(int i, const TimecodeSettings &s)
     old.reset(); // its devices closed outside the lock too
     emit timecodeRoutingChanged();
     return true;
+}
+
+bool Engine::setLayerClock(int i, ClockKind kind)
+{
+    bool text = false, timecode = false;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        if (l->type == SourceType::Text && l->clockGen && l->clockGen->kind() == kind) return true; // as it is
+        timecode = l->timecode.has_value();
+        text = l->type == SourceType::Text && (l->clockGen || timecode);
+    }
+    // A text source first, in a style that suits a time (one that showed a time already keeps its own)
+    if (!setLayerText(i)) return false;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l) return false;
+        if (!text) {
+            l->text.font = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+            l->text.size = 220;
+            l->text.bold = true;
+            l->text.width = 1600;
+            l->text.height = 320;
+            l->srcWidth = l->text.width;
+            l->srcHeight = l->text.height;
+        }
+        l->clockGen = std::make_shared<ClockGenerator>(kind);
+    }
+    if (timecode) emit timecodeRoutingChanged(); // the timecode it showed is gone, and the output it drove is free
+    return true;
+}
+
+std::shared_ptr<ClockGenerator> Engine::layerClock(int i) const
+{
+    Lock lk(&m_mutex);
+    return i >= 0 && i < int(m_layers.size()) ? m_layers[size_t(i)]->clockGen : nullptr;
 }
 
 int Engine::timecodeOutputUser(quint64 output) const

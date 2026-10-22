@@ -4,6 +4,12 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
+#include <QRegularExpression>
+#include <QUrl>
+#include <algorithm>
+#include <limits>
+#include <map>
 
 QStringList Engine::videoExtensions()
 {
@@ -13,8 +19,108 @@ QStringList Engine::videoExtensions()
 
 QStringList Engine::imageExtensions()
 {
-    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"};
+    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"
+#ifdef PINOL_HAS_SVG
+                                  , "svg", "svgz"
+#endif
+    };
     return e;
+}
+
+QStringList Engine::sequenceExtensions()
+{
+    static const QStringList e = {"tga", "tif", "tiff", "dpx", "exr", "png", "jpg", "jpeg"};
+    return e;
+}
+
+// The numbered pictures of a folder grouped by name and extension (name0001.exr: "name", 1, 4 digits); the largest
+// group is the sequence, when it holds most of the folder's pictures. Numbers of one width make a padded pattern
+// (%04d); numbers without leading zeros of several widths an unpadded one (%d).
+bool Engine::detectImageSequence(const QString &folder, SequenceInfo *out)
+{
+    const QFileInfo fi(folder);
+    if (!fi.isDir()) return false;
+    static const QRegularExpression numbered(QStringLiteral("^(.*?)(\\d+)\\.([A-Za-z0-9]+)$"));
+    struct Group {
+        std::map<qint64, QString> numbers; // number -> its digits
+        QString prefix, ext;
+    };
+    QHash<QString, Group> groups;
+    int pictures = 0;
+    for (const QString &name : QDir(folder).entryList(QDir::Files | QDir::Hidden, QDir::Name)) {
+        const QRegularExpressionMatch m = numbered.match(name);
+        const QString ext = QFileInfo(name).suffix();
+        if (!sequenceExtensions().contains(ext.toLower())) continue;
+        ++pictures;
+        if (!m.hasMatch() || m.captured(2).size() > 9) continue;
+        Group &g = groups[m.captured(1) + QChar(0) + m.captured(3)];
+        g.prefix = m.captured(1);
+        g.ext = m.captured(3);
+        g.numbers.emplace(m.captured(2).toLongLong(), m.captured(2));
+    }
+    const Group *best = nullptr;
+    for (const Group &g : groups)
+        if (!best || g.numbers.size() > best->numbers.size()) best = &g;
+    if (!best || best->numbers.size() < 2 || int(best->numbers.size()) * 2 < pictures) return false;
+    // Its widths: one (padded, or all numbers as wide), else the widest run of numbers without leading zeros
+    std::map<int, int> widths;
+    bool leadingZero = false;
+    for (const auto &[n, digits] : best->numbers) {
+        ++widths[int(digits.size())];
+        leadingZero = leadingZero || (digits.size() > 1 && digits.startsWith(QLatin1Char('0')));
+    }
+    int width = 0; // 0: %d
+    if (widths.size() == 1) width = widths.begin()->first > 1 ? widths.begin()->first : 0;
+    else if (leadingZero) { // mixed widths with padding: the most common width
+        width = std::max_element(widths.begin(), widths.end(), [](auto a, auto b) { return a.second < b.second; })->first;
+    }
+    std::vector<qint64> numbers;
+    for (const auto &[n, digits] : best->numbers)
+        if (width == 0 ? !(digits.size() > 1 && digits.startsWith(QLatin1Char('0'))) : int(digits.size()) == width) numbers.push_back(n);
+    if (numbers.size() < 2 || numbers.front() > std::numeric_limits<int>::max()) return false;
+    int frames = 1; // from the first number, until the first gap (FFmpeg's image2 stops there)
+    while (size_t(frames) < numbers.size() && numbers[size_t(frames)] == numbers.front() + frames) ++frames;
+    if (out) {
+        QString prefix = best->prefix;
+        prefix.replace(QLatin1Char('%'), QStringLiteral("%%"));
+        // QString::arg also recognizes %0; build FFmpeg's literal %0Nd without
+        // letting Qt substitute that part of the pattern.
+        out->pattern = prefix + (width ? QStringLiteral("%0") + QString::number(width) + QLatin1Char('d')
+                                      : QStringLiteral("%d")) + QLatin1Char('.') + best->ext;
+        out->start = int(numbers.front());
+        out->frames = frames;
+    }
+    return true;
+}
+
+bool Engine::isStreamUrl(const QString &s)
+{
+    static const QStringList schemes = {"rtsp", "rtsps", "rtmp", "rtmps", "rtmpt", "srt", "udp", "rtp", "tcp", "http", "https"};
+    const int colon = s.indexOf(QLatin1String("://"));
+    return colon > 0 && schemes.contains(s.left(colon).trimmed().toLower());
+}
+
+static const QString kStreamsFolder = QStringLiteral("/Pinol/Streams/");
+
+QString Engine::streamPath(const QString &url) { return kStreamsFolder + QString::fromLatin1(QUrl::toPercentEncoding(url)); }
+
+QString Engine::streamUrlOfPath(const QString &path)
+{
+    if (isStreamUrl(path)) return path.trimmed();
+    const QString p = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const int at = p.indexOf(kStreamsFolder);
+    if (at < 0) return {};
+    const QString url = QUrl::fromPercentEncoding(p.mid(at + kStreamsFolder.size()).toLatin1());
+    return isStreamUrl(url) ? url : QString();
+}
+
+QString Engine::streamName(const QString &url)
+{
+    const QUrl u(url.trimmed());
+    if (!u.isValid() || u.host().isEmpty()) return url.trimmed();
+    QString name = u.host() + (u.port() > 0 ? QStringLiteral(":%1").arg(u.port()) : QString()) + u.path();
+    while (name.endsWith(QLatin1Char('/'))) name.chop(1);
+    return name;
 }
 
 QStringList Engine::audioExtensions()
@@ -39,7 +145,9 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
 {
     std::vector<MediaRef> out;
     enum Kind { ImageKind, VideoKind, AudioKind };
-    auto kindOf = [](const QString &p) { return isVideoFile(p) ? VideoKind : isAudioFile(p) ? AudioKind : ImageKind; };
+    auto kindOf = [](const QString &p) {
+        return isVideoFile(p) || isStreamUrl(p) || QFileInfo(p).isDir() ? VideoKind : isAudioFile(p) ? AudioKind : ImageKind;
+    };
     auto add = [&](const QString &path, Kind kind, const QString &user, bool imported) {
         if (path.isEmpty()) return;
         for (MediaRef &r : out) {
@@ -76,7 +184,7 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
         for (const QString &p : m_binItems)
             if (!isIsfFile(p)) add(p, kindOf(p), QString(), true); // shaders imported to the bin are in ISF > Generators
     }
-    for (MediaRef &r : out) r.missing = !QFileInfo::exists(r.path);
+    for (MediaRef &r : out) r.missing = !isStreamUrl(r.path) && !QFileInfo::exists(r.path); // a stream: never missing
     return out;
 }
 
@@ -91,7 +199,8 @@ void Engine::addBinItems(const QStringList &paths)
     Lock lk(&m_mutex);
     for (const QString &p : paths) {
         if (p.isEmpty()) continue;
-        const QString abs = QFileInfo(p).isAbsolute() ? QDir::cleanPath(p) : QFileInfo(p).absoluteFilePath();
+        const QString abs = isStreamUrl(p) ? p.trimmed() // an URL as it is (cleanPath would fold its "//")
+                            : QFileInfo(p).isAbsolute() ? QDir::cleanPath(p) : QFileInfo(p).absoluteFilePath();
         if (!m_binItems.contains(abs)) m_binItems << abs;
     }
 }
@@ -100,6 +209,23 @@ void Engine::removeBinItem(const QString &path)
 {
     Lock lk(&m_mutex);
     m_binItems.removeAll(path);
+    m_binStreamsUdp.remove(path);
+}
+
+void Engine::addBinStream(const QString &url, bool rtspTcp)
+{
+    const QString u = url.trimmed();
+    if (!isStreamUrl(u)) return;
+    addBinItems({u});
+    Lock lk(&m_mutex);
+    if (rtspTcp) m_binStreamsUdp.remove(u);
+    else m_binStreamsUdp.insert(u);
+}
+
+bool Engine::binStreamTcp(const QString &url) const
+{
+    Lock lk(&m_mutex);
+    return !m_binStreamsUdp.contains(url.trimmed());
 }
 
 void Engine::relinkBinItem(const QString &from, const QString &to)

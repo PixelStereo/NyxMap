@@ -37,6 +37,26 @@ struct AVPacket;
 struct AVBufferRef;
 struct SwsContext;
 
+// How a video source is read besides its path (saved with the layer):
+//  - an image sequence: numbered still pictures in a folder (the path), read as a clip by FFmpeg's image2 demuxer
+//    from `pattern` (a file name, printf style: "shot_%04d.exr"), from number `start`, at `fps` frames per second.
+//    image2 reads a contiguous range: the first gap in the numbering ends the clip.
+//  - a live network stream (the path is its URL: rtsp, rtmp, srt, udp, rtp, http(s), HLS…): no duration, no seeking,
+//    the newest picture shown; the decoder connects on its own thread and connects again when the stream drops.
+struct VideoSource {
+    QString pattern;
+    int start = 0;
+    double fps = 25;
+    bool live = false;
+    bool rtspTcp = true; // RTSP over TCP (interleaved): through firewalls, no lost packets; off: UDP, lower latency
+    bool isSequence() const { return !pattern.isEmpty(); }
+    bool operator==(const VideoSource &o) const
+    {
+        return pattern == o.pattern && start == o.start && fps == o.fps && live == o.live && rtspTcp == o.rtspTcp;
+    }
+    bool operator!=(const VideoSource &o) const { return !(*this == o); }
+};
+
 class VideoDecoder
 {
 public:
@@ -45,11 +65,14 @@ public:
     VideoDecoder(const VideoDecoder &) = delete;
     VideoDecoder &operator=(const VideoDecoder &) = delete;
 
-    bool open(const QString &path, QString *err);
+    // A file, an image sequence (path: its folder) or a live stream (path: its URL). A live stream is not connected
+    // here: open() returns at once and the decode thread connects (liveStatus()).
+    bool open(const QString &path, QString *err, const VideoSource &source = VideoSource());
 
     // File info without decoding it (media bin)
     struct Info {
         int width = 0, height = 0;
+        int frames = 0; // an image sequence's pictures (0: not one)
         double duration = 0, fps = 0;
         QString codec;
         QString pixelFormat;    // container's declared AVPixelFormat (may be unspecified)
@@ -61,16 +84,28 @@ public:
         QString colorDescription() const;
         QString colorSpaceSummary() const;
     };
-    static bool probe(const QString &path, Info *info, QString *err = nullptr);
+    // Never for a live stream (it would connect): false
+    static bool probe(const QString &path, Info *info, QString *err = nullptr, const VideoSource &source = VideoSource());
     void close();
 
     int width() const { return m_width; }
     int height() const { return m_height; }
-    double duration() const { return m_duration; }
-    double fps() const { return m_fps; }
+    double duration() const { return m_duration; } // 0 for a live stream
+    double fps() const;
     // "h264", "prores", "Hap Q"…, followed by the hardware decoder once it delivers frames
     QString codecName() const;
-    const Info &sourceInfo() const { return m_sourceInfo; } // captured before decoder starts; immutable while open
+    Info sourceInfo() const; // captured before decoder starts (a live stream: at each connection)
+
+    // --- Live streams
+    bool isLive() const { return m_live; }
+    enum class LiveState { Connecting, Live, Reconnecting };
+    struct LiveStatus {
+        LiveState state = LiveState::Connecting;
+        QString reason;   // why it is (re)connecting: the last error
+        int attempts = 0; // connections tried since the last one that worked
+    };
+    LiveStatus liveStatus() const;
+    static constexpr int kLiveTimeoutUs = 5000000; // no data for this long: the stream is taken as dropped
     bool isHap() const { return m_hapTag != 0; }
     bool hardwareActive() const { return m_hwActive.load(); }
     int decodeThreads() const; // FFmpeg's threads for this video (0: HAP, decoded here)
@@ -153,6 +188,11 @@ public:
     static std::shared_ptr<const VideoLayout> layoutOf(const AVFrame *f);
 
 private:
+    bool openStreams(const QString &path, const VideoSource &source, QString *err); // demuxer and decoder
+    void releaseStreams();                                                         // what openStreams made
+    void runLive();                              // decode thread of a live stream: connects, decodes, reconnects
+    void setLiveState(LiveState s, const QString &reason, int attempts);
+    static int interruptCallback(void *self);    // FFmpeg's blocking calls give up when the decoder closes
     void run();
     void runLoop(); // run(): restarted after an allocation failure, which stops playback until the next seek
     bool doSeek(double t);
@@ -191,7 +231,7 @@ private:
     int m_stream = -1;
     double m_timeBase = 0, m_startTime = 0;
 
-    int m_width = 0, m_height = 0;
+    std::atomic<int> m_width{0}, m_height{0}; // written by the decode thread of a live stream
     int m_softwareThreads = 0; // FFmpeg threads counted in the process-wide budget (0: hardware, HAP, closed)
     double m_duration = 0, m_fps = 25;
     QString m_codecName;
@@ -262,4 +302,14 @@ private:
     bool m_resendPacket = false; // send_packet said EAGAIN: m_packet kept, sent again after the output is read
     int m_consecutiveCodecErrors = 0, m_ioRetries = 0;
     double m_resumeSeek = 0, m_resumeDiscard = -1e9; // where a transient I/O error resumes the forward leg
+
+    // Live stream: set by open() before the decode thread starts, read-only afterwards
+    bool m_live = false;
+    QString m_livePath;
+    VideoSource m_liveSource;
+    std::atomic<bool> m_abort{false}; // close(): FFmpeg's blocking calls (connecting, reading) return
+    // What the decode thread found at its last connection, and the state (other threads read them)
+    mutable std::mutex m_infoMutex; // m_sourceInfo and m_liveCodecName too, for a live stream
+    LiveStatus m_liveStatus;
+    QString m_liveCodecName;
 };

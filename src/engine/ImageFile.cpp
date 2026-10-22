@@ -3,6 +3,12 @@
 
 #include <QColorSpace>
 #include <QFile>
+#include <QFileInfo>
+#include <QPainter>
+#include <cmath>
+#ifdef PINOL_HAS_SVG
+#include <QSvgRenderer>
+#endif
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -59,8 +65,65 @@ static QImage decodeWithFfmpeg(const QString &path)
     return out;
 }
 
-QImage readImageFile(const QString &path, int psdLayer, QString *err)
+bool isSvgFile(const QString &path)
 {
+    const QString ext = QFileInfo(path).suffix().toLower();
+    return ext == QLatin1String("svg") || ext == QLatin1String("svgz");
+}
+
+#ifdef PINOL_HAS_SVG
+// Its view box (else its declared size), scaled up to the wanted longer side, within the largest texture made here
+static QSize svgSize(const QSvgRenderer &r, int longSide)
+{
+    QSizeF s = r.viewBoxF().size();
+    if (s.width() <= 0 || s.height() <= 0) s = r.defaultSize();
+    if (s.width() <= 0 || s.height() <= 0) return {};
+    const double longest = std::max(s.width(), s.height());
+    const double scale = std::min(std::max(1.0, longSide / longest), kMaxSvgSide / longest);
+    return QSize(std::max(1, int(std::lround(s.width() * scale))), std::max(1, int(std::lround(s.height() * scale))));
+}
+#endif
+
+QSize svgRenderSize(const QString &path, int svgLongSide)
+{
+#ifdef PINOL_HAS_SVG
+    QSvgRenderer r(path);
+    return r.isValid() ? svgSize(r, svgLongSide) : QSize();
+#else
+    (void)path;
+    (void)svgLongSide;
+    return {};
+#endif
+}
+
+static QImage readSvg(const QString &path, int longSide, QString *err)
+{
+#ifdef PINOL_HAS_SVG
+    QSvgRenderer r(path);
+    const QSize size = r.isValid() ? svgSize(r, longSide) : QSize();
+    if (!size.isValid()) {
+        if (err) *err = QStringLiteral("Unreadable SVG drawing: ") + path;
+        return {};
+    }
+    QImage img(size, QImage::Format_RGBA8888_Premultiplied);
+    if (img.isNull()) return {};
+    img.fill(Qt::transparent);
+    QPainter p(&img);
+    p.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+    r.render(&p, QRectF(QPointF(0, 0), QSizeF(size)));
+    p.end();
+    img.setColorSpace(QColorSpace::SRgb); // SVG colours are sRGB
+    return img.convertToFormat(QImage::Format_RGBA8888);
+#else
+    (void)longSide;
+    if (err) *err = QStringLiteral("SVG drawings need Qt SVG, absent from this build: ") + path;
+    return {};
+#endif
+}
+
+QImage readImageFile(const QString &path, int psdLayer, QString *err, int svgLongSide)
+{
+    if (isSvgFile(path)) return readSvg(path, svgLongSide, err);
     if (isPsdFile(path)) {
         QImage img = readPsd(path, psdLayer, err);
         return img.isNull() && psdLayer < 0 ? decodeWithFfmpeg(path) : img;

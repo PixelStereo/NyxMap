@@ -11,7 +11,8 @@ class QLineEdit;
 class QComboBox;
 class QToolButton;
 
-// Media Bin: the project's video, image and audio files (used by layers or imported), grouped by type, the Text
+// Media Bin: the project's video, image and audio files (used by layers or imported), grouped by type — image
+// sequences (folders) and network streams (URLs) among the videos —, the Text
 // generator, the live inputs, and the ISF generators of the library (ISF > Generators). Items are dragged onto layers to load them.
 class MediaBin : public QWidget
 {
@@ -39,6 +40,8 @@ private:
     void refreshInputs(); // Inputs: the live sources there now, and those the layers use
     void updateButtons();
     void importDialog();
+    void importSequenceDialog(); // a folder of numbered pictures
+    void addStreamDialog();      // a network stream's URL
     void relinkSelected();
     void removeSelected();
     void revealSelected();
@@ -49,6 +52,7 @@ private:
     Engine *m_engine;
     QTreeWidget *m_tree;
     QTreeWidgetItem *m_videos, *m_images, *m_audios, *m_generators, *m_text, *m_timecode, *m_web, *m_inputs, *m_isf, *m_isfGenerators;
+    QTreeWidgetItem *m_clocks[3] = {}; // Countdown, Stopwatch, Clock (ClockKind)
     QPushButton *m_relink, *m_remove, *m_reveal;
     QLabel *m_summary;
     QLineEdit *m_search = nullptr;

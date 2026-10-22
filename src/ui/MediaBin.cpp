@@ -19,7 +19,11 @@
 #include <QHeaderView>
 #include <QColorSpace>
 #include "ColorInfo.h"
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QToolButton>
 #include <QImageReader>
 #include <QLabel>
@@ -86,7 +90,7 @@ private:
 bool replaceable(const QTreeWidgetItem *it)
 {
     const QString p = it->data(0, PathRole).toString();
-    return !p.isEmpty() && (!it->data(0, IsfRole).toBool() || Engine::isIsfFile(p));
+    return !p.isEmpty() && !Engine::isStreamUrl(p) && (!it->data(0, IsfRole).toBool() || Engine::isIsfFile(p));
 }
 
 // Media Bin tree: drag items onto layers, drop files to import them.
@@ -102,7 +106,9 @@ protected:
         QList<QUrl> urls;
         for (QTreeWidgetItem *it : items) {
             const QString p = it->data(0, PathRole).toString();
-            if (!p.isEmpty() && !it->data(0, MissingRole).toBool()) urls << QUrl::fromLocalFile(p);
+            // A stream as a (virtual) path, as the live inputs are: dropped onto a layer like a file
+            if (!p.isEmpty() && !it->data(0, MissingRole).toBool())
+                urls << QUrl::fromLocalFile(Engine::isStreamUrl(p) ? Engine::streamPath(p) : p);
         }
         m->setUrls(urls);
         return m;
@@ -155,7 +161,14 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
                                          "scan the ISF library folders again"));
     head->addWidget(m_rebuild);
     auto *import = new QPushButton(QStringLiteral("Import…"));
-    import->setToolTip(QStringLiteral("Add videos, images, sounds or ISF generators to the Media Bin"));
+    import->setObjectName(QStringLiteral("mediaBinImport"));
+    import->setToolTip(QStringLiteral("Add videos, images, sounds or ISF generators, an image sequence (a folder of "
+                                      "numbered pictures) or a network stream to the Media Bin"));
+    auto *importMenu = new QMenu(import);
+    importMenu->addAction(QStringLiteral("Files…"), this, &MediaBin::importDialog);
+    importMenu->addAction(QStringLiteral("Image Sequence (Folder)…"), this, &MediaBin::importSequenceDialog);
+    importMenu->addAction(QStringLiteral("Add Stream URL…"), this, &MediaBin::addStreamDialog);
+    import->setMenu(importMenu);
     head->addWidget(import);
     v->addLayout(head);
     m_search = new QLineEdit;
@@ -257,7 +270,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_videos = new BinItem(m_tree, {QStringLiteral("Videos")});
     m_images = new BinItem(m_tree, {QStringLiteral("Images")});
     m_audios = new BinItem(m_tree, {QStringLiteral("Audio")});
-    // The generators, built in, always there: Text, Timecode
+    // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock
     m_generators = new BinItem(m_tree, m_audios);
     m_generators->setText(0, QStringLiteral("Generators"));
     auto generator = [this](const QString &name, const QString &path) {
@@ -273,6 +286,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     };
     m_text = generator(QStringLiteral("Text"), kTextGeneratorPath);
     m_timecode = generator(QStringLiteral("Timecode"), kTimecodeGeneratorPath);
+    for (ClockKind k : {ClockKind::Countdown, ClockKind::Stopwatch, ClockKind::Clock})
+        m_clocks[int(k)] = generator(clockKindName(k), clockGeneratorPath(k));
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
     m_inputs = new BinItem(m_tree, m_generators);
@@ -291,7 +306,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         cat->setFirstColumnSpanned(true);
     }
     v->addWidget(m_tree, 1);
-    m_inputs->setToolTip(0, QStringLiteral("Cameras, and the NDI, OMT and Syphon sources found on this machine and the network"));
+    m_inputs->setToolTip(0, QStringLiteral("Cameras, screens and windows, DeckLink inputs, and the NDI, OMT, Syphon and Spout sources "
+                                          "found on this machine and the network"));
     auto *look = new QTimer(this); // the network's sources come and go
     look->setInterval(3000);
     connect(look, &QTimer::timeout, this, [this] {
@@ -320,7 +336,6 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_summary->setWordWrap(true);
     v->addWidget(m_summary);
 
-    connect(import, &QPushButton::clicked, this, &MediaBin::importDialog);
     connect(m_rebuild, &QToolButton::clicked, this, &MediaBin::rebuild);
     connect(m_relink, &QPushButton::clicked, this, &MediaBin::relinkSelected);
     connect(m_remove, &QPushButton::clicked, this, &MediaBin::removeSelected);
@@ -371,8 +386,15 @@ void MediaBin::refresh()
         it->setData(0, MissingRole, r.missing);
         it->setData(0, UsedRole, !r.users.isEmpty());
         it->setData(0, UsersRole, int(r.users.size()));
-        it->setText(0, QFileInfo(r.path).fileName());
-        if (r.missing) {
+        const bool stream = Engine::isStreamUrl(r.path);
+        it->setText(0, stream ? Engine::streamName(r.path) : QFileInfo(r.path).fileName());
+        if (stream) { // never probed: that would connect to it
+            const bool rtsp = r.path.startsWith(QLatin1String("rtsp"), Qt::CaseInsensitive);
+            it->setText(1, QStringLiteral("Stream · ") + r.path.section(QLatin1Char(':'), 0, 0).toUpper() +
+                               (rtsp ? (m_engine->binStreamTcp(r.path) ? QStringLiteral(" (TCP)") : QStringLiteral(" (UDP)")) : QString()));
+            it->setText(3, QStringLiteral("Unknown (live stream)"));
+            it->setToolTip(1, QStringLiteral("Live network stream: connected when a layer plays it, again when it drops"));
+        } else if (r.missing) {
             it->setText(1, QStringLiteral("missing"));
             it->setText(3, QStringLiteral("Unavailable"));
             m_info.remove(r.path);
@@ -539,8 +561,8 @@ void MediaBin::refreshIsf()
     m_isfGenerators->setText(0, QStringLiteral("Generators (%1)").arg(total));
 }
 
-// Inputs: the cameras, and the NDI, OMT and Syphon sources announced now (looked for again every few seconds while the
-// Media Bin is shown), with the layers that use them
+// Inputs: the cameras, the screens and windows, the DeckLink inputs, and the NDI, OMT, Syphon and Spout sources
+// announced now (looked for again every few seconds while the Media Bin is shown), with the layers that use them
 void MediaBin::refreshInputs()
 {
     const std::vector<LiveInputInfo> found = Engine::liveInputs();
@@ -598,12 +620,12 @@ void MediaBin::refreshInputs()
 void MediaBin::refreshText()
 {
     const SortingPause sorting(m_tree);
-    QStringList texts, timecodes, webs;
+    QStringList texts, timecodes, webs, clocks[3];
     {
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
-            if (l->type == SourceType::Text) (l->timecode ? timecodes : texts) << l->name;
+            if (l->type == SourceType::Text) (l->clockGen ? clocks[int(l->clockGen->kind())] : l->timecode ? timecodes : texts) << l->name;
             if (l->type == SourceType::Web) webs << l->name;
         }
     }
@@ -619,6 +641,16 @@ void MediaBin::refreshText()
     show(m_timecode, timecodes,
          QStringLiteral("Timecode generator: shows a timecode, from its own clock (time of day, free run) or received "
                         "(LTC, MTC, ATC), and can send it (LTC, MTC)"));
+    show(m_clocks[int(ClockKind::Countdown)], clocks[int(ClockKind::Countdown)],
+         QStringLiteral("Countdown generator: counts down from a duration, or to a time of day, to zero; then holds, shows "
+                        "a text, or goes on into overtime in a color of its own. Start, Pause, Reset from its Source tab, "
+                        "OSC, interactions, snapshots and sequences"));
+    show(m_clocks[int(ClockKind::Stopwatch)], clocks[int(ClockKind::Stopwatch)],
+         QStringLiteral("Stopwatch generator: counts up from zero, or from a time of its own. Start, Pause, Reset from its "
+                        "Source tab, OSC, interactions, snapshots and sequences"));
+    show(m_clocks[int(ClockKind::Clock)], clocks[int(ClockKind::Clock)],
+         QStringLiteral("Clock generator: the time of day, 24 h or 12 h, with or without its seconds and its date, in the "
+                        "system's time zone or another one"));
     if (m_web)
         show(m_web, webs,
              QStringLiteral("Web Page generator: a web page (an address, or a local HTML file) rendered at its own size and "
@@ -650,8 +682,25 @@ void MediaBin::probe(const QString &path)
     QThreadPool::globalInstance()->start([self, path, image] {
         QString info;
         QString color = QStringLiteral("Unknown");
+        if (QFileInfo(path).isDir()) { // an image sequence: its pictures as a clip (25 fps unless a layer says)
+            Engine::SequenceInfo seq;
+            VideoSource source;
+            VideoDecoder::Info vi;
+            if (Engine::detectImageSequence(path, &seq)) {
+                source.pattern = seq.pattern;
+                source.start = seq.start;
+            }
+            if (source.isSequence() && VideoDecoder::probe(path, &vi, nullptr, source)) {
+                info = QStringLiteral("Sequence · %1 frames · %2×%3 · %4 fps\t%5, from %6 · %7")
+                           .arg(vi.frames).arg(vi.width).arg(vi.height).arg(vi.fps, 0, 'g', 4)
+                           .arg(seq.pattern).arg(seq.start).arg(vi.codec);
+                color = vi.colorSpaceSummary();
+            } else {
+                info = QStringLiteral("no image sequence");
+            }
+        }
         AudioStream::Info ai;
-        const bool sound = !image && AudioStream::probe(path, &ai);
+        const bool sound = !image && !QFileInfo(path).isDir() && AudioStream::probe(path, &ai);
         const QString soundText = sound ? QStringLiteral("%1 %2 kHz %3")
                                               .arg(ai.codec)
                                               .arg(ai.sampleRate / 1000.0, 0, 'g', 3)
@@ -659,7 +708,9 @@ void MediaBin::probe(const QString &path)
                                                    : ai.channels == 2 ? QStringLiteral("stereo")
                                                                       : QStringLiteral("%1 ch").arg(ai.channels))
                                         : QString();
-        if (!image) {
+        if (!info.isEmpty()) {
+            // an image sequence, above
+        } else if (!image) {
             VideoDecoder::Info vi;
             if (Engine::isAudioFile(path) || !VideoDecoder::probe(path, &vi)) {
                 // Sound only
@@ -684,6 +735,12 @@ void MediaBin::probe(const QString &path)
             }
         } else if (const QString psd = psdInfo(path); !psd.isEmpty()) {
             info = psd;
+        } else if (isSvgFile(path)) { // drawn at the composition's size when a layer shows it
+            const QSize s = svgRenderSize(path, 0);
+            info = s.isValid() ? QStringLiteral("%1×%2 · SVG\tvector drawing, rendered at least as large as the "
+                                                "composition, transparent background").arg(s.width()).arg(s.height())
+                               : QStringLiteral("unreadable");
+            color = QStringLiteral("sRGB");
         } else {
             QImageReader r(path);
             const QSize s = r.size();
@@ -739,7 +796,8 @@ void MediaBin::updateButtons()
     }
     m_relink->setEnabled(m_tree->selectedItems().size() == 1 && replaceable(m_tree->selectedItems().first()));
     m_remove->setEnabled(removable);
-    m_reveal->setEnabled(any && !m_tree->selectedItems().first()->data(0, MissingRole).toBool());
+    m_reveal->setEnabled(any && !m_tree->selectedItems().first()->data(0, MissingRole).toBool() &&
+                         !Engine::isStreamUrl(m_tree->selectedItems().first()->data(0, PathRole).toString()));
 }
 
 static bool isMedia(const QString &p) { return Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
@@ -749,7 +807,13 @@ void MediaBin::importFiles(const QStringList &paths)
     QStringList ok, refused;
     for (const QString &p : paths) {
         QFileInfo fi(p);
-        if (fi.isDir()) {
+        if (const QString url = Engine::streamUrlOfPath(p); !url.isEmpty()) { // a stream (its transport kept)
+            if (!m_engine->binItems().contains(url)) m_engine->addBinStream(url, true);
+            ok << url;
+        } else if (fi.isDir() && Engine::isSequenceFolder(p)) {
+            // A folder of numbered pictures: one image sequence, played as a clip
+            ok << QDir::cleanPath(fi.absoluteFilePath());
+        } else if (fi.isDir()) {
             // A dropped folder: import its videos, images and audio files (top level only)
             for (const QFileInfo &f : QDir(p).entryInfoList(QDir::Files, QDir::Name))
                 if (isMedia(f.filePath()) || (Engine::isIsfFile(f.filePath()) && IsfInstance::readHeader(f.filePath()).ok &&
@@ -786,6 +850,55 @@ void MediaBin::importDialog()
     if (files.isEmpty()) return;
     s.setValue("dirs/video", QFileInfo(files.first()).absolutePath());
     importFiles(files);
+}
+
+void MediaBin::importSequenceDialog()
+{
+    QSettings s;
+    const QString folder = QFileDialog::getExistingDirectory(this, QStringLiteral("Import Image Sequence (a folder of numbered pictures)"),
+                                                             s.value("dirs/video").toString());
+    if (folder.isEmpty()) return;
+    s.setValue("dirs/video", QFileInfo(folder).absolutePath());
+    if (!Engine::isSequenceFolder(folder)) {
+        QMessageBox::information(this, QStringLiteral("Image Sequence"),
+                                 QStringLiteral("No image sequence in %1: a sequence is a folder whose pictures (%2) are "
+                                                "mostly one numbered series (name0001.exr, name0002.exr…).")
+                                     .arg(QDir::toNativeSeparators(folder), Engine::sequenceExtensions().join(QStringLiteral(", "))));
+        return;
+    }
+    importFiles({folder});
+}
+
+void MediaBin::addStreamDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Add Stream URL"));
+    auto *form = new QFormLayout(&dialog);
+    auto *url = new QLineEdit;
+    url->setObjectName(QStringLiteral("streamUrl"));
+    url->setPlaceholderText(QStringLiteral("rtsp://camera.local/stream"));
+    url->setMinimumWidth(360);
+    url->setToolTip(QStringLiteral("rtsp://, rtmp://, srt://, udp://, rtp://, http(s)://… (HLS .m3u8 or a progressive "
+                                   "stream). Played live: no duration, no seeking; connected again when it drops."));
+    auto *tcp = new QCheckBox(QStringLiteral("TCP for RTSP"));
+    tcp->setChecked(true);
+    tcp->setToolTip(QStringLiteral("RTSP over TCP: through firewalls and without lost packets. Off: UDP, lower latency "
+                                   "on a clean network"));
+    form->addRow(QStringLiteral("URL"), url);
+    form->addRow(QString(), tcp);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&dialog, url] {
+        if (Engine::isStreamUrl(url->text().trimmed())) dialog.accept();
+        else
+            QMessageBox::information(&dialog, QStringLiteral("Add Stream URL"),
+                                     QStringLiteral("Not a stream URL: rtsp://, rtmp://, srt://, udp://, rtp://, tcp:// or http(s)://"));
+    });
+    if (dialog.exec() != QDialog::Accepted) return;
+    m_engine->addBinStream(url->text().trimmed(), tcp->isChecked());
+    refresh();
+    emit binEdited();
 }
 
 void MediaBin::relinkSelected()
@@ -870,6 +983,8 @@ void MediaBin::contextMenu(const QPoint &pos)
         menu.addSeparator();
     }
     menu.addAction(QStringLiteral("Import…"), this, &MediaBin::importDialog);
+    menu.addAction(QStringLiteral("Import Image Sequence (Folder)…"), this, &MediaBin::importSequenceDialog);
+    menu.addAction(QStringLiteral("Add Stream URL…"), this, &MediaBin::addStreamDialog);
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
 

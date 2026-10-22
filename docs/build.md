@@ -38,7 +38,7 @@ OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, un
 
 ### Linux release packaging
 
-The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components, then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, an explicit list of GStreamer plugins for camera capture, audio libraries, NDI and Native AOT OMT. It closes the ELF dependencies of everything it copies (`ldd`), plus an explicit list of libraries that are loaded with `dlopen()` (ALSA, PulseAudio, Avahi, udev, OpenSSL, ICU, and
+The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components (with OpenSSL for TLS and libsrt for SRT streams), then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, an explicit list of GStreamer plugins for camera capture, audio libraries, NDI and Native AOT OMT. It closes the ELF dependencies of everything it copies (`ldd`), plus an explicit list of libraries that are loaded with `dlopen()` (ALSA, PulseAudio, Avahi, udev, OpenSSL, ICU, and
 with Qt WebEngine the NSS modules); with Qt WebEngine it also adds `QtWebEngineProcess` (`usr/libexec`), its resources
 (`usr/resources`) and locales (`usr/translations/qtwebengine_locales`), which `AppRun` points Qt WebEngine to; glibc and the host graphics stack are left out on purpose. Other dynamically loaded modules are not bundled: GIO modules, VA-API (libva) drivers and GStreamer's network, audio and playback plugins come from the host or are absent. The Qt TIFF image plugin is left out (Ubuntu's libtiff links the GPL-only libjbig).
 
@@ -78,7 +78,7 @@ Run it again after `git pull` to rebuild. CI runs the scripts on fresh macOS, Ub
 
 ### Step by step
 
-**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Clone with submodules:
+**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/PixelStereo/Pinol.git
@@ -107,7 +107,7 @@ before keeps its options: run the `cmake -S …` line again to change them.
 
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \
-  qt6-multimedia-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
+  qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
   libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
   git clang dotnet-sdk-8.0  # OMT (see below)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \

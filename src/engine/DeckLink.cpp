@@ -44,6 +44,77 @@ void decklink::bgraToUyvy(const uint8_t *bgra, int stride, int width, int height
     }
 }
 
+// ---------------------------------------------------------------------------
+// 4:2:2 Y'CbCr to RGBA (the inputs; also used by the tests, with or without the SDK)
+// ---------------------------------------------------------------------------
+namespace {
+// Video range to full: R' = 1.164 Y' + 1.793 Cr ... (BT.709; BT.601 below 720 lines), in 1/1024ths. `bits`: 8 or 10
+// (the 10-bit samples: their offsets four times larger, the result back to 8 bits)
+struct YcbcrToRgb {
+    int ky = 1192, kr, kgb, kgr, kb, yOff, cOff, shift, round;
+    YcbcrToRgb(int height, int bits)
+    {
+        const bool hd = height >= 720;
+        kr = hd ? 1836 : 1634;
+        kgb = hd ? 218 : 401;
+        kgr = hd ? 546 : 833;
+        kb = hd ? 2163 : 2066;
+        yOff = bits == 10 ? 64 : 16;
+        cOff = bits == 10 ? 512 : 128;
+        shift = bits == 10 ? 12 : 10;
+        round = 1 << (shift - 1);
+    }
+    void operator()(int y, int cb, int cr, uint8_t *d) const
+    {
+        const int l = ky * (y - yOff) + round;
+        cb -= cOff;
+        cr -= cOff;
+        d[0] = uint8_t(std::clamp((l + kr * cr) >> shift, 0, 255));
+        d[1] = uint8_t(std::clamp((l - kgb * cb - kgr * cr) >> shift, 0, 255));
+        d[2] = uint8_t(std::clamp((l + kb * cb) >> shift, 0, 255));
+        d[3] = 255;
+    }
+};
+} // namespace
+
+void decklink::uyvyToRgba(const uint8_t *uyvy, int stride, int width, int height, uint8_t *out, int outStride)
+{
+    const YcbcrToRgb rgb(height, 8);
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *s = uyvy + size_t(y) * size_t(stride);
+        uint8_t *d = out + size_t(y) * size_t(outStride);
+        int x = 0;
+        for (; x + 1 < width; x += 2, s += 4, d += 8) {
+            rgb(s[1], s[0], s[2], d);
+            rgb(s[3], s[0], s[2], d + 4);
+        }
+        if (x < width) rgb(s[1], s[0], s[2], d); // an odd width: the last pixel of its pair
+    }
+}
+
+void decklink::v210ToRgba(const uint8_t *v210, int stride, int width, int height, uint8_t *out, int outStride)
+{
+    const YcbcrToRgb rgb(height, 10);
+    auto word = [](const uint8_t *p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; };
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *s = v210 + size_t(y) * size_t(stride);
+        uint8_t *d = out + size_t(y) * size_t(outStride);
+        // Each block of 16 bytes: six pixels. Its samples in order: Cb0 Y0 Cr0 | Y1 Cb2 Y2 | Cr2 Y3 Cb4 | Y4 Cr4 Y5
+        for (int x = 0; x < width; x += 6, s += 16) {
+            int v[12];
+            for (int k = 0; k < 4; ++k) {
+                const uint32_t w = word(s + 4 * k);
+                v[3 * k] = int(w & 0x3FF);
+                v[3 * k + 1] = int((w >> 10) & 0x3FF);
+                v[3 * k + 2] = int((w >> 20) & 0x3FF);
+            }
+            const int ys[6] = {v[1], v[3], v[5], v[7], v[9], v[11]};
+            const int cbs[3] = {v[0], v[4], v[8]}, crs[3] = {v[2], v[6], v[10]};
+            for (int k = 0; k < 6 && x + k < width; ++k) rgb(ys[k], cbs[k / 2], crs[k / 2], d + size_t(x + k) * 4);
+        }
+    }
+}
+
 const decklink::Mode *decklink::bestMode(const std::vector<Mode> &modes, QSize size, double fps)
 {
     auto pick = [&](int w, int h) -> const Mode * {
@@ -71,6 +142,16 @@ std::unique_ptr<CpuPublisher> createDeckLinkPublisher() { return nullptr; }
 std::vector<decklink::Port> decklink::inputPorts() { return {}; }
 void decklink::rescan() {}
 int decklink::lookups() { return 0; }
+struct decklink::VideoInput::Impl {};
+decklink::VideoInput::VideoInput() : d(std::make_unique<Impl>()) {}
+decklink::VideoInput::~VideoInput() = default;
+bool decklink::VideoInput::open(const QString &, Callback, QString *err)
+{
+    if (err) *err = QStringLiteral("built without DeckLink");
+    return false;
+}
+QString decklink::VideoInput::status() const { return {}; }
+bool decklink::VideoInput::hasSignal() const { return false; }
 struct decklink::TimecodeInput::Impl {};
 decklink::TimecodeInput::TimecodeInput() : d(std::make_unique<Impl>()) {}
 decklink::TimecodeInput::~TimecodeInput() = default;
@@ -717,7 +798,8 @@ void Callback::detach()
 std::unique_ptr<CpuPublisher> createDeckLinkPublisher() { return std::make_unique<DeckLinkPublisher>(); }
 
 // ---------------------------------------------------------------------------
-// Timecode in: an input's RP188 (else VITC), in whatever mode comes in (format detection)
+// Inputs: a port opened once (PortCapture) for all that listen to it, its pictures (VideoInput) and its timecode
+// (TimecodeInput, ATC: RP188, else VITC), in whatever mode comes in (format detection)
 // ---------------------------------------------------------------------------
 namespace {
 TcRate rateOf(IDeckLinkDisplayMode *m, bool drop)
@@ -731,18 +813,44 @@ TcRate rateOf(IDeckLinkDisplayMode *m, bool drop)
     if (fps < 27.5) return TcRate::Fps25;
     return drop || std::abs(fps - 29.97) < 0.01 ? (drop ? TcRate::Fps2997Df : TcRate::Fps30) : TcRate::Fps30;
 }
-} // namespace
 
-struct decklink::TimecodeInput::Impl : public IDeckLinkInputCallback {
-    std::mutex mutex;
-    Callback cb;
-    Ref<IDeckLink> device;
-    Ref<IDeckLinkInput> input;
-    Port port;
-    TcRate rate = TcRate::Fps25;
-    QString status;
-    std::atomic<ULONG> refs{1};
-    bool started = false;
+class PortCapture : public IDeckLinkInputCallback
+{
+public:
+    using Listener = std::function<void(const decklink::InputFrame &)>;
+
+    // The port's capture: the one already open, else opened now; null with `err` when it cannot be
+    static std::shared_ptr<PortCapture> acquire(const QString &port, QString *err);
+    virtual ~PortCapture()
+    {
+        if (m_started) m_input->StopStreams();
+        m_input->SetCallback(nullptr);
+        m_input->DisableVideoInput();
+    }
+
+    int listen(Listener fn)
+    {
+        std::lock_guard<std::mutex> lk(m_listenMutex);
+        m_listeners.emplace_back(++m_lastId, std::move(fn));
+        return m_lastId;
+    }
+    void unlisten(int id) // no call to it once this returns (a call on its way is waited for)
+    {
+        std::lock_guard<std::mutex> lk(m_listenMutex);
+        m_listeners.erase(std::remove_if(m_listeners.begin(), m_listeners.end(), [id](const auto &l) { return l.first == id; }),
+                          m_listeners.end());
+    }
+    QString status() const
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (m_framesSeen && !m_signal) return QStringLiteral("%1: no signal").arg(m_port.name);
+        return m_status;
+    }
+    bool hasSignal() const
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        return m_signal;
+    }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, LPVOID *ppv) override
     {
@@ -754,91 +862,203 @@ struct decklink::TimecodeInput::Impl : public IDeckLinkInputCallback {
         *ppv = nullptr;
         return E_NOINTERFACE;
     }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
-    ULONG STDMETHODCALLTYPE Release() override { return --refs; } // owned by TimecodeInput, not by the SDK
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++m_refs; }
+    ULONG STDMETHODCALLTYPE Release() override { return --m_refs; } // owned by its listeners, not by the SDK
     HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(BMDVideoInputFormatChangedEvents, IDeckLinkDisplayMode *mode,
                                                       BMDDetectedVideoInputFormatFlags flags) override
     {
-        if (!mode || !input) return S_OK;
-        const BMDPixelFormat f = (flags & bmdDetectedVideoInputRGB444) ? bmdFormat8BitBGRA : bmdFormat8BitYUV;
-        input->PauseStreams();
-        input->EnableVideoInput(mode->GetDisplayMode(), f, bmdVideoInputEnableFormatDetection);
-        input->FlushStreams();
-        input->StartStreams();
-        std::lock_guard<std::mutex> lk(mutex);
-        rate = rateOf(mode, false);
+        if (!mode) return S_OK;
+        // RGB as 8-bit BGRA; 4:2:2 in 10 bits when it comes so (else, or when the card will not, in 8)
+        BMDPixelFormat f = bmdFormat8BitYUV;
+        if (flags & bmdDetectedVideoInputRGB444) f = bmdFormat8BitBGRA;
+        else if (flags & (bmdDetectedVideoInput10BitDepth | bmdDetectedVideoInput12BitDepth)) f = bmdFormat10BitYUV;
+        m_input->PauseStreams();
+        if (m_input->EnableVideoInput(mode->GetDisplayMode(), f, bmdVideoInputEnableFormatDetection) != S_OK && f == bmdFormat10BitYUV) {
+            f = bmdFormat8BitYUV;
+            m_input->EnableVideoInput(mode->GetDisplayMode(), f, bmdVideoInputEnableFormatDetection);
+        }
+        m_input->FlushStreams();
+        m_input->StartStreams();
         DlString s = nullptr;
-        status = QStringLiteral("%1: %2").arg(port.name, mode->GetName(&s) == S_OK ? takeString(s) : QString());
+        const QString name = mode->GetName(&s) == S_OK ? takeString(s) : QString();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_rate = rateOf(mode, false);
+        m_status = QStringLiteral("%1: %2").arg(m_port.name, name);
+        if (f == bmdFormat8BitBGRA) m_status += QStringLiteral(" (RGB)");
+        else if (f == bmdFormat10BitYUV) m_status += QStringLiteral(" (10-bit)");
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE VideoInputFrameArrived(IDeckLinkVideoInputFrame *frame, IDeckLinkAudioInputPacket *) override
     {
         if (!frame) return S_OK;
+        decklink::InputFrame in;
+        in.timecode = timecodeOf(frame);
+        const bool signal = !(frame->GetFlags() & bmdFrameHasNoInputSource);
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_signal = signal;
+            m_framesSeen = true;
+        }
+        void *bytes = nullptr;
+        if (signal && frame->GetBytes(&bytes) == S_OK && bytes) {
+            const BMDPixelFormat pf = frame->GetPixelFormat();
+            if (pf == bmdFormat8BitYUV || pf == bmdFormat10BitYUV || pf == bmdFormat8BitBGRA) {
+                in.format = pf == bmdFormat8BitYUV    ? decklink::InputFrame::Uyvy
+                            : pf == bmdFormat10BitYUV ? decklink::InputFrame::V210
+                                                      : decklink::InputFrame::Bgra;
+                in.data = static_cast<const uint8_t *>(bytes);
+                in.width = int(frame->GetWidth());
+                in.height = int(frame->GetHeight());
+                in.rowBytes = int(frame->GetRowBytes());
+            }
+        }
+        std::lock_guard<std::mutex> lk(m_listenMutex);
+        for (const auto &l : m_listeners) l.second(in);
+        return S_OK;
+    }
+
+private:
+    PortCapture(Ref<IDeckLink> device, Ref<IDeckLinkInput> input, const decklink::Port &port)
+        : m_device(std::move(device)), m_input(std::move(input)), m_port(port), m_status(port.name)
+    {
+    }
+
+    bool start(QString *err)
+    {
+        m_input->SetCallback(this);
+        // Any mode to begin with: the format detection switches to the one that comes in
+        if (m_input->EnableVideoInput(bmdModeHD1080i50, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection) != S_OK &&
+            m_input->EnableVideoInput(bmdModeHD1080i50, bmdFormat8BitYUV, bmdVideoInputFlagDefault) != S_OK) {
+            if (err) *err = QStringLiteral("%1 is in use").arg(m_port.name);
+            m_input->SetCallback(nullptr);
+            return false;
+        }
+        if (m_input->StartStreams() != S_OK) {
+            if (err) *err = QStringLiteral("%1 did not start").arg(m_port.name);
+            m_input->SetCallback(nullptr);
+            m_input->DisableVideoInput();
+            return false;
+        }
+        m_started = true;
+        return true;
+    }
+
+    // Its ATC: RP188, else VITC (above 30 frames a second, the frame count halved: the timecode counts pairs)
+    std::optional<Timecode> timecodeOf(IDeckLinkVideoInputFrame *frame) const
+    {
         IDeckLinkTimecode *t = nullptr;
         if (frame->GetTimecode(bmdTimecodeRP188Any, &t) != S_OK || !t)
-            if (frame->GetTimecode(bmdTimecodeVITC, &t) != S_OK || !t) return S_OK;
+            if (frame->GetTimecode(bmdTimecodeVITC, &t) != S_OK || !t) return std::nullopt;
         uint8_t h = 0, m = 0, sec = 0, f = 0;
         const bool ok = t->GetComponents(&h, &m, &sec, &f) == S_OK;
         const bool drop = (t->GetFlags() & bmdTimecodeIsDropFrame) != 0;
         t->Release();
-        if (!ok) return S_OK;
-        Callback fn;
+        if (!ok) return std::nullopt;
         Timecode tc;
         {
-            std::lock_guard<std::mutex> lk(mutex);
-            fn = cb;
-            tc = Timecode{h, m, sec, f, drop ? TcRate::Fps2997Df : rate};
+            std::lock_guard<std::mutex> lk(m_mutex);
+            tc = Timecode{h, m, sec, f, drop ? TcRate::Fps2997Df : m_rate};
         }
         if (tc.f >= Timecode::nominalFps(tc.rate)) tc.f /= 2;
-        if (fn && tc.valid()) fn(tc);
-        return S_OK;
+        if (!tc.valid()) return std::nullopt;
+        return tc;
     }
+
+    Ref<IDeckLink> m_device;
+    Ref<IDeckLinkInput> m_input;
+    decklink::Port m_port;
+    bool m_started = false;
+    std::atomic<ULONG> m_refs{1};
+    mutable std::mutex m_mutex; // the mode coming in (the card's thread), the states
+    QString m_status;
+    TcRate m_rate = TcRate::Fps25;
+    bool m_signal = false, m_framesSeen = false;
+    std::mutex m_listenMutex; // held while they are called: one that goes waits for its call to end
+    std::vector<std::pair<int, Listener>> m_listeners;
+    int m_lastId = 0;
+};
+
+// The ports open, by id. One closes with this held: the same port opened again just then waits for it to be free
+std::mutex g_capturesMutex;
+std::map<QString, std::weak_ptr<PortCapture>> g_captures;
+
+std::shared_ptr<PortCapture> PortCapture::acquire(const QString &port, QString *err)
+{
+    comInit();
+    decklink::Port p;
+    Ref<IDeckLink> device = findPort(port, &p, true);
+    Ref<IDeckLinkInput> input = query<IDeckLinkInput>(device.p, IID_IDeckLinkInput);
+    if (!input) {
+        if (err) *err = port.isEmpty() ? QStringLiteral("no DeckLink input") : QStringLiteral("DeckLink input not found");
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lk(g_capturesMutex);
+    if (std::shared_ptr<PortCapture> open = g_captures[p.id].lock()) return open;
+    auto *c = new PortCapture(std::move(device), std::move(input), p);
+    if (!c->start(err)) {
+        delete c;
+        return nullptr;
+    }
+    const QString id = p.id;
+    std::shared_ptr<PortCapture> shared(c, [id](PortCapture *x) {
+        std::lock_guard<std::mutex> lk(g_capturesMutex);
+        delete x;
+        const auto it = g_captures.find(id);
+        if (it != g_captures.end() && it->second.expired()) g_captures.erase(it);
+    });
+    g_captures[id] = shared;
+    return shared;
+}
+} // namespace
+
+struct decklink::VideoInput::Impl {
+    std::shared_ptr<PortCapture> capture;
+    int listener = 0;
+};
+
+decklink::VideoInput::VideoInput() : d(std::make_unique<Impl>()) {}
+
+decklink::VideoInput::~VideoInput()
+{
+    if (d->capture) d->capture->unlisten(d->listener);
+}
+
+bool decklink::VideoInput::open(const QString &port, Callback cb, QString *err)
+{
+    comInit();
+    d->capture = PortCapture::acquire(port, err);
+    if (!d->capture) return false;
+    d->listener = d->capture->listen(std::move(cb));
+    return true;
+}
+
+QString decklink::VideoInput::status() const { return d->capture ? d->capture->status() : QString(); }
+
+bool decklink::VideoInput::hasSignal() const { return d->capture && d->capture->hasSignal(); }
+
+struct decklink::TimecodeInput::Impl {
+    std::shared_ptr<PortCapture> capture;
+    int listener = 0;
 };
 
 decklink::TimecodeInput::TimecodeInput() : d(std::make_unique<Impl>()) {}
 
 decklink::TimecodeInput::~TimecodeInput()
 {
-    if (d->input) {
-        if (d->started) d->input->StopStreams();
-        d->input->SetCallback(nullptr);
-        d->input->DisableVideoInput();
-    }
+    if (d->capture) d->capture->unlisten(d->listener);
 }
 
 bool decklink::TimecodeInput::open(const QString &port, Callback cb, QString *err)
 {
     comInit();
-    d->device = findPort(port, &d->port, true);
-    d->input = query<IDeckLinkInput>(d->device.p, IID_IDeckLinkInput);
-    if (!d->input) {
-        if (err) *err = port.isEmpty() ? QStringLiteral("no DeckLink input") : QStringLiteral("DeckLink input not found");
-        return false;
-    }
-    d->cb = std::move(cb);
-    d->input->SetCallback(d.get());
-    // Any mode to begin with: the format detection switches to the one that comes in
-    if (d->input->EnableVideoInput(bmdModeHD1080i50, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection) != S_OK &&
-        d->input->EnableVideoInput(bmdModeHD1080i50, bmdFormat8BitYUV, bmdVideoInputFlagDefault) != S_OK) {
-        if (err) *err = QStringLiteral("%1 is in use").arg(d->port.name);
-        d->input->SetCallback(nullptr);
-        return false;
-    }
-    if (d->input->StartStreams() != S_OK) {
-        if (err) *err = QStringLiteral("%1 did not start").arg(d->port.name);
-        d->input->SetCallback(nullptr);
-        d->input->DisableVideoInput();
-        return false;
-    }
-    d->started = true;
-    d->status = d->port.name;
+    d->capture = PortCapture::acquire(port, err);
+    if (!d->capture) return false;
+    d->listener = d->capture->listen([cb = std::move(cb)](const InputFrame &f) {
+        if (cb && f.timecode) cb(*f.timecode);
+    });
     return true;
 }
 
-QString decklink::TimecodeInput::status() const
-{
-    std::lock_guard<std::mutex> lk(d->mutex);
-    return d->status;
-}
+QString decklink::TimecodeInput::status() const { return d->capture ? d->capture->status() : QString(); }
 
 #endif // PINOL_HAS_DECKLINK
