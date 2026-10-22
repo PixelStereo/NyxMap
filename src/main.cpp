@@ -3,6 +3,7 @@
 #include "MainWindow.h"
 #include "NetVideo.h"
 #include "Permissions.h"
+#include "WebPageQt.h"
 #include "Widgets.h"
 
 #include <QFileInfo>
@@ -80,6 +81,8 @@ int main(int argc, char *argv[])
         std::printf("NDI: %s\nOMT: %s\n", qPrintable(n.ok ? n.path : n.error), qPrintable(o.ok ? o.path : o.error));
         return n.ok && o.ok ? 0 : 5;
     }
+
+    registerWebPages(); // the Web Page generator's browser (Qt WebEngine), before any project is opened
 
     Engine engine;
     QString err;

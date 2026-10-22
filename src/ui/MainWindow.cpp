@@ -49,6 +49,7 @@
 #include <QKeyEvent>
 #include <QAbstractSpinBox>
 #include <QLabel>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
@@ -839,6 +840,8 @@ void MainWindow::buildMenus()
     // A layer is created empty; media is then dropped onto it (Media Bin, Finder)
     layer->addAction(QStringLiteral("New Layer"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), this,
                      &MainWindow::addEmptyLayer);
+    if (webPagesAvailable()) // the Web Page generator into the selected layer (as dropped from the Media Bin)
+        layer->addAction(QStringLiteral("Load Web Page…"), this, [this] { loadIntoLayer(currentLayer(), kWebGeneratorPath); });
     QAction *dup = layer->addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
     dup->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     // Copy a layer, then paste all of it or some of its parts onto others (as DaVinci Resolve's Paste Attributes)
@@ -1078,6 +1081,7 @@ static QString layerTag(SourceType t)
     case SourceType::Audio: return QStringLiteral("♪");
     case SourceType::Layer: return QStringLiteral("⧉");
     case SourceType::Input: return QStringLiteral("◉");
+    case SourceType::Web: return QStringLiteral("◍");
     default: return QStringLiteral("○");
     }
 }
@@ -1157,6 +1161,10 @@ void MainWindow::refreshLayerList()
                 r.source = liveInputKind(l->sourcePath) + QStringLiteral(" ") + liveInputName(l->sourcePath);
                 r.error = r.error || !l->input;
                 break;
+            case SourceType::Web:
+                r.source = QStringLiteral("web ") + (l->web.url.isEmpty() ? QStringLiteral("(blank)") : l->web.url.left(60));
+                r.error = r.error || !l->webPage;
+                break;
             case SourceType::Layer: {
                 const Layer *src = m_engine->layer(m_engine->indexOfId(l->sourceLayer));
                 r.source = QStringLiteral("layer %1 · %2")
@@ -1184,6 +1192,8 @@ void MainWindow::refreshLayerList()
                                       fmtClock(l->position()), fmtClock(l->duration()), kModeSymbol[int(l->mode)]);
             } else if (l->type == SourceType::Isf || l->type == SourceType::Text) {
                 r.playback = QStringLiteral("real time");
+            } else if (l->type == SourceType::Web) {
+                r.playback = QStringLiteral("%1 × %2 · %3 fps").arg(l->web.width).arg(l->web.height).arg(l->web.fps);
             }
             rows.push_back(r);
         }
@@ -1355,6 +1365,44 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         refreshAll();
         return true;
     }
+    if (isWebGeneratorPath(path)) { // the built-in Web Page generator, dragged from the Media Bin
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && (l->isGroup || l->isViewport)) {
+                lk.unlock();
+                statusBar()->showMessage(QStringLiteral("A group or a viewport has no source: drop the web page onto a layer."), 6000);
+                return false;
+            }
+        }
+        bool ok = m_quiet;
+        const QString url = m_quiet ? QString()
+                                    : QInputDialog::getText(this, QStringLiteral("Web Page"),
+                                                            QStringLiteral("Address of the page (https://…, or a local .html file):"),
+                                                            QLineEdit::Normal, QStringLiteral("https://"), &ok).trimmed();
+        if (!ok) return false;
+        WebSource web;
+        web.url = url == QLatin1String("https://") ? QString() : url;
+        const QSize comp = m_engine->compositionSize(); // the composition's size, as Millumin's browser media
+        web.width = comp.width();
+        web.height = comp.height();
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        QString err;
+        if (!m_engine->setLayerWeb(i, web, &err)) {
+            QMessageBox::warning(this, QStringLiteral("Web Page"), err);
+            return false;
+        }
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = QStringLiteral("Web Page");
+        }
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Web Page"), beforeAnimations));
+        selectLayer(i);
+        refreshAll();
+        return true;
+    }
     if (const QString uri = liveInputUriOfPath(path); !uri.isEmpty()) { // a camera, NDI, OMT or Syphon source
         {
             Engine::Lock lk(&m_engine->mutex());
@@ -1450,7 +1498,7 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
     for (const QString &p : paths) {
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
-        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty() ||
+        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || isWebGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
         } else if (effect) {

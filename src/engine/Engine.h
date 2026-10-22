@@ -315,6 +315,12 @@ public:
     TimecodeRouter &timecodeRouter() { return *m_tcRouter; }   // tests
     // A live input (LiveInput.h) as the layer's source: a camera, an NDI or OMT source, a Syphon server
     bool setLayerInput(int i, const QString &uri, QString *err = nullptr);
+    // The Web Page generator (WebPage.h) as the layer's source, with these settings. Without a browser in this build
+    // it is refused (`err` says why), unless `keepWithoutBrowser`: the layer is then one all the same, with that error
+    // (a project made where there was one)
+    bool setLayerWeb(int i, const WebSource &s, QString *err = nullptr, bool keepWithoutBrowser = false);
+    void reloadLayerWeb(int i);
+    QString layerWebStatus(int i) const; // what its page is doing (loading, failed…); empty: it is shown
     static std::vector<LiveInputInfo> liveInputs(const QString &libraryFolder = QString()) { return listLiveInputs(libraryFolder); }
     void setLayerTextContent(int i, const QString &text);
     void editLayerText(int i, const std::function<void(Layer &)> &edit); // style (bold, outline, shadow…), under the lock

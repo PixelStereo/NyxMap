@@ -38,7 +38,9 @@ OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, un
 
 ### Linux release packaging
 
-The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components (with OpenSSL for TLS and libsrt for SRT streams), then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, an explicit list of GStreamer plugins for camera capture, audio libraries, NDI and Native AOT OMT. It closes the ELF dependencies of everything it copies (`ldd`), plus an explicit list of libraries that are loaded with `dlopen()` (ALSA, PulseAudio, Avahi, udev, OpenSSL, ICU); glibc and the host graphics stack are left out on purpose. Other dynamically loaded modules are not bundled: GIO modules, VA-API (libva) drivers and GStreamer's network, audio and playback plugins come from the host or are absent. The Qt TIFF image plugin is left out (Ubuntu's libtiff links the GPL-only libjbig).
+The [CI workflow](../.github/workflows/build.yml) builds shared FFmpeg from pinned, checksummed source without GPL/nonfree components (with OpenSSL for TLS and libsrt for SRT streams), then builds and tests Pinol against it. `scripts/package_linux.py` creates one AppDir containing the application, shaders, Qt X11/Wayland and image plugins, an explicit list of GStreamer plugins for camera capture, audio libraries, NDI and Native AOT OMT. It closes the ELF dependencies of everything it copies (`ldd`), plus an explicit list of libraries that are loaded with `dlopen()` (ALSA, PulseAudio, Avahi, udev, OpenSSL, ICU, and
+with Qt WebEngine the NSS modules); with Qt WebEngine it also adds `QtWebEngineProcess` (`usr/libexec`), its resources
+(`usr/resources`) and locales (`usr/translations/qtwebengine_locales`), which `AppRun` points Qt WebEngine to; glibc and the host graphics stack are left out on purpose. Other dynamically loaded modules are not bundled: GIO modules, VA-API (libva) drivers and GStreamer's network, audio and playback plugins come from the host or are absent. The Qt TIFF image plugin is left out (Ubuntu's libtiff links the GPL-only libjbig).
 
 The packaging fails if a library in the package comes from a Debian package whose copyright file declares only GPL licences (no LGPL or permissive one), or is one of the known GPL-only libraries; packages it cannot read correctly are reviewed by hand in `LICENCE_OVERRIDE`. The launcher (`AppRun`) sets library, plugin and GStreamer/ALSA/fontconfig variables for Pinol only: programs Pinol opens through `xdg-open` (browser, file manager) get the environment it was started with back, and GStreamer uses its own registry in `~/.cache/pinol`.
 
@@ -105,7 +107,7 @@ before keeps its options: run the `cmake -S …` line again to change them.
 
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \
-  qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
+  qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
   libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
   git clang dotnet-sdk-8.0  # OMT (see below)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -119,7 +121,8 @@ cmake --build build -j
 <details>
 <summary><strong>Windows — MSVC 2022</strong></summary>
 
-Install Qt 6 (MSVC 2022, including Qt Multimedia), shared FFmpeg (an LGPL build), CMake, and for OMT git, LLVM's
+Install Qt 6 (MSVC 2022, including Qt Multimedia, and Qt WebEngine with Qt WebChannel and Qt Positioning for the Web
+Page generator), shared FFmpeg (an LGPL build), CMake, and for OMT git, LLVM's
 clang and the .NET SDK. From an MSVC developer shell:
 
 ```powershell
@@ -131,6 +134,14 @@ cmake --build build --config Release
 See [the CI workflow](../.github/workflows/build.yml) for the tested toolchain and deployment steps.
 
 </details>
+
+**Web pages (optional).** The Web Page generator (Media Bin ▸ Generators, or Layer ▸ Load Web Page…) needs Qt
+WebEngine: Homebrew's `qt` includes it (macOS 14 or later), on Ubuntu it is `qt6-webengine-dev`, on Windows the
+aqt modules `qtwebengine qtwebchannel qtpositioning`. Without it Pinol builds the same, without the generator
+(`-DPINOL_WEB=OFF` leaves it out on purpose). It makes the packages larger: Chromium is about 150 MB uncompressed
+(roughly 60–70 MB more in each archive). On Linux, where unprivileged user namespaces are restricted (Ubuntu 24.04's
+AppArmor default), Chromium's sandbox may not start: a page then says its renderer stopped. Allowing it
+(`QTWEBENGINE_DISABLE_SANDBOX=1` in the environment) is a choice for trusted pages only.
 
 The first build also puts OMT next to the program, as in the packages: it is built from source, which needs git,
 clang++ (Xcode's on macOS) and the [.NET SDK](https://dotnet.microsoft.com/download), version 8 or later (without one of
