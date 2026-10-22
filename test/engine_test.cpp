@@ -65,6 +65,7 @@ int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
 int runLiveInputTests(Engine &e); // live_inputs.cpp
 int runClockGeneratorTests(Engine &e); // clock_generators.cpp
+int runToxTests(Engine &e, const QString &tmp);
 int runFileSourceTests(Engine &e, const QString &tmp); // file_sources.cpp
 #define CHECK(cond)                                                                 \
     do {                                                                            \
@@ -197,6 +198,7 @@ int main(int argc, char **argv)
     if (area("psd")) failures += runPsdLayerTests(e, tmp);
     if (area("live_inputs")) failures += runLiveInputTests(e);
     if (area("clocks")) failures += runClockGeneratorTests(e);
+    if (area("tox")) failures += runToxTests(e, tmp);
     if (area("file_sources")) failures += runFileSourceTests(e, tmp);
     if (area("timeline_repeat")) {
         failures += runTimelineRepeatTests(e, tmp);
@@ -2402,7 +2404,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         {
             Sequencer::Sequence seq;
             seq.name = "Show";
-            seq.steps = {{e.snapshot(1).id, "Act 1"}, {e.snapshot(0).id, "Act 2"}, {987654, "gone"}};
+            seq.steps = {{e.snapshot(1).id, "Act 1", {}}, {e.snapshot(0).id, "Act 2", {}}, {987654, "gone", {}}};
             CHECK(e.sequencer().add(seq) == 0 && e.sequencer().current() == 0 && e.sequencer().position() == -1);
             CHECK(e.sequencer().next() == 0 && e.sequencer().previous() == -1);
             e.layer(V + 0)->opacity = 0.1f;

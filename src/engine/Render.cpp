@@ -124,6 +124,8 @@ void Engine::drawQuad()
 // The layers the image inputs of a layer's shaders (its generator, its enabled effects) show
 void Engine::forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const
 {
+    if (l.type == SourceType::Tox)
+        for (quint64 input : l.tox.inputs) if (input) fn(input);
     auto each = [&](const IsfInstance *inst) {
         for (const IsfInput &in : inst->inputs())
             if (in.imageLayer) fn(in.imageLayer);
@@ -206,6 +208,7 @@ void Engine::updateSource(Layer &l, double dt)
             l.pendingAutoImage = QImage();
         }
     }
+    if (l.toxPlayer && l.tox.playing) l.toxPlayer->advance(m_realDt * timeScale());
     (void)dt;
     if ((l.type != SourceType::Video && l.type != SourceType::Audio) || !l.hasTransport()) return;
     if (l.playing) {
@@ -458,6 +461,23 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         tex = l.sourceTex.tex;
         w = l.sourceTex.w;
         h = l.sourceTex.h;
+        break;
+    case SourceType::Tox:
+        if (l.toxPlayer) {
+            for (const auto &top : l.toxPlayer->inputs()) {
+                const Layer *source = layer(indexOfId(l.tox.inputs.value(top.first)));
+                l.toxPlayer->setInputTexture(top.first, source ? source->finalTex : 0,
+                                            source ? source->finalW : 0, source ? source->finalH : 0);
+            }
+            if (l.toxPlayer->update(l.sourceTex)) {
+                const bool first = !l.srcWidth;
+                l.srcWidth = l.sourceTex.w; l.srcHeight = l.sourceTex.h;
+                if (first && l.mapping.isIdentity() && l.srcHeight > 0)
+                    l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(m_compSize.width()) / m_compSize.height());
+            }
+            l.error = l.toxPlayer->error();
+        }
+        tex = l.sourceTex.tex; w = l.sourceTex.w; h = l.sourceTex.h;
         break;
     case SourceType::Web: // the newest picture taken of the page (its size: the page's, set in its settings)
         if (l.webPage && l.webPage->update(l.sourceTex)) {

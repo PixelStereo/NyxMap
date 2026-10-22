@@ -178,8 +178,11 @@ void MappingView::typeCoordinate()
             n.out += delta;
         }
         if (before != after) {
-            if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Move Mask Node")));
-            else m_engine->setLayerMasks(id, after);
+            if (m_undo) {
+                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Move Mask Node")));
+            } else {
+                m_engine->setLayerMasks(id, after);
+            }
             emit masksEdited();
             update();
         }
@@ -1233,8 +1236,11 @@ void MappingView::keyPressEvent(QKeyEvent *e)
             target.shape = Mask::Shape::Path;
         }
         if (before != after) {
-            if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Nudge Mask Nodes")));
-            else m_engine->setLayerMasks(id, after);
+            if (m_undo) {
+                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Nudge Mask Nodes")));
+            } else {
+                m_engine->setLayerMasks(id, after);
+            }
             emit masksEdited();
             update();
         }
@@ -1259,8 +1265,11 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         if (id) {
             m_maskNode = -1;
             m_maskSelection.clear();
-            if (m_undo) m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Delete Mask Point")));
-            else m_engine->setLayerMasks(id, after);
+            if (m_undo) {
+                m_undo->push(new cmd::SetMasks(m_engine, id, before, after, QStringLiteral("Delete Mask Point")));
+            } else {
+                m_engine->setLayerMasks(id, after);
+            }
             emit masksEdited();
             update();
             return;

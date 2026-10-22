@@ -382,7 +382,7 @@ jobs:
         run: |
           # Keep packaging independent of any stale build artifacts.
           rm -rf build
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON
           cmake --build build -j4
           cmake --build build --target pinol_tests -j4
       - name: Engine tests
@@ -393,6 +393,7 @@ jobs:
         run: |
           { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; brew list --versions qt ffmpeg; } \
             | tee deps-macos.txt
+          echo "TouchEngine macOS SDK c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962 (Shared Use License; licenses/touchengine.txt)" >> deps-macos.txt
       - name: Homebrew FFmpeg version
         id: ffmpeg
         run: echo "version=$(brew list --versions ffmpeg | awk '{print $2}')" >> "$GITHUB_OUTPUT"
@@ -577,7 +578,7 @@ jobs:
         run: |
           # pwsh stops on cmdlet errors only: every native command's exit code is checked
           $ErrorActionPreference = "Stop"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT="C:\ffmpeg\$env:FFMPEG_ZIP"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT="C:\ffmpeg\$env:FFMPEG_ZIP" -DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
           cmake --build build
           if ($LASTEXITCODE -ne 0) { throw "Pinol build failed" }
@@ -607,6 +608,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
 
           Copy-Item build\Pinol.exe dist\Pinol.exe -Force
+          Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
           Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
@@ -705,6 +707,7 @@ jobs:
             "  signed by $($vcSignature.SignerCertificate.Subject)",
             (Get-Content "$env:RUNNER_TEMP\ndi\NDI-SDK.txt")) |
             Set-Content -Encoding utf8 dist\DEPENDENCIES.txt
+          Add-Content dist\DEPENDENCIES.txt "TouchEngine Windows SDK af3e4a393086c0377cd3634172a0ce18d1a654c8 (Shared Use License; licenses/touchengine.txt)"
           Get-Content dist\DEPENDENCIES.txt
 
           $tagSuffix = ""

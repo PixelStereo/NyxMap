@@ -3,6 +3,7 @@
 #include <QVariant>
 #include <QJsonObject>
 #include <QWidget>
+#include "Tox.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -83,6 +84,10 @@ private:
     QWidget *buildColor(const LayerValues &s);
     QWidget *buildCompositing(const LayerValues &s);
     QWidget *buildMapping(const LayerValues &s);
+    QPointer<QLabel> m_toxStatus;
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_toxFields;
+    std::vector<std::pair<QPointer<QWidget>, ToxControl>> m_toxColors;
+    bool m_toxRebuildQueued = false;
     QPointer<MaskPanel> m_maskPanel;
     unsigned m_masksRev = 0; // the masks' revision the panel shows
     int m_maskIndex = -1; // the mask selected (kept while the inspector is rebuilt for the same layer)

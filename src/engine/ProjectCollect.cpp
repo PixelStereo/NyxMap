@@ -24,6 +24,7 @@ QString folderFor(const QString &path)
     static const QSet<QString> audio = {"wav", "aif", "aiff", "mp3", "aac", "m4a", "flac", "ogg", "opus", "wma", "caf"};
     static const QSet<QString> isf = {"fs", "frag", "vs", "vert"};
     const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "tox") return QStringLiteral("TOUCHDESIGNER");
     if (movies.contains(ext)) return QStringLiteral("MOVIES");
     if (picts.contains(ext)) return QStringLiteral("PICTS");
     if (audio.contains(ext)) return QStringLiteral("AUDIO");

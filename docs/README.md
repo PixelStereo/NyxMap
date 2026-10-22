@@ -36,6 +36,7 @@
   grows to 10 s; the Source tab shows the state and the reason. Packages: macOS
   has TLS (Secure Transport) but no SRT; Linux has TLS (OpenSSL) and SRT (libsrt);
   Windows (BtbN builds) has TLS and SRT.
+- **TouchDesigner:** `.tox` playback needs an installed, paid TouchDesigner/TouchPlayer on Windows/macOS. Licensed GPU playback remains to be verified on hardware. CHOP/DAT/audio are not connected; Collect Files cannot discover external component resources.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

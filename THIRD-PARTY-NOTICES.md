@@ -16,6 +16,7 @@ library).
 | Spout2 (Windows) | Spout input and output | BSD 2-clause | `licenses/spout2.txt` | https://github.com/leadedge/Spout2 |
 | Blackmagic DeckLink SDK headers | DeckLink output (the driver is installed separately) | Boost Software License 1.0 | `licenses/decklink.txt` | https://www.blackmagicdesign.com/developer |
 | Open Media Transport: libomtnet, libomt, libvmx | OMT input and output | MIT | `OMT-LICENSES.txt` (in the package) | https://github.com/openmediatransport |
+| TouchEngine SDK (Windows/macOS, opt-in) | TouchDesigner .tox components | Derivative Shared Use License; use requires acceptance of the TouchDesigner licence | `licenses/touchengine.txt` | https://github.com/TouchDesigner/TouchEngine-Windows and https://github.com/TouchDesigner/TouchEngine-macOS |
 | NDI® runtime | NDI input and output | NDI SDK License Agreement | `NDI-NOTICE.txt`, `Processing.NDI.Lib.Licenses.txt` (in the package) | https://ndi.video |
 | AppImage runtime (Linux) | Portable executable launcher | MIT; linked libfuse under LGPL v2.1, other linked libraries under permissive licences | `licenses/appimage-runtime.txt`, `licenses/LGPL-2.1.txt` | https://github.com/AppImage/type2-runtime |
 
@@ -54,3 +55,9 @@ build checks that each one declares LGPL v2.1 or later or LGPL v3 or later and w
 parts, and records that licence in `DEPENDENCIES.txt`. Those builds include OpenSSL (Apache-2.0) and libsrt (MPL-2.0)
 inside the FFmpeg DLLs, for TLS and SRT streams; their sources are linked from the BtbN/FFmpeg-Builds repository. Microsoft's `vc_redist.x64.exe` is included unmodified, under
 its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.
+
+TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by Pinol's MIT licence.
+See `licenses/touchengine.txt` for the full Shared Use License. Pinol is an independent integration; Derivative does
+not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
+Commercial or Pro licence. Pinol neither installs nor activates that licence. Builders must explicitly opt in with
+`PINOL_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).

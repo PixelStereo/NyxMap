@@ -18,6 +18,7 @@
 #include "SourceColor.h"
 #include "Psd.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -120,6 +121,10 @@ struct LayerValues {
     TextSource text; // Text generator
     std::optional<TimecodeSettings> timecode; // a Timecode generator
     std::optional<ClockSettings> clock;       // a Countdown, Stopwatch or Clock generator
+    ToxSettings tox;
+    std::vector<ToxControl> toxControls;
+    std::vector<std::pair<QString, QString>> toxInputs, toxOutputs;
+    QString toxStatus;
     WebSource web;     // Web Page generator
     QString webStatus; // what its page is doing (empty: shown)
 
@@ -204,6 +209,13 @@ struct LayerValues {
         s.text = l->text;
         s.timecode = l->timecode;
         if (l->clockGen) s.clock = l->clockGen->settings();
+        s.tox = l->tox;
+        if (l->toxPlayer) {
+            s.toxControls = l->toxPlayer->controls();
+            s.toxInputs = l->toxPlayer->inputs();
+            s.toxOutputs = l->toxPlayer->outputs();
+            s.toxStatus = l->toxPlayer->status();
+        }
         s.web = l->web;
         s.webStatus = l->webPage ? l->webPage->status() : l->error;
         if (!l->isViewport) {
@@ -594,6 +606,9 @@ void LayerInspector::rebuild()
     }
     m_content = new QWidget;
     m_textColors.clear();
+    m_toxFields.clear();
+    m_toxColors.clear();
+    m_toxStatus = nullptr;
     auto *v = new QVBoxLayout(m_content);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(10);
@@ -886,6 +901,11 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
                             : s.text.content.section('\n', 0, 0).left(40);
         d << QStringLiteral("%1 × %2").arg(s.text.width).arg(s.text.height);
         break;
+    case SourceType::Tox:
+        kind = QStringLiteral("TouchDesigner");
+        name = QFileInfo(s.sourcePath).fileName();
+        d << QStringLiteral("%1 × %2").arg(s.srcW).arg(s.srcH) << s.toxStatus;
+        break;
     case SourceType::Web:
         d << QStringLiteral("Color space: sRGB (web page)");
         kind = QStringLiteral("Web Page");
@@ -940,7 +960,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
     if (!s.error.isEmpty()) v->addWidget(errorLabel(s.error));
 
     if (s.type == SourceType::Image || s.type == SourceType::Video || s.type == SourceType::Input ||
-        s.type == SourceType::Isf || s.type == SourceType::Text || s.type == SourceType::Web) {
+        s.type == SourceType::Isf || s.type == SourceType::Text || s.type == SourceType::Web || s.type == SourceType::Tox) {
         auto *row = new QHBoxLayout;
         auto *pick = new QComboBox;
         pick->setObjectName(QStringLiteral("sourceColorSpace"));
@@ -1215,6 +1235,127 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         }
     }
 
+    if (s.type == SourceType::Tox) {
+        auto *box = new QGroupBox(QStringLiteral("TouchDesigner"));
+        auto *form = new QFormLayout(box);
+        auto *requirements = new QLabel(touchEngineRequirements());
+        requirements->setWordWrap(true);
+        requirements->setTextFormat(Qt::PlainText);
+        form->addRow(requirements);
+        m_toxStatus = new QLabel(s.toxStatus);
+        m_toxStatus->setWordWrap(true);
+        m_toxStatus->setTextFormat(Qt::PlainText);
+        form->addRow(QStringLiteral("Status"), m_toxStatus);
+        auto *output = new QComboBox;
+        output->setObjectName(QStringLiteral("toxOutput"));
+        output->addItem(QStringLiteral("First output TOP"), QString());
+        for (const auto &top : s.toxOutputs) output->addItem(top.second, top.first);
+        if (!s.tox.output.isEmpty() && output->findData(s.tox.output) < 0)
+            output->addItem(s.tox.output + QStringLiteral(" (unavailable)"), s.tox.output);
+        output->setCurrentIndex(std::max(0, output->findData(s.tox.output)));
+        form->addRow(QStringLiteral("Output TOP"), output);
+        m_toxFields.push_back({output, QStringLiteral("tox/output")});
+        connect(output, &QComboBox::activated, this, [this, output](int i) {
+            setValue(QStringLiteral("tox/output"), output->itemData(i).toString(), QStringLiteral("Change Output TOP"));
+        });
+        auto *fps = new NumberBox;
+        fps->setRange(1, 120); fps->setValue(s.tox.fps); fps->setSuffix(QStringLiteral(" fps"));
+        form->addRow(QStringLiteral("Frame rate"), fps);
+        m_toxFields.push_back({fps, QStringLiteral("tox/fps")});
+        connect(fps, &QDoubleSpinBox::editingFinished, this, [this, fps] {
+            setValue(QStringLiteral("tox/fps"), fps->value(), QStringLiteral("Change TouchDesigner Frame Rate"));
+        });
+        auto *play = new QCheckBox(QStringLiteral("Play"));
+        play->setChecked(s.tox.playing);
+        m_toxFields.push_back({play, QStringLiteral("tox/play")});
+        connect(play, &QCheckBox::toggled, this, [this](bool on) { setValue(QStringLiteral("tox/play"), on, QStringLiteral("TouchDesigner Playback")); });
+        auto *reload = new QPushButton(QStringLiteral("Reload component"));
+        connect(reload, &QPushButton::clicked, this, [this] {
+            Engine::Lock lock(&m_engine->mutex());
+            if (Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId)); l && l->toxPlayer) l->toxPlayer->reload();
+        });
+        auto *transport = new QHBoxLayout;
+        transport->addWidget(play); transport->addWidget(reload);
+        form->addRow(transport);
+        for (const auto &top : s.toxInputs) {
+            auto *pick = new QComboBox;
+            pick->setObjectName(QStringLiteral("toxInput_") + top.first);
+            pick->addItem(QStringLiteral("Disconnected"), QVariant::fromValue<qulonglong>(0));
+            for (const auto &candidate : s.candidates) pick->addItem(candidate.second, QVariant::fromValue<qulonglong>(candidate.first));
+            const quint64 current = s.tox.inputs.value(top.first);
+            if (current && pick->findData(QVariant::fromValue<qulonglong>(current)) < 0)
+                pick->addItem(QStringLiteral("Unavailable layer (%1)").arg(current), QVariant::fromValue<qulonglong>(current));
+            pick->setCurrentIndex(std::max(0, pick->findData(QVariant::fromValue<qulonglong>(s.tox.inputs.value(top.first)))));
+            pick->setToolTip(QStringLiteral("The selected layer's picture after Color and FX, before Spatial mapping. Cyclic connections are refused."));
+            form->addRow(QStringLiteral("Input TOP · ") + top.second, pick);
+            connect(pick, &QComboBox::activated, this, [this, pick, id = top.first](int k) {
+                const quint64 source = pick->itemData(k).toULongLong();
+                editSource(QStringLiteral("Connect Input TOP"), [this, id, source] {
+                    QString error;
+                    if (!m_engine->setLayerToxInput(m_engine->indexOfId(m_layerId), id, source, &error))
+                        QMessageBox::warning(this, QStringLiteral("Input TOP"), error);
+                });
+                QTimer::singleShot(0, this, [this] { rebuild(); });
+            });
+        }
+        for (const ToxControl &c : s.toxControls) {
+            if (c.color && c.count >= 3 && c.count <= 4) {
+                auto *picker = new ColorPicker(c.count == 4);
+                auto color = [&] { return QColor::fromRgbF(float(c.value(s.tox, 0).toDouble()), float(c.value(s.tox, 1).toDouble()),
+                                  float(c.value(s.tox, 2).toDouble()), c.count == 4 ? float(c.value(s.tox, 3).toDouble()) : 1.f); };
+                picker->setColor(color());
+                auto *label = new QLabel(c.label);
+                form->addRow(label, picker);
+                QStringList paths;
+                for (int k = 0; k < c.count; ++k) paths << c.path(k);
+                m_animate->attach({label, picker}, paths);
+                connect(picker, &ColorPicker::colorEdited, this, [this, c](const QColor &color) {
+                    QJsonObject values{{c.path(0), color.redF()}, {c.path(1), color.greenF()}, {c.path(2), color.blueF()}};
+                    if (c.count == 4) values[c.path(3)] = color.alphaF();
+                    setValues(values, QStringLiteral("Change ") + c.label);
+                });
+                m_toxColors.push_back({picker, c});
+                continue;
+            }
+            for (int k = 0; k < c.count; ++k) {
+                const QString path = c.path(k);
+                auto *label = new QLabel(c.label + (c.count > 1 ? " " + path.section('/', -1).toUpper() : QString()));
+                QWidget *field = nullptr;
+                if (c.type == ParamInfo::Type::Float || c.type == ParamInfo::Type::Int) {
+                    auto *number = new NumberBox;
+                    const auto limits = limitsOf(path, -10000, 10000);
+                    number->setRange(limits.first, limits.second);
+                    number->setDecimals(c.type == ParamInfo::Type::Int ? 0 : 4);
+                    number->setSingleStep(c.type == ParamInfo::Type::Int ? 1 : .01);
+                    number->setValue(c.value(s.tox, k).toDouble());
+                    connect(number, &QDoubleSpinBox::editingFinished, this, [this, number, path] { setValue(path, number->value(), QStringLiteral("Change TouchDesigner Parameter")); });
+                    field = number;
+                } else if (c.type == ParamInfo::Type::Bool) {
+                    auto *flag = new QCheckBox;
+                    flag->setChecked(c.value(s.tox, k).toBool());
+                    connect(flag, &QCheckBox::toggled, this, [this, path](bool on) { setValue(path, on, QStringLiteral("Change TouchDesigner Parameter")); });
+                    field = flag;
+                } else if (c.type == ParamInfo::Type::Trigger) {
+                    auto *button = new QPushButton(c.label);
+                    connect(button, &QPushButton::clicked, this, [this, path] {
+                        Engine::Lock lock(&m_engine->mutex());
+                        if (Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId)))
+                            for (Parameter *p : l->parameters()) if (p->path() == path) { p->setValue(true); break; }
+                    });
+                    field = button;
+                } else {
+                    auto *text = new QLineEdit(c.value(s.tox, k).toString());
+                    connect(text, &QLineEdit::editingFinished, this, [this, text, path] { setValue(path, text->text(), QStringLiteral("Change TouchDesigner Parameter")); });
+                    field = text;
+                }
+                form->addRow(label, field);
+                m_animate->attach({label, field}, {path});
+                if (c.type != ParamInfo::Type::Trigger) m_toxFields.push_back({field, path});
+            }
+        }
+        v->addWidget(box);
+    }
+
     // Web Page generator: its address, size, frame rate, zoom and background; each one a parameter (undoable, held by
     // snapshots and presets, reached by OSC)
     if (s.type == SourceType::Web) {
@@ -1428,7 +1569,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             // A duration typed (h:m:s, m:s or seconds): set, or shown again as it is
             auto durationField = [this, set, durationText](QLineEdit *e, const QString &path, double now, const QString &label,
                                                            bool negative) {
-                connect(e, &QLineEdit::editingFinished, this, [this, e, path, now, label, negative, set, durationText] {
+                connect(e, &QLineEdit::editingFinished, this, [e, path, now, label, negative, set, durationText] {
                     const std::optional<double> v = parseClockDuration(e->text());
                     if (v && (negative || *v >= 0)) set(path, *v, label);
                     else e->setText(durationText(now));
@@ -3377,6 +3518,34 @@ void LayerInspector::refreshClock()
 
 void LayerInspector::refreshDynamic()
 {
+    if (m_toxStatus) {
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId));
+            if (l && l->toxPlayer) m_toxStatus->setText(l->toxPlayer->status());
+        }
+        if (m_layoutKey != layoutKey() && !m_toxRebuildQueued) {
+            m_toxRebuildQueued = true;
+            QTimer::singleShot(0, this, [this] { m_toxRebuildQueued = false; rebuild(); });
+            return;
+        }
+        for (const auto &[field, path] : m_toxFields) {
+            if (!field || field->hasFocus() || field->isAncestorOf(QApplication::focusWidget())) continue;
+            const QJsonValue value = m_engine->parameterValue(m_layerId, path);
+            const QSignalBlocker block(field);
+            if (auto *n = qobject_cast<QDoubleSpinBox *>(field.data())) n->setValue(value.toDouble());
+            else if (auto *b = qobject_cast<QCheckBox *>(field.data())) b->setChecked(value.toBool());
+            else if (auto *t = qobject_cast<QLineEdit *>(field.data())) t->setText(value.toString());
+            else if (auto *c = qobject_cast<QComboBox *>(field.data()); c && !c->view()->isVisible()) c->setCurrentIndex(c->findData(value.toString()));
+        }
+        for (const auto &[field, control] : m_toxColors) {
+            if (!field || field->isAncestorOf(QApplication::focusWidget())) continue;
+            auto value = [this, c = control](int k) { return std::clamp(m_engine->parameterValue(m_layerId, c.path(k)).toDouble(), 0.0, 1.0); };
+            if (auto *picker = qobject_cast<ColorPicker *>(field.data()))
+                picker->setColor(QColor::fromRgbF(float(value(0)), float(value(1)), float(value(2)), control.count == 4 ? float(value(3)) : 1.f));
+        }
+    }
+
     if (m_sourceColorSpace || m_sourceColorStatus) {
         QString space, status;
         {
@@ -3554,6 +3723,7 @@ QString LayerInspector::layoutKey() const
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};
+    if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
     for (const auto &effect : layer->effects) key << effect->path();
     if (layer->clockGen) { // a Countdown, Stopwatch or Clock: its fields show its settings (changed by a recall: made again)
         const ClockSettings c = layer->clockGen->settings();

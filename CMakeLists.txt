@@ -71,6 +71,8 @@ add_library(pinol_engine STATIC
   src/engine/DeckLink.cpp
   src/engine/Midi.cpp
   src/engine/LiveInput.cpp
+  src/engine/Tox.cpp
+  src/engine/ToxTouchEngine.cpp
   src/engine/WebPage.cpp
   src/engine/Permissions.cpp
   src/engine/AudioStream.cpp
@@ -302,6 +304,8 @@ endif()
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
+include(cmake/TouchEngine.cmake)
+
 set(APP_SOURCES
   assets/branding.qrc
   src/main.cpp
@@ -476,6 +480,7 @@ if(PINOL_BUNDLE_RUNTIMES)
     list(TRANSFORM OMT_FILES PREPEND "${RUNTIMES}/omt/" OUTPUT_VARIABLE OMT_PATHS)
     add_custom_command(OUTPUT ${OMT_PATHS}
       COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/build_omt.py" "${RUNTIMES}/omt"
+      DEPENDS "${CMAKE_SOURCE_DIR}/scripts/build_omt.py"
       COMMENT "OMT (libomt, libvmx) from source" VERBATIM)
     list(APPEND RUNTIME_FILES ${OMT_PATHS})
   else()
@@ -526,7 +531,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(PINOL_TESTS "Build the engine tests" ON)
 if(PINOL_TESTS)
-  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(pinol_tests PRIVATE src/ui)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
@@ -651,7 +656,7 @@ if(PINOL_TESTS)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
   foreach(area color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
-          media sound layersource timecode interactions psd live_inputs clocks file_sources)
+          media sound layersource timecode interactions psd live_inputs clocks file_sources tox)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()
   # Areas depending on real time (sound clocks, threads, waits, publishers): label "timing".
@@ -706,4 +711,15 @@ if(PINOL_TESTS)
   # Several videos played together: cmake --build build --target pinol_bench
   add_executable(pinol_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(pinol_bench PRIVATE pinol_engine)
+endif()
+
+# TouchEngine is a redistributable SDK shim, not a TouchDesigner installation.
+if(PINOL_TOUCHENGINE_FRAMEWORK)
+  set_property(TARGET Pinol APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
+  add_custom_command(TARGET Pinol POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:Pinol>/Contents/Frameworks"
+    COMMAND ditto "${PINOL_TOUCHENGINE_FRAMEWORK}" "$<TARGET_BUNDLE_DIR:Pinol>/Contents/Frameworks/TouchEngine.framework")
+elseif(PINOL_TOUCHENGINE_DLL)
+  add_custom_command(TARGET Pinol POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PINOL_TOUCHENGINE_DLL}" "$<TARGET_FILE_DIR:Pinol>/TouchEngine.dll")
 endif()

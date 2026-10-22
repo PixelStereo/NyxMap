@@ -674,6 +674,11 @@ static QString psdInfo(const QString &path)
 
 void MediaBin::probe(const QString &path)
 {
+    if (Engine::isToxFile(path)) {
+        m_info[path] = QStringLiteral("TouchDesigner component\tGPU TOP source\tUnspecified (generated)");
+        return;
+    }
+
     if (m_probing.value(path)) return;
     m_probing[path] = true;
     QPointer<MediaBin> self(this);
@@ -800,7 +805,7 @@ void MediaBin::updateButtons()
                          !Engine::isStreamUrl(m_tree->selectedItems().first()->data(0, PathRole).toString()));
 }
 
-static bool isMedia(const QString &p) { return Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
+static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
 
 void MediaBin::importFiles(const QStringList &paths)
 {
@@ -843,10 +848,10 @@ void MediaBin::importDialog()
     QSettings s;
     QStringList ext;
     for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions()) ext << "*." + e;
-    ext << "*.fs";
+    ext << "*.fs" << "*.tox";
     const QStringList files = QFileDialog::getOpenFileNames(this, QStringLiteral("Import to Media Bin"),
                                                             s.value("dirs/video").toString(),
-                                                            QStringLiteral("Videos, Images, Audio and ISF generators (%1);;All Files (*)").arg(ext.join(' ')));
+                                                            QStringLiteral("Videos, Images, Audio, ISF and TouchDesigner components (%1);;All Files (*)").arg(ext.join(' ')));
     if (files.isEmpty()) return;
     s.setValue("dirs/video", QFileInfo(files.first()).absolutePath());
     importFiles(files);
@@ -911,11 +916,11 @@ void MediaBin::relinkSelected()
     QStringList ext;
     if (!Engine::isIsfFile(from))
         for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions()) ext << "*." + e;
-    ext << QStringLiteral("*.fs") << QStringLiteral("*.frag");
+    ext << QStringLiteral("*.fs") << QStringLiteral("*.frag") << QStringLiteral("*.tox");
     const QString to = QFileDialog::getOpenFileName(this, QStringLiteral("Replace \"%1\" with…").arg(QFileInfo(from).fileName()),
                                                     start + "/" + QFileInfo(from).fileName(),
                                                     (Engine::isIsfFile(from) ? QStringLiteral("ISF generators (%1)")
-                                                                             : QStringLiteral("Media and ISF generators (%1)"))
+                                                                             : QStringLiteral("Media, ISF and TouchDesigner components (%1)"))
                                                             .arg(ext.join(' ')) +
                                                         QStringLiteral(";;All Files (*)"));
     if (to.isEmpty() || to == from) return;

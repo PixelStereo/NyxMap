@@ -431,6 +431,7 @@ void Engine::releaseLayer(Layer &l)
     if (l.videoTex) l.videoTex->destroy();
     l.videoTex.reset();
     releaseAudio(*m_audio, l.audio);
+    l.toxPlayer.reset();
     l.sourceTex.destroy();
     l.imageAutoTex.destroy();
     l.sourceColorTarget.destroy();
@@ -820,6 +821,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->generator = std::move(l.generator);
     g->input = std::move(l.input);
     g->webPage = std::move(l.webPage);
+    g->toxPlayer = std::move(l.toxPlayer);
+    l.tox = ToxSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();
@@ -846,6 +849,7 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
     if (g->video) g->video->close();
     releaseAudio(*m_audio, g->audio);
     runGl([g] {
+        g->toxPlayer.reset();
         g->tex.destroy();
         g->imageAutoTex.destroy();
         g->textTex.destroy();
@@ -881,6 +885,8 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
         for (const auto &l : m_layers) {
             if (l->id != cur) continue;
             if (l->type == SourceType::Layer && l->sourceLayer && visit(l->sourceLayer)) return true;
+            if (l->type == SourceType::Tox)
+                for (quint64 input : l->tox.inputs) if (input && visit(input)) return true;
             for (const auto &fx : l->effects) // the masks of its effects
                 if (fx->maskLayer && visit(fx->maskLayer)) return true;
             if (l->color.maskLayer && visit(l->color.maskLayer)) return true; // the mask of its color
@@ -919,6 +925,17 @@ void Engine::fixLayerReferences(QStringList *warnings)
                                            : QStringLiteral(": the layer it used is gone, source dropped."));
         l->type = SourceType::None;
         l->sourceLayer = 0;
+    }
+    for (auto &l : m_layers) {
+        if (l->type != SourceType::Tox) continue;
+        for (auto it = l->tox.inputs.begin(); it != l->tox.inputs.end(); ++it) {
+            if (!it.value()) continue;
+            const Layer *src = layer(indexOfId(it.value()));
+            if (src && !src->isViewport && src->id != l->id && !layerDependsOn(src->id, l->id)) continue;
+            if (warnings) *warnings << l->name + QStringLiteral(": invalid or cyclic TOP input disconnected: ") + it.key();
+            it.value() = 0;
+        }
+        l->applyTox();
     }
     // Masks of the effects: a layer that is gone, a viewport, or one that would feed back
     for (auto &l : m_layers)
@@ -1236,6 +1253,7 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
 {
     if (const QString url = streamUrlOfPath(path); !url.isEmpty()) return setLayerStream(i, url, binStreamTcp(url), err);
     if (QFileInfo(path).isDir()) return setLayerVideo(i, path, err); // an image sequence
+    if (isToxFile(path)) return setLayerTox(i, path, {}, err);
     if (isImageFile(path)) return setLayerImage(i, path, err);
     if (isAudioFile(path)) return setLayerAudio(i, path, err);
     QString e;
@@ -2179,4 +2197,55 @@ int Engine::reloadIsfFile(const QString &path, QString *error)
     });
     if (error) *error = errors.join(QLatin1Char('\n'));
     return reloaded;
+}
+
+
+bool Engine::setLayerTox(int i, const QString &path, const ToxSettings &settings, QString *err)
+{
+    if (!isToxFile(path)) { if (err) *err = QStringLiteral("Expected a .tox component"); return false; }
+    ToxSettings s = settings;
+    s.sanitize();
+    auto player = createToxPlayer(path, s); // SDK initialization is deferred to the render thread
+    if (!player) { if (err) *err = QStringLiteral("Cannot create TouchEngine source"); return false; }
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isViewport || l->isGroup) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Tox;
+        l->sourcePath = path;
+        l->tox = s;
+        l->toxPlayer = std::move(player);
+        l->error = l->toxPlayer->error();
+        if (err) *err = l->error;
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true; // keep the component and its settings when its runtime/file is unavailable
+}
+
+bool Engine::setLayerToxInput(int i, const QString &input, quint64 source, QString *err)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Tox || !l->toxPlayer) return false;
+        const auto inputs = l->toxPlayer->inputs();
+        if (std::none_of(inputs.begin(), inputs.end(), [&](const auto &p) { return p.first == input; })) {
+            if (err) *err = QStringLiteral("That TOP input is unavailable");
+            return false;
+        }
+        if (source) {
+            const Layer *s = layer(indexOfId(source));
+            if (!s || s->isViewport || source == l->id || layerDependsOn(source, l->id)) {
+                if (err) *err = QStringLiteral("This TOP connection is missing, uses a viewport, or would create a feedback loop");
+                return false;
+            }
+        }
+        l->tox.inputs[input] = source;
+        l->applyTox();
+    }
+    emit layersChanged();
+    return true;
 }

@@ -202,6 +202,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["type"] = "input";
         src["uri"] = l.sourcePath;
         break;
+    case SourceType::Tox:
+        src = l.tox.toJson();
+        src["type"] = "tox";
+        break;
     case SourceType::Web:
         src = l.web.toJson();
         src["type"] = "web";
@@ -213,7 +217,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["path"] = l.sourcePath;
         src["live"] = true;
         src["rtsp_tcp"] = l.videoSource.rtspTcp;
-    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf) {
+    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox) {
         src["path"] = l.sourcePath;
         if (!projectDir.isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
@@ -353,6 +357,9 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             l->sourcePath = uri;
             l->error = err;
         }
+    } else if (type == "tox") {
+        setLayerTox(index, path, ToxSettings::fromJson(src), &err);
+        if (!err.isEmpty() && warnings) *warnings << name + ": " + err;
     } else if (type == "web") { // a web page: kept even where there is no browser (its error says so)
         QSize comp;
         {
@@ -608,7 +615,7 @@ static QString projectPreflightError(const QJsonObject &root)
                 (type != QLatin1String("none") && type != QLatin1String("video") &&
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
-                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web")))
+                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {

@@ -53,8 +53,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4 # without submodules: the script fetches them
-      - name: ./build.sh --no-run --accept-ndi-license
-        run: ./build.sh --no-run --accept-ndi-license
+      - name: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
+        run: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
       - name: The program, NDI and OMT are there
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then dir=build/Pinol.app/Contents/Frameworks; test -x build/Pinol.app/Contents/MacOS/Pinol
@@ -68,13 +68,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: ./build.sh --no-run --accept-ndi-license (runs build.ps1)
+      - name: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license (runs build.ps1)
         shell: bash
-        run: ./build.sh --no-run --accept-ndi-license
+        run: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
       - name: The program, Qt, FFmpeg, NDI and OMT are there
         shell: pwsh
         run: |
-          foreach ($f in "Pinol.exe", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
+          foreach ($f in "Pinol.exe", "TouchEngine.dll", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
             if (-not (Test-Path "build\$f")) { throw "build\$f missing" }
           }
           if (-not (Get-ChildItem build\avcodec-*.dll)) { throw "FFmpeg DLLs missing" }

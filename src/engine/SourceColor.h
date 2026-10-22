@@ -61,6 +61,7 @@ inline QString sourceColorStatus(const Layer &layer)
         return QStringLiteral("Unknown or unsupported video profile: RGB left unchanged; declare its SDR space if known");
     }
     if (layer.type == SourceType::Text) return QStringLiteral("Generated sRGB → sRGB working space");
+    if (layer.type == SourceType::Tox) return QStringLiteral("TouchDesigner output is untagged: assumed sRGB; declare its source space if known");
     if (layer.type == SourceType::Web) return QStringLiteral("Web page sRGB → sRGB working space");
     return QStringLiteral("Unknown profile: assumed sRGB; declare the source space if known");
 }
