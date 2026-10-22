@@ -718,7 +718,11 @@ if(PINOL_TOUCHENGINE_FRAMEWORK)
   set_property(TARGET Pinol APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
   add_custom_command(TARGET Pinol POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:Pinol>/Contents/Frameworks"
-    COMMAND ditto "${PINOL_TOUCHENGINE_FRAMEWORK}" "$<TARGET_BUNDLE_DIR:Pinol>/Contents/Frameworks/TouchEngine.framework")
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE=${PINOL_TOUCHENGINE_FRAMEWORK}"
+      "-DDESTINATION=$<TARGET_BUNDLE_DIR:Pinol>/Contents/Frameworks/TouchEngine.framework"
+      -P "${PINOL_TOUCHENGINE_STAGE_SCRIPT}"
+    VERBATIM)
 elseif(PINOL_TOUCHENGINE_DLL)
   add_custom_command(TARGET Pinol POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PINOL_TOUCHENGINE_DLL}" "$<TARGET_FILE_DIR:Pinol>/TouchEngine.dll")

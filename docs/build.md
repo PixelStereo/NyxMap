@@ -194,6 +194,9 @@ Windows and macOS can import `.tox` files through TouchEngine. The SDK is option
 `--accept-touchengine-license` (or `-DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON` with CMake).
 Use `--no-touchengine` to decline without a prompt. Changing the flag reconfigures an existing build.
 The platform CI builds explicitly enable it and include the SDK and notices in their packages.
+On macOS, CMake stages and ad-hoc signs the SDK and its nested components for local builds, including test
+executables. This requires Apple's command-line tools; no Developer ID is required. Re-running `build.sh`
+repairs existing build directories. These local signatures do not replace Developer ID signing or notarization for distribution.
 
 The SDK is pinned to Windows `af3e4a393086c0377cd3634172a0ce18d1a654c8` and macOS
 `c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962`. Only the SDK shim is bundled; install TouchDesigner or TouchPlayer

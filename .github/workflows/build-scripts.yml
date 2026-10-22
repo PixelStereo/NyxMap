@@ -9,6 +9,7 @@ on:
       - build.ps1
       - build.cmd
       - CMakeLists.txt
+      - cmake/**
       - scripts/build_omt.py
       - scripts/fetch_ndi.py
       - packaging/ndi-sdk.json
@@ -20,6 +21,7 @@ on:
       - build.ps1
       - build.cmd
       - CMakeLists.txt
+      - cmake/**
       - scripts/build_omt.py
       - scripts/fetch_ndi.py
       - packaging/ndi-sdk.json
@@ -61,6 +63,17 @@ jobs:
           else dir=build; test -x build/Pinol; fi
           ls "$dir" | grep -E '^lib(ndi|omt|vmx)'
           for lib in ndi omt vmx; do ls "$dir" | grep -q "^lib$lib" || { echo "lib$lib missing"; exit 1; }; done
+      - name: macOS source build starts before packaging
+        if: runner.os == 'macOS'
+        run: |
+          for framework in build/runtimes/touchengine/TouchEngine.framework build/Pinol.app/Contents/Frameworks/TouchEngine.framework; do
+            codesign --verify --deep --strict --verbose=2 "$framework"
+          done
+          ./build/Pinol.app/Contents/MacOS/Pinol --help
+          # Reuse the build directory as build.sh does on subsequent invocations.
+          ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
+          codesign --verify --deep --strict build/Pinol.app/Contents/Frameworks/TouchEngine.framework
+          ./build/Pinol.app/Contents/MacOS/Pinol --help
 
   windows:
     name: build.sh (windows-2022, Git Bash)

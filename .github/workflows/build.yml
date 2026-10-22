@@ -385,6 +385,11 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON
           cmake --build build -j4
           cmake --build build --target pinol_tests -j4
+      - name: macOS source build starts before packaging
+        run: |
+          codesign --verify --deep --strict build/runtimes/touchengine/TouchEngine.framework
+          codesign --verify --deep --strict build/Pinol.app/Contents/Frameworks/TouchEngine.framework
+          ./build/Pinol.app/Contents/MacOS/Pinol --help
       - name: Engine tests
         run: |
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing
