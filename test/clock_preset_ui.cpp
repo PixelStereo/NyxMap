@@ -110,7 +110,8 @@ int runClockPresetUiTests(Engine &engine)
     exercise("clock/seconds"); exercise("clock/date");
 
     TimecodeSettings settings; settings.internal = TimecodeSettings::Internal::FreeRun;
-    check(engine.setLayerTimecode(row, settings), "create a free-run Timecode"); showSource();
+    check(engine.setLayerTimecode(row, settings), "create a free-run Timecode");
+    engine.setParameter(id, "tc/play", false); showSource();
     for (const auto &path : QStringList{"tc/source", "tc/internal", "tc/rate", "tc/offset", "tc/output",
                                        "tc/play", "tc/position", "tc/in", "tc/out", "tc/play_mode"}) exercise(path);
     engine.setParameter(id, "tc/play", false); engine.setParameter(id, "tc/position", 42.0);
