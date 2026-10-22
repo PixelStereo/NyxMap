@@ -18,8 +18,10 @@ import sys
 from pathlib import Path
 
 CELLAR = Path(subprocess.check_output(["brew", "--cellar"], text=True).strip())
-# Not from Homebrew: built or fetched for the package, their licences travel with them (OMT-LICENSES.txt, NDI-NOTICE.txt)
+# Not from Homebrew: built or fetched for the package, their licences travel with them (OMT-LICENSES.txt, NDI-NOTICE.txt,
+# licenses/touchengine.txt). The TouchEngine SDK's frameworks: TouchEngine.framework and IPM.framework, wherever it is
 OWN = re.compile(r"^lib(omt|vmx|ndi)\b")
+OWN_FRAMEWORKS = {"TouchEngine.framework", "IPM.framework"}
 FFMPEG = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.\d+\.dylib$")
 # Libraries whose licence is not their formula's: gettext's programs are GPL, its libintl is LGPL (gettext's
 # COPYING and its manual, "The GNU libintl library is covered by the GNU Lesser General Public License")
@@ -101,8 +103,8 @@ def main():
     out.mkdir(parents=True)
 
     by_formula, errors = {}, []
-    for name in libraries(app / "Contents" / "Frameworks"):
-        if OWN.match(name):
+    for name, path in libraries(app / "Contents" / "Frameworks").items():
+        if OWN.match(name) or any(a.name in OWN_FRAMEWORKS for a in (path, *path.parents)):
             continue
         if FFMPEG.match(name):  # rebuilt without GPL parts (build_ffmpeg_lgpl.py), not Homebrew's
             by_formula.setdefault("ffmpeg", []).append(name)
