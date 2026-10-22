@@ -45,6 +45,17 @@ static QString playbackTime(double seconds)
         .arg((ticks / 100) % 60, 2, 10, QLatin1Char('0')).arg(ticks % 100, 2, 10, QLatin1Char('0'));
 }
 
+static double playbackClockAt(const Animation &a, double position)
+{
+    const bool backwards = a.state != AnimState::Stopped && a.backwardsAt(a.clock);
+    double clock = a.state == AnimState::Stopped ? position : a.clockAt(position);
+    // An exact loop boundary belongs to the next pass in the engine. Leave the
+    // handle at the end of this pass rather than wrapping/flipping it on release.
+    if (a.loop != AnimLoop::Once && position == (backwards ? 0.0 : a.duration) && clock > 0)
+        clock = std::nextafter(clock, 0.0);
+    return clock;
+}
+
 QString animWaveName(AnimWave w)
 {
     switch (w) {
@@ -1480,15 +1491,15 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     connect(m_position, &QSlider::valueChanged, this, [this](int value) {
         Animation a;
         if (!fetch(&a)) return;
-        const double t = a.duration * value / kPlaybackSteps;
-        control(AnimAction::Seek, a.state == AnimState::Stopped ? t : a.clockAt(t));
+        const double t = a.duration * (double(value) / kPlaybackSteps);
+        control(AnimAction::Seek, playbackClockAt(a, t));
         poll();
     });
     connect(m_ruler, &TimeRuler::seekRequested, this, [this](double t) {
         // Within the pass shown: from the pass it is in
         Animation a;
         if (!fetch(&a)) return;
-        control(AnimAction::Seek, a.state == AnimState::Stopped ? t : a.clockAt(t));
+        control(AnimAction::Seek, playbackClockAt(a, t));
     });
     connect(m_duration, &QDoubleSpinBox::valueChanged, this, [this](double d) {
         if (m_filling) return;

@@ -256,6 +256,13 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
         check(std::abs(sought.position() - transport.duration / 2) < 1e-5 && sought.backwardsAt(sought.clock) &&
               sought.state == AnimState::Paused && undo.count() == undoCount,
               "scrubbing seeks within the backwards pass without resuming playback or creating an edit");
+        slider->setValue(0);
+        check(std::abs(read().position()) < 1e-5 && read().backwardsAt(read().clock),
+              "the start endpoint does not wrap out of the backwards pass");
+        seek(100); editor.poll();
+        slider->setValue(slider->maximum());
+        check(std::abs(read().position() - transport.duration) < 1e-5 && !read().backwardsAt(read().clock),
+              "the end endpoint does not jump to the next pass");
         slider->setSliderDown(true);
         slider->setValue(slider->maximum() / 4);
         seek(123); editor.poll();
