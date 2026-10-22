@@ -53,11 +53,12 @@ def build_vmx(src: Path, out: Path):
     s = src / "src"
     system = platform.system()
     if system == "Darwin":
-        # Universal, as upstream's build/buildmacuniversal.sh
-        common = ["-O3", "-std=c++17", "-fdeclspec", "-fPIC", "-mmacosx-version-min=10.15", "-dynamiclib",
+        # Universal. Apple silicon starts at macOS 11; a 10.15 target triggers newer libc++'s unsupported-platform warning.
+        # Suppress only SSE2NEON's opt-in optimization reminder, not compiler diagnostics. The codec stays at -O3.
+        common = ["-O3", "-std=c++17", "-fdeclspec", "-fPIC", "-mmacosx-version-min=11.0", "-dynamiclib",
                   "-install_name", "@rpath/libvmx.dylib"]
         arm, x86 = out / "vmx-arm64.dylib", out / "vmx-x86_64.dylib"
-        run(["clang++", *common, "-target", "arm64-apple-darwin", s / "vmxcodec_arm.cpp", s / "vmxcodec.cpp", "-o", arm], src)
+        run(["clang++", *common, "-target", "arm64-apple-darwin", "-DSSE2NEON_SUPPRESS_WARNINGS=1", s / "vmxcodec_arm.cpp", s / "vmxcodec.cpp", "-o", arm], src)
         run(["clang++", *common, "-target", "x86_64-apple-darwin", "-mlzcnt", "-mavx2", "-mbmi",
              s / "vmxcodec_x86.cpp", s / "vmxcodec_avx2.cpp", s / "vmxcodec.cpp", "-o", x86], src)
         run(["lipo", "-create", "-output", out / "libvmx.dylib", x86, arm], src)

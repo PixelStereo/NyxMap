@@ -1565,7 +1565,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             // A duration typed (h:m:s, m:s or seconds): set, or shown again as it is
             auto durationField = [this, set, durationText](QLineEdit *e, const QString &path, double now, const QString &label,
                                                            bool negative) {
-                connect(e, &QLineEdit::editingFinished, this, [this, e, path, now, label, negative, set, durationText] {
+                connect(e, &QLineEdit::editingFinished, this, [e, path, now, label, negative, set, durationText] {
                     const std::optional<double> v = parseClockDuration(e->text());
                     if (v && (negative || *v >= 0)) set(path, *v, label);
                     else e->setText(durationText(now));

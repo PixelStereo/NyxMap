@@ -167,7 +167,7 @@ int main(int argc, char **argv)
     check(registerWebPages() && webPagesAvailable(), "Qt WebEngine registered");
     {
         QFile html(tmp.filePath("red.html"));
-        html.open(QIODevice::WriteOnly);
+        check(html.open(QIODevice::WriteOnly), "HTML fixture opened");
         html.write("<!doctype html><html><body style=\"margin:0;background:rgb(255,0,0)\"></body></html>");
         html.close();
         e.fadeCompositionOpacity(1.0, 0);

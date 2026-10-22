@@ -30,14 +30,6 @@
 #include <QUndoStack>
 #include <cmath>
 
-static void setSwatch(QPushButton *b, const float c[4])
-{
-    const QColor col = QColor::fromRgbF(c[0], c[1], c[2], c[3]);
-    b->setText(col.name(QColor::HexArgb).toUpper());
-    b->setStyleSheet(QStringLiteral("QPushButton { background:%1; color:%2; border:1px solid #555; padding:3px 8px; }")
-                         .arg(col.name(QColor::HexRgb), col.lightnessF() > 0.55 ? "#000" : "#fff"));
-}
-
 void ParamPanel::setValue(int input, const QString &label, const std::function<void(IsfValue &)> &modify)
 {
     IsfInput in;
@@ -113,7 +105,7 @@ ParamPanel::ParamPanel(Engine *engine, QUndoStack *undo, int layer, int slot, in
             emit m_speed->valueEdited(1);
         });
         form->addRow(name, m_speed);
-        m_rows.push_back({QString(), {name, m_speed}});
+        m_rows.push_back({QString(), {name, m_speed}, nullptr, nullptr, {}});
     }
 
     for (int idx = 0; idx < int(inputs.size()); ++idx) {

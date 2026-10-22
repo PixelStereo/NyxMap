@@ -313,7 +313,7 @@ std::vector<std::pair<QString, QString>> IsfInstance::dependencies(const QString
     std::vector<std::pair<QString, QString>> out;
     const QFileInfo fi(path);
     const QDir dir = fi.absoluteDir();
-    for (const QString ext : {QStringLiteral("vs"), QStringLiteral("vert")}) {
+    for (const QString &ext : {QStringLiteral("vs"), QStringLiteral("vert")}) {
         const QString vs = fi.completeBaseName() + '.' + ext;
         if (dir.exists(vs)) out.push_back({dir.absoluteFilePath(vs), vs});
     }
