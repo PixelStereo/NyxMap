@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Check Linux dependency setup syntax
+        run: shellcheck .github/scripts/configure_linux_apt.sh
       - name: Test change routing
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
       - name: Test release metadata and tag versions
@@ -54,7 +56,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Make
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           sh test/make_media.sh
@@ -78,7 +82,9 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
@@ -165,28 +171,32 @@ jobs:
     needs: scope
     name: Workspace memory safety (Linux)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb
       - name: Build with AddressSanitizer
+        timeout-minutes: 15
         run: |
           cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
           cmake --build build-asan --target pinol_workspace_ui_test -j4
       - name: Exercise workspace lifetime
+        timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           LP_NUM_THREADS: '1'
-        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure -R '^(workspace_ui|color_parameter_ui)$'
+        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure --timeout 120 -R '^(workspace_ui|color_parameter_ui)$'
 
   workspace-valgrind:
     if: needs.scope.outputs.valgrind == 'true'
@@ -199,7 +209,9 @@ jobs:
         with:
           submodules: true
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
@@ -241,7 +253,9 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
@@ -285,7 +299,7 @@ jobs:
     name: Interface scenario (Linux)
     runs-on: ubuntu-24.04
     needs: [scope, media]
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -295,16 +309,20 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
+        timeout-minutes: 15
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j4
+          cmake --build build --target Pinol -j4
       - name: Scenario
+        timeout-minutes: 5
         run: |
           python3 test/make_tests.py
           bash test/ui_test.sh "$PWD/ui-out"
@@ -335,7 +353,9 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
+        timeout-minutes: 10
         run: |
+          bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
