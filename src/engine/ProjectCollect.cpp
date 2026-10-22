@@ -20,7 +20,7 @@ QString folderFor(const QString &path)
     static const QSet<QString> movies = {"mov", "mp4", "m4v", "avi", "mkv", "mxf", "webm", "mpg", "mpeg", "nut",
                                          "wmv", "ts", "mts", "m2ts", "flv", "3gp", "ogv", "dv", "hap"};
     static const QSet<QString> picts = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "exr", "psd", "psb",
-                                        "tga", "heic", "heif", "svg", "dds", "hdr", "jp2"};
+                                        "tga", "heic", "heif", "svg", "svgz", "dds", "hdr", "jp2", "dpx"};
     static const QSet<QString> audio = {"wav", "aif", "aiff", "mp3", "aac", "m4a", "flac", "ogg", "opus", "wma", "caf"};
     static const QSet<QString> isf = {"fs", "frag", "vs", "vert"};
     const QString ext = QFileInfo(path).suffix().toLower();
@@ -103,9 +103,31 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
     QStringList found;
     QSet<QString> seenFound, seenMissing;
     QHash<QString, QString> alias; // a path that is not there → the file found from its relative path
+    QStringList sequences;         // image sequences: their folders, copied whole
+    QSet<QString> seenSequences;
     visit(root, QString(), nullptr, [&](const QString &k, const QString &s, const QJsonObject *in) {
         if (s.isEmpty()) return;
         if (k == QLatin1String("relative_path")) return; // with its "path"
+        // A layer's sequence, or one imported into the Media Bin (a folder)
+        if (k == QLatin1String("path") && QDir::isAbsolutePath(s) &&
+            ((in && in->contains(QLatin1String("sequence"))) || QFileInfo(s).isDir())) {
+            QString folder = s;
+            const QString rel = in ? in->value("relative_path").toString() : QString();
+            if (!QFileInfo(folder).isDir() && !rel.isEmpty() && !oldPath.isEmpty() && QFileInfo(oldDir.absoluteFilePath(rel)).isDir()) {
+                folder = QDir::cleanPath(oldDir.absoluteFilePath(rel));
+                alias.insert(key(s), folder);
+            }
+            if (!QFileInfo(folder).isDir()) {
+                if (!seenMissing.contains(s)) {
+                    seenMissing.insert(s);
+                    plan.missing << s;
+                }
+            } else if (!seenSequences.contains(key(folder))) {
+                seenSequences.insert(key(folder));
+                sequences << folder;
+            }
+            return;
+        }
         QString file;
         if (QDir::isAbsolutePath(s) && QFileInfo(s).isFile()) {
             file = s;
@@ -186,6 +208,21 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
     for (const QString &file : found) {
         if (isShader(file) || to.contains(key(file))) continue;
         add(file, freeName(media + '/' + folderFor(file), QFileInfo(file).fileName()));
+    }
+    // An image sequence: its folder copied whole (every file in it, not its subfolders) into a folder of its own
+    for (const QString &folder : sequences) {
+        const QString dest = freeName(media + QStringLiteral("/SEQUENCES"), QFileInfo(folder).fileName());
+        to.insert(key(folder), dest);
+        for (const QFileInfo &f : QDir(folder).entryInfoList(QDir::Files | QDir::Hidden, QDir::Name)) {
+            if (to.contains(key(f.absoluteFilePath()))) continue;
+            to.insert(key(f.absoluteFilePath()), dest + '/' + f.fileName());
+            CollectFile c;
+            c.from = f.absoluteFilePath();
+            c.to = dest + '/' + f.fileName();
+            c.bytes = f.size();
+            plan.bytes += c.bytes;
+            plan.files.push_back(c);
+        }
     }
     for (auto it = alias.cbegin(); it != alias.cend(); ++it) // its old spelling points to the copy too
         if (to.contains(key(it.value()))) to.insert(it.key(), to.value(key(it.value())));

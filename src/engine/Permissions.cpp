@@ -8,6 +8,8 @@
 
 #ifdef Q_OS_MACOS
 void requestLocalNetworkAccess(); // Permissions.mm
+#else
+bool screenCaptureAllowed(bool) { return true; } // macOS: Permissions.mm
 #endif
 
 void requestSystemPermissions()

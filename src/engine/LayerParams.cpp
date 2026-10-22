@@ -28,7 +28,7 @@ quint64 keyOf(const Layer &l)
     for (quint64 v : {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
                       quint64(l.isGroup), quint64(c.width()), quint64(c.height()), quint64(quintptr(l.generator.get())),
                       quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
-                      quint64(quintptr(l.tcClock.get()))})
+                      quint64(quintptr(l.tcClock.get())), quint64(quintptr(l.clockGen.get()))})
         mix(v);
     auto inputs = [&mix](const IsfInstance *i) {
         if (!i) return;
@@ -306,6 +306,138 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(true)
             .bind([k] { return QVariant(k->playing()); }, [k](const QVariant &v) { k->setPlaying(v.toBool()); });
         add("tc/rewind", "Timecode › Rewind", T::Trigger).bind(nullptr, [k](const QVariant &) { k->rewind(); });
+    }
+
+    // A Countdown, Stopwatch or Clock generator: its settings, then its transport (countdown, stopwatch). Set at once,
+    // not animated. In a snapshot, the elapsed time of one that runs there and runs already is left alone: it goes on
+    // (Engine::applyParams). Its value and whether a countdown reached zero are read (an interaction can follow them)
+    if (std::shared_ptr<ClockGenerator> c = clockGen) {
+        ClockGenerator *k = c.get(); // the parameters are made again when the generator changes
+        const ClockKind kind = k->kind();
+        const ClockSettings def = ClockSettings::defaults(kind);
+        auto setting = [&](const QString &path, const QString &label, T type, const QVariant &byDef,
+                           std::function<QVariant(const ClockSettings &)> get,
+                           std::function<void(ClockSettings &, const QVariant &)> set) -> Parameter & {
+            return add(path, label, type)
+                .ramp(Parameter::Ramp::Cut)
+                .byDefault(byDef)
+                .bind([k, get] { return get(k->settings()); },
+                      [k, set](const QVariant &v) { k->update([&](ClockSettings &s) { set(s, v); }); });
+        };
+        auto secs = [&](const QString &path, const QString &label, double lo, double hi, double llo, double lhi, double byDef,
+                        double ClockSettings::*m) -> Parameter & {
+            return setting(path, label, T::Float, byDef, [m](const ClockSettings &s) { return QVariant(s.*m); },
+                           [m](ClockSettings &s, const QVariant &v) { s.*m = v.toDouble(); })
+                .range(lo, hi)
+                .limits(llo, lhi)
+                .step(0.1)
+                .animatable(false);
+        };
+        auto text = [&](const QString &path, const QString &label, const QString &byDef, QString ClockSettings::*m) -> Parameter & {
+            return setting(path, label, T::Text, byDef, [m](const ClockSettings &s) { return QVariant(s.*m); },
+                           [m](ClockSettings &s, const QVariant &v) { s.*m = v.toString(); });
+        };
+        const double day = 24.0 * 3600.0, most = 100 * day;
+        const QString name = clockKindName(kind);
+        if (kind == ClockKind::Countdown) {
+            setting("clock/target", name + " › Target", T::Choice, QStringLiteral("duration"),
+                    [](const ClockSettings &s) {
+                        return QVariant(s.target == ClockSettings::Target::TimeOfDay ? QStringLiteral("time_of_day")
+                                                                                      : QStringLiteral("duration"));
+                    },
+                    [](ClockSettings &s, const QVariant &v) {
+                        s.target = v.toString() == QLatin1String("time_of_day") ? ClockSettings::Target::TimeOfDay
+                                                                                 : ClockSettings::Target::Duration;
+                    })
+                .choices({"duration", "time_of_day"});
+            secs("clock/duration", name + " › Duration (s)", 0, day, 0, most, def.duration, &ClockSettings::duration).step(1);
+            setting("clock/target_time", name + " › Target Time", T::Text, def.targetTime.toString(QStringLiteral("HH:mm:ss")),
+                    [](const ClockSettings &s) { return QVariant(s.targetTime.toString(QStringLiteral("HH:mm:ss"))); },
+                    [](ClockSettings &s, const QVariant &v) {
+                        const QTime t = ClockGenerator::parseTime(v.toString());
+                        if (t.isValid()) s.targetTime = t;
+                    });
+        }
+        if (kind == ClockKind::Stopwatch)
+            secs("clock/offset", name + " › Start At (s)", 0, day, -most, most, def.offset, &ClockSettings::offset).step(1);
+        setting("clock/format", name + " › Format", T::Choice, def.format, [](const ClockSettings &s) { return QVariant(s.format); },
+                [](ClockSettings &s, const QVariant &v) { s.format = v.toString(); })
+            .choices(kind == ClockKind::Clock ? ClockGenerator::clockFormats() : ClockGenerator::durationFormats());
+        text("clock/custom_format", name + " › Custom Format", QString(), &ClockSettings::customFormat);
+        if (kind != ClockKind::Clock)
+            setting("clock/fps", name + " › Frames per Second", T::Int, def.fps, [](const ClockSettings &s) { return QVariant(s.fps); },
+                    [](ClockSettings &s, const QVariant &v) { s.fps = std::clamp(v.toInt(), 1, 1000); })
+                .range(1, 120)
+                .limits(1, 1000);
+        if (kind == ClockKind::Countdown) {
+            static const char *const kZero[] = {"stop", "text", "overtime"};
+            setting("clock/at_zero", name + " › At Zero", T::Choice, QStringLiteral("stop"),
+                    [](const ClockSettings &s) { return QVariant(QString::fromLatin1(kZero[int(s.atZero)])); },
+                    [](ClockSettings &s, const QVariant &v) {
+                        for (int z = 0; z < 3; ++z)
+                            if (v.toString() == QLatin1String(kZero[z])) s.atZero = ClockSettings::AtZero(z);
+                    })
+                .choices({"stop", "text", "overtime"});
+            text("clock/zero_text", name + " › Text at Zero", def.zeroText, &ClockSettings::zeroText);
+            for (int q = 0; q < 4; ++q) {
+                const QColor &dc = def.overtimeColor;
+                const double d = q == 0 ? dc.redF() : q == 1 ? dc.greenF() : q == 2 ? dc.blueF() : dc.alphaF();
+                setting(QStringLiteral("clock/overtime_color/") + QChar("rgba"[q]), name + " › Overtime Color " + QChar("RGBA"[q]),
+                        T::Float, d,
+                        [q](const ClockSettings &s) {
+                            const QColor &x = s.overtimeColor;
+                            return QVariant(q == 0 ? x.redF() : q == 1 ? x.greenF() : q == 2 ? x.blueF() : x.alphaF());
+                        },
+                        [q](ClockSettings &s, const QVariant &v) {
+                            QColor &x = s.overtimeColor;
+                            const float f = float(std::clamp(v.toDouble(), 0.0, 1.0));
+                            if (q == 0) x.setRedF(f);
+                            else if (q == 1) x.setGreenF(f);
+                            else if (q == 2) x.setBlueF(f);
+                            else x.setAlphaF(f);
+                        })
+                    .range(0, 1)
+                    .colorComponent(q);
+            }
+        }
+        if (kind == ClockKind::Clock) {
+            setting("clock/seconds", name + " › Seconds", T::Bool, def.seconds, [](const ClockSettings &s) { return QVariant(s.seconds); },
+                    [](ClockSettings &s, const QVariant &v) { s.seconds = v.toBool(); });
+            setting("clock/date", name + " › Date", T::Bool, def.date, [](const ClockSettings &s) { return QVariant(s.date); },
+                    [](ClockSettings &s, const QVariant &v) { s.date = v.toBool(); });
+        }
+        if (kind != ClockKind::Stopwatch) text("clock/zone", name + " › Time Zone", QString(), &ClockSettings::zone);
+        if (k->hasTransport()) {
+            // Where it is, then whether it runs: a recall that also sets where it is starts (or holds) it from there
+            num("clock/elapsed", name + " › Elapsed (s)", 0, day, 0.0, [k] { return k->elapsed(); }, [k](double v) { k->setElapsed(v); })
+                .limits(0, most)
+                .step(0.1)
+                .ramp(Parameter::Ramp::Cut)
+                .animatable(false);
+            add("clock/play", name + " › Run", T::Bool)
+                .ramp(Parameter::Ramp::Cut)
+                .byDefault(false)
+                .bind([k] { return QVariant(k->running()); }, [k](const QVariant &v) { k->setRunning(v.toBool()); });
+            // From its start, running: a snapshot or a preset that holds it on starts it again (read back as off: an
+            // action of the recall, as a media's restart)
+            add("clock/restart", name + " › Restart on Recall", T::Bool)
+                .ramp(Parameter::Ramp::Cut)
+                .byDefault(false)
+                .bind([] { return QVariant(false); },
+                      [k](const QVariant &v) {
+                          if (v.toBool()) k->restart();
+                      });
+            add("clock/start", name + " › Start", T::Trigger).bind(nullptr, [k](const QVariant &) { k->start(); });
+            add("clock/pause", name + " › Pause", T::Trigger).bind(nullptr, [k](const QVariant &) { k->pause(); });
+            add("clock/reset", name + " › Reset", T::Trigger).bind(nullptr, [k](const QVariant &) { k->reset(); });
+        }
+        add("clock/value", name + " › Value (s)", T::Float)
+            .range(kind == ClockKind::Countdown ? -day : 0, day)
+            .limits(-most, most)
+            .readOnly()
+            .bind([k] { return QVariant(k->value()); }, nullptr);
+        if (kind == ClockKind::Countdown)
+            add("clock/zero", name + " › Zero Reached", T::Bool).readOnly().bind([k] { return QVariant(k->finished()); }, nullptr);
     }
 
     // Text generator

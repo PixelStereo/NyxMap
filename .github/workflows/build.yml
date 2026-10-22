@@ -36,6 +36,8 @@ jobs:
           fetch-depth: 0
       - name: Test change routing
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
+      - name: Test release metadata and tag versions
+        run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
         id: scope
         env:
@@ -78,11 +80,10 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
-            qt6-webengine-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
-            nasm libdav1d-dev libva-dev libdrm-dev qt6-wayland qt6-image-formats-plugins python3-pil \
+            nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
@@ -112,13 +113,24 @@ jobs:
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
           xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -L timing
+      - name: Backtraces of the crashed tests
+        if: failure()
+        run: |
+          # Each failed engine area again under gdb: where it crashed (the symbols of a release build: functions only)
+          sudo apt-get install -y gdb
+          for name in $(sed -n 's/^[0-9]*:\(.*\)$/\1/p' build/Testing/Temporary/LastTestsFailed*.log | sort -u); do
+            ctest --test-dir build -N -V -R "^${name}\$" | grep -q 'Test command: .*pinol_tests.*--area' || continue
+            echo "::group::gdb $name"
+            (cd build && timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args ./pinol_tests --area "$name") || true
+            echo "::endgroup::"
+          done
       - name: Dependency versions
         run: |
           # The build machine only (package_linux.py labels it so). Ubuntu's FFmpeg (GPL) makes the test fixtures and is
           # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
           {
             echo "Built on $(lsb_release -ds) $(uname -m), commit $GITHUB_SHA"
-            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-webengine-dev libasound2-dev cmake gcc
+            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
         run: |
@@ -161,7 +173,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb
       - name: Build with AddressSanitizer
@@ -189,7 +201,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind
       - name: Build with debug symbols
@@ -232,7 +244,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
+            qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb
       - name: Build
         run: |
@@ -285,7 +297,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
@@ -326,7 +338,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |
@@ -738,6 +750,15 @@ jobs:
             dist/**/*.zip
             dist/**/*.tar.gz
             dist/**/*.AppImage
+
+  # A release published with GITHUB_TOKEN does not trigger another release
+  # workflow. Call it explicitly once all package uploads have completed.
+  release-metadata:
+    if: github.ref_type == 'tag'
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-metadata.yml
 
   validation:
     name: Validation

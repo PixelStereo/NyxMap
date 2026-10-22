@@ -30,7 +30,7 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 
 | | |
 | :--- | :--- |
-| **01 — PLAY**<br>**Your media, all together.**<br>Video, HAP, images, audio, text, live inputs, web pages and ISF generators. Layer, group, blend and combine them with effects. | **02 — MAP**<br>**Take the picture beyond the rectangle.**<br>Position, scale, rotate, corner-pin and warp with a mesh. Shape content to a surface, crop it with ROI and route it through viewports. |
+| **01 — PLAY**<br>**Your media, all together.**<br>Video, HAP, image sequences (TGA, TIFF, DPX, EXR, PNG, JPEG), images and SVG drawings, audio, text, timecode, countdown, stopwatch and clock generators, network streams (RTSP, RTMP, SRT, UDP/RTP, HLS), live inputs (cameras, screens and windows, DeckLink, NDI, OMT, Syphon and Spout), web pages and ISF generators. Layer, group, blend and combine them with effects. | **02 — MAP**<br>**Take the picture beyond the rectangle.**<br>Position, scale, rotate, corner-pin and warp with a mesh. Shape content to a surface, crop it with ROI and route it through viewports. |
 | **03 — CUE**<br>**Build the moment. Then recall it.**<br>Snapshots, selective presets and sequences with waits, fades and auto-follow. Animate parameters with waveforms, Bézier keys and timelines. | **04 — CONTROL**<br>**Hands on. Eyes up.**<br>OSC, OSCQuery, MIDI, keyboard and internal interactions, with Learn, ranges, curves, filters and pick-up or jump takeover. |
 | **05 — SYNC**<br>**Keep the show on time.**<br>Time-of-day and transport-based clocks, LTC, MTC and ATC, plus routing to MIDI, audio and supported video destinations. | **06 — OUTPUT**<br>**From preview to projection.**<br>Fullscreen output windows, Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio—depending on your platform and installed runtimes. |
 
@@ -46,13 +46,15 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 
 ## Download
 
-Latest published build: **[v0.2](https://github.com/PixelStereo/Pinol/releases/tag/v0.2)** (preview).
+<!-- release-downloads:start -->
+Latest published build: **[v0.2.1](https://github.com/PixelStereo/Pinol/releases/tag/v0.2.1)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.2/Pinol-macos-v0.2.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.2/Pinol-windows-v0.2.zip)** | **[Download Ubuntu 64-bit](https://github.com/PixelStereo/Pinol/releases/download/v0.2/Pinol-linux-x86_64-v0.2.tar.gz)** |
+| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.2.1/Pinol-macos-v0.2.1.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.2.1/Pinol-windows-v0.2.1.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.2.1/Pinol-linux-x86_64-v0.2.1.AppImage)** |
 
-The next Linux release provides a self-contained **AppImage** and **portable archive** for Ubuntu 24.04 or newer, including Qt, FFmpeg, NDI and OMT. The portable archive runs without FUSE or installation. The older v0.2 Linux archive above still needs system libraries; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.2.1/Pinol-linux-x86_64-v0.2.1.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+<!-- release-downloads:end -->
 
 To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds Pinol and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
 

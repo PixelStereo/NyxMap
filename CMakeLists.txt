@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
-project(Pinol VERSION 0.1.0 LANGUAGES CXX)
+include(cmake/Version.cmake)
+project(Pinol VERSION ${PINOL_VERSION_NUMERIC} LANGUAGES CXX)
+configure_file(cmake/Version.h.in generated/PinolVersion.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -90,6 +92,7 @@ add_library(pinol_engine STATIC
   src/engine/TimecodeClock.cpp
   src/engine/TimecodeIo.cpp
   src/engine/TimecodeOutputs.cpp
+  src/engine/ClockGenerator.cpp
   src/engine/Interactions.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
@@ -110,6 +113,14 @@ if(Qt6Multimedia_FOUND)
   target_compile_definitions(pinol_engine PRIVATE PINOL_HAS_CAMERA)
 else()
   message(STATUS "Qt Multimedia not found: no camera inputs")
+endif()
+# SVG drawings as images: Qt SVG when it is there
+find_package(Qt6 QUIET COMPONENTS Svg)
+if(Qt6Svg_FOUND)
+  target_link_libraries(pinol_engine PRIVATE Qt6::Svg)
+  target_compile_definitions(pinol_engine PRIVATE PINOL_HAS_SVG)
+else()
+  message(STATUS "Qt SVG not found: no SVG images")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -192,7 +203,7 @@ target_include_directories(pinol_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party
 #  - Syphon (macOS) and Spout (Windows): sources downloaded and built with Pinol
 # ---------------------------------------------------------------------------
 option(PINOL_SYPHON "Syphon publishing (macOS)" ON)
-option(PINOL_SPOUT "Spout publishing (Windows)" ON)
+option(PINOL_SPOUT "Spout publishing and inputs (Windows)" ON)
 
 # macOS: the output windows shown through Metal (OpenGL into a window only works on the main thread there)
 if(APPLE)
@@ -201,7 +212,7 @@ if(APPLE)
   set_source_files_properties(src/engine/PresentMetal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_compile_definitions(pinol_engine PRIVATE GL_SILENCE_DEPRECATION)
   target_link_libraries(pinol_engine PRIVATE "-framework Metal" "-framework QuartzCore" "-framework IOSurface"
-    "-framework AppKit" "-framework Network" "-framework CoreVideo")
+    "-framework AppKit" "-framework Network" "-framework CoreVideo" "-framework CoreGraphics")
 else()
   target_sources(pinol_engine PRIVATE src/engine/VideoSurfaceNone.cpp)
 endif()
@@ -283,7 +294,7 @@ if(WIN32 AND PINOL_SPOUT)
     target_compile_options(spout_gl PRIVATE /W0)
   endif()
   target_link_libraries(spout_gl PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
-  target_sources(pinol_engine PRIVATE src/engine/PublishSpout.cpp)
+  target_sources(pinol_engine PRIVATE src/engine/PublishSpout.cpp src/engine/LiveInputSpout.cpp)
   target_link_libraries(pinol_engine PRIVATE spout_gl)
   target_compile_definitions(pinol_engine PRIVATE PINOL_HAS_SPOUT)
 endif()
@@ -352,6 +363,8 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME "Pinol"
     MACOSX_BUNDLE_GUI_IDENTIFIER "fr.pinol.app"
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+    MACOSX_BUNDLE_LONG_VERSION_STRING "${PINOL_VERSION}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in") # with the camera's usage text
   set(ISF_DEST "$<TARGET_FILE_DIR:Pinol>/../Resources/isf")
 elseif(WIN32)
@@ -513,7 +526,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(PINOL_TESTS "Build the engine tests" ON)
 if(PINOL_TESTS)
-  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(pinol_tests PRIVATE src/ui)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
@@ -638,12 +651,12 @@ if(PINOL_TESTS)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
   foreach(area color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
-          media sound layersource timecode interactions psd)
+          media sound layersource timecode interactions psd live_inputs clocks file_sources)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()
   # Areas depending on real time (sound clocks, threads, waits, publishers): label "timing".
   # CI gates on the first attempt; run_timing_tests.py reruns failures for diagnosis only.
-  set_tests_properties(sound playback thread publishing timecode snapshots media PROPERTIES LABELS timing)
+  set_tests_properties(sound playback thread publishing timecode snapshots media file_sources PROPERTIES LABELS timing)
   add_executable(pinol_sequence_ui_test test/sequence_ui.cpp src/ui/SequencePanel.cpp src/ui/TimelineActivity.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_sequence_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_sequence_ui_test PRIVATE pinol_engine Qt6::Widgets)

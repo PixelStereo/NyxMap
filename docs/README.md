@@ -20,6 +20,22 @@
   image when present; otherwise visible layers are composited with normal blending
   only. Other blend modes, clipping, masks, layer effects, adjustment layers and
   smart objects are not reproduced.
+- **Image sequences:** a folder whose pictures (TGA, TIFF, DPX, EXR, PNG, JPEG) are
+  mostly one numbered series (`name0001.exr`…) imports as one clip (Media Bin ›
+  Import › Image Sequence, or drop the folder), played at the rate set in its Source
+  tab (25 fps by default). FFmpeg's image2 demuxer reads a contiguous range: the
+  first gap in the numbering ends the clip. Saved as `"sequence": {"pattern",
+  "start", "fps"}` with the folder as the path; Collect Files copies the folder.
+- **SVG:** drawings render once, on a transparent background, with their longer
+  side at least the composition's (at most 8192 px); not redrawn when the layer
+  is scaled. Needs Qt SVG at build time (otherwise `.svg` is not offered).
+- **Network streams:** RTSP (TCP or UDP), RTMP, SRT, UDP/RTP (MPEG-TS), HTTP(S)
+  progressive and HLS URLs play live (Media Bin › Import › Add Stream URL): no
+  duration, no seeking or looping, the newest picture shown, no sound. A stream
+  that drops or stalls (5 s without data) is connected again after a pause that
+  grows to 10 s; the Source tab shows the state and the reason. Packages: macOS
+  has TLS (Secure Transport) but no SRT; Linux has TLS (OpenSSL) and SRT (libsrt);
+  Windows (BtbN builds) has TLS and SRT.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

@@ -1,0 +1,25 @@
+# One version for About, --version, and the native bundle. Tags override the
+# last published version stored in source archives and ordinary checkouts.
+if(NOT DEFINED PINOL_VERSION OR PINOL_VERSION STREQUAL "")
+  if("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
+    set(PINOL_VERSION "$ENV{GITHUB_REF_NAME}")
+  else()
+    execute_process(COMMAND git describe --tags --exact-match HEAD
+      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
+      OUTPUT_VARIABLE PINOL_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(PINOL_VERSION STREQUAL "")
+      file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../VERSION" PINOL_VERSION LIMIT_COUNT 1)
+    endif()
+  endif()
+endif()
+string(REGEX REPLACE "^v" "" PINOL_VERSION "${PINOL_VERSION}")
+if(NOT PINOL_VERSION MATCHES "^([0-9]+)[.]([0-9]+)([.]([0-9]+))?([-+][0-9A-Za-z.-]+)?$")
+  message(FATAL_ERROR "Invalid release version: ${PINOL_VERSION}")
+endif()
+set(PINOL_VERSION_NUMERIC "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+if("${CMAKE_MATCH_4}" STREQUAL "")
+  string(APPEND PINOL_VERSION_NUMERIC ".0")
+else()
+  string(APPEND PINOL_VERSION_NUMERIC ".${CMAKE_MATCH_4}")
+endif()
+message(STATUS "Pinol version: ${PINOL_VERSION}")

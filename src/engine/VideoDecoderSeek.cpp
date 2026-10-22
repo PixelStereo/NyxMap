@@ -34,6 +34,7 @@ bool VideoDecoder::doSeek(double t)
 
 void VideoDecoder::seek(double c)
 {
+    if (m_live) return; // live: nothing to seek, the newest picture is shown
     {
         std::lock_guard<std::mutex> lk(m_mutex);
         ++m_generation;

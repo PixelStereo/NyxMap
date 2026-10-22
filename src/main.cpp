@@ -2,6 +2,7 @@
 #include "EnduranceLogger.h"
 #include "MainWindow.h"
 #include "NetVideo.h"
+#include "PinolVersion.h"
 #include "Permissions.h"
 #include "WebPageQt.h"
 #include "Widgets.h"
@@ -43,7 +44,7 @@ int main(int argc, char *argv[])
     ignoreWheelOnFields(&app); // the trackpad scrolls the panels, it never changes a value
     QApplication::setApplicationName("Pinol");
     QApplication::setOrganizationName("Pinol");
-    QApplication::setApplicationVersion("0.1.0");
+    QApplication::setApplicationVersion(PINOL_VERSION);
 #ifdef Q_OS_MACOS
     app.setWindowIcon(QIcon(QStringLiteral(":/branding/pinol-app.png")));
 #else

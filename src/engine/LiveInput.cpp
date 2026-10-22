@@ -1,20 +1,28 @@
-// Live inputs (LiveInput.h): cameras through Qt Multimedia, NDI and OMT through their libraries loaded at run time,
-// Syphon in LiveInputSyphon.mm.
+// Live inputs (LiveInput.h): cameras, screens and windows through Qt Multimedia, NDI and OMT through their libraries
+// loaded at run time, DeckLink through its driver (DeckLink.cpp), Syphon in LiveInputSyphon.mm, Spout in
+// LiveInputSpout.cpp.
 #include "LiveInput.h"
+#include "DeckLink.h"
 #include "NetVideo.h"
+#include "Permissions.h"
 
 #include <QColor>
 #include <QCoreApplication>
 #include <QFile>
+#include <QGuiApplication>
+#include <QHash>
 #include <QImage>
 #include <QMetaObject>
 #include <QMutex>
 #include "AnnotatedMutex.h"
 #include <QThread>
+#include <QTimer>
 #include <QUrl>
+#include <QWindow>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <functional>
 #include <thread>
 
 #ifdef PINOL_HAS_CAMERA
@@ -27,7 +35,19 @@
 #include <QVideoSink>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 #include <QPermissions>
+#include <QScreen>
+#include <QScreenCapture>
+#define PINOL_HAS_SCREEN_CAPTURE // Qt 6.5: the screens
 #endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#include <QCapturableWindow>
+#include <QWindowCapture>
+#define PINOL_HAS_WINDOW_CAPTURE // Qt 6.6: the other applications' windows
+#endif
+#endif
+
+#ifdef PINOL_HAS_SPOUT
+#include "SpoutInput.h"
 #endif
 
 #ifdef PINOL_HAS_SYPHON
@@ -329,6 +349,213 @@ private:
 };
 #endif
 
+// --- DeckLink: the card's pictures, in whatever mode comes in; 4:2:2 made RGBA in the card's thread
+class DeckLinkInput : public LiveInput
+{
+public:
+    bool open(const QString &port, QString *err)
+    {
+        return m_in.open(port, [this](const decklink::InputFrame &f) { receive(f); }, err);
+    }
+    bool update(Texture2D &tex) override { return m_frame.take(tex); }
+    QString status() const override
+    {
+        if (m_in.hasSignal()) return {};
+        const QString s = m_in.status();
+        return s.endsWith(QLatin1String("no signal")) ? s : s + QStringLiteral(" — waiting for a signal");
+    }
+
+private:
+    void receive(const decklink::InputFrame &f) // the card's thread
+    {
+        if (!f.data || f.width <= 0 || f.height <= 0) return; // no signal: the last picture stays
+        if (f.format == decklink::InputFrame::Bgra) {
+            m_frame.put(f.data, f.width, f.height, f.rowBytes, true);
+            return;
+        }
+        m_rgba.resize(size_t(f.width) * size_t(f.height) * 4);
+        if (f.format == decklink::InputFrame::Uyvy) decklink::uyvyToRgba(f.data, f.rowBytes, f.width, f.height, m_rgba.data(), f.width * 4);
+        else decklink::v210ToRgba(f.data, f.rowBytes, f.width, f.height, m_rgba.data(), f.width * 4);
+        m_frame.put(m_rgba.data(), f.width, f.height, f.width * 4, false);
+    }
+    LatestFrame m_frame;
+    std::vector<uint8_t> m_rgba; // the card's thread only
+    decklink::VideoInput m_in;   // last: it goes first, and no frame comes after
+};
+
+#ifdef PINOL_HAS_SPOUT
+// --- Spout: the sender's texture copied on the GPU into the layer's, in the render thread
+class SpoutInput : public LiveInput
+{
+public:
+    explicit SpoutInput(const QString &name) : m_name(name), m_rx(createSpoutReceive(name)) {}
+    bool update(Texture2D &tex) override
+    {
+        SpoutReceive::Result r = m_rx->receive(tex.tex, tex.w, tex.h);
+        if (r == SpoutReceive::Resize) { // a new sender, or another size: the texture made at its size, then the frame
+            if (!tex.tex || tex.w != m_rx->width() || tex.h != m_rx->height()) tex.upload(nullptr, m_rx->width(), m_rx->height());
+            r = m_rx->receive(tex.tex, tex.w, tex.h);
+        }
+        m_found = r != SpoutReceive::Gone;
+        if (r == SpoutReceive::Received) m_seen = true;
+        return r == SpoutReceive::Received;
+    }
+    QString status() const override
+    {
+        if (!m_seen) return QStringLiteral("Waiting for the Spout sender \"%1\"").arg(m_name);
+        return m_found ? QString() : QStringLiteral("Spout sender \"%1\" not found — its last picture kept").arg(m_name);
+    }
+
+private:
+    QString m_name;
+    std::unique_ptr<SpoutReceive> m_rx;
+    std::atomic<bool> m_found{false}, m_seen{false};
+};
+#endif
+
+#ifdef PINOL_HAS_SCREEN_CAPTURE
+const QString kScreenPermission = QStringLiteral("Screen Recording permission needed: System Settings › Privacy & Security");
+
+// The screens, by name (else by place, from 1)
+std::vector<std::pair<QString, QScreen *>> screensById()
+{
+    std::vector<std::pair<QString, QScreen *>> out;
+    if (!qobject_cast<QGuiApplication *>(QCoreApplication::instance())) return out;
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (int k = 0; k < screens.size(); ++k)
+        out.push_back({screens[k]->name().isEmpty() ? QString::number(k + 1) : screens[k]->name(), screens[k]});
+    return out;
+}
+#endif
+
+#ifdef PINOL_HAS_WINDOW_CAPTURE
+// Pinol's own windows are not offered (a layer showing its own output window: a picture fed back into itself).
+// Qt does not say whose a window is: by its title, Pinol's (in the application's thread, its windows' titles too)
+bool isOwnWindow(const QString &title)
+{
+    if (title.contains(QLatin1String("Pinol"), Qt::CaseInsensitive)) return true;
+    QCoreApplication *app = QCoreApplication::instance();
+    if (qobject_cast<QGuiApplication *>(app) && QThread::currentThread() == app->thread())
+        for (const QWindow *w : QGuiApplication::topLevelWindows())
+            if (w->title() == title) return true;
+    return false;
+}
+
+// The other applications' windows, by title: the same after a restart (a window's handle is not). Two of the same
+// title: the second "<title> #2", in the system's order
+std::vector<std::pair<QString, QCapturableWindow>> windowsById()
+{
+    std::vector<std::pair<QString, QCapturableWindow>> out;
+    QHash<QString, int> seen;
+    for (const QCapturableWindow &w : QWindowCapture::capturableWindows()) {
+        const QString title = w.description().trimmed();
+        if (title.isEmpty() || isOwnWindow(title)) continue;
+        const int n = ++seen[title];
+        out.push_back({n == 1 ? title : QStringLiteral("%1 #%2").arg(title).arg(n), w});
+    }
+    return out;
+}
+#endif
+
+#ifdef PINOL_HAS_SCREEN_CAPTURE
+// --- A screen or a window: Qt Multimedia, in the application's thread, as a camera. Looked for again every few
+// seconds while it is not there (a window closed, a screen unplugged), the last picture kept meanwhile
+class ScreenInput : public LiveInput
+{
+public:
+    ScreenInput(bool window, const QString &id)
+    {
+        m_holder = new QObject;
+        QObject *holder = m_holder;
+        auto frame = m_frame;
+        auto status = m_status;
+        auto setStatus = [status](const QString &t) {
+            QMutexLocker lk(&status->mutex);
+            status->text = t;
+        };
+        auto start = [holder, window, id, frame, setStatus] {
+            auto *session = new QMediaCaptureSession(holder);
+            auto *sink = new QVideoSink(holder);
+            session->setVideoSink(sink);
+            QObject::connect(sink, &QVideoSink::videoFrameChanged, holder, [frame, setStatus](const QVideoFrame &f) {
+                const QImage img = f.toImage().convertToFormat(QImage::Format_RGBA8888);
+                if (img.isNull()) return;
+                frame->put(img.constBits(), img.width(), img.height(), int(img.bytesPerLine()), false);
+                setStatus(QString());
+            });
+            // An error: the permission (macOS) when it is missing, else what Qt says
+            auto failed = [setStatus](const QString &e) { setStatus(screenCaptureAllowed(false) ? e : kScreenPermission); };
+            std::function<bool()> attach; // found (again) and started; false: not there now
+            if (!window) {
+                auto *capture = new QScreenCapture(holder);
+                session->setScreenCapture(capture);
+                QObject::connect(capture, &QScreenCapture::errorOccurred, holder,
+                                 [failed](QScreenCapture::Error, const QString &e) { failed(e); });
+                attach = [capture, id, setStatus] {
+                    if (capture->isActive()) return true;
+                    for (const auto &s : screensById()) {
+                        if (s.first != id) continue;
+                        capture->setScreen(s.second);
+                        capture->start();
+                        return true;
+                    }
+                    setStatus(QStringLiteral("Screen \"%1\" not found").arg(id));
+                    return false;
+                };
+            } else {
+#ifdef PINOL_HAS_WINDOW_CAPTURE
+                auto *capture = new QWindowCapture(holder);
+                session->setWindowCapture(capture);
+                QObject::connect(capture, &QWindowCapture::errorOccurred, holder,
+                                 [failed](QWindowCapture::Error, const QString &e) { failed(e); });
+                attach = [capture, id, setStatus] {
+                    if (capture->isActive() && capture->window().isValid()) return true;
+                    for (const auto &w : windowsById()) {
+                        if (w.first != id) continue;
+                        capture->setWindow(w.second);
+                        capture->start();
+                        return true;
+                    }
+                    setStatus(QStringLiteral("Window \"%1\" not found").arg(id));
+                    return false;
+                };
+#endif
+            }
+            if (!attach) return;
+            attach();
+            auto *again = new QTimer(holder);
+            again->setInterval(3000);
+            QObject::connect(again, &QTimer::timeout, holder, attach);
+            again->start();
+        };
+        QObject *app = QCoreApplication::instance();
+        if (!app) return;
+        holder->moveToThread(app->thread());
+        QMetaObject::invokeMethod(app, [start, setStatus] {
+            // macOS: asked once (the system's prompt); granted, it applies when Pinol is opened again
+            if (!screenCaptureAllowed(true)) setStatus(kScreenPermission);
+            else start();
+        });
+    }
+    ~ScreenInput() override { m_holder->deleteLater(); } // stopped and released in its own thread
+    bool update(Texture2D &tex) override { return m_frame->take(tex); }
+    QString status() const override
+    {
+        QMutexLocker lk(&m_status->mutex);
+        return m_status->text;
+    }
+
+private:
+    struct Status {
+        QMutex mutex;
+        QString text;
+    };
+    QObject *m_holder;
+    std::shared_ptr<LatestFrame> m_frame = std::make_shared<LatestFrame>();
+    std::shared_ptr<Status> m_status = std::make_shared<Status>();
+};
+#endif
+
 } // namespace
 
 static const QString kInputsFolder = QStringLiteral("/Pinol/Inputs/");
@@ -351,6 +578,10 @@ QString liveInputKind(const QString &uri)
     if (k == QLatin1String("ndi")) return QStringLiteral("NDI");
     if (k == QLatin1String("omt")) return QStringLiteral("OMT");
     if (k == QLatin1String("syphon")) return QStringLiteral("Syphon");
+    if (k == QLatin1String("spout")) return QStringLiteral("Spout");
+    if (k == QLatin1String("decklink")) return QStringLiteral("DeckLink");
+    if (k == QLatin1String("screen")) return QStringLiteral("Screen");
+    if (k == QLatin1String("window")) return QStringLiteral("Window");
     if (k == QLatin1String("test")) return QStringLiteral("Test");
     return {};
 }
@@ -362,6 +593,9 @@ QString liveInputName(const QString &uri)
         for (const QCameraDevice &d : QMediaDevices::videoInputs())
             if (QString::fromUtf8(d.id()) == rest(uri)) return d.description();
 #endif
+    if (part(uri, 1) == QLatin1String("decklink"))
+        for (const decklink::Port &p : decklink::inputPorts())
+            if (p.id == rest(uri)) return p.name;
     return rest(uri);
 }
 
@@ -376,6 +610,22 @@ std::vector<LiveInputInfo> listLiveInputs(const QString &folder)
     for (const LiveInputInfo &i : omtSources(folder)) out.push_back(i);
 #ifdef PINOL_HAS_SYPHON
     for (const LiveInputInfo &i : listSyphonInputs()) out.push_back(i);
+#endif
+#ifdef PINOL_HAS_SPOUT
+    for (const QString &name : spoutSenders()) out.push_back({QStringLiteral("input:spout:") + name, name, QStringLiteral("Spout")});
+#endif
+    // The ports that take a signal in (looked up once: decklink::rescan looks again); none without the driver
+    for (const decklink::Port &p : decklink::inputPorts())
+        out.push_back({QStringLiteral("input:decklink:") + p.id, p.name, QStringLiteral("DeckLink")});
+#ifdef PINOL_HAS_SCREEN_CAPTURE
+    for (const auto &s : screensById()) {
+        const QSize size = s.second->size() * s.second->devicePixelRatio();
+        out.push_back({QStringLiteral("input:screen:") + s.first, QStringLiteral("%1 (%2 × %3)").arg(s.first).arg(size.width()).arg(size.height()),
+                       QStringLiteral("Screen")});
+    }
+#endif
+#ifdef PINOL_HAS_WINDOW_CAPTURE
+    for (const auto &w : windowsById()) out.push_back({QStringLiteral("input:window:") + w.first, w.first, QStringLiteral("Window")});
 #endif
     return out;
 }
@@ -418,6 +668,30 @@ std::unique_ptr<LiveInput> createLiveInput(const QString &uri, const QString &fo
         return createSyphonInput(what, err);
 #else
         return fail(QStringLiteral("Syphon is only available on macOS"));
+#endif
+    }
+    if (kind == QLatin1String("spout")) {
+#ifdef PINOL_HAS_SPOUT
+        return std::make_unique<SpoutInput>(what);
+#else
+        return fail(QStringLiteral("Spout is only available on Windows"));
+#endif
+    }
+    if (kind == QLatin1String("decklink")) {
+        if (!decklink::compiledIn()) return fail(QStringLiteral("DeckLink: this build has no DeckLink SDK"));
+        auto input = std::make_unique<DeckLinkInput>();
+        QString e;
+        if (!input->open(what, &e)) return fail(e);
+        return input;
+    }
+    if (kind == QLatin1String("screen") || kind == QLatin1String("window")) {
+#ifdef PINOL_HAS_WINDOW_CAPTURE
+        return std::make_unique<ScreenInput>(kind == QLatin1String("window"), what);
+#elif defined(PINOL_HAS_SCREEN_CAPTURE)
+        if (kind == QLatin1String("screen")) return std::make_unique<ScreenInput>(false, what);
+        return fail(QStringLiteral("Window capture needs Qt 6.6 or later"));
+#else
+        return fail(QStringLiteral("Screen and window capture need Qt Multimedia 6.5 or later"));
 #endif
     }
     return fail(QStringLiteral("Unknown input: ") + uri);

@@ -1,6 +1,7 @@
 #pragma once
 // Blackmagic DeckLink (SDI / HDMI cards, UltraStudio): the output ports this machine has, the video modes each one
-// plays, and a viewport's picture sent to one of them (createDeckLinkPublisher, Publish.h).
+// plays, and a viewport's picture sent to one of them (createDeckLinkPublisher, Publish.h). And the inputs: the
+// pictures and the timecode coming in (a live input, LiveInput.h; ATC, TimecodeIo.h), both from the same port at once.
 //
 // The SDK's headers are in the source tree (third_party/decklink, Boost license); the driver (Desktop Video) is loaded
 // at run time: without it there is simply no port. The ports and their modes are looked up once and kept: asking the
@@ -11,8 +12,10 @@
 
 #include <QSize>
 #include <QString>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace decklink {
@@ -42,6 +45,38 @@ const Mode *bestMode(const std::vector<Mode> &modes, QSize size, double fps);
 
 // BGRA rows (top to bottom) to 8-bit 4:2:2 Y'CbCr ('2vuy': Cb Y0 Cr Y1), BT.709 (BT.601 below 720 lines), video range
 void bgraToUyvy(const uint8_t *bgra, int stride, int width, int height, uint8_t *out, int outStride);
+
+// 8-bit 4:2:2 Y'CbCr ('2vuy': Cb Y0 Cr Y1) or 10-bit ('v210': six pixels in four little-endian words) rows to RGBA
+// (top to bottom), BT.709 (BT.601 below 720 lines), video range; each pair of pixels with its own chroma
+void uyvyToRgba(const uint8_t *uyvy, int stride, int width, int height, uint8_t *out, int outStride);
+void v210ToRgba(const uint8_t *v210, int stride, int width, int height, uint8_t *out, int outStride);
+inline int v210RowBytes(int width) { return ((width + 47) / 48) * 128; } // the SDK's: whole blocks of 48 pixels
+
+// A picture that came in (valid during the call only): its rows top to bottom, as the card gives them
+struct InputFrame {
+    enum Format { Uyvy, V210, Bgra }; // 8-bit 4:2:2, 10-bit 4:2:2, 8-bit RGB (an RGB 4:4:4 signal)
+    Format format = Uyvy;
+    const uint8_t *data = nullptr; // null: no signal (the timecode may still be there)
+    int width = 0, height = 0, rowBytes = 0;
+    std::optional<Timecode> timecode; // its ATC (RP188, else VITC)
+};
+
+// The pictures an input takes, in whatever mode comes in (format detection): 4:2:2 as 8 or 10 bits as detected, RGB
+// when the signal is. The port is opened once for its pictures and its timecode (a TimecodeInput on the same port)
+class VideoInput
+{
+public:
+    using Callback = std::function<void(const InputFrame &)>; // each frame (the card's thread: return quickly)
+    VideoInput();
+    ~VideoInput(); // no call after it
+    bool open(const QString &port, Callback cb, QString *err); // empty: the first input
+    QString status() const;                                    // the port and the mode coming in
+    bool hasSignal() const;                                    // a picture is coming in
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
+};
 
 // The timecode an input carries (ATC: RP188, else VITC), in whatever mode comes in
 class TimecodeInput

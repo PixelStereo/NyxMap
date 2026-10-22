@@ -84,6 +84,28 @@ Assume all four controls still target the same opacity, the recalls have no dela
 
 The interaction produces **0.9 for that frame** and releases the active opacity fade. Without another MIDI message or filter change, the timeline writes again on the next frame and can return opacity to **0.5**. A still-pending delayed recall can execute later. Winning one write does not mean owning the parameter.
 
+## Countdown, stopwatch and clock generators
+
+The Media Bin lists **Countdown**, **Stopwatch** and **Clock** under Generators, with Text and Timecode. Dropped onto a layer, each one is a text layer (same font, size, color, alignment, outline and shadow controls as Text) that shows a time. Their settings and transport are layer parameters under `clock/`: OSC addresses (`/layer/<name>/clock/...`), interactions, snapshots and presets reach them like any other value.
+
+| Address | Generators | Meaning |
+|---|---|---|
+| `clock/target` | Countdown | `duration` or `time_of_day` (counts down to the next occurrence of `clock/target_time`, across midnight if needed). |
+| `clock/duration` | Countdown | Seconds it counts down from. |
+| `clock/target_time` | Countdown | Time of day, as text (`20:30:00`, `8:30 PM`). |
+| `clock/offset` | Stopwatch | Seconds it counts up from. |
+| `clock/format`, `clock/custom_format` | All | Countdown and stopwatch: `hh:mm:ss`, `mm:ss`, `ss`, with tenths (`.t`) or frames (`:ff`), or `custom` with tokens `h hh m mm s ss t tt ttt ff` and `'quoted text'`. Clock: `24h`, `12h`, or `custom` with a Qt date-time format. |
+| `clock/fps` | Countdown, Stopwatch | Frames per second for the `ff` token. |
+| `clock/at_zero`, `clock/zero_text`, `clock/overtime_color/r,g,b,a` | Countdown | At zero: `stop` (holds 00:00), `text` (shows the text), or `overtime` (counts on below zero in the overtime color). |
+| `clock/seconds`, `clock/date`, `clock/zone` | Clock | Seconds and date shown; time zone (empty: system, `UTC`, `+02:00`, `Europe/Paris`). `clock/zone` also applies to a countdown to a time of day. |
+| `clock/play` | Countdown, Stopwatch | Running or paused (stored in snapshots and presets). |
+| `clock/elapsed` | Countdown, Stopwatch | Seconds run since the start (stored; a recall leaves a clock that is already running untouched). |
+| `clock/start`, `clock/pause`, `clock/reset` | Countdown, Stopwatch | Actions. Reset returns to the start and pauses; starting a countdown that finished starts it again from its full duration. |
+| `clock/restart` | Countdown, Stopwatch | "Restart on recall": a snapshot or preset holding it on starts the clock from the beginning. |
+| `clock/value`, `clock/zero` | Read only | The time shown in seconds; whether a countdown reached zero. An internal interaction can follow `clock/zero` to drive another parameter at zero. |
+
+Countdowns and stopwatches follow real time (not the composition speed). Only their own transport and **STOP ALL** pause them. A project saves the elapsed time and running state; on load, a running clock continues from the saved value.
+
 ## Proposed improvements — not implemented
 
 | Priority | Proposal | Acceptance criteria |

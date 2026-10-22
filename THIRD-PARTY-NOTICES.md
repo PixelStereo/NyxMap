@@ -6,7 +6,7 @@ library).
 
 | Component | Use in Pinol | Licence | Licence text | Source |
 |---|---|---|---|---|
-| Qt 6 | User interface, OpenGL, multimedia | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source (Linux package: Ubuntu's Qt, see below) |
+| Qt 6 | User interface, OpenGL, multimedia, SVG images | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source (Linux package: Ubuntu's Qt, see below) |
 | Qt WebEngine (with Chromium) | Web Page generator (when the package is built with it) | GNU LGPL v3 (dynamically linked; also offered under GPL v2/v3); Chromium BSD 3-clause, its bundled components under their own licences | `licenses/LGPL-3.0.txt`, `licenses/chromium.txt` (Chromium's licence, and where the list of its components' licences is) | https://download.qt.io/official_releases/qt/ (Linux package: Ubuntu's `qt6-webengine`) |
 | FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample…) | Video and audio decoding | GNU LGPL v2.1 or later (dynamically linked; built without GPL components). The Windows package's FFmpeg may be built with `--enable-version3`, which makes it LGPL v3 or later; its `DEPENDENCIES.txt` states which | `licenses/LGPL-2.1.txt`; `licenses/LGPL-3.0.txt` for an LGPL v3 build | https://ffmpeg.org/download.html (Windows: https://github.com/BtbN/FFmpeg-Builds) |
 | miniaudio | Audio input and output | Public domain (Unlicense) or MIT No Attribution | `licenses/miniaudio.txt` | https://github.com/mackron/miniaudio |
@@ -39,7 +39,9 @@ Ubuntu's Qt packages: their source is on Launchpad (https://launchpad.net/ubuntu
 versions listed in `usr/bin/THIRD-PARTY-LINUX.md`. That file records every bundled binary with its Ubuntu binary and
 source package versions and licences; copyright and licence texts are in `usr/bin/licenses/linux`. The build checks
 that none of them comes from a package under the GPL only. FFmpeg is built from checksummed source without GPL components; its exact source URL,
-version and configuration are recorded in `usr/bin/DEPENDENCIES.txt`.
+version and configuration are recorded in `usr/bin/DEPENDENCIES.txt`. Its FFmpeg is linked with Ubuntu's OpenSSL
+(Apache-2.0; TLS for https, rtmps and HLS) and libsrt (MPL-2.0, `libsrt1.5-openssl`; the srt:// protocol), dynamically,
+both listed with their copyright files in `THIRD-PARTY-LINUX.md`. Qt SVG (LGPL v3, Ubuntu's `libqt6svg6`) renders SVG images.
 
 **macOS package.** It also contains the libraries Qt and FFmpeg depend on (images, fonts, compression, encryption,
 AV1 decoding…), copied from Homebrew when the package is built. Their list, versions, licences and licence texts are
@@ -49,5 +51,6 @@ that every FFmpeg library in it is LGPL and that no GPL-only library is in it.
 
 **Windows package.** Its FFmpeg DLLs come from a pinned, checksummed BtbN/FFmpeg-Builds "lgpl-shared" archive; the
 build checks that each one declares LGPL v2.1 or later or LGPL v3 or later and was configured without GPL or non-free
-parts, and records that licence in `DEPENDENCIES.txt`. Microsoft's `vc_redist.x64.exe` is included unmodified, under
+parts, and records that licence in `DEPENDENCIES.txt`. Those builds include OpenSSL (Apache-2.0) and libsrt (MPL-2.0)
+inside the FFmpeg DLLs, for TLS and SRT streams; their sources are linked from the BtbN/FFmpeg-Builds repository. Microsoft's `vc_redist.x64.exe` is included unmodified, under
 its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.

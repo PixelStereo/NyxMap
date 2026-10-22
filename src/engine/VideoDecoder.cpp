@@ -11,6 +11,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <QDir>
 #include <QFileInfo>
 #include <QStringList>
 #include <algorithm>
@@ -293,114 +294,78 @@ QString VideoDecoder::Info::colorDescription() const
     return fields.join(QStringLiteral(" · "));
 }
 
-bool VideoDecoder::open(const QString &path, QString *err)
+// The demuxer of a file, of an image sequence (FFmpeg's image2, from its folder and its pattern) or of a live stream
+// (its URL, with low-latency options and time limits). *fmt may come allocated (a live stream's interrupt callback).
+static int openInput(AVFormatContext **fmt, const QString &path, const VideoSource &source)
+{
+    AVDictionary *opts = nullptr;
+    const AVInputFormat *format = nullptr;
+    QByteArray target;
+    if (source.live) {
+        const QString url = path.trimmed();
+        const QString scheme = url.section(QLatin1Char(':'), 0, 0).toLower();
+        target = url.toUtf8();
+        av_dict_set(&opts, "fflags", "nobuffer", 0); // pictures as they come, not buffered while probing
+        av_dict_set(&opts, "probesize", "1000000", 0);
+        av_dict_set(&opts, "analyzeduration", "2000000", 0);
+        av_dict_set_int(&opts, "rw_timeout", VideoDecoder::kLiveTimeoutUs, 0); // no data: the read gives up
+        if (scheme == QLatin1String("rtsp") || scheme == QLatin1String("rtsps"))
+            av_dict_set(&opts, "rtsp_transport", source.rtspTcp ? "tcp" : "udp", 0);
+        // The socket time limit of these protocols ("timeout" would make RTMP listen for a connection instead)
+        if (scheme.startsWith(QLatin1String("rtsp")) || scheme.startsWith(QLatin1String("http")) ||
+            scheme == QLatin1String("tcp") || scheme == QLatin1String("udp") || scheme == QLatin1String("rtp") ||
+            scheme == QLatin1String("srt"))
+            av_dict_set_int(&opts, "timeout", VideoDecoder::kLiveTimeoutUs, 0);
+        if (scheme == QLatin1String("udp")) av_dict_set(&opts, "overrun_nonfatal", "1", 0); // a late reader skips
+    } else if (source.isSequence()) {
+        format = av_find_input_format("image2");
+        if (!format) return AVERROR_DEMUXER_NOT_FOUND;
+        QString folder = QDir(path).absolutePath();
+        folder.replace(QLatin1Char('%'), QStringLiteral("%%")); // the whole path is a pattern
+        target = (folder + QLatin1Char('/') + source.pattern).toUtf8();
+        const double fps = source.fps > 0 ? source.fps : 25.0;
+        av_dict_set(&opts, "framerate", QByteArray::number(fps, 'g', 10).constData(), 0);
+        av_dict_set_int(&opts, "start_number", source.start, 0);
+        av_dict_set(&opts, "pattern_type", "sequence", 0);
+    } else {
+        target = QFileInfo(path).absoluteFilePath().toUtf8();
+    }
+    const int r = avformat_open_input(fmt, target.constData(), format, &opts);
+    av_dict_free(&opts);
+    return r;
+}
+
+int VideoDecoder::interruptCallback(void *self) { return static_cast<VideoDecoder *>(self)->m_abort.load() ? 1 : 0; }
+
+bool VideoDecoder::open(const QString &path, QString *err, const VideoSource &source)
 {
     close();
-    QByteArray p = QFileInfo(path).absoluteFilePath().toUtf8();
-    int r = avformat_open_input(&m_fmt, p.constData(), nullptr, nullptr);
-    if (r < 0) {
-        if (err) *err = QStringLiteral("Unable to open video: ") + avErr(r);
-        m_fmt = nullptr;
-        return false;
+    m_abort = false;
+    m_live = source.live;
+    if (m_live) {
+        // Connected by the decode thread (it may take seconds, or never happen): nothing waits for it here
+        m_livePath = path.trimmed();
+        m_liveSource = source;
+        m_duration = 0;
+        m_fps = 25;
+        {
+            std::lock_guard<std::mutex> lk(m_infoMutex);
+            m_liveStatus = {};
+            m_liveCodecName.clear();
+            m_sourceInfo = {};
+            m_sourceInfo.fps = m_fps;
+        }
+        m_quit = false;
+        m_eof = false;
+        m_seekPending = false;
+        m_seekFailed = false;
+        m_needFirst = true;
+        m_draining = false;
+        m_lastPts = 0;
+        m_thread = std::thread(&VideoDecoder::runLive, this);
+        return true;
     }
-    avformat_find_stream_info(m_fmt, nullptr);
-    m_stream = av_find_best_stream(m_fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    if (m_stream < 0) {
-        if (err) *err = QStringLiteral("No decodable video stream.");
-        close();
-        return false;
-    }
-    // Only the picture is read here (the sound has its own reader)
-    for (unsigned i = 0; i < m_fmt->nb_streams; ++i)
-        if (int(i) != m_stream) m_fmt->streams[i]->discard = AVDISCARD_ALL;
-    AVStream *st = m_fmt->streams[m_stream];
-    const AVCodecParameters *par = st->codecpar;
-
-    if (hap::isHapTag(par->codec_tag) || par->codec_id == AV_CODEC_ID_HAP) {
-        // HAP: the packets are read here, the GPU samples their textures
-        m_hapTag = hap::isHapTag(par->codec_tag) ? par->codec_tag : MKTAG('H', 'a', 'p', '1');
-        m_codecName = hap::variantName(m_hapTag);
-        m_width = par->width;
-        m_height = par->height;
-        if (m_width <= 0 || m_height <= 0) {
-            if (err) *err = QStringLiteral("HAP video without a size.");
-            close();
-            return false;
-        }
-        // Its textures are allocated at this size: a damaged or hostile header must not ask for gigabytes
-        if (m_width > kMaxVideoSide || m_height > kMaxVideoSide
-            || av_image_check_size(unsigned(m_width), unsigned(m_height), 0, nullptr) < 0) {
-            if (err) *err = QStringLiteral("HAP video of an unsupported size (%1 × %2).").arg(m_width).arg(m_height);
-            close();
-            return false;
-        }
-    } else {
-        const AVCodec *dec = avcodec_find_decoder(par->codec_id);
-        if (!dec) {
-            const AVCodecDescriptor *d = avcodec_descriptor_get(par->codec_id);
-            if (err) *err = QStringLiteral("No decoder for this video (%1).").arg(d ? QString::fromUtf8(d->name) : QStringLiteral("unknown codec"));
-            close();
-            return false;
-        }
-        m_codec = avcodec_alloc_context3(dec);
-        if (!m_codec) {
-            if (err) *err = QStringLiteral("Unable to allocate video decoder: ") + avErr(AVERROR(ENOMEM));
-            close();
-            return false;
-        }
-        r = avcodec_parameters_to_context(m_codec, par);
-        if (r < 0) {
-            if (err) *err = QStringLiteral("Unable to configure video decoder: ") + avErr(r);
-            close();
-            return false;
-        }
-        m_codec->pkt_timebase = st->time_base;
-        const bool hw = s_hardware && setupHardware(dec);
-        // Hardware: a few threads feed it. Software: an even share of the cores (see softwareThreads)
-        m_codec->thread_count = hw ? 4 : softwareThreads();
-        m_codec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-        r = avcodec_open2(m_codec, dec, nullptr);
-        if (r < 0) {
-            if (err) *err = QStringLiteral("Decoder unavailable: ") + avErr(r);
-            close();
-            return false;
-        }
-        if (!hw) { // counted in the software budget until it closes
-            m_softwareThreads = std::max(1, m_codec->thread_count);
-            s_softwareThreadsInUse += m_softwareThreads;
-            ++s_softwareDecodersOpen;
-        }
-        m_codecName = QString::fromUtf8(dec->name);
-        m_width = m_codec->width;
-        m_height = m_codec->height;
-        if (m_width > kMaxVideoSide || m_height > kMaxVideoSide
-            || (m_width > 0 && m_height > 0 && av_image_check_size(unsigned(m_width), unsigned(m_height), 0, nullptr) < 0)) {
-            if (err) *err = QStringLiteral("Video of an unsupported size (%1 × %2).").arg(m_width).arg(m_height);
-            close();
-            return false;
-        }
-    }
-
-    m_timeBase = av_q2d(st->time_base);
-    m_startTime = st->start_time != AV_NOPTS_VALUE ? st->start_time * m_timeBase : 0.0;
-    AVRational fr = av_guess_frame_rate(m_fmt, st, nullptr);
-    m_fps = (fr.num > 0 && fr.den > 0) ? av_q2d(fr) : 25.0;
-    m_sourceInfo = {};
-    m_sourceInfo.width = m_width;
-    m_sourceInfo.height = m_height;
-    m_sourceInfo.fps = m_fps;
-    m_sourceInfo.codec = m_codecName;
-    readSourceColor(par, &m_sourceInfo);
-    if (m_fmt->duration > 0) m_duration = double(m_fmt->duration) / AV_TIME_BASE;
-    else if (st->duration > 0) m_duration = st->duration * m_timeBase;
-    else m_duration = 0;
-    m_sourceInfo.duration = m_duration;
-
-    m_frame = av_frame_alloc();
-    m_swFrame = av_frame_alloc();
-    m_packet = av_packet_alloc();
-    if (!m_frame || !m_swFrame || !m_packet) {
-        if (err) *err = QStringLiteral("Unable to allocate video buffers: ") + avErr(AVERROR(ENOMEM));
+    if (!openStreams(path, source, err)) {
         close();
         return false;
     }
@@ -421,11 +386,137 @@ bool VideoDecoder::open(const QString &path, QString *err)
     return true;
 }
 
-bool VideoDecoder::probe(const QString &path, Info *info, QString *err)
+// The demuxer and the decoder of the media, its size, rate and duration. On failure err says why, and what was made
+// stays for releaseStreams.
+bool VideoDecoder::openStreams(const QString &path, const VideoSource &source, QString *err)
 {
+    if (source.live) {
+        m_fmt = avformat_alloc_context();
+        if (!m_fmt) {
+            if (err) *err = avErr(AVERROR(ENOMEM));
+            return false;
+        }
+        m_fmt->interrupt_callback.callback = &VideoDecoder::interruptCallback;
+        m_fmt->interrupt_callback.opaque = this;
+    }
+    int r = openInput(&m_fmt, path, source);
+    if (r < 0) {
+        if (err) *err = (source.live ? QString() : QStringLiteral("Unable to open video: ")) + avErr(r);
+        m_fmt = nullptr;
+        return false;
+    }
+    avformat_find_stream_info(m_fmt, nullptr);
+    m_stream = av_find_best_stream(m_fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (m_stream < 0) {
+        if (err) *err = QStringLiteral("No decodable video stream.");
+        return false;
+    }
+    // Only the picture is read here (the sound has its own reader)
+    for (unsigned i = 0; i < m_fmt->nb_streams; ++i)
+        if (int(i) != m_stream) m_fmt->streams[i]->discard = AVDISCARD_ALL;
+    AVStream *st = m_fmt->streams[m_stream];
+    const AVCodecParameters *par = st->codecpar;
+    int width = 0, height = 0;
+
+    if (hap::isHapTag(par->codec_tag) || par->codec_id == AV_CODEC_ID_HAP) {
+        // HAP: the packets are read here, the GPU samples their textures
+        m_hapTag = hap::isHapTag(par->codec_tag) ? par->codec_tag : MKTAG('H', 'a', 'p', '1');
+        m_codecName = hap::variantName(m_hapTag);
+        width = par->width;
+        height = par->height;
+        if (width <= 0 || height <= 0) {
+            if (err) *err = QStringLiteral("HAP video without a size.");
+            return false;
+        }
+        // Its textures are allocated at this size: a damaged or hostile header must not ask for gigabytes
+        if (width > kMaxVideoSide || height > kMaxVideoSide
+            || av_image_check_size(unsigned(width), unsigned(height), 0, nullptr) < 0) {
+            if (err) *err = QStringLiteral("HAP video of an unsupported size (%1 × %2).").arg(width).arg(height);
+            return false;
+        }
+    } else {
+        const AVCodec *dec = avcodec_find_decoder(par->codec_id);
+        if (!dec) {
+            const AVCodecDescriptor *d = avcodec_descriptor_get(par->codec_id);
+            if (err) *err = QStringLiteral("No decoder for this video (%1).").arg(d ? QString::fromUtf8(d->name) : QStringLiteral("unknown codec"));
+            return false;
+        }
+        m_codec = avcodec_alloc_context3(dec);
+        if (!m_codec) {
+            if (err) *err = QStringLiteral("Unable to allocate video decoder: ") + avErr(AVERROR(ENOMEM));
+            return false;
+        }
+        r = avcodec_parameters_to_context(m_codec, par);
+        if (r < 0) {
+            if (err) *err = QStringLiteral("Unable to configure video decoder: ") + avErr(r);
+            return false;
+        }
+        m_codec->pkt_timebase = st->time_base;
+        const bool hw = s_hardware && setupHardware(dec);
+        // Hardware: a few threads feed it. Software: an even share of the cores (see softwareThreads)
+        m_codec->thread_count = hw ? 4 : softwareThreads();
+        // A live stream: each picture out as soon as it is decoded (frame threads would hold several back)
+        m_codec->thread_type = source.live ? FF_THREAD_SLICE : FF_THREAD_FRAME | FF_THREAD_SLICE;
+        if (source.live) m_codec->flags |= AV_CODEC_FLAG_LOW_DELAY;
+        r = avcodec_open2(m_codec, dec, nullptr);
+        if (r < 0) {
+            if (err) *err = QStringLiteral("Decoder unavailable: ") + avErr(r);
+            return false;
+        }
+        if (!hw) { // counted in the software budget until it closes
+            m_softwareThreads = std::max(1, m_codec->thread_count);
+            s_softwareThreadsInUse += m_softwareThreads;
+            ++s_softwareDecodersOpen;
+        }
+        m_codecName = QString::fromUtf8(dec->name);
+        width = m_codec->width;
+        height = m_codec->height;
+        if (width > kMaxVideoSide || height > kMaxVideoSide
+            || (width > 0 && height > 0 && av_image_check_size(unsigned(width), unsigned(height), 0, nullptr) < 0)) {
+            if (err) *err = QStringLiteral("Video of an unsupported size (%1 × %2).").arg(width).arg(height);
+            return false;
+        }
+    }
+
+    m_timeBase = av_q2d(st->time_base);
+    m_startTime = st->start_time != AV_NOPTS_VALUE ? st->start_time * m_timeBase : 0.0;
+    AVRational fr = av_guess_frame_rate(m_fmt, st, nullptr);
+    m_fps = (fr.num > 0 && fr.den > 0) ? av_q2d(fr) : 25.0;
+    Info info;
+    info.width = width;
+    info.height = height;
+    info.fps = m_fps;
+    info.codec = m_codecName;
+    readSourceColor(par, &info);
+    if (source.live) m_duration = 0; // whatever the stream says (HLS: the length of its playlist so far)
+    else if (m_fmt->duration > 0) m_duration = double(m_fmt->duration) / AV_TIME_BASE;
+    else if (st->duration > 0) m_duration = st->duration * m_timeBase;
+    else m_duration = 0;
+    info.duration = m_duration;
+    if (source.isSequence()) info.frames = int(std::lround(m_duration * m_fps));
+
+    m_frame = av_frame_alloc();
+    m_swFrame = av_frame_alloc();
+    m_packet = av_packet_alloc();
+    if (!m_frame || !m_swFrame || !m_packet) {
+        if (err) *err = QStringLiteral("Unable to allocate video buffers: ") + avErr(AVERROR(ENOMEM));
+        return false;
+    }
+    m_width = width;
+    m_height = height;
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    m_sourceInfo = info;
+    return true;
+}
+
+bool VideoDecoder::probe(const QString &path, Info *info, QString *err, const VideoSource &source)
+{
+    if (source.live) {
+        if (err) *err = QStringLiteral("A live stream is not probed");
+        return false;
+    }
     AVFormatContext *fmt = nullptr;
-    QByteArray p = QFileInfo(path).absoluteFilePath().toUtf8();
-    int r = avformat_open_input(&fmt, p.constData(), nullptr, nullptr);
+    int r = openInput(&fmt, path, source);
     if (r < 0) {
         if (err) *err = avErr(r);
         return false;
@@ -449,6 +540,7 @@ bool VideoDecoder::probe(const QString &path, Info *info, QString *err)
         info->fps = (fr.num > 0 && fr.den > 0) ? av_q2d(fr) : 0.0;
         if (fmt->duration > 0) info->duration = double(fmt->duration) / AV_TIME_BASE;
         else if (st->duration > 0) info->duration = st->duration * av_q2d(st->time_base);
+        if (source.isSequence()) info->frames = int(std::lround(info->duration * info->fps));
     }
     avformat_close_input(&fmt);
     return true;
@@ -457,6 +549,7 @@ bool VideoDecoder::probe(const QString &path, Info *info, QString *err)
 void VideoDecoder::close()
 {
     if (m_thread.joinable()) {
+        m_abort = true; // a live stream's connection or read in progress gives up
         {
             std::lock_guard<std::mutex> lk(m_mutex);
             m_quit = true;
@@ -482,6 +575,18 @@ void VideoDecoder::close()
     m_surfaceLayouts.clear();
     m_rgbaLayout.reset();
     m_hapScratch = {};
+    releaseStreams();
+    m_live = false;
+    m_livePath.clear();
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    m_sourceInfo = {};
+    m_liveStatus = {};
+    m_liveCodecName.clear();
+}
+
+// What openStreams made: the decoder, the demuxer, the hardware device (closed, or a live stream connecting again)
+void VideoDecoder::releaseStreams()
+{
     if (m_sws) sws_freeContext(m_sws);
     m_sws = nullptr;
     if (m_frame) av_frame_free(&m_frame);
@@ -500,15 +605,35 @@ void VideoDecoder::close()
     m_hwActive = false;
     m_hapTag = 0;
     m_stream = -1;
-    m_width = m_height = 0;
-    m_sourceInfo = {};
+    m_width = 0;
+    m_height = 0;
+    m_draining = false;
+    m_resendPacket = false;
+    m_consecutiveCodecErrors = 0;
 }
 
-int VideoDecoder::decodeThreads() const { return m_codec ? m_codec->thread_count : 0; }
+int VideoDecoder::decodeThreads() const { return m_codec && !m_live ? m_codec->thread_count : 0; }
 
 QString VideoDecoder::codecName() const
 {
+    if (m_live) {
+        std::lock_guard<std::mutex> lk(m_infoMutex);
+        return m_liveCodecName;
+    }
     return m_hwActive && !m_hwName.isEmpty() ? QStringLiteral("%1 (%2)").arg(m_codecName, m_hwName) : m_codecName;
+}
+
+double VideoDecoder::fps() const
+{
+    if (!m_live) return m_fps;
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    return m_sourceInfo.fps;
+}
+
+VideoDecoder::Info VideoDecoder::sourceInfo() const
+{
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    return m_sourceInfo;
 }
 
 void VideoDecoder::setTimeline(const Timeline &t)
@@ -529,7 +654,8 @@ bool VideoDecoder::fetch(double t, VideoFrame &out)
         return false;
     }
     int pick = -1;
-    for (size_t i = 0; i < m_queue.size(); ++i) {
+    if (m_live) pick = int(m_queue.size()) - 1; // a live stream: its newest picture, whatever the clock
+    for (size_t i = 0; !m_live && i < m_queue.size(); ++i) {
         if (m_queue[i].pts <= t + 1e-4) pick = int(i);
         else break;
     }
@@ -550,6 +676,10 @@ bool VideoDecoder::fetch(double t, VideoFrame &out)
     m_queue.pop_front();
     m_needFirst = false;
     ++m_metricFetched;
+    if (m_live) {
+        m_cv.notify_all();
+        return true;
+    }
     const double latenessMs = std::max(0.0, t - out.pts) * 1000.0;
     const uint64_t latenessNs = uint64_t(latenessMs * 1000000.0);
     m_metricLastLateNs.store(latenessNs, std::memory_order_relaxed);
@@ -839,7 +969,12 @@ int VideoDecoder::decodeNext(VideoFrame &f, double skipBefore)
         if (!m_resendPacket) {
             r = readVideoPacket();
             if (r < 0) {
-                // A disk/NAS error is not a clean end-of-media: retried, then reported, never looped silently
+                // A disk/NAS error is not a clean end-of-media: retried, then reported, never looped silently.
+                // A live stream connects again instead (runLive).
+                if (r != AVERROR_EOF && m_live) {
+                    if (!m_abort) markDecodeError(r, true, false);
+                    return -1;
+                }
                 if (r != AVERROR_EOF) return ioFailure(r);
                 const int sent = avcodec_send_packet(m_codec, nullptr); // drain delayed pictures
                 if (sent < 0 && sent != AVERROR_EOF) {
@@ -1022,6 +1157,91 @@ void VideoDecoder::produceBackwardWindow()
     m_backStack = std::move(got); // delivered from its end: the latest position first
     m_backEnd = a;
     if (a <= m_leg.to + 1e-9) m_legDone = true; // finished once the stack is delivered
+}
+
+// ---------------------------------------------------------------------------
+// Live streams
+// ---------------------------------------------------------------------------
+static constexpr size_t kLiveQueue = 2; // pictures a live stream keeps ahead: the older ones are dropped
+
+void VideoDecoder::setLiveState(LiveState s, const QString &reason, int attempts)
+{
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    m_liveStatus.state = s;
+    m_liveStatus.reason = reason;
+    m_liveStatus.attempts = attempts;
+    if (s == LiveState::Live)
+        m_liveCodecName = m_hwActive && !m_hwName.isEmpty() ? QStringLiteral("%1 (%2)").arg(m_codecName, m_hwName) : m_codecName;
+}
+
+VideoDecoder::LiveStatus VideoDecoder::liveStatus() const
+{
+    std::lock_guard<std::mutex> lk(m_infoMutex);
+    return m_liveStatus;
+}
+
+// Decode thread of a live stream: connects, decodes while pictures come, and connects again when the stream ends,
+// fails or stalls (no data for kLiveTimeoutUs), after a pause growing with the attempts. Nothing here blocks another
+// thread: FFmpeg's waits give up at their time limit, or at once when the decoder closes (interrupt callback).
+void VideoDecoder::runLive()
+{
+    int attempts = 0;
+    QString reason;
+    while (!m_abort) {
+        setLiveState(attempts ? LiveState::Reconnecting : LiveState::Connecting, reason, attempts);
+        QString err;
+        bool connected = false;
+        try {
+            connected = openStreams(m_livePath, m_liveSource, &err);
+        } catch (const std::bad_alloc &) {
+            err = avErr(AVERROR(ENOMEM));
+        }
+        ++attempts;
+        reason = err;
+        uint64_t frames = 0;
+        while (connected && !m_abort) {
+            VideoFrame f;
+            int r = 0;
+            const auto decodeStarted = std::chrono::steady_clock::now();
+            try {
+                r = decodeNext(f);
+            } catch (const std::bad_alloc &) {
+                markDecodeError(AVERROR(ENOMEM), false, false);
+                r = -1;
+            }
+            if (r == 2) continue;
+            if (r != 1) {
+                reason = r == 0 ? QStringLiteral("the stream ended")
+                                : avErr(m_lastAvError.load(std::memory_order_relaxed));
+                break;
+            }
+            recordDecodeTime(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - decodeStarted).count()));
+            ++m_metricDecoded;
+            accountFrame(f);
+            if (frames++ == 0) { // pictures again: the next drop starts its attempts afresh
+                attempts = 0;
+                setLiveState(LiveState::Live, QString(), 0);
+            }
+            f.pts = 0; // shown as soon as it is fetched (fetch takes the newest)
+            std::lock_guard<std::mutex> lk(m_mutex);
+            while (m_queue.size() >= kLiveQueue) { // the render thread is behind the stream: the oldest dropped
+                recycleLocked(std::move(m_queue.front()));
+                m_queue.pop_front();
+                ++m_metricSkipped;
+            }
+            m_queue.push_back(std::move(f));
+            recordQueueDepth(m_queue.size());
+        }
+        releaseStreams();
+        if (m_abort) break;
+        if (reason.isEmpty()) reason = QStringLiteral("no picture");
+        qWarning("Pinol live stream %s: %s; connecting again", qPrintable(m_livePath), qPrintable(reason));
+        // 0.5, 1, 2, 4, 8 s between attempts, then every 10 s
+        const auto pause = std::chrono::milliseconds(std::min(10000, 500 << std::min(attempts - 1, 4)));
+        std::unique_lock<std::mutex> lk(m_mutex);
+        m_cv.wait_for(lk, pause, [this] { return m_quit; });
+    }
 }
 
 void VideoDecoder::run()
