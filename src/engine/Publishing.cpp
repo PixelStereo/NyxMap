@@ -120,12 +120,16 @@ void Publishing::follow(const std::vector<std::pair<quint64, PublishSettings>> &
         it = m_pubs.erase(it);
     }
     for (size_t k = 0; k < viewports.size(); ++k) {
-        auto &slot = m_pubs[viewports[k].first];
-        if (!slot) {
+        Publication *current;
+        {
+            // Readers must never see a newly inserted null slot, and map insertion
+            // must use the same mutex as state()'s lookup.
             std::lock_guard<std::mutex> lk(m_stateMutex);
-            slot = std::make_unique<Publication>();
+            auto &slot = m_pubs[viewports[k].first];
+            if (!slot) slot = std::make_unique<Publication>();
+            current = slot.get();
         }
-        Publication &pub = *slot;
+        Publication &pub = *current;
         // The test tap follows the first viewport
         if (k == 0 && tapDirty) {
             pub.tap = tap ? std::shared_ptr<CpuPublisher>(createTapPublisher(tap)) : nullptr;
