@@ -916,11 +916,11 @@ void MediaBin::relinkSelected()
     QStringList ext;
     if (!Engine::isIsfFile(from))
         for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions()) ext << "*." + e;
-    ext << QStringLiteral("*.fs") << QStringLiteral("*.frag");
+    ext << QStringLiteral("*.fs") << QStringLiteral("*.frag") << QStringLiteral("*.tox");
     const QString to = QFileDialog::getOpenFileName(this, QStringLiteral("Replace \"%1\" with…").arg(QFileInfo(from).fileName()),
                                                     start + "/" + QFileInfo(from).fileName(),
                                                     (Engine::isIsfFile(from) ? QStringLiteral("ISF generators (%1)")
-                                                                             : QStringLiteral("Media and ISF generators (%1)"))
+                                                                             : QStringLiteral("Media, ISF and TouchDesigner components (%1)"))
                                                             .arg(ext.join(' ')) +
                                                         QStringLiteral(";;All Files (*)"));
     if (to.isEmpty() || to == from) return;

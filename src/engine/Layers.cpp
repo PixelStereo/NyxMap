@@ -477,7 +477,6 @@ void Engine::removeLayer(int i)
             for (auto &l : m_layers)
                 if (l->parent == g->layer->id) l->parent = g->layer->parent;
         normalizeLocked();
-        fixLayerReferences();
     }
     if (g->layer->video) g->layer->video->close(); // stop the decode thread outside the render thread
     releaseAudio(*m_audio, g->layer->audio);

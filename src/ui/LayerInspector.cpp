@@ -18,6 +18,7 @@
 #include "SourceColor.h"
 #include "Psd.h"
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -1281,6 +1282,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             pick->setObjectName(QStringLiteral("toxInput_") + top.first);
             pick->addItem(QStringLiteral("Disconnected"), QVariant::fromValue<qulonglong>(0));
             for (const auto &candidate : s.candidates) pick->addItem(candidate.second, QVariant::fromValue<qulonglong>(candidate.first));
+            const quint64 current = s.tox.inputs.value(top.first);
+            if (current && pick->findData(QVariant::fromValue<qulonglong>(current)) < 0)
+                pick->addItem(QStringLiteral("Unavailable layer (%1)").arg(current), QVariant::fromValue<qulonglong>(current));
             pick->setCurrentIndex(std::max(0, pick->findData(QVariant::fromValue<qulonglong>(s.tox.inputs.value(top.first)))));
             pick->setToolTip(QStringLiteral("The selected layer's picture after Color and FX, before Spatial mapping. Cyclic connections are refused."));
             form->addRow(QStringLiteral("Input TOP · ") + top.second, pick);
@@ -3536,7 +3540,7 @@ void LayerInspector::refreshDynamic()
         }
         for (const auto &[field, control] : m_toxColors) {
             if (!field || field->isAncestorOf(QApplication::focusWidget())) continue;
-            auto value = [&](int k) { return std::clamp(m_engine->parameterValue(m_layerId, control.path(k)).toDouble(), 0.0, 1.0); };
+            auto value = [this, c = control](int k) { return std::clamp(m_engine->parameterValue(m_layerId, c.path(k)).toDouble(), 0.0, 1.0); };
             if (auto *picker = qobject_cast<ColorPicker *>(field.data()))
                 picker->setColor(QColor::fromRgbF(float(value(0)), float(value(1)), float(value(2)), control.count == 4 ? float(value(3)) : 1.f));
         }

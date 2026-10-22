@@ -164,7 +164,7 @@ class NativeTox final : public ToxPlayer {
         TERelease(&m_context);
         m_cooking = m_resumed = m_started = false;
         m_loaded = m_finished = false;
-        m_lastCook = -1;
+        m_lastCook = -1; m_time = 0;
     }
     bool open() {
         m_started = true;
@@ -349,6 +349,7 @@ class NativeTox final : public ToxPlayer {
                                  TEOpenGLTextureGetWidth(texture), TEOpenGLTextureGetHeight(texture), dest,
                                  TETextureGetOrigin(reinterpret_cast<TETexture *>(texture)),
                                  TETextureGetComponentMap(reinterpret_cast<TETexture *>(texture)));
+        if (copied) { std::lock_guard<std::mutex> lock(m_mutex); m_error.clear(); }
         m_output = texture;
         m_fence = gl()->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         gl()->glFlush();
@@ -399,7 +400,7 @@ public:
             m_finished = false; m_cooking = false;
             copied = receive(dest, s);
         }
-        if (!s.playing) { if (error().isEmpty()) message(QStringLiteral("TouchEngine paused")); return copied; }
+        if (!s.playing) { m_lastCook = -1; if (error().isEmpty()) message(QStringLiteral("TouchEngine paused")); return copied; }
         if (m_cooking || m_output) return copied;
         if (!m_resumed) {
             if (!TEOpenGLContextSupportsTexturesForInstance(m_context, m_instance)) {
@@ -410,8 +411,8 @@ public:
         }
         const double now = m_clock.nsecsElapsed() / 1e9;
         if (m_lastCook >= 0 && now - m_lastCook < 1.0 / s.fps) return copied;
-        // Engine time advances by one requested interval; pausing never jumps forward.
-        if (m_lastCook >= 0) m_time += 1.0 / s.fps;
+        // Follow elapsed time under load; pausing holds component time without a jump on resume.
+        if (m_lastCook >= 0) m_time += now - m_lastCook;
         m_lastCook = now;
         for (const auto &c : controls()) {
             if (!s.values.contains(c.id) || c.type == ParamInfo::Type::Trigger) continue;

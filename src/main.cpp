@@ -77,8 +77,9 @@ int main(int argc, char *argv[])
 
     // The packages ship NDI and OMT: their smoke test checks that both load from where they were put
     if (cli.isSet(libsOpt)) {
-        const ndi::Lib &n = ndi::lib(QString());
-        const omt::Lib &o = omt::lib(QString());
+        const QString defaultRuntimePath;
+        const ndi::Lib &n = ndi::lib(defaultRuntimePath);
+        const omt::Lib &o = omt::lib(defaultRuntimePath);
         std::printf("NDI: %s\nOMT: %s\n", qPrintable(n.ok ? n.path : n.error), qPrintable(o.ok ? o.path : o.error));
         return n.ok && o.ok ? 0 : 5;
     }

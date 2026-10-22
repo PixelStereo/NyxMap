@@ -344,12 +344,12 @@ struct Layer {
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
 
-    // Web Page generator (type Web): its settings, and the page (its pictures taken by the render thread into
-    // sourceTex). applyWeb() hands the settings to the page once they are changed.
+    // TouchDesigner component: native SDK access stays on the render thread.
     ToxSettings tox;
     std::unique_ptr<ToxPlayer> toxPlayer;
     void applyTox() { tox.sanitize(); if (toxPlayer) toxPlayer->configure(tox); }
 
+    // Web Page generator: its settings and page; sourceTex holds its newest picture.
     WebSource web;
     std::unique_ptr<WebPage> webPage;
     void applyWeb()

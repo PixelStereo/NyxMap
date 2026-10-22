@@ -2404,7 +2404,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         {
             Sequencer::Sequence seq;
             seq.name = "Show";
-            seq.steps = {{e.snapshot(1).id, "Act 1"}, {e.snapshot(0).id, "Act 2"}, {987654, "gone"}};
+            seq.steps = {{e.snapshot(1).id, "Act 1", {}}, {e.snapshot(0).id, "Act 2", {}}, {987654, "gone", {}}};
             CHECK(e.sequencer().add(seq) == 0 && e.sequencer().current() == 0 && e.sequencer().position() == -1);
             CHECK(e.sequencer().next() == 0 && e.sequencer().previous() == -1);
             e.layer(V + 0)->opacity = 0.1f;

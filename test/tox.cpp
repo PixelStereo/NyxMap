@@ -91,12 +91,14 @@ int runToxTests(Engine &e, const QString &tmp)
           e.layer(restored)->tox.inputs.value("in2") == bid && e.layer(restored)->tox.output == "out2", "routing and output survive reopen");
     check(std::abs(e.parameterValue(id, c.path(0)).toDouble() - .6) < 1e-6, "parameter values survive reopen");
     e.removeLayer(e.indexOfId(aid));
-    check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == 0 && e.layer(e.indexOfId(id))->tox.inputs.value("in2") == bid,
-          "deleting one source disconnects only its TOP");
+    e.renderFrame();
+    fake = dynamic_cast<FakeTox *>(e.layer(e.indexOfId(id))->toxPlayer.get());
+    check(fake && !fake->textures.value("in1") && fake->textures.value("in2"),
+          "deleting one source disconnects only its TOP (stable reference kept for undo)");
     QJsonObject cyclic = e.layerJson(e.indexOfId(id));
     QJsonObject src = cyclic["source"].toObject();
     src["inputs"] = QJsonObject{{"in1", QString::number(id)}, {"in2", QString::number(bid)}}; cyclic["source"] = src;
-    e.replaceLayerById(id, cyclic);
+    e.replaceLayerJson(e.indexOfId(id), cyclic);
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == 0, "invalid saved routing repaired");
     const QString relinked = tmp + "/relinked.tox";
     check(QFile::copy(component, relinked) && e.relinkLayerMedia(e.indexOfId(id), component, relinked, &error), "relink component");

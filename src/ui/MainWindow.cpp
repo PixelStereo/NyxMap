@@ -792,7 +792,7 @@ void MainWindow::buildMenus()
         QSettings s;
         const QStringList files = QFileDialog::getOpenFileNames(this, QStringLiteral("Import to Media Bin"),
                                                                 s.value("dirs/video").toString(),
-                                                                QStringLiteral("Videos, Images and Audio (*)"));
+                                                                QStringLiteral("Videos, Images, Audio and TouchDesigner components (*)"));
         if (!files.isEmpty()) m_bin->importFiles(files);
     });
     file->addSeparator();
