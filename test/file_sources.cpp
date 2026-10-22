@@ -225,6 +225,10 @@ void streamTests(Engine &e, const QString &tmp)
     // Nothing listens there: the layer is set at once, the decoder reports why it connects again, the render thread
     // never waits for it
     e.newProject();
+    // Keep software OpenGL allocation and the previous SVG test's large render
+    // target out of the network latency measurement.
+    e.setCompositionSize(QSize(128, 64));
+    e.renderFrame();
     const int row = e.addLayer("Cam");
     const QString refused = "rtsp://127.0.0.1:9/none";
     QElapsedTimer timer;

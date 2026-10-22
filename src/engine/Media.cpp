@@ -83,7 +83,10 @@ bool Engine::detectImageSequence(const QString &folder, SequenceInfo *out)
     if (out) {
         QString prefix = best->prefix;
         prefix.replace(QLatin1Char('%'), QStringLiteral("%%"));
-        out->pattern = prefix + (width ? QStringLiteral("%0%1d").arg(width) : QStringLiteral("%d")) + QLatin1Char('.') + best->ext;
+        // QString::arg also recognizes %0; build FFmpeg's literal %0Nd without
+        // letting Qt substitute that part of the pattern.
+        out->pattern = prefix + (width ? QStringLiteral("%0") + QString::number(width) + QLatin1Char('d')
+                                      : QStringLiteral("%d")) + QLatin1Char('.') + best->ext;
         out->start = int(numbers.front());
         out->frames = frames;
     }
