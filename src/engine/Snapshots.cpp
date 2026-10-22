@@ -1013,6 +1013,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         if (!group && (curSrc.value("type") != src.value("type") || curSrc.value("layer") != src.value("layer") ||
                        curSrc.value("tap") != src.value("tap") || curSrc.value("uri") != src.value("uri") ||
                        curSrc.value("psd_layer") != src.value("psd_layer") || curSrc.value("clock") != src.value("clock") ||
+                       curSrc.value("timecode") != src.value("timecode") ||
                        curSrc.value("sequence") != src.value("sequence") || curSrc.value("live") != src.value("live") ||
                        curSrc.value("rtsp_tcp") != src.value("rtsp_tcp") ||
                        (src.value("type") == QLatin1String("tox") && curSrc.value("inputs") != src.value("inputs")) ||

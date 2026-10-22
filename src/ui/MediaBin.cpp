@@ -646,7 +646,7 @@ void MediaBin::refreshText()
                         "a text, or goes on into overtime in a color of its own. Start, Pause, Reset from its Source tab, "
                         "OSC, interactions, snapshots and sequences"));
     show(m_clocks[int(ClockKind::Stopwatch)], clocks[int(ClockKind::Stopwatch)],
-         QStringLiteral("Stopwatch generator: counts up from zero, or from a time of its own. Start, Pause, Reset from its "
+         QStringLiteral("Chronometer generator: counts up from zero, or from a time of its own. Start, Pause, Reset from its "
                         "Source tab, OSC, interactions, snapshots and sequences"));
     show(m_clocks[int(ClockKind::Clock)], clocks[int(ClockKind::Clock)],
          QStringLiteral("Clock generator: the time of day, 24 h or 12 h, with or without its seconds and its date, in the "
