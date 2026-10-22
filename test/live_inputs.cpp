@@ -12,6 +12,15 @@
 // the output's), and the listings and the inputs made when nothing is there (no card, no driver, no sender)
 namespace {
 
+// Height selects the conversion matrix and also the number of rows processed.
+// Supply every row, even when the assertions inspect just one of them.
+std::vector<uint8_t> repeatRow(const uint8_t *row, size_t stride, int height)
+{
+    std::vector<uint8_t> frame(stride * size_t(height));
+    for (int y = 0; y < height; ++y) std::copy(row, row + stride, frame.data() + size_t(y) * stride);
+    return frame;
+}
+
 // Six pixels in 16 bytes: Cb0 Y0 Cr0 | Y1 Cb2 Y2 | Cr2 Y3 Cb4 | Y4 Cr4 Y5, 10 bits each, little-endian words
 std::vector<uint8_t> packV210(const std::vector<int> &ys, const std::vector<int> &cbs, const std::vector<int> &crs, int width)
 {
@@ -60,17 +69,21 @@ int runLiveInputTests(Engine &e)
     // 8-bit 4:2:2, video range: white, black, and BT.709's red (HD) and BT.601's (SD)
     {
         const uint8_t row[8] = {128, 235, 128, 16, 128, 16, 128, 235}; // Cb Y0 Cr Y1: white, black; black, white
-        uint8_t out[16] = {};
-        decklink::uyvyToRgba(row, 8, 4, 1080, out, 16);
+        std::vector<uint8_t> output(size_t(1080) * 16);
+        uint8_t *out = output.data();
+        const auto picture = repeatRow(row, 8, 1080);
+        decklink::uyvyToRgba(picture.data(), 8, 4, 1080, out, 16);
         check(near(out, 255, 255, 255, 0) && near(out + 4, 0, 0, 0, 0) && near(out + 8, 0, 0, 0, 0) && near(out + 12, 255, 255, 255, 0),
               "UYVY white and black");
         const uint8_t red709[4] = {102, 63, 240, 63}, red601[4] = {90, 81, 240, 81};
-        decklink::uyvyToRgba(red709, 4, 2, 1080, out, 8);
+        const auto hdRed = repeatRow(red709, 4, 1080), sdRed = repeatRow(red601, 4, 576);
+        decklink::uyvyToRgba(hdRed.data(), 4, 2, 1080, out, 8);
         check(near(out, 255, 0, 0, 2) && near(out + 4, 255, 0, 0, 2), "UYVY BT.709 red (HD)");
-        decklink::uyvyToRgba(red601, 4, 2, 576, out, 8);
+        decklink::uyvyToRgba(sdRed.data(), 4, 2, 576, out, 8);
         check(near(out, 255, 0, 0, 2), "UYVY BT.601 red (SD)");
         const uint8_t odd[8] = {128, 126, 128, 126, 128, 235, 128, 0}; // three pixels: the last one of its pair
-        decklink::uyvyToRgba(odd, 8, 3, 1080, out, 12);
+        const auto oddPicture = repeatRow(odd, 8, 1080);
+        decklink::uyvyToRgba(oddPicture.data(), 8, 3, 1080, out, 12);
         check(near(out, 128, 128, 128, 1) && near(out + 8, 255, 255, 255, 0), "UYVY odd width");
     }
 
@@ -111,13 +124,15 @@ int runLiveInputTests(Engine &e)
             uyvy[size_t(x) * 2 + 2] = uint8_t(crs[size_t(x / 2)]);
             uyvy[size_t(x) * 2 + 3] = uint8_t(ys[size_t(x) + 1]);
         }
-        uint8_t a[width * 4] = {}, b[width * 4] = {};
-        decklink::v210ToRgba(v210.data(), int(v210.size()), width, 1080, a, width * 4);
-        decklink::uyvyToRgba(uyvy.data(), width * 2, width, 1080, b, width * 4);
+        const auto v210Picture = repeatRow(v210.data(), v210.size(), 1080);
+        const auto uyvyPicture = repeatRow(uyvy.data(), uyvy.size(), 1080);
+        std::vector<uint8_t> a(size_t(width) * 4 * 1080), b(a.size());
+        decklink::v210ToRgba(v210Picture.data(), int(v210.size()), width, 1080, a.data(), width * 4);
+        decklink::uyvyToRgba(uyvyPicture.data(), width * 2, width, 1080, b.data(), width * 4);
         bool same = true;
-        for (int i = 0; i < width * 4; ++i) same = same && std::abs(a[i] - b[i]) <= 1;
+        for (size_t i = 0; i < a.size(); ++i) same = same && std::abs(a[i] - b[i]) <= 1;
         check(same, "v210 as UYVY");
-        check(near(a, 0, 0, 0, 0) && near(a + 4, 255, 255, 255, 0) && near(a + 8, 255, 0, 0, 2), "v210 black, white, red");
+        check(near(a.data(), 0, 0, 0, 0) && near(a.data() + 4, 255, 255, 255, 0) && near(a.data() + 8, 255, 0, 0, 2), "v210 black, white, red");
     }
 
     // The listings: whatever is there (often nothing on a test machine), each one well formed
