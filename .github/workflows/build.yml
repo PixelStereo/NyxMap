@@ -91,6 +91,16 @@ jobs:
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 libicu74 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
+      - name: Prepare clean Ubuntu runtime images
+        timeout-minutes: 15
+        run: |
+          # Network setup has its own budget, separate from package execution.
+          for ubuntu_version in 24.04 26.04; do
+            timeout 420 docker build --progress=plain -t "pinol-clean-runtime:$ubuntu_version" \
+              --secret id=ubuntu-ca,src=/etc/ssl/certs/ca-certificates.crt \
+              --build-arg "UBUNTU_VERSION=$ubuntu_version" \
+              -f packaging/linux/smoke.Dockerfile packaging/linux
+          done
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
@@ -151,13 +161,11 @@ jobs:
           cp dist/Pinol-linux-x86_64*.AppImage dist/Pinol-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
           cp scripts/smoke_package.py scripts/smoke_linux_package.py "$RUNNER_TEMP/linux-smoke-scripts/"
           for ubuntu_version in 24.04 26.04; do
-            docker build -t pinol-clean-runtime --build-arg "UBUNTU_VERSION=$ubuntu_version" \
-              -f packaging/linux/smoke.Dockerfile packaging/linux
             docker run --rm --init --network none \
               -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
               -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
               -v "$PWD/test/media:/media:ro" \
-              pinol-clean-runtime python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
+              "pinol-clean-runtime:$ubuntu_version" python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
           done
       - uses: actions/upload-artifact@v4
         with:
