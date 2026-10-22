@@ -19,7 +19,19 @@ if(PINOL_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
   FetchContent_MakeAvailable(pinol_touchengine)
   add_library(pinol_touchengine_sdk SHARED IMPORTED GLOBAL)
   if(APPLE)
-    set(PINOL_TOUCHENGINE_FRAMEWORK "${pinol_touchengine_SOURCE_DIR}/TouchEngine.framework")
+    # Test/CLI executables also load the SDK via their build RPATH. Link against
+    # a signed private copy rather than the unsigned FetchContent checkout.
+    set(PINOL_TOUCHENGINE_FRAMEWORK "${CMAKE_BINARY_DIR}/runtimes/touchengine/TouchEngine.framework")
+    set(PINOL_TOUCHENGINE_STAGE_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/StageTouchEngineMac.cmake")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PINOL_TOUCHENGINE_STAGE_SCRIPT}")
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${pinol_touchengine_SOURCE_DIR}/TouchEngine.framework"
+      "-DDESTINATION=${PINOL_TOUCHENGINE_FRAMEWORK}"
+      -P "${PINOL_TOUCHENGINE_STAGE_SCRIPT}"
+      RESULT_VARIABLE _te_staging_result)
+    if(NOT _te_staging_result STREQUAL "0")
+      message(FATAL_ERROR "Could not prepare the signed TouchEngine SDK")
+    endif()
     set_target_properties(pinol_touchengine_sdk PROPERTIES
       IMPORTED_LOCATION "${PINOL_TOUCHENGINE_FRAMEWORK}/TouchEngine"
       FRAMEWORK TRUE
