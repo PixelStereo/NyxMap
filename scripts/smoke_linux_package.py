@@ -36,6 +36,12 @@ def check_tree(tree):
     for plugin in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
         if not (tree / "usr/plugins" / plugin).is_file():
             sys.exit(f"Missing plugin: {plugin}")
+    # Qt WebEngine in the package (the Web Page generator): its helper process and data next to it, where AppRun says
+    if any((tree / "usr/lib").glob("libQt6WebEngineCore.so*")):
+        for required in ("libexec/QtWebEngineProcess", "resources/qtwebengine_resources.pak",
+                         "translations/qtwebengine_locales/en-US.pak"):
+            if not (tree / "usr" / required).is_file():
+                sys.exit(f"Missing Qt WebEngine file: {required}")
     check_xdg_open(tree)
 
 

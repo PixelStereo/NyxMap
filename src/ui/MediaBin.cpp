@@ -273,6 +273,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     };
     m_text = generator(QStringLiteral("Text"), kTextGeneratorPath);
     m_timecode = generator(QStringLiteral("Timecode"), kTimecodeGeneratorPath);
+    // Web Page: only when the application has a browser (Qt WebEngine)
+    m_web = webPagesAvailable() ? generator(QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
     m_inputs = new BinItem(m_tree, m_generators);
     m_inputs->setText(0, QStringLiteral("Inputs"));
     m_isf = new BinItem(m_tree, {QStringLiteral("ISF")});
@@ -596,12 +598,13 @@ void MediaBin::refreshInputs()
 void MediaBin::refreshText()
 {
     const SortingPause sorting(m_tree);
-    QStringList texts, timecodes;
+    QStringList texts, timecodes, webs;
     {
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
             if (l->type == SourceType::Text) (l->timecode ? timecodes : texts) << l->name;
+            if (l->type == SourceType::Web) webs << l->name;
         }
     }
     auto show = [](QTreeWidgetItem *it, const QStringList &users, const QString &what) {
@@ -616,6 +619,10 @@ void MediaBin::refreshText()
     show(m_timecode, timecodes,
          QStringLiteral("Timecode generator: shows a timecode, from its own clock (time of day, free run) or received "
                         "(LTC, MTC, ATC), and can send it (LTC, MTC)"));
+    if (m_web)
+        show(m_web, webs,
+             QStringLiteral("Web Page generator: a web page (an address, or a local HTML file) rendered at its own size and "
+                            "frame rate, its background transparent if asked; its sound is muted"));
     m_inputs->setText(0, QStringLiteral("Inputs (%1)").arg(m_inputs->childCount()));
 }
 
