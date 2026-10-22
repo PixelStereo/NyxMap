@@ -404,6 +404,61 @@ const std::vector<Parameter *> &Layer::parameters()
             }
     }
 
+    // Web Page generator (WebPage.h): each change goes to its page at once (a new URL loads it; the others keep it)
+    if (type == SourceType::Web) {
+        WebSource *w = &web;
+        const WebSource def;
+        add("web/url", "Web › URL", T::Text)
+            .byDefault(QString())
+            .bind([w] { return QVariant(w->url); },
+                  [self](const QVariant &v) {
+                      self->web.url = v.toString();
+                      self->applyWeb();
+                  });
+        for (int axis = 0; axis < 2; ++axis) { // the size of its picture: the composition's by default
+            int WebSource::*f = axis ? &WebSource::height : &WebSource::width;
+            add(axis ? "web/height" : "web/width", axis ? "Web › Height (px)" : "Web › Width (px)", T::Int)
+                .range(16, 7680)
+                .limits(1, WebSource::kMaxSize)
+                .ramp(Parameter::Ramp::Cut)
+                .animatable(false)
+                .byDefault([C, axis] { return QVariant(axis ? C().height() : C().width()); })
+                .bind([w, f] { return QVariant(w->*f); },
+                      [self, f](const QVariant &v) {
+                          self->web.*f = v.toInt();
+                          self->applyWeb();
+                          self->srcWidth = self->web.width;
+                          self->srcHeight = self->web.height;
+                      });
+        }
+        num("web/fps", "Web › Frame Rate (fps)", WebSource::kMinFps, WebSource::kMaxFps, def.fps, [w] { return w->fps; },
+            [self](double v) {
+                self->web.fps = v;
+                self->applyWeb();
+            })
+            .step(1)
+            .ramp(Parameter::Ramp::Cut)
+            .animatable(false);
+        num("web/zoom", "Web › Zoom", WebSource::kMinZoom, WebSource::kMaxZoom, def.zoom, [w] { return w->zoom; },
+            [self](double v) {
+                self->web.zoom = v;
+                self->applyWeb();
+            })
+            .step(0.05)
+            .ramp(Parameter::Ramp::Cut)
+            .animatable(false);
+        add("web/transparent", "Web › Transparent Background", T::Bool)
+            .byDefault(def.transparent)
+            .bind([w] { return QVariant(w->transparent); },
+                  [self](const QVariant &v) {
+                      self->web.transparent = v.toBool();
+                      self->applyWeb();
+                  });
+        add("web/reload", "Web › Reload", T::Trigger).bind(nullptr, [self](const QVariant &) {
+            if (self->webPage) self->webPage->reload();
+        });
+    }
+
     // The shaders: the generator's at the layer's top (its speed: the pace of its TIME), each effect under fx/<fx>/
     auto shader = [&](const IsfInstance &inst, const QString &prefix, const QString &title, bool effect) {
         for (Parameter p : inst.parameters(title)) {

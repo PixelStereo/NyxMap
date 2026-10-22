@@ -108,13 +108,14 @@ $ffSha = FromWorkflow "FFMPEG_SHA256:\s*(\S+)" "FFmpeg checksum"
 $deps = Join-Path $PSScriptRoot "build-deps"
 New-Item -ItemType Directory -Force $deps | Out-Null
 
-# --- Qt (with Qt Multimedia), through aqtinstall
+# --- Qt (with Qt Multimedia, and Qt WebEngine for the Web Page generator: it needs Qt WebChannel and Qt Positioning),
+# through aqtinstall
 $qtDir = Join-Path $deps "Qt\$qtVersion\$($qtArch -replace '^win64_', '')"
 if (-not (Test-Path "$qtDir\bin\qmake.exe")) {
     if (-not $Install) { Fail "Qt $qtVersion is not in $qtDir" }
-    Step "Installing Qt $qtVersion ($qtArch, with Qt Multimedia) in build-deps\Qt"
+    Step "Installing Qt $qtVersion ($qtArch, with Qt Multimedia and Qt WebEngine) in build-deps\Qt"
     Invoke-Python -m pip install --user --upgrade aqtinstall; Native "pip install aqtinstall"
-    Invoke-Python -m aqt install-qt windows desktop $qtVersion $qtArch -m qtmultimedia -O (Join-Path $deps "Qt"); Native "Qt installation"
+    Invoke-Python -m aqt install-qt windows desktop $qtVersion $qtArch -m qtmultimedia qtwebengine qtwebchannel qtpositioning -O (Join-Path $deps "Qt"); Native "Qt installation"
 }
 
 # --- FFmpeg: the LGPL shared build the CI uses, checksummed

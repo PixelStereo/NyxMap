@@ -11,6 +11,7 @@
 #include "Publish.h"
 #include "VideoDecoder.h"
 #include "VideoTexture.h"
+#include "WebPage.h"
 
 #include <QColor>
 #include <QColorSpace>
@@ -29,8 +30,8 @@
 
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
-// `Text`: rendered text layer with system fonts, word wrapping, and animation.
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input };
+// `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
@@ -39,6 +40,9 @@ inline bool isTextGeneratorPath(const QString &p) { return QString(p).replace('\
 // The Timecode generator: a text layer that shows a timecode (TimecodeClock.h), from the Media Bin like a file
 inline const QString kTimecodeGeneratorPath = QStringLiteral("/Pinol/Generators/Timecode");
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
+// The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
+inline const QString kWebGeneratorPath = QStringLiteral("/Pinol/Generators/Web Page");
+inline bool isWebGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kWebGeneratorPath); }
 // Where the picture of a layer used as a source is taken
 enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
@@ -319,6 +323,16 @@ struct Layer {
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
 
+    // Web Page generator (type Web): its settings, and the page (its pictures taken by the render thread into
+    // sourceTex). applyWeb() hands the settings to the page once they are changed.
+    WebSource web;
+    std::unique_ptr<WebPage> webPage;
+    void applyWeb()
+    {
+        web.sanitize();
+        if (webPage) webPage->configure(web);
+    }
+
     // ISF generator
     std::unique_ptr<IsfInstance> generator;
     int genWidth = 1920, genHeight = 1080;
@@ -413,8 +427,14 @@ struct Layer {
     }
     double position() const { return timeline().position(clock); }
     bool atEnd() const { return timeline().ended(clock); } // One-shot / Stop: played to the end
-    int sourceWidth() const { return type == SourceType::Isf ? genWidth : type == SourceType::Text ? text.width : srcWidth; }
-    int sourceHeight() const { return type == SourceType::Isf ? genHeight : type == SourceType::Text ? text.height : srcHeight; }
+    int sourceWidth() const
+    {
+        return type == SourceType::Isf ? genWidth : type == SourceType::Text ? text.width : type == SourceType::Web ? web.width : srcWidth;
+    }
+    int sourceHeight() const
+    {
+        return type == SourceType::Isf ? genHeight : type == SourceType::Text ? text.height : type == SourceType::Web ? web.height : srcHeight;
+    }
     bool hasPicture() const { return isGroup || isViewport || (type != SourceType::Audio && !(type == SourceType::None && missingType == SourceType::Audio)); }
     bool isText() const { return type == SourceType::Text; }
     QSize viewportSize() const { return QSize(std::max(1, vpWidth), std::max(1, vpHeight)); }
