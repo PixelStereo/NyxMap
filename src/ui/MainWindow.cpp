@@ -1332,6 +1332,31 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         refreshAll();
         return true;
     }
+    if (const std::optional<ClockKind> kind = clockGeneratorOfPath(path)) { // the built-in Countdown, Stopwatch, Clock
+        const QString name = clockKindName(*kind);
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && (l->isGroup || l->isViewport)) {
+                lk.unlock();
+                statusBar()->showMessage(QStringLiteral("A group or a viewport has no source: drop the %1 onto a layer.")
+                                             .arg(name.toLower()), 6000);
+                return false;
+            }
+        }
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        if (!m_engine->setLayerClock(i, *kind)) return false;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = name;
+        }
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load %1 Generator").arg(name), beforeAnimations));
+        selectLayer(i);
+        refreshAll();
+        return true;
+    }
     if (isTextGeneratorPath(path)) { // the built-in Text generator, dragged from the Media Bin
         {
             Engine::Lock lk(&m_engine->mutex());
@@ -1446,7 +1471,7 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
     for (const QString &p : paths) {
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
-        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty()) { // built in, or live: never imported into the Media Bin
+        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || !liveInputUriOfPath(p).isEmpty()) { // built in, or live: never imported into the Media Bin
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
         } else if (effect) {
             loadIntoLayer(layer, p);

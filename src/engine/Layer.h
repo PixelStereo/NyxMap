@@ -1,6 +1,7 @@
 #pragma once
 #include "Anim.h"
 #include "AudioStream.h"
+#include "ClockGenerator.h"
 #include "Gl.h"
 #include "Isf.h"
 #include "LiveInput.h"
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
@@ -39,6 +41,22 @@ inline bool isTextGeneratorPath(const QString &p) { return QString(p).replace('\
 // The Timecode generator: a text layer that shows a timecode (TimecodeClock.h), from the Media Bin like a file
 inline const QString kTimecodeGeneratorPath = QStringLiteral("/Pinol/Generators/Timecode");
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
+// The Countdown, Stopwatch and Clock generators: text layers that show a time (ClockGenerator.h), from the Media Bin too
+inline const QString kCountdownGeneratorPath = QStringLiteral("/Pinol/Generators/Countdown");
+inline const QString kStopwatchGeneratorPath = QStringLiteral("/Pinol/Generators/Stopwatch");
+inline const QString kClockGeneratorPath = QStringLiteral("/Pinol/Generators/Clock");
+inline std::optional<ClockKind> clockGeneratorOfPath(const QString &p)
+{
+    const QString q = QString(p).replace('\\', '/');
+    if (q.endsWith(kCountdownGeneratorPath)) return ClockKind::Countdown;
+    if (q.endsWith(kStopwatchGeneratorPath)) return ClockKind::Stopwatch;
+    if (q.endsWith(kClockGeneratorPath)) return ClockKind::Clock;
+    return std::nullopt;
+}
+inline QString clockGeneratorPath(ClockKind k)
+{
+    return k == ClockKind::Countdown ? kCountdownGeneratorPath : k == ClockKind::Stopwatch ? kStopwatchGeneratorPath : kClockGeneratorPath;
+}
 // Where the picture of a layer used as a source is taken
 enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
@@ -349,6 +367,8 @@ struct Layer {
     // A Timecode generator (a text source showing its clock): its settings and its clock
     std::optional<TimecodeSettings> timecode;
     std::shared_ptr<TimecodeClock> tcClock;
+    // A Countdown, Stopwatch or Clock generator (a text source showing its time): its settings and its transport
+    std::shared_ptr<ClockGenerator> clockGen;
     unsigned masksRevision = 1;
     Texture2D shapeMaskSurface, shapeMaskComp; // their alpha, in its picture and in the composition
     unsigned shapeMaskSurfaceRev = 0, shapeMaskCompRev = 0;

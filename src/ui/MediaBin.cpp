@@ -257,7 +257,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_videos = new BinItem(m_tree, {QStringLiteral("Videos")});
     m_images = new BinItem(m_tree, {QStringLiteral("Images")});
     m_audios = new BinItem(m_tree, {QStringLiteral("Audio")});
-    // The generators, built in, always there: Text, Timecode
+    // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock
     m_generators = new BinItem(m_tree, m_audios);
     m_generators->setText(0, QStringLiteral("Generators"));
     auto generator = [this](const QString &name, const QString &path) {
@@ -273,6 +273,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     };
     m_text = generator(QStringLiteral("Text"), kTextGeneratorPath);
     m_timecode = generator(QStringLiteral("Timecode"), kTimecodeGeneratorPath);
+    for (ClockKind k : {ClockKind::Countdown, ClockKind::Stopwatch, ClockKind::Clock})
+        m_clocks[int(k)] = generator(clockKindName(k), clockGeneratorPath(k));
     m_inputs = new BinItem(m_tree, m_generators);
     m_inputs->setText(0, QStringLiteral("Inputs"));
     m_isf = new BinItem(m_tree, {QStringLiteral("ISF")});
@@ -596,12 +598,12 @@ void MediaBin::refreshInputs()
 void MediaBin::refreshText()
 {
     const SortingPause sorting(m_tree);
-    QStringList texts, timecodes;
+    QStringList texts, timecodes, clocks[3];
     {
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
-            if (l->type == SourceType::Text) (l->timecode ? timecodes : texts) << l->name;
+            if (l->type == SourceType::Text) (l->clockGen ? clocks[int(l->clockGen->kind())] : l->timecode ? timecodes : texts) << l->name;
         }
     }
     auto show = [](QTreeWidgetItem *it, const QStringList &users, const QString &what) {
@@ -616,6 +618,16 @@ void MediaBin::refreshText()
     show(m_timecode, timecodes,
          QStringLiteral("Timecode generator: shows a timecode, from its own clock (time of day, free run) or received "
                         "(LTC, MTC, ATC), and can send it (LTC, MTC)"));
+    show(m_clocks[int(ClockKind::Countdown)], clocks[int(ClockKind::Countdown)],
+         QStringLiteral("Countdown generator: counts down from a duration, or to a time of day, to zero; then holds, shows "
+                        "a text, or goes on into overtime in a color of its own. Start, Pause, Reset from its Source tab, "
+                        "OSC, interactions, snapshots and sequences"));
+    show(m_clocks[int(ClockKind::Stopwatch)], clocks[int(ClockKind::Stopwatch)],
+         QStringLiteral("Stopwatch generator: counts up from zero, or from a time of its own. Start, Pause, Reset from its "
+                        "Source tab, OSC, interactions, snapshots and sequences"));
+    show(m_clocks[int(ClockKind::Clock)], clocks[int(ClockKind::Clock)],
+         QStringLiteral("Clock generator: the time of day, 24 h or 12 h, with or without its seconds and its date, in the "
+                        "system's time zone or another one"));
     m_inputs->setText(0, QStringLiteral("Inputs (%1)").arg(m_inputs->childCount()));
 }
 

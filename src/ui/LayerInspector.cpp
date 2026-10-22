@@ -116,6 +116,7 @@ struct LayerValues {
     int cols = 4, rows = 4;
     TextSource text; // Text generator
     std::optional<TimecodeSettings> timecode; // a Timecode generator
+    std::optional<ClockSettings> clock;       // a Countdown, Stopwatch or Clock generator
 
     static LayerValues take(Engine *e, int index)
     {
@@ -195,6 +196,7 @@ struct LayerValues {
         s.rows = l->mapping.rows;
         s.text = l->text;
         s.timecode = l->timecode;
+        if (l->clockGen) s.clock = l->clockGen->settings();
         if (!l->isViewport) {
             const Layer *top = l;
             while (top->parent) {
@@ -530,6 +532,38 @@ void LayerInspector::editSource(const QString &text, const std::function<void()>
 
 // --- Building ----------------------------------------------------------------
 
+// A Countdown, Stopwatch or Clock in a few words: where it starts, where it goes, which time it tells
+static QString clockSummary(const ClockSettings &c)
+{
+    switch (c.kind) {
+    case ClockKind::Countdown:
+        return c.target == ClockSettings::Target::TimeOfDay
+                   ? QStringLiteral("to %1").arg(c.targetTime.toString(QStringLiteral("HH:mm:ss")))
+                   : QStringLiteral("from %1").arg(ClockGenerator::formatDuration(c.duration, QStringLiteral("hh:mm:ss")));
+    case ClockKind::Stopwatch: return QStringLiteral("from %1").arg(ClockGenerator::formatDuration(c.offset, QStringLiteral("hh:mm:ss")));
+    case ClockKind::Clock: return c.zone.trimmed().isEmpty() ? QStringLiteral("Local time") : c.zone.trimmed();
+    }
+    return {};
+}
+
+// A duration typed: "90", "1:30", "01:00:00", "2:30.5" (a minus before it: below zero)
+static std::optional<double> parseClockDuration(QString text)
+{
+    text = text.trimmed();
+    const bool minus = text.startsWith(QLatin1Char('-'));
+    if (minus) text.remove(0, 1);
+    const QStringList parts = text.split(QLatin1Char(':'));
+    if (text.isEmpty() || parts.size() > 3) return std::nullopt;
+    double total = 0;
+    for (const QString &p : parts) {
+        bool ok = false;
+        const double x = p.trimmed().toDouble(&ok);
+        if (!ok || x < 0 || !std::isfinite(x)) return std::nullopt;
+        total = total * 60 + x;
+    }
+    return minus ? -total : total;
+}
+
 static QString layerNameOf(Engine *e, int i)
 {
     Engine::Lock lk(&e->mutex());
@@ -541,6 +575,7 @@ void LayerInspector::rebuild()
 {
     m_layoutKey = layoutKey();
     m_tcTransport.reset();
+    m_clockUi.reset();
     m_sourceColorSpace = nullptr;
     m_sourceColorStatus = nullptr;
     if (m_content) {
@@ -835,8 +870,10 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         break;
     case SourceType::Text:
         d << QStringLiteral("Color space: Unspecified (generated)");
-        kind = s.timecode ? QStringLiteral("Timecode") : QStringLiteral("Text");
-        name = s.timecode ? TimecodeSettings::sourceName(s.timecode->source) : s.text.content.section('\n', 0, 0).left(40);
+        kind = s.clock ? clockKindName(s.clock->kind) : s.timecode ? QStringLiteral("Timecode") : QStringLiteral("Text");
+        name = s.clock      ? clockSummary(*s.clock)
+               : s.timecode ? TimecodeSettings::sourceName(s.timecode->source)
+                            : s.text.content.section('\n', 0, 0).left(40);
         d << QStringLiteral("%1 × %2").arg(s.text.width).arg(s.text.height);
         break;
     case SourceType::Layer: {
@@ -1137,7 +1174,261 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             return x;
         };
 
-        if (s.timecode) { // a Timecode generator: its clock instead of a text typed
+        if (s.clock) { // a Countdown, Stopwatch or Clock: its settings and its transport (clock/*) instead of a text typed
+            const ClockSettings cs = *s.clock;
+            const ClockKind kind = cs.kind;
+            auto *box = new QGroupBox(clockKindName(kind));
+            auto *cf = new QFormLayout(box);
+            cf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            // Each setting is a value of the layer: undone, held by snapshots and presets, sent by OSC
+            auto set = [this](const QString &path, const QJsonValue &v, const QString &label) {
+                if (m_engine->isLocked(m_layer)) return;
+                cmd::setValue(m_undo, m_engine, m_layerId, path, v, label);
+                refreshClock();
+                // Its fields follow its settings (a target, a format, what it does at zero): made again when they change
+                QMetaObject::invokeMethod(this, [this] {
+                    if (m_layoutKey != layoutKey()) rebuild();
+                }, Qt::QueuedConnection);
+            };
+            auto choose = [this, set](QComboBox *box, const QString &path, const QString &label) {
+                connect(box, qOverload<int>(&QComboBox::activated), this,
+                        [set, box, path, label](int) { set(path, box->currentData().toString(), label); });
+            };
+            auto combo = [this](const QList<QPair<QString, QString>> &items, const QString &current) {
+                auto *b = new QComboBox;
+                for (const auto &[label, key] : items) b->addItem(label, key);
+                b->setCurrentIndex(std::max(0, b->findData(current)));
+                b->setEnabled(!m_locked);
+                return b;
+            };
+            auto line = [this](const QString &text, const QString &tip) {
+                auto *e = new QLineEdit(text);
+                e->setToolTip(tip);
+                e->setEnabled(!m_locked);
+                return e;
+            };
+            auto durationText = [](double secs) {
+                const bool whole = std::abs(secs - std::round(secs)) < 1e-6;
+                return ClockGenerator::formatDuration(secs, whole ? QStringLiteral("hh:mm:ss") : QStringLiteral("hh:mm:ss.t"));
+            };
+            // A duration typed (h:m:s, m:s or seconds): set, or shown again as it is
+            auto durationField = [this, set, durationText](QLineEdit *e, const QString &path, double now, const QString &label,
+                                                           bool negative) {
+                connect(e, &QLineEdit::editingFinished, this, [this, e, path, now, label, negative, set, durationText] {
+                    const std::optional<double> v = parseClockDuration(e->text());
+                    if (v && (negative || *v >= 0)) set(path, *v, label);
+                    else e->setText(durationText(now));
+                    e->clearFocus();
+                });
+            };
+            const bool timeOfDay = kind == ClockKind::Countdown && cs.target == ClockSettings::Target::TimeOfDay;
+            if (kind == ClockKind::Countdown) {
+                auto *target = combo({{QStringLiteral("A duration"), QStringLiteral("duration")},
+                                      {QStringLiteral("A time of day"), QStringLiteral("time_of_day")}},
+                                     timeOfDay ? QStringLiteral("time_of_day") : QStringLiteral("duration"));
+                target->setToolTip(QStringLiteral("Counts down from a duration, or to a time of day (the next one to come: "
+                                                  "after midnight when it is already past today)"));
+                cf->addRow(QStringLiteral("Count down"), target);
+                choose(target, QStringLiteral("clock/target"), QStringLiteral("Countdown Target"));
+                if (timeOfDay) {
+                    auto *time = line(cs.targetTime.toString(QStringLiteral("HH:mm:ss")),
+                                      QStringLiteral("The time of day it counts down to: 20:30, 20:30:00, 8:30 PM"));
+                    cf->addRow(QStringLiteral("To"), time);
+                    connect(time, &QLineEdit::editingFinished, this, [time, set, cs] {
+                        const QTime t = ClockGenerator::parseTime(time->text());
+                        if (t.isValid()) set(QStringLiteral("clock/target_time"), t.toString(QStringLiteral("HH:mm:ss")),
+                                             QStringLiteral("Countdown Target Time"));
+                        else time->setText(cs.targetTime.toString(QStringLiteral("HH:mm:ss")));
+                        time->clearFocus();
+                    });
+                } else {
+                    auto *duration = line(durationText(cs.duration),
+                                          QStringLiteral("Where it starts: hours:minutes:seconds (1:30:00), minutes:seconds "
+                                                         "(5:00) or seconds (90)"));
+                    cf->addRow(QStringLiteral("Duration"), duration);
+                    durationField(duration, QStringLiteral("clock/duration"), cs.duration, QStringLiteral("Countdown Duration"), false);
+                }
+            }
+            if (kind == ClockKind::Stopwatch) {
+                auto *offset = line(durationText(cs.offset), QStringLiteral("Where it starts counting up from (0: zero)"));
+                cf->addRow(QStringLiteral("Start at"), offset);
+                durationField(offset, QStringLiteral("clock/offset"), cs.offset, QStringLiteral("Stopwatch Start"), true);
+            }
+
+            // Its format: a preset, or one of its own (tokens; a Qt date-time format for the clock)
+            QList<QPair<QString, QString>> formats;
+            if (kind == ClockKind::Clock) {
+                formats = {{QStringLiteral("24 h"), QStringLiteral("24h")}, {QStringLiteral("12 h (AM / PM)"), QStringLiteral("12h")}};
+            } else {
+                for (const QString &f : ClockGenerator::durationFormats())
+                    if (f != QLatin1String("custom"))
+                        formats.append({f.toUpper().replace(QStringLiteral(".T"), QStringLiteral(".t")), f});
+            }
+            formats.append({QStringLiteral("Custom"), QStringLiteral("custom")});
+            auto *format = combo(formats, cs.format);
+            format->setToolTip(kind == ClockKind::Clock ? QStringLiteral("How the time is written")
+                                                        : QStringLiteral("How the time is written: hours, minutes, seconds, "
+                                                                         "tenths (.t), frames (:ff)"));
+            cf->addRow(QStringLiteral("Format"), format);
+            choose(format, QStringLiteral("clock/format"), QStringLiteral("%1 Format").arg(clockKindName(kind)));
+            if (cs.format == QLatin1String("custom")) {
+                auto *custom = line(cs.customFormat,
+                                    kind == ClockKind::Clock
+                                        ? QStringLiteral("A Qt date-time format: HH:mm:ss, h:mm AP, dddd d MMMM yyyy…")
+                                        : QStringLiteral("Tokens: h hh (hours), m mm (minutes), s ss (seconds), t tt ttt "
+                                                         "(tenths, hundredths, thousandths), ff (frames); 'text' quoted. The "
+                                                         "largest unit holds all of the time above it (mm:ss shows 90:00)"));
+                custom->setPlaceholderText(kind == ClockKind::Clock ? QStringLiteral("HH:mm:ss") : QStringLiteral("'T-'mm:ss"));
+                cf->addRow(QStringLiteral("Custom"), custom);
+                connect(custom, &QLineEdit::editingFinished, this, [custom, set, kind] {
+                    set(QStringLiteral("clock/custom_format"), custom->text(), QStringLiteral("%1 Custom Format").arg(clockKindName(kind)));
+                    custom->clearFocus();
+                });
+            }
+            const bool frames = kind != ClockKind::Clock &&
+                                (cs.format.contains(QLatin1String("ff")) ||
+                                 (cs.format == QLatin1String("custom") && cs.customFormat.contains(QLatin1Char('f'), Qt::CaseInsensitive)));
+            if (frames) {
+                auto *fps = new IntBox;
+                fps->setRange(1, 1000);
+                fps->setValue(cs.fps);
+                fps->setSuffix(QStringLiteral(" fps"));
+                fps->setEnabled(!m_locked);
+                fps->setToolTip(QStringLiteral("The frames counted in a second (the ff token)"));
+                cf->addRow(QStringLiteral("Frames"), fps);
+                connect(fps, &QSpinBox::editingFinished, this, [fps, set, kind] {
+                    set(QStringLiteral("clock/fps"), fps->value(), QStringLiteral("%1 Frame Rate").arg(clockKindName(kind)));
+                });
+            }
+
+            if (kind == ClockKind::Countdown) { // at zero: holds, a text, or overtime in its own color
+                static const char *const kZero[] = {"stop", "text", "overtime"};
+                auto *zero = combo({{QStringLiteral("Stop at zero"), QStringLiteral("stop")},
+                                    {QStringLiteral("Show a text"), QStringLiteral("text")},
+                                    {QStringLiteral("Overtime (counts on, below zero)"), QStringLiteral("overtime")}},
+                                   QString::fromLatin1(kZero[int(cs.atZero)]));
+                zero->setToolTip(QStringLiteral("What it shows once at zero (its value clock/zero turns on: an interaction "
+                                                "can follow it)"));
+                cf->addRow(QStringLiteral("At zero"), zero);
+                choose(zero, QStringLiteral("clock/at_zero"), QStringLiteral("Countdown At Zero"));
+                if (cs.atZero == ClockSettings::AtZero::Text) {
+                    auto *text = line(cs.zeroText, QStringLiteral("Shown once it is at zero"));
+                    cf->addRow(QStringLiteral("Text"), text);
+                    connect(text, &QLineEdit::editingFinished, this, [text, set] {
+                        set(QStringLiteral("clock/zero_text"), text->text(), QStringLiteral("Countdown Text at Zero"));
+                        text->clearFocus();
+                    });
+                } else if (cs.atZero == ClockSettings::AtZero::Overtime) {
+                    auto *color = new QPushButton;
+                    color->setFixedWidth(48);
+                    color->setEnabled(!m_locked);
+                    color->setToolTip(QStringLiteral("The color of the text in overtime"));
+                    color->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #666; border-radius: 2px;")
+                                             .arg(cs.overtimeColor.name()));
+                    auto *row = new QHBoxLayout;
+                    row->addWidget(color);
+                    row->addStretch();
+                    cf->addRow(QStringLiteral("Overtime"), row);
+                    connect(color, &QPushButton::clicked, this, [this, color, cs] {
+                        const QPointer<QPushButton> guard(color);
+                        const QColor c = ColorPicker::getColor(cs.overtimeColor, this, QStringLiteral("Overtime Color"),
+                            QStringLiteral("ui/colorPickerMode/layer/%1/clock/overtime").arg(m_layerId));
+                        if (!guard || !c.isValid() || m_engine->isLocked(m_layer)) return;
+                        cmd::setValues(m_undo, m_engine, m_layerId,
+                                       QJsonObject{{"clock/overtime_color/r", c.redF()}, {"clock/overtime_color/g", c.greenF()},
+                                                   {"clock/overtime_color/b", c.blueF()}, {"clock/overtime_color/a", c.alphaF()}},
+                                       QStringLiteral("Countdown Overtime Color"));
+                    });
+                }
+            }
+            if (kind == ClockKind::Clock) {
+                auto *row = new QHBoxLayout;
+                auto *secs = new QCheckBox(QStringLiteral("Seconds"));
+                auto *date = new QCheckBox(QStringLiteral("Date"));
+                secs->setChecked(cs.seconds);
+                date->setChecked(cs.date);
+                date->setToolTip(QStringLiteral("The date under the time, as the system writes it"));
+                for (QCheckBox *b : {secs, date}) {
+                    b->setEnabled(!m_locked && cs.format != QLatin1String("custom"));
+                    row->addWidget(b);
+                }
+                row->addStretch();
+                cf->addRow(QStringLiteral("Show"), row);
+                connect(secs, &QCheckBox::toggled, this,
+                        [set](bool on) { set(QStringLiteral("clock/seconds"), on, QStringLiteral("Clock Seconds")); });
+                connect(date, &QCheckBox::toggled, this,
+                        [set](bool on) { set(QStringLiteral("clock/date"), on, QStringLiteral("Clock Date")); });
+            }
+            if (kind == ClockKind::Clock || timeOfDay) {
+                auto *zone = line(cs.zone, QStringLiteral("Empty: the system's time zone. Or UTC, an offset (+02:00, -5), "
+                                                          "a zone name (Europe/Paris, America/New_York)"));
+                zone->setPlaceholderText(QStringLiteral("System"));
+                cf->addRow(QStringLiteral("Time zone"), zone);
+                connect(zone, &QLineEdit::editingFinished, this, [zone, set] {
+                    set(QStringLiteral("clock/zone"), zone->text().trimmed(), QStringLiteral("Time Zone"));
+                    zone->clearFocus();
+                });
+            }
+
+            m_clockUi = std::make_shared<ClockUi>();
+            auto *shown = new QLabel;
+            shown->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            m_clockUi->shown = shown;
+            if (kind != ClockKind::Clock) { // Start, Pause, Reset: its values clock/play, clock/reset (OSC, cues…)
+                auto button = [](const QIcon &icon, const QString &tip, bool checkable) {
+                    auto *b = new QToolButton;
+                    b->setIcon(icon);
+                    b->setIconSize(QSize(18, 18));
+                    b->setToolTip(tip);
+                    b->setCheckable(checkable);
+                    b->setAutoRaise(true);
+                    b->setProperty("allowLocked", true); // the transport stays available on a locked layer, as a media's
+                    b->setStyleSheet(QStringLiteral("QToolButton { padding:3px 7px; border-radius:3px; }"
+                                                    "QToolButton:checked { background:%1; }"
+                                                    "QToolButton:hover { background:#3a3a3f; }")
+                                         .arg(theme::css()));
+                    return b;
+                };
+                auto *row = new QHBoxLayout;
+                row->setSpacing(2);
+                auto *pause = button(transportIcon(TransportIcon::Pause), QStringLiteral("Pause"), true);
+                auto *play = button(transportIcon(TransportIcon::PlayForward),
+                                    QStringLiteral("Start (at its end: from the start again)"), true);
+                auto *reset = button(transportIcon(TransportIcon::ToStart),
+                                     QStringLiteral("Reset: back to its start, paused"), false);
+                auto *group = new QButtonGroup(box);
+                group->setExclusive(true);
+                group->addButton(pause, 0);
+                group->addButton(play, 1);
+                row->addWidget(pause);
+                row->addWidget(play);
+                row->addWidget(reset);
+                row->addSpacing(8);
+                row->addWidget(shown, 1);
+                cf->addRow(QStringLiteral("Transport"), row);
+                m_clockUi->play = play;
+                m_clockUi->pause = pause;
+                connect(group, &QButtonGroup::idClicked, this, [this, kind](int id) {
+                    cmd::setValue(m_undo, m_engine, m_layerId, QStringLiteral("clock/play"), id == 1,
+                                  QStringLiteral("%1 %2").arg(id == 1 ? QStringLiteral("Start") : QStringLiteral("Pause"),
+                                                              clockKindName(kind)));
+                    refreshClock();
+                });
+                connect(reset, &QToolButton::clicked, this, [this] {
+                    m_engine->setParameter(m_layerId, QStringLiteral("clock/reset"), true); // an action, not undone
+                    refreshClock();
+                });
+            } else {
+                cf->addRow(QStringLiteral("Now"), shown);
+            }
+            auto *status = new QLabel;
+            status->setWordWrap(true);
+            status->setStyleSheet("color:#9ad;");
+            cf->addRow(QString(), status);
+            m_clockUi->status = status;
+            refreshClock();
+            v->addWidget(box);
+        } else if (s.timecode) { // a Timecode generator: its clock instead of a text typed
             const TimecodeSettings ts = *s.timecode;
             auto *box = new QGroupBox(QStringLiteral("Timecode"));
             auto *tf = new QFormLayout(box);
@@ -2847,6 +3138,29 @@ void LayerInspector::refreshTimecodeTransport()
     if (QAbstractButton *b = t->modes->button(int(c->playMode())); b && !b->isChecked()) b->setChecked(true);
 }
 
+void LayerInspector::refreshClock()
+{
+    const std::shared_ptr<ClockUi> u = m_clockUi;
+    if (!u) return;
+    const std::shared_ptr<ClockGenerator> c = m_engine->layerClock(m_layer);
+    if (!c) return;
+    if (u->play && u->pause) {
+        const bool running = c->running();
+        if (u->play->isChecked() != running) u->play->setChecked(running);
+        if (u->pause->isChecked() == running) u->pause->setChecked(!running);
+    }
+    if (u->shown) {
+        const QString shown = c->display();
+        if (u->shown->text() != shown) u->shown->setText(shown);
+        const QString css = c->overtime() ? QStringLiteral("color:%1;").arg(c->settings().overtimeColor.name()) : QString();
+        if (u->shown->property("css").toString() != css) {
+            u->shown->setProperty("css", css);
+            u->shown->setStyleSheet(QStringLiteral("font-family:monospace; font-size:16px; font-weight:bold; ") + css);
+        }
+    }
+    if (u->status) u->status->setText(c->status());
+}
+
 void LayerInspector::refreshDynamic()
 {
     if (m_sourceColorSpace || m_sourceColorStatus) {
@@ -2879,6 +3193,7 @@ void LayerInspector::refreshDynamic()
     if (m_output) m_output->refreshStatus(); // mode set by ⌘F or a closed window, publishing states
     if (m_timecodeStatus) m_timecodeStatus->setText(m_engine->layerTimecodeStatus(m_layer));
     refreshTimecodeTransport();
+    refreshClock();
     // ROI preview: the source picture, read back by the render thread while the editor is shown
     const bool wantPreview = m_roi && m_roi->isVisible();
     if (wantPreview) {
@@ -3000,6 +3315,13 @@ QString LayerInspector::layoutKey() const
         QString::number(layer->colorModels), QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer)};
     for (const auto &effect : layer->effects) key << effect->path();
+    if (layer->clockGen) { // a Countdown, Stopwatch or Clock: its fields show its settings (changed by a recall: made again)
+        const ClockSettings c = layer->clockGen->settings();
+        key << clockKindKey(c.kind) << QString::number(int(c.target)) << QString::number(c.duration, 'g', 12)
+            << c.targetTime.toString() << QString::number(c.offset, 'g', 12) << c.format << c.customFormat
+            << QString::number(c.fps) << QString::number(int(c.atZero)) << c.zeroText << c.overtimeColor.name(QColor::HexArgb)
+            << QString::number(c.seconds) << QString::number(c.date) << c.zone;
+    }
     return key.join(QChar(0x1f));
 }
 

@@ -821,6 +821,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->input = std::move(l.input);
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
+    l.clockGen.reset();
     g->generatorTarget = l.generatorTarget;
     l.generatorTarget = RenderTarget{};
     l.pendingImage = QImage();
@@ -1502,6 +1503,44 @@ bool Engine::setLayerTimecode(int i, const TimecodeSettings &s)
     old.reset(); // its devices closed outside the lock too
     emit timecodeRoutingChanged();
     return true;
+}
+
+bool Engine::setLayerClock(int i, ClockKind kind)
+{
+    bool text = false, timecode = false;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        if (l->type == SourceType::Text && l->clockGen && l->clockGen->kind() == kind) return true; // as it is
+        timecode = l->timecode.has_value();
+        text = l->type == SourceType::Text && (l->clockGen || timecode);
+    }
+    // A text source first, in a style that suits a time (one that showed a time already keeps its own)
+    if (!setLayerText(i)) return false;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l) return false;
+        if (!text) {
+            l->text.font = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+            l->text.size = 220;
+            l->text.bold = true;
+            l->text.width = 1600;
+            l->text.height = 320;
+            l->srcWidth = l->text.width;
+            l->srcHeight = l->text.height;
+        }
+        l->clockGen = std::make_shared<ClockGenerator>(kind);
+    }
+    if (timecode) emit timecodeRoutingChanged(); // the timecode it showed is gone, and the output it drove is free
+    return true;
+}
+
+std::shared_ptr<ClockGenerator> Engine::layerClock(int i) const
+{
+    Lock lk(&m_mutex);
+    return i >= 0 && i < int(m_layers.size()) ? m_layers[size_t(i)]->clockGen : nullptr;
 }
 
 int Engine::timecodeOutputUser(quint64 output) const

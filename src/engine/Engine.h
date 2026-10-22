@@ -252,6 +252,10 @@ public:
     QString layerTimecodeStatus(int i) const;
     void restartLayerTimecode(int i); // free run: from its in point, playing
     std::shared_ptr<TimecodeClock> layerTimecodeClock(int i) const; // its transport
+    // The Countdown, Stopwatch and Clock generators: a text source that shows its time (ClockGenerator.h). Its settings
+    // and its transport are its parameters (clock/*). Another kind: made again, its text style kept
+    bool setLayerClock(int i, ClockKind kind);
+    std::shared_ptr<ClockGenerator> layerClock(int i) const; // none: not one of them
     int timecodeOutputUser(quint64 output) const; // the layer driving a timecode output (-1: none)
 
     // --- Timecode outputs (TimecodeOutputs.h): named outputs the Timecode layers drive, patched to destinations that

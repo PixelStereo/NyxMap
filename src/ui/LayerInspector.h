@@ -147,6 +147,12 @@ private:
     };
     std::shared_ptr<TcTransport> m_tcTransport;
     void refreshTimecodeTransport();
+    struct ClockUi { // a Countdown, Stopwatch or Clock: what it shows now and its transport, kept up to date
+        QPointer<QAbstractButton> play, pause;
+        QPointer<QLabel> shown, status;
+    };
+    std::shared_ptr<ClockUi> m_clockUi;
+    void refreshClock();
     QPointer<SliderField> m_genSpeed; // the generator's speed (above the tabs)
     QPointer<ViewportOutputPanel> m_output;
     QPointer<QTabWidget> m_tabs;

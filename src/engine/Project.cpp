@@ -178,6 +178,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Text:
         src["type"] = "text";
         if (l.timecode) src["timecode"] = l.timecode->toJson();
+        // A Countdown, Stopwatch or Clock: its kind (its settings and its transport come with the values: clock/*)
+        if (l.clockGen) src["clock"] = clockKindKey(l.clockGen->kind());
         break;
     case SourceType::Input:
         src["type"] = "input";
@@ -324,6 +326,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->type = SourceType::Text;
             l->text = TextSource{};
+            l->clockGen.reset();
         }
         if (src.contains("timecode")) { // a Timecode generator: its clock (its text style comes with the values)
             TimecodeSettings ts = TimecodeSettings::fromJson(src.value("timecode").toObject());
@@ -341,6 +344,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->timecode = ts;
             l->tcClock = clock;
+        } else if (const std::optional<ClockKind> kind = clockKindFromKey(src.value("clock").toString())) {
+            // A Countdown, Stopwatch or Clock: its values (below) set it as it was saved, paused or running from there
+            Lock lk(&m_mutex);
+            layer(index)->clockGen = std::make_shared<ClockGenerator>(*kind);
         }
     }
 

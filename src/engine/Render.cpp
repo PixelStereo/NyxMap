@@ -36,8 +36,9 @@
 
 // The Text generator's picture: the text shown now (typed so far, during a typewriter), wrapped to the layer's
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
-// Flipped like the images (the sources are stored bottom-up).
-static QImage renderTextLayer(const Layer &l, const QString &text)
+// Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
+// stored bottom-up).
+static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill)
 {
     const int w = std::max(1, l.text.width), h = std::max(1, l.text.height);
     QImage img(w, h, QImage::Format_RGBA8888_Premultiplied);
@@ -108,7 +109,7 @@ static QImage renderTextLayer(const Layer &l, const QString &text)
         if (l.text.outline > 0.01f) drawOutlined(sc, sc, l.text.shadowX, l.text.shadowY, true);
         else draw(sc, l.text.shadowX, l.text.shadowY);
     }
-    drawOutlined(l.text.outlineColor, l.text.color, 0, 0, true);
+    drawOutlined(l.text.outlineColor, fill, 0, 0, true);
     painter.end();
     return flippedVertically(img.convertToFormat(QImage::Format_RGBA8888));
 }
@@ -464,16 +465,18 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         break;
     case SourceType::Text: {
         // Redrawn only when what is shown changes (typed characters, edits, style)
-        const QString shown = l.tcClock ? l.tcClock->display() : l.text.shown(); // a Timecode generator: its clock
+        // A Timecode generator: its clock; a Countdown, Stopwatch or Clock: its time (an overtime in a color of its own)
+        const QString shown = l.tcClock ? l.tcClock->display() : l.clockGen ? l.clockGen->display() : l.text.shown();
+        const QColor fill = l.clockGen ? l.clockGen->color(l.text.color) : l.text.color;
         const QString key = QStringLiteral("%1\n%2|%3|%4|%5|%6|%7|%8x%9|%10").arg(shown, l.text.font).arg(l.text.size)
-                                .arg(l.text.color.name(QColor::HexArgb)).arg(int(l.text.align))
+                                .arg(fill.name(QColor::HexArgb)).arg(int(l.text.align))
                                 .arg(l.text.lineHeight).arg(l.text.letterSpacing).arg(l.text.width).arg(l.text.height)
                                 .arg(QStringLiteral("%1%2%3%4|%5%6|%7%8|%9").arg(l.text.bold).arg(l.text.italic).arg(l.text.underline)
                                          .arg(l.text.strike).arg(l.text.outline).arg(l.text.outlineColor.name(QColor::HexArgb))
                                          .arg(l.text.shadow).arg(l.text.shadowColor.name(QColor::HexArgb))
                                          .arg(QStringLiteral("%1,%2").arg(l.text.shadowX).arg(l.text.shadowY)));
         if (!l.textTex.tex || key != l.textKey) {
-            const QImage img = renderTextLayer(l, shown);
+            const QImage img = renderTextLayer(l, shown, fill);
             l.textTex.upload(img.constBits(), img.width(), img.height());
             l.textKey = key;
         }

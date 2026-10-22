@@ -330,6 +330,10 @@ void Engine::applyParams(Layer &layer, const QJsonObject &params, const QJsonObj
             if (path == QLatin1String("tc/position") && params.value("tc/play").toBool(true) && l->tcClock &&
                 l->tcClock->playing())
                 continue;
+            // A countdown or a stopwatch likewise: one that runs here and runs already goes on
+            if (path == QLatin1String("clock/elapsed") && params.value("clock/play").toBool(false) && l->clockGen &&
+                l->clockGen->running())
+                continue;
             const bool cut = !p->isNumber() || info.ramp == ParamInfo::Ramp::Cut || (chain && path.startsWith("fx/"));
             if (path == "opacity") {
                 const double target = it.value().toDouble(p->number());
@@ -1008,7 +1012,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         };
         if (!group && (curSrc.value("type") != src.value("type") || curSrc.value("layer") != src.value("layer") ||
                        curSrc.value("tap") != src.value("tap") || curSrc.value("uri") != src.value("uri") ||
-                       curSrc.value("psd_layer") != src.value("psd_layer") ||
+                       curSrc.value("psd_layer") != src.value("psd_layer") || curSrc.value("clock") != src.value("clock") ||
                        QDir::cleanPath(curSrc.value("path").toString()) != QDir::cleanPath(src.value("path").toString()))) {
             // Another media: it comes in with the layer's transition over the source's time (the snapshot's
             // fade unless it has its own), or at once for a cut
@@ -1199,6 +1203,7 @@ void Engine::stopShowPlayback()
         }
         if (l.hasTransport()) l.playing = false;
         if (l.tcClock) l.tcClock->setPlaying(false);
+        if (l.clockGen) l.clockGen->pause(); // a countdown, a stopwatch: held where they are
         if (l.text.typeDur > 0) {
             l.text.content = l.text.shown();
             l.text.stopTyping();
@@ -1710,7 +1715,9 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     auto paramsMatch = [&](quint64 layer, const QJsonObject &values, const QString &prefix = QString(), const QJsonObject *liveValues = nullptr) {
         for (auto value = values.begin(); value != values.end(); ++value) {
             const QString path = prefix + value.key();
-            if (path == QLatin1String("position") || path == QLatin1String("tc/position") || path == QLatin1String("restart") || isDriven(layer, path)) continue;
+            if (path == QLatin1String("position") || path == QLatin1String("tc/position") || path == QLatin1String("restart") ||
+                path == QLatin1String("clock/elapsed") || path == QLatin1String("clock/restart") || isDriven(layer, path))
+                continue;
             const QJsonValue live = liveValues ? liveValues->value(value.key()) : parameterValue(layer, path);
             if (!equal(live, value.value())) return mismatch(path);
         }
