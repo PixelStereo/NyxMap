@@ -1614,7 +1614,9 @@ void MainWindow::removeCurrentLayer()
             ++skipped;
             continue;
         }
-        const QList<int> members = m_engine->groupMembers(r);
+        QList<int> members;
+        for (quint64 id : tree::descendants(m_engine->structure(), m_engine->layerId(r)))
+            members << m_engine->indexOfId(id);
         bool lockedMember = false;
         for (int m : members) lockedMember |= m_engine->isLocked(m);
         if (lockedMember) {
@@ -1640,7 +1642,7 @@ void MainWindow::duplicateCurrentLayer()
 {
     const int i = currentLayer();
     if (i < 0) return;
-    const int members = m_engine->groupMembers(i).size();
+    const int members = int(tree::descendants(m_engine->structure(), m_engine->layerId(i)).size());
     const int ni = m_engine->duplicateLayer(i);
     if (ni < 0) return;
     m_undo->beginMacro(members ? QStringLiteral("Duplicate Group") : QStringLiteral("Duplicate Layer"));

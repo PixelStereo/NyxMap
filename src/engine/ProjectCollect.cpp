@@ -215,8 +215,9 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
         const QString dest = freeName(media + QStringLiteral("/SEQUENCES"), QFileInfo(folder).fileName());
         to.insert(key(folder), dest);
         for (const QFileInfo &f : QDir(folder).entryInfoList(QDir::Files | QDir::Hidden, QDir::Name)) {
-            if (to.contains(key(f.absoluteFilePath()))) continue;
-            to.insert(key(f.absoluteFilePath()), dest + '/' + f.fileName());
+            // A frame also used as a still or shader import needs both copies:
+            // image2 requires every numbered file at its original relative name.
+            if (!to.contains(key(f.absoluteFilePath()))) to.insert(key(f.absoluteFilePath()), dest + '/' + f.fileName());
             CollectFile c;
             c.from = f.absoluteFilePath();
             c.to = dest + '/' + f.fileName();
@@ -272,9 +273,12 @@ bool Engine::collect(const CollectPlan &plan, QString *err)
 int Engine::removeCollectedOriginals(const CollectPlan &plan, QStringList *failed)
 {
     int removed = 0;
+    QSet<QString> processed;
     for (const CollectFile &f : plan.files) {
         if (!QFileInfo::exists(f.to)) continue; // never without its copy
-        if (key(f.from) == key(f.to)) continue;
+        const QString original = key(f.from);
+        if (original == key(f.to) || processed.contains(original)) continue;
+        processed.insert(original); // one original can have several necessary collected copies
         if (QFile::remove(f.from)) ++removed;
         else if (failed) *failed << f.from;
     }

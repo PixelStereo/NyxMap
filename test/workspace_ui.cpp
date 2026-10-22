@@ -153,6 +153,59 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
     for (auto it = saved.cbegin(); it != saved.cend(); ++it) settings.setValue(it.key(), it.value());
 }
 
+static void nestedGroupTests(Engine &engine, const std::function<void(bool, const char *)> &check)
+{
+    engine.newProject();
+    const auto outer = engine.layerId(engine.addGroup("Outer", engine.layerCount()));
+    const auto inner = engine.layerId(engine.addGroup("Inner", engine.layerCount()));
+    const auto source = engine.layerId(engine.addLayer("Source", engine.layerCount()));
+    const auto linked = engine.layerId(engine.addLayer("Linked", engine.layerCount()));
+    const auto external = engine.layerId(engine.addLayer("External mask", engine.layerCount()));
+    engine.setLayerText(engine.indexOfId(source)); engine.setLayerText(engine.indexOfId(external));
+    auto structure = engine.structure();
+    for (auto &node : structure) {
+        if (node.id == inner) node.parent = outer;
+        if (node.id == source || node.id == linked) node.parent = inner;
+    }
+    engine.setStructure(structure);
+    check(engine.setLayerSourceLayer(engine.indexOfId(linked), source, LayerTap::PostFx), "create an internal group reference");
+    LayerMatte matte; matte.layer = source;
+    check(engine.setLayerMatte(engine.indexOfId(linked), matte), "create an internal matte reference");
+    check(engine.setColorMask(engine.indexOfId(linked), external, false), "create an external mask reference");
+    {
+        MainWindow window(&engine); window.setQuiet(true); window.setAutosaveEnabled(false);
+        window.show(); QApplication::processEvents();
+        auto *table = window.findChild<LayerTable *>();
+        auto *undo = window.findChild<QUndoStack *>();
+        check(table && undo, "nested group UI fixture is available");
+        if (table && undo) {
+            const int before = engine.layerCount();
+            table->setCurrentRow(engine.indexOfId(outer)); table->duplicateClicked();
+            check(engine.layerCount() == before + 4, "duplicate includes all descendants of nested groups");
+            const auto copy = engine.layerId(table->currentRow());
+            const auto descendants = tree::descendants(engine.structure(), copy);
+            check(descendants.size() == 3, "the copied nested structure is intact");
+            if (descendants.size() == 3) {
+                const auto *copiedLink = engine.layer(engine.indexOfId(descendants[2]));
+                check(copiedLink && copiedLink->sourceLayer == descendants[1] && copiedLink->matte.layer == descendants[1] &&
+                      copiedLink->color.maskLayer == external,
+                      "copy redirects internal source/matte references and preserves external references");
+            }
+            undo->undo();
+            check(engine.layerCount() == before && engine.structure() == structure, "Undo removes every duplicated descendant");
+            undo->redo(); check(engine.layerCount() == before + 4, "Redo recreates the whole nested group");
+            undo->undo();
+            table->setCurrentRow(engine.indexOfId(outer)); table->removeClicked();
+            check(engine.indexOfId(outer) < 0 && engine.indexOfId(inner) < 0 && engine.indexOfId(source) < 0 &&
+                  engine.indexOfId(linked) < 0 && engine.indexOfId(external) >= 0,
+                  "Delete removes the whole nested group and leaves unrelated layers alone");
+            undo->undo(); check(engine.structure() == structure, "Undo restores all nested group members and parents");
+            undo->setClean();
+        }
+    }
+    engine.newProject();
+}
+
 int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
@@ -186,6 +239,7 @@ int main(int argc, char **argv)
     };
     if (!selection) {
         mediaBinColumnTests(engine, check);
+        nestedGroupTests(engine, check);
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();
         auto *defaultColorView = window.findChild<QComboBox *>("defaultColorPickerView");
