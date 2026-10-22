@@ -57,6 +57,10 @@ LICENCE_OVERRIDE = {
     # alsa-lib is LGPL-2.1+ (its COPYING); Ubuntu's copyright file misspells the short name "LPGL-2.1+"
     "libasound2t64": "LGPL-2.1+",
 }
+# Reviewed, no override needed: Qt WebEngine (libqt6webenginecore6, -bin for QtWebEngineProcess, libqt6webengine6-data)
+# is "LGPL-3 or GPL-2" for its library and helper process (upstream src/process is LGPL-3.0-only OR GPL-2.0/3.0, as
+# the rest of the module); only its tools and tests are GPL-3 with the Qt exception, and they are not shipped.
+# Chromium's components are permissive or LGPL/MPL; the check above reads them as such.
 
 
 def run(cmd, **kwargs):
@@ -188,6 +192,26 @@ def package(build, ffmpeg, omt, ndi, output):
             if source.is_symlink():
                 (library / source.name).symlink_to(source.resolve().name)
 
+    # Qt WebEngine (the Web Page generator), when Pinol is built with it: Chromium's helper process, its resources
+    # and locales, where qt.conf (Prefix=..) and AppRun's QTWEBENGINE* variables point; the NSS modules Chromium's
+    # certificate checks load with dlopen()
+    if "libQt6WebEngineCore" in subprocess.check_output(["ldd", str(build / "Pinol")], text=True):
+        webengine_process = Path("/usr/lib/qt6/libexec/QtWebEngineProcess")
+        webengine_data = Path("/usr/share/qt6")
+        copy(webengine_process, app / "usr/libexec/QtWebEngineProcess")
+        shutil.copytree(webengine_data / "resources", app / "usr/resources")
+        shutil.copytree(webengine_data / "translations/qtwebengine_locales", app / "usr/translations/qtwebengine_locales")
+        for required in ("libexec/QtWebEngineProcess", "resources/qtwebengine_resources.pak",
+                         "translations/qtwebengine_locales/en-US.pak"):
+            if not (app / "usr" / required).is_file():
+                sys.exit(f"Qt WebEngine file missing: {required}")
+        for name in ("libsoftokn3.so", "libfreeblpriv3.so", "libfreebl3.so", "libnssckbi.so", "libnssdbm3.so"):
+            source = Path("/usr/lib/x86_64-linux-gnu") / name
+            if source.is_file():
+                copy(source, library / name)
+    else:
+        print("Pinol is built without Qt WebEngine: no Web Page generator in the package", flush=True)
+
     tool = tools(output / "tools")
     # Freedesktop icon sizes stop at 512 in linuxdeploy; the source artwork is larger.
     icon = output / "pinol.png"
@@ -270,8 +294,11 @@ def package(build, ffmpeg, omt, ndi, output):
     if problems := [f"{owner}: {problem} ({summary})" for owner, (summary, problem) in licences.items() if problem]:
         sys.exit("Libraries that may not be shipped (review, then fix or add to LICENCE_OVERRIDE):\n"
                  + "\n".join(sorted(problems)))
-    for pattern, label in (("/usr/share/alsa/*", "ALSA configuration data"),
-                           ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans fallback font")):
+    data_files = [("/usr/share/alsa/*", "ALSA configuration data"),
+                  ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans fallback font")]
+    if (app / "usr/resources").is_dir():  # Qt WebEngine's data: Chromium's licences are in its copyright file
+        data_files.append(("/usr/share/qt6/resources/qtwebengine_resources.pak", "Qt WebEngine resources and locales"))
+    for pattern, label in data_files:
         result = subprocess.check_output(["dpkg-query", "-S", pattern], text=True)
         owners = {line.split(": ", 1)[0] for line in result.splitlines() if ": " in line}
         for owner in sorted(owners):

@@ -6,7 +6,8 @@ APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # file manager) get them back: usr/libexec/pinol-path/xdg-open restores them.
 PINOL_ENV_VARS="PATH LD_LIBRARY_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML2_IMPORT_PATH \
 GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_PATH_1_0 GST_PLUGIN_SCANNER GST_REGISTRY_1_0 \
-ALSA_CONFIG_DIR ALSA_CONFIG_PATH ALSA_PLUGIN_DIR QT_QPA_FONTDIR FONTCONFIG_FILE QT_MEDIA_BACKEND"
+ALSA_CONFIG_DIR ALSA_CONFIG_PATH ALSA_PLUGIN_DIR QT_QPA_FONTDIR FONTCONFIG_FILE QT_MEDIA_BACKEND \
+QTWEBENGINEPROCESS_PATH QTWEBENGINE_RESOURCES_PATH QTWEBENGINE_LOCALES_PATH"
 export PINOL_ENV_VARS
 for name in $PINOL_ENV_VARS; do
   if eval "[ -n \"\${$name+set}\" ]"; then
@@ -32,4 +33,10 @@ export ALSA_PLUGIN_DIR="$APPDIR/usr/lib/alsa-lib"
 export QT_QPA_FONTDIR="$APPDIR/usr/share/fonts"
 export FONTCONFIG_FILE="$APPDIR/usr/share/fontconfig/fonts.conf"
 export QT_MEDIA_BACKEND=gstreamer
+# Qt WebEngine (the Web Page generator): its helper process, resources and locales, when the package has them
+if [ -x "$APPDIR/usr/libexec/QtWebEngineProcess" ]; then
+  export QTWEBENGINEPROCESS_PATH="$APPDIR/usr/libexec/QtWebEngineProcess"
+  export QTWEBENGINE_RESOURCES_PATH="$APPDIR/usr/resources"
+  export QTWEBENGINE_LOCALES_PATH="$APPDIR/usr/translations/qtwebengine_locales"
+fi
 exec "$APPDIR/usr/bin/Pinol" "$@"
