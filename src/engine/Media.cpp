@@ -133,6 +133,8 @@ bool Engine::isAudioFile(const QString &path) { return audioExtensions().contain
 
 bool Engine::isVideoFile(const QString &path) { return videoExtensions().contains(QFileInfo(path).suffix().toLower()); }
 
+bool Engine::isToxFile(const QString &path) { return QFileInfo(path).suffix().compare("tox", Qt::CaseInsensitive) == 0; }
+
 bool Engine::isImageFile(const QString &path) { return imageExtensions().contains(QFileInfo(path).suffix().toLower()); }
 
 bool Engine::isIsfFile(const QString &path)
@@ -146,7 +148,7 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
     std::vector<MediaRef> out;
     enum Kind { ImageKind, VideoKind, AudioKind };
     auto kindOf = [](const QString &p) {
-        return isVideoFile(p) || isStreamUrl(p) || QFileInfo(p).isDir() ? VideoKind : isAudioFile(p) ? AudioKind : ImageKind;
+        return isVideoFile(p) || isToxFile(p) || isStreamUrl(p) || QFileInfo(p).isDir() ? VideoKind : isAudioFile(p) ? AudioKind : ImageKind;
     };
     auto add = [&](const QString &path, Kind kind, const QString &user, bool imported) {
         if (path.isEmpty()) return;
@@ -169,8 +171,8 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
         Lock lk(&m_mutex);
         for (const auto &l : m_layers) {
             const SourceType t = l->type != SourceType::None ? l->type : l->missingType;
-            if (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio)
-                add(l->sourcePath, t == SourceType::Video ? VideoKind : t == SourceType::Audio ? AudioKind : ImageKind,
+            if (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox)
+                add(l->sourcePath, (t == SourceType::Video || t == SourceType::Tox) ? VideoKind : t == SourceType::Audio ? AudioKind : ImageKind,
                     l->name, false);
             auto scan = [&](const IsfInstance *inst, const QString &user) {
                 if (!inst) return;
@@ -253,7 +255,7 @@ QList<int> Engine::layersUsingMedia(const QString &path) const
     for (int i = 0; i < int(m_layers.size()); ++i) {
         const Layer &l = *m_layers[size_t(i)];
         bool uses = l.sourcePath == path && (l.type == SourceType::Video || l.type == SourceType::Image ||
-                                             l.type == SourceType::Audio || l.missingType != SourceType::None);
+                                             l.type == SourceType::Audio || l.type == SourceType::Tox || l.missingType != SourceType::None);
         uses |= l.type == SourceType::Isf && !l.sourcePath.isEmpty() && QDir::cleanPath(l.sourcePath) == QDir::cleanPath(path);
         uses |= isfUsesImage(l.generator.get(), path);
         for (const auto &fx : l.effects) uses |= isfUsesImage(fx.get(), path);
@@ -271,6 +273,7 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
     QJsonObject kept; // the values it kept while its file was missing (its speed, its range…)
     int psdLayer = -1; // the layer of a Photoshop file it showed (found again by its name in the new file)
     QString psdLayerName;
+    ToxSettings tox;
     QJsonObject values; // an ISF generator's: its inputs' values, kept by the shader replacing it where the names match
     std::vector<std::pair<IsfInstance *, int>> inputs;
     {
@@ -278,11 +281,12 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
         Layer *l = layer(i);
         if (!l) return false;
         const SourceType t = l->type != SourceType::None ? l->type : l->missingType;
-        if (l->sourcePath == from && (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio)) kind = t;
+        if (l->sourcePath == from && (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox)) kind = t;
         if (t == SourceType::Isf && !l->sourcePath.isEmpty() && QDir::cleanPath(l->sourcePath) == QDir::cleanPath(from)) {
             kind = SourceType::Isf;
             if (l->generator) values = l->generator->save(QString(), true);
         }
+        tox = l->tox;
         mapping = l->mapping;
         mode = l->mode;
         in = l->inPoint;
@@ -304,7 +308,8 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
     if (kind != SourceType::None) {
         // The new file may be of another type (video replaced by an image, an audio file…)
         SourceType target = kind;
-        if (isImageFile(to)) target = SourceType::Image;
+        if (isToxFile(to)) target = SourceType::Tox;
+        else if (isImageFile(to)) target = SourceType::Image;
         else if (isVideoFile(to)) target = SourceType::Video;
         else if (isAudioFile(to)) target = SourceType::Audio;
         else if (isIsfFile(to)) target = SourceType::Isf;
@@ -315,7 +320,8 @@ bool Engine::relinkLayerMedia(int i, const QString &from, const QString &to, QSt
                 return false;
             }
         }
-        ok = target == SourceType::Video   ? setLayerVideo(i, to, err)
+        ok = target == SourceType::Tox ? setLayerTox(i, to, tox, err)
+             : target == SourceType::Video   ? setLayerVideo(i, to, err)
              : target == SourceType::Audio ? setLayerAudio(i, to, err)
              : target == SourceType::Isf   ? setLayerIsf(i, to, err)
                                            : setLayerImage(i, to, err, psdLayer, psdLayerName);

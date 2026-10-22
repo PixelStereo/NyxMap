@@ -14,7 +14,8 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$Install = $true; $Run = $true; $Clean = $false; $Ndi = ""; $Type = "Release"
+$Install = $true; $Run = $true; $Clean = $false; $Ndi = ""
+$Tox = ""; $Type = "Release"
 foreach ($a in $args) {
     switch ($a) {
         "--no-install" { $Install = $false }
@@ -23,6 +24,8 @@ foreach ($a in $args) {
         "--debug" { $Type = "Debug" }
         "--accept-ndi-license" { $Ndi = "ON" }
         "--no-ndi" { $Ndi = "OFF" }
+        "--accept-touchengine-license" { $Tox = "ON" }
+        "--no-touchengine" { $Tox = "OFF" }
         { $_ -in "-h", "--help" } { Get-Content $PSCommandPath -TotalCount 13 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
         default { Write-Host "Unknown option: $a (see build.ps1 --help)" -ForegroundColor Red; exit 2 }
     }
@@ -142,6 +145,14 @@ if (Test-Path .git) {
     Fail "third_party\ is empty: clone the repository with git (git clone --recurse-submodules https://github.com/PixelStereo/Pinol.git)"
 }
 
+if (-not $Tox) {
+    if (-not [Console]::IsInputRedirected) {
+        Write-Host "TouchEngine SDK: licenses/touchengine.txt (https://derivative.ca/UserGuide/TouchEngine)"
+        $answer = Read-Host "Have you accepted the TouchDesigner licence and do you accept the SDK terms? [y/N]"
+        $Tox = if ($answer -match '^[Yy]') { "ON" } else { "OFF" }
+    } else { $Tox = "OFF" }
+}
+
 # --- NDI: only with your agreement to the NDI SDK licence
 if (-not $Ndi) {
     Write-Host "`nNDI (video over the network) comes from the NDI SDK, under the NDI SDK License Agreement:"
@@ -153,7 +164,7 @@ if (-not $Ndi) {
 # --- Build
 if ($Clean -and (Test-Path build)) { Remove-Item -Recurse -Force build }
 $cmakeArgs = @("-S", ".", "-B", "build", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Type", "-DCMAKE_PREFIX_PATH=$qtDir",
-               "-DFFMPEG_ROOT=$ffDir", "-DPINOL_BUNDLE_RUNTIMES=ON", "-DPINOL_ACCEPT_NDI_SDK_LICENSE=$Ndi")
+               "-DPINOL_ACCEPT_TOUCHENGINE_LICENSE=$Tox", "-DFFMPEG_ROOT=$ffDir", "-DPINOL_BUNDLE_RUNTIMES=ON", "-DPINOL_ACCEPT_NDI_SDK_LICENSE=$Ndi")
 Step "Configuring (cmake $($cmakeArgs -join ' '))"
 cmake @cmakeArgs; Native "CMake configure"
 Step "Building"

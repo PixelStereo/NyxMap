@@ -1015,6 +1015,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
                        curSrc.value("psd_layer") != src.value("psd_layer") || curSrc.value("clock") != src.value("clock") ||
                        curSrc.value("sequence") != src.value("sequence") || curSrc.value("live") != src.value("live") ||
                        curSrc.value("rtsp_tcp") != src.value("rtsp_tcp") ||
+                       (src.value("type") == QLatin1String("tox") && curSrc.value("inputs") != src.value("inputs")) ||
                        QDir::cleanPath(curSrc.value("path").toString()) != QDir::cleanPath(src.value("path").toString()))) {
             // Another media: it comes in with the layer's transition over the source's time (the snapshot's
             // fade unless it has its own), or at once for a cut
@@ -1092,6 +1093,14 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         Lock lk(&m_mutex);
         Layer *l = layer(indexOfId(id));
         if (!l) continue;
+        if (l->type == SourceType::Tox) {
+            const ToxSettings saved = ToxSettings::fromJson(src);
+            QSet<QString> exposed;
+            if (l->toxPlayer) for (const ToxControl &control : l->toxPlayer->controls()) exposed.insert(control.id);
+            for (auto it = saved.values.begin(); it != saved.values.end(); ++it)
+                if (!exposed.contains(it.key())) l->tox.values[it.key()] = it.value();
+            l->applyTox();
+        }
         l->name = o.value("name").toString(l->name);
         recallLayerAnims(*l, o.value("anims").toArray());
         if (!group) l->color.maskLayer = o.value("mask").toString().toULongLong();
@@ -1205,6 +1214,7 @@ void Engine::stopShowPlayback()
         }
         if (l.hasTransport()) l.playing = false;
         if (l.tcClock) l.tcClock->setPlaying(false);
+        if (l.toxPlayer) { l.tox.playing = false; l.applyTox(); }
         if (l.clockGen) l.clockGen->pause(); // a countdown, a stopwatch: held where they are
         if (l.text.typeDur > 0) {
             l.text.content = l.text.shown();

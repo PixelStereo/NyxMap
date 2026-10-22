@@ -5,6 +5,7 @@
 #   ./build.sh                 install what is missing, build, open Pinol
 #   ./build.sh --no-install    do not install anything (the requirements are there)
 #   ./build.sh --no-run        build only
+#   ./build.sh --accept-touchengine-license | --no-touchengine  (macOS/Windows; see licenses/touchengine.txt)
 #   ./build.sh --accept-ndi-license | --no-ndi
 #                              include NDI (you accept the NDI SDK License Agreement) or not, without asking
 #   ./build.sh --clean         start from an empty build folder
@@ -16,7 +17,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-INSTALL=1 RUN=1 CLEAN=0 NDI="" TYPE=Release
+INSTALL=1 RUN=1 CLEAN=0 NDI="" TOX="" TYPE=Release
 for arg in "$@"; do
   case "$arg" in
     --no-install) INSTALL=0 ;;
@@ -25,6 +26,8 @@ for arg in "$@"; do
     --debug) TYPE=Debug ;;
     --accept-ndi-license) NDI=ON ;;
     --no-ndi) NDI=OFF ;;
+    --accept-touchengine-license) TOX=ON ;;
+    --no-touchengine) TOX=OFF ;;
     -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (see ./build.sh --help)" >&2; exit 2 ;;
   esac
@@ -116,6 +119,14 @@ if [[ -z $NDI ]]; then
   fi
 fi
 CMAKE_ARGS+=(-DPINOL_BUNDLE_RUNTIMES=ON -DPINOL_ACCEPT_NDI_SDK_LICENSE="$NDI")
+
+# TouchEngine's Shared Use License requires that the builder has accepted the TouchDesigner licence.
+if [[ $OS == Darwin && -z $TOX && -t 0 ]]; then
+  echo "TouchEngine SDK: licenses/touchengine.txt (https://derivative.ca/UserGuide/TouchEngine)"
+  read -r -p "Have you accepted the TouchDesigner licence and do you accept the SDK terms? [y/N] " answer
+  if [[ $answer =~ ^[Yy] ]]; then TOX=ON; else TOX=OFF; fi
+fi
+CMAKE_ARGS+=(-DPINOL_ACCEPT_TOUCHENGINE_LICENSE="${TOX:-OFF}")
 
 # --- Build
 if [[ $CLEAN == 1 ]]; then rm -rf build; fi

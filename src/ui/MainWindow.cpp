@@ -767,6 +767,9 @@ void MainWindow::buildMenus()
         box.setText(QStringLiteral("<h2>PINOL</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
                                    "<p>© 2025-2026 PIXEL STEREO. Released under the %2.</p>"
                                    "<p>Built with Qt and FFmpeg (GNU LGPL) and other open source components: see the %3.</p>"
+                                   "<p>TouchEngine and TouchDesigner are products of Derivative Inc. "
+                                   "TouchEngine SDK: Shared Use License (licenses/touchengine.txt). "
+                                   "Playback requires a separately installed and licensed TouchDesigner or TouchPlayer.</p>"
                                    "<p>NDI® is a registered trademark of Vizrt NDI AB. "
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
                         .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("MIT License")),
@@ -1081,6 +1084,7 @@ static QString layerTag(SourceType t)
     case SourceType::Audio: return QStringLiteral("♪");
     case SourceType::Layer: return QStringLiteral("⧉");
     case SourceType::Input: return QStringLiteral("◉");
+    case SourceType::Tox: return QStringLiteral("◈");
     case SourceType::Web: return QStringLiteral("◍");
     default: return QStringLiteral("○");
     }
@@ -1160,6 +1164,9 @@ void MainWindow::refreshLayerList()
             case SourceType::Input:
                 r.source = liveInputKind(l->sourcePath) + QStringLiteral(" ") + liveInputName(l->sourcePath);
                 r.error = r.error || !l->input;
+                break;
+            case SourceType::Tox:
+                r.source = QStringLiteral("TouchDesigner ") + QFileInfo(l->sourcePath).fileName();
                 break;
             case SourceType::Web:
                 r.source = QStringLiteral("web ") + (l->web.url.isEmpty() ? QStringLiteral("(blank)") : l->web.url.left(60));

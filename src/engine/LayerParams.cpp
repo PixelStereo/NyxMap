@@ -35,6 +35,8 @@ quint64 keyOf(const Layer &l)
         mix(quint64(i->isValid()));
         for (const IsfInput &in : i->inputs()) mix(qHash(in.name) ^ (quint64(in.type) << 40));
     };
+    mix(quint64(quintptr(l.toxPlayer.get())));
+    if (l.toxPlayer) mix(l.toxPlayer->revision());
     inputs(l.generator.get());
     for (const auto &fx : l.effects) {
         mix(quint64(quintptr(fx.get())));
@@ -534,6 +536,29 @@ const std::vector<Parameter *> &Layer::parameters()
                         else q.setAlphaF(float(v));
                     }).colorComponent(k);
             }
+    }
+
+    if (type == SourceType::Tox && toxPlayer) {
+        flag("tox/play", "TouchDesigner › Play", true, &tox.playing)
+            .bind([self] { return QVariant(self->tox.playing); }, [self](const QVariant &v) { self->tox.playing = v.toBool(); self->applyTox(); });
+        num("tox/fps", "TouchDesigner › Frame Rate", 1, 120, 30, [self] { return self->tox.fps; },
+            [self](double v) { self->tox.fps = v; self->applyTox(); }).animatable(false);
+        add("tox/output", "TouchDesigner › Output TOP", T::Text).byDefault(QString()).bind(
+            [self] { return QVariant(self->tox.output); },
+            [self](const QVariant &v) { self->tox.output = v.toString(); self->applyTox(); });
+        add("tox/reload", "TouchDesigner › Reload", T::Trigger).bind(nullptr, [self](const QVariant &) { self->toxPlayer->reload(); });
+        for (const ToxControl &c : toxPlayer->controls()) {
+            for (int k = 0; k < c.count; ++k) {
+                Parameter &p = add(c.path(k), "TouchDesigner › " + c.label + (c.count > 1 ? " " + c.path(k).section('/', -1).toUpper() : QString()), c.type);
+                if (c.type == T::Trigger) { p.bind(nullptr, [self, c](const QVariant &) { self->toxPlayer->pulse(c.id); }); continue; }
+                const double lo = k < int(c.minimum.size()) ? c.minimum[size_t(k)] : 0;
+                const double hi = k < int(c.maximum.size()) ? c.maximum[size_t(k)] : 1;
+                p.range(lo, std::max(lo, hi)).byDefault(c.value(ToxSettings(), k))
+                    .bind([self, c, k] { return c.value(self->tox, k); },
+                          [self, c, k](const QVariant &v) { c.setValue(self->tox, k, v); self->applyTox(); });
+                if (c.color && k < 4) p.colorComponent(k);
+            }
+        }
     }
 
     // Web Page generator (WebPage.h): each change goes to its page at once (a new URL loads it; the others keep it)

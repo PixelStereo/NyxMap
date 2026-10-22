@@ -65,6 +65,7 @@ int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
 int runLiveInputTests(Engine &e); // live_inputs.cpp
 int runClockGeneratorTests(Engine &e); // clock_generators.cpp
+int runToxTests(Engine &e, const QString &tmp);
 int runFileSourceTests(Engine &e, const QString &tmp); // file_sources.cpp
 #define CHECK(cond)                                                                 \
     do {                                                                            \
@@ -197,6 +198,7 @@ int main(int argc, char **argv)
     if (area("psd")) failures += runPsdLayerTests(e, tmp);
     if (area("live_inputs")) failures += runLiveInputTests(e);
     if (area("clocks")) failures += runClockGeneratorTests(e);
+    if (area("tox")) failures += runToxTests(e, tmp);
     if (area("file_sources")) failures += runFileSourceTests(e, tmp);
     if (area("timeline_repeat")) {
         failures += runTimelineRepeatTests(e, tmp);
