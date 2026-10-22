@@ -69,7 +69,7 @@ int runClockPresetUiTests(Engine &engine)
         undo.redo(); check(presets.inSelected(id, {path}), "Redo restores the setting");
         click(label ? label : field, label ? Qt::NoModifier : Qt::AltModifier);
         check(!presets.inSelected(id, {path}), "click removes the setting from the selected preset");
-        QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal({3, 3}));
+        QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal(QPoint(3, 3)));
         QApplication::sendEvent(field, &event);
         auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
         bool hasPreset = false;
