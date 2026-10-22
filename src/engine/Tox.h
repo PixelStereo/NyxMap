@@ -36,6 +36,7 @@ class ToxPlayer : public LiveInput
 {
 public:
     virtual void configure(const ToxSettings &settings) = 0; // mailbox only, any thread
+    virtual void advance(double seconds) {} // render thread; elapsed show time, already paused/scaled by Engine
     virtual void reload() = 0;
     virtual void pulse(const QString &identifier) = 0;
     virtual std::vector<ToxControl> controls() const = 0;

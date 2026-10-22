@@ -5,6 +5,7 @@
 #include <QSet>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <mutex>
 
 #ifdef PINOL_HAS_TOUCHENGINE
@@ -268,14 +269,17 @@ class NativeTox final : public ToxPlayer {
         }
         const GLenum format = renderBits() > 8 ? GL_RGBA32F : GL_RGBA8;
         g->glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        Texture2D allocated;
+        Texture2D *out = &dest;
         if (!dest.tex || dest.w != w || dest.h != h || dest.storageFormat != format) {
-            if (renderBits() > 8) dest.uploadFloat(nullptr, w, h); else dest.upload(nullptr, w, h);
+            if (renderBits() > 8) allocated.uploadFloat(nullptr, w, h); else allocated.upload(nullptr, w, h);
+            out = &allocated;
         }
         if (!m_vao) g->glGenVertexArrays(1, &m_vao);
         if (!m_fbo) g->glGenFramebuffers(1, &m_fbo);
         g->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbo);
-        g->glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dest.tex, 0);
-        if (g->glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { message(QStringLiteral("Cannot allocate TouchEngine texture"), true); return false; }
+        g->glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, out->tex, 0);
+        if (g->glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { allocated.destroy(); message(QStringLiteral("Cannot allocate TouchEngine texture"), true); return false; }
         for (GLenum cap : {GL_BLEND, GL_SCISSOR_TEST, GL_DEPTH_TEST, GL_STENCIL_TEST, GL_CULL_FACE, GL_RASTERIZER_DISCARD, GL_FRAMEBUFFER_SRGB}) g->glDisable(cap);
         g->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         g->glViewport(0, 0, w, h);
@@ -290,6 +294,7 @@ class NativeTox final : public ToxPlayer {
         g->glUniform4i(g->glGetUniformLocation(p, "map"), map.r, map.g, map.b, map.a);
         g->glBindVertexArray(m_vao);
         g->glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (allocated.tex) { dest.destroy(); dest = allocated; }
         return true;
     }
     void sendInputs(const ToxSettings &s) {
@@ -369,6 +374,7 @@ public:
         if (m_fbo) g->glDeleteFramebuffers(1, &m_fbo);
     }
     void configure(const ToxSettings &s) override { std::lock_guard<std::mutex> lock(m_mutex); m_settings = s; m_settings.sanitize(); }
+    void advance(double dt) override { if (std::isfinite(dt) && dt > 0) m_time += dt; }
     void reload() override { m_reload = true; }
     void pulse(const QString &id) override { std::lock_guard<std::mutex> lock(m_mutex); if (m_pulses.size() < 128) m_pulses << id; }
     std::vector<ToxControl> controls() const override { std::lock_guard<std::mutex> lock(m_mutex); return m_controls; }
@@ -411,8 +417,7 @@ public:
         }
         const double now = m_clock.nsecsElapsed() / 1e9;
         if (m_lastCook >= 0 && now - m_lastCook < 1.0 / s.fps) return copied;
-        // Follow elapsed time under load; pausing holds component time without a jump on resume.
-        if (m_lastCook >= 0) m_time += now - m_lastCook;
+        // Wall time paces requests; component time follows the engine's show clock.
         m_lastCook = now;
         for (const auto &c : controls()) {
             if (!s.values.contains(c.id) || c.type == ParamInfo::Type::Trigger) continue;

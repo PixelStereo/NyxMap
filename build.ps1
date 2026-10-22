@@ -5,6 +5,8 @@
 #   --no-run                build only
 #   --accept-ndi-license    include NDI: you accept the NDI SDK License Agreement (https://ndi.video/sdk/)
 #   --no-ndi                without NDI, without asking
+#   --accept-touchengine-license  include TouchEngine: you have accepted its SDK and TouchDesigner terms
+#   --no-touchengine        without TouchEngine, without asking
 #   --clean                 start from an empty build folder
 #   --debug                 a Debug build
 #
@@ -26,7 +28,7 @@ foreach ($a in $args) {
         "--no-ndi" { $Ndi = "OFF" }
         "--accept-touchengine-license" { $Tox = "ON" }
         "--no-touchengine" { $Tox = "OFF" }
-        { $_ -in "-h", "--help" } { Get-Content $PSCommandPath -TotalCount 13 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
+        { $_ -in "-h", "--help" } { Get-Content $PSCommandPath -TotalCount 15 | ForEach-Object { $_ -replace '^# ?', '' }; exit 0 }
         default { Write-Host "Unknown option: $a (see build.ps1 --help)" -ForegroundColor Red; exit 2 }
     }
 }

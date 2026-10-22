@@ -480,6 +480,7 @@ if(PINOL_BUNDLE_RUNTIMES)
     list(TRANSFORM OMT_FILES PREPEND "${RUNTIMES}/omt/" OUTPUT_VARIABLE OMT_PATHS)
     add_custom_command(OUTPUT ${OMT_PATHS}
       COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/build_omt.py" "${RUNTIMES}/omt"
+      DEPENDS "${CMAKE_SOURCE_DIR}/scripts/build_omt.py"
       COMMENT "OMT (libomt, libvmx) from source" VERBATIM)
     list(APPEND RUNTIME_FILES ${OMT_PATHS})
   else()

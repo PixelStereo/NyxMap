@@ -208,6 +208,7 @@ void Engine::updateSource(Layer &l, double dt)
             l.pendingAutoImage = QImage();
         }
     }
+    if (l.toxPlayer && l.tox.playing) l.toxPlayer->advance(m_realDt * timeScale());
     (void)dt;
     if ((l.type != SourceType::Video && l.type != SourceType::Audio) || !l.hasTransport()) return;
     if (l.playing) {

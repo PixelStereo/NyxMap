@@ -12,6 +12,8 @@ struct FakeTox final : ToxPlayer {
     ToxSettings settings;
     QMap<QString, GLuint> textures;
     int reloads = 0;
+    double elapsed = 0;
+    void advance(double dt) override { elapsed += dt; }
     explicit FakeTox(const ToxSettings &s) : settings(s) {}
     void configure(const ToxSettings &s) override { settings = s; }
     void reload() override { ++reloads; }
@@ -82,6 +84,11 @@ int runToxTests(Engine &e, const QString &tmp)
     e.recallSnapshot(snapshot); e.advanceFades(.01);
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == aid && std::abs(e.parameterValue(id, c.path(0)).toDouble() - .6) < 1e-6,
           "snapshot restores TOP routing and values");
+    fake = dynamic_cast<FakeTox *>(e.layer(e.indexOfId(id))->toxPlayer.get());
+    const double beforePause = fake ? fake->elapsed : -1;
+    e.setPaused(true); e.renderFrame();
+    check(fake && fake->elapsed == beforePause, "show pause freezes component time");
+    e.setPaused(false);
     const QString project = tmp + "/tox.pinol";
     check(e.saveProject(project, {}, &error), "save component project");
     e.newProject();
@@ -99,7 +106,11 @@ int runToxTests(Engine &e, const QString &tmp)
     QJsonObject src = cyclic["source"].toObject();
     src["inputs"] = QJsonObject{{"in1", QString::number(id)}, {"in2", QString::number(bid)}}; cyclic["source"] = src;
     e.replaceLayerJson(e.indexOfId(id), cyclic);
-    check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == 0, "invalid saved routing repaired");
+    const QString invalidProject = tmp + "/tox-invalid.pinol";
+    check(e.saveProject(invalidProject, {}, &error), "save deliberately invalid routing");
+    e.newProject();
+    check(e.loadProject(invalidProject, nullptr, &error), "load deliberately invalid routing");
+    check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == 0, "invalid saved routing repaired on load");
     const QString relinked = tmp + "/relinked.tox";
     check(QFile::copy(component, relinked) && e.relinkLayerMedia(e.indexOfId(id), component, relinked, &error), "relink component");
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in2") == bid && e.layer(e.indexOfId(id))->tox.output == "out2", "relink preserves TOP settings");
