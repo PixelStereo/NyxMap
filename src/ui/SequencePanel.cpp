@@ -316,7 +316,7 @@ void CueStack::paintEvent(QPaintEvent *)
         y += h + kRowGap;
         const bool placeholder = r.step < 0;
         QColor frame = r.role == Current ? played : r.role == Next ? kUpcoming : QColor(58, 58, 66);
-        if (placeholder) frame.setAlphaF(0.35);
+        if (placeholder) frame.setAlphaF(0.35f);
         QPainterPath shape;
         shape.addRoundedRect(box, 3, 3);
 
@@ -609,7 +609,7 @@ private:
         const bool selected = opt.state & QStyle::State_Selected;
         QColor ink = opt.palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
         if (col == ColNext) {
-            if (next == Sequencer::StepContinue::Wait) ink.setAlphaF(0.45);
+            if (next == Sequencer::StepContinue::Wait) ink.setAlphaF(0.45f);
             p->setPen(ink);
             p->drawText(opt.rect.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, continueName(next));
             return;
@@ -630,15 +630,15 @@ private:
         const QRectF r = QRectF(opt.rect).adjusted(2, 3, -2, -3);
         if (frac >= 0) {
             QColor back = bar;
-            back.setAlphaF(0.18);
+            back.setAlphaF(0.18f);
             p->fillRect(r, back);
             QColor fill = bar;
-            fill.setAlphaF(frac >= 1 ? 0.35 : 0.75);
+            fill.setAlphaF(frac >= 1 ? 0.35f : 0.75f);
             p->fillRect(QRectF(r.left(), r.top(), r.width() * frac, r.height()), fill);
         }
         // The post-wait only counts with a follow; a time of zero is quiet
         const bool unused = col == ColPost && next == Sequencer::StepContinue::Wait;
-        if (unused || (value == 0 && frac < 0)) ink.setAlphaF(0.4);
+        if (unused || (value == 0 && frac < 0)) ink.setAlphaF(0.4f);
         QFont f = opt.font;
         QString text = value < 0 ? QStringLiteral("∞") : seconds(value);
         if (frac >= 0 && frac < 1) { // on its way: the time gone by, counting up
