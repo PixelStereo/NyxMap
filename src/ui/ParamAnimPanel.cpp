@@ -411,7 +411,7 @@ public:
         QUndoStack *undo = panel->m_undo;
         const quint64 layer = panel->m_layer;
         setObjectName("animCard");
-        setStyleSheet("#animCard { background:#232327; border:1px solid #38383e; border-radius:4px; }");
+        setStyleSheet("#animCard { background:#27272e; border:1px solid #62626e; border-radius:4px; }");
         auto *v = new QVBoxLayout(this);
         v->setContentsMargins(6, 4, 6, 6);
         v->setSpacing(4);

@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QFontDatabase>
 #include <QContextMenuEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -20,6 +21,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSlider>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QTimer>
 #include <QToolTip>
@@ -33,6 +35,15 @@ static const QColor kWave(224, 180, 58);
 static const QColor kHandle(235, 235, 240);
 static const QColor kPlayhead(76, 217, 100);
 static const QColor kCurrentStart(246, 196, 83);
+static constexpr int kPlaybackSteps = 1000000;
+
+static QString playbackTime(double seconds)
+{
+    if (!std::isfinite(seconds)) return QStringLiteral("—");
+    const qint64 ticks = std::llround(std::clamp(seconds, 0.0, 1e9) * 100);
+    return QStringLiteral("%1:%2.%3").arg(ticks / 6000, 2, 10, QLatin1Char('0'))
+        .arg((ticks / 100) % 60, 2, 10, QLatin1Char('0')).arg(ticks % 100, 2, 10, QLatin1Char('0'));
+}
 
 QString animWaveName(AnimWave w)
 {
@@ -1023,7 +1034,7 @@ void TrackRow::build()
     if (side) {
         head->setFixedWidth(m_ed->headerWidth());
         head->setObjectName("trackHead");
-        head->setStyleSheet("#trackHead { background:#222226; border-right:1px solid #34343a; }");
+        head->setStyleSheet("#trackHead { background:#27272e; border-right:1px solid #62626e; }");
         head->setAttribute(Qt::WA_StyledBackground);
     }
     auto *g = new QGridLayout(head);
@@ -1283,8 +1294,6 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     m_play->setStyleSheet("QPushButton:enabled { background:#2f6b3a; color:white; }");
     if (!side)
         for (QPushButton *b : {m_pause, m_stop, m_rewind}) b->setFixedWidth(34);
-    m_time = new QLabel;
-    m_time->setMinimumWidth(side ? 170 : 0);
     m_duration = numberBox(0.05, 36000, 2, 0.1, QStringLiteral(" s"));
     m_duration->setKeyboardTracking(false); // typing 12 over 4 does not first squash the keys into 1 s
     m_duration->setToolTip(QStringLiteral("Duration of one pass (the time of the keys; a wave has its own period)"));
@@ -1322,7 +1331,7 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     };
     if (side) {
         auto *transport = new QHBoxLayout;
-        for (QWidget *w : std::initializer_list<QWidget *>{m_play, m_pause, m_stop, m_rewind, m_time}) transport->addWidget(w);
+        for (QWidget *w : std::initializer_list<QWidget *>{m_play, m_pause, m_stop, m_rewind}) transport->addWidget(w);
         transport->addStretch();
         transport->addWidget(durationLabel(false));
         transport->addWidget(m_duration);
@@ -1354,8 +1363,6 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         auto *r1 = new QHBoxLayout;
         r1->setSpacing(3);
         for (QWidget *w : std::initializer_list<QWidget *>{m_play, m_pause, m_stop, m_rewind}) r1->addWidget(w);
-        r1->addSpacing(4);
-        r1->addWidget(m_time, 1);
         v->addLayout(r1);
         auto *r2 = new QHBoxLayout;
         r2->addWidget(durationLabel(true));
@@ -1373,6 +1380,49 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         }
         v->addLayout(r3);
     }
+
+    // Playback is separate from view scrolling. Text never contributes a changing
+    // width to the layout, even when minutes or loop counts gain more digits.
+    auto *playback = new QWidget;
+    playback->setObjectName(QStringLiteral("animationPlayback"));
+    auto *playbackLayout = new QVBoxLayout(playback);
+    playbackLayout->setContentsMargins(6, 3, 6, 3);
+    playbackLayout->setSpacing(1);
+    m_position = new QSlider(Qt::Horizontal);
+    m_position->setObjectName(QStringLiteral("animationPosition"));
+    m_position->setAccessibleName(QStringLiteral("Playback position"));
+    m_position->setToolTip(QStringLiteral("Playback position — drag to seek within the current pass"));
+    m_position->setRange(0, kPlaybackSteps);
+    m_position->setStyleSheet(QStringLiteral(
+        "QSlider::groove:horizontal { height:6px; border:1px solid #6a6a77; border-radius:3px; background:#202027; }"
+        "QSlider::sub-page:horizontal { background:#4cd964; border-radius:3px; }"
+        "QSlider::handle:horizontal { width:12px; margin:-5px 0; background:#e6e6ed; border:1px solid #9a9aa7; border-radius:3px; }"));
+    playbackLayout->addWidget(m_position);
+    auto *readouts = new QHBoxLayout;
+    readouts->setSpacing(6);
+    m_time = new QLabel(QStringLiteral("00:00.00"));
+    m_totalTime = new QLabel(QStringLiteral("00:04.00"));
+    m_playbackState = new QLabel(QStringLiteral("Stopped"));
+    m_time->setObjectName(QStringLiteral("animationElapsed"));
+    m_totalTime->setObjectName(QStringLiteral("animationDuration"));
+    m_playbackState->setObjectName(QStringLiteral("animationPlaybackState"));
+    m_time->setAccessibleName(QStringLiteral("Elapsed time"));
+    m_totalTime->setAccessibleName(QStringLiteral("Total duration"));
+    m_playbackState->setAccessibleName(QStringLiteral("Playback state and pass"));
+    const QFont counterFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    for (auto *label : {m_time, m_playbackState, m_totalTime}) {
+        label->setFont(counterFont);
+        label->setTextFormat(Qt::PlainText);
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        label->setFixedHeight(label->fontMetrics().height() + 4);
+        readouts->addWidget(label, label == m_playbackState ? 4 : 3);
+    }
+    m_time->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_playbackState->setAlignment(Qt::AlignCenter);
+    m_totalTime->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_totalTime->setStyleSheet(QStringLiteral("color:#b9b9c5;"));
+    playbackLayout->addLayout(readouts);
+    v->addWidget(playback);
 
     const int bar = scrollTracks ? style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0; // the lanes' scroll bar
     auto *rulerRow = new QHBoxLayout;
@@ -1415,6 +1465,13 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     connect(m_pause, &QPushButton::clicked, this, [this] { control(AnimAction::Pause); });
     connect(m_stop, &QPushButton::clicked, this, [this] { control(AnimAction::Stop); });
     connect(m_rewind, &QPushButton::clicked, this, [this] { control(AnimAction::Rewind); });
+    connect(m_position, &QSlider::valueChanged, this, [this](int value) {
+        Animation a;
+        if (!fetch(&a)) return;
+        const double t = a.duration * value / kPlaybackSteps;
+        control(AnimAction::Seek, a.state == AnimState::Stopped ? t : a.clockAt(t));
+        poll();
+    });
     connect(m_ruler, &TimeRuler::seekRequested, this, [this](double t) {
         // Within the pass shown: from the pass it is in
         Animation a;
@@ -1571,15 +1628,25 @@ void AnimEditor::poll()
                           k < a.capturedRgb.size() ? a.capturedRgb[k] : AnimTrack().capturedRgb, shown);
     }
     const double d = std::max(0.05, a.duration);
-    const int pass = a.pass;
-    const QString state = a.state == AnimState::Playing ? QStringLiteral("<span style='color:%1'>playing</span>").arg(kPlayhead.name())
-                        : a.state == AnimState::Paused  ? QStringLiteral("<span style='color:#e0b43a'>paused</span>")
-                                                        : QStringLiteral("<span style='color:#8a8a90'>stopped</span>");
-    m_time->setText(QStringLiteral("<b>%1</b> / %2 s · %3%4")
-                        .arg(pos, 0, 'f', 2)
-                        .arg(d, 0, 'f', 2)
-                        .arg(state)
-                        .arg(shown && a.loop != AnimLoop::Once ? QStringLiteral(" · pass %1").arg(pass) : QString()));
+    if (!m_position->isSliderDown()) {
+        const QSignalBlocker block(m_position);
+        m_position->setValue(int(std::lround(std::clamp(pos / d, 0.0, 1.0) * kPlaybackSteps)));
+    }
+    m_position->setSingleStep(std::max(1, int(std::lround(kPlaybackSteps / (d * 60)))));
+    m_position->setPageStep(std::max(m_position->singleStep(), kPlaybackSteps / 100));
+    const QString state = a.state == AnimState::Playing ? QStringLiteral("Playing")
+                        : a.state == AnimState::Paused ? QStringLiteral("Paused") : QStringLiteral("Stopped");
+    const QString stateText = state + (shown && a.loop != AnimLoop::Once ? QStringLiteral(" · Pass %1").arg(a.pass) : QString());
+    m_time->setText(playbackTime(pos));
+    m_totalTime->setText(playbackTime(d));
+    m_playbackState->setText(stateText);
+    const QColor stateColor = a.state == AnimState::Playing ? kPlayhead
+                            : a.state == AnimState::Paused ? QColor("#efc374") : QColor("#b9b9c5");
+    const QString stateStyle = QStringLiteral("color:%1;").arg(stateColor.name());
+    if (m_playbackState->styleSheet() != stateStyle) m_playbackState->setStyleSheet(stateStyle);
+    const QString description = QStringLiteral("%1 / %2 · %3").arg(m_time->text(), m_totalTime->text(), stateText);
+    m_position->setAccessibleDescription(description);
+    for (auto *label : {m_time, m_totalTime, m_playbackState}) label->setToolTip(description);
     m_play->setEnabled(a.state != AnimState::Playing);
     m_pause->setEnabled(a.state == AnimState::Playing);
 }

@@ -280,9 +280,9 @@ protected:
     std::vector<LaneView> m_laneViews;
     std::vector<TrackRow *> m_rows;
     QPushButton *m_play, *m_pause, *m_stop, *m_rewind, *m_fit, *m_all;
-    QSlider *m_zoomX = nullptr, *m_zoomY = nullptr;
+    QSlider *m_position, *m_zoomX = nullptr, *m_zoomY = nullptr;
     QScrollBar *m_scrollX;
-    QLabel *m_time;
+    QLabel *m_time, *m_totalTime, *m_playbackState;
     NumberBox *m_duration, *m_speed;
     QComboBox *m_loop;
     IntBox *m_repeat;

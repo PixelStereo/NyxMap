@@ -92,13 +92,14 @@ Notifier *notifier()
 
 QString theme::tabStyle()
 {
-    return QStringLiteral("QTabBar::tab { background:#1f1f23; color:#9a9aa1; padding:5px 9px; margin-right:2px;"
-                          " border:1px solid #34343a; border-bottom:none;"
+    return QStringLiteral("QTabBar::tab { background:#25252b; color:#c3c3cd; padding:5px 9px; margin-right:3px;"
+                          " font-weight:600; border:1px solid #62626e; border-bottom:3px solid #44444e;"
                           " border-top-left-radius:4px; border-top-right-radius:4px; }"
-                          "QTabBar::tab:selected { background:#505058; color:#ffffff; font-weight:bold; border-color:#62626a;"
+                          "QTabBar::tab:selected { background:#4c4c59; color:#ffffff; border-color:#9494a3;"
                           " border-bottom:3px solid %1; }"
-                          "QTabBar::tab:hover:!selected { background:#2e2e34; color:#e2e2e6; }"
-                          "QTabBar::tab:disabled { color:#55555a; }")
+                          "QTabBar::tab:hover:!selected { background:#383841; color:#ffffff; border-color:#9292a0; }"
+                          "QTabBar::tab:disabled { color:#777782; border-color:#44444e; }"
+                          "QTabWidget::pane { border:1px solid #62626e; }")
         .arg(css());
 }
 
@@ -233,10 +234,17 @@ void applyToApplication(QApplication &app)
     p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(120, 120, 125));
     p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(120, 120, 125));
     app.setPalette(p);
-    app.setStyleSheet(QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid #4a4a50; border-radius: 4px; "
+    app.setStyleSheet(tabStyle() + QStringLiteral("QGroupBox { font-weight: bold; border: 1px solid #62626e; border-radius: 4px; "
                                      "margin-top: 10px; padding-top: 8px; } "
                                      "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; "
-                                     "color: %1; }")
+                                     "color: %1; }"
+                                     "QSplitter::handle { background:#62626e; margin:1px; }"
+                                     "QSplitter::handle:horizontal { width:7px; }"
+                                     "QSplitter::handle:vertical { height:7px; }"
+                                     "QSplitter::handle:hover { background:%1; }"
+                                     "QHeaderView::section { background:#35353e; color:#e1e1e8;"
+                                     " border:0; border-right:1px solid #555561; border-bottom:1px solid #747480; padding:4px 6px; }"
+                                     "QMenu::separator { height:1px; background:#62626e; margin:5px 8px; }")
                           .arg(css()));
 }
 } // namespace theme

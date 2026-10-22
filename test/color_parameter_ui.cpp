@@ -13,9 +13,12 @@
 #include <QContextMenuEvent>
 #include <QClipboard>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QJsonArray>
 #include <QMenu>
 #include <QPushButton>
+#include <QPixmap>
+#include <QSlider>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -217,6 +220,59 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     QTemporaryDir files;
     check(engine.saveProject(files.filePath("colors.pinol"), {}, &error), "save local color animations");
     inspector.hide(); timeline.hide(); pump();
+
+    // Reproduce changing time/pass widths in both layouts using the real
+    // engine transport. Polling must neither resize the editor nor seek it.
+    const int transportRow = engine.addLayer("Transport geometry");
+    const quint64 transportLayer = engine.layerId(transportRow);
+    Animation transport; transport.duration = 36000; transport.loop = AnimLoop::PingPong;
+    AnimTrack transportTrack; transportTrack.layer = transportLayer; transportTrack.param = "opacity";
+    transportTrack.keys = {{0, 0, 0}, {36000, 1, 0}}; transport.tracks = {transportTrack};
+    const int transportIndex = engine.addAnimation(transport);
+    const quint64 transportId = engine.animation(transportIndex).id;
+    engine.setLayerAnim(transportLayer, "opacity", &transport);
+    TimelineEditor wide(&engine, &undo); wide.setTimeline(transportId); wide.resize(1000, 420);
+    ParamAnimEditor narrow(&engine, &undo, transportLayer, "opacity", AnimEditor::Layout::Stacked); narrow.resize(420, 520);
+    auto checkTransport = [&](AnimEditor &editor, auto seek, auto read, const QString &captureName) {
+        editor.show(); seek(9.99); editor.poll(); pump();
+        auto *slider = editor.findChild<QSlider *>("animationPosition");
+        auto *elapsed = editor.findChild<QLabel *>("animationElapsed");
+        check(slider && elapsed, "both animation layouts expose a playback slider and elapsed readout");
+        if (!slider || !elapsed) return;
+        check(elapsed->geometry().top() >= slider->geometry().bottom(), "time digits are below the playback slider");
+        const QSize preferred = editor.sizeHint(), minimum = editor.minimumSizeHint(), actual = editor.size();
+        const QRect digits = elapsed->geometry();
+        for (double clock : {10., 59.99, 60., 5999.99, 6000., 99999999.99}) {
+            seek(clock); editor.poll(); pump();
+            check(editor.sizeHint() == preferred && editor.minimumSizeHint() == minimum && editor.size() == actual &&
+                  elapsed->geometry() == digits, "time and pass digit changes leave editor and readout geometry unchanged");
+            check(std::abs(read().clock - clock) < 1e-5, "playback polling never feeds a rounded slider value back into the engine");
+        }
+        seek(transport.duration + 100); editor.poll(); // the backwards pass
+        const int undoCount = undo.count();
+        slider->setValue(slider->maximum() / 2);
+        const Animation sought = read();
+        check(std::abs(sought.position() - transport.duration / 2) < 1e-5 && sought.backwardsAt(sought.clock) &&
+              sought.state == AnimState::Paused && undo.count() == undoCount,
+              "scrubbing seeks within the backwards pass without resuming playback or creating an edit");
+        slider->setSliderDown(true);
+        slider->setValue(slider->maximum() / 4);
+        seek(123); editor.poll();
+        check(slider->value() == slider->maximum() / 4, "playback polling does not move the handle during a drag");
+        slider->setSliderDown(false); editor.poll(); pump();
+        const QString captures = qEnvironmentVariable("PINOL_UI_CAPTURE_DIR");
+        if (!captures.isEmpty()) {
+            seek(99999999.99); editor.poll(); pump();
+            check(QDir().mkpath(captures), "create CI transport screenshot directory");
+            check(editor.grab().save(QDir(captures).filePath(captureName + ".png")), "save CI transport screenshot");
+        }
+        editor.hide(); pump();
+    };
+    checkTransport(wide, [&](double clock) { engine.controlAnimation(transportId, AnimAction::Seek, clock); },
+                   [&] { return engine.animation(engine.indexOfAnimation(transportId)); }, "timeline");
+    checkTransport(narrow, [&](double clock) { engine.controlLayerAnim(transportLayer, "opacity", AnimAction::Seek, clock); },
+                   [&] { Animation a; engine.layerAnim(transportLayer, "opacity", &a); return a; }, "parameter-animation");
+    engine.removeAnimation(engine.indexOfAnimation(transportId)); engine.removeLayer(transportRow);
     check(engine.loadProject(files.filePath("colors.pinol"), nullptr, &error), "reload local color animations");
     Animation restored;
     check(engine.layerAnim(id, start, &restored) && restored.tracks[0].color, "project reload preserves grouped local RGB animation");
