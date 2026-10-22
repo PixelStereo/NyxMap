@@ -192,10 +192,15 @@ QDateTime ClockGenerator::nowLocked() const { return m_testNow.isValid() ? m_tes
 void ClockGenerator::setTestNow(const QDateTime &now)
 {
     std::lock_guard<std::mutex> lk(m_mutex);
-    const double e = elapsedLocked();
+    // Rebase only when changing clock domains. Advancing an already injected
+    // clock must advance the transport from its existing anchor.
+    const bool switchingClock = m_testNow.isValid() != now.isValid();
+    const double e = switchingClock ? elapsedLocked() : 0;
     m_testNow = now;
-    m_base = e; // its transport goes on from where it is, on this time
-    m_anchor = msLocked();
+    if (switchingClock) {
+        m_base = e;
+        m_anchor = msLocked();
+    }
 }
 
 double ClockGenerator::elapsedLocked() const { return m_base + (m_running ? (msLocked() - m_anchor) / 1000.0 : 0.0); }
