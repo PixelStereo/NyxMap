@@ -111,6 +111,17 @@ jobs:
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
           xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -L timing
+      - name: Backtraces of the crashed tests
+        if: failure()
+        run: |
+          # Each failed engine area again under gdb: where it crashed (the symbols of a release build: functions only)
+          sudo apt-get install -y gdb
+          for name in $(sed -n 's/^[0-9]*:\(.*\)$/\1/p' build/Testing/Temporary/LastTestsFailed*.log | sort -u); do
+            ctest --test-dir build -N -V -R "^${name}\$" | grep -q 'Test command: .*pinol_tests.*--area' || continue
+            echo "::group::gdb $name"
+            (cd build && timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args ./pinol_tests --area "$name") || true
+            echo "::endgroup::"
+          done
       - name: Dependency versions
         run: |
           # The build machine only (package_linux.py labels it so). Ubuntu's FFmpeg (GPL) makes the test fixtures and is
