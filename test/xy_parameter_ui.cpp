@@ -9,8 +9,12 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QPixmap>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QUndoStack>
@@ -20,6 +24,7 @@
 
 int runXyParameterUiTests(Engine &engine, const QString &root)
 {
+    theme::applyToApplication(*qApp);
     int failures = 0;
     auto check = [&](bool ok, const char *why) {
         if (!ok) { ++failures; std::printf("FAIL xy_parameter_ui: %s\n", why); }
@@ -82,6 +87,10 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     check(engine.layerAnim(layer, point, &local) && local.tracks[0].isPoint(), "one local animation owns both axes");
     ParamAnimEditor editor(&engine, &undo, layer, point, AnimEditor::Layout::Side);
     editor.resize(1000, 420); editor.show(); pump();
+    auto *showPath = editor.findChild<QPushButton *>("showXyPath");
+    check(showPath && showPath->isVisible(), "grouped animation offers an XY path preview");
+    if (showPath) showPath->click();
+    pump();
     auto *axisBox = editor.findChild<QComboBox *>("xyAnimationAxis");
     check(axisBox && axisBox->isVisible(), "grouped editor has an explicit X/Y selector");
     if (axisBox) {
@@ -95,6 +104,8 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
         undo.undo(); pump();
         check(engine.layerAnim(layer, point, &local) && std::abs(local.tracks[0].axes[1].phase - .25) < 1e-6,
               "Undo restores the Y phase as part of the grouped animation");
+        auto *preview = editor.findChild<XyPathPreview *>();
+        check(preview && preview->isVisible(), "XY path stays open across axis selection and Undo");
     }
     presets.addToNew(layer, {point});
     const auto preset = engine.preset(engine.presetCount() - 1);
@@ -132,5 +143,100 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
               list[0].oscAddress.isEmpty(), "editing Y source does not replace X source");
     }
     engine.setInteractionLearn(false);
+    engine.setInteractions({});
+
+    // Compare the preview to actual engine output, especially after elapsed
+    // wave time diverges from the position within a loop or ping-pong pass.
+    auto wave = engine.makeLayerAnim(layer, point, int(AnimWave::Sine));
+    wave.duration = 1;
+    for (auto &axis : wave.tracks[0].axes) { axis.period = 3.7; axis.center = .5; axis.amplitude = .25; }
+    engine.setLayerAnim(layer, point, &wave);
+    ParamAnimEditor pathEditor(&engine, &undo, layer, point, AnimEditor::Layout::Side);
+    pathEditor.resize(1000, 560); pathEditor.show(); pump();
+    auto *pathToggle = pathEditor.findChild<QPushButton *>("showXyPath");
+    if (pathToggle) pathToggle->click();
+    pump();
+    auto previewMatchesOutput = [&](AnimEditor &view) {
+        pump();
+        view.poll();
+        auto *preview = view.findChild<XyPathPreview *>();
+        Engine::AnimationPlayback playback;
+        if (!preview || !engine.sampleAnimation(0, layer, point, &playback)) return false;
+        const auto value = preview->valueAt(playback.position);
+        return std::abs(value[0] - engine.parameterValue(layer, point + "/x").toDouble()) < 1e-6 &&
+               std::abs(value[1] - engine.parameterValue(layer, point + "/y").toDouble()) < 1e-6;
+    };
+    engine.controlLayerAnim(layer, point, AnimAction::Play);
+    engine.advanceFades(2.4);
+    check(previewMatchesOutput(pathEditor), "XY path uses continuous wave time across loop boundaries");
+    engine.controlLayerAnim(layer, point, AnimAction::LoopMode, 0, AnimLoop::PingPong);
+    engine.advanceFades(1.1);
+    Engine::AnimationPlayback playback;
+    check(engine.sampleAnimation(0, layer, point, &playback) && playback.backwards && std::abs(playback.played - 3.5) < 1e-6,
+          "telemetry retains wave time and direction after changing loop mode");
+    check(previewMatchesOutput(pathEditor), "XY path matches actual output on a backwards pass with a wave offset");
+    auto clickPath = [&](XyPathPreview *preview) {
+        if (!preview) return;
+        const QPointF pos = preview->rect().center();
+        const QPointF global = preview->mapToGlobal(pos.toPoint());
+        QMouseEvent down(QEvent::MouseButtonPress, pos, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent up(QEvent::MouseButtonRelease, pos, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(preview, &down); QApplication::sendEvent(preview, &up); pump();
+    };
+    clickPath(pathEditor.findChild<XyPathPreview *>());
+    check(engine.layerAnim(layer, point, &local) && local.clock >= 1 && local.clock < 2,
+          "seeking along the path stays in the current backwards pass");
+    check(previewMatchesOutput(pathEditor), "path seeking updates both coordinates through the shared transport");
+    const QString captures = qEnvironmentVariable("PINOL_UI_CAPTURE_DIR");
+    if (!captures.isEmpty()) {
+        check(QDir().mkpath(captures), "create XY screenshot directory");
+        check(pathEditor.grab().save(QDir(captures).filePath("xy-path-wave.png")), "save XY wave preview in CI");
+    }
+    engine.controlLayerAnim(layer, point, AnimAction::Stop);
+    wave.tracks[0].axes[0].enabled = false;
+    auto &y = wave.tracks[0].axes[1];
+    y.oscillator = false; y.keys = {{0, 0, 0}, {1, .9, 0}}; y.keys[0].isCurrentValue = true;
+    engine.setLayerAnim(layer, point, &wave);
+    engine.setParameter(layer, point + "/x", .22); engine.setParameter(layer, point + "/y", .31);
+    engine.controlLayerAnim(layer, point, AnimAction::Play); engine.advanceFades(.4); pump();
+    check(previewMatchesOutput(pathEditor), "XY path uses captured starts and holds a disabled axis at its live value");
+    engine.setParameter(layer, point + "/x", .8);
+    check(previewMatchesOutput(pathEditor), "manual X changes update the preview without recapturing the Y start");
+    engine.controlLayerAnim(layer, point, AnimAction::Stop);
+
+    auto keys = engine.makeLayerAnim(layer, point, -1);
+    keys.duration = 1;
+    for (auto &axis : keys.tracks[0].axes) axis.keys = {{0, 0, 0}, {1, 1, 0}};
+    const int previewTimeline = engine.addAnimation(keys);
+    TimelineEditor timelinePath(&engine, &undo);
+    timelinePath.setTimeline(engine.animation(previewTimeline).id);
+    timelinePath.resize(1000, 560); timelinePath.show(); pump();
+    auto *timelinePathToggle = timelinePath.findChild<QPushButton *>("showXyPath");
+    check(timelinePathToggle && timelinePathToggle->isVisible(), "global timelines offer the same XY path view");
+    if (timelinePathToggle) timelinePathToggle->click();
+    pump();
+    const auto definition = engine.animation(previewTimeline);
+    const int undoCount = undo.count();
+    clickPath(timelinePath.findChild<XyPathPreview *>());
+    const auto sought = engine.animation(previewTimeline);
+    check(sought.state == AnimState::Paused && sought.clock > .1 && sought.clock < .9 &&
+          std::abs(engine.parameterValue(layer, point + "/x").toDouble() - sought.position()) < 1e-6 &&
+          std::abs(engine.parameterValue(layer, point + "/y").toDouble() - sought.position()) < 1e-6,
+          "clicking a global XY path seeks the pair instead of writing unrelated scalar values");
+    check(sameAnimation(definition, sought) && undo.count() == undoCount, "path scrubbing preserves the curves and Undo history");
+    if (!captures.isEmpty())
+        check(timelinePath.grab().save(QDir(captures).filePath("xy-path-timeline.png")), "save global XY path preview in CI");
+    auto *targetMenu = timelinePath.findChild<QPushButton *>("timelineParameter");
+    QAction *scalarTarget = nullptr;
+    if (targetMenu && targetMenu->menu())
+        for (auto *action : targetMenu->menu()->actions())
+            if (action->text() == QLatin1String("Opacity") && !action->menu()) scalarTarget = action;
+    check(scalarTarget != nullptr, "timeline target menu offers a scalar target beside XY");
+    if (scalarTarget) scalarTarget->trigger();
+    pump();
+    const auto *scalarPreview = timelinePath.findChild<XyPathPreview *>();
+    const auto *scalarToggle = timelinePath.findChild<QPushButton *>("showXyPath");
+    check(scalarPreview && !scalarPreview->isVisible() && scalarToggle && !scalarToggle->isVisible(),
+          "switching to a scalar target hides XY-only controls");
     return failures;
 }

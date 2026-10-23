@@ -1330,6 +1330,7 @@ Engine::AnimationPlayback playbackOf(const Animation &a, bool captures)
     Engine::AnimationPlayback out;
     out.id = a.id; out.name = a.name; out.state = a.state; out.loop = a.loop;
     out.position = a.position(); out.duration = a.duration; out.clock = a.clock;
+    out.played = a.played(); out.backwards = a.backwardsAt(a.clock);
     out.speed = a.speed; out.length = a.length(); out.tracks = int(a.tracks.size());
     out.pass = int(std::min(1e9, std::floor(std::min(a.clock, a.length()) / std::max(.05, a.duration)))) + 1;
     if (captures) {
