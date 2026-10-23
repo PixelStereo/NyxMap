@@ -10,7 +10,8 @@ paged in groups of 24 to keep large shows responsive.
 
 1. Install [Open Stage Control 1.31.x](https://openstagecontrol.ammd.net/).
 2. In Pinol **Settings**, enable **OSC / OSCQuery**. Its default TCP port is `5678`.
-3. Keep `pinol.json` and `pinol.js` together. In the Open Stage Control launcher,
+3. Download **Pinol-OpenStageControl** from a successful [controller workflow](https://github.com/PixelStereo/Pinol/actions/workflows/open-stage-control.yml)
+   and extract the whole ZIP, including its `node_modules` folder. In the launcher,
    set **load** to `pinol.json` and **custom-module** to `pinol.js`, then start.
 4. Open **CONNECT** to enter another Pinol computer or OSCQuery port. Open Stage
    Control itself can be opened from a tablet at its HTTP address, normally
@@ -23,11 +24,16 @@ open-stage-control --load /path/to/pinol.json \
   --custom-module /path/to/pinol.js --port 8080 --osc-port 11111
 ```
 
-The module uses `ws` and `osc`, already included with Open Stage Control. Pinol
+The controller pack includes its pure JavaScript `ws` and `osc` dependencies and
+their license files. Keep them next to the session. Pinol
 commands and feedback use **one OSCQuery/WebSocket connection**; no UDP feedback
-target or additional npm installation is needed. Widgets' local `127.0.0.1:1234`
+target or npm installation is needed for the downloaded pack. Widgets' local `127.0.0.1:1234`
 target is intercepted by the module, which sends their commands to the Pinol host
 chosen on CONNECT.
+
+For a source checkout, prepare the dependencies once with
+`npm install --ignore-scripts --omit=optional` in this folder. This step is done
+by GitHub CI when it builds the downloadable pack.
 
 ## Operating rules
 

@@ -1,4 +1,4 @@
-// Open Stage Control 1.x custom module. Uses the ws/osc modules shipped with it.
+// Open Stage Control 1.x custom module. Uses ws/osc from the controller pack.
 // Pinol state remains authoritative; feedback never replays a show command.
 const WebSocket = nativeRequire('ws');
 const osc = nativeRequire('osc');
@@ -8,7 +8,7 @@ const PAGE_SIZE = 24;
 let host = '127.0.0.1', port = 5678, socket, timer, request, generation = 0;
 let catalog, playback, selected = '0', lastPong = 0, online = false, catalogKey = '';
 let pages = {snapshots: 0, presets: 0, timelines: 0, cues: 0};
-let retryAt = 0, lastCatalog = 0;
+let retryAt = 0, lastCatalog = 0, catalogError = '';
 const id = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
 const emit = (address, value) => receive(address, value);
 const edit = (widget, properties) => receive('/EDIT', widget, JSON.stringify(properties));
@@ -19,7 +19,7 @@ const active = 'JS{return !!OSC{/pinol/ui/online,0}}';
 function status(text) {
     const ready = !!(socket && socket.readyState === WebSocket.OPEN && catalog && playback && Date.now() - lastPong < 6000);
     if (online !== ready) { online = ready; emit('/pinol/ui/online', ready ? 1 : 0); }
-    emit('/pinol/ui/status', text || (ready ? `CONNECTED · ${host}:${port}` : `CONNECTING · ${host}:${port}`));
+    emit('/pinol/ui/status', text || catalogError || (ready ? `CONNECTED · ${host}:${port}` : `CONNECTING · ${host}:${port}`));
 }
 function button(widget, label, address, preArgs, extra) {
     return Object.assign({type: 'button', id: widget, label, mode: 'momentary', height: 48,
@@ -62,11 +62,12 @@ function renderCues() {
     const sequence = catalog && catalog.sequences.find(entry => entry.id === selected);
     const entries = range('cues', sequence ? sequence.cues : []);
     const widgets = entries.map(cue => {
+        const number = Number(cue.index);
         const name = cue.text || cue.name || (cue.missing ? 'Missing target' : 'Empty cue');
         const details = [cue.target_type, cue.name, cue.continue, cue.description].filter(Boolean).join(' · ');
         return button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
             height: 76, align: 'left',
-            colorWidget: `JS{return OSC{/sequence/cue/current/number,0} === ${cue.index} ? '#78dfb5' : '#516078'}`,
+            colorWidget: `JS{return OSC{/sequence/cue/current/number,0} === ${number} ? '#78dfb5' : '#516078'}`,
             css: 'font-size:15px;text-align:left;'});
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
@@ -97,12 +98,17 @@ function publishTimelineValues() {
 function publishState(state) {
     if (!state || state.version !== 1 || !state.values || !Array.isArray(state.timelines)) throw Error('Unsupported Pinol state');
     const oldSelected = selected;
+    const oldCue = playback && playback.values['/sequence/cue/current/number'];
     selected = String(state.values['/sequence/id'] || '0');
     playback = state;
     for (const address of Object.keys(state.values)) emit(address, state.values[address]);
     for (const property of ['pause', 'blackout']) emit('/pinol/composition/' + property, state.values['/composition/' + property]);
     emit('/pinol/sequence/select', selected);
-    if (selected !== oldSelected) { pages.cues = 0; renderCues(); }
+    const cue = Math.max(0, Number(state.values['/sequence/cue/current/number']) - 1) || 0;
+    if (selected !== oldSelected || (oldCue !== state.values['/sequence/cue/current/number'] && Math.floor(cue / PAGE_SIZE) !== pages.cues)) {
+        pages.cues = Math.floor(cue / PAGE_SIZE); renderCues();
+    }
+    emit('/pinol/ui/background', (state.sequences || []).filter(s => s.active && s.id !== selected).length);
     publishTimelineValues();
     status();
 }
@@ -125,13 +131,13 @@ function fetchCatalog(force) {
                 const parsed = JSON.parse(JSON.parse(body).VALUE[0]);
                 if (parsed.version !== 1 || !['sequences', 'snapshots', 'presets', 'timelines'].every(k => Array.isArray(parsed[k])))
                     throw Error('Unsupported Pinol catalog');
-                catalog = parsed; lastCatalog = Date.now();
+                catalog = parsed; lastCatalog = Date.now(); catalogError = '';
                 publishCatalog(force); status();
-            } catch (error) { catalog = null; status(error.message); }
+            } catch (error) { catalog = null; catalogError = error.message; status(); }
         });
     });
     request.on('timeout', () => request && request.destroy(Error('OSCQuery request timed out')));
-    request.on('error', error => { if (token === generation) { catalog = null; status(error.message); } });
+    request.on('error', error => { if (token === generation) { catalog = null; catalogError = error.message; status(); } });
     request.on('close', () => { if (token === generation) request = null; });
 }
 function connect(nextHost, nextPort) {
@@ -143,7 +149,7 @@ function connect(nextHost, nextPort) {
     if (request) { request.destroy(); request = null; }
     if (socket) socket.terminate();
     host = nextHost; port = nextPort;
-    catalog = playback = null; selected = '0'; catalogKey = ''; lastCatalog = 0;
+    catalog = playback = null; selected = '0'; catalogKey = ''; lastCatalog = 0; catalogError = '';
     emit('/pinol/ui/host', host); emit('/pinol/ui/port', port);
     emit('/sequence/name', 'Disconnected'); emit('/sequence/go_enabled', 0); emit('/sequence/back_enabled', 0);
     status();
@@ -167,7 +173,7 @@ function connect(nextHost, nextPort) {
                 };
                 visit(packet);
             } else if (JSON.parse(data.toString()).COMMAND === 'PATH_CHANGED') fetchCatalog(false);
-        } catch (error) { status('Invalid Pinol feedback: ' + error.message); }
+        } catch (error) { playback = null; status('Invalid Pinol feedback: ' + error.message); }
     });
     socket.on('error', error => { if (token === generation) status('Connection error: ' + error.message); });
     socket.on('close', () => {
