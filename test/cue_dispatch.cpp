@@ -10,7 +10,7 @@ int main(int argc,char **argv) {
     QSurfaceFormat format;format.setVersion(3,3);format.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(format);
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);QApplication app(argc,argv);
     Engine engine;QString error;if(!engine.initialize(&error)||!engine.start())return 1;
-    engine.addLayer("Surface");Engine::Snapshot snapshot;snapshot.name="Slow cue";snapshot.layers=engine.captureLayers();snapshot.fade=0;
+    const auto surfaceId=engine.layerId(engine.addLayer("Surface"));Engine::Snapshot snapshot;snapshot.name="Slow cue";snapshot.layers=engine.captureLayers();snapshot.fade=0;
     const int index=engine.addSnapshot(snapshot);const auto id=engine.snapshot(index).id;
     std::atomic<bool> inSlowRecall{false};int recorded=0,heartbeats=0;bool correctThread=false;
     QObject::connect(&engine,&Engine::snapshotRecalled,&engine,[&](int){inSlowRecall=true;QThread::msleep(120);inSlowRecall=false;},Qt::DirectConnection);
@@ -41,6 +41,26 @@ int main(int argc,char **argv) {
     wait.restart();while(wait.elapsed()<350){app.processEvents();QThread::msleep(1);}
     check(stoppedRecalls==1,"STOP cancels snapshots queued during a recall");
     QObject::disconnect(stopping);
+    // A delayed preset restores MIDI definitions on the cue clock. Port/timer
+    // reconfiguration must be queued back to the Engine's QObject thread.
+    Interaction midi = Interaction::made(InteractionSource::Midi);
+    midi.layer = surfaceId; midi.param = "opacity";
+    midi.id = engine.addInteraction(midi);
+    auto *scan = engine.findChild<QTimer *>("midiInputScan");
+    check(scan && scan->thread() == app.thread() && scan->isActive(), "MIDI scan belongs to the GUI thread");
+    engine.removeInteraction(midi.id);
+    check(scan && !scan->isActive(), "removing the last MIDI definition stops scanning");
+    Engine::Preset preset; preset.name = "MIDI preset"; preset.fade = 0; preset.interactions = {midi};
+    const auto presetId = engine.preset(engine.addPreset(preset)).id;
+    engine.sequencer().clear();
+    Sequencer::Sequence sequence; Sequencer::Step step; step.preset = presetId; step.preWait = .02;
+    sequence.steps = {step}; engine.sequencer().add(sequence); engine.sequencer().go();
+    wait.restart();
+    while ((!scan || !scan->isActive() || engine.interactions().empty()) && wait.elapsed() < 5000) {
+        app.processEvents(); QThread::msleep(1);
+    }
+    check(scan && scan->thread() == app.thread() && scan->isActive() && !engine.interactions().empty(),
+          "a delayed preset safely restarts MIDI scanning on its owner thread");
     engine.sequencer().setRecallRecorder(nullptr);engine.sequencer().shutdownClock();engine.shutdown();
     return failures?1:0;
 }

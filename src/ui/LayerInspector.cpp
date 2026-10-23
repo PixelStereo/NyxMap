@@ -24,6 +24,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QHash>
+#include <QJsonDocument>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFontComboBox>
@@ -1529,6 +1530,13 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             return x;
         };
 
+        auto trackRow = [this](QFormLayout *form, QWidget *field, const QStringList &paths) {
+            m_animate->attach(field, paths);
+            m_animate->attach(form->labelForField(field), paths);
+        };
+        auto trackLayoutRow = [this](QFormLayout *form, QLayout *row, const QStringList &paths) {
+            m_animate->attach(form->labelForField(row), paths);
+        };
         if (s.clock) { // a Countdown, Stopwatch or Clock: its settings and its transport (clock/*) instead of a text typed
             const ClockSettings cs = *s.clock;
             const ClockKind kind = cs.kind;
@@ -1584,11 +1592,13 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 target->setToolTip(QStringLiteral("Counts down from a duration, or to a time of day (the next one to come: "
                                                   "after midnight when it is already past today)"));
                 cf->addRow(QStringLiteral("Count down"), target);
+                trackRow(cf, target, {QStringLiteral("clock/target")});
                 choose(target, QStringLiteral("clock/target"), QStringLiteral("Countdown Target"));
                 if (timeOfDay) {
                     auto *time = line(cs.targetTime.toString(QStringLiteral("HH:mm:ss")),
                                       QStringLiteral("The time of day it counts down to: 20:30, 20:30:00, 8:30 PM"));
                     cf->addRow(QStringLiteral("To"), time);
+                    trackRow(cf, time, {QStringLiteral("clock/target_time")});
                     connect(time, &QLineEdit::editingFinished, this, [time, set, cs] {
                         const QTime t = ClockGenerator::parseTime(time->text());
                         if (t.isValid()) set(QStringLiteral("clock/target_time"), t.toString(QStringLiteral("HH:mm:ss")),
@@ -1601,13 +1611,15 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                                           QStringLiteral("Where it starts: hours:minutes:seconds (1:30:00), minutes:seconds "
                                                          "(5:00) or seconds (90)"));
                     cf->addRow(QStringLiteral("Duration"), duration);
+                    trackRow(cf, duration, {QStringLiteral("clock/duration")});
                     durationField(duration, QStringLiteral("clock/duration"), cs.duration, QStringLiteral("Countdown Duration"), false);
                 }
             }
             if (kind == ClockKind::Stopwatch) {
                 auto *offset = line(durationText(cs.offset), QStringLiteral("Where it starts counting up from (0: zero)"));
                 cf->addRow(QStringLiteral("Start at"), offset);
-                durationField(offset, QStringLiteral("clock/offset"), cs.offset, QStringLiteral("Stopwatch Start"), true);
+                trackRow(cf, offset, {QStringLiteral("clock/offset")});
+                durationField(offset, QStringLiteral("clock/offset"), cs.offset, QStringLiteral("Chronometer Start"), true);
             }
 
             // Its format: a preset, or one of its own (tokens; a Qt date-time format for the clock)
@@ -1625,6 +1637,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                                                         : QStringLiteral("How the time is written: hours, minutes, seconds, "
                                                                          "tenths (.t), frames (:ff)"));
             cf->addRow(QStringLiteral("Format"), format);
+            trackRow(cf, format, {QStringLiteral("clock/format")});
             choose(format, QStringLiteral("clock/format"), QStringLiteral("%1 Format").arg(clockKindName(kind)));
             if (cs.format == QLatin1String("custom")) {
                 auto *custom = line(cs.customFormat,
@@ -1635,6 +1648,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                                                          "largest unit holds all of the time above it (mm:ss shows 90:00)"));
                 custom->setPlaceholderText(kind == ClockKind::Clock ? QStringLiteral("HH:mm:ss") : QStringLiteral("'T-'mm:ss"));
                 cf->addRow(QStringLiteral("Custom"), custom);
+                trackRow(cf, custom, {QStringLiteral("clock/custom_format")});
                 connect(custom, &QLineEdit::editingFinished, this, [custom, set, kind] {
                     set(QStringLiteral("clock/custom_format"), custom->text(), QStringLiteral("%1 Custom Format").arg(clockKindName(kind)));
                     custom->clearFocus();
@@ -1651,6 +1665,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 fps->setEnabled(!m_locked);
                 fps->setToolTip(QStringLiteral("The frames counted in a second (the ff token)"));
                 cf->addRow(QStringLiteral("Frames"), fps);
+                trackRow(cf, fps, {QStringLiteral("clock/fps")});
                 connect(fps, &QSpinBox::editingFinished, this, [fps, set, kind] {
                     set(QStringLiteral("clock/fps"), fps->value(), QStringLiteral("%1 Frame Rate").arg(clockKindName(kind)));
                 });
@@ -1665,10 +1680,12 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 zero->setToolTip(QStringLiteral("What it shows once at zero (its value clock/zero turns on: an interaction "
                                                 "can follow it)"));
                 cf->addRow(QStringLiteral("At zero"), zero);
+                trackRow(cf, zero, {QStringLiteral("clock/at_zero")});
                 choose(zero, QStringLiteral("clock/at_zero"), QStringLiteral("Countdown At Zero"));
                 if (cs.atZero == ClockSettings::AtZero::Text) {
                     auto *text = line(cs.zeroText, QStringLiteral("Shown once it is at zero"));
                     cf->addRow(QStringLiteral("Text"), text);
+                    trackRow(cf, text, {QStringLiteral("clock/zero_text")});
                     connect(text, &QLineEdit::editingFinished, this, [text, set] {
                         set(QStringLiteral("clock/zero_text"), text->text(), QStringLiteral("Countdown Text at Zero"));
                         text->clearFocus();
@@ -1684,6 +1701,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                     row->addWidget(color);
                     row->addStretch();
                     cf->addRow(QStringLiteral("Overtime"), row);
+                    const QStringList colorPaths{"clock/overtime_color/r", "clock/overtime_color/g", "clock/overtime_color/b", "clock/overtime_color/a"};
+                    m_animate->attach(color, colorPaths);
+                    trackLayoutRow(cf, row, colorPaths);
                     connect(color, &QPushButton::clicked, this, [this, color, cs] {
                         const QPointer<QPushButton> guard(color);
                         const QColor c = ColorPicker::getColor(cs.overtimeColor, this, QStringLiteral("Overtime Color"),
@@ -1709,6 +1729,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 }
                 row->addStretch();
                 cf->addRow(QStringLiteral("Show"), row);
+                m_animate->attach(secs, {QStringLiteral("clock/seconds")});
+                m_animate->attach(date, {QStringLiteral("clock/date")});
+                trackLayoutRow(cf, row, {QStringLiteral("clock/seconds"), QStringLiteral("clock/date")});
                 connect(secs, &QCheckBox::toggled, this,
                         [set](bool on) { set(QStringLiteral("clock/seconds"), on, QStringLiteral("Clock Seconds")); });
                 connect(date, &QCheckBox::toggled, this,
@@ -1719,6 +1742,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                                                           "a zone name (Europe/Paris, America/New_York)"));
                 zone->setPlaceholderText(QStringLiteral("System"));
                 cf->addRow(QStringLiteral("Time zone"), zone);
+                trackRow(cf, zone, {QStringLiteral("clock/zone")});
                 connect(zone, &QLineEdit::editingFinished, this, [zone, set] {
                     set(QStringLiteral("clock/zone"), zone->text().trimmed(), QStringLiteral("Time Zone"));
                     zone->clearFocus();
@@ -1762,6 +1786,10 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 row->addSpacing(8);
                 row->addWidget(shown, 1);
                 cf->addRow(QStringLiteral("Transport"), row);
+                m_animate->attach({play, pause}, {QStringLiteral("clock/play")});
+                m_animate->attach(reset, {QStringLiteral("clock/elapsed")});
+                m_animate->attach(shown, {QStringLiteral("clock/elapsed")});
+                trackLayoutRow(cf, row, {QStringLiteral("clock/play"), QStringLiteral("clock/elapsed")});
                 m_clockUi->play = play;
                 m_clockUi->pause = pause;
                 connect(group, &QButtonGroup::idClicked, this, [this, kind](int id) {
@@ -1789,13 +1817,17 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             auto *box = new QGroupBox(QStringLiteral("Timecode"));
             auto *tf = new QFormLayout(box);
             tf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            auto apply = [this, live](const QString &label, const std::function<void(TimecodeSettings &)> &fn) {
-                live(label, [this, fn] {
-                    std::optional<TimecodeSettings> cur = m_engine->layerTimecode(m_layer);
-                    if (!cur) return;
-                    fn(*cur);
-                    m_engine->setLayerTimecode(m_layer, *cur);
-                });
+            auto apply = [this](const QString &label, const std::function<void(TimecodeSettings &)> &fn) {
+                auto settings = m_engine->layerTimecode(m_layer);
+                if (!settings) return;
+                const QJsonObject before = settings->toJson();
+                fn(*settings);
+                QJsonObject changes;
+                const QJsonObject after = settings->toJson();
+                for (const char *key : {"source", "internal", "rate", "offset", "input", "output"})
+                    if (before.value(key) != after.value(key))
+                        changes.insert(QStringLiteral("tc/") + key, after.value(key).isUndefined() ? QJsonValue(QString()) : after.value(key));
+                setValues(changes, label);
             };
             auto *source = new QComboBox;
             for (int k = 0; k < 5; ++k) source->addItem(TimecodeSettings::sourceName(TimecodeSettings::Source(k)));
@@ -1803,6 +1835,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             source->setToolTip(QStringLiteral("Internal: its own clock · LTC: from an audio input · MTC: from a MIDI input · "
                                               "ATC: carried by the video (an NDI source, a DeckLink SDI input)"));
             tf->addRow(QStringLiteral("Source"), source);
+            trackRow(tf, source, {QStringLiteral("tc/source")});
             auto *clockRow = new QHBoxLayout;
             auto *clock = new QComboBox;
             clock->addItems({QStringLiteral("Time of day"), QStringLiteral("Free run")});
@@ -1812,6 +1845,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             clockRow->addWidget(clock, 1);
             auto *clockLabel = new QLabel(QStringLiteral("Clock"));
             tf->addRow(clockLabel, clockRow);
+            m_animate->attach({clockLabel, clock}, {QStringLiteral("tc/internal")});
             const bool internal = ts.source == TimecodeSettings::Source::Internal;
             clockLabel->setVisible(internal);
             clock->setVisible(internal);
@@ -1820,6 +1854,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             rate->setCurrentIndex(int(ts.rate));
             rate->setToolTip(QStringLiteral("Its rate (a timecode received keeps its own)"));
             tf->addRow(QStringLiteral("Rate"), rate);
+            trackRow(tf, rate, {QStringLiteral("tc/rate")});
             auto *offset = new QLineEdit;
             {
                 const Timecode o = Timecode::fromFrames(std::llabs(ts.offset), ts.rate);
@@ -1827,6 +1862,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             }
             offset->setToolTip(QStringLiteral("Added to what is shown and sent: HH:MM:SS:FF, a minus before it to take away"));
             tf->addRow(QStringLiteral("Offset"), offset);
+            trackRow(tf, offset, {QStringLiteral("tc/offset")});
 
             // Where an external timecode comes from: the devices of its kind, the one chosen kept when it is not here
             using Src = TimecodeSettings::Source;
@@ -1873,6 +1909,8 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 rescan->setToolTip(QStringLiteral("Look for the devices again (an NDI source takes a moment to be found)"));
                 row->addWidget(rescan);
                 tf->addRow(QStringLiteral("Input"), row);
+                m_animate->attach(input, {QStringLiteral("tc/input")});
+                trackLayoutRow(tf, row, {QStringLiteral("tc/input")});
                 input->setEnabled(!m_locked);
                 connect(rescan, &QPushButton::clicked, this, [this] {
                     QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
@@ -1903,6 +1941,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             output->setCurrentIndex(std::max(0, output->findData(QVariant::fromValue<quint64>(ts.output))));
             output->setEnabled(!m_locked);
             tf->addRow(QStringLiteral("Output"), output);
+            trackRow(tf, output, {QStringLiteral("tc/output")});
             connect(output, qOverload<int>(&QComboBox::activated), this, [this, apply, output](int) {
                 quint64 id = output->currentData().value<quint64>();
                 if (id == ~quint64(0)) id = m_engine->addTimecodeOutput(layerNameOf(m_engine, m_layer));
@@ -1945,6 +1984,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 position->setProperty("allowLocked", true);
                 playRow->addWidget(position, 1);
                 tf->addRow(QStringLiteral("Transport"), playRow);
+                m_animate->attach({pause, play}, {QStringLiteral("tc/play")});
+                m_animate->attach({rewind, position}, {QStringLiteral("tc/position")});
+                trackLayoutRow(tf, playRow, {QStringLiteral("tc/play"), QStringLiteral("tc/position")});
 
                 auto *modeRow = new QHBoxLayout;
                 modeRow->setSpacing(2);
@@ -1961,6 +2003,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                     b->setProperty("allowLocked", false);
                     b->setEnabled(!m_locked);
                     modes->addButton(b, int(m.mode));
+                    m_animate->attach(b, {QStringLiteral("tc/play_mode")});
                     modeRow->addWidget(b);
                 }
                 modeRow->addSpacing(8);
@@ -1975,6 +2018,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 modeRow->addWidget(new QLabel(QStringLiteral("Out")));
                 modeRow->addWidget(out, 1);
                 tf->addRow(QStringLiteral("Mode"), modeRow);
+                m_animate->attach(in, {QStringLiteral("tc/in")});
+                m_animate->attach(out, {QStringLiteral("tc/out")});
+                trackLayoutRow(tf, modeRow, {QStringLiteral("tc/play_mode"), QStringLiteral("tc/in"), QStringLiteral("tc/out")});
 
                 // Seconds of transport ↔ the timecode shown (the offset is added)
                 auto shown = [this](double secs) {
@@ -2094,6 +2140,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         fontBox->setCurrentFont(QFont(s.text.font));
         fontBox->setEnabled(!m_locked);
         fmt->addRow(new ResetLabel(QStringLiteral("Font"), [fontBox, def] { fontBox->setCurrentFont(QFont(def.font)); }), fontBox);
+        trackRow(fmt, fontBox, {QStringLiteral("text/font")});
         connect(fontBox, &QFontComboBox::currentFontChanged, this, [style](const QFont &f) {
             const QString family = f.family();
             style(QStringLiteral("Text Font"), [family](Layer &l) { l.text.font = family; });
@@ -2143,6 +2190,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             b->setFont(f);
             styleRow->addWidget(b);
             styleButtons << b;
+            m_animate->attach(b, {QStringLiteral("text/") + (t.field == &TextSource::strike ? QStringLiteral("strike") : QString::fromLatin1(t.tip).toLower())});
             auto field = t.field;
             connect(b, &QToolButton::toggled, this, [style, field, tip = QString::fromLatin1(t.tip)](bool on) {
                 style(tip, [field, on](Layer &l) { l.text.*field = on; });
@@ -2183,6 +2231,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                         setAlign();
                     }),
                     alignRow);
+        m_animate->attach(hAlign, {QStringLiteral("text/align")});
+        m_animate->attach(vAlign, {QStringLiteral("text/v_align")});
+        trackLayoutRow(fmt, alignRow, {QStringLiteral("text/align"), QStringLiteral("text/v_align")});
         connect(hAlign, QOverload<int>::of(&QComboBox::activated), this, setAlign);
         connect(vAlign, QOverload<int>::of(&QComboBox::activated), this, setAlign);
 
@@ -2255,6 +2306,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                         sy->setValue(def.shadowY);
                     }),
                     shadowRow);
+        m_animate->attach(shadow, {QStringLiteral("text/shadow/enable")});
         m_animate->attach(sx, {QStringLiteral("text/shadow/x")});
         m_animate->attach(sy, {QStringLiteral("text/shadow/y")});
         m_animate->attach(shadowColor, {"text/shadow/color/r", "text/shadow/color/g", "text/shadow/color/b", "text/shadow/color/a"});
@@ -3724,6 +3776,7 @@ QString LayerInspector::layoutKey() const
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};
+    if (layer->timecode) key << QString::fromUtf8(QJsonDocument(layer->timecode->toJson()).toJson(QJsonDocument::Compact));
     if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
     for (const auto &effect : layer->effects) key << effect->path();
     if (layer->clockGen) { // a Countdown, Stopwatch or Clock: its fields show its settings (changed by a recall: made again)

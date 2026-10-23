@@ -1104,6 +1104,7 @@ private:
     std::vector<std::unique_ptr<midi::Input>> m_midiIns; // every MIDI input, open while a MIDI interaction is there
     QStringList m_midiInNames;
     QTimer *m_midiScan = nullptr;
+    std::atomic<bool> m_midiUpdatePending{false};
     void stepInteractions(double dt); // lock held
     // Their values as the composition's parameters ("interaction/<id>/master"…): presets, timelines, OSC, other
     // interactions reach them; made again when the list changes (lock held)

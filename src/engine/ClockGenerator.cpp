@@ -17,7 +17,7 @@ QString clockKindName(ClockKind k)
 {
     switch (k) {
     case ClockKind::Countdown: return QStringLiteral("Countdown");
-    case ClockKind::Stopwatch: return QStringLiteral("Stopwatch");
+    case ClockKind::Stopwatch: return QStringLiteral("Chronometer");
     case ClockKind::Clock: return QStringLiteral("Clock");
     }
     return {};

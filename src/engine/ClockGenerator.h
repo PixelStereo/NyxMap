@@ -1,9 +1,9 @@
 #pragma once
-// The Countdown, Stopwatch and Clock generators: text layers that show a time, as the Timecode generator shows a
+// The Countdown, Chronometer and Clock generators: text layers that show a time, as the Timecode generator shows a
 // timecode (its text style is the Text generator's: font, size, color, alignment, outline, shadow).
 //  - Countdown: from a duration down to zero, or down to a time of day (20:30:00, the next one to come). At zero it
 //    holds there, shows a text of its own ("00:00", "END"…), or goes on into overtime (negative, in a color of its own);
-//  - Stopwatch: counts up from zero, or from an offset;
+//  - Chronometer: counts up from zero, or from an offset;
 //  - Clock: the time of day, 24 h or 12 h, with or without its seconds and its date, in a time zone of its own.
 // The countdown and the stopwatch run with real time (the composition's speed does not change them), started, paused
 // and reset by their own transport (parameters clock/play, clock/start, clock/pause, clock/reset: the inspector, OSC,
@@ -25,7 +25,7 @@
 
 enum class ClockKind { Countdown = 0, Stopwatch, Clock };
 QString clockKindKey(ClockKind k);  // "countdown", "stopwatch", "clock": in the layer's source
-QString clockKindName(ClockKind k); // "Countdown", "Stopwatch", "Clock"
+QString clockKindName(ClockKind k); // "Countdown", "Chronometer", "Clock"
 std::optional<ClockKind> clockKindFromKey(const QString &k);
 
 struct ClockSettings {
