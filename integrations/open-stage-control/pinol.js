@@ -53,7 +53,7 @@ function renderLibrary(kind) {
                 text(key + '_name', label, {align: 'left', css: 'font-weight:600;font-size:17px;'}),
                 text(key + '_clock', 'Stopped', {address: base + '/clock', css: 'font-family:monospace;'}),
                 {type: 'fader', id: key + '_progress', address: base + '/progress', horizontal: true, design: 'compact', knobSize: 0, label: false,
-                    height: 12, width: '100%', interaction: false, bypass: true, input: false, range: {min: 0, max: 1}, colorWidget: '#56c4ff'},
+                    height: 16, padding: 0, lineWidth: 0, alphaFillOff: 0.08, alphaFillOn: 0.6, width: '100%', interaction: false, bypass: true, input: false, range: {min: 0, max: 1}, colorWidget: '#56c4ff'},
                 {type: 'panel', id: key + '_buttons', label: false, layout: 'horizontal', height: 44, width: '100%', padding: 3,
                     widgets: ['play', 'pause', 'stop'].map(action => button(key + '_' + action, action.toUpperCase(),
                         '/pinol/timeline/control', [entry.id, action], {height: 40, width: 'auto', expand: true,

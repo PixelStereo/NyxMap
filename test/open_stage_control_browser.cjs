@@ -33,6 +33,8 @@ async function commandSeen(address) {
         const [previous, current, next] = await Promise.all(cards.map(card => card.boundingBox()));
         assert.ok(previous.y < current.y && current.y < next.y, 'Cues stack previous/current/next vertically');
         assert.ok(current.height > previous.height, 'The current cue has visual priority');
+        const cueText = await page.getByText('Start the film', {exact: true}).boundingBox();
+        assert.ok(cueText.y >= current.y && cueText.y + cueText.height <= current.y + current.height, 'Cue text remains inside its card above the progress fill');
         await capture('show');
         await button('GO ▶').click();
         await commandSeen('/sequence/by-id/501/go');

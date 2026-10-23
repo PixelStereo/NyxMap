@@ -11,7 +11,7 @@
     "colorBg": "#202024",
     "colorText": "#ececf0",
     "padding": 12,
-    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}\n.text-container {--alpha-fill-off:0;}\n.pinol-cue > inner {border-radius:5rem;overflow:hidden;}\n.pinol-cue > inner > .widget:not(.pinol-cue-fill) {position:relative;z-index:1;}\n.pinol-cue-fill {z-index:0!important;}\n.navigation {background:#26262b;}\n.tablink {color:#a4a4ae;}\n.tablink.on {color:#ececf0;box-shadow:inset 0 -2rem #4cd964;}\n@media screen and (min-width:1000px) {\n .pinol-dashboard > inner {grid-template-columns:minmax(0,1.6fr) minmax(320rem,1fr)!important;}\n}",
+    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}\n.text-container {--alpha-fill-off:0;}\n.pinol-cue > inner {border-radius:5rem;overflow:hidden;}\n.pinol-cue > inner > .widget:not(.pinol-cue-fill) {position:relative;z-index:1;}\n.pinol-cue > inner > .pinol-cue-fill {position:absolute!important;top:0!important;left:0!important;min-height:0!important;z-index:0!important;}\n.navigation {background:#26262b;}\n.tablink {color:#a4a4ae;}\n.tablink.on {color:#ececf0;box-shadow:inset 0 -2rem #4cd964;}\n@media screen and (min-width:1000px) {\n .pinol-dashboard > inner {grid-template-columns:minmax(0,1.6fr) minmax(320rem,1fr)!important;}\n}",
     "onCreate": "send('127.0.0.1:1234', '/pinol/session/ready');",
     "widgets": [
       {
@@ -54,7 +54,8 @@
         "height": 64,
         "padding": 8,
         "contain": true,
-        "css": ""
+        "css": "",
+        "alphaStroke": 0
       },
       {
         "type": "panel",
@@ -110,7 +111,8 @@
                     "height": 64,
                     "padding": 8,
                     "contain": true,
-                    "css": ""
+                    "css": "",
+                    "alphaStroke": 0
                   },
                   {
                     "type": "panel",
@@ -160,7 +162,8 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/previous/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "lineWidth": 0
                               },
                               {
                                 "type": "text",
@@ -247,7 +250,8 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "lineWidth": 0
                               },
                               {
                                 "type": "text",
@@ -375,7 +379,8 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/next/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "lineWidth": 0
                               },
                               {
                                 "type": "text",
@@ -477,7 +482,8 @@
                         "height": "auto",
                         "padding": 8,
                         "contain": false,
-                        "css": "class: pinol-flow;"
+                        "css": "class: pinol-flow;",
+                        "alphaStroke": 0
                       },
                       {
                         "type": "panel",
@@ -490,158 +496,6 @@
                         "padding": 4,
                         "css": "class: pinol-flow;",
                         "widgets": [
-                          {
-                            "type": "panel",
-                            "id": "timing",
-                            "label": false,
-                            "widgets": [
-                              {
-                                "type": "panel",
-                                "id": "elapsed_box",
-                                "label": false,
-                                "widgets": [
-                                  {
-                                    "type": "text",
-                                    "id": "elapsed_title",
-                                    "value": "ELAPSED",
-                                    "width": "100%",
-                                    "height": 20,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "alphaFillOff": 0,
-                                    "align": "left",
-                                    "colorText": "#a4a4ae",
-                                    "css": "font-size:11px;letter-spacing:2px;"
-                                  },
-                                  {
-                                    "type": "text",
-                                    "id": "elapsed",
-                                    "value": "",
-                                    "width": "100%",
-                                    "height": 56,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "address": "/sequence/cue/current/elapsed_text",
-                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
-                                    "alphaFillOff": 0
-                                  }
-                                ],
-                                "layout": "vertical",
-                                "width": "100%",
-                                "height": "auto",
-                                "padding": 8,
-                                "contain": false,
-                                "css": "class: pinol-flow;",
-                                "colorBg": "#26262b"
-                              },
-                              {
-                                "type": "panel",
-                                "id": "remaining_box",
-                                "label": false,
-                                "widgets": [
-                                  {
-                                    "type": "text",
-                                    "id": "remaining_title",
-                                    "value": "REMAINING",
-                                    "width": "100%",
-                                    "height": 20,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "alphaFillOff": 0,
-                                    "align": "left",
-                                    "colorText": "#a4a4ae",
-                                    "css": "font-size:11px;letter-spacing:2px;"
-                                  },
-                                  {
-                                    "type": "text",
-                                    "id": "remaining",
-                                    "value": "",
-                                    "width": "100%",
-                                    "height": 56,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "address": "/sequence/cue/current/remaining_text",
-                                    "colorText": "#e0b43a",
-                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
-                                    "alphaFillOff": 0
-                                  }
-                                ],
-                                "layout": "vertical",
-                                "width": "100%",
-                                "height": "auto",
-                                "padding": 8,
-                                "contain": false,
-                                "css": "class: pinol-flow;",
-                                "colorBg": "#26262b"
-                              },
-                              {
-                                "type": "panel",
-                                "id": "phase_box",
-                                "label": false,
-                                "widgets": [
-                                  {
-                                    "type": "text",
-                                    "id": "phase_title",
-                                    "value": "PHASE PROGRESS",
-                                    "width": "100%",
-                                    "height": 20,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "alphaFillOff": 0,
-                                    "colorText": "#a4a4ae",
-                                    "css": "font-size:11px;letter-spacing:2px;"
-                                  },
-                                  {
-                                    "type": "fader",
-                                    "id": "phase_meter",
-                                    "address": "/sequence/cue/current/phase_progress",
-                                    "width": "100%",
-                                    "height": 20,
-                                    "horizontal": true,
-                                    "interaction": false,
-                                    "bypass": true,
-                                    "input": false,
-                                    "range": {
-                                      "min": 0,
-                                      "max": 1
-                                    },
-                                    "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                    "design": "compact",
-                                    "knobSize": 0,
-                                    "pips": false,
-                                    "dashed": false,
-                                    "alphaStroke": 0,
-                                    "label": false,
-                                    "alphaFillOn": 0.6
-                                  },
-                                  {
-                                    "type": "text",
-                                    "id": "continue_mode",
-                                    "value": "",
-                                    "width": "100%",
-                                    "height": 32,
-                                    "bypass": true,
-                                    "wrap": true,
-                                    "address": "/sequence/cue/current/continue",
-                                    "alphaFillOff": 0
-                                  }
-                                ],
-                                "layout": "vertical",
-                                "width": "100%",
-                                "height": "auto",
-                                "padding": 8,
-                                "contain": false,
-                                "css": "class: pinol-flow;",
-                                "colorBg": "#26262b"
-                              }
-                            ],
-                            "layout": "vertical",
-                            "width": "100%",
-                            "height": "auto",
-                            "padding": 4,
-                            "contain": false,
-                            "css": "class: pinol-flow;"
-                          },
                           {
                             "type": "panel",
                             "id": "transport",
@@ -735,7 +589,167 @@
                             "padding": 4,
                             "contain": false,
                             "css": "class: pinol-flow;",
-                            "gridTemplate": "\"back go\" 78rem \"stop stopall\" 48rem / 1fr 1.4fr"
+                            "gridTemplate": "\"back go\" 78rem \"stop stopall\" 48rem / 1fr 1.4fr",
+                            "alphaStroke": 0
+                          },
+                          {
+                            "type": "panel",
+                            "id": "timing",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "panel",
+                                "id": "elapsed_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "elapsed_title",
+                                    "value": "ELAPSED",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "align": "left",
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "elapsed",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 56,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/elapsed_text",
+                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b",
+                                "alphaStroke": 0
+                              },
+                              {
+                                "type": "panel",
+                                "id": "remaining_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "remaining_title",
+                                    "value": "REMAINING",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "align": "left",
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "remaining",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 56,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/remaining_text",
+                                    "colorText": "#e0b43a",
+                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b",
+                                "alphaStroke": 0
+                              },
+                              {
+                                "type": "panel",
+                                "id": "phase_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "phase_title",
+                                    "value": "PHASE PROGRESS",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "fader",
+                                    "id": "phase_meter",
+                                    "address": "/sequence/cue/current/phase_progress",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "horizontal": true,
+                                    "interaction": false,
+                                    "bypass": true,
+                                    "input": false,
+                                    "range": {
+                                      "min": 0,
+                                      "max": 1
+                                    },
+                                    "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
+                                    "design": "compact",
+                                    "knobSize": 0,
+                                    "pips": false,
+                                    "dashed": false,
+                                    "alphaStroke": 0,
+                                    "label": false,
+                                    "alphaFillOn": 0.6,
+                                    "padding": 0,
+                                    "lineWidth": 0,
+                                    "alphaFillOff": 0.08
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "continue_mode",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 32,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/continue",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b",
+                                "alphaStroke": 0
+                              }
+                            ],
+                            "layout": "vertical",
+                            "width": "100%",
+                            "height": "auto",
+                            "padding": 4,
+                            "contain": false,
+                            "css": "class: pinol-flow;",
+                            "alphaStroke": 0
                           },
                           {
                             "type": "text",
@@ -750,10 +764,12 @@
                             "align": "left",
                             "colorText": "#9999a4"
                           }
-                        ]
+                        ],
+                        "alphaStroke": 0
                       }
                     ],
-                    "gridTemplate": "none / minmax(0,1fr)"
+                    "gridTemplate": "none / minmax(0,1fr)",
+                    "alphaStroke": 0
                   },
                   {
                     "type": "text",
@@ -828,7 +844,8 @@
                     "height": 64,
                     "padding": 8,
                     "contain": true,
-                    "css": ""
+                    "css": "",
+                    "alphaStroke": 0
                   },
                   {
                     "type": "panel",
@@ -840,7 +857,8 @@
                     "height": "auto",
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;"
+                    "css": "class: pinol-flow;",
+                    "alphaStroke": 0
                   }
                 ],
                 "layout": "vertical",
@@ -849,7 +867,8 @@
                 "padding": 8,
                 "contain": false,
                 "scroll": true,
-                "css": "class: pinol-flow;"
+                "css": "class: pinol-flow;",
+                "alphaStroke": 0
               }
             ],
             "layout": "vertical",
@@ -946,7 +965,8 @@
                 "height": 64,
                 "padding": 8,
                 "contain": true,
-                "css": ""
+                "css": "",
+                "alphaStroke": 0
               },
               {
                 "type": "panel",
@@ -959,7 +979,8 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}",
+                "alphaStroke": 0
               }
             ],
             "contain": false
@@ -1054,7 +1075,8 @@
                 "height": 64,
                 "padding": 8,
                 "contain": true,
-                "css": ""
+                "css": "",
+                "alphaStroke": 0
               },
               {
                 "type": "panel",
@@ -1067,7 +1089,8 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}",
+                "alphaStroke": 0
               }
             ],
             "contain": false
@@ -1162,7 +1185,8 @@
                 "height": 64,
                 "padding": 8,
                 "contain": true,
-                "css": ""
+                "css": "",
+                "alphaStroke": 0
               },
               {
                 "type": "panel",
@@ -1175,7 +1199,8 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:166rem;}"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:166rem;}",
+                "alphaStroke": 0
               }
             ],
             "contain": false
@@ -1274,7 +1299,8 @@
                 "height": 64,
                 "padding": 8,
                 "contain": true,
-                "css": ""
+                "css": "",
+                "alphaStroke": 0
               },
               {
                 "type": "text",
@@ -1318,7 +1344,8 @@
         "expand": true,
         "tabsPosition": "top",
         "scroll": true,
-        "contain": false
+        "contain": false,
+        "alphaStroke": 0.25
       }
     ],
     "contain": false,
