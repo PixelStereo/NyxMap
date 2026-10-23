@@ -303,6 +303,7 @@ public:
     // interaction only, not to the native value of that address as well (one writer per value: an interaction that
     // preserves alpha is not undone by the direct write landing first). Any thread.
     bool oscAddressClaimed(const QString &address) const;
+    void configureInteractionTarget(Interaction &it, quint64 layer, const QString &path) const;
     // Learn: the sources that come in are kept (of one kind, when given), for the interface to take once they have
     // settled — several moved together (a controller sending two messages): it asks which one. The interactions go on
     void setInteractionLearn(bool on, std::optional<InteractionSource> kind = std::nullopt);
@@ -474,6 +475,7 @@ public:
         int tracks = 0, pass = 1;
         std::vector<double> captured;
         std::vector<std::array<double, 3>> capturedRgb;
+        std::vector<std::array<double, 2>> capturedXy;
     };
     bool sampleAnimations(std::vector<AnimationPlayback> *out) const;
     bool sampleAnimation(quint64 timeline, quint64 layer, const QString &param, AnimationPlayback *out) const;
@@ -490,6 +492,7 @@ public:
     // The numbers of a layer (0: the composition) a timeline can drive, with their ranges
     std::vector<AnimParam> animatableParams(quint64 layer) const;
     std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
+    std::vector<AnimParam> animatablePoints(quint64 layer) const; // grouped XY targets, components remain addressable
     bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
     struct AnimationTargetState {
         quint64 layer = 0;
@@ -1047,6 +1050,7 @@ private:
     void releaseFromFades(quint64 layer, const QString &path);
     bool setAnimParam(quint64 layer, const QString &path, double v); // lock held
     bool setAnimColor(quint64 layer, const QString &path, const std::array<double, 3> &value); // lock held
+    bool setAnimPoint(const AnimTrack &track, double position, double played); // lock held; validate both axes first
     void remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes); // empty replacement removes
     void removeSourceAnimations(Layer &layer); // lock held, before detaching the source
     const std::vector<Parameter *> &compositionParameters(); // its opacity, volume, speed (lock held)
@@ -1092,6 +1096,10 @@ private:
         std::array<InteractionProcessor, 4> channels;  // a whole color: each channel's chain (Interactions.h)
         std::array<std::optional<double>, 4> channelOut; // their last results
         InteractionColorTargetState colorTarget;          // its pick-up
+        InteractionProcessor xyY;
+        InteractionTargetState xyYTarget;
+        std::optional<double> xyYLastOut;
+        double xyYLastInternal = std::numeric_limits<double>::quiet_NaN();
     };
     std::map<quint64, InteractionRun> m_interactionRun; // render thread (m_mutex held)
     std::mutex m_interactionEventsMutex;

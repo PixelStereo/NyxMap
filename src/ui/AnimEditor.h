@@ -187,7 +187,7 @@ public:
     TrackRow(AnimEditor *editor, int index);
     void build(); // the widgets: called once, right after construction (buildHeader is virtual)
     void setPlayhead(double pos, bool shown);
-    void setLive(double captured, const std::array<double, 3> &capturedRgb, bool running);
+    void setLive(double captured, const std::array<double, 3> &capturedRgb, const std::array<double, 2> &capturedXy, bool running);
     void applyView();                            // the editor's zoom
     std::pair<double, double> fullRange() const;
     virtual void fill(); // the widgets from the track
@@ -196,6 +196,8 @@ protected:
     virtual void buildHeader(QGridLayout *) {} // above the common settings
     AnimTrack &track();
     const AnimTrack &track() const;
+    AnimTrack &editedTrack();
+    const AnimTrack &editedTrack() const;
     void updateLane();
     void changed(bool lane = true, const QString &mergeKey = {}); // the track edited: to the engine
     std::pair<double, double> range() const;
@@ -207,6 +209,9 @@ protected:
 
 private:
     QComboBox *m_kind = nullptr, *m_wave = nullptr;
+    QComboBox *m_axis = nullptr;
+    class QCheckBox *m_axisOn = nullptr;
+    int m_axisIndex = 0;
     QWidget *m_osc = nullptr;
     NumberBox *m_period = nullptr, *m_center = nullptr, *m_amp = nullptr, *m_phase = nullptr;
     QPushButton *m_reseed = nullptr;
@@ -235,6 +240,7 @@ public:
     std::pair<double, double> rangeOf(const AnimTrack &t);
     void setLaneHeight(int px) { m_laneHeight = px; }
     int laneHeight() const { return m_laneHeight; }
+    double valueDuration() const { return m_edit.duration; }
 
 signals:
     void edited(); // changed: the project is modified
@@ -258,6 +264,7 @@ protected:
     void setEditorEnabled(bool on);
     QVBoxLayout *mainLayout() const { return m_main; }
     struct LaneView {
+        int axis = 0;
         double zoom = 1;                                          // values: the whole range / zoom
         double center = std::numeric_limits<double>::quiet_NaN(); // nan: the middle of the range
     };

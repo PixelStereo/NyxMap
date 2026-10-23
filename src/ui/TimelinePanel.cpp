@@ -47,17 +47,24 @@ void TimelineWindow::fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo
         bool changed = false;
         const auto numbers = engine->animatableParams(layer);
         const auto colors = engine->animatableColors(layer);
+        const auto points = engine->animatablePoints(layer);
         for (const auto &path : paths) {
             const bool color = std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == path; });
-            if (!color && std::none_of(numbers.begin(), numbers.end(), [&](const auto &p) { return p.path == path; })) continue;
+            const bool point = std::any_of(points.begin(), points.end(), [&](const auto &p) { return p.path == path; });
+            if (!color && !point && std::none_of(numbers.begin(), numbers.end(), [&](const auto &p) { return p.path == path; })) continue;
             if (std::any_of(after.tracks.begin(), after.tracks.end(), [&](const AnimTrack &t) {
-                return t.layer == layer && t.param == path && t.color == color;
+                return t.layer == layer && t.param == path && t.color == color && t.isPoint() == point;
             })) continue;
             const auto created = engine->makeLayerAnim(layer, path, -1);
             AnimTrack track = created.tracks.front();
             for (auto &key : track.keys) key.t *= after.duration / created.duration;
+            for (auto &axis : track.axes) for (auto &key : axis.keys) key.t *= after.duration / created.duration;
+            if (!track.isPoint()) for (auto &existing : after.tracks)
+                if (existing.layer == layer && existing.isPoint())
+                    for (auto &axis : existing.axes) if (axis.param == path) axis.enabled = false;
             after.tracks.erase(std::remove_if(after.tracks.begin(), after.tracks.end(), [&](const AnimTrack &t) {
-                return t.layer == layer && (track.color ? track.drives(t.param) : t.color && t.drives(track.param));
+                const auto driven = track.drivenParams();
+                return t.layer == layer && std::any_of(driven.begin(), driven.end(), [&](const auto &p) { return t.drives(p); });
             }), after.tracks.end());
             after.tracks.push_back(track);
             changed = true;
@@ -116,6 +123,7 @@ private:
     void fillParams(); // the numbers of its layer, in the menu
     void selectParam(const QString &path);
     void selectColor(const QString &path);
+    void selectPoint(const QString &path);
     TimelineEditor *m_tl;
     FlagBox *m_on = nullptr;
     QComboBox *m_layer = nullptr;
@@ -132,7 +140,8 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
     del->setFixedWidth(26);
     del->setToolTip(QStringLiteral("Delete the track"));
     m_param = new QPushButton;
-    m_param->setToolTip(QStringLiteral("Choose a color (RGB) or an individual numeric parameter"));
+    m_param->setObjectName(QStringLiteral("timelineParameter"));
+    m_param->setToolTip(QStringLiteral("Choose a point (XY), color (RGB), or individual numeric parameter"));
     m_param->setMenu(new QMenu(m_param));
     m_param->setStyleSheet(QStringLiteral("QPushButton { text-align:left; padding-left:6px; }"));
     g->addWidget(m_on, 0, 0);
@@ -151,6 +160,7 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
         // Its first number, from where it is
         track().param = params.empty() ? QString() : params.front().path;
         track().color = false;
+        track().axes.clear();
         track().keys = {AnimKey{0, currentValue(), 3}};
         fillParams();
         fill();
@@ -176,6 +186,13 @@ void TimelineTrackRow::fillParams()
 {
     QMenu *menu = m_param->menu();
     menu->clear();
+    const auto points = m_e->animatablePoints(track().layer);
+    if (!points.empty()) {
+        auto *pointMenu = menu->addMenu(QStringLiteral("Points (XY)"));
+        addParamMenu(pointMenu, points, [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+            into->addAction(text, this, [this, path = p.path] { selectPoint(path); });
+        });
+    }
     const auto colors = m_e->animatableColors(track().layer);
     if (!colors.empty()) {
         auto *colorMenu = menu->addMenu(QStringLiteral("Colors (RGB)"));
@@ -186,17 +203,21 @@ void TimelineTrackRow::fillParams()
         });
         menu->addSeparator();
     }
-    addParamMenu(menu, animationMenuParams(m_e, track().layer), [this, colors](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+    addParamMenu(menu, animationMenuParams(m_e, track().layer), [this, colors, points](QMenu *into, const Engine::AnimParam &p, const QString &text) {
         const bool color = std::any_of(colors.begin(), colors.end(), [&](const auto &c) { return c.path == p.path; });
-        QAction *a = into->addAction(text, this, [this, path = p.path, color] { if (color) selectColor(path); else selectParam(path); });
+        const bool point = std::any_of(points.begin(), points.end(), [&](const auto &c) { return c.path == p.path; });
+        QAction *a = into->addAction(text, this, [this, path = p.path, color, point] {
+            if (point) selectPoint(path); else if (color) selectColor(path); else selectParam(path);
+        });
         a->setCheckable(true);
-        a->setChecked(color == track().color && p.path == track().param);
+        a->setChecked(color == track().color && point == track().isPoint() && p.path == track().param);
     });
 }
 
 void TimelineTrackRow::selectParam(const QString &path)
 {
     track().color = false;
+    track().axes.clear();
     track().param = path;
     track().keys = {AnimKey{0, currentValue(), 3}};
     m_e->waveAround(track().layer, path, &track().center, &track().amplitude);
@@ -210,10 +231,23 @@ void TimelineTrackRow::selectColor(const QString &path)
     auto &t = track();
     t.param = path;
     t.color = true;
+    t.axes.clear();
     t.oscillator = false;
     AnimKey key{0, 0, 0};
     m_e->animColorValue(t.layer, path, &key.rgb);
     t.keys = {key};
+    fillParams();
+    fill();
+    changed();
+}
+
+void TimelineTrackRow::selectPoint(const QString &path)
+{
+    const bool enabled = track().enabled;
+    const auto created = m_e->makeLayerAnim(track().layer, path, -1);
+    track() = created.tracks.front();
+    track().enabled = enabled;
+    for (auto &axis : track().axes) for (auto &key : axis.keys) key.t *= m_ed->valueDuration() / created.duration;
     fillParams();
     fill();
     changed();
@@ -231,7 +265,7 @@ void TimelineTrackRow::fill()
     }
     m_layer->setCurrentIndex(li);
     QString label = t.param.isEmpty() ? QStringLiteral("(choose a parameter)") : QStringLiteral("(%1 — not on this layer)").arg(t.param);
-    const auto params = t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
+    const auto params = t.isPoint() ? m_e->animatablePoints(t.layer) : t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
     for (const Engine::AnimParam &p : params)
         if (p.path == t.param) label = p.label;
     m_param->setText(label);

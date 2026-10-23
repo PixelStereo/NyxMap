@@ -61,6 +61,7 @@ int runRecallDelayTests(Engine &e); // recall_delay.cpp
 int runEmergencyStopTests(Engine &e); // emergency_stop.cpp
 int runPreviewSourceTests(Engine &e, const QString &tmp);
 int runColorAnimationTests(Engine &engine, const QString &root);
+int runXyControlTests(Engine &engine, const QString &root);
 int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cpp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
 int runLiveInputTests(Engine &e); // live_inputs.cpp
@@ -181,6 +182,7 @@ int main(int argc, char **argv)
     if (area("cue_lifecycle")) failures += runCueLifecycleTests(e);
     if (area("recall_integrity")) failures += runRecallIntegrityTests(e);
     if (area("color_animation")) failures += runColorAnimationTests(e, root);
+    if (area("xy_controls")) failures += runXyControlTests(e, root);
     if (area("output_color")) failures += runOutputColorTests(e);
     if (area("show_hold")) failures += runShowHoldTests(e);
     if (area("image_precision")) failures += runImagePrecisionTests(e);

@@ -95,6 +95,17 @@ struct Interaction {
     // A complete color target normally changes RGB only. OSC 'r' and RGBA
     // tuples can carry an unused/zero alpha; opt in explicitly to map it.
     bool colorMapAlpha = false;
+    // An XY mapping keeps X in this interaction and Y in one scalar child.
+    // Each axis has its own input, range, filter, curve and pick-up state.
+    // The child has no independent ID or target and cannot contain children.
+    std::vector<Interaction> xyInputs;
+    bool drives(const QString &path) const
+    {
+        if (path == param) return true;
+        if (!xyInputs.empty()) return path == param + "/x" || (xyInputs.front().enabled && path == param + "/y");
+        return path == param + "/r" || path == param + "/g" || path == param + "/b" ||
+               (colorMapAlpha && path == param + "/a");
+    }
 
     // The chain
     double master = 1;    // 0..1
@@ -124,6 +135,8 @@ struct Interaction {
 struct InteractionTelemetry {
     quint64 id = 0;
     double input = 0, output = 0, curveInput = 0;
+    double yInput = 0, yOutput = 0, yCurveInput = 0;
+    bool hasY = false;
 };
 
 // The chain of one interaction, from its source's values to the value of its target. Pure: no engine, no clock.

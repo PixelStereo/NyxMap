@@ -227,6 +227,14 @@ int Engine::indexOfAnimation(quint64 id) const
 static void sortKeys(AnimTrack &t)
 {
     std::stable_sort(t.keys.begin(), t.keys.end(), [](const AnimKey &a, const AnimKey &b) { return a.t < b.t; });
+    if (t.isPoint()) for (int c = 0; c < 2; ++c) {
+        auto &axis = t.axes[size_t(c)];
+        axis.axes.clear();
+        axis.color = false;
+        axis.layer = t.layer;
+        axis.param = t.param + (c ? "/y" : "/x");
+        sortKeys(axis);
+    }
 }
 
 int Engine::addAnimation(const Animation &a, int at)
@@ -275,6 +283,8 @@ void Engine::setAnimation(int i, const Animation &a)
                 if (o.layer == t.layer && o.param == t.param && o.color == t.color) {
                     t.captured = o.captured;
                     t.capturedRgb = o.capturedRgb;
+                    if (t.isPoint() && o.isPoint()) for (int c = 0; c < 2; ++c)
+                        t.axes[size_t(c)].captured = o.axes[size_t(c)].captured;
                 }
         }
     }
@@ -325,6 +335,10 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
             t.captured = cur && !t.color && animParamValue(t.layer, t.param, &v) ? v : std::numeric_limits<double>::quiet_NaN();
             t.capturedRgb = AnimTrack().capturedRgb;
             if (cur && t.color) animColorValue(t.layer, t.param, &t.capturedRgb);
+            if (t.isPoint()) for (auto &axis : t.axes) {
+                const bool current = !axis.oscillator && !axis.keys.empty() && axis.keys.front().isCurrentValue;
+                axis.captured = current && animParamValue(t.layer, axis.param, &v) ? v : std::numeric_limits<double>::quiet_NaN();
+            }
         }
     };
     switch (action) {
@@ -378,6 +392,10 @@ void Engine::applyAnimation(Animation &a)
     const double pos = a.position(), played = a.played();
     for (const AnimTrack &t : a.tracks) {
         if (!t.enabled || t.param.isEmpty()) continue;
+        if (t.isPoint()) {
+            setAnimPoint(t, pos, played);
+            continue;
+        }
         if (t.color) {
             setAnimColor(t.layer, t.param, t.colorAt(pos));
             continue;
@@ -542,6 +560,46 @@ std::vector<Engine::AnimParam> Engine::animatableColors(quint64 layer) const
     return out;
 }
 
+std::vector<Engine::AnimParam> Engine::animatablePoints(quint64 layer) const
+{
+    const auto params = animatableParams(layer);
+    std::vector<AnimParam> out;
+    for (const auto &p : params) {
+        if (p.pointComponent != 0 || !p.path.endsWith("/x")) continue;
+        const QString base = p.path.chopped(2);
+        if (std::none_of(params.begin(), params.end(), [&](const auto &y) {
+                return y.path == base + "/y" && y.pointComponent == 1;
+            })) continue;
+        AnimParam group = p;
+        group.path = base;
+        group.label = p.label;
+        const int suffix = group.label.lastIndexOf(QStringLiteral(" X"));
+        if (suffix >= 0) group.label.remove(suffix, 2);
+        group.label += QStringLiteral(" (XY)");
+        out.push_back(group);
+    }
+    return out;
+}
+
+bool Engine::setAnimPoint(const AnimTrack &track, double position, double played)
+{
+    if (!track.isPoint()) return false;
+    for (const auto &l : m_layers) if (l->id == track.layer && l->locked) return false;
+    std::array<Parameter *, 2> params{};
+    std::array<double, 2> values{};
+    for (int c = 0; c < 2; ++c) {
+        params[size_t(c)] = findParameter(track.layer, track.param + (c ? "/y" : "/x"));
+        values[size_t(c)] = track.axes[size_t(c)].enabled ? track.axes[size_t(c)].valueAt(position, played) : 0;
+        const auto *p = params[size_t(c)];
+        if (!p || !p->animatable() || p->info().pointComponent != c || !std::isfinite(values[size_t(c)])) return false;
+    }
+    for (int c = 0; c < 2; ++c) if (track.axes[size_t(c)].enabled) {
+        params[size_t(c)]->setNumber(values[size_t(c)]);
+        if (track.layer) releaseFromFades(track.layer, params[size_t(c)]->path());
+    }
+    return true;
+}
+
 bool Engine::animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const
 {
     if (!value) return false;
@@ -613,10 +671,11 @@ void Engine::remapAnimationTargets(quint64 layer, const std::vector<std::pair<QS
         if (track.layer != layer) return false;
         for (const auto &[from, to] : prefixes) {
             const bool match = track.param == from || track.param.startsWith(from + '/') ||
-                               (track.color && from.startsWith(track.param + '/'));
+                               ((track.color || track.isPoint()) && from.startsWith(track.param + '/'));
             if (!match) continue;
             if (to.isEmpty()) return true;
             track.param = to + track.param.mid(from.size());
+            sortKeys(track);
             return false;
         }
         return false;
@@ -701,6 +760,10 @@ void Engine::applyLayerAnim(Layer &l, Animation &a)
     if (a.tracks.empty()) return;
     const AnimTrack &t = a.tracks.front();
     if (!t.enabled || t.param.isEmpty()) return;
+    if (t.isPoint()) {
+        setAnimPoint(t, a.position(), a.played());
+        return;
+    }
     if (t.color) {
         setAnimColor(l.id, t.param, t.colorAt(a.position()));
         return;
@@ -781,6 +844,8 @@ void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
             a.clock = std::min(a.clock, a.length());
             t.captured = was->tracks.front().captured;
             t.capturedRgb = was->tracks.front().capturedRgb;
+            if (t.isPoint() && was->tracks.front().isPoint()) for (int c = 0; c < 2; ++c)
+                t.axes[size_t(c)].captured = was->tracks.front().axes[size_t(c)].captured;
         }
         l.anims.push_back(a);
     }
@@ -938,6 +1003,20 @@ void Engine::waveAround(quint64 layer, const QString &param, double *center, dou
 
 Animation Engine::makeLayerAnim(quint64 layer, const QString &param, int wave) const
 {
+    const auto points = animatablePoints(layer);
+    if (std::any_of(points.begin(), points.end(), [&](const auto &p) { return p.path == param; })) {
+        Animation a;
+        AnimTrack t;
+        t.layer = layer;
+        t.param = param;
+        for (int c = 0; c < 2; ++c) {
+            auto axis = makeLayerAnim(layer, param + (c ? "/y" : "/x"), wave).tracks.front();
+            if (wave >= 0 && c == 1) axis.phase = 0.25; // a quarter cycle: an ellipse for sine waves
+            t.axes.push_back(axis);
+        }
+        a.tracks = {t};
+        return a;
+    }
     const auto colors = animatableColors(layer);
     if (std::any_of(colors.begin(), colors.end(), [&](const auto &p) { return p.path == param; })) {
         Animation a;
@@ -1003,6 +1082,18 @@ Engine::AnimLoop animLoopFromKey(const QString &k) { return Engine::AnimLoop(key
 // [t, v, curve, "current", {"in": [dt, dv], "out": [dt, dv]}] (all but t and v when they matter) and its oscillator
 static void trackToJson(const AnimTrack &t, QJsonObject &o)
 {
+    if (t.isPoint()) {
+        o["type"] = QStringLiteral("point2d");
+        if (!t.enabled) o["enable"] = false;
+        QJsonArray axes;
+        for (const auto &axis : t.axes) {
+            QJsonObject value;
+            trackToJson(axis, value);
+            axes.append(value);
+        }
+        o["axes"] = axes;
+        return;
+    }
     if (t.color) o["type"] = QStringLiteral("color");
     if (!t.enabled) o["enable"] = false;
     if (t.oscillator) {
@@ -1034,6 +1125,22 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
 
 static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
 {
+    t.axes.clear();
+    if (o.value("type").toString() == QLatin1String("point2d")) {
+        t.color = false;
+        t.enabled = o.value("enable").toBool(true);
+        const auto axes = o.value("axes").toArray();
+        if (axes.size() == 2) for (const auto &value : axes) {
+            auto child = value.toObject();
+            child.remove("type"); // children are scalar; do not parse recursive groups
+            child.remove("axes");
+            AnimTrack axis;
+            trackFromJson(axis, child, duration);
+            t.axes.push_back(axis);
+        }
+        sortKeys(t);
+        return;
+    }
     t.color = o.value("type").toString() == QLatin1String("color");
     t.enabled = o.value("enable").toBool(true);
     if (o.contains("oscillator")) {
@@ -1231,6 +1338,9 @@ Engine::AnimationPlayback playbackOf(const Animation &a, bool captures)
         for (const auto &track : a.tracks) {
             out.captured.push_back(track.captured);
             out.capturedRgb.push_back(track.capturedRgb);
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            out.capturedXy.push_back(track.isPoint() ? std::array<double, 2>{track.axes[0].captured, track.axes[1].captured}
+                                                   : std::array<double, 2>{nan, nan});
         }
     }
     return out;

@@ -63,9 +63,14 @@ QStringList PresetEditor::stored(quint64 layer, const QStringList &paths) const
     QStringList out;
     if (layer && m_engine->indexOfId(layer) < 0) return out;
     const auto colors = m_engine->animatableColors(layer);
+    const auto points = m_engine->animatablePoints(layer);
     for (const QString &p : paths) {
         const auto color = std::find_if(colors.begin(), colors.end(), [&](const auto &c) { return c.path == p; });
         if (color != colors.end()) { out << p + "/r" << p + "/g" << p + "/b"; continue; }
+        if (std::any_of(points.begin(), points.end(), [&](const auto &xy) { return xy.path == p; })) {
+            out << p + "/x" << p + "/y";
+            continue;
+        }
         if (layer && p.startsWith(QLatin1String("category/"))) { out << p; continue; }
         if (layer && p == QLatin1String("geometry/mesh")) { out << p; continue; }
         ParamInfo info;
@@ -113,15 +118,26 @@ void PresetEditor::capturePresetDrivers(Engine::Preset &preset, quint64 layer, c
                std::any_of(paths.begin(), paths.end(), [&](const QString &p) { return a.tracks.front().drives(p); });
     };
     preset.animations.erase(std::remove_if(preset.animations.begin(), preset.animations.end(), matches), preset.animations.end());
-    for (const auto &animation : m_engine->layerAnims(layer))
-        if (matches(animation)) preset.animations.push_back(animation);
-    for (const QString &path : paths) {
-        preset.interactions.erase(std::remove_if(preset.interactions.begin(), preset.interactions.end(), [&](const Interaction &it) {
-            return it.layer == layer && it.param == path;
-        }), preset.interactions.end());
-        for (const Interaction &it : m_engine->interactions())
-            if (it.layer == layer && it.param == path) preset.interactions.push_back(it);
+    for (const auto &animation : m_engine->layerAnims(layer)) if (matches(animation)) {
+        const auto &track = animation.tracks.front();
+        if (track.isPoint() && !(paths.contains(track.param) ||
+            (paths.contains(track.param + "/x") && paths.contains(track.param + "/y")))) {
+            // A preset limited to X must not restore Y's curve or its transport.
+            for (const auto &axis : track.axes) if (axis.enabled && paths.contains(axis.param)) {
+                auto scalar = animation;
+                scalar.tracks = {axis};
+                preset.animations.push_back(scalar);
+            }
+        } else preset.animations.push_back(animation);
     }
+    auto interactionMatches = [&](const Interaction &it) {
+        if (it.layer != layer) return false;
+        if (!it.xyInputs.empty()) return paths.contains(it.param) ||
+            (paths.contains(it.param + "/x") && paths.contains(it.param + "/y"));
+        return std::any_of(paths.begin(), paths.end(), [&](const auto &p) { return it.drives(p); });
+    };
+    preset.interactions.erase(std::remove_if(preset.interactions.begin(), preset.interactions.end(), interactionMatches), preset.interactions.end());
+    for (const auto &it : m_engine->interactions()) if (interactionMatches(it)) preset.interactions.push_back(it);
 }
 
 void PresetEditor::addToNew(quint64 layer, const QStringList &paths)
@@ -207,7 +223,7 @@ void PresetEditor::removeFromPreset(quint64 target, quint64 layer, const QString
                     return !a.tracks.empty() && a.tracks.front().layer == layer && a.tracks.front().drives(path);
                 }), p.animations.end());
                 p.interactions.erase(std::remove_if(p.interactions.begin(), p.interactions.end(), [&](const Interaction &it) {
-                    return it.layer == layer && it.param == path;
+                    return it.layer == layer && it.drives(path);
                 }), p.interactions.end());
             }
         }
@@ -368,7 +384,7 @@ void PresetEditor::updateMarks()
         }
         if (!t.driven) {
             for (const Interaction &interaction : interactions) {
-                if (interaction.enabled && interaction.layer == t.layer && t.paths.contains(interaction.param)) {
+                if (interaction.enabled && interaction.layer == t.layer && std::any_of(t.paths.begin(), t.paths.end(), [&](const auto &p) { return interaction.drives(p); })) {
                     t.driven = true;
                     break;
                 }

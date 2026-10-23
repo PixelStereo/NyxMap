@@ -29,6 +29,51 @@ static void nameInteractions(std::vector<Interaction> &list)
     }
 }
 
+static bool sameInputBinding(const Interaction &a, const Interaction &b)
+{
+    return a.source == b.source && a.key == b.key && a.midiPort == b.midiPort && a.midiChannel == b.midiChannel &&
+           a.midiMessage == b.midiMessage && a.midiNumber == b.midiNumber && a.oscAddress == b.oscAddress &&
+           a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
+           a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
+           a.audioInput == b.audioInput && a.toggle == b.toggle && a.filterOn == b.filterOn && a.filter == b.filter &&
+           a.layer == b.layer && a.param == b.param;
+}
+
+static bool sameXyInput(const Interaction &a, const Interaction &b)
+{
+    if (a.xyInputs.empty() != b.xyInputs.empty()) return false;
+    return a.xyInputs.empty() || sameInputBinding(a.xyInputs.front(), b.xyInputs.front());
+}
+
+void Engine::configureInteractionTarget(Interaction &it, quint64 layer, const QString &path) const
+{
+    if (it.layer == layer && it.param == path && !it.xyInputs.empty()) return;
+    it.layer = layer;
+    it.param = path;
+    it.xyInputs.clear();
+    ParamInfo x, y;
+    if (parameterInfo(layer, path + "/x", &x) && x.pointComponent == 0 &&
+        parameterInfo(layer, path + "/y", &y) && y.pointComponent == 1) {
+        it.dstMin = x.min;
+        it.dstMax = x.max;
+        Interaction second = it;
+        second.id = 0;
+        second.name.clear();
+        second.layer = 0;
+        second.param.clear();
+        second.dstMin = y.min;
+        second.dstMax = y.max;
+        if (second.source == InteractionSource::Osc) second.oscArgument = std::min(63, second.oscArgument + 1);
+        if (second.source == InteractionSource::Midi) second.midiNumber = std::min(127, second.midiNumber + 1);
+        if (second.source == InteractionSource::Internal && second.sourceParam.endsWith("/x"))
+            second.sourceParam = second.sourceParam.chopped(2) + "/y";
+        it.xyInputs.push_back(second);
+    } else if (parameterInfo(layer, path, &x)) {
+        it.dstMin = x.isNumber() ? x.min : 0;
+        it.dstMax = x.isNumber() ? x.max : 1;
+    }
+}
+
 std::vector<Interaction> Engine::interactions() const
 {
     Lock lk(&m_mutex);
@@ -39,6 +84,12 @@ void Engine::setInteractions(const std::vector<Interaction> &list)
 {
     {
         Lock lk(&m_mutex);
+        for (const auto &it : list) {
+            const auto old = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const auto &x) { return x.id == it.id; });
+            if (old != m_interactions.end() && (!sameXyInput(*old, it) ||
+                ((!old->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*old, it))))
+                m_interactionRun.erase(it.id);
+        }
         m_interactions = list;
         nameInteractions(m_interactions);
         for (const Interaction &it : m_interactions) m_nextInteractionId = std::max(m_nextInteractionId, it.id + 1);
@@ -79,7 +130,8 @@ bool Engine::setInteraction(const Interaction &it)
         if (f == m_interactions.end()) return false;
         const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->filterOn != it.filterOn ||
                                    f->filter != it.filter || f->layer != it.layer || f->param != it.param ||
-                                   f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam;
+                                   f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
+                                   ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it));
         *f = it;
         nameInteractions(m_interactions);
         m_interactionParamsDirty = true;
@@ -124,8 +176,16 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
     out->reserve(m_interactionRun.size());
     for (const auto &[id, run] : m_interactionRun) {
         const auto level = run.proc.level();
-        if (!level) continue;
-        out->push_back({id, *level, run.proc.output().value_or(*level), run.proc.curveInput().value_or(*level)});
+        if (!level && !run.xyY.level()) continue;
+        const double x = level.value_or(0);
+        out->push_back({id, x, run.proc.output().value_or(x), run.proc.curveInput().value_or(x)});
+        if (const auto y = run.xyY.level()) {
+            auto &sample = out->back();
+            sample.hasY = true;
+            sample.yInput = *y;
+            sample.yOutput = run.xyY.output().value_or(*y);
+            sample.yCurveInput = run.xyY.curveInput().value_or(*y);
+        }
     }
     m_mutex.unlock();
     std::sort(out->begin(), out->end(), [](const InteractionLevel &a, const InteractionLevel &b) { return a.id < b.id; });
@@ -136,8 +196,10 @@ bool Engine::oscAddressClaimed(const QString &address) const
 {
     Lock lk(&m_mutex);
     return std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
-        return it.enabled && it.source == InteractionSource::Osc && !it.oscAddress.isEmpty() &&
-               it.oscAddress == address;
+        const auto listens = [&](const Interaction &input) {
+            return input.enabled && input.source == InteractionSource::Osc && !input.oscAddress.isEmpty() && input.oscAddress == address;
+        };
+        return it.enabled && (listens(it) || (!it.xyInputs.empty() && listens(it.xyInputs.front())));
     });
 }
 
@@ -247,7 +309,8 @@ void Engine::updateMidiInputs()
     {
         Lock lk(&m_mutex);
         wanted = std::any_of(m_interactions.begin(), m_interactions.end(),
-                             [](const Interaction &it) { return it.enabled && it.source == InteractionSource::Midi; });
+                             [](const Interaction &it) { return it.enabled && (it.source == InteractionSource::Midi ||
+                                 (!it.xyInputs.empty() && it.xyInputs.front().source == InteractionSource::Midi)); });
     }
     {
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
@@ -304,7 +367,14 @@ void Engine::stepInteractions(double dt)
     }
     if (m_interactions.empty()) return;
     // The program mix and the live input, each read only when an Audio interaction measures its bands
-    auto needsSpectrum=[this](bool input){return std::any_of(m_interactions.begin(),m_interactions.end(),[input](const Interaction &it){return it.enabled && it.source==InteractionSource::Audio && it.audioInput==input && it.audioFeature==Interaction::AudioFeature::Band;});};
+    auto needsSpectrum = [this](bool input) {
+        const auto needs = [input](const Interaction &it) {
+            return it.source == InteractionSource::Audio && it.audioInput == input && it.audioFeature == Interaction::AudioFeature::Band;
+        };
+        return std::any_of(m_interactions.begin(), m_interactions.end(), [&](const Interaction &it) {
+            return it.enabled && (needs(it) || (!it.xyInputs.empty() && needs(it.xyInputs.front())));
+        });
+    };
     const AudioAnalysis::Spectrum spectra[2]={needsSpectrum(false)?m_audio->spectrum():AudioAnalysis::Spectrum{},
                                               needsSpectrum(true)?m_audioInput->spectrum():AudioAnalysis::Spectrum{}};
     const AudioAnalysis::Values audios[2]={m_audio->analysis(),m_audioInput->analysis()};
@@ -323,6 +393,61 @@ void Engine::stepInteractions(double dt)
     for (const Interaction &it : m_interactions) {
         if (!it.enabled || it.param.isEmpty()) continue;
         InteractionRun &run = m_interactionRun[it.id];
+        if (!it.xyInputs.empty()) {
+            std::array<Parameter *, 2> params{};
+            bool valid = true;
+            for (int axis = 0; axis < 2; ++axis) {
+                auto *p = findParameter(it.layer, it.param + (axis ? "/y" : "/x"));
+                params[size_t(axis)] = p;
+                valid &= p && p->info().pointComponent == axis && p->isNumber() && (p->info().access & ParamInfo::Write);
+            }
+            if (!valid) continue; // no partial write to a replaced source or FX
+            auto evaluate = [&](const Interaction &input, InteractionProcessor &proc, InteractionTargetState &targetState,
+                                std::optional<double> &lastOut, double &lastInternal, Parameter *targetParam) -> std::optional<double> {
+                if (!input.enabled) return std::nullopt;
+                bool freshInput = false;
+                if (input.source == InteractionSource::Audio) {
+                    const auto &audio = audios[input.audioInput];
+                    const double raw = input.audioFeature == Interaction::AudioFeature::Band
+                        ? bandValue(input.audioInput, float(input.audioLow), float(input.audioHigh))
+                        : input.audioFeature == Interaction::AudioFeature::Level ? audio.level : audio.onset;
+                    proc.input(input, raw);
+                    freshInput = true;
+                } else if (input.source == InteractionSource::Internal) {
+                    if (const auto *source = findParameter(input.sourceLayer, input.sourceParam)) {
+                        const double raw = source->value().toDouble();
+                        if (std::isfinite(raw) && raw != lastInternal) {
+                            lastInternal = raw;
+                            proc.input(input, raw);
+                            freshInput = true;
+                        }
+                    }
+                } else for (const auto &event : events) if (input.matches(event) && event.colorComponents == 0) {
+                    proc.input(input, event.value); // preserve raw XY units; never apply RGB byte conversion
+                    freshInput = true;
+                }
+                const auto output = proc.step(input, dt);
+                if (!output) return std::nullopt;
+                const bool changed = freshInput || !lastOut || std::abs(*lastOut - *output) > 1e-9;
+                lastOut = output;
+                if (!changed) return std::nullopt;
+                const auto info = targetParam->info();
+                return targetState.numberToWrite(input, *output, targetParam->number(),
+                                                  std::max(info.step, 0.01 * std::abs(input.dstMax - input.dstMin)));
+            };
+            const auto x = evaluate(it, run.proc, run.target, run.lastOut, run.lastInternal, params[0]);
+            const auto y = evaluate(it.xyInputs.front(), run.xyY, run.xyYTarget, run.xyYLastOut, run.xyYLastInternal, params[1]);
+            if (it.layer) {
+                const int index = indexOfId(it.layer);
+                if (index < 0 || m_layers[size_t(index)]->locked) continue;
+            }
+            for (int axis = 0; axis < 2; ++axis) {
+                const auto &value = axis ? y : x;
+                if (value && std::isfinite(*value) && params[size_t(axis)]->setNumber(*value) && it.layer)
+                    releaseFromFades(it.layer, params[size_t(axis)]->path());
+            }
+            continue;
+        }
         bool fresh = false;
         // Stateless trigger mappings retain every edge in a batch. Continuous
         // values and filters still advance once per frame with the full dt.
@@ -489,14 +614,15 @@ void Engine::makeInteractionParams()
 {
     m_interactionParams.clear();
     using T = Parameter::Type;
-    for (const Interaction &it : m_interactions) {
-        const quint64 id = it.id;
-        const QString prefix = QStringLiteral("interaction/%1/").arg(id);
-        const QString cat = QStringLiteral("Interactions › %1 › ").arg(it.name);
+    for (const Interaction &root : m_interactions) for (int axis = 0; axis < (root.xyInputs.empty() ? 1 : 2); ++axis) {
+        const Interaction &it = axis ? root.xyInputs.front() : root;
+        const quint64 id = root.id;
+        const QString prefix = QStringLiteral("interaction/%1/%2").arg(id).arg(axis ? QStringLiteral("xy/y/") : QString());
+        const QString cat = QStringLiteral("Interactions › %1 › %2").arg(root.name).arg(axis ? QStringLiteral("Y › ") : QString());
         // Read and written in the interaction of that id (the lock held by the caller); a write tells the interface
-        auto find = [this, id]() -> Interaction * {
+        auto find = [this, id, axis]() -> Interaction * {
             for (Interaction &x : m_interactions)
-                if (x.id == id) return &x;
+                if (x.id == id) return axis ? (x.xyInputs.empty() ? nullptr : &x.xyInputs.front()) : &x;
             return nullptr;
         };
         auto add = [&](const QString &path, const QString &name, T type) -> Parameter & {
@@ -552,7 +678,7 @@ void Engine::makeInteractionParams()
                 sHi = p->info().max;
             }
         }
-        if (const Parameter *p = lookup(it.layer, it.param); p && p->isNumber()) {
+        if (const Parameter *p = lookup(root.layer, root.xyInputs.empty() ? root.param : root.param + (axis ? "/y" : "/x")); p && p->isNumber()) {
                 tLo = p->info().min;
                 tHi = p->info().max;
             }
@@ -599,6 +725,7 @@ void Engine::makeInteractionParams()
                           const int k = int(keys.indexOf(v.toString()));
                           if (Interaction *x = find(); x && k >= 0) {
                               x->filter = InteractionFilter(k);
+                              m_interactionParamsDirty = true; // the new filter may expose a second setting
                               interactionValuesTouched();
                           }
                       });
@@ -700,7 +827,13 @@ void Engine::makeInteractionParams()
         choice(QStringLiteral("source/audio/input"),QStringLiteral("Audio Source"),{QStringLiteral("program"),QStringLiteral("input")},
             [](const Interaction &x){return x.audioInput?1:0;},[](Interaction &x,int k){x.audioInput=k==1;});
         text(QStringLiteral("target"), QStringLiteral("Target"), [valueRef](const Interaction &x) { return valueRef(x.layer, x.param); },
-             [parseRef](Interaction &x, const QString &v) { parseRef(v, &x.layer, &x.param); });
+             [this, parseRef, axis](Interaction &x, const QString &v) {
+                 if (axis) return; // the Y chain shares the root target
+                 quint64 layer = 0;
+                 QString path;
+                 parseRef(v, &layer, &path);
+                 configureInteractionTarget(x, layer, path);
+             });
         text(QStringLiteral("curve"), QStringLiteral("Curve Keys"),
              [](const Interaction &x) { return QString::fromUtf8(QJsonDocument(x.toJson().value("curve").toArray()).toJson(QJsonDocument::Compact)); },
              [](Interaction &x, const QString &v) {

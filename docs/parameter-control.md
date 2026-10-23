@@ -36,6 +36,28 @@ flowchart LR
 
 Arrows show possible writers, not addition or a permanent ownership hierarchy.
 
+## Grouped XY parameters
+
+ISF `point2D` inputs and native layer position, pivot, scale and corner offsets
+offer an **XY** target alongside their separate **X** and **Y** components.
+Presets can capture the pair or either component.
+
+An XY interaction has two input chains: choose **X input and mapping** or
+**Y input and mapping** to configure its source, ranges, filter, curve and
+takeover independently. For a single OSC XY message, use the same address with
+arguments `0` and `1`; separate addresses or protocols also work. A fresh X-only
+event does not resend a stale Y value.
+
+An XY animation is one track with a shared transport and two independent
+curves or waves. Select X or Y to edit its keys, period, phase, center and
+amplitude. **Drive axis** leaves either component available to another control.
+Adding a separate X animation preserves the grouped Y animation, and vice versa.
+Wave phase is measured in cycles: equal sine periods with X phase `0` and Y phase
+`0.25` produce an ellipse. Each curve supports **Start from the current value**.
+
+Design references: [Chataigne Mapping 2D](https://benkuper.notion.site/Mapping-2D-Layer-ce3f908cae484a99acdd8b486c5de1fb)
+and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-system.html).
+
 | Control | What it does |
 |---|---|
 | Snapshot | Recalls scene state, including sources, FX, values, local animation states and interaction settings, subject to inclusion choices. |

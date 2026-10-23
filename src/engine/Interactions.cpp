@@ -124,6 +124,8 @@ QJsonObject Interaction::stateJson() const
 {
     QJsonObject o = toJson();
     for (const char *k : kNotState) o.remove(QLatin1String(k));
+    o.remove("xy_y"); // source definitions remain unchanged during snapshot recall
+    if (!xyInputs.empty()) o["xy_y_state"] = xyInputs.front().stateJson();
     return o;
 }
 
@@ -133,9 +135,10 @@ void Interaction::applyState(const QJsonObject &state)
     for (auto it = state.begin(); it != state.end(); ++it) {
         bool kept = true;
         for (const char *k : kNotState) kept = kept && it.key() != QLatin1String(k);
-        if (kept) o[it.key()] = it.value();
+        if (kept && it.key() != QLatin1String("xy_y") && it.key() != QLatin1String("xy_y_state")) o[it.key()] = it.value();
     }
     *this = fromJson(o);
+    if (!xyInputs.empty() && state.contains("xy_y_state")) xyInputs.front().applyState(state.value("xy_y_state").toObject());
 }
 
 AnimTrack Interaction::straightCurve()
@@ -194,6 +197,11 @@ QJsonObject Interaction::toJson() const
     o["layer"] = QString::number(layer);
     o["param"] = param;
     o["color_map_alpha"] = colorMapAlpha;
+    if (!xyInputs.empty()) {
+        Interaction y = xyInputs.front();
+        y.xyInputs.clear();
+        o["xy_y"] = y.toJson();
+    }
     o["master"] = master;
     o["toggle"] = toggle;
     o["source_range"] = QJsonArray{srcMin, srcMax};
@@ -258,6 +266,11 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();
     it.colorMapAlpha = o.value("color_map_alpha").toBool(false);
+    if (o.value("xy_y").isObject()) {
+        auto y = o.value("xy_y").toObject();
+        y.remove("xy_y"); // fixed arity; never parse nested interactions
+        it.xyInputs.push_back(fromJson(y));
+    }
     it.master = std::clamp(o.value("master").toDouble(1), 0.0, 1.0);
     it.toggle = o.value("toggle").toBool(false);
     const QJsonArray sr = o.value("source_range").toArray(), tr = o.value("target_range").toArray();

@@ -49,6 +49,7 @@ struct ParamInfo {
     QStringList choices;     // Choice: its keys
     bool animatable = false; // a timeline or an animation can drive it (the numbers)
     int colorComponent = -1; // explicit RGB(A) member at <color path>/r,g,b,a; -1: not a color
+    int pointComponent = -1; // explicit XY member at <point path>/x,y; -1: not a point
 
     bool isNumber() const { return type == Type::Float || type == Type::Int; }
     QString name() const; // its own name, without the category ("Rotation (°)")
@@ -70,6 +71,7 @@ public:
     Parameter &writeOnly();
     Parameter &animatable(bool on = true);
     Parameter &colorComponent(int component) { m_info.colorComponent = component; return *this; }
+    Parameter &pointComponent(int component) { m_info.pointComponent = component; return *this; }
     Parameter &values(const QList<int> &v);           // Int: among these
     Parameter &choices(const QStringList &keys);      // Choice
     Parameter &byDefault(const QVariant &v);

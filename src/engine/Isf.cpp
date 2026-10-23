@@ -422,8 +422,8 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
             break;
         case IsfInput::Point2D: {
             const QPointF lo = in.hasPointRange ? in.pMin : QPointF(0, 0), hi = in.hasPointRange ? in.pMax : QPointF(1, 1);
-            number(path + "/x", label + " X", 0, lo.x(), hi.x(), in.pDefault.x())->limits(-1e6, 1e6);
-            number(path + "/y", label + " Y", 1, lo.y(), hi.y(), in.pDefault.y())->limits(-1e6, 1e6);
+            number(path + "/x", label + " X", 0, lo.x(), hi.x(), in.pDefault.x())->limits(-1e6, 1e6).pointComponent(0);
+            number(path + "/y", label + " Y", 1, lo.y(), hi.y(), in.pDefault.y())->limits(-1e6, 1e6).pointComponent(1);
             break;
         }
         case IsfInput::Color:

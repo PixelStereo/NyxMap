@@ -49,6 +49,7 @@
 #include <functional>
 #include <utility>
 int runColorParameterUiTests(Engine &engine, const QString &root);
+int runXyParameterUiTests(Engine &engine, const QString &root);
 int runClockPresetUiTests(Engine &engine);
 
 static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, const char *)> &check)
@@ -259,15 +260,21 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool selection = false, colorAnimation = false, clockPresets = false, systemIsf = false;
+    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
-        if (arg == QLatin1String("--selection")) selection = true;
+        if (arg == QLatin1String("--xy")) xy = true;
+        else if (arg == QLatin1String("--selection")) selection = true;
         else if (arg == QLatin1String("--color-animation")) colorAnimation = true;
         else if (arg == QLatin1String("--clock-presets")) clockPresets = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
         else capture = arg;
+    }
+    if (xy) {
+        const int failures = runXyParameterUiTests(engine, QStringLiteral(TEST_DIR));
+        engine.shutdown();
+        return failures ? 1 : 0;
     }
     if (clockPresets) {
         const int failures = runClockPresetUiTests(engine);
