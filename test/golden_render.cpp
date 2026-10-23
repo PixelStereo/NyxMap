@@ -120,15 +120,15 @@ int runGoldenRenderTests(Engine &engine, const QString &root, const QString &tmp
     if (need(engine.setLayerImage(layer, halvesPath, &err), "image source"))
         failures += compareImage(QStringLiteral("split"), capture(), refs, tmp);
 
-    // The stock FlipCrop ISF filter should exchange the two image halves.
+    // The stock FlipFlop ISF filter should exchange the two image halves.
     reset();
     layer = engine.addLayer(QStringLiteral("Flip"));
-    const QString flipFx = root + "/../isf/effects/FlipCrop.fs";
+    const QString flipFx = root + "/../isf/effects/FlipFlop.fs";
     if (need(engine.setLayerImage(layer, halvesPath, &err), "image before ISF")) {
         const int fx = engine.addEffect(layer, flipFx, &err);
         if (need(fx >= 0, "ISF filter")) {
-            IsfInput *in = engine.layer(layer)->effects[size_t(fx)]->input(QStringLiteral("flipH"));
-            if (need(in != nullptr, "flipH ISF parameter")) {
+            IsfInput *in = engine.layer(layer)->effects[size_t(fx)]->input(QStringLiteral("flip"));
+            if (need(in != nullptr, "flip ISF parameter")) {
                 in->bValue = true;
                 failures += compareImage(QStringLiteral("flip"), capture(), refs, tmp);
             }
