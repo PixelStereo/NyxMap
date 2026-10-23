@@ -215,8 +215,9 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
         const QString dest = freeName(media + QStringLiteral("/SEQUENCES"), QFileInfo(folder).fileName());
         to.insert(key(folder), dest);
         for (const QFileInfo &f : QDir(folder).entryInfoList(QDir::Files | QDir::Hidden, QDir::Name)) {
-            if (to.contains(key(f.absoluteFilePath()))) continue;
-            to.insert(key(f.absoluteFilePath()), dest + '/' + f.fileName());
+            // A frame also used as a still or shader import needs both copies:
+            // image2 requires every numbered file at its original relative name.
+            if (!to.contains(key(f.absoluteFilePath()))) to.insert(key(f.absoluteFilePath()), dest + '/' + f.fileName());
             CollectFile c;
             c.from = f.absoluteFilePath();
             c.to = dest + '/' + f.fileName();
@@ -272,11 +273,21 @@ bool Engine::collect(const CollectPlan &plan, QString *err)
 int Engine::removeCollectedOriginals(const CollectPlan &plan, QStringList *failed)
 {
     int removed = 0;
+    QSet<QString> processed;
+    QStringList originals;
+    // Resolve every identity while all originals still exist. After unlinking a
+    // file, canonicalFilePath() is empty and a symlinked parent (e.g. /var on
+    // macOS) would otherwise give its later references a different key.
     for (const CollectFile &f : plan.files) {
         if (!QFileInfo::exists(f.to)) continue; // never without its copy
-        if (key(f.from) == key(f.to)) continue;
-        if (QFile::remove(f.from)) ++removed;
-        else if (failed) *failed << f.from;
+        const QString original = key(f.from);
+        if (original == key(f.to) || processed.contains(original)) continue;
+        processed.insert(original); // one original can have several necessary collected copies
+        originals << f.from;
+    }
+    for (const QString &original : originals) {
+        if (QFile::remove(original)) ++removed;
+        else if (failed) *failed << original;
     }
     return removed;
 }

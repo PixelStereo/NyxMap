@@ -12,6 +12,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QThread>
 #include <algorithm>
 #include <cstdio>
@@ -175,6 +176,37 @@ void sequenceTests(Engine &e, const QString &tmp)
     for (const QJsonValue &v : plan.project.value("layers").toArray())
         if (v.toObject().value("name").toString() == "Seq") collectedPath = v.toObject().value("source").toObject().value("path").toString();
     check(collectedPath.endsWith("/MEDIA/SEQUENCES/shot_seq") && plan.missing.isEmpty(), "the collected layer uses the copied folder");
+    // A numbered frame used separately still has to exist inside the copied sequence.
+    e.addBinItems({folder + "/shot0003.png"});
+    QTemporaryDir collection(tmp + "/collect-XXXXXX");
+    check(collection.isValid(), "an isolated collection destination is available");
+    const auto shared = e.planCollect(collection.path(), "SharedFrameShow", {});
+    int copies = 0;
+    for (const auto &file : shared.files) if (file.from == folder + "/shot0003.png") ++copies;
+    check(copies == 2, "a frame used as a still has both necessary collected copies");
+    check(e.collect(shared, &err), "collect a sequence with a separately imported frame");
+    QString copiedFolder;
+    for (const auto &layer : shared.project.value("layers").toArray())
+        if (layer.toObject().value("name").toString() == "Seq")
+            copiedFolder = layer.toObject().value("source").toObject().value("path").toString();
+    check(VideoDecoder::probe(copiedFolder, &info, &err, faster) && info.frames == 5,
+          "the collected sequence remains contiguous and keeps all five frames");
+    d.close(); e.newProject();
+    auto moved = shared;
+#ifdef Q_OS_UNIX
+    // The later reference uses another spelling of the same file. Once the
+    // first is removed its canonical path is unavailable, even on Linux.
+    const QString alias = collection.path() + "/source_alias";
+    check(QFile::link(folder, alias), "a symbolic source-folder alias is available");
+    for (auto it = moved.files.rbegin(); it != moved.files.rend(); ++it)
+        if (it->from == folder + "/shot0003.png") {
+            it->from = alias + "/shot0003.png";
+            break;
+        }
+#endif
+    QStringList failed;
+    check(Engine::removeCollectedOriginals(moved, &failed) == int(shared.files.size()) - 1 && failed.isEmpty(),
+          "Move removes each original once even when it has two collected copies");
 }
 
 void svgTests(Engine &e, const QString &tmp)

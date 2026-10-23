@@ -30,6 +30,9 @@ quint64 keyOf(const Layer &l)
                       quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
                       quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get()))})
         mix(v);
+    // An allocator can reuse a replaced generator's address. Its kind changes
+    // which parameters exist even when the pointer and text source stay equal.
+    if (l.clockGen) mix(quint64(l.clockGen->kind()));
     auto inputs = [&mix](const IsfInstance *i) {
         if (!i) return;
         mix(quint64(i->isValid()));

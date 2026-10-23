@@ -699,25 +699,59 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
 
 int Engine::duplicateLayer(int i)
 {
-    QJsonObject o = layerJson(i);
-    if (o.isEmpty()) return -1;
-    const quint64 original = layerId(i);
-    QList<QJsonObject> inside; // everything the group holds, in order
-    for (quint64 id : tree::descendants(structure(), original)) inside << layerJson(indexOfId(id));
-    o["name"] = o.value("name").toString() + QStringLiteral(" copy");
-    o.remove("id"); // the copies get their own ids
-    const int gi = insertLayerJson(i, o);
-    std::map<QString, quint64> newId{{QString::number(original), layerId(gi)}};
-    int at = gi + 1;
-    for (QJsonObject m : inside) {
-        const QString oldId = m.value("id").toString();
-        m.remove("id");
-        m["parent"] = QString::number(newId[m.value("parent").toString()]);
-        const int k = insertLayerJson(at, m);
-        newId[oldId] = layerId(k);
-        at = k + 1;
+    std::vector<QJsonObject> states;
+    std::map<QString, quint64> copies;
+    quint64 original = 0;
+    {
+        Lock lock(&m_mutex);
+        original = layerId(i);
+        if (!original) return -1;
+        states.push_back(layerJson(i));
+        for (quint64 id : tree::descendants(structure(), original)) states.push_back(layerJson(indexOfId(id)));
+        // Allocate the entire identity map before restoring any state: references may
+        // point forward to siblings as well as backward to a source or mask.
+        for (const auto &state : states) copies[state.value("id").toString()] = newIdLocked();
     }
-    return indexOfId(newId[QString::number(original)]);
+    auto remap = [&](QJsonValue value) -> QJsonValue {
+        const auto found = copies.find(value.toString());
+        return found == copies.end() ? value : QJsonValue(QString::number(found->second));
+    };
+    auto remapShader = [&](QJsonObject shader) {
+        if (shader.contains("mask")) shader["mask"] = remap(shader.value("mask"));
+        QJsonObject images = shader.value("image_layers").toObject();
+        for (auto it = images.begin(); it != images.end(); ++it) it.value() = remap(it.value());
+        if (!images.isEmpty()) shader["image_layers"] = images;
+        return shader;
+    };
+    int at = i;
+    for (size_t k = 0; k < states.size(); ++k) {
+        QJsonObject state = states[k];
+        state["id"] = remap(state.value("id"));
+        if (k == 0) state["name"] = state.value("name").toString() + QStringLiteral(" copy");
+        if (state.contains("parent")) state["parent"] = remap(state.value("parent"));
+        if (state.contains("mask")) state["mask"] = remap(state.value("mask"));
+        if (state.contains("matte")) {
+            QJsonObject matte = state.value("matte").toObject();
+            matte["layer"] = remap(matte.value("layer"));
+            state["matte"] = matte;
+        }
+        QJsonObject source = remapShader(state.value("source").toObject());
+        if (source.value("type") == QLatin1String("layer")) source["layer"] = remap(source.value("layer"));
+        if (source.value("type") == QLatin1String("tox")) {
+            QJsonObject inputs = source.value("inputs").toObject();
+            for (auto it = inputs.begin(); it != inputs.end(); ++it) it.value() = remap(it.value());
+            source["inputs"] = inputs;
+        }
+        state["source"] = source;
+        QJsonArray effects;
+        for (const auto &effect : state.value("fx").toArray()) effects.append(remapShader(effect.toObject()));
+        state["fx"] = effects;
+        const int inserted = insertLayerJson(at, state);
+        if (inserted < 0) return -1;
+        at = inserted + 1;
+    }
+    fixLayerReferences();
+    return indexOfId(copies[QString::number(original)]);
 }
 
 QJsonArray Engine::effectsJson(int i) const

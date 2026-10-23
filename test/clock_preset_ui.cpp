@@ -63,18 +63,18 @@ int runClockPresetUiTests(Engine &engine)
         const auto count = engine.preset(pi).values.size();
         click(field, Qt::AltModifier);
         check(presets.inSelected(id, {path}) && engine.preset(pi).values.size() == count + 1,
-              "Alt-click stores exactly the individual setting");
-        check(engine.parameterValue(id, path) == before, "preset selection leaves the live value unchanged");
-        undo.undo(); check(!presets.inSelected(id, {path}), "Undo removes the captured setting");
-        undo.redo(); check(presets.inSelected(id, {path}), "Redo restores the setting");
+              qPrintable(path + ": Alt-click stores exactly the individual setting"));
+        check(engine.parameterValue(id, path) == before, qPrintable(path + ": preset selection leaves the live value unchanged"));
+        undo.undo(); check(!presets.inSelected(id, {path}), qPrintable(path + ": Undo removes the captured setting"));
+        undo.redo(); check(presets.inSelected(id, {path}), qPrintable(path + ": Redo restores the setting"));
         click(label ? label : field, label ? Qt::NoModifier : Qt::AltModifier);
-        check(!presets.inSelected(id, {path}), "click removes the setting from the selected preset");
+        check(!presets.inSelected(id, {path}), qPrintable(path + ": click removes the setting from the selected preset"));
         QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal(QPoint(3, 3)));
         QApplication::sendEvent(field, &event);
         auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
         bool hasPreset = false;
         if (menu) for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
-        check(hasPreset, "the field exposes the standard Preset context menu");
+        check(hasPreset, qPrintable(path + ": the field exposes the standard Preset context menu"));
         if (menu) menu->close();
         pump();
     };
