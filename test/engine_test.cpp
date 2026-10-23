@@ -264,7 +264,7 @@ void main(){ gl_FragColor = definitely_not_defined; }
             const QString gen = tmp + "/KeepGen.fs", fx = tmp + "/KeepFx.fs";
             QFile::remove(gen);
             QFile::remove(fx);
-            CHECK(QFile::copy(isf + "/generators/SolidColor.fs", gen) && QFile::copy(isf + "/effects/FlipCrop.fs", fx));
+            CHECK(QFile::copy(isf + "/generators/SolidColor.fs", gen) && QFile::copy(isf + "/effects/FlipFlop.fs", fx));
             QFile::setPermissions(gen, QFile::ReadOwner | QFile::WriteOwner);
             QFile::setPermissions(fx, QFile::ReadOwner | QFile::WriteOwner);
             const int gl = e.addLayer(QStringLiteral("Kept generator"));
@@ -311,7 +311,7 @@ void main(){ gl_FragColor = definitely_not_defined; }
             }
             // The shaders back: the second save opens as the first one was, values included
             QFile::remove(gen);
-            CHECK(QFile::copy(isf + "/generators/SolidColor.fs", gen) && QFile::copy(isf + "/effects/FlipCrop.fs", fx));
+            CHECK(QFile::copy(isf + "/generators/SolidColor.fs", gen) && QFile::copy(isf + "/effects/FlipFlop.fs", fx));
             CHECK(e.loadProject(second, nullptr, &err));
             kept = -1;
             for (int k = 0; k < e.layerCount(); ++k)
@@ -895,7 +895,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         };
         CHECK(put(root + "/media/bars.png", src + "/bars.png") && put(root + "/media/h264.mp4", src + "/clip.mp4") &&
               put(root + "/media/tone.wav", src + "/tone.wav") && put(root + "/media/av.mp4", src + "/later.mp4") &&
-              put(isf + "/effects/FlipCrop.fs", src + "/Flip.fs") &&
+              put(isf + "/effects/FlipFlop.fs", src + "/Flip.fs") &&
               put(isf + "/transitions/Dissolve.fs", src + "/Dissolve.fs") &&
               put(root + "/media/bars.png", src + "/shaders/tex.png") &&
               put(root + "/media/bars.png", other + "/bars.png")); // another file of the same name
@@ -1049,7 +1049,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     int fx2 = e.addEffect(v, tmp + "/Broken.fs", &err);
     CHECK(fx2 == -1 && int(e.layer(v)->effects.size()) == beforeFx);
     CHECK(err.contains("undefinedThing"));
-    int fx3 = e.addEffect(v, root + "/../isf/effects/Blur.fs", &err);
+    int fx3 = e.addEffect(v, root + "/../isf/effects/Separable Gaussian Blur.fs", &err);
     CHECK(fx3 >= 0 && e.layer(v)->effects[size_t(fx3)]->isValid());
     for (int i = 0; i < 5; ++i) e.renderFrame(); // still shows the working video and effects
     QImage out = e.grabOutput();
@@ -1234,11 +1234,12 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(c.green() < 120 && c.red() > 135 && c.blue() > 135);
             e.removeLayer(gl);
         }
-        // Effects switch: FlipCrop flips the picture, the general switch bypasses the chain
-        const int fx = e.addEffect(l, isf + "/effects/FlipCrop.fs", &err);
+        // Effects switch: FlipFlop flips the picture, the general switch bypasses the chain
+        const int fx = e.addEffect(l, isf + "/effects/FlipFlop.fs", &err);
         CHECK(fx == 0);
+        if (fx < 0) { qWarning("Unable to load the compositing FX fixture: %s", qPrintable(err)); return 1; }
         for (IsfInput &in : e.layer(l)->effects[0]->inputs())
-            if (in.name == "flipH") in.bValue = true;
+            if (in.name == "flip") in.bValue = true;
         img = render();
         CHECK(px(img, 8, 16).blue() > 250);
         e.layer(l)->effectsEnabled = false;
@@ -1789,8 +1790,12 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.newProject();
         e.setCompositionSize(QSize(64, 32));
         const int li = e.addLayer("My layer");
-        e.setLayerImage(li, tmp + "/redblue.png", &err);
-        e.addEffect(li, isf + "/effects/FlipCrop.fs", &err);
+        const bool loadedImage = e.setLayerImage(li, tmp + "/redblue.png", &err);
+        CHECK(loadedImage);
+        if (!loadedImage) { qWarning("Unable to load the OSC image fixture: %s", qPrintable(err)); return 1; }
+        const int oscFx = e.addEffect(li, isf + "/effects/FlipFlop.fs", &err);
+        CHECK(oscFx == 0);
+        if (oscFx < 0) { qWarning("Unable to load the OSC FX fixture: %s", qPrintable(err)); return 1; }
         const int gi = e.addGroup("G", V + 0);
         e.setStructure(tree::intoGroup(e.structure(), {e.layerId(V + 1)}, e.layerId(gi)));
         {
@@ -1820,8 +1825,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(server.handleMessage({L + "/temp", "f", {-2000.0}}) && e.layer(V + 1)->color.temp == -2000.0f);
         CHECK(server.handleMessage({L + "/tint", "f", {500.0}}) && e.layer(V + 1)->color.tint == 100.0f); // clipped
         CHECK(server.handleMessage({L + "/roi/left", "f", {0.25}}) && std::abs(e.layer(V + 1)->roi.left() - 0.25) < 1e-9);
-        CHECK(server.handleMessage({L + "/fx/FlipCrop/param/flipH", "T", {true}}));
-        CHECK(e.layer(V + 1)->effects[0]->inputs()[1].bValue || e.layer(V + 1)->effects[0]->inputs()[2].bValue);
+        CHECK(server.handleMessage({L + "/fx/FlipFlop/param/flip", "T", {true}}));
+        const IsfInput *flipped = e.layer(V + 1)->effects[size_t(oscFx)]->input(QStringLiteral("flip"));
+        CHECK(flipped && flipped->bValue);
         CHECK(server.handleMessage({L + "/fx/enable", "F", {false}}) && !e.layer(V + 1)->effectsEnabled);
         CHECK(server.handleMessage({"/layer/G/opacity", "i", {0}}) && e.layer(V + 0)->opacity == 0.0f);
         CHECK(server.handleMessage({"/composition/blackout", "T", {true}}) && e.blackout());
@@ -2067,7 +2073,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.layer(V + 0)->color.temp = 1000;
         e.layer(V + 0)->mapping.setCorner(0, QPointF(0.3, 0.3));
         e.layer(V + 1)->enabled = true;
-        e.addEffect(V + 0, isf + "/effects/FlipCrop.fs", &err);
+        e.addEffect(V + 0, isf + "/effects/FlipFlop.fs", &err);
         e.recallSnapshot(0);
         CHECK(std::abs(e.layer(V + 0)->opacity - 0.8f) < 1e-6 && e.layer(V + 0)->color.temp == 0.0f);
         CHECK(QLineF(e.layer(V + 0)->mapping.corner(0), QPointF(0.3, 0.3)).length() > 1e-6); // the corner came back
@@ -4689,13 +4695,18 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         while (t.elapsed() < 3000) {
             int a = e.addLayer("stress");
             e.setLayerIsf(a, root + "/../isf/generators/Plasma.fs", &err);
-            e.addEffect(a, root + "/../isf/effects/Blur.fs", &err);
+            const int stressFx = e.addEffect(a, root + "/../isf/effects/Separable Gaussian Blur.fs", &err);
+            CHECK(stressFx == 0);
+            if (stressFx < 0) { qWarning("Unable to load the threaded FX fixture: %s", qPrintable(err)); return 1; }
             {
                 Engine::Lock lk(&e.mutex());
                 Layer *l = e.layer(a);
                 l->mapping.setCorner(1, QPointF(0.7, 0.1));
                 l->mapping.resetMesh(6, 5);
-                l->effects[0]->inputs()[1].fValue = 12;
+                IsfInput *radius = l->effects[size_t(stressFx)]->input(QStringLiteral("radius"));
+                CHECK(radius);
+                if (!radius) return 1;
+                radius->fValue = 12;
                 l->opacity = 0.8f;
             }
             int b = e.insertLayerJson(V + 0, e.layerJson(a + 1 > e.layerCount() - 1 ? a : a));

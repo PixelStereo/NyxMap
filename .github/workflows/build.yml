@@ -290,7 +290,7 @@ jobs:
           timeout 120 xvfb-run -a ./build-tsan/pinol_tests --area cue_lifecycle
           # The decoders' threads, the sound callback and its decode threads, the OSC server. (The render-thread areas
           # render with llvmpipe, itself far too slow under ThreadSanitizer on a CI runner: run them locally.)
-          # A data race (exit code 66) fails at once. Any other failure is a timing check under ThreadSanitizer's
+          # A sanitizer report (exit code 66, including a fatal signal) fails at once. Other failures can be timing checks under ThreadSanitizer's
           # slowness (the sound clocks): tried up to 3 times, a real regression fails every time
           for area in sound video osc; do
             echo "::group::$area"
@@ -300,7 +300,7 @@ jobs:
               rc=0
               timeout 600 xvfb-run -a ./build-tsan/pinol_tests --area $area || rc=$?
               if [ $rc -eq 0 ]; then ok=1; break; fi
-              if [ $rc -eq 66 ]; then echo "::error::ThreadSanitizer: data race in area $area"; exit 66; fi
+              if [ $rc -eq 66 ]; then echo "::error::ThreadSanitizer: race or fatal runtime error in area $area"; exit 66; fi
               echo "::warning::$area failed (exit $rc) under ThreadSanitizer, attempt $attempt of 3"
             done
             echo "$area: $(( $(date +%s) - start )) s"

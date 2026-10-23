@@ -27,11 +27,11 @@ for e in sorted(glob.glob(os.path.join(isf, 'effects', '*.fs'))):
     n = os.path.splitext(os.path.basename(e))[0]
     params = {}
     if n == 'Mask': params = {"maskImage": os.path.join(media, 'bars.png'), "feather": 0.1}
-    if n == 'SoftEdges': params = {"left": 0.3, "right": 0.3, "top": 0.15, "bottom": 0.15}
-    if n == 'Blur': params = {"radius": 20}
+    if n == 'Soft Crop': params = {"LeftFeather": 0.3, "RightFeather": 0.3, "TopFeather": 0.15, "BottomFeather": 0.15}
+    if n == 'Separable Gaussian Blur': params = {"radius": 20}
     if n == 'Hue': params = {"hue": 120}
     if n == 'Pixelate': params = {"cellSize": 24, "gap": 0.1}
-    if n == 'FlipCrop': params = {"flipH": True}
+    if n == 'FlipFlop': params = {"flip": True}
     if n == 'Trails': params = {"drift": [3, 0], "decay": 0.95}
     proj('fx_' + n, [layer('video', video('h264.mp4'), [{"path": e, "enable": True, "params": params}], mapping=full)])
 
@@ -58,7 +58,7 @@ demo = {"app": "Pinol", "format_version": 1, "composition": {"width": 640, "heig
     layer('Test Pattern', {"type": "isf", "path": pattern, "width": 1280, "height": 720}, mapping=warp),
     layer('Video h264', video('h264.mp4'), [
         {"path": os.path.join(isf, 'effects', 'ColorCorrection.fs'), "enable": True, "params": {"saturation": 0.3}},
-        {"path": os.path.join(isf, 'effects', 'SoftEdges.fs'), "enable": True, "params": {"left": 0.2, "right": 0.2}}], mapping=video_quad),
+        {"path": os.path.join(isf, 'effects', 'Soft Crop.fs'), "enable": True, "params": {"LeftFeather": 0.2, "RightFeather": 0.2}}], mapping=video_quad),
     layer('Act 2', {"type": "video", "path": os.path.join(root, 'out', 'missing', 'act2.mov'), "loop": True, "speed": 1, "playing": True}),
 ], "bin": [{"path": os.path.join(media, 'bars.png')}], "ui": {"selected_layer": 1}}
 json.dump(demo, open(os.path.join(root, 'projects', 'demo.pinol'), 'w'), indent=1)

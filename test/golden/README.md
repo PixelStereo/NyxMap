@@ -7,7 +7,7 @@ Run `ctest --test-dir build -R '^golden$' --output-on-failure` after building `p
 Each scene renders into an exact 128 × 64 viewport and compares **every RGB pixel inside each approved interior rectangle**, avoiding texture boundaries and anti-aliased edges. The current fixtures validate more than ten thousand pixels per run.
 
 - `split`: opaque red and blue halves of an image.
-- `flip`: same image with the stock ISF FlipCrop filter's horizontal flip enabled.
+- `flip`: same image with the stock ISF FlipFlop filter's horizontal flip enabled.
 - `alpha`: normal source-over composition of a 50% red PNG over opaque blue, evaluated using straight-alpha GPU blending.
 - `solid_isf`: a SolidColor ISF generator with input color (0.2, 0.6, 0.8, 1.0).
 - `spatial_position`: a red layer centered in the left half of the composition; untouched right half remains black.
