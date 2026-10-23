@@ -25,7 +25,13 @@ async function commandSeen(address) {
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto('http://127.0.0.1:8080');
         await page.getByText(/^CONNECTED ·/).waitFor({timeout: 40000});
+        await page.getByText('Loading session…', {exact: true}).waitFor({state: 'hidden'});
         await page.getByText('Start the film', {exact: true}).waitFor();
+        await page.waitForFunction(() => {
+            const canvas = document.querySelectorAll('.pinol-cue-fill canvas')[1];
+            return canvas && canvas.height > 50 && canvas.width > 50 &&
+                canvas.getContext('2d').getImageData(Math.floor(canvas.width * .2), Math.floor(canvas.height * .5), 1, 1).data[3] > 0;
+        }, null, {timeout: 10000});
         await page.getByText('0:04.2', {exact: true}).waitFor();
         const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});
         const cards = await page.locator('.pinol-cue').all();
@@ -61,6 +67,7 @@ async function commandSeen(address) {
         await capture('tablet');
         assert.deepEqual(errors, []);
     } catch (error) {
+        if (page) console.error(await page.locator('.pinol-cue-fill canvas').evaluateAll(nodes => nodes.map(c => ({width:c.width, height:c.height, box:c.getBoundingClientRect().toJSON(), parent:c.parentNode.getBoundingClientRect().toJSON()}))).catch(() => []));
         if (page) await page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-failure.png')}).catch(() => {});
         throw error;
     } finally { await browser.close(); }
