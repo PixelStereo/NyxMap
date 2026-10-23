@@ -83,7 +83,8 @@
                         "expand": 3,
                         "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
                         "target": "127.0.0.1:1234",
-                        "ignoreDefaults": true
+                        "ignoreDefaults": true,
+                        "label": "%key"
                       },
                       {
                         "type": "text",
@@ -167,6 +168,16 @@
                             "wrap": true,
                             "address": "/sequence/cue/previous/phase",
                             "css": "font-family:monospace;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "previous_times",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "css": "font-size:12px;font-family:monospace;",
+                            "value": "JS{var a=Number(OSC{/sequence/cue/previous/action,0}); return 'Pre '+Number(OSC{/sequence/cue/previous/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/previous/postwait,0}).toFixed(1)+' s';}"
                           },
                           {
                             "type": "fader",
@@ -255,6 +266,16 @@
                             "css": "font-family:monospace;"
                           },
                           {
+                            "type": "text",
+                            "id": "current_times",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "css": "font-size:12px;font-family:monospace;",
+                            "value": "JS{var a=Number(OSC{/sequence/cue/current/action,0}); return 'Pre '+Number(OSC{/sequence/cue/current/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/current/postwait,0}).toFixed(1)+' s';}"
+                          },
+                          {
                             "type": "fader",
                             "id": "current_progress",
                             "address": "/sequence/cue/current/progress",
@@ -339,6 +360,16 @@
                             "wrap": true,
                             "address": "/sequence/cue/next/phase",
                             "css": "font-family:monospace;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "next_times",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "css": "font-size:12px;font-family:monospace;",
+                            "value": "JS{var a=Number(OSC{/sequence/cue/next/action,0}); return 'Pre '+Number(OSC{/sequence/cue/next/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/next/postwait,0}).toFixed(1)+' s';}"
                           },
                           {
                             "type": "fader",

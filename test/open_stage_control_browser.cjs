@@ -22,7 +22,7 @@ async function commandSeen(address) {
         const page = await browser.newPage({viewport: {width: 1440, height: 1080}});
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto('http://127.0.0.1:8080');
-        await page.getByText('Evening show', {exact: false}).first().waitFor({timeout: 40000});
+        await page.getByText(/^CONNECTED ·/).waitFor({timeout: 40000});
         await page.getByText('Start the film', {exact: true}).waitFor();
         await page.getByText('0:04.2', {exact: true}).waitFor();
         const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});

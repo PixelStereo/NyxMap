@@ -10,7 +10,12 @@ let catalog, playback, selected = '0', lastPong = 0, online = false, catalogKey 
 let pages = {snapshots: 0, presets: 0, timelines: 0, cues: 0};
 let retryAt = 0, lastCatalog = 0, catalogError = '';
 const id = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
-const emit = (address, value) => receive(address, value);
+const sentValues = new Map();
+function emit(address, value, force = false) {
+    if (!force && sentValues.has(address) && sentValues.get(address) === value) return;
+    if (sentValues.size > 512) sentValues.clear();
+    sentValues.set(address, value); receive(address, value);
+}
 const edit = (widget, properties) => receive('/EDIT', widget, JSON.stringify(properties));
 const arg = (data, index) => data.args[index] && data.args[index].value;
 const target = {target: '127.0.0.1:1234', ignoreDefaults: true};
@@ -56,7 +61,7 @@ function renderLibrary(kind) {
             ]};
     });
     edit(kind + '_items', {widgets: widgets.length ? widgets : [text(kind + '_empty', 'No ' + kind + ' in this project.')]});
-    if (playback) publishTimelineValues();
+    if (playback) publishTimelineValues(true);
 }
 function renderCues() {
     const sequence = catalog && catalog.sequences.find(entry => entry.id === selected);
@@ -71,6 +76,7 @@ function renderCues() {
             css: 'font-size:15px;text-align:left;'});
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
+    if (playback) emit('/sequence/cue/current/number', playback.values['/sequence/cue/current/number'], true);
 }
 function publishCatalog(force) {
     if (!catalog) return;
@@ -79,7 +85,7 @@ function publishCatalog(force) {
     catalogKey = key;
     edit('sequence_select', {values: {labels: catalog.sequences.map(s => `${s.index} · ${s.name || 'Untitled'}`),
         values: catalog.sequences.map(s => s.id)}});
-    emit('/pinol/sequence/select', selected);
+    emit('/pinol/sequence/select', selected, true);
     for (const kind of ['snapshots', 'presets', 'timelines']) renderLibrary(kind);
     renderCues();
 }
@@ -88,11 +94,14 @@ function clock(seconds) {
     const tenths = Math.round(Math.max(0, seconds) * 10);
     return `${Math.floor(tenths / 600)}:${String(Math.floor(tenths / 10) % 60).padStart(2, '0')}.${tenths % 10}`;
 }
-function publishTimelineValues() {
+function publishTimelineValues(force = false) {
+    if (!catalog) return;
+    const visible = new Set(catalog.timelines.slice(pages.timelines * PAGE_SIZE, (pages.timelines + 1) * PAGE_SIZE).map(t => t.id));
     for (const timeline of playback.timelines || []) {
+        if (!visible.has(timeline.id)) continue;
         const base = `/pinol/timeline/${timeline.id}`;
-        emit(base + '/progress', timeline.progress);
-        emit(base + '/clock', `${timeline.state.toUpperCase()} · ${clock(timeline.position)} / ${clock(timeline.duration)} · Pass ${timeline.pass} · Left ${clock(timeline.remaining)}`);
+        emit(base + '/progress', timeline.progress, force);
+        emit(base + '/clock', `${timeline.state.toUpperCase()} · ${clock(timeline.position)} / ${clock(timeline.duration)} · Pass ${timeline.pass} · Left ${clock(timeline.remaining)}`, force);
     }
 }
 function publishState(state) {
@@ -149,6 +158,7 @@ function connect(nextHost, nextPort) {
     if (request) { request.destroy(); request = null; }
     if (socket) socket.terminate();
     host = nextHost; port = nextPort;
+    sentValues.clear();
     catalog = playback = null; selected = '0'; catalogKey = ''; lastCatalog = 0; catalogError = '';
     emit('/pinol/ui/host', host); emit('/pinol/ui/port', port);
     emit('/sequence/name', 'Disconnected'); emit('/sequence/go_enabled', 0); emit('/sequence/back_enabled', 0);
@@ -192,6 +202,7 @@ function command(data) {
     if (address === '/pinol/session/ready') {
         emit('/pinol/ui/host', host); emit('/pinol/ui/port', port); status();
         publishCatalog(true); if (playback) publishState(playback);
+        for (const [address, value] of sentValues) receive(address, value);
     } else if (address === '/pinol/connect') {
         connect(String(arg(data, 0) || '').trim(), Number(arg(data, 1)));
     } else if (address === '/pinol/refresh') {
