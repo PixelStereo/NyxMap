@@ -45,19 +45,20 @@ inline const QString kTimecodeGeneratorPath = QStringLiteral("/Pinol/Generators/
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
 // The Countdown, Stopwatch and Clock generators: text layers that show a time (ClockGenerator.h), from the Media Bin too
 inline const QString kCountdownGeneratorPath = QStringLiteral("/Pinol/Generators/Countdown");
-inline const QString kStopwatchGeneratorPath = QStringLiteral("/Pinol/Generators/Stopwatch");
+inline const QString kChronometerGeneratorPath = QStringLiteral("/Pinol/Generators/Chronometer");
+inline const QString kStopwatchGeneratorPath = QStringLiteral("/Pinol/Generators/Stopwatch"); // legacy drag paths
 inline const QString kClockGeneratorPath = QStringLiteral("/Pinol/Generators/Clock");
 inline std::optional<ClockKind> clockGeneratorOfPath(const QString &p)
 {
     const QString q = QString(p).replace('\\', '/');
     if (q.endsWith(kCountdownGeneratorPath)) return ClockKind::Countdown;
-    if (q.endsWith(kStopwatchGeneratorPath)) return ClockKind::Stopwatch;
+    if (q.endsWith(kChronometerGeneratorPath) || q.endsWith(kStopwatchGeneratorPath)) return ClockKind::Stopwatch;
     if (q.endsWith(kClockGeneratorPath)) return ClockKind::Clock;
     return std::nullopt;
 }
 inline QString clockGeneratorPath(ClockKind k)
 {
-    return k == ClockKind::Countdown ? kCountdownGeneratorPath : k == ClockKind::Stopwatch ? kStopwatchGeneratorPath : kClockGeneratorPath;
+    return k == ClockKind::Countdown ? kCountdownGeneratorPath : k == ClockKind::Stopwatch ? kChronometerGeneratorPath : kClockGeneratorPath;
 }
 // The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
 inline const QString kWebGeneratorPath = QStringLiteral("/Pinol/Generators/Web Page");
@@ -237,6 +238,8 @@ inline QString imageSourceDepth(QImage::Format f)
         return QStringLiteral("8-bit or less");
     }
 }
+
+class Engine;
 
 struct Layer {
     // Identity and structure. A group is a layer without source whose picture is the composite of its members;
@@ -422,6 +425,7 @@ struct Layer {
     // composition's size). The engine's lock is held.
     const std::vector<Parameter *> &parameters();
     Parameter *parameter(const QString &path); // null: it has none at that address
+    Engine *engine = nullptr; // owner for validated Timecode configuration writes
     const QSize *compSize = nullptr;           // the composition's (set by the engine): its parameters in pixels
     std::vector<std::unique_ptr<Parameter>> paramStore;
     std::vector<Parameter *> paramList;

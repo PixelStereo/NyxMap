@@ -28,7 +28,7 @@ quint64 keyOf(const Layer &l)
     for (quint64 v : {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
                       quint64(l.isGroup), quint64(c.width()), quint64(c.height()), quint64(quintptr(l.generator.get())),
                       quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
-                      quint64(quintptr(l.tcClock.get())), quint64(quintptr(l.clockGen.get()))})
+                      quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get()))})
         mix(v);
     auto inputs = [&mix](const IsfInstance *i) {
         if (!i) return;
@@ -282,32 +282,53 @@ const std::vector<Parameter *> &Layer::parameters()
     // A Timecode generator's transport (its free run): played, paused, sought, its in / out points and play mode.
     // Values in seconds of timecode; set at once (each one repositions the clock). In a snapshot, the position of a
     // clock that plays there and plays already is left alone: it goes on (Engine::applyParams)
-    if (std::shared_ptr<TimecodeClock> c = tcClock) {
-        TimecodeClock *k = c.get(); // the parameters are made again when the clock changes
+    if (tcClock) {
+        // Keep the registry stable across configuration changes. Transport bindings resolve
+        // the current clock so a recall can configure it and seek it in the same pass.
+        auto clock = [self] { return self->tcClock; };
+        if (engine && timecode) {
+            auto config = [&](const QString &field, const QString &label, T type, const QVariant &def) -> Parameter & {
+                return add("tc/" + field, "Timecode › " + label, type).byDefault(def)
+                    .ramp(Parameter::Ramp::Cut).animatable(false)
+                    .bind([self, field] { return self->timecode->toJson().value(field).toVariant(); },
+                          [self, field](const QVariant &value) {
+                              QJsonObject settings = self->timecode->toJson();
+                              settings[field] = QJsonValue::fromVariant(value);
+                              const int row = t_layerBuild.layer == self ? kBuildSlot : self->engine->indexOfId(self->id);
+                              self->engine->setLayerTimecode(row, TimecodeSettings::fromJson(settings));
+                          });
+            };
+            config("source", "Source", T::Choice, "internal").choices({"internal", "ltc", "mtc", "atc_ndi", "atc_decklink"});
+            config("internal", "Clock", T::Choice, "time_of_day").choices({"time_of_day", "free_run"});
+            config("rate", "Rate", T::Choice, "25").choices({"24", "25", "29.97df", "30"});
+            config("offset", "Offset (frames)", T::Int, 0).range(-2592000, 2592000);
+            config("input", "Input", T::Text, QString());
+            config("output", "Output", T::Text, QStringLiteral("0"));
+        }
         const double day = 24.0 * 3600.0;
-        num("tc/in", "Timecode › In (s)", 0, day, 0.0, [k] { return k->inPoint(); }, [k](double v) { k->setInOut(v, k->outPoint()); })
+        num("tc/in", "Timecode › In (s)", 0, day, 0.0, [clock] { return clock()->inPoint(); }, [clock](double v) { clock()->setInOut(v, clock()->outPoint()); })
             .step(0.04)
             .ramp(Parameter::Ramp::Cut)
             .animatable(false);
-        num("tc/out", "Timecode › Out (s)", -1, day, -1.0, [k] { return k->outPoint(); },
-            [k](double v) { k->setInOut(k->inPoint(), v < 0 ? -1.0 : v); })
+        num("tc/out", "Timecode › Out (s)", -1, day, -1.0, [clock] { return clock()->outPoint(); },
+            [clock](double v) { clock()->setInOut(clock()->inPoint(), v < 0 ? -1.0 : v); })
             .step(0.04)
             .ramp(Parameter::Ramp::Cut)
             .animatable(false);
         add("tc/play_mode", "Timecode › Play Mode", T::Choice)
             .choices({"oneshot", "loop", "pingpong", "stop"})
             .byDefault(QStringLiteral("loop"))
-            .bind([k] { return QVariant(tcPlayModeKey(k->playMode())); },
-                  [k](const QVariant &v) { k->setPlayMode(tcPlayModeFromKey(v.toString())); });
-        num("tc/position", "Timecode › Position (s)", 0, day, 0.0, [k] { return k->position(); }, [k](double v) { k->seek(v); })
+            .bind([clock] { return QVariant(tcPlayModeKey(clock()->playMode())); },
+                  [clock](const QVariant &v) { clock()->setPlayMode(tcPlayModeFromKey(v.toString())); });
+        num("tc/position", "Timecode › Position (s)", 0, day, 0.0, [clock] { return clock()->position(); }, [clock](double v) { clock()->seek(v); })
             .step(0.04)
             .ramp(Parameter::Ramp::Cut)
             .animatable(false);
         add("tc/play", "Timecode › Play", T::Bool)
             .ramp(Parameter::Ramp::Cut)
             .byDefault(true)
-            .bind([k] { return QVariant(k->playing()); }, [k](const QVariant &v) { k->setPlaying(v.toBool()); });
-        add("tc/rewind", "Timecode › Rewind", T::Trigger).bind(nullptr, [k](const QVariant &) { k->rewind(); });
+            .bind([clock] { return QVariant(clock()->playing()); }, [clock](const QVariant &v) { clock()->setPlaying(v.toBool()); });
+        add("tc/rewind", "Timecode › Rewind", T::Trigger).bind(nullptr, [clock](const QVariant &) { clock()->rewind(); });
     }
 
     // A Countdown, Stopwatch or Clock generator: its settings, then its transport (countdown, stopwatch). Set at once,

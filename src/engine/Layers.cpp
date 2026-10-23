@@ -114,6 +114,7 @@ int Engine::indexOf(const Layer *l) const
 std::unique_ptr<Layer> Engine::makeLayerLocked(const QString &name)
 {
     auto l = std::make_unique<Layer>();
+    l->engine = this;
     l->compSize = &m_compSize;
     l->mapping.aspect = double(m_compSize.width()) / std::max(1, m_compSize.height());
     l->id = newIdLocked();
@@ -1605,7 +1606,9 @@ bool Engine::setLayerTimecode(int i, const TimecodeSettings &s)
         if (!l || l->isGroup || l->isViewport) return false;
         if (s.output && !hasTimecodeOutput(s.output)) return false;
         const int user = s.output ? timecodeOutputUser(s.output) : -1;
-        if (user >= 0 && user != i) return false; // a timecode output is driven by one layer only
+        const bool replacing = i == kBuildSlot && t_layerBuild.replaces && user >= 0 &&
+                               m_layers[size_t(user)]->id == t_layerBuild.replaces;
+        if (user >= 0 && user != i && !replacing) return false; // one layer per output
         already = l->type == SourceType::Text && l->timecode;
         if (already && *l->timecode == s) return true;
     }
