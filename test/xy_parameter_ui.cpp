@@ -226,9 +226,14 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     check(sameAnimation(definition, sought) && undo.count() == undoCount, "path scrubbing preserves the curves and Undo history");
     if (!captures.isEmpty())
         check(timelinePath.grab().save(QDir(captures).filePath("xy-path-timeline.png")), "save global XY path preview in CI");
-    auto scalar = sought;
-    scalar.tracks = {sought.tracks[0].axes[0]};
-    engine.setAnimation(previewTimeline, scalar); pump();
+    auto *targetMenu = timelinePath.findChild<QPushButton *>("timelineParameter");
+    QAction *scalarTarget = nullptr;
+    if (targetMenu && targetMenu->menu())
+        for (auto *action : targetMenu->menu()->actions())
+            if (action->text() == QLatin1String("Opacity") && !action->menu()) scalarTarget = action;
+    check(scalarTarget != nullptr, "timeline target menu offers a scalar target beside XY");
+    if (scalarTarget) scalarTarget->trigger();
+    pump();
     const auto *scalarPreview = timelinePath.findChild<XyPathPreview *>();
     const auto *scalarToggle = timelinePath.findChild<QPushButton *>("showXyPath");
     check(scalarPreview && !scalarPreview->isVisible() && scalarToggle && !scalarToggle->isVisible(),
