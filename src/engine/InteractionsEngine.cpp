@@ -613,10 +613,13 @@ void Engine::stepInteractions(double dt)
 void Engine::interactionValuesTouched()
 {
     if (m_interactionValuesPending.exchange(true)) return; // one is on its way
-    QMetaObject::invokeMethod(this, [this] {
-        m_interactionValuesPending = false;
-        emit interactionValuesChanged();
-    }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(this, "notifyInteractionValuesChanged", Qt::QueuedConnection);
+}
+
+void Engine::notifyInteractionValuesChanged()
+{
+    m_interactionValuesPending = false;
+    emit interactionValuesChanged();
 }
 
 void Engine::makeInteractionParams()

@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <atomic>
+#include <thread>
 #include <cstdio>
 int main(int argc,char **argv) {
     QSurfaceFormat format;format.setVersion(3,3);format.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(format);
@@ -61,6 +62,30 @@ int main(int argc,char **argv) {
     }
     check(scan && scan->thread() == app.thread() && scan->isActive() && !engine.interactions().empty(),
           "a delayed preset safely restarts MIDI scanning on its owner thread");
+    engine.sequencer().shutdownClock();
+    const QString master = QStringLiteral("interaction/%1/master").arg(midi.id);
+    check(engine.setParameter(0, master, 0.0), "interaction settings are available after preset recall");
+    app.processEvents();
+    // Keep the owner thread blocked while a producer changes settings. One
+    // coalesced notification must arrive on the owner thread when events resume.
+    std::atomic<int> notifications{0};
+    std::atomic<bool> ownerThread{true}, writesOk{true};
+    auto feedback = QObject::connect(&engine, &Engine::interactionValuesChanged, &engine, [&] {
+        ++notifications;
+        if (QThread::currentThread() != app.thread()) ownerThread = false;
+    }, Qt::DirectConnection);
+    std::thread producer([&] {
+        for (int n = 1; n <= 64; ++n)
+            if (!engine.setParameter(0, master, double(n) / 64)) writesOk = false;
+    });
+    producer.join();
+    check(notifications == 0, "interaction feedback remains queued while the owner thread is blocked");
+    wait.restart();
+    while (notifications == 0 && wait.elapsed() < 5000) { app.processEvents(); QThread::msleep(1); }
+    check(writesOk && notifications == 1 && ownerThread,
+          "a burst of cross-thread interaction edits emits once on the owner thread");
+    check(engine.parameterValue(0, master).toDouble() == 1.0, "coalesced feedback preserves the final interaction value");
+    QObject::disconnect(feedback);
     engine.sequencer().setRecallRecorder(nullptr);engine.sequencer().shutdownClock();engine.shutdown();
     return failures?1:0;
 }

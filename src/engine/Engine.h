@@ -1121,6 +1121,7 @@ private:
     bool m_interactionParamsDirty = true;
     std::atomic<bool> m_interactionValuesPending{false};
     void interactionValuesTouched(); // any thread: interactionValuesChanged soon, once
+    Q_INVOKABLE void notifyInteractionValuesChanged(); // Engine's QObject thread; no captured event payload
     void makeInteractionParams();    // lock held
     const std::vector<std::unique_ptr<Parameter>> &interactionParams(); // made again when needed (lock held)
     struct InteractionFade {
