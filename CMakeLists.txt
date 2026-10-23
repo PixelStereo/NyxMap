@@ -539,6 +539,9 @@ if(PINOL_TESTS)
   # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(pinol_isf_library_test test/isf_library.cpp)
+  target_link_libraries(pinol_isf_library_test PRIVATE pinol_engine)
+  add_test(NAME isf_library COMMAND pinol_isf_library_test)
   add_executable(pinol_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_color_timeline_ui_test PRIVATE src/ui)
@@ -691,6 +694,7 @@ if(PINOL_TESTS)
   endif()
   add_test(NAME workspace_ui COMMAND pinol_workspace_ui_test)
   add_test(NAME clock_preset_ui COMMAND pinol_workspace_ui_test --clock-presets)
+  add_test(NAME system_isf_ui COMMAND pinol_workspace_ui_test --system-isf)
   set_tests_properties(clock_preset_ui PROPERTIES TIMEOUT 60)
   add_test(NAME color_parameter_ui COMMAND pinol_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)

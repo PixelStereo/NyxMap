@@ -113,6 +113,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
 
     QSettings s;
     m_engine->library().setUserFolders(s.value("isf/folders").toStringList());
+    m_engine->library().setSystemVisibility({s.value("isf/showSystemGenerators", true).toBool(),
+                                           s.value("isf/showSystemFX", true).toBool(),
+                                           s.value("isf/showSystemTransitions", true).toBool()});
     m_engine->library().scan();
 
     // --- Top: media bin | preview and mapping | Layer / Composition tabs
@@ -922,6 +925,31 @@ void MainWindow::buildMenus()
         QSettings().setValue("isf/folders", QStringList());
         rescanLibrary();
     });
+    auto *systemShaders = lib->addMenu(QStringLiteral("System Shaders"));
+    systemShaders->setToolTipsVisible(true);
+    struct SystemOption {
+        const char *label, *key, *objectName;
+        bool IsfLibrary::SystemVisibility::*field;
+    };
+    for (const SystemOption &option : {
+             SystemOption{"Show Generators", "isf/showSystemGenerators", "showSystemIsfGenerators", &IsfLibrary::SystemVisibility::generators},
+             SystemOption{"Show FX", "isf/showSystemFX", "showSystemIsfFX", &IsfLibrary::SystemVisibility::filters},
+             SystemOption{"Show Transitions", "isf/showSystemTransitions", "showSystemIsfTransitions", &IsfLibrary::SystemVisibility::transitions}}) {
+        auto *action = systemShaders->addAction(QString::fromLatin1(option.label));
+        action->setObjectName(QString::fromLatin1(option.objectName));
+        action->setMenuRole(QAction::NoRole);
+        action->setCheckable(true);
+        action->setChecked(m_engine->library().systemVisibility().*option.field);
+        action->setToolTip(QStringLiteral("Include shaders from the standard ISF folders on this computer. "
+                                         "Shaders already used by the project remain available."));
+        connect(action, &QAction::toggled, this, [this, option](bool on) {
+            auto visibility = m_engine->library().systemVisibility();
+            visibility.*option.field = on;
+            m_engine->library().setSystemVisibility(visibility);
+            QSettings().setValue(QString::fromLatin1(option.key), on);
+            refreshLibrary();
+        });
+    }
     lib->addSeparator();
     lib->addAction(QStringLiteral("Open Bundled Shaders Folder"), this, [] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(IsfLibrary::bundledFolder()));
@@ -2106,12 +2134,19 @@ void MainWindow::addIsfFolder()
 void MainWindow::rescanLibrary()
 {
     m_engine->library().scan();
+    refreshLibrary();
+}
+
+void MainWindow::refreshLibrary()
+{
     m_settings->setTransitions(m_engine->library().transitions(), m_engine->defaultTransition());
     m_bin->refresh();
     m_inspector->rebuild();
-    statusBar()->showMessage(QStringLiteral("ISF Library: %1 generators, %2 FX")
+    m_viewportInspector->rebuild();
+    statusBar()->showMessage(QStringLiteral("ISF Library: %1 generators, %2 FX, %3 transitions")
                                  .arg(m_engine->library().generators().size())
-                                 .arg(m_engine->library().filters().size()),
+                                 .arg(m_engine->library().filters().size())
+                                 .arg(m_engine->library().transitions().size()),
                              5000);
 }
 

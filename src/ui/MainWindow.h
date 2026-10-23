@@ -119,6 +119,7 @@ private:
     void addViewport();
     void addIsfFolder();
     void rescanLibrary();
+    void refreshLibrary();
 
     void setBlackout(bool on);
     bool handleControlKey(int key, Qt::KeyboardModifiers mods); // show-control shortcuts, also from the output window

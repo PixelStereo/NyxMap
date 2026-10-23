@@ -530,7 +530,7 @@ void MediaBin::refreshIsf()
         it->setData(0, UsersRole, int(g->users.size()));
         it->setText(0, g->name);
         it->setText(3, QStringLiteral("Unknown (shader RGB)"));
-        it->setText(1, missing ? QStringLiteral("missing") : g->inLibrary ? QString() : g->imported ? QStringLiteral("imported") : QStringLiteral("outside library"));
+        it->setText(1, missing ? QStringLiteral("missing") : g->inLibrary ? QString() : g->imported ? QStringLiteral("imported") : QStringLiteral("used by project"));
         it->setText(2, g->users.isEmpty() ? QStringLiteral("—") : QString::number(g->users.size()));
         it->setTextAlignment(2, Qt::AlignCenter);
         const QString usedBy = g->users.isEmpty() ? QStringLiteral("Not used by any layer")

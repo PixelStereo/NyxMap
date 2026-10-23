@@ -205,7 +205,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           LP_NUM_THREADS: '1'
           PINOL_UI_CAPTURE_DIR: ${{ runner.temp }}/animation-transport
-        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure --timeout 120 -R '^(workspace_ui|color_parameter_ui|clock_preset_ui)$'
+        run: xvfb-run -a ctest --test-dir build-asan --output-on-failure --timeout 120 -R '^(workspace_ui|color_parameter_ui|clock_preset_ui|system_isf_ui)$'
       - name: Animation transport screenshots
         uses: actions/upload-artifact@v4
         if: always()

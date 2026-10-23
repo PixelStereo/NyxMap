@@ -9,6 +9,21 @@
 #include <QStandardPaths>
 #include <algorithm>
 
+namespace {
+QString pathKey(const QString &path)
+{
+    const QFileInfo file(path);
+    QString key = file.canonicalFilePath();
+    if (key.isEmpty()) key = QDir::cleanPath(file.absoluteFilePath());
+#ifdef Q_OS_WIN
+    key = key.toCaseFolded();
+#endif
+    return key;
+}
+}
+
+IsfLibrary::IsfLibrary(const QStringList &standardFolders) : m_systemFolders(standardFolders) {}
+
 QString IsfLibrary::bundledFolder()
 {
     const QString app = QCoreApplication::applicationDirPath();
@@ -40,25 +55,38 @@ QStringList IsfLibrary::systemFolders()
 QStringList IsfLibrary::allFolders() const
 {
     QStringList all;
+    QSet<QString> seen;
+    auto add = [&](const QString &folder) {
+        if (folder.isEmpty() || !QFileInfo(folder).isDir()) return;
+        const QString key = pathKey(folder);
+        if (seen.contains(key)) return;
+        seen.insert(key);
+        all << folder;
+    };
     const QString b = bundledFolder();
-    if (!b.isEmpty()) all << b;
-    for (const QString &s : systemFolders()) if (QFileInfo(s).isDir()) all << s;
-    for (const QString &u : m_userFolders) if (QFileInfo(u).isDir() && !all.contains(u)) all << u;
+    add(b);
+    for (const QString &s : m_systemFolders) add(s);
+    for (const QString &u : m_userFolders) add(u);
     return all;
 }
 
 void IsfLibrary::scan()
 {
-    m_generators.clear();
-    m_filters.clear();
-    m_transitions.clear();
+    m_allGenerators.clear();
+    m_allFilters.clear();
+    m_allTransitions.clear();
+    QSet<QString> system;
+    for (const QString &folder : m_systemFolders) system.insert(pathKey(folder));
+    const QString bundled = bundledFolder();
     QSet<QString> seen;
     for (const QString &folder : allFolders()) {
+        const bool isSystem = (bundled.isEmpty() || pathKey(folder) != pathKey(bundled)) && system.contains(pathKey(folder));
         QDirIterator it(folder, {"*.fs", "*.frag"}, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             const QString path = QFileInfo(it.next()).absoluteFilePath();
-            if (seen.contains(path)) continue;
-            seen.insert(path);
+            const QString key = pathKey(path);
+            if (seen.contains(key)) continue;
+            seen.insert(key);
             IsfInstance::Header h = IsfInstance::readHeader(path);
             if (!h.ok) continue;
             IsfEntry e;
@@ -67,19 +95,39 @@ void IsfLibrary::scan()
             e.description = h.description;
             e.categories = h.categories;
             e.isFilter = h.isFilter;
-            (h.isTransition ? m_transitions : e.isFilter ? m_filters : m_generators).push_back(e);
+            e.isSystem = isSystem;
+            (h.isTransition ? m_allTransitions : e.isFilter ? m_allFilters : m_allGenerators).push_back(e);
         }
     }
     auto byName = [](const IsfEntry &a, const IsfEntry &b) { return a.name.localeAwareCompare(b.name) < 0; };
-    std::sort(m_generators.begin(), m_generators.end(), byName);
-    std::sort(m_filters.begin(), m_filters.end(), byName);
-    std::sort(m_transitions.begin(), m_transitions.end(), byName);
+    std::sort(m_allGenerators.begin(), m_allGenerators.end(), byName);
+    std::sort(m_allFilters.begin(), m_allFilters.end(), byName);
+    std::sort(m_allTransitions.begin(), m_allTransitions.end(), byName);
+    updateVisible();
+}
+
+void IsfLibrary::setSystemVisibility(SystemVisibility visibility)
+{
+    m_systemVisibility = visibility;
+    updateVisible();
+}
+
+void IsfLibrary::updateVisible()
+{
+    auto visible = [](QVector<IsfEntry> entries, bool showSystem) {
+        if (!showSystem) entries.erase(std::remove_if(entries.begin(), entries.end(),
+            [](const IsfEntry &entry) { return entry.isSystem; }), entries.end());
+        return entries;
+    };
+    m_generators = visible(m_allGenerators, m_systemVisibility.generators);
+    m_filters = visible(m_allFilters, m_systemVisibility.filters);
+    m_transitions = visible(m_allTransitions, m_systemVisibility.transitions);
 }
 
 QString IsfLibrary::findByFileName(const QString &fileName) const
 {
-    for (const IsfEntry &e : m_generators) if (QFileInfo(e.path).fileName() == fileName) return e.path;
-    for (const IsfEntry &e : m_filters) if (QFileInfo(e.path).fileName() == fileName) return e.path;
-    for (const IsfEntry &e : m_transitions) if (QFileInfo(e.path).fileName() == fileName) return e.path;
+    for (const IsfEntry &e : m_allGenerators) if (QFileInfo(e.path).fileName() == fileName) return e.path;
+    for (const IsfEntry &e : m_allFilters) if (QFileInfo(e.path).fileName() == fileName) return e.path;
+    for (const IsfEntry &e : m_allTransitions) if (QFileInfo(e.path).fileName() == fileName) return e.path;
     return {};
 }
