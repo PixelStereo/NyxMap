@@ -1131,6 +1131,8 @@ private:
     std::vector<InteractionFade> m_interactionFades; // render thread (lock held)
     void stepInteractionFades(double dt);
     void updateMidiInputs();          // main thread
+    void requestMidiInputUpdate();    // any thread; coalesced named Qt invocation
+    Q_INVOKABLE void applyMidiInputUpdate();
     std::vector<TimecodeOutput> m_tcOutputs;  // under m_mutex
     std::vector<MidiOutput> m_midiOutputs;
     std::vector<AudioChannelOutput> m_audioOutputs;
