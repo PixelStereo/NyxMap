@@ -28,6 +28,11 @@ async function commandSeen(address) {
         await page.getByText('Start the film', {exact: true}).waitFor();
         await page.getByText('0:04.2', {exact: true}).waitFor();
         const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});
+        const cards = await page.locator('.pinol-cue').all();
+        assert.equal(cards.length, 3);
+        const [previous, current, next] = await Promise.all(cards.map(card => card.boundingBox()));
+        assert.ok(previous.y < current.y && current.y < next.y, 'Cues stack previous/current/next vertically');
+        assert.ok(current.height > previous.height, 'The current cue has visual priority');
         await capture('show');
         await button('GO ▶').click();
         await commandSeen('/sequence/by-id/501/go');

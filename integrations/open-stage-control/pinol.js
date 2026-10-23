@@ -46,18 +46,18 @@ function renderLibrary(kind) {
     const widgets = entries.map(entry => {
         const key = `${kind}_${entry.id}`, label = `${entry.index} · ${entry.name || 'Untitled'}`;
         if (kind !== 'timelines')
-            return button(key, label, '/pinol/recall', [kind, entry.id], {height: 76, colorWidget: kind === 'presets' ? '#e5ba71' : '#73cbd9'});
+            return button(key, label, '/pinol/recall', [kind, entry.id], {height: 76, colorWidget: kind === 'presets' ? '#e0b43a' : '#4cd964'});
         const base = `/pinol/timeline/${entry.id}`;
         return {type: 'panel', id: key, label: false, layout: 'vertical', height: 166, width: '100%',
-            colorBg: '#1a2330', contain: false, css: 'min-height:166rem!important;', padding: 8, widgets: [
+            colorBg: '#26262b', contain: false, css: 'min-height:166rem!important;', padding: 8, widgets: [
                 text(key + '_name', label, {align: 'left', css: 'font-weight:600;font-size:17px;'}),
                 text(key + '_clock', 'Stopped', {address: base + '/clock', css: 'font-family:monospace;'}),
-                {type: 'fader', id: key + '_progress', address: base + '/progress', horizontal: true, compact: true,
-                    height: 12, width: '100%', interaction: false, bypass: true, input: false, range: {min: 0, max: 1}, colorWidget: '#73cbd9'},
+                {type: 'fader', id: key + '_progress', address: base + '/progress', horizontal: true, design: 'compact', knobSize: 0, label: false,
+                    height: 12, width: '100%', interaction: false, bypass: true, input: false, range: {min: 0, max: 1}, colorWidget: '#56c4ff'},
                 {type: 'panel', id: key + '_buttons', label: false, layout: 'horizontal', height: 44, width: '100%', padding: 3,
                     widgets: ['play', 'pause', 'stop'].map(action => button(key + '_' + action, action.toUpperCase(),
                         '/pinol/timeline/control', [entry.id, action], {height: 40, width: 'auto', expand: true,
-                            colorWidget: action === 'stop' ? '#e9818b' : '#73cbd9'}))}
+                            colorWidget: action === 'stop' ? '#e84c3d' : '#56c4ff'}))}
             ]};
     });
     edit(kind + '_items', {widgets: widgets.length ? widgets : [text(kind + '_empty', 'No ' + kind + ' in this project.')]});
@@ -73,12 +73,15 @@ function renderCues() {
         const details = [cue.target_type, cue.name, cue.continue, cue.description].filter(Boolean).join(' · ');
         return button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
             height: 76, align: 'left',
-            colorWidget: `JS{return OSC{/sequence/cue/current/number,0,false} === ${number} ? '#78dfb5' : '#516078'}`,
-            css: 'font-size:15px;text-align:left;'});
+            colorWidget: `JS{return OSC{/sequence/cue/current/number,0,false} === ${number} ? '#4cd964' : OSC{/sequence/cue/next/number,0,false} === ${number} ? '#e84c3d' : '#6d6d78'}`,
+            alphaFillOff: 0.08, alphaStroke: 0.45, borderRadius: 4,
+            css: ':host {font-size:14px;} label {justify-content:flex-start;text-align:left;padding-left:14rem;line-height:1.5;}'});
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
     emit('/pinol/ui/online', online ? 1 : 0, true);
-    if (playback) emit('/sequence/cue/current/number', playback.values['/sequence/cue/current/number'], true);
+    if (playback) for (const role of ['current', 'next']) {
+        const address = `/sequence/cue/${role}/number`; emit(address, playback.values[address], true);
+    }
 }
 function publishCatalog(force) {
     if (!catalog) return;

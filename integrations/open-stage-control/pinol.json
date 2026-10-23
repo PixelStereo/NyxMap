@@ -8,10 +8,10 @@
     "layout": "vertical",
     "width": "100%",
     "height": "100%",
-    "colorBg": "#101722",
-    "colorText": "#e5edf6",
+    "colorBg": "#202024",
+    "colorText": "#ececf0",
     "padding": 12,
-    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}",
+    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}\n.text-container {--alpha-fill-off:0;}\n.pinol-cue > inner {border-radius:5rem;overflow:hidden;}\n.pinol-cue > inner > .widget:not(.pinol-cue-fill) {position:relative;z-index:1;}\n.pinol-cue-fill {z-index:0!important;}\n.navigation {background:#26262b;}\n.tablink {color:#a4a4ae;}\n.tablink.on {color:#ececf0;box-shadow:inset 0 -2rem #4cd964;}\n@media screen and (min-width:1000px) {\n .pinol-dashboard > inner {grid-template-columns:minmax(0,1.6fr) minmax(320rem,1fr)!important;}\n}",
     "onCreate": "send('127.0.0.1:1234', '/pinol/session/ready');",
     "widgets": [
       {
@@ -22,14 +22,15 @@
           {
             "type": "text",
             "id": "brand",
-            "value": "PINOL / SHOW CONTROL",
+            "value": "PINOL  /  SHOW CONTROL",
             "width": "100%",
             "height": 32,
             "bypass": true,
             "wrap": true,
             "align": "left",
-            "css": "font-size:22px;font-weight:bold;letter-spacing:2px;",
-            "expand": 2
+            "css": "font-size:19px;font-weight:600;letter-spacing:2px;",
+            "expand": 2,
+            "alphaFillOff": 0
           },
           {
             "type": "text",
@@ -42,7 +43,10 @@
             "address": "/pinol/ui/status",
             "default": "Load pinol.js as the custom module",
             "expand": 3,
-            "align": "right"
+            "align": "right",
+            "alphaFillOff": 0,
+            "css": "font-size:11px;letter-spacing:1px;",
+            "colorText": "#a4a4ae"
           }
         ],
         "layout": "horizontal",
@@ -96,8 +100,9 @@
                         "height": 32,
                         "bypass": true,
                         "wrap": true,
-                        "colorText": "#e5ba71",
-                        "expand": 2
+                        "colorText": "#b2b2bc",
+                        "expand": 2,
+                        "alphaFillOff": 0
                       }
                     ],
                     "layout": "horizontal",
@@ -109,341 +114,362 @@
                   },
                   {
                     "type": "panel",
-                    "id": "cue_cards",
+                    "id": "show_dashboard",
                     "label": false,
-                    "widgets": [
-                      {
-                        "type": "panel",
-                        "id": "cue_previous",
-                        "label": false,
-                        "widgets": [
-                          {
-                            "type": "text",
-                            "id": "previous_heading",
-                            "value": "PREVIOUS",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "colorText": "#8596ac",
-                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "previous_label",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/previous/label",
-                            "default": "\u2014",
-                            "css": "font-size:22px;font-weight:600;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "previous_text",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/previous/text",
-                            "css": "font-size:18px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "previous_description",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/previous/description",
-                            "css": "color:#a9b8ca;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "previous_phase",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/previous/phase",
-                            "css": "font-family:monospace;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "previous_times",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/previous/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/previous/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/previous/postwait,0,false}).toFixed(1)+' s';}"
-                          },
-                          {
-                            "type": "fader",
-                            "id": "previous_progress",
-                            "address": "/sequence/cue/previous/progress",
-                            "width": "100%",
-                            "height": 14,
-                            "horizontal": true,
-                            "compact": true,
-                            "interaction": false,
-                            "bypass": true,
-                            "input": false,
-                            "range": {
-                              "min": 0,
-                              "max": 1
-                            },
-                            "colorWidget": "#8596ac"
-                          }
-                        ],
-                        "layout": "vertical",
-                        "width": "100%",
-                        "height": "auto",
-                        "padding": 8,
-                        "colorBg": "#1a2330",
-                        "border": true,
-                        "contain": false,
-                        "css": "class: pinol-flow;"
-                      },
-                      {
-                        "type": "panel",
-                        "id": "cue_current",
-                        "label": false,
-                        "widgets": [
-                          {
-                            "type": "text",
-                            "id": "current_heading",
-                            "value": "CURRENT",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "colorText": "#78dfb5",
-                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "current_label",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/label",
-                            "default": "\u2014",
-                            "css": "font-size:22px;font-weight:600;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "current_text",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/text",
-                            "css": "font-size:18px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "current_description",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/description",
-                            "css": "color:#a9b8ca;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "current_phase",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/phase",
-                            "css": "font-family:monospace;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "current_times",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/current/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/current/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/current/postwait,0,false}).toFixed(1)+' s';}"
-                          },
-                          {
-                            "type": "fader",
-                            "id": "current_progress",
-                            "address": "/sequence/cue/current/progress",
-                            "width": "100%",
-                            "height": 14,
-                            "horizontal": true,
-                            "compact": true,
-                            "interaction": false,
-                            "bypass": true,
-                            "input": false,
-                            "range": {
-                              "min": 0,
-                              "max": 1
-                            },
-                            "colorWidget": "#78dfb5"
-                          }
-                        ],
-                        "layout": "vertical",
-                        "width": "100%",
-                        "height": "auto",
-                        "padding": 8,
-                        "colorBg": "#1a2330",
-                        "border": true,
-                        "contain": false,
-                        "css": "class: pinol-flow;"
-                      },
-                      {
-                        "type": "panel",
-                        "id": "cue_next",
-                        "label": false,
-                        "widgets": [
-                          {
-                            "type": "text",
-                            "id": "next_heading",
-                            "value": "NEXT",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "colorText": "#73cbd9",
-                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "next_label",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/next/label",
-                            "default": "\u2014",
-                            "css": "font-size:22px;font-weight:600;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "next_text",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/next/text",
-                            "css": "font-size:18px;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "next_description",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/next/description",
-                            "css": "color:#a9b8ca;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "next_phase",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/next/phase",
-                            "css": "font-family:monospace;"
-                          },
-                          {
-                            "type": "text",
-                            "id": "next_times",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/next/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/next/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/next/postwait,0,false}).toFixed(1)+' s';}"
-                          },
-                          {
-                            "type": "fader",
-                            "id": "next_progress",
-                            "address": "/sequence/cue/next/progress",
-                            "width": "100%",
-                            "height": 14,
-                            "horizontal": true,
-                            "compact": true,
-                            "interaction": false,
-                            "bypass": true,
-                            "input": false,
-                            "range": {
-                              "min": 0,
-                              "max": 1
-                            },
-                            "colorWidget": "#73cbd9"
-                          }
-                        ],
-                        "layout": "vertical",
-                        "width": "100%",
-                        "height": "auto",
-                        "padding": 8,
-                        "colorBg": "#1a2330",
-                        "border": true,
-                        "contain": false,
-                        "css": "class: pinol-flow;"
-                      }
-                    ],
                     "layout": "grid",
                     "width": "100%",
                     "height": "auto",
-                    "padding": 8,
-                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 270px), 1fr))",
                     "contain": false,
-                    "css": "class: pinol-flow;"
-                  },
-                  {
-                    "type": "panel",
-                    "id": "timing",
-                    "label": false,
+                    "padding": 4,
+                    "css": "class: pinol-flow;\nclass: pinol-dashboard;",
                     "widgets": [
                       {
                         "type": "panel",
-                        "id": "elapsed_box",
+                        "id": "cue_cards",
                         "label": false,
                         "widgets": [
                           {
-                            "type": "text",
-                            "id": "elapsed_title",
-                            "value": "ELAPSED",
+                            "type": "panel",
+                            "id": "cue_previous",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "fader",
+                                "id": "previous_cue_fill",
+                                "address": "/sequence/cue/previous/progress",
+                                "left": 0,
+                                "top": 0,
+                                "width": "100%",
+                                "height": "100%",
+                                "horizontal": true,
+                                "design": "compact",
+                                "knobSize": 0,
+                                "pips": false,
+                                "dashed": false,
+                                "label": false,
+                                "input": false,
+                                "interaction": false,
+                                "bypass": true,
+                                "origin": 0,
+                                "range": {
+                                  "min": 0,
+                                  "max": 1
+                                },
+                                "alphaFillOff": 0,
+                                "alphaFillOn": 0.09,
+                                "alphaStroke": 0,
+                                "padding": 0,
+                                "colorWidget": "JS{var p=OSC{/sequence/cue/previous/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                              },
+                              {
+                                "type": "text",
+                                "id": "previous_heading",
+                                "value": "PREVIOUS",
+                                "width": "100%",
+                                "height": 20,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "colorText": "#676771",
+                                "css": "font-size:11px;font-weight:700;letter-spacing:2px;",
+                                "alphaFillOff": 0,
+                                "align": "left"
+                              },
+                              {
+                                "type": "text",
+                                "id": "previous_label",
+                                "value": "",
+                                "width": "100%",
+                                "height": 30,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/previous/label",
+                                "default": "\u2014",
+                                "css": "font-size:19px;font-weight:600;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#a4a4ae"
+                              },
+                              {
+                                "type": "text",
+                                "id": "previous_text",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/previous/text",
+                                "css": "font-size:15px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#9797a0"
+                              }
+                            ],
+                            "layout": "vertical",
                             "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true
+                            "height": "auto",
+                            "padding": 12,
+                            "colorBg": "#242428",
+                            "border": true,
+                            "contain": false,
+                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #676771;border-radius:5rem;}",
+                            "alphaStroke": 0
                           },
                           {
-                            "type": "text",
-                            "id": "elapsed",
-                            "value": "",
+                            "type": "panel",
+                            "id": "cue_current",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "fader",
+                                "id": "current_cue_fill",
+                                "address": "/sequence/cue/current/progress",
+                                "left": 0,
+                                "top": 0,
+                                "width": "100%",
+                                "height": "100%",
+                                "horizontal": true,
+                                "design": "compact",
+                                "knobSize": 0,
+                                "pips": false,
+                                "dashed": false,
+                                "label": false,
+                                "input": false,
+                                "interaction": false,
+                                "bypass": true,
+                                "origin": 0,
+                                "range": {
+                                  "min": 0,
+                                  "max": 1
+                                },
+                                "alphaFillOff": 0,
+                                "alphaFillOn": 0.18,
+                                "alphaStroke": 0,
+                                "padding": 0,
+                                "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_heading",
+                                "value": "CURRENT",
+                                "width": "100%",
+                                "height": 20,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "colorText": "#4cd964",
+                                "css": "font-size:11px;font-weight:700;letter-spacing:2px;",
+                                "alphaFillOff": 0,
+                                "align": "left"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_label",
+                                "value": "",
+                                "width": "100%",
+                                "height": 40,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/current/label",
+                                "default": "\u2014",
+                                "css": "font-size:28px;font-weight:600;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#ececf0"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_text",
+                                "value": "",
+                                "width": "100%",
+                                "height": 30,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/current/text",
+                                "css": "font-size:20px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#d2d2d9"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_description",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/current/description",
+                                "css": "font-size:13px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#a4a4ae"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_phase",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/current/phase",
+                                "css": "font-size:12px;font-weight:600;letter-spacing:1px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':p==='action'?'#4cd964':'#9797a0';}"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_times",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "css": "font-size:12px;font-family:monospace;",
+                                "value": "JS{var a=Number(OSC{/sequence/cue/current/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/current/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/current/postwait,0,false}).toFixed(1)+' s';}",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#a4a4ae"
+                              }
+                            ],
+                            "layout": "vertical",
                             "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/elapsed_text",
-                            "css": "font-size:38px;font-family:monospace;"
+                            "height": "auto",
+                            "padding": 12,
+                            "colorBg": "#262b28",
+                            "border": true,
+                            "contain": false,
+                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #4cd964;border-radius:5rem;}",
+                            "alphaStroke": 0
+                          },
+                          {
+                            "type": "panel",
+                            "id": "cue_next",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "fader",
+                                "id": "next_cue_fill",
+                                "address": "/sequence/cue/next/progress",
+                                "left": 0,
+                                "top": 0,
+                                "width": "100%",
+                                "height": "100%",
+                                "horizontal": true,
+                                "design": "compact",
+                                "knobSize": 0,
+                                "pips": false,
+                                "dashed": false,
+                                "label": false,
+                                "input": false,
+                                "interaction": false,
+                                "bypass": true,
+                                "origin": 0,
+                                "range": {
+                                  "min": 0,
+                                  "max": 1
+                                },
+                                "alphaFillOff": 0,
+                                "alphaFillOn": 0.18,
+                                "alphaStroke": 0,
+                                "padding": 0,
+                                "colorWidget": "JS{var p=OSC{/sequence/cue/next/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
+                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_heading",
+                                "value": "NEXT",
+                                "width": "100%",
+                                "height": 20,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "colorText": "#e84c3d",
+                                "css": "font-size:11px;font-weight:700;letter-spacing:2px;",
+                                "alphaFillOff": 0,
+                                "align": "left"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_label",
+                                "value": "",
+                                "width": "100%",
+                                "height": 30,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/next/label",
+                                "default": "\u2014",
+                                "css": "font-size:19px;font-weight:600;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#ececf0"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_text",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/next/text",
+                                "css": "font-size:15px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#d2d2d9"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_description",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/next/description",
+                                "css": "font-size:13px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#a4a4ae"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_phase",
+                                "value": "",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "address": "/sequence/cue/next/phase",
+                                "css": "font-size:12px;font-weight:600;letter-spacing:1px;",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "JS{var p=OSC{/sequence/cue/next/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':p==='action'?'#4cd964':'#9797a0';}"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_times",
+                                "width": "100%",
+                                "height": 24,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "css": "font-size:12px;font-family:monospace;",
+                                "value": "JS{var a=Number(OSC{/sequence/cue/next/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/next/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/next/postwait,0,false}).toFixed(1)+' s';}",
+                                "alphaFillOff": 0,
+                                "align": "left",
+                                "colorText": "#a4a4ae"
+                              }
+                            ],
+                            "layout": "vertical",
+                            "width": "100%",
+                            "height": "auto",
+                            "padding": 12,
+                            "colorBg": "#2c2728",
+                            "border": true,
+                            "contain": false,
+                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #e84c3d;border-radius:5rem;}",
+                            "alphaStroke": 0
                           }
                         ],
                         "layout": "vertical",
@@ -455,195 +481,292 @@
                       },
                       {
                         "type": "panel",
-                        "id": "remaining_box",
+                        "id": "show_console",
                         "label": false,
-                        "widgets": [
-                          {
-                            "type": "text",
-                            "id": "remaining_title",
-                            "value": "REMAINING",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true
-                          },
-                          {
-                            "type": "text",
-                            "id": "remaining",
-                            "value": "",
-                            "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/remaining_text",
-                            "colorText": "#e5ba71",
-                            "css": "font-size:38px;font-family:monospace;"
-                          }
-                        ],
                         "layout": "vertical",
                         "width": "100%",
                         "height": "auto",
-                        "padding": 8,
                         "contain": false,
-                        "css": "class: pinol-flow;"
-                      },
-                      {
-                        "type": "panel",
-                        "id": "phase_box",
-                        "label": false,
+                        "padding": 4,
+                        "css": "class: pinol-flow;",
                         "widgets": [
                           {
-                            "type": "text",
-                            "id": "phase_title",
-                            "value": "PHASE PROGRESS",
+                            "type": "panel",
+                            "id": "timing",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "panel",
+                                "id": "elapsed_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "elapsed_title",
+                                    "value": "ELAPSED",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "align": "left",
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "elapsed",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 56,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/elapsed_text",
+                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b"
+                              },
+                              {
+                                "type": "panel",
+                                "id": "remaining_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "remaining_title",
+                                    "value": "REMAINING",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "align": "left",
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "remaining",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 56,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/remaining_text",
+                                    "colorText": "#e0b43a",
+                                    "css": "font-size:46px;font-family:monospace;letter-spacing:1px;",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b"
+                              },
+                              {
+                                "type": "panel",
+                                "id": "phase_box",
+                                "label": false,
+                                "widgets": [
+                                  {
+                                    "type": "text",
+                                    "id": "phase_title",
+                                    "value": "PHASE PROGRESS",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "alphaFillOff": 0,
+                                    "colorText": "#a4a4ae",
+                                    "css": "font-size:11px;letter-spacing:2px;"
+                                  },
+                                  {
+                                    "type": "fader",
+                                    "id": "phase_meter",
+                                    "address": "/sequence/cue/current/phase_progress",
+                                    "width": "100%",
+                                    "height": 20,
+                                    "horizontal": true,
+                                    "interaction": false,
+                                    "bypass": true,
+                                    "input": false,
+                                    "range": {
+                                      "min": 0,
+                                      "max": 1
+                                    },
+                                    "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
+                                    "design": "compact",
+                                    "knobSize": 0,
+                                    "pips": false,
+                                    "dashed": false,
+                                    "alphaStroke": 0,
+                                    "label": false,
+                                    "alphaFillOn": 0.6
+                                  },
+                                  {
+                                    "type": "text",
+                                    "id": "continue_mode",
+                                    "value": "",
+                                    "width": "100%",
+                                    "height": 32,
+                                    "bypass": true,
+                                    "wrap": true,
+                                    "address": "/sequence/cue/current/continue",
+                                    "alphaFillOff": 0
+                                  }
+                                ],
+                                "layout": "vertical",
+                                "width": "100%",
+                                "height": "auto",
+                                "padding": 8,
+                                "contain": false,
+                                "css": "class: pinol-flow;",
+                                "colorBg": "#26262b"
+                              }
+                            ],
+                            "layout": "vertical",
                             "width": "100%",
-                            "height": 32,
-                            "bypass": true,
-                            "wrap": true
+                            "height": "auto",
+                            "padding": 4,
+                            "contain": false,
+                            "css": "class: pinol-flow;"
                           },
                           {
-                            "type": "fader",
-                            "id": "phase_meter",
-                            "address": "/sequence/cue/current/phase_progress",
+                            "type": "panel",
+                            "id": "transport",
+                            "label": false,
+                            "widgets": [
+                              {
+                                "type": "button",
+                                "id": "back",
+                                "label": "\u2039 GO BACK",
+                                "address": "/pinol/sequence/back",
+                                "preArgs": [],
+                                "mode": "momentary",
+                                "target": "127.0.0.1:1234",
+                                "ignoreDefaults": true,
+                                "width": "auto",
+                                "height": 52,
+                                "expand": true,
+                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/back_enabled,0,false}}",
+                                "wrap": true,
+                                "colorWidget": "#94949f",
+                                "alphaFillOff": 0.08,
+                                "alphaStroke": 0.55,
+                                "borderRadius": 4,
+                                "css": ":host {grid-area:back;font-size:12px;font-weight:600;}"
+                              },
+                              {
+                                "type": "button",
+                                "id": "go",
+                                "label": "GO \u25b6",
+                                "address": "/pinol/sequence/go",
+                                "preArgs": [],
+                                "mode": "momentary",
+                                "target": "127.0.0.1:1234",
+                                "ignoreDefaults": true,
+                                "width": "auto",
+                                "height": 52,
+                                "expand": true,
+                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/go_enabled,0,false}}",
+                                "wrap": true,
+                                "colorWidget": "#4cd964",
+                                "css": ":host {grid-area:go;font-size:28px;font-weight:600;}",
+                                "alphaFillOff": 0.18,
+                                "alphaStroke": 0.55,
+                                "borderRadius": 4
+                              },
+                              {
+                                "type": "button",
+                                "id": "stop",
+                                "label": "STOP WAITS",
+                                "address": "/pinol/sequence/stop",
+                                "preArgs": [],
+                                "mode": "momentary",
+                                "target": "127.0.0.1:1234",
+                                "ignoreDefaults": true,
+                                "width": "auto",
+                                "height": 52,
+                                "expand": true,
+                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                                "wrap": true,
+                                "colorWidget": "#e84c3d",
+                                "alphaFillOff": 0.08,
+                                "alphaStroke": 0.55,
+                                "borderRadius": 4,
+                                "css": ":host {grid-area:stop;font-size:12px;font-weight:600;}"
+                              },
+                              {
+                                "type": "button",
+                                "id": "stop_all",
+                                "label": "STOP ALL WAITS",
+                                "address": "/pinol/sequence/stop_all",
+                                "preArgs": [],
+                                "mode": "momentary",
+                                "target": "127.0.0.1:1234",
+                                "ignoreDefaults": true,
+                                "width": "auto",
+                                "height": 52,
+                                "expand": true,
+                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                                "wrap": true,
+                                "colorWidget": "#e84c3d",
+                                "doubleTap": true,
+                                "alphaFillOff": 0.08,
+                                "alphaStroke": 0.55,
+                                "borderRadius": 4,
+                                "css": ":host {grid-area:stopall;font-size:12px;font-weight:600;}"
+                              }
+                            ],
+                            "layout": "grid",
                             "width": "100%",
-                            "height": 14,
-                            "horizontal": true,
-                            "compact": true,
-                            "interaction": false,
-                            "bypass": true,
-                            "input": false,
-                            "range": {
-                              "min": 0,
-                              "max": 1
-                            },
-                            "colorWidget": "#e5ba71"
+                            "height": "auto",
+                            "padding": 4,
+                            "contain": false,
+                            "css": "class: pinol-flow;",
+                            "gridTemplate": "\"back go\" 78rem \"stop stopall\" 48rem / 1fr 1.4fr"
                           },
                           {
                             "type": "text",
-                            "id": "continue_mode",
-                            "value": "",
+                            "id": "timing_note",
+                            "value": "STOP WAITS cancels pending cues and follows. It does not stop media or timelines. Double-tap STOP ALL WAITS for every sequence.",
                             "width": "100%",
-                            "height": 32,
+                            "height": 52,
                             "bypass": true,
-                            "wrap": true,
-                            "address": "/sequence/cue/current/continue"
+                            "wrap": "soft",
+                            "css": "font-size:11px;line-height:1.4;",
+                            "alphaFillOff": 0,
+                            "align": "left",
+                            "colorText": "#9999a4"
                           }
-                        ],
-                        "layout": "vertical",
-                        "width": "100%",
-                        "height": "auto",
-                        "padding": 8,
-                        "contain": false,
-                        "css": "class: pinol-flow;"
+                        ]
                       }
                     ],
-                    "layout": "grid",
-                    "width": "100%",
-                    "height": "auto",
-                    "padding": 8,
-                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-                    "contain": false,
-                    "css": "class: pinol-flow;"
-                  },
-                  {
-                    "type": "panel",
-                    "id": "transport",
-                    "label": false,
-                    "widgets": [
-                      {
-                        "type": "button",
-                        "id": "back",
-                        "label": "\u2039 GO BACK",
-                        "address": "/pinol/sequence/back",
-                        "preArgs": [],
-                        "mode": "momentary",
-                        "target": "127.0.0.1:1234",
-                        "ignoreDefaults": true,
-                        "width": "auto",
-                        "height": 52,
-                        "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/back_enabled,0,false}}",
-                        "wrap": true,
-                        "colorWidget": "#e5ba71"
-                      },
-                      {
-                        "type": "button",
-                        "id": "go",
-                        "label": "GO \u25b6",
-                        "address": "/pinol/sequence/go",
-                        "preArgs": [],
-                        "mode": "momentary",
-                        "target": "127.0.0.1:1234",
-                        "ignoreDefaults": true,
-                        "width": "auto",
-                        "height": 52,
-                        "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/go_enabled,0,false}}",
-                        "wrap": true,
-                        "colorWidget": "#78dfb5",
-                        "css": "font-size:30px;font-weight:bold;"
-                      },
-                      {
-                        "type": "button",
-                        "id": "stop",
-                        "label": "STOP WAITS",
-                        "address": "/pinol/sequence/stop",
-                        "preArgs": [],
-                        "mode": "momentary",
-                        "target": "127.0.0.1:1234",
-                        "ignoreDefaults": true,
-                        "width": "auto",
-                        "height": 52,
-                        "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
-                        "wrap": true,
-                        "colorWidget": "#e9818b"
-                      },
-                      {
-                        "type": "button",
-                        "id": "stop_all",
-                        "label": "STOP ALL WAITS",
-                        "address": "/pinol/sequence/stop_all",
-                        "preArgs": [],
-                        "mode": "momentary",
-                        "target": "127.0.0.1:1234",
-                        "ignoreDefaults": true,
-                        "width": "auto",
-                        "height": 52,
-                        "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
-                        "wrap": true,
-                        "colorWidget": "#e9818b",
-                        "doubleTap": true
-                      }
-                    ],
-                    "layout": "horizontal",
-                    "width": "100%",
-                    "height": 88,
-                    "padding": 8,
-                    "contain": true,
-                    "css": ""
-                  },
-                  {
-                    "type": "text",
-                    "id": "timing_note",
-                    "value": "STOP WAITS cancels pending cues and follows. It does not stop media or timelines. Double-tap STOP ALL WAITS for every sequence.",
-                    "width": "100%",
-                    "height": 32,
-                    "bypass": true,
-                    "wrap": true,
-                    "css": "color:#a9b8ca;font-size:12px;"
+                    "gridTemplate": "none / minmax(0,1fr)"
                   },
                   {
                     "type": "text",
                     "id": "cue_list_title",
-                    "value": "CUE LIST",
+                    "value": "CUE STACK",
                     "width": "100%",
                     "height": 32,
                     "bypass": true,
                     "wrap": true,
                     "align": "left",
-                    "css": "font-weight:bold;letter-spacing:2px;"
+                    "css": "font-size:11px;font-weight:600;letter-spacing:2px;",
+                    "alphaFillOff": 0,
+                    "colorText": "#a4a4ae"
                   },
                   {
                     "type": "panel",
@@ -678,7 +801,8 @@
                         "wrap": true,
                         "address": "/pinol/library/cues/page",
                         "css": "font-family:monospace;",
-                        "expand": true
+                        "expand": true,
+                        "alphaFillOff": 0
                       },
                       {
                         "type": "button",
@@ -748,7 +872,8 @@
                 "bypass": true,
                 "wrap": true,
                 "align": "left",
-                "css": "font-size:26px;font-weight:bold;"
+                "css": "font-size:26px;font-weight:bold;",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -758,7 +883,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "panel",
@@ -793,7 +919,8 @@
                     "wrap": true,
                     "address": "/pinol/library/snapshots/page",
                     "css": "font-family:monospace;",
-                    "expand": true
+                    "expand": true,
+                    "alphaFillOff": 0
                   },
                   {
                     "type": "button",
@@ -853,7 +980,8 @@
                 "bypass": true,
                 "wrap": true,
                 "align": "left",
-                "css": "font-size:26px;font-weight:bold;"
+                "css": "font-size:26px;font-weight:bold;",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -863,7 +991,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "panel",
@@ -898,7 +1027,8 @@
                     "wrap": true,
                     "address": "/pinol/library/presets/page",
                     "css": "font-family:monospace;",
-                    "expand": true
+                    "expand": true,
+                    "alphaFillOff": 0
                   },
                   {
                     "type": "button",
@@ -958,7 +1088,8 @@
                 "bypass": true,
                 "wrap": true,
                 "align": "left",
-                "css": "font-size:26px;font-weight:bold;"
+                "css": "font-size:26px;font-weight:bold;",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -968,7 +1099,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "panel",
@@ -1003,7 +1135,8 @@
                     "wrap": true,
                     "address": "/pinol/library/timelines/page",
                     "css": "font-family:monospace;",
-                    "expand": true
+                    "expand": true,
+                    "alphaFillOff": 0
                   },
                   {
                     "type": "button",
@@ -1063,7 +1196,8 @@
                 "bypass": true,
                 "wrap": true,
                 "align": "left",
-                "css": "font-size:26px;font-weight:bold;"
+                "css": "font-size:26px;font-weight:bold;",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -1073,7 +1207,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "input",
@@ -1149,7 +1284,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -1159,7 +1295,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               },
               {
                 "type": "text",
@@ -1169,7 +1306,8 @@
                 "height": 32,
                 "bypass": true,
                 "wrap": true,
-                "align": "left"
+                "align": "left",
+                "alphaFillOff": 0
               }
             ],
             "contain": false
@@ -1183,6 +1321,8 @@
         "contain": false
       }
     ],
-    "contain": false
+    "contain": false,
+    "colorWidget": "#6d6d78",
+    "alphaStroke": 0
   }
 }

@@ -58,3 +58,8 @@ by GitHub CI when it builds the downloadable pack.
 See the [OSC API guide](../../docs/osc.md) for commands, schemas, subscriptions
 and the optional legacy UDP cue feedback. Open Stage Control is a separate
 GPL-3.0 application; it is not bundled or linked into Pinol.
+
+The cue stack follows Pinol’s palette: green for the current cue, red for the
+next cue, yellow for pre-wait and blue for post-wait. Previous cues are dimmed.
+Progress fills the cue background in translucent phase color; the current cue
+has the strongest visual weight. Cues stay ordered vertically on every screen.
