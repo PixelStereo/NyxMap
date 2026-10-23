@@ -2,7 +2,7 @@
     "DESCRIPTION": "Animated fractal noise (clouds, smoke, organic textures).",
     "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
-    "CATEGORIES": ["Animated Textures"],
+    "CATEGORIES": ["Noise"],
     "INPUTS": [
         { "NAME": "colorA", "LABEL": "Shadow", "TYPE": "color", "DEFAULT": [0.02, 0.03, 0.06, 1.0] },
         { "NAME": "colorB", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.85, 0.9, 1.0, 1.0] },

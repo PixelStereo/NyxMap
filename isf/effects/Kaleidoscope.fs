@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Rotating kaleidoscope with mirrored segments.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Geometry"],
     "INPUTS": [

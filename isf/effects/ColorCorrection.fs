@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Color correction: exposure, contrast, saturation, gamma, RGB tint.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Color"],
     "INPUTS": [

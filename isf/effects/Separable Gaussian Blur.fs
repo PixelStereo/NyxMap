@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Separable two-pass Gaussian blur (horizontal pass at half resolution, then vertical).",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Blur"],
     "INPUTS": [

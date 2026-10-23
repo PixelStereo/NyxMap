@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Pixelation (mosaic) with square cells.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Stylize"],
     "INPUTS": [

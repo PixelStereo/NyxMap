@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Trails / afterimage: accumulates previous frames in a persistent floating-point buffer.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Time"],
     "INPUTS": [

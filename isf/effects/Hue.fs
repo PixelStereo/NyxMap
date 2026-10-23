@@ -1,12 +1,11 @@
 /*{
-    "DESCRIPTION": "Hue rotation, with optional animation.",
-    "CREDIT": "Fulskrin",
+    "DESCRIPTION": "Hue rotation",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Color"],
     "INPUTS": [
         { "NAME": "inputImage", "TYPE": "image" },
         { "NAME": "hue", "LABEL": "Hue (°)", "TYPE": "float", "DEFAULT": 0.0, "MIN": -180.0, "MAX": 180.0 },
-        { "NAME": "cycle", "LABEL": "Cycle (turns/s)", "TYPE": "float", "DEFAULT": 0.0, "MIN": 0.0, "MAX": 2.0 }
     ]
 }*/
 
@@ -30,6 +29,6 @@ void main()
 {
     vec4 c = IMG_THIS_PIXEL(inputImage);
     vec3 hsv = rgb2hsv(c.rgb);
-    hsv.x = fract(hsv.x + hue / 360.0 + TIME * cycle);
+    hsv.x = fract(hsv.x + hue / 360.0);
     gl_FragColor = vec4(hsv2rgb(hsv), c.a);
 }

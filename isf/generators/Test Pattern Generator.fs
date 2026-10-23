@@ -1,7 +1,7 @@
 /*{
   "DESCRIPTION": "Full-featured scope test shader with rotating patterns, animated luma, and time-controlled generative visuals",
   "CREDIT": "Cornelius // ProjectileObjects",
-  "CATEGORIES": [ "Test Pattern", "Utility" ],
+  "CATEGORIES": [ "Utility" ],
   "INPUTS": [
     {
       "NAME": "pattern",

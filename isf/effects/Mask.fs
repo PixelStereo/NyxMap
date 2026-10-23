@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Mask from an image (luminance or alpha): shape cut-out for mapping.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Alignment"],
     "INPUTS": [
