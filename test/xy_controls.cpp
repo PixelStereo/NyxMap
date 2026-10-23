@@ -132,6 +132,9 @@ int runXyControlTests(Engine &engine, const QString &root)
     const auto decodedMapping = Interaction::fromJson(mapping.toJson());
     check(decodedMapping.xyInputs.size() == 1 && decodedMapping.xyInputs[0].oscAddress == "/xy/new-address" &&
           near(decodedMapping.xyInputs[0].dstMax, .6), "full mapping round-trip preserves both sources and ranges");
+    mapping.xyInputs[0].filter = InteractionFilter::Damper;
+    mapping.xyInputs[0].filterB = .77;
+    check(engine.setInteraction(mapping), "give Y its own filter settings");
     const QString yMaster = QStringLiteral("interaction/%1/xy/y/master").arg(mid);
     check(engine.setParameter(0, yMaster, .5), "Y processing settings are presettable parameters");
     check(near(engine.interactions()[0].xyInputs[0].master, .5), "Y preset parameter reaches Y rather than X");
@@ -148,7 +151,8 @@ int runXyControlTests(Engine &engine, const QString &root)
     engine.recallSnapshot(cueIndex);
     const auto recalled = engine.interactions();
     check(recalled.size() == 1 && recalled[0].xyInputs.size() == 1 &&
-          recalled[0].xyInputs[0].oscAddress == "/xy/new-address" && near(recalled[0].xyInputs[0].master, .5),
+          recalled[0].xyInputs[0].oscAddress == "/xy/new-address" && near(recalled[0].xyInputs[0].master, .5) &&
+          recalled[0].xyInputs[0].filter == InteractionFilter::Damper && near(recalled[0].xyInputs[0].filterB, .77),
           "snapshot recreates both input definitions and their independent processing settings");
 
     engine.setLayerAnim(layer, point, &wave);

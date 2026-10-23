@@ -725,6 +725,7 @@ void Engine::makeInteractionParams()
                           const int k = int(keys.indexOf(v.toString()));
                           if (Interaction *x = find(); x && k >= 0) {
                               x->filter = InteractionFilter(k);
+                              m_interactionParamsDirty = true; // the new filter may expose a second setting
                               interactionValuesTouched();
                           }
                       });
