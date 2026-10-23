@@ -274,13 +274,20 @@ int Engine::removeCollectedOriginals(const CollectPlan &plan, QStringList *faile
 {
     int removed = 0;
     QSet<QString> processed;
+    QStringList originals;
+    // Resolve every identity while all originals still exist. After unlinking a
+    // file, canonicalFilePath() is empty and a symlinked parent (e.g. /var on
+    // macOS) would otherwise give its later references a different key.
     for (const CollectFile &f : plan.files) {
         if (!QFileInfo::exists(f.to)) continue; // never without its copy
         const QString original = key(f.from);
         if (original == key(f.to) || processed.contains(original)) continue;
         processed.insert(original); // one original can have several necessary collected copies
-        if (QFile::remove(f.from)) ++removed;
-        else if (failed) *failed << f.from;
+        originals << f.from;
+    }
+    for (const QString &original : originals) {
+        if (QFile::remove(original)) ++removed;
+        else if (failed) *failed << original;
     }
     return removed;
 }
