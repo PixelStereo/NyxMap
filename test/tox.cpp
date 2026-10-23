@@ -85,6 +85,24 @@ int runToxTests(Engine &e, const QString &tmp)
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == aid && std::abs(e.parameterValue(id, c.path(0)).toDouble() - .6) < 1e-6,
           "snapshot restores TOP routing and values");
     fake = dynamic_cast<FakeTox *>(e.layer(e.indexOfId(id))->toxPlayer.get());
+    // Press/release events in one render batch must not erase trigger edges.
+    for (auto kind : {InteractionSource::Osc, InteractionSource::Midi, InteractionSource::Keyboard}) {
+        Interaction trigger = Interaction::made(kind);
+        trigger.layer = id; trigger.param = "tox/reload"; trigger.oscAddress = "/reload"; trigger.key = "R";
+        trigger.midiMessage = MidiMessageKind::ProgramChange; trigger.midiNumber = 7;
+        trigger.takeover = Takeover::Jump;
+        e.setInteractions({trigger});
+        InteractionEvent event; event.source = kind; event.address = kind == InteractionSource::Keyboard ? "R" : "/reload";
+        event.message = MidiMessageKind::ProgramChange; event.number = 7; event.channel = 1;
+        const int before = fake ? fake->reloads : -1;
+        for (double value : {1.0, 1.0, 0.0, 1.0, 0.0}) { event.value = value; e.feedInteraction(event); }
+        e.renderFrame();
+        check(fake && fake->reloads == before + 2, "two short pulses fire twice while a held value fires once");
+        e.renderFrame(); check(fake && fake->reloads == before + 2, "a consumed trigger is not replayed next frame");
+        event.value = 1; e.feedInteraction(event); e.renderFrame();
+        check(fake && fake->reloads == before + 3, "the release in the batch rearms the next trigger");
+    }
+    e.setInteractions({});
     const double beforePause = fake ? fake->elapsed : -1;
     e.setPaused(true); e.renderFrame();
     check(fake && fake->elapsed == beforePause, "show pause freezes component time");
