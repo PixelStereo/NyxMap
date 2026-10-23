@@ -80,6 +80,7 @@ add_library(pinol_engine STATIC
   src/engine/AudioInput.cpp
   src/engine/MiniaudioImpl.cpp
   src/engine/Osc.cpp
+  src/engine/OscShowControl.cpp
   src/engine/EventLog.cpp
   src/engine/FrameTiming.cpp
   src/engine/OscCodec.cpp
@@ -531,7 +532,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(PINOL_TESTS "Build the engine tests" ON)
 if(PINOL_TESTS)
-  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/xy_controls.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(pinol_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(pinol_tests PRIVATE src/ui)
   target_link_libraries(pinol_tests PRIVATE pinol_engine)
   target_compile_options(pinol_tests PRIVATE ${PINOL_WARNINGS})
@@ -662,7 +663,7 @@ if(PINOL_TESTS)
   target_link_libraries(pinol_cue_dispatch_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND pinol_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
-  foreach(area xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks file_sources tox)
     add_test(NAME ${area} COMMAND pinol_tests --area ${area})
   endforeach()

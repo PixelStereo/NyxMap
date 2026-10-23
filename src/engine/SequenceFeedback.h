@@ -58,6 +58,7 @@ public:
 
     // Every value of the state now (tests, and what is sent)
     std::vector<osc::Message> state() const;
+    static std::vector<osc::Message> stateFor(Engine *engine, bool modified = false);
     void sendNow(bool everything); // sends the values that changed (all of them: everything)
 
 signals:

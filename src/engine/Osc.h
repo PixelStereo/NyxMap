@@ -71,6 +71,7 @@ public:
 
 private:
     void build();
+    void addShowControl();
     OscNode &add(const QString &path, const QString &type, int access, const QString &description);
     void addLayer(const QString &prefix, quint64 id);
 

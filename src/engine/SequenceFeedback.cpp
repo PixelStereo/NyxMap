@@ -118,7 +118,13 @@ static QString actionWord(const Sequencer::Step &st)
 
 std::vector<osc::Message> SequenceFeedback::state() const
 {
-    const Sequencer &sq = m_e->sequencer();
+    return stateFor(m_e, m_modified);
+}
+
+std::vector<osc::Message> SequenceFeedback::stateFor(Engine *engine, bool modified)
+{
+    Engine::Lock lock(&engine->mutex());
+    const Sequencer &sq = engine->sequencer();
     const int cur = sq.current();
     const Sequencer::Sequence s = sq.sequence(cur);
     const int n = int(s.steps.size());
@@ -134,7 +140,7 @@ std::vector<osc::Message> SequenceFeedback::state() const
     i(QStringLiteral("/sequence/running"), sq.running() ? 1 : 0);
     i(QStringLiteral("/sequence/go_enabled"), sq.next() >= 0 ? 1 : 0);
     i(QStringLiteral("/sequence/back_enabled"), sq.previous() >= 0 ? 1 : 0);
-    i(QStringLiteral("/sequence/modified"), m_modified ? 1 : 0);
+    i(QStringLiteral("/sequence/modified"), modified ? 1 : 0);
 
     const int pos = sq.position();
     auto cue = [&](const QString &role, int k) {
@@ -147,14 +153,14 @@ std::vector<osc::Message> SequenceFeedback::state() const
             const int index = sq.indexOfSequence(st.sequence);
             name = index >= 0 ? QStringLiteral("Sequence · %1").arg(sq.sequence(index).name) : QStringLiteral("(sequence gone)");
         } else if (valid && st.preset) {
-            const int index = m_e->indexOfPreset(st.preset);
-            name = index >= 0 ? QStringLiteral("Preset · %1").arg(m_e->preset(index).name) : QStringLiteral("(preset gone)");
+            const int index = engine->indexOfPreset(st.preset);
+            name = index >= 0 ? QStringLiteral("Preset · %1").arg(engine->preset(index).name) : QStringLiteral("(preset gone)");
         } else if (valid && st.timeline) {
-            const int a = m_e->indexOfAnimation(st.timeline);
-            name = (a >= 0 ? m_e->animation(a).name : QStringLiteral("(timeline gone)")) + QStringLiteral(" · ") + actionWord(st);
+            const int a = engine->indexOfAnimation(st.timeline);
+            name = (a >= 0 ? engine->animation(a).name : QStringLiteral("(timeline gone)")) + QStringLiteral(" · ") + actionWord(st);
         } else if (valid && st.snapshot) {
-            const int m = m_e->indexOfSnapshot(st.snapshot);
-            name = m >= 0 ? m_e->snapshot(m).name : QStringLiteral("(snapshot gone)");
+            const int m = engine->indexOfSnapshot(st.snapshot);
+            name = m >= 0 ? engine->snapshot(m).name : QStringLiteral("(snapshot gone)");
         }
         const double duration = valid ? sq.stepDuration(st) : 0.0;
         i(base + QStringLiteral("/number"), valid ? k + 1 : 0);
