@@ -24,7 +24,10 @@ private:
     std::function<void()> m_wake;
 };
 
-Sequencer::Sequencer(Engine &engine, Annotated<QRecursiveMutex> &mutex) : QObject(&engine), m_engine(engine), m_mutex(mutex) {}
+Sequencer::Sequencer(Engine &engine, Annotated<QRecursiveMutex> &mutex) : QObject(&engine), m_engine(engine), m_mutex(mutex)
+{
+    connect(this, &Sequencer::changed, this, [this] { ++m_revision; }, Qt::DirectConnection);
+}
 
 Sequencer::~Sequencer() { shutdownClock(); }
 
@@ -339,8 +342,13 @@ bool Sequencer::goTo(int step, bool chain)
     return goToSequence(owner, step, chain);
 }
 
-bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_ptr<std::atomic<bool>> expected)
+bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_ptr<std::atomic<bool>> expected, quint64 cue)
 {
+    auto resolve = [cue](const Sequence &s, int index) {
+        if (!cue) return index;
+        for (size_t k = 0; k < s.steps.size(); ++k) if (s.steps[k].runtimeId == cue) return int(k);
+        return -1;
+    };
     if (QThread::currentThread() != thread()) {
         // Bind delayed OSC commands to their original sequence, even if selection changes.
         bool ok = false;
@@ -349,6 +357,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
         {
             QMutexLocker lk(&m_mutex);
             const int index = sequenceIndexLocked(owner);
+            if (index >= 0) step = resolve(m_sequences[size_t(index)], step);
             ok = index >= 0 && step >= 0 && step < int(m_sequences[size_t(index)].steps.size());
             if (ok) {
                 stepId = m_sequences[size_t(index)].steps[size_t(step)].runtimeId;
@@ -357,15 +366,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
         }
         if (ok) QMetaObject::invokeMethod(this, [this, owner, stepId, chain, valid] {
             if (!valid->load()) return;
-            int resolved = -1;
-            {
-                QMutexLocker lk(&m_mutex);
-                const int index = sequenceIndexLocked(owner);
-                if (index < 0) return;
-                const auto &steps = m_sequences[size_t(index)].steps;
-                for (size_t k = 0; k < steps.size(); ++k) if (steps[k].runtimeId == stepId) resolved = int(k);
-            }
-            if (valid->load()) goToSequence(owner, resolved, chain, valid);
+            goToSequence(owner, -1, chain, valid, stepId);
         }, Qt::QueuedConnection);
         return ok;
     }
@@ -375,6 +376,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
         const int index = sequenceIndexLocked(owner);
         if (index < 0) return false; // removed before a queued GO arrived
         const Sequence &s = m_sequences[size_t(index)];
+        step = resolve(s, step);
         if (step < 0 || step >= int(s.steps.size())) return false;
         const Step &st = s.steps[size_t(step)];
         if (!chain) {
@@ -436,6 +438,35 @@ bool Sequencer::backSequence(int index)
         owner = m_sequenceIds[size_t(index)];
     }
     return relativeGo(owner, true);
+}
+
+bool Sequencer::goById(quint64 id) { return relativeGo(id, false); }
+bool Sequencer::backById(quint64 id) { return relativeGo(id, true); }
+bool Sequencer::cueById(quint64 sequence, quint64 cue) { return cue && goToSequence(sequence, -1, true, {}, cue); }
+
+bool Sequencer::selectById(quint64 id)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        const int index = sequenceIndexLocked(id);
+        if (index < 0) return false;
+        if (index == m_current) return true;
+        m_current = index;
+    }
+    emit positionChanged();
+    return true;
+}
+
+bool Sequencer::stopById(quint64 id)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        const int index = sequenceIndexLocked(id);
+        if (index < 0) return false;
+        stopSequenceLocked(index);
+    }
+    QMutexLocker dispatch(&m_dispatchMutex);
+    return true;
 }
 
 std::shared_ptr<std::atomic<bool>> Sequencer::commandTokenLocked(quint64 owner)

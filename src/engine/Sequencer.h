@@ -122,6 +122,7 @@ public:
     void shutdownClock(); // the clock thread stopped (the engine, before it goes)
 
     int count() const;
+    quint64 revision() const { return m_revision.load(); } // definition edits, not clock ticks
     Sequence sequence(int i) const;
     quint64 sequenceId(int index) const;
     int indexOfSequence(quint64 id) const;
@@ -151,6 +152,11 @@ public:
     bool backSequence(int index);
     bool goToStepOf(int index, int step);
     void stopSequence(int index);
+    bool goById(quint64 id);
+    bool backById(quint64 id);
+    bool selectById(quint64 id);
+    bool stopById(quint64 id);
+    bool cueById(quint64 sequence, quint64 cue);
     double stepElapsed(int index) const; // wall seconds since the selected step received GO
     int positionOf(int index) const; // its playhead (-1: before the first step)
     std::vector<Run> runs() const; // the steps of the selected sequence on their way
@@ -187,7 +193,7 @@ private:
     std::shared_ptr<std::atomic<bool>> commandTokenLocked(quint64 owner);
     bool relativeGo(quint64 owner, bool back, std::shared_ptr<std::atomic<bool>> valid = {});
     int sequenceIndexLocked(quint64 id) const; // under m_mutex; stable identity for queued GO
-    bool goToSequence(quint64 id, int step, bool chain, std::shared_ptr<std::atomic<bool>> valid = {});
+    bool goToSequence(quint64 id, int step, bool chain, std::shared_ptr<std::atomic<bool>> valid = {}, quint64 cue = 0);
     int nextOfLocked(int index) const;     // under m_mutex
     int previousOfLocked(int index) const; // under m_mutex
     void stopSequenceLocked(int index);    // under m_mutex
@@ -209,6 +215,7 @@ private:
     std::vector<quint64> m_sequenceIds; // runtime identity, aligned with m_sequences
     quint64 m_nextSequenceId = 1;
     quint64 m_nextStepId = 1;
+    std::atomic<quint64> m_revision{0};
     std::map<quint64, std::shared_ptr<std::atomic<bool>>> m_commandTokens;
     int m_startupSequence = -1; // none by default; adjusted on insert/remove
     std::map<quint64, qint64> m_stepStartedNs;

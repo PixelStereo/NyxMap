@@ -1,0 +1,1114 @@
+{
+  "createdWith": "Open Stage Control",
+  "version": "1.31.1",
+  "type": "session",
+  "content": {
+    "type": "root",
+    "id": "root",
+    "layout": "vertical",
+    "width": "100%",
+    "height": "100%",
+    "colorBg": "#101722",
+    "colorText": "#e5edf6",
+    "padding": 12,
+    "css": "font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;",
+    "onCreate": "send('127.0.0.1:1234', '/pinol/session/ready');",
+    "widgets": [
+      {
+        "type": "panel",
+        "id": "header",
+        "label": false,
+        "widgets": [
+          {
+            "type": "text",
+            "id": "brand",
+            "value": "PINOL / SHOW CONTROL",
+            "width": "100%",
+            "height": 32,
+            "bypass": true,
+            "wrap": true,
+            "align": "left",
+            "css": "font-size:22px;font-weight:bold;letter-spacing:2px;",
+            "expand": 2
+          },
+          {
+            "type": "text",
+            "id": "connection",
+            "value": "",
+            "width": "100%",
+            "height": 32,
+            "bypass": true,
+            "wrap": true,
+            "address": "/pinol/ui/status",
+            "default": "Load pinol.js as the custom module",
+            "expand": 3,
+            "align": "right"
+          }
+        ],
+        "layout": "horizontal",
+        "width": "100%",
+        "height": "auto",
+        "padding": 8
+      },
+      {
+        "type": "panel",
+        "id": "pages",
+        "label": false,
+        "tabs": [
+          {
+            "type": "tab",
+            "id": "show_tab",
+            "label": "SHOW",
+            "widgets": [
+              {
+                "type": "panel",
+                "id": "show",
+                "label": false,
+                "widgets": [
+                  {
+                    "type": "panel",
+                    "id": "show_toolbar",
+                    "label": false,
+                    "widgets": [
+                      {
+                        "type": "dropdown",
+                        "id": "sequence_select",
+                        "address": "/pinol/sequence/select",
+                        "values": {
+                          "labels": [],
+                          "values": []
+                        },
+                        "width": "auto",
+                        "height": 48,
+                        "expand": 3,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true
+                      },
+                      {
+                        "type": "text",
+                        "id": "sequence_running",
+                        "value": "JS{return OSC{/sequence/running,0} ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO'}",
+                        "width": "100%",
+                        "height": 32,
+                        "bypass": true,
+                        "wrap": true,
+                        "colorText": "#e5ba71",
+                        "expand": 2
+                      }
+                    ],
+                    "layout": "horizontal",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8
+                  },
+                  {
+                    "type": "panel",
+                    "id": "cue_cards",
+                    "label": false,
+                    "widgets": [
+                      {
+                        "type": "panel",
+                        "id": "cue_previous",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "previous_heading",
+                            "value": "PREVIOUS",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "colorText": "#8596ac",
+                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "previous_label",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/previous/label",
+                            "default": "\u2014",
+                            "css": "font-size:22px;font-weight:600;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "previous_text",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/previous/text",
+                            "css": "font-size:18px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "previous_description",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/previous/description",
+                            "css": "color:#a9b8ca;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "previous_phase",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/previous/phase",
+                            "css": "font-family:monospace;"
+                          },
+                          {
+                            "type": "fader",
+                            "id": "previous_progress",
+                            "address": "/sequence/cue/previous/progress",
+                            "width": "100%",
+                            "height": 14,
+                            "horizontal": true,
+                            "compact": true,
+                            "interaction": false,
+                            "bypass": true,
+                            "input": false,
+                            "range": {
+                              "min": 0,
+                              "max": 1
+                            },
+                            "colorWidget": "#8596ac"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8,
+                        "colorBg": "#1a2330",
+                        "border": true
+                      },
+                      {
+                        "type": "panel",
+                        "id": "cue_current",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "current_heading",
+                            "value": "CURRENT",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "colorText": "#78dfb5",
+                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "current_label",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/label",
+                            "default": "\u2014",
+                            "css": "font-size:22px;font-weight:600;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "current_text",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/text",
+                            "css": "font-size:18px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "current_description",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/description",
+                            "css": "color:#a9b8ca;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "current_phase",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/phase",
+                            "css": "font-family:monospace;"
+                          },
+                          {
+                            "type": "fader",
+                            "id": "current_progress",
+                            "address": "/sequence/cue/current/progress",
+                            "width": "100%",
+                            "height": 14,
+                            "horizontal": true,
+                            "compact": true,
+                            "interaction": false,
+                            "bypass": true,
+                            "input": false,
+                            "range": {
+                              "min": 0,
+                              "max": 1
+                            },
+                            "colorWidget": "#78dfb5"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8,
+                        "colorBg": "#1a2330",
+                        "border": true
+                      },
+                      {
+                        "type": "panel",
+                        "id": "cue_next",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "next_heading",
+                            "value": "NEXT",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "colorText": "#73cbd9",
+                            "css": "font-size:12px;font-weight:bold;letter-spacing:2px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "next_label",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/next/label",
+                            "default": "\u2014",
+                            "css": "font-size:22px;font-weight:600;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "next_text",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/next/text",
+                            "css": "font-size:18px;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "next_description",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/next/description",
+                            "css": "color:#a9b8ca;"
+                          },
+                          {
+                            "type": "text",
+                            "id": "next_phase",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/next/phase",
+                            "css": "font-family:monospace;"
+                          },
+                          {
+                            "type": "fader",
+                            "id": "next_progress",
+                            "address": "/sequence/cue/next/progress",
+                            "width": "100%",
+                            "height": 14,
+                            "horizontal": true,
+                            "compact": true,
+                            "interaction": false,
+                            "bypass": true,
+                            "input": false,
+                            "range": {
+                              "min": 0,
+                              "max": 1
+                            },
+                            "colorWidget": "#73cbd9"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8,
+                        "colorBg": "#1a2330",
+                        "border": true
+                      }
+                    ],
+                    "layout": "grid",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8,
+                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 270px), 1fr))",
+                    "contain": false
+                  },
+                  {
+                    "type": "panel",
+                    "id": "timing",
+                    "label": false,
+                    "widgets": [
+                      {
+                        "type": "panel",
+                        "id": "elapsed_box",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "elapsed_title",
+                            "value": "ELAPSED",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true
+                          },
+                          {
+                            "type": "text",
+                            "id": "elapsed",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/elapsed_text",
+                            "css": "font-size:38px;font-family:monospace;"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8
+                      },
+                      {
+                        "type": "panel",
+                        "id": "remaining_box",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "remaining_title",
+                            "value": "REMAINING",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true
+                          },
+                          {
+                            "type": "text",
+                            "id": "remaining",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/remaining_text",
+                            "colorText": "#e5ba71",
+                            "css": "font-size:38px;font-family:monospace;"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8
+                      },
+                      {
+                        "type": "panel",
+                        "id": "phase_box",
+                        "label": false,
+                        "widgets": [
+                          {
+                            "type": "text",
+                            "id": "phase_title",
+                            "value": "PHASE PROGRESS",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true
+                          },
+                          {
+                            "type": "fader",
+                            "id": "phase_meter",
+                            "address": "/sequence/cue/current/phase_progress",
+                            "width": "100%",
+                            "height": 14,
+                            "horizontal": true,
+                            "compact": true,
+                            "interaction": false,
+                            "bypass": true,
+                            "input": false,
+                            "range": {
+                              "min": 0,
+                              "max": 1
+                            },
+                            "colorWidget": "#e5ba71"
+                          },
+                          {
+                            "type": "text",
+                            "id": "continue_mode",
+                            "value": "",
+                            "width": "100%",
+                            "height": 32,
+                            "bypass": true,
+                            "wrap": true,
+                            "address": "/sequence/cue/current/continue"
+                          }
+                        ],
+                        "layout": "vertical",
+                        "width": "100%",
+                        "height": "auto",
+                        "padding": 8
+                      }
+                    ],
+                    "layout": "grid",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8,
+                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 220px), 1fr))"
+                  },
+                  {
+                    "type": "panel",
+                    "id": "transport",
+                    "label": false,
+                    "widgets": [
+                      {
+                        "type": "button",
+                        "id": "back",
+                        "label": "\u2039 GO BACK",
+                        "address": "/pinol/sequence/back",
+                        "preArgs": [],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0} && !!OSC{/sequence/back_enabled,0}}",
+                        "wrap": true,
+                        "colorWidget": "#e5ba71"
+                      },
+                      {
+                        "type": "button",
+                        "id": "go",
+                        "label": "GO \u25b6",
+                        "address": "/pinol/sequence/go",
+                        "preArgs": [],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0} && !!OSC{/sequence/go_enabled,0}}",
+                        "wrap": true,
+                        "colorWidget": "#78dfb5",
+                        "css": "font-size:30px;font-weight:bold;"
+                      },
+                      {
+                        "type": "button",
+                        "id": "stop",
+                        "label": "STOP WAITS",
+                        "address": "/pinol/sequence/stop",
+                        "preArgs": [],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "wrap": true,
+                        "colorWidget": "#e9818b"
+                      },
+                      {
+                        "type": "button",
+                        "id": "stop_all",
+                        "label": "STOP ALL WAITS",
+                        "address": "/pinol/sequence/stop_all",
+                        "preArgs": [],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "wrap": true,
+                        "colorWidget": "#e9818b",
+                        "doubleTap": true
+                      }
+                    ],
+                    "layout": "horizontal",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8
+                  },
+                  {
+                    "type": "text",
+                    "id": "timing_note",
+                    "value": "STOP WAITS cancels pending cues and follows. It does not stop media or timelines. Double-tap STOP ALL WAITS for every sequence.",
+                    "width": "100%",
+                    "height": 32,
+                    "bypass": true,
+                    "wrap": true,
+                    "css": "color:#a9b8ca;font-size:12px;"
+                  },
+                  {
+                    "type": "text",
+                    "id": "cue_list_title",
+                    "value": "CUE LIST",
+                    "width": "100%",
+                    "height": 32,
+                    "bypass": true,
+                    "wrap": true,
+                    "align": "left",
+                    "css": "font-weight:bold;letter-spacing:2px;"
+                  },
+                  {
+                    "type": "panel",
+                    "id": "cues_pager",
+                    "label": false,
+                    "widgets": [
+                      {
+                        "type": "button",
+                        "id": "cues_prev",
+                        "label": "\u2039 PREVIOUS",
+                        "address": "/pinol/library/page",
+                        "preArgs": [
+                          "cues",
+                          -1
+                        ],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "wrap": true
+                      },
+                      {
+                        "type": "text",
+                        "id": "cues_page",
+                        "value": "",
+                        "width": "100%",
+                        "height": 32,
+                        "bypass": true,
+                        "wrap": true,
+                        "address": "/pinol/library/cues/page",
+                        "css": "font-family:monospace;",
+                        "expand": true
+                      },
+                      {
+                        "type": "button",
+                        "id": "cues_next",
+                        "label": "NEXT \u203a",
+                        "address": "/pinol/library/page",
+                        "preArgs": [
+                          "cues",
+                          1
+                        ],
+                        "mode": "momentary",
+                        "target": "127.0.0.1:1234",
+                        "ignoreDefaults": true,
+                        "width": "auto",
+                        "height": 52,
+                        "expand": true,
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "wrap": true
+                      }
+                    ],
+                    "layout": "horizontal",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8
+                  },
+                  {
+                    "type": "panel",
+                    "id": "cue_items",
+                    "label": false,
+                    "widgets": [],
+                    "layout": "vertical",
+                    "width": "100%",
+                    "height": "auto",
+                    "padding": 8,
+                    "contain": false
+                  }
+                ],
+                "layout": "vertical",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8,
+                "contain": false,
+                "scroll": true
+              }
+            ],
+            "layout": "vertical",
+            "scroll": true
+          },
+          {
+            "type": "tab",
+            "id": "snapshots_tab",
+            "label": "SNAPSHOTS",
+            "layout": "vertical",
+            "scroll": true,
+            "widgets": [
+              {
+                "type": "text",
+                "id": "snapshots_title",
+                "value": "SNAPSHOTS",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "css": "font-size:26px;font-weight:bold;"
+              },
+              {
+                "type": "text",
+                "id": "snapshots_help",
+                "value": "Launch on demand. The list follows the open Pinol project.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "panel",
+                "id": "snapshots_pager",
+                "label": false,
+                "widgets": [
+                  {
+                    "type": "button",
+                    "id": "snapshots_prev",
+                    "label": "\u2039 PREVIOUS",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "snapshots",
+                      -1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  },
+                  {
+                    "type": "text",
+                    "id": "snapshots_page",
+                    "value": "",
+                    "width": "100%",
+                    "height": 32,
+                    "bypass": true,
+                    "wrap": true,
+                    "address": "/pinol/library/snapshots/page",
+                    "css": "font-family:monospace;",
+                    "expand": true
+                  },
+                  {
+                    "type": "button",
+                    "id": "snapshots_next",
+                    "label": "NEXT \u203a",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "snapshots",
+                      1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  }
+                ],
+                "layout": "horizontal",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8
+              },
+              {
+                "type": "panel",
+                "id": "snapshots_items",
+                "label": false,
+                "widgets": [],
+                "layout": "grid",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8,
+                "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+                "contain": false
+              }
+            ]
+          },
+          {
+            "type": "tab",
+            "id": "presets_tab",
+            "label": "PRESETS",
+            "layout": "vertical",
+            "scroll": true,
+            "widgets": [
+              {
+                "type": "text",
+                "id": "presets_title",
+                "value": "PRESETS",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "css": "font-size:26px;font-weight:bold;"
+              },
+              {
+                "type": "text",
+                "id": "presets_help",
+                "value": "Launch on demand. The list follows the open Pinol project.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "panel",
+                "id": "presets_pager",
+                "label": false,
+                "widgets": [
+                  {
+                    "type": "button",
+                    "id": "presets_prev",
+                    "label": "\u2039 PREVIOUS",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "presets",
+                      -1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  },
+                  {
+                    "type": "text",
+                    "id": "presets_page",
+                    "value": "",
+                    "width": "100%",
+                    "height": 32,
+                    "bypass": true,
+                    "wrap": true,
+                    "address": "/pinol/library/presets/page",
+                    "css": "font-family:monospace;",
+                    "expand": true
+                  },
+                  {
+                    "type": "button",
+                    "id": "presets_next",
+                    "label": "NEXT \u203a",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "presets",
+                      1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  }
+                ],
+                "layout": "horizontal",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8
+              },
+              {
+                "type": "panel",
+                "id": "presets_items",
+                "label": false,
+                "widgets": [],
+                "layout": "grid",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8,
+                "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+                "contain": false
+              }
+            ]
+          },
+          {
+            "type": "tab",
+            "id": "timelines_tab",
+            "label": "TIMELINES",
+            "layout": "vertical",
+            "scroll": true,
+            "widgets": [
+              {
+                "type": "text",
+                "id": "timelines_title",
+                "value": "TIMELINES",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "css": "font-size:26px;font-weight:bold;"
+              },
+              {
+                "type": "text",
+                "id": "timelines_help",
+                "value": "Launch on demand. The list follows the open Pinol project.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "panel",
+                "id": "timelines_pager",
+                "label": false,
+                "widgets": [
+                  {
+                    "type": "button",
+                    "id": "timelines_prev",
+                    "label": "\u2039 PREVIOUS",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "timelines",
+                      -1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  },
+                  {
+                    "type": "text",
+                    "id": "timelines_page",
+                    "value": "",
+                    "width": "100%",
+                    "height": 32,
+                    "bypass": true,
+                    "wrap": true,
+                    "address": "/pinol/library/timelines/page",
+                    "css": "font-family:monospace;",
+                    "expand": true
+                  },
+                  {
+                    "type": "button",
+                    "id": "timelines_next",
+                    "label": "NEXT \u203a",
+                    "address": "/pinol/library/page",
+                    "preArgs": [
+                      "timelines",
+                      1
+                    ],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "wrap": true
+                  }
+                ],
+                "layout": "horizontal",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8
+              },
+              {
+                "type": "panel",
+                "id": "timelines_items",
+                "label": false,
+                "widgets": [],
+                "layout": "grid",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8,
+                "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+                "contain": false
+              }
+            ]
+          },
+          {
+            "type": "tab",
+            "id": "connect_tab",
+            "label": "CONNECT",
+            "layout": "vertical",
+            "scroll": true,
+            "widgets": [
+              {
+                "type": "text",
+                "id": "connect_title",
+                "value": "CONNECT TO PINOL",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "css": "font-size:26px;font-weight:bold;"
+              },
+              {
+                "type": "text",
+                "id": "connect_help",
+                "value": "Enter the computer running Pinol and its OSCQuery TCP port. Enable OSC / OSCQuery in Pinol Settings. No UDP feedback configuration is required.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "input",
+                "id": "pinol_host",
+                "address": "/pinol/ui/host",
+                "value": "127.0.0.1",
+                "default": "127.0.0.1",
+                "label": "Pinol host",
+                "width": "100%",
+                "height": 60,
+                "bypass": true
+              },
+              {
+                "type": "input",
+                "id": "pinol_port",
+                "address": "/pinol/ui/port",
+                "value": 5678,
+                "default": 5678,
+                "label": "OSCQuery port",
+                "width": "100%",
+                "height": 60,
+                "bypass": true
+              },
+              {
+                "type": "panel",
+                "id": "connect_buttons",
+                "label": false,
+                "widgets": [
+                  {
+                    "type": "button",
+                    "id": "connect",
+                    "label": "CONNECT",
+                    "address": "/pinol/noop",
+                    "preArgs": [],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": true,
+                    "wrap": true,
+                    "onValue": "send('127.0.0.1:1234', '/pinol/connect', get('pinol_host'), Number(get('pinol_port')));"
+                  },
+                  {
+                    "type": "button",
+                    "id": "refresh",
+                    "label": "REFRESH LISTS",
+                    "address": "/pinol/refresh",
+                    "preArgs": [],
+                    "mode": "momentary",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true,
+                    "width": "auto",
+                    "height": 52,
+                    "expand": true,
+                    "interaction": true,
+                    "wrap": true
+                  }
+                ],
+                "layout": "horizontal",
+                "width": "100%",
+                "height": "auto",
+                "padding": 8
+              },
+              {
+                "type": "text",
+                "id": "connection_rules",
+                "value": "A disconnected controller disables show commands. Commands are never queued for replay after reconnecting. Each browser shares the same Pinol connection.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "text",
+                "id": "timing_units",
+                "value": "Cue timers use Pinol cue time. Timeline clocks use animation time; \u221e means no finite end. A frozen or paused timeline does not count down in wall-clock seconds.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              },
+              {
+                "type": "text",
+                "id": "control_pages",
+                "value": "SHOW follows the selected sequence in Pinol. Sequence selection does not stop background sequences. Library recalls may override values controlled by the sequence.",
+                "width": "100%",
+                "height": 32,
+                "bypass": true,
+                "wrap": true,
+                "align": "left"
+              }
+            ]
+          }
+        ],
+        "height": "auto",
+        "width": "100%",
+        "expand": true,
+        "tabsPosition": "top",
+        "scroll": true
+      }
+    ]
+  }
+}

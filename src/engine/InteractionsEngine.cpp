@@ -294,15 +294,24 @@ static bool parseMidi(const uint8_t *m, size_t n, InteractionEvent &e)
     }
 }
 
+void Engine::requestMidiInputUpdate()
+{
+    if (!m_midiUpdatePending.exchange(true))
+        QMetaObject::invokeMethod(this, "applyMidiInputUpdate", Qt::QueuedConnection);
+}
+
+void Engine::applyMidiInputUpdate()
+{
+    m_midiUpdatePending = false;
+    updateMidiInputs();
+}
+
 void Engine::updateMidiInputs()
 {
     // Presets can restore interactions on the cue-clock thread. Timers and the
     // MIDI port list are owned exclusively by the Engine's QObject thread.
     if (QThread::currentThread() != thread()) {
-        if (!m_midiUpdatePending.exchange(true)) QMetaObject::invokeMethod(this, [this] {
-            m_midiUpdatePending = false;
-            updateMidiInputs();
-        }, Qt::QueuedConnection);
+        requestMidiInputUpdate();
         return;
     }
     bool wanted;
@@ -744,7 +753,7 @@ void Engine::makeInteractionParams()
         auto changed = [this] { // its name, its source or its target: the list, the MIDI inputs, the labels
             m_interactionParamsDirty = true;
             interactionValuesTouched();
-            QMetaObject::invokeMethod(this, [this] { updateMidiInputs(); }, Qt::QueuedConnection);
+            requestMidiInputUpdate();
         };
         auto text = [&](const QString &path, const QString &name, std::function<QString(const Interaction &)> get,
                         std::function<void(Interaction &, const QString &)> set) {

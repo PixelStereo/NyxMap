@@ -122,14 +122,23 @@ QString OscNamespace::signature() const
             if (!a.tracks.empty()) s += QStringLiteral("anim:") + a.tracks.front().param + ',';
         s += '\n';
     }
-    for (int i = 0; i < m_e->snapshotCount(); ++i) s += QStringLiteral("snapshot:") + m_e->snapshot(i).name + '\n';
-    for (int i = 0; i < m_e->presetCount(); ++i) s += QStringLiteral("preset:") + m_e->preset(i).name + '\n';
-    for (int i = 0; i < m_e->sequencer().count(); ++i)
-        s += QStringLiteral("sequence:") + m_e->sequencer().sequence(i).name + '\n';
+    for (int i = 0; i < m_e->snapshotCount(); ++i) {
+        const auto snapshot = m_e->snapshot(i);
+        s += QStringLiteral("snapshot:%1:%2\n").arg(snapshot.id).arg(snapshot.name);
+    }
+    for (int i = 0; i < m_e->presetCount(); ++i) {
+        const auto preset = m_e->preset(i);
+        s += QStringLiteral("preset:%1:%2\n").arg(preset.id).arg(preset.name);
+    }
+    s += QStringLiteral("cues:%1\n").arg(m_e->sequencer().revision());
     for (const Interaction &it : m_e->interactions()) // their names, and which filter settings they have
         s += QStringLiteral("interaction:%1:%2:%3:%4\n").arg(it.id).arg(it.name).arg(int(it.filter))
             .arg(it.xyInputs.empty() ? -1 : int(it.xyInputs.front().filter));
-    for (int i = 0; i < m_e->animationCount(); ++i) s += QStringLiteral("timeline:") + m_e->animation(i).name + '\n';
+    std::vector<Engine::AnimationPlayback> timelines;
+    m_e->sampleAnimations(&timelines);
+    for (const auto &a : timelines) {
+        s += QStringLiteral("timeline:%1:%2:%3\n").arg(a.id).arg(a.name).arg(a.duration);
+    }
     return s;
 }
 
@@ -441,6 +450,8 @@ void OscNamespace::build()
             m_nodes[base].description = an.name.isEmpty() ? QString::number(i + 1) : an.name;
         }
     }
+
+    addShowControl();
 
     // --- Viewports, then the layers (top level, then the contents of each group, at any depth)
     struct Item {
