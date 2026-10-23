@@ -471,7 +471,8 @@ public:
         QString name;
         AnimState state = AnimState::Stopped;
         AnimLoop loop = AnimLoop::Once;
-        double position = 0, duration = 0, clock = 0, speed = 1, length = 0;
+        double position = 0, duration = 0, clock = 0, played = 0, speed = 1, length = 0;
+        bool backwards = false;
         int tracks = 0, pass = 1;
         std::vector<double> captured;
         std::vector<std::array<double, 3>> capturedRgb;

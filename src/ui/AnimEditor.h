@@ -29,6 +29,39 @@ class AnimEditor;
 
 class QMenu;
 
+// A sampled projection of both axis curves over the current pass. Seeking here
+// uses the same transport as the time ruler; it never changes the keys.
+class XyPathPreview : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit XyPathPreview(QWidget *parent = nullptr);
+    void setTrack(const AnimTrack &track, double duration,
+                  const std::array<std::pair<double, double>, 2> &ranges);
+    void setPlayhead(double position, double played, bool backwards, bool running);
+    void setLive(const std::array<double, 2> &captured, const std::array<double, 2> &live);
+    std::array<double, 2> valueAt(double position) const;
+signals:
+    void seekRequested(double position);
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+private:
+    void updateCaptures();
+    void samplePath();
+    void seekAt(QPointF position);
+    QRectF plotRect() const;
+    QPointF mapPoint(const std::array<double, 2> &value) const;
+    AnimTrack m_track;
+    double m_duration = 4, m_position = 0, m_origin = 0;
+    bool m_backwards = false, m_running = false, m_dirty = true, m_dragging = false;
+    std::array<double, 2> m_live{0, 0}, m_captured{NAN, NAN};
+    std::array<std::pair<double, double>, 2> m_ranges{{{0, 1}, {0, 1}}}, m_bounds = m_ranges;
+    std::vector<std::array<double, 2>> m_samples;
+};
+
 // One RGB track: the strip uses exactly the same interpolation as playback.
 class ColorLane : public QWidget
 {
@@ -93,7 +126,7 @@ public:
     void setTrack(const AnimTrack &t, double duration, double lo, double hi);
     // What is shown: seconds t0..t1, values vlo..vhi (the zoom)
     void setView(double t0, double t1, double vlo, double vhi);
-    void setPlayhead(double position, bool shown);
+    void setPlayhead(double position, bool shown, double played = NAN, bool backwards = false);
     void setCurrentValue(std::function<double()> f) { m_current = std::move(f); }
     void setLive(double v); // the value a "current value" first key starts from (captured, or the number now)
     double fullLo() const { return m_lo; }
@@ -134,7 +167,8 @@ private:
     AnimTrack m_track;
     double m_duration = 4, m_lo = 0, m_hi = 1;    // the whole
     double m_t0 = 0, m_t1 = 4, m_vlo = 0, m_vhi = 1; // what is shown
-    double m_playhead = 0;
+    double m_playhead = 0, m_played = 0;
+    bool m_backwards = false;
     double m_live = std::numeric_limits<double>::quiet_NaN();
     bool m_showPlayhead = false;
     int m_dragKey = -1;
@@ -186,7 +220,7 @@ class TrackRow : public QWidget
 public:
     TrackRow(AnimEditor *editor, int index);
     void build(); // the widgets: called once, right after construction (buildHeader is virtual)
-    void setPlayhead(double pos, bool shown);
+    void setPlayhead(double pos, double played, bool backwards, bool shown);
     void setLive(double captured, const std::array<double, 3> &capturedRgb, const std::array<double, 2> &capturedXy, bool running);
     void applyView();                            // the editor's zoom
     std::pair<double, double> fullRange() const;
@@ -216,6 +250,8 @@ private:
     NumberBox *m_period = nullptr, *m_center = nullptr, *m_amp = nullptr, *m_phase = nullptr;
     QPushButton *m_reseed = nullptr;
     QPushButton *m_startCurrent = nullptr;
+    QPushButton *m_showPath = nullptr;
+    XyPathPreview *m_pointPreview = nullptr;
     void updateStartMode();
     class CurveLane *m_lane = nullptr;
     ColorLane *m_colorLane = nullptr;
@@ -265,6 +301,7 @@ protected:
     QVBoxLayout *mainLayout() const { return m_main; }
     struct LaneView {
         int axis = 0;
+        bool xyPreview = false;
         double zoom = 1;                                          // values: the whole range / zoom
         double center = std::numeric_limits<double>::quiet_NaN(); // nan: the middle of the range
     };

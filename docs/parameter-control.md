@@ -55,6 +55,14 @@ Adding a separate X animation preserves the grouped Y animation, and vice versa.
 Wave phase is measured in cycles: equal sine periods with X phase `0` and Y phase
 `0.25` produce an ellipse. Each curve supports **Start from the current value**.
 
+Open **XY path** in a local animation or timeline track to see the sampled
+trajectory for the current pass. Blue marks the start, gold the end and green
+the playhead. Click or drag along the path to seek the shared transport;
+edit keys and wave settings through the X/Y selector. The preview follows
+continuous wave time across loops and ping-pong, captured current-value starts,
+and the live value of a disabled axis. Axis ranges are fitted independently:
+this is a parameter plot, not a spatial preview of the composition.
+
 Design references: [Chataigne Mapping 2D](https://benkuper.notion.site/Mapping-2D-Layer-ce3f908cae484a99acdd8b486c5de1fb)
 and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-system.html).
 

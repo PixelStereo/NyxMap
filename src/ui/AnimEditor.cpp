@@ -171,6 +171,205 @@ CurveLane::CurveLane(QWidget *parent) : QWidget(parent)
 
 static bool startsFromCurrent(const AnimTrack &t) { return !t.oscillator && !t.keys.empty() && t.keys.front().isCurrentValue; }
 
+XyPathPreview::XyPathPreview(QWidget *parent) : QWidget(parent)
+{
+    setObjectName(QStringLiteral("xyPathPreview"));
+    setFixedHeight(150);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setCursor(Qt::CrossCursor);
+    setAccessibleName(QStringLiteral("XY path preview"));
+    setToolTip(QStringLiteral("Sampled XY path for the current pass. Click or drag along the path to seek both axes.\n"
+                              "Blue: start. Gold: end. Green: playhead. Disabled axes use their current parameter value.\n"
+                              "X and Y use the ranges shown; this is a parameter plot, not a composition view."));
+}
+
+void XyPathPreview::setTrack(const AnimTrack &track, double duration,
+                           const std::array<std::pair<double, double>, 2> &ranges)
+{
+    m_track = track;
+    m_duration = std::max(.05, duration);
+    m_ranges = ranges;
+    m_dirty = true;
+    updateCaptures();
+    update();
+}
+
+void XyPathPreview::setPlayhead(double position, double played, bool backwards, bool running)
+{
+    // Waves follow elapsed time, even when the pass wraps or runs backwards.
+    const double origin = running ? played + (backwards ? position : -position) : 0;
+    const bool moved = std::abs(position - m_position) > 1e-7;
+    if (std::abs(origin - m_origin) > 1e-7 || backwards != m_backwards || running != m_running) m_dirty = true;
+    m_position = position;
+    m_origin = origin;
+    m_backwards = backwards;
+    m_running = running;
+    updateCaptures();
+    if (moved || m_dirty) update();
+}
+
+void XyPathPreview::setLive(const std::array<double, 2> &captured, const std::array<double, 2> &live)
+{
+    if (m_track.isPoint()) for (size_t c = 0; c < 2; ++c)
+        if (!m_track.axes[c].enabled && live[c] != m_live[c]) m_dirty = true;
+    m_live = live;
+    m_captured = captured;
+    updateCaptures();
+    if (m_dirty) update();
+}
+
+void XyPathPreview::updateCaptures()
+{
+    if (!m_track.isPoint()) return;
+    for (size_t c = 0; c < 2; ++c) {
+        auto &axis = m_track.axes[c];
+        if (!startsFromCurrent(axis)) continue;
+        const double value = m_running ? (std::isfinite(m_captured[c]) ? m_captured[c] : axis.keys.front().v) : m_live[c];
+        if (axis.captured != value) { axis.captured = value; m_dirty = true; }
+    }
+}
+
+std::array<double, 2> XyPathPreview::valueAt(double position) const
+{
+    if (!m_track.isPoint()) return {NAN, NAN};
+    const double time = std::clamp(position, 0.0, m_duration);
+    const double played = m_running ? std::max(0.0, m_origin + (m_backwards ? -time : time)) : time;
+    return {m_track.axes[0].enabled ? m_track.axes[0].valueAt(time, played) : m_live[0],
+            m_track.axes[1].enabled ? m_track.axes[1].valueAt(time, played) : m_live[1]};
+}
+
+void XyPathPreview::samplePath()
+{
+    if (!m_dirty) return;
+    m_dirty = false;
+    const double infinity = std::numeric_limits<double>::infinity();
+    for (auto &[lo, hi] : m_bounds) { lo = infinity; hi = -infinity; }
+    // Bounded work, cached between edits/passes. Points do not draw false lines
+    // across jumps in held keys, square waves or sample-and-hold random waves.
+    constexpr int steps = 384;
+    m_samples.clear();
+    m_samples.reserve(steps + 1);
+    for (int k = 0; k <= steps; ++k) {
+        const auto value = valueAt(m_duration * k / steps);
+        m_samples.push_back(value);
+        for (size_t c = 0; c < 2; ++c) if (std::isfinite(value[c])) {
+            m_bounds[c].first = std::min(m_bounds[c].first, value[c]);
+            m_bounds[c].second = std::max(m_bounds[c].second, value[c]);
+        }
+    }
+    for (size_t c = 0; c < 2; ++c) {
+        auto &[lo, hi] = m_bounds[c];
+        if (!std::isfinite(lo) || !std::isfinite(hi)) { lo = 0; hi = 1; }
+        if (hi - lo < 1e-9) {
+            double span = std::abs(m_ranges[c].second - m_ranges[c].first) * .02;
+            if (!std::isfinite(span)) span = 1;
+            span = std::max({span, std::abs(lo) * 1e-6, 1e-6});
+            lo -= span / 2; hi += span / 2;
+        }
+        const double padding = (hi - lo) * .04;
+        lo -= padding; hi += padding;
+    }
+}
+
+QRectF XyPathPreview::plotRect() const { return QRectF(rect()).adjusted(38, 22, -12, -24); }
+
+QPointF XyPathPreview::mapPoint(const std::array<double, 2> &value) const
+{
+    const auto area = plotRect();
+    return {area.left() + (value[0] - m_bounds[0].first) / (m_bounds[0].second - m_bounds[0].first) * area.width(),
+            area.bottom() - (value[1] - m_bounds[1].first) / (m_bounds[1].second - m_bounds[1].first) * area.height()};
+}
+
+void XyPathPreview::paintEvent(QPaintEvent *)
+{
+    samplePath();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.fillRect(rect(), QColor(26, 26, 30));
+    const auto area = plotRect();
+    if (area.width() <= 0 || area.height() <= 0) return;
+    p.setPen(QColor(70, 70, 80)); p.drawRect(area);
+    p.setPen(QColor(44, 44, 50));
+    for (int k = 1; k < 4; ++k) {
+        const double x = area.left() + area.width() * k / 4;
+        const double y = area.top() + area.height() * k / 4;
+        p.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+        p.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
+    }
+    QFont f = font(); f.setPointSizeF(f.pointSizeF() * .8); p.setFont(f);
+    p.setPen(QColor(185, 185, 195));
+    p.drawText(QRectF(5, 1, width() - 10, 18), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("XY path · current pass"));
+    p.drawText(QRectF(0, area.top() - 4, 35, 16), Qt::AlignRight, num(m_bounds[1].second));
+    p.drawText(QRectF(0, area.bottom() - 12, 35, 16), Qt::AlignRight, num(m_bounds[1].first));
+    p.drawText(QRectF(0, area.center().y() - 8, 35, 16), Qt::AlignCenter, QStringLiteral("Y"));
+    p.drawText(QRectF(area.left(), area.bottom() + 4, area.width() / 2, 16), Qt::AlignLeft, num(m_bounds[0].first));
+    p.drawText(QRectF(area.center().x(), area.bottom() + 4, area.width() / 2, 16), Qt::AlignRight, num(m_bounds[0].second));
+    p.drawText(QRectF(area.center().x() - 10, area.bottom() + 4, 20, 16), Qt::AlignCenter, QStringLiteral("X"));
+    if (!m_track.isPoint()) return;
+    const bool finite = std::any_of(m_samples.begin(), m_samples.end(), [](const auto &v) { return std::isfinite(v[0]) && std::isfinite(v[1]); });
+    if (!finite) {
+        p.drawText(area, Qt::AlignCenter, QStringLiteral("Both axes need values"));
+        return;
+    }
+    QString held;
+    if (!m_track.axes[0].enabled) held = QStringLiteral("X held");
+    if (!m_track.axes[1].enabled) held += held.isEmpty() ? QStringLiteral("Y held") : QStringLiteral(" · Y held");
+    p.drawText(QRectF(5, 1, width() - 10, 18), Qt::AlignRight | Qt::AlignVCenter, held);
+    p.save(); p.setClipRect(area.adjusted(-4, -4, 4, 4));
+    for (size_t k = 0; k < m_samples.size(); ++k) {
+        if (!std::isfinite(m_samples[k][0]) || !std::isfinite(m_samples[k][1])) continue;
+        const double t = double(k) / (m_samples.size() - 1);
+        QColor color = QColor::fromRgbF((1 - t) * kCurve.redF() + t * kWave.redF(),
+                                       (1 - t) * kCurve.greenF() + t * kWave.greenF(),
+                                       (1 - t) * kCurve.blueF() + t * kWave.blueF());
+        if (!m_track.enabled) color.setAlphaF(.35f);
+        p.setPen(QPen(color, 2.3, Qt::SolidLine, Qt::RoundCap));
+        p.drawPoint(mapPoint(m_samples[k]));
+    }
+    auto marker = [&](double time, const QColor &color, bool square) {
+        const auto value = valueAt(time);
+        if (!std::isfinite(value[0]) || !std::isfinite(value[1])) return;
+        const auto point = mapPoint(value);
+        p.setPen(QPen(color, 1.8)); p.setBrush(QColor(26, 26, 30));
+        if (square) p.drawRect(QRectF(point.x() - 3, point.y() - 3, 6, 6));
+        else p.drawEllipse(point, 4, 4);
+    };
+    marker(0, kCurve, false); marker(m_duration, kWave, true);
+    marker(m_position, m_running ? kPlayhead : kHandle, false);
+    p.restore();
+}
+
+void XyPathPreview::seekAt(QPointF position)
+{
+    samplePath();
+    if (!plotRect().contains(position) || m_samples.size() < 2) return;
+    double best = std::numeric_limits<double>::infinity(), time = 0;
+    bool found = false;
+    for (size_t k = 0; k < m_samples.size(); ++k) {
+        const auto &value = m_samples[k];
+        if (!std::isfinite(value[0]) || !std::isfinite(value[1])) continue;
+        const auto delta = mapPoint(value) - position;
+        const double distance = QPointF::dotProduct(delta, delta), candidate = m_duration * k / (m_samples.size() - 1);
+        if (distance < best - 1e-6 || (std::abs(distance - best) <= 1e-6 && std::abs(candidate - m_position) < std::abs(time - m_position))) {
+            best = distance; time = candidate; found = true;
+        }
+    }
+    if (found) emit seekRequested(time);
+}
+
+void XyPathPreview::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton || !plotRect().contains(event->position())) return;
+    m_dragging = true;
+    seekAt(event->position());
+}
+
+void XyPathPreview::mouseMoveEvent(QMouseEvent *event) { if (m_dragging) seekAt(event->position()); }
+void XyPathPreview::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) { if (m_dragging) seekAt(event->position()); m_dragging = false; }
+}
+
 static void sortKeys(std::vector<AnimKey> &keys)
 {
     std::stable_sort(keys.begin(), keys.end(), [](const AnimKey &a, const AnimKey &b) { return a.t < b.t; });
@@ -217,10 +416,14 @@ void CurveLane::setLive(double v)
     if (m_dragKey < 0 && m_dragHandle < 0) update();
 }
 
-void CurveLane::setPlayhead(double position, bool shown)
+void CurveLane::setPlayhead(double position, bool shown, double played, bool backwards)
 {
-    if (std::abs(position - m_playhead) < 1e-6 && shown == m_showPlayhead) return;
+    if (!std::isfinite(played)) played = position;
+    if (std::abs(position - m_playhead) < 1e-6 && std::abs(played - m_played) < 1e-6 &&
+        backwards == m_backwards && shown == m_showPlayhead) return;
     m_playhead = position;
+    m_played = played;
+    m_backwards = backwards;
     m_showPlayhead = shown;
     update();
 }
@@ -312,7 +515,8 @@ void CurveLane::paintEvent(QPaintEvent *)
         QPainterPath path;
         for (int x = int(x0); x <= int(std::ceil(x1)); ++x) {
             const double t = tOf(x);
-            const QPointF pt(x, yOf(drawn.valueAt(t, t)));
+            const double played = m_showPlayhead ? std::max(0.0, m_played + (m_backwards ? m_playhead - t : t - m_playhead)) : t;
+            const QPointF pt(x, yOf(drawn.valueAt(t, played)));
             if (x == int(x0)) path.moveTo(pt);
             else path.lineTo(pt);
         }
@@ -1086,8 +1290,10 @@ void TrackRow::build()
     ++r;
     connect(m_axis, qOverload<int>(&QComboBox::activated), this, [this](int axis) {
         m_axisIndex = axis;
+        const bool preview = m_ed->laneView(m_i).xyPreview;
         m_ed->laneView(m_i) = {};
         m_ed->laneView(m_i).axis = axis;
+        m_ed->laneView(m_i).xyPreview = preview;
         fill();
         m_ed->poll();
     });
@@ -1167,7 +1373,25 @@ void TrackRow::build()
         updateStartMode();
         changed();
     });
-    if (side) g->setRowStretch(r + 3, 1);
+    m_showPath = new QPushButton(QStringLiteral("XY path"));
+    m_showPath->setObjectName(QStringLiteral("showXyPath"));
+    m_showPath->setCheckable(true);
+    m_showPath->setToolTip(QStringLiteral("Show the XY trajectory and seek both axes along it"));
+    m_pointPreview = new XyPathPreview;
+    g->addWidget(m_showPath, r + 3, 0, 1, 4);
+    g->addWidget(m_pointPreview, r + 4, 0, 1, 4);
+    connect(m_showPath, &QPushButton::toggled, this, [this](bool on) {
+        m_ed->laneView(m_i).xyPreview = on;
+        m_pointPreview->setVisible(on && track().isPoint());
+        if (on) m_ed->poll();
+    });
+    connect(m_pointPreview, &XyPathPreview::seekRequested, this, [this](double position) {
+        Animation current;
+        if (!m_ed->fetch(&current)) return;
+        m_ed->control(AnimAction::Seek, playbackClockAt(current, position));
+        m_ed->poll();
+    });
+    if (side) g->setRowStretch(r + 5, 1);
     g->setColumnStretch(1, 1);
     m_lane = new CurveLane;
     m_lane->setMinimumHeight(side ? 70 : std::max(70, m_ed->laneHeight()));
@@ -1250,6 +1474,9 @@ void TrackRow::fill()
     m_axisOn->setVisible(track().isPoint());
     m_axis->setCurrentIndex(m_axisIndex);
     m_axisOn->setChecked(t.enabled);
+    m_showPath->setVisible(track().isPoint());
+    m_showPath->setChecked(m_ed->laneView(m_i).xyPreview);
+    m_pointPreview->setVisible(track().isPoint() && m_showPath->isChecked());
     m_kind->setVisible(!t.color);
     m_lane->setVisible(!t.color);
     m_colorLane->setVisible(t.color);
@@ -1277,10 +1504,20 @@ void TrackRow::updateStartMode()
     m_startCurrent->setStyleSheet(current ? QStringLiteral("QPushButton { background:#f6c453; color:#19191d; border:2px solid #ffe4a1; border-radius:4px; font-weight:bold; padding:4px 6px; }") : QString());
 }
 
-void TrackRow::setPlayhead(double pos, bool shown) { m_lane->setPlayhead(pos, shown); m_colorLane->setPlayhead(pos, shown); }
+void TrackRow::setPlayhead(double pos, double played, bool backwards, bool shown)
+{
+    m_lane->setPlayhead(pos, shown, played, backwards);
+    m_colorLane->setPlayhead(pos, shown);
+    m_pointPreview->setPlayhead(pos, played, backwards, shown);
+}
 
 void TrackRow::setLive(double captured, const std::array<double, 3> &capturedRgb, const std::array<double, 2> &capturedXy, bool running)
 {
+    if (track().isPoint() && m_pointPreview->isVisible()) {
+        std::array<double, 2> live{};
+        for (size_t c = 0; c < 2; ++c) m_e->animParamValue(track().layer, track().axes[c].param, &live[c]);
+        m_pointPreview->setLive(capturedXy, live);
+    }
     if (track().isPoint()) captured = capturedXy[size_t(m_axisIndex)];
     if (editedTrack().color) {
         auto rgb = capturedRgb;
@@ -1309,6 +1546,8 @@ void TrackRow::updateLane()
     const auto [lo, hi] = range();
     m_lane->setTrack(editedTrack(), m_ed->m_edit.duration, lo, hi);
     m_colorLane->setTrack(editedTrack(), m_ed->m_edit.duration);
+    if (track().isPoint())
+        m_pointPreview->setTrack(track(), m_ed->m_edit.duration, {m_ed->rangeOf(track().axes[0]), m_ed->rangeOf(track().axes[1])});
     applyView();
 }
 
@@ -1323,6 +1562,8 @@ void TrackRow::applyView()
 void TrackRow::changed(bool lane, const QString &mergeKey)
 {
     if (lane) updateLane();
+    else if (track().isPoint())
+        m_pointPreview->setTrack(track(), m_ed->m_edit.duration, {m_ed->rangeOf(track().axes[0]), m_ed->rangeOf(track().axes[1])});
     m_ed->commit(QStringLiteral("Edit Animation"), mergeKey);
 }
 
@@ -1684,7 +1925,7 @@ void AnimEditor::poll()
     const double pos = a.position;
     m_ruler->setPlayhead(pos, shown);
     for (size_t k = 0; k < m_rows.size(); ++k) {
-        m_rows[k]->setPlayhead(pos, shown);
+        m_rows[k]->setPlayhead(pos, a.played, a.backwards, shown);
         m_rows[k]->setLive(k < a.captured.size() ? a.captured[k] : std::numeric_limits<double>::quiet_NaN(),
                           k < a.capturedRgb.size() ? a.capturedRgb[k] : AnimTrack().capturedRgb,
                           k < a.capturedXy.size() ? a.capturedXy[k] : std::array<double, 2>{NAN, NAN}, shown);
