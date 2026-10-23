@@ -93,7 +93,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     auto inlineTarget = [&](const Engine::AnimParam &target) -> QAction * {
         const int cut = target.label.lastIndexOf(QStringLiteral(" › "));
         for (auto *button : timeline.findChildren<QPushButton *>()) {
-            if (!button->menu() || !button->toolTip().contains("Choose a color")) continue;
+            if (!button->menu() || button->objectName() != QLatin1String("timelineParameter")) continue;
             for (auto *category : button->menu()->actions()) if (category->menu() && category->text() == target.label.left(cut))
                 for (auto *action : category->menu()->actions()) if (action->text() == target.name()) return action;
         }

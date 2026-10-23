@@ -140,6 +140,7 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
     del->setFixedWidth(26);
     del->setToolTip(QStringLiteral("Delete the track"));
     m_param = new QPushButton;
+    m_param->setObjectName(QStringLiteral("timelineParameter"));
     m_param->setToolTip(QStringLiteral("Choose a point (XY), color (RGB), or individual numeric parameter"));
     m_param->setMenu(new QMenu(m_param));
     m_param->setStyleSheet(QStringLiteral("QPushButton { text-align:left; padding-left:6px; }"));

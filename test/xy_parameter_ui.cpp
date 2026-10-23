@@ -68,6 +68,15 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
             menu->close(); pump();
         }
     }
+    QMenu timelineMenu;
+    TimelineWindow::fillValueMenu(&timelineMenu, &engine, &undo, layer, {point}, &inspector);
+    timelineMenu.actions().front()->trigger();
+    const auto timelineState = engine.animation(engine.animationCount() - 1);
+    check(timelineState.tracks.size() == 1 && timelineState.tracks[0].isPoint(), "parameter menu adds one grouped XY timeline track");
+    TimelineEditor timeline(&engine, &undo);
+    timeline.setTimeline(timelineState.id); timeline.resize(1000, 420); timeline.show(); pump();
+    auto *timelineAxis = timeline.findChild<QComboBox *>("xyAnimationAxis");
+    check(timelineAxis && timelineAxis->isVisible(), "global timeline exposes both component curves in one track");
     paramanim::animate(&engine, &undo, layer, point, int(AnimWave::Sine));
     Animation local;
     check(engine.layerAnim(layer, point, &local) && local.tracks[0].isPoint(), "one local animation owns both axes");
