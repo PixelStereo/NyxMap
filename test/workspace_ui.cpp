@@ -7,6 +7,7 @@
 #include "TimelinePanel.h"
 #include "LayerInspector.h"
 #include "PresetEditor.h"
+#include "SettingsPanel.h"
 #include "ColorPicker.h"
 #include "ViewportOutput.h"
 #include <QDoubleSpinBox>
@@ -207,6 +208,43 @@ static void nestedGroupTests(Engine &engine, const std::function<void(bool, cons
     engine.newProject();
 }
 
+static void systemIsfVisibilityTests(Engine &engine, const std::function<void(bool, const char *)> &check)
+{
+    const QStringList names{"showSystemIsfGenerators", "showSystemIsfFX", "showSystemIsfTransitions"};
+    const QStringList keys{"isf/showSystemGenerators", "isf/showSystemFX", "isf/showSystemTransitions"};
+    {
+        MainWindow window(&engine); window.setQuiet(true); window.setAutosaveEnabled(false);
+        auto *settings = window.findChild<SettingsPanel *>();
+        auto *transition = settings ? settings->findChild<QComboBox *>("snapshotTransition") : nullptr;
+        check(transition != nullptr, "default snapshot transition is accessible");
+        if (transition) {
+            const QString current = "/missing/system/HiddenTransition.fs";
+            settings->setTransitions({}, current);
+            check(transition->currentData().toString() == current && transition->currentText() == "HiddenTransition",
+                  "hiding a transition keeps the current selection accurately displayed");
+        }
+        for (int i = 0; i < names.size(); ++i) {
+            auto *action = window.findChild<QAction *>(names[i]);
+            check(action && action->isCheckable() && action->isChecked(), "system shader categories default to visible");
+            if (action) action->setChecked(false);
+            check(!QSettings().value(keys[i], true).toBool(), "system shader visibility is saved immediately");
+        }
+        const auto visibility = engine.library().systemVisibility();
+        check(!visibility.generators && !visibility.filters && !visibility.transitions, "all three preferences reach the library");
+    }
+    {
+        MainWindow reopened(&engine); reopened.setQuiet(true); reopened.setAutosaveEnabled(false);
+        for (const auto &name : names) {
+            auto *action = reopened.findChild<QAction *>(name);
+            check(action && !action->isChecked(), "reopening restores hidden system shader categories");
+            if (action) action->setChecked(true);
+        }
+        const auto visibility = engine.library().systemVisibility();
+        check(visibility.generators && visibility.filters && visibility.transitions, "all categories can be shown again");
+    }
+    for (const auto &key : keys) QSettings().remove(key);
+}
+
 int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
@@ -221,13 +259,14 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool selection = false, colorAnimation = false, clockPresets = false;
+    bool selection = false, colorAnimation = false, clockPresets = false, systemIsf = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
         if (arg == QLatin1String("--selection")) selection = true;
         else if (arg == QLatin1String("--color-animation")) colorAnimation = true;
         else if (arg == QLatin1String("--clock-presets")) clockPresets = true;
+        else if (arg == QLatin1String("--system-isf")) systemIsf = true;
         else capture = arg;
     }
     if (clockPresets) {
@@ -244,6 +283,11 @@ int main(int argc, char **argv)
     auto check = [&](bool ok, const char *reason) {
         if (!ok) { ++failures; std::printf("FAIL %s: %s\n", selection ? "selection_ui" : "workspace_ui", reason); }
     };
+    if (systemIsf) {
+        systemIsfVisibilityTests(engine, check);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
     if (!selection) {
         mediaBinColumnTests(engine, check);
         nestedGroupTests(engine, check);

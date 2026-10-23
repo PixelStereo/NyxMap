@@ -108,11 +108,13 @@ void SettingsPanel::setTransitions(const QVector<IsfEntry> &transitions, const Q
 {
     QSignalBlocker b(m_transition);
     m_transition->clear();
+    m_transition->addItem(QStringLiteral("Crossfade (built in)"), QString());
     for (const IsfEntry &t : transitions) {
         m_transition->addItem(t.name, t.path);
         m_transition->setItemData(m_transition->count() - 1, t.description, Qt::ToolTipRole);
     }
-    if (m_transition->findData(current) < 0) m_transition->addItem(QStringLiteral("Crossfade (built in)"), QString());
+    if (!current.isEmpty() && m_transition->findData(current) < 0)
+        m_transition->addItem(QFileInfo(current).completeBaseName(), current);
     m_transition->setCurrentIndex(std::max(0, m_transition->findData(current)));
 }
 
@@ -161,6 +163,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
     form->addRow(note(QStringLiteral("Given to a video or a sound when it is loaded into a layer. "
                                      "Layers already loaded keep their own mode.")));
     m_transition = new QComboBox;
+    m_transition->setObjectName(QStringLiteral("snapshotTransition"));
     form->addRow(new ResetLabel(QStringLiteral("Snapshot transition"),
                                 [this] {
                                     const int k = m_transition->findText(QStringLiteral("Crossfade"));
