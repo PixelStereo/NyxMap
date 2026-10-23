@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <cmath>
 #include <cstdio>
+#include <new>
 
 int runClockGeneratorTests(Engine &e)
 {
@@ -25,6 +26,28 @@ int runClockGeneratorTests(Engine &e)
         check(got == QLatin1String(want), why);
     };
     using G = ClockGenerator;
+
+    { // Reproduce allocator reuse without relying on a platform's heap policy.
+        alignas(G) unsigned char storage[sizeof(G)];
+        Layer layer;
+        layer.type = SourceType::Text;
+        auto replace = [&](ClockKind kind) {
+            layer.clockGen.reset();
+            layer.clockGen = std::shared_ptr<G>(::new (static_cast<void *>(storage)) G(kind),
+                                               [](G *clock) { clock->~ClockGenerator(); });
+        };
+        replace(ClockKind::Stopwatch);
+        check(layer.parameter("clock/offset") && !layer.parameter("clock/duration"),
+              "Chronometer exposes its own settings before replacement");
+        replace(ClockKind::Countdown);
+        check(layer.parameter("clock/duration") && layer.parameter("clock/target") &&
+                  layer.parameter("clock/at_zero") && !layer.parameter("clock/offset"),
+              "Countdown replaces the cached parameter registry at the same address");
+        replace(ClockKind::Clock);
+        check(layer.parameter("clock/seconds") && layer.parameter("clock/zone") &&
+                  !layer.parameter("clock/duration") && !layer.parameter("clock/play"),
+              "Clock replaces the cached settings and removes the previous transport");
+    }
 
     // Formats: a countdown rounds up (it shows 00:00 at zero, not a second before), a stopwatch down
     eq(G::formatDuration(90, "mm:ss", 25, true), "01:30", "countdown 90 s as mm:ss");

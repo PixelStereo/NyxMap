@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QSet>
 #include <QTimer>
+#include <QThread>
 #include <cmath>
 
 // Each one has a name of its own (its address in OSC, its name in the presets and the snapshots): an empty one is
@@ -233,6 +234,15 @@ static bool parseMidi(const uint8_t *m, size_t n, InteractionEvent &e)
 
 void Engine::updateMidiInputs()
 {
+    // Presets can restore interactions on the cue-clock thread. Timers and the
+    // MIDI port list are owned exclusively by the Engine's QObject thread.
+    if (QThread::currentThread() != thread()) {
+        if (!m_midiUpdatePending.exchange(true)) QMetaObject::invokeMethod(this, [this] {
+            m_midiUpdatePending = false;
+            updateMidiInputs();
+        }, Qt::QueuedConnection);
+        return;
+    }
     bool wanted;
     {
         Lock lk(&m_mutex);
@@ -251,6 +261,7 @@ void Engine::updateMidiInputs()
     }
     if (!m_midiScan) {
         m_midiScan = new QTimer(this);
+        m_midiScan->setObjectName(QStringLiteral("midiInputScan"));
         m_midiScan->setInterval(2000);
         connect(m_midiScan, &QTimer::timeout, this, &Engine::updateMidiInputs);
     }
@@ -313,6 +324,11 @@ void Engine::stepInteractions(double dt)
         if (!it.enabled || it.param.isEmpty()) continue;
         InteractionRun &run = m_interactionRun[it.id];
         bool fresh = false;
+        // Stateless trigger mappings retain every edge in a batch. Continuous
+        // values and filters still advance once per frame with the full dt.
+        const Parameter *target = findParameter(it.layer, it.param);
+        const bool eventTrigger = !it.filterOn && target && target->info().type == ParamInfo::Type::Trigger;
+        unsigned rises = 0;
         if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
             const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
@@ -333,6 +349,12 @@ void Engine::stepInteractions(double dt)
             for (const InteractionEvent &e : events)
                 if (it.matches(e)) {
                     run.proc.input(it, e.value);
+                    if (eventTrigger) {
+                        const auto value = run.proc.step(it, 0);
+                        const bool above = value && *value > 0.5;
+                        if (above && !run.target.above) ++rises;
+                        run.target.above = above;
+                    }
                     run.color = e.color;
                     run.colorComponents = e.colorComponents;
                     if (e.colorComponents >= 3) { // a whole color: each channel through its own chain (no toggle)
@@ -436,8 +458,13 @@ void Engine::stepInteractions(double dt)
         }
         case ParamInfo::Type::Trigger: {
             const bool above = *out > 0.5;
-            if (above && !run.target.above) wrote = p->setValue(QVariant()); // fires each time it goes up
+            if (above && !run.target.above) ++rises;
             run.target.above = above;
+            for (unsigned edge = 0; edge < rises; ++edge) {
+                // An action may reload its source: resolve its address again for
+                // each edge rather than retaining a parameter across actions.
+                if (Parameter *action = findParameter(it.layer, it.param)) wrote |= action->setValue(QVariant());
+            }
             break;
         }
         case ParamInfo::Type::Text: break;
