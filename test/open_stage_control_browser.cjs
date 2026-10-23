@@ -21,7 +21,7 @@ async function commandSeen(address) {
     let page;
     try {
         page = await browser.newPage({viewport: {width: 1440, height: 1080}});
-        const button = label => page.locator('.button-container').filter({has: page.getByText(label, {exact: true})});
+        const button = label => page.locator('.button-container:visible').filter({has: page.getByText(label, {exact: true})});
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto('http://127.0.0.1:8080');
         await page.getByText(/^CONNECTED ·/).waitFor({timeout: 40000});
@@ -33,7 +33,12 @@ async function commandSeen(address) {
         await commandSeen('/sequence/by-id/501/go');
         await page.getByText('SNAPSHOTS', {exact: true}).first().click();
         await page.getByText('1 · Look 1', {exact: true}).waitFor();
+        assert.ok((await button('1 · Look 1').boundingBox()).height >= 60, 'Snapshot buttons remain touch-sized');
         await capture('snapshots');
+        await button('NEXT ›').click();
+        await button('25 · Look 25').click();
+        await commandSeen('/snapshot/by-id/124/recall');
+        await button('‹ PREVIOUS').click();
         await button('1 · Look 1').click();
         await commandSeen('/snapshot/by-id/100/recall');
         await page.getByText('PRESETS', {exact: true}).first().click();

@@ -49,7 +49,7 @@
         "width": "100%",
         "height": 64,
         "padding": 8,
-        "contain": false,
+        "contain": true,
         "css": ""
       },
       {
@@ -83,7 +83,7 @@
                         "width": "auto",
                         "height": 48,
                         "expand": 3,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                         "target": "127.0.0.1:1234",
                         "ignoreDefaults": true,
                         "label": "%key"
@@ -91,7 +91,7 @@
                       {
                         "type": "text",
                         "id": "sequence_running",
-                        "value": "JS{return (OSC{/sequence/running,0} ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO') + ' \u00b7 ' + OSC{/pinol/ui/background,0} + ' background'}",
+                        "value": "JS{return (OSC{/sequence/running,0,false} ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO') + ' \u00b7 ' + OSC{/pinol/ui/background,0,false} + ' background'}",
                         "width": "100%",
                         "height": 32,
                         "bypass": true,
@@ -104,7 +104,7 @@
                     "width": "100%",
                     "height": 64,
                     "padding": 8,
-                    "contain": false,
+                    "contain": true,
                     "css": ""
                   },
                   {
@@ -181,7 +181,7 @@
                             "bypass": true,
                             "wrap": true,
                             "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/previous/action,0}); return 'Pre '+Number(OSC{/sequence/cue/previous/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/previous/postwait,0}).toFixed(1)+' s';}"
+                            "value": "JS{var a=Number(OSC{/sequence/cue/previous/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/previous/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/previous/postwait,0,false}).toFixed(1)+' s';}"
                           },
                           {
                             "type": "fader",
@@ -279,7 +279,7 @@
                             "bypass": true,
                             "wrap": true,
                             "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/current/action,0}); return 'Pre '+Number(OSC{/sequence/cue/current/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/current/postwait,0}).toFixed(1)+' s';}"
+                            "value": "JS{var a=Number(OSC{/sequence/cue/current/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/current/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/current/postwait,0,false}).toFixed(1)+' s';}"
                           },
                           {
                             "type": "fader",
@@ -377,7 +377,7 @@
                             "bypass": true,
                             "wrap": true,
                             "css": "font-size:12px;font-family:monospace;",
-                            "value": "JS{var a=Number(OSC{/sequence/cue/next/action,0}); return 'Pre '+Number(OSC{/sequence/cue/next/prewait,0}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/next/postwait,0}).toFixed(1)+' s';}"
+                            "value": "JS{var a=Number(OSC{/sequence/cue/next/action,0,false}); return 'Pre '+Number(OSC{/sequence/cue/next/prewait,0,false}).toFixed(1)+' s \u00b7 Action '+(a<0?'\u221e':a.toFixed(1)+' s')+' \u00b7 Post '+Number(OSC{/sequence/cue/next/postwait,0,false}).toFixed(1)+' s';}"
                           },
                           {
                             "type": "fader",
@@ -562,7 +562,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0} && !!OSC{/sequence/back_enabled,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/back_enabled,0,false}}",
                         "wrap": true,
                         "colorWidget": "#e5ba71"
                       },
@@ -578,7 +578,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0} && !!OSC{/sequence/go_enabled,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/go_enabled,0,false}}",
                         "wrap": true,
                         "colorWidget": "#78dfb5",
                         "css": "font-size:30px;font-weight:bold;"
@@ -595,7 +595,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                         "wrap": true,
                         "colorWidget": "#e9818b"
                       },
@@ -611,7 +611,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                         "wrap": true,
                         "colorWidget": "#e9818b",
                         "doubleTap": true
@@ -621,7 +621,7 @@
                     "width": "100%",
                     "height": 88,
                     "padding": 8,
-                    "contain": false,
+                    "contain": true,
                     "css": ""
                   },
                   {
@@ -665,7 +665,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                         "wrap": true
                       },
                       {
@@ -695,7 +695,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                         "wrap": true
                       }
                     ],
@@ -703,7 +703,7 @@
                     "width": "100%",
                     "height": 64,
                     "padding": 8,
-                    "contain": false,
+                    "contain": true,
                     "css": ""
                   },
                   {
@@ -780,7 +780,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -810,7 +810,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -818,7 +818,7 @@
                 "width": "100%",
                 "height": 64,
                 "padding": 8,
-                "contain": false,
+                "contain": true,
                 "css": ""
               },
               {
@@ -832,7 +832,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}"
               }
             ],
             "contain": false
@@ -885,7 +885,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -915,7 +915,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -923,7 +923,7 @@
                 "width": "100%",
                 "height": 64,
                 "padding": 8,
-                "contain": false,
+                "contain": true,
                 "css": ""
               },
               {
@@ -937,7 +937,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}"
               }
             ],
             "contain": false
@@ -990,7 +990,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -1020,7 +1020,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0}}",
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -1028,7 +1028,7 @@
                 "width": "100%",
                 "height": 64,
                 "padding": 8,
-                "contain": false,
+                "contain": true,
                 "css": ""
               },
               {
@@ -1042,7 +1042,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": "class: pinol-flow;\n> inner {grid-auto-rows:166rem;}"
               }
             ],
             "contain": false
@@ -1138,7 +1138,7 @@
                 "width": "100%",
                 "height": 64,
                 "padding": 8,
-                "contain": false,
+                "contain": true,
                 "css": ""
               },
               {

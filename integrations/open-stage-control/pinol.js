@@ -19,7 +19,7 @@ function emit(address, value, force = false) {
 const edit = (widget, properties) => receive('/EDIT', widget, JSON.stringify(properties));
 const arg = (data, index) => data.args[index] && data.args[index].value;
 const target = {target: '127.0.0.1:1234', ignoreDefaults: true};
-const active = 'JS{return !!OSC{/pinol/ui/online,0}}';
+const active = 'JS{return !!OSC{/pinol/ui/online,0,false}}';
 
 function status(text) {
     const ready = !!(socket && socket.readyState === WebSocket.OPEN && catalog && playback && Date.now() - lastPong < 6000);
@@ -61,6 +61,7 @@ function renderLibrary(kind) {
             ]};
     });
     edit(kind + '_items', {widgets: widgets.length ? widgets : [text(kind + '_empty', 'No ' + kind + ' in this project.')]});
+    emit('/pinol/ui/online', online ? 1 : 0, true);
     if (playback) publishTimelineValues(true);
 }
 function renderCues() {
@@ -72,10 +73,11 @@ function renderCues() {
         const details = [cue.target_type, cue.name, cue.continue, cue.description].filter(Boolean).join(' · ');
         return button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
             height: 76, align: 'left',
-            colorWidget: `JS{return OSC{/sequence/cue/current/number,0} === ${number} ? '#78dfb5' : '#516078'}`,
+            colorWidget: `JS{return OSC{/sequence/cue/current/number,0,false} === ${number} ? '#78dfb5' : '#516078'}`,
             css: 'font-size:15px;text-align:left;'});
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
+    emit('/pinol/ui/online', online ? 1 : 0, true);
     if (playback) emit('/sequence/cue/current/number', playback.values['/sequence/cue/current/number'], true);
 }
 function publishCatalog(force) {
