@@ -18,8 +18,9 @@ async function commandSeen(address) {
 (async () => {
     await waitForServer();
     const browser = await chromium.launch({headless: true});
+    let page;
     try {
-        const page = await browser.newPage({viewport: {width: 1440, height: 1080}});
+        page = await browser.newPage({viewport: {width: 1440, height: 1080}});
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto('http://127.0.0.1:8080');
         await page.getByText(/^CONNECTED ·/).waitFor({timeout: 40000});
@@ -46,5 +47,8 @@ async function commandSeen(address) {
         await page.setViewportSize({width: 768, height: 1024});
         await capture('tablet');
         assert.deepEqual(errors, []);
+    } catch (error) {
+        if (page) await page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-failure.png')}).catch(() => {});
+        throw error;
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

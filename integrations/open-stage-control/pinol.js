@@ -49,7 +49,7 @@ function renderLibrary(kind) {
             return button(key, label, '/pinol/recall', [kind, entry.id], {height: 76, colorWidget: kind === 'presets' ? '#e5ba71' : '#73cbd9'});
         const base = `/pinol/timeline/${entry.id}`;
         return {type: 'panel', id: key, label: false, layout: 'vertical', height: 166, width: '100%',
-            colorBg: '#1a2330', padding: 8, widgets: [
+            colorBg: '#1a2330', contain: false, css: 'min-height:166rem!important;', padding: 8, widgets: [
                 text(key + '_name', label, {align: 'left', css: 'font-weight:600;font-size:17px;'}),
                 text(key + '_clock', 'Stopped', {address: base + '/clock', css: 'font-family:monospace;'}),
                 {type: 'fader', id: key + '_progress', address: base + '/progress', horizontal: true, compact: true,

@@ -11,7 +11,7 @@
     "colorBg": "#101722",
     "colorText": "#e5edf6",
     "padding": 12,
-    "css": "font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;",
+    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}",
     "onCreate": "send('127.0.0.1:1234', '/pinol/session/ready');",
     "widgets": [
       {
@@ -48,7 +48,9 @@
         "layout": "horizontal",
         "width": "100%",
         "height": "auto",
-        "padding": 8
+        "padding": 8,
+        "contain": false,
+        "css": "class: pinol-flow;"
       },
       {
         "type": "panel",
@@ -101,7 +103,9 @@
                     "layout": "horizontal",
                     "width": "100%",
                     "height": "auto",
-                    "padding": 8
+                    "padding": 8,
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   },
                   {
                     "type": "panel",
@@ -202,7 +206,9 @@
                         "height": "auto",
                         "padding": 8,
                         "colorBg": "#1a2330",
-                        "border": true
+                        "border": true,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       },
                       {
                         "type": "panel",
@@ -298,7 +304,9 @@
                         "height": "auto",
                         "padding": 8,
                         "colorBg": "#1a2330",
-                        "border": true
+                        "border": true,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       },
                       {
                         "type": "panel",
@@ -394,7 +402,9 @@
                         "height": "auto",
                         "padding": 8,
                         "colorBg": "#1a2330",
-                        "border": true
+                        "border": true,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       }
                     ],
                     "layout": "grid",
@@ -402,7 +412,8 @@
                     "height": "auto",
                     "padding": 8,
                     "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 270px), 1fr))",
-                    "contain": false
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   },
                   {
                     "type": "panel",
@@ -438,7 +449,9 @@
                         "layout": "vertical",
                         "width": "100%",
                         "height": "auto",
-                        "padding": 8
+                        "padding": 8,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       },
                       {
                         "type": "panel",
@@ -470,7 +483,9 @@
                         "layout": "vertical",
                         "width": "100%",
                         "height": "auto",
-                        "padding": 8
+                        "padding": 8,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       },
                       {
                         "type": "panel",
@@ -517,14 +532,18 @@
                         "layout": "vertical",
                         "width": "100%",
                         "height": "auto",
-                        "padding": 8
+                        "padding": 8,
+                        "contain": false,
+                        "css": "class: pinol-flow;"
                       }
                     ],
                     "layout": "grid",
                     "width": "100%",
                     "height": "auto",
                     "padding": 8,
-                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 220px), 1fr))"
+                    "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   },
                   {
                     "type": "panel",
@@ -601,7 +620,9 @@
                     "layout": "horizontal",
                     "width": "100%",
                     "height": "auto",
-                    "padding": 8
+                    "padding": 8,
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   },
                   {
                     "type": "text",
@@ -681,7 +702,9 @@
                     "layout": "horizontal",
                     "width": "100%",
                     "height": "auto",
-                    "padding": 8
+                    "padding": 8,
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   },
                   {
                     "type": "panel",
@@ -692,7 +715,8 @@
                     "width": "100%",
                     "height": "auto",
                     "padding": 8,
-                    "contain": false
+                    "contain": false,
+                    "css": "class: pinol-flow;"
                   }
                 ],
                 "layout": "vertical",
@@ -700,11 +724,13 @@
                 "height": "auto",
                 "padding": 8,
                 "contain": false,
-                "scroll": true
+                "scroll": true,
+                "css": "class: pinol-flow;"
               }
             ],
             "layout": "vertical",
-            "scroll": true
+            "scroll": true,
+            "contain": false
           },
           {
             "type": "tab",
@@ -791,7 +817,9 @@
                 "layout": "horizontal",
                 "width": "100%",
                 "height": "auto",
-                "padding": 8
+                "padding": 8,
+                "contain": false,
+                "css": "class: pinol-flow;"
               },
               {
                 "type": "panel",
@@ -803,9 +831,11 @@
                 "height": "auto",
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-                "contain": false
+                "contain": false,
+                "css": "class: pinol-flow;"
               }
-            ]
+            ],
+            "contain": false
           },
           {
             "type": "tab",
@@ -892,7 +922,9 @@
                 "layout": "horizontal",
                 "width": "100%",
                 "height": "auto",
-                "padding": 8
+                "padding": 8,
+                "contain": false,
+                "css": "class: pinol-flow;"
               },
               {
                 "type": "panel",
@@ -904,9 +936,11 @@
                 "height": "auto",
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-                "contain": false
+                "contain": false,
+                "css": "class: pinol-flow;"
               }
-            ]
+            ],
+            "contain": false
           },
           {
             "type": "tab",
@@ -993,7 +1027,9 @@
                 "layout": "horizontal",
                 "width": "100%",
                 "height": "auto",
-                "padding": 8
+                "padding": 8,
+                "contain": false,
+                "css": "class: pinol-flow;"
               },
               {
                 "type": "panel",
@@ -1005,9 +1041,11 @@
                 "height": "auto",
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-                "contain": false
+                "contain": false,
+                "css": "class: pinol-flow;"
               }
-            ]
+            ],
+            "contain": false
           },
           {
             "type": "tab",
@@ -1099,7 +1137,9 @@
                 "layout": "horizontal",
                 "width": "100%",
                 "height": "auto",
-                "padding": 8
+                "padding": 8,
+                "contain": false,
+                "css": "class: pinol-flow;"
               },
               {
                 "type": "text",
@@ -1131,15 +1171,18 @@
                 "wrap": true,
                 "align": "left"
               }
-            ]
+            ],
+            "contain": false
           }
         ],
-        "height": "auto",
+        "height": 100,
         "width": "100%",
         "expand": true,
         "tabsPosition": "top",
-        "scroll": true
+        "scroll": true,
+        "contain": false
       }
-    ]
+    ],
+    "contain": false
   }
 }
