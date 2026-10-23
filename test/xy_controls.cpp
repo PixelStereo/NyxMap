@@ -1,4 +1,4 @@
-#include "Engine.h"
+#include "EngineInternal.h"
 #include "Osc.h"
 #include <QJsonArray>
 #include <QTemporaryDir>
