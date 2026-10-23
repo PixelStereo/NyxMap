@@ -47,10 +47,10 @@
         ],
         "layout": "horizontal",
         "width": "100%",
-        "height": "auto",
+        "height": 64,
         "padding": 8,
         "contain": false,
-        "css": "class: pinol-flow;"
+        "css": ""
       },
       {
         "type": "panel",
@@ -102,10 +102,10 @@
                     ],
                     "layout": "horizontal",
                     "width": "100%",
-                    "height": "auto",
+                    "height": 64,
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;"
+                    "css": ""
                   },
                   {
                     "type": "panel",
@@ -619,10 +619,10 @@
                     ],
                     "layout": "horizontal",
                     "width": "100%",
-                    "height": "auto",
+                    "height": 88,
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;"
+                    "css": ""
                   },
                   {
                     "type": "text",
@@ -701,10 +701,10 @@
                     ],
                     "layout": "horizontal",
                     "width": "100%",
-                    "height": "auto",
+                    "height": 64,
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;"
+                    "css": ""
                   },
                   {
                     "type": "panel",
@@ -816,10 +816,10 @@
                 ],
                 "layout": "horizontal",
                 "width": "100%",
-                "height": "auto",
+                "height": 64,
                 "padding": 8,
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": ""
               },
               {
                 "type": "panel",
@@ -921,10 +921,10 @@
                 ],
                 "layout": "horizontal",
                 "width": "100%",
-                "height": "auto",
+                "height": 64,
                 "padding": 8,
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": ""
               },
               {
                 "type": "panel",
@@ -1026,10 +1026,10 @@
                 ],
                 "layout": "horizontal",
                 "width": "100%",
-                "height": "auto",
+                "height": 64,
                 "padding": 8,
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": ""
               },
               {
                 "type": "panel",
@@ -1136,10 +1136,10 @@
                 ],
                 "layout": "horizontal",
                 "width": "100%",
-                "height": "auto",
+                "height": 64,
                 "padding": 8,
                 "contain": false,
-                "css": "class: pinol-flow;"
+                "css": ""
               },
               {
                 "type": "text",

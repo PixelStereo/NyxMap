@@ -21,6 +21,7 @@ async function commandSeen(address) {
     let page;
     try {
         page = await browser.newPage({viewport: {width: 1440, height: 1080}});
+        const button = label => page.locator('.button-container').filter({has: page.getByText(label, {exact: true})});
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.goto('http://127.0.0.1:8080');
         await page.getByText(/^CONNECTED ·/).waitFor({timeout: 40000});
@@ -28,12 +29,12 @@ async function commandSeen(address) {
         await page.getByText('0:04.2', {exact: true}).waitFor();
         const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});
         await capture('show');
-        await page.getByText('GO ▶', {exact: true}).click();
+        await button('GO ▶').click();
         await commandSeen('/sequence/by-id/501/go');
         await page.getByText('SNAPSHOTS', {exact: true}).first().click();
         await page.getByText('1 · Look 1', {exact: true}).waitFor();
         await capture('snapshots');
-        await page.getByText('1 · Look 1', {exact: true}).click();
+        await button('1 · Look 1').click();
         await commandSeen('/snapshot/by-id/100/recall');
         await page.getByText('PRESETS', {exact: true}).first().click();
         await page.getByText('1 · Warm look', {exact: true}).waitFor();
@@ -41,7 +42,7 @@ async function commandSeen(address) {
         await page.getByText('TIMELINES', {exact: true}).first().click();
         await page.getByText('1 · Opening fade', {exact: true}).waitFor();
         await capture('timelines');
-        await page.getByText('PAUSE', {exact: true}).click();
+        await button('PAUSE').click();
         await commandSeen('/timeline/by-id/401/pause');
         await page.getByText('SHOW', {exact: true}).first().click();
         await page.setViewportSize({width: 768, height: 1024});
