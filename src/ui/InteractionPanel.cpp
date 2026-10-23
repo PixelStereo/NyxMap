@@ -139,7 +139,7 @@ QJsonObject chainJson(const Interaction &it)
 {
     QJsonObject o = it.toJson();
     for (const char *k : {"id", "name", "enabled", "source", "key", "port", "channel", "message", "number", "address",
-                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"})
+                          "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param", "xy_y"})
         o.remove(QLatin1String(k));
     return o;
 }
@@ -293,7 +293,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         const std::optional<Interaction> it = selected();
         if (!it) return;
         auto *mime = new QMimeData;
-        const QByteArray json = QJsonDocument(chainJson(*it)).toJson(QJsonDocument::Compact);
+        const QByteArray json = QJsonDocument(chainJson(m_xyAxis == 1 && !it->xyInputs.empty() ? it->xyInputs.front() : *it)).toJson(QJsonDocument::Compact);
         mime->setData(kMime, json);
         mime->setText(QString::fromUtf8(json));
         QApplication::clipboard()->setMimeData(mime);
@@ -306,7 +306,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         for (QTreeWidgetItem *item : m_list->selectedItems()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
         std::vector<Interaction> list = m_engine->interactions();
         for (Interaction &it : list)
-            if (ids.contains(it.id)) applyChain(it, chain);
+            if (ids.contains(it.id)) applyChain(m_xyAxis == 1 && !it.xyInputs.empty() ? it.xyInputs.front() : it, chain);
         commitList(list, QStringLiteral("Paste Interaction Settings"));
         rebuildSettings();
     });
@@ -410,6 +410,8 @@ QString InteractionPanel::targetLabel(quint64 layer, const QString &param) const
         const QString label = info.label.endsWith(QStringLiteral(" R")) ? info.label.chopped(2) : info.label;
         return owner + QStringLiteral(" › ") + label;
     }
+    for (const auto &point : m_engine->animatablePoints(layer))
+        if (point.path == param) return owner + QStringLiteral(" › ") + point.label;
     return owner + QStringLiteral(" › ") + param;
 }
 
@@ -536,9 +538,10 @@ void InteractionPanel::refreshLevels()
         }
     }
     const auto *value = sampled(m_shown);
-    if (m_lane) m_lane->setPlayhead(value ? value->curveInput : 0, value != nullptr);
-    if (m_inMeter) m_inMeter->setValue(value ? int(value->input * 1000) : 0);
-    if (m_outMeter) m_outMeter->setValue(value ? int(value->output * 1000) : 0);
+    const bool y = m_xyAxis == 1 && value && value->hasY;
+    if (m_lane) m_lane->setPlayhead(value ? (y ? value->yCurveInput : value->curveInput) : 0, value != nullptr);
+    if (m_inMeter) m_inMeter->setValue(value ? int((y ? value->yInput : value->input) * 1000) : 0);
+    if (m_outMeter) m_outMeter->setValue(value ? int((y ? value->yOutput : value->output) * 1000) : 0);
     if (m_copy) m_copy->setEnabled(m_shown != 0);
     if (m_paste) m_paste->setEnabled(QApplication::clipboard()->mimeData() && QApplication::clipboard()->mimeData()->hasFormat(kMime) &&
                                      !m_list->selectedItems().isEmpty());
@@ -576,22 +579,28 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
     const InteractionEvent *e = &ev;
     std::optional<Interaction> sel = selected();
     Interaction it = sel ? *sel : Interaction::made(e->source);
-    if (sel && sel->source != e->source) it.takeover = Interaction::made(e->source).takeover; // that kind's
-    it.source = e->source;
+    Interaction &input = sel && m_xyAxis == 1 && !it.xyInputs.empty() ? it.xyInputs.front() : it;
+    if (sel && input.source != e->source) input.takeover = Interaction::made(e->source).takeover; // that kind's
+    input.source = e->source;
     switch (e->source) {
-    case InteractionSource::Keyboard: it.key = e->address; break;
+    case InteractionSource::Keyboard: input.key = e->address; break;
     case InteractionSource::Midi:
-        it.midiPort = e->port;
-        it.midiChannel = e->channel;
-        it.midiMessage = e->message;
-        it.midiNumber = e->number;
+        input.midiPort = e->port;
+        input.midiChannel = e->channel;
+        input.midiMessage = e->message;
+        input.midiNumber = e->number;
         break;
     case InteractionSource::Osc:
-        it.oscAddress = e->address;
-        it.oscArgument = e->argument;
+        input.oscAddress = e->address;
+        input.oscArgument = e->argument;
         break;
     case InteractionSource::Audio:
     case InteractionSource::Internal: break;
+    }
+    if (m_xyAxis == 0 && !it.xyInputs.empty() && e->source == InteractionSource::Osc &&
+        it.xyInputs.front().source == InteractionSource::Osc && it.xyInputs.front().oscAddress.isEmpty()) {
+        it.xyInputs.front().oscAddress = e->address;
+        it.xyInputs.front().oscArgument = std::min(63, e->argument + 1);
     }
     if (sel) {
         commit(it, QStringLiteral("Learn Interaction Source"));
@@ -629,13 +638,8 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
     quint64 id = 1;
     for (const Interaction &x : list) id = std::max(id, x.id + 1);
     it.id = id;
-    it.layer = layer;
-    it.param = path;
-    ParamInfo info;
-    if (m_engine->parameterInfo(layer, path, &info) && info.isNumber()) { // its whole range
-        it.dstMin = info.min;
-        it.dstMax = info.max;
-    }
+    m_engine->configureInteractionTarget(it, layer, path);
+    m_xyAxis = 0;
     list.push_back(it);
     commitList(list, QStringLiteral("New Interaction"));
     emit showRequested();
@@ -664,6 +668,9 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
         ParamInfo info;
         if (e->parameterInfo(layer, path, &info)) params.push_back(info);
     }
+    for (const auto &point : e->animatablePoints(layer))
+        if (paths.contains(point.path) || (paths.contains(point.path + "/x") && paths.contains(point.path + "/y")))
+            params.insert(params.begin(), point);
     if (params.empty()) return;
     if (auto *panel = instance()) {
         QMenu *animate = nullptr;
@@ -708,7 +715,10 @@ void InteractionPanel::attachPreset(std::initializer_list<QWidget *> ws, const Q
     PresetEditor *pe = PresetEditor::instance();
     if (!pe || !m_shown) return;
     QStringList full;
-    for (const QString &p : paths) full << QStringLiteral("interaction/%1/%2").arg(m_shown).arg(p);
+    for (const QString &p : paths) {
+        const bool y = m_xyAxis == 1 && p != QLatin1String("name") && p != QLatin1String("target");
+        full << QStringLiteral("interaction/%1/%2%3").arg(m_shown).arg(y ? QStringLiteral("xy/y/") : QString()).arg(p);
+    }
     for (QWidget *w : ws) {
         if (!w) continue;
         pe->track(w, 0, full); // Edit mode: underlined, its name puts it in the preset or takes it out
@@ -741,6 +751,7 @@ bool InteractionPanel::eventFilter(QObject *o, QEvent *e)
 void InteractionPanel::rebuildSettings()
 {
     const std::optional<Interaction> cur = selected();
+    if (!cur || cur->id != m_shown || cur->xyInputs.empty()) m_xyAxis = 0;
     m_shown = cur ? cur->id : 0;
     m_inMeter = m_outMeter = nullptr;
     m_lane = nullptr;
@@ -755,16 +766,29 @@ void InteractionPanel::rebuildSettings()
         m_settingsLayout->addStretch();
         return;
     }
-    const Interaction it = *cur;
+    const Interaction root = *cur;
+    Interaction it = m_xyAxis == 1 ? root.xyInputs.front() : root;
+    it.id = root.id;
+    it.name = root.name;
+    it.layer = root.layer;
+    it.param = root.param;
     m_settingsTitle->setText(QStringLiteral("Settings · %1").arg(interactionSourceName(it.source)));
     const quint64 id = it.id;
     // An edit of this one: read again as it is now (another edit may have come), changed, committed
-    auto edit = [this, id](const QString &text, const std::function<void(Interaction &)> &fn, const QString &merge = QString()) {
+    auto editRoot = [this, id](const QString &text, const std::function<void(Interaction &)> &fn, const QString &merge = QString()) {
         for (Interaction x : m_engine->interactions())
             if (x.id == id) {
                 fn(x);
                 commit(x, text, merge);
             }
+    };
+
+    const int axis = m_xyAxis;
+    auto edit = [editRoot, axis](const QString &text, const std::function<void(Interaction &)> &fn, const QString &merge = QString()) {
+        editRoot(text, [axis, fn](Interaction &x) {
+            if (axis == 1 && !x.xyInputs.empty()) fn(x.xyInputs.front());
+            else fn(x);
+        }, merge.isEmpty() ? merge : merge + QStringLiteral("/axis%1").arg(axis));
     };
 
     auto *form = new QFormLayout;
@@ -783,10 +807,33 @@ void InteractionPanel::rebuildSettings()
     form->addRow(QStringLiteral("Name"), name);
     attachPreset({name}, {QStringLiteral("name")});
     attachPreset({m_settingsTitle}, {QStringLiteral("source/kind")});
-    connect(name, &QLineEdit::editingFinished, this, [edit, name] {
-        edit(QStringLiteral("Rename Interaction"), [name](Interaction &x) { x.name = name->text().trimmed(); });
+    connect(name, &QLineEdit::editingFinished, this, [editRoot, name] {
+        editRoot(QStringLiteral("Rename Interaction"), [name](Interaction &x) { x.name = name->text().trimmed(); });
     });
 
+    if (!root.xyInputs.empty()) {
+        auto *axisBox = new QComboBox;
+        axisBox->setObjectName(QStringLiteral("xyInteractionAxis"));
+        axisBox->addItems({QStringLiteral("X input and mapping"), QStringLiteral("Y input and mapping")});
+        axisBox->setCurrentIndex(m_xyAxis);
+        form->addRow(QStringLiteral("XY component"), axisBox);
+        connect(axisBox, qOverload<int>(&QComboBox::activated), this, [this](int axis) {
+            m_xyAxis = axis;
+            rebuildSettings();
+        });
+        auto *kind = new QComboBox;
+        kind->setObjectName(QStringLiteral("xyInteractionSource"));
+        for (int k = 0; k < kInteractionSourceCount; ++k) kind->addItem(interactionSourceName(InteractionSource(k)));
+        kind->setCurrentIndex(int(it.source));
+        form->addRow(QStringLiteral("Input type"), kind);
+        attachPreset({kind}, {QStringLiteral("source/kind")});
+        connect(kind, qOverload<int>(&QComboBox::activated), this, [this, edit](int k) {
+            edit(QStringLiteral("Change XY Input Type"), [k](Interaction &x) { x.source = InteractionSource(k); });
+            rebuildSettings();
+            rebuildList();
+        });
+        form->addRow(note(QStringLiteral("Each axis has its own input and mapping. For one OSC XY message, use the same address with arguments 0 and 1.")));
+    }
     // The source
     double srcLo = 0, srcHi = 1; // the bar of the source range
     switch (it.source) {
@@ -858,8 +905,10 @@ void InteractionPanel::rebuildSettings()
     }
     case InteractionSource::Osc: {
         auto *address = new QLineEdit(it.oscAddress);
+        address->setObjectName(QStringLiteral("interactionOscAddress"));
         address->setPlaceholderText(QStringLiteral("/fader/1"));
         auto *argument = new IntBox;
+        argument->setObjectName(QStringLiteral("interactionOscArgument"));
         argument->setRange(0, 63);
         argument->setValue(it.oscArgument);
         argument->setPrefix(QStringLiteral("arg "));
@@ -994,7 +1043,7 @@ void InteractionPanel::rebuildSettings()
     target->setToolTip(QStringLiteral("The value of the show it drives: a number, a switch, a choice or an action"));
     auto *targetMenu = new QMenu(target);
     target->setMenu(targetMenu);
-    connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, edit] {
+    connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, editRoot] {
         targetMenu->clear();
         auto fill = [&](QMenu *into, quint64 layer) {
             std::vector<ParamInfo> params;
@@ -1020,14 +1069,14 @@ void InteractionPanel::rebuildSettings()
                 color.animatable = false;
                 params.push_back(color);
             }
-            addParamMenu(into, params, [this, edit, layer](QMenu *m, const ParamInfo &p, const QString &text) {
-                m->addAction(text, this, [this, edit, layer, p] {
-                    edit(QStringLiteral("Change Interaction Target"), [layer, p](Interaction &x) {
-                        x.layer = layer;
-                        x.param = p.path;
-                        x.dstMin = p.isNumber() ? p.min : 0; // its whole range
-                        x.dstMax = p.isNumber() ? p.max : 1;
+            const auto points = m_engine->animatablePoints(layer);
+            params.insert(params.end(), points.begin(), points.end());
+            addParamMenu(into, params, [this, editRoot, layer](QMenu *m, const ParamInfo &p, const QString &text) {
+                m->addAction(text, this, [this, editRoot, layer, p] {
+                    editRoot(QStringLiteral("Change Interaction Target"), [this, layer, p](Interaction &x) {
+                        m_engine->configureInteractionTarget(x, layer, p.path);
                     });
+                    m_xyAxis = 0;
                     rebuildSettings();
                     rebuildList();
                 });
@@ -1155,7 +1204,7 @@ void InteractionPanel::rebuildSettings()
     // Target range: Min/Max are ordered endpoints, Invert exchanges where
     // 0 and 1 land without changing the visual positions of those endpoints.
     ParamInfo tinfo;
-    const bool numberTarget = m_engine->parameterInfo(it.layer, it.param, &tinfo) && tinfo.isNumber();
+    const bool numberTarget = m_engine->parameterInfo(it.layer, root.xyInputs.empty() ? it.param : it.param + (m_xyAxis ? "/y" : "/x"), &tinfo) && tinfo.isNumber();
     const double tLo = numberTarget ? std::min({tinfo.min, it.dstMin, it.dstMax}) : 0;
     const double tHi = numberTarget ? std::max({tinfo.max, it.dstMin, it.dstMax}) : 1;
     auto dstFields = makeRangeSliders(tLo, tHi,

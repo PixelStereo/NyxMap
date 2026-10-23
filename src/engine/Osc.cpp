@@ -127,7 +127,8 @@ QString OscNamespace::signature() const
     for (int i = 0; i < m_e->sequencer().count(); ++i)
         s += QStringLiteral("sequence:") + m_e->sequencer().sequence(i).name + '\n';
     for (const Interaction &it : m_e->interactions()) // their names, and which filter settings they have
-        s += QStringLiteral("interaction:%1:%2:%3\n").arg(it.id).arg(it.name).arg(int(it.filter));
+        s += QStringLiteral("interaction:%1:%2:%3:%4\n").arg(it.id).arg(it.name).arg(int(it.filter))
+            .arg(it.xyInputs.empty() ? -1 : int(it.xyInputs.front().filter));
     for (int i = 0; i < m_e->animationCount(); ++i) s += QStringLiteral("timeline:") + m_e->animation(i).name + '\n';
     return s;
 }
@@ -487,7 +488,7 @@ void OscNamespace::build()
             ParamInfo info;
             if (!e->parameterInfo(0, prefix + key, &info)) continue;
             const QString type = info.type == ParamInfo::Type::Bool ? QStringLiteral("T")
-                                 : info.type == ParamInfo::Type::Choice ? QStringLiteral("s")
+                                 : info.type == ParamInfo::Type::Choice || info.type == ParamInfo::Type::Text ? QStringLiteral("s")
                                                                         : QStringLiteral("f");
             OscNode &n = add(P + '/' + key, type, 3, info.name());
             n.range = {info.type == ParamInfo::Type::Choice ? vals(info.choices) : minMax(info.min, info.max)};

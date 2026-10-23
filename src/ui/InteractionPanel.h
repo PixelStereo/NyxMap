@@ -91,6 +91,7 @@ private:
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;
     quint64 m_shown = 0;        // the interaction whose settings are shown
+    int m_xyAxis = 0; // source/chain currently edited in an XY interaction
     bool m_committing = false;  // its own edit going to the engine: the settings are not made again
     bool m_filling = false;
     // Reused between meter polls; a busy engine leaves the display intact.

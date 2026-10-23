@@ -556,6 +556,11 @@ void Engine::recallPreset(int i)
         if (idx < 0 || isLocked(idx)) continue;
         auto current = layerAnims(layerId);
         const auto paths = target.drivenParams();
+        if (!target.isPoint()) for (auto &other : current) {
+            if (other.tracks.empty() || !other.tracks.front().isPoint()) continue;
+            for (auto &axis : other.tracks.front().axes)
+                if (paths.contains(axis.param)) axis.enabled = false;
+        }
         current.erase(std::remove_if(current.begin(), current.end(), [&](const Animation &other) {
             return !other.tracks.empty() && other.tracks.front().param != target.param &&
                    std::any_of(paths.begin(), paths.end(), [&](const QString &path) { return other.tracks.front().drives(path); });
@@ -719,6 +724,12 @@ QJsonArray Engine::captureRecallLayers(int snapshotIndex) const
             const auto &rgb = a.tracks.front().capturedRgb;
             if (std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }))
                 state["_undo_captured_rgb"] = QJsonArray{rgb[0], rgb[1], rgb[2]};
+            if (a.tracks.front().isPoint()) {
+                QJsonArray xy;
+                for (const auto &axis : a.tracks.front().axes)
+                    xy.append(std::isfinite(axis.captured) ? QJsonValue(axis.captured) : QJsonValue());
+                state["_undo_captured_xy"] = xy;
+            }
             animations[int(k)] = state;
         }
         if (!animations.isEmpty()) o["anims"] = animations; // Undo-only metadata, never project/snapshot JSON
@@ -763,6 +774,9 @@ void Engine::restoreRecallLayers(const QJsonArray &states)
             if (saved.contains("_undo_captured")) a.tracks.front().captured = saved.value("_undo_captured").toDouble();
             const auto rgb = saved.value("_undo_captured_rgb").toArray();
             if (rgb.size() == 3) for (int c = 0; c < 3; ++c) a.tracks.front().capturedRgb[c] = rgb[c].toDouble();
+            const auto xy = saved.value("_undo_captured_xy").toArray();
+            if (xy.size() == 2 && a.tracks.front().isPoint()) for (int c = 0; c < 2; ++c)
+                if (xy[c].isDouble()) a.tracks.front().axes[size_t(c)].captured = xy[c].toDouble();
             animations.push_back(std::move(a));
         }
         restoreLayerAnims(id, std::move(animations));
@@ -1563,7 +1577,7 @@ double Engine::snapshotDuration(quint64 id) const
 QStringList Engine::interactionKeys()
 {
     // What it is first (its source, its target: a recall that makes it again sets them before its values)
-    return {QStringLiteral("name"),          QStringLiteral("source/kind"),        QStringLiteral("source/key"),
+    QStringList keys{QStringLiteral("name"),          QStringLiteral("source/kind"),        QStringLiteral("source/key"),
             QStringLiteral("source/midi/input"), QStringLiteral("source/midi/channel"), QStringLiteral("source/midi/message"),
             QStringLiteral("source/midi/number"), QStringLiteral("source/osc/address"), QStringLiteral("source/osc/argument"),
             QStringLiteral("source/internal"), QStringLiteral("source/audio/input"), QStringLiteral("source/audio/feature"),
@@ -1573,6 +1587,10 @@ QStringList Engine::interactionKeys()
             QStringLiteral("takeover"),      QStringLiteral("filter/enable"),      QStringLiteral("filter/type"),
             QStringLiteral("filter/a"),      QStringLiteral("filter/b"),           QStringLiteral("curve/enable"),
             QStringLiteral("curve")};
+    const auto scalar = keys;
+    for (const auto &key : scalar) if (key != QLatin1String("name") && key != QLatin1String("target"))
+        keys << QStringLiteral("xy/y/") + key;
+    return keys;
 }
 
 QJsonArray Engine::captureInteractions() const

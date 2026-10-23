@@ -106,10 +106,13 @@ static QString num(double v)
 std::vector<Engine::AnimParam> animationMenuParams(Engine *engine, quint64 layer)
 {
     const auto colors = engine->animatableColors(layer);
+    const auto points = engine->animatablePoints(layer);
     std::vector<Engine::AnimParam> out;
     for (const auto &p : engine->animatableParams(layer)) {
         for (const auto &color : colors)
             if (p.path == color.path + "/r") out.push_back(color);
+        for (const auto &point : points)
+            if (p.path == point.path + "/x") out.push_back(point);
         out.push_back(p);
     }
     return out;
@@ -139,18 +142,20 @@ static bool sameKeys(const std::vector<AnimKey> &a, const std::vector<AnimKey> &
     return true;
 }
 
+static bool sameTrack(const AnimTrack &a, const AnimTrack &b)
+{
+    if (a.layer != b.layer || a.param != b.param || a.enabled != b.enabled || a.oscillator != b.oscillator || a.color != b.color ||
+        a.wave != b.wave || a.period != b.period || a.center != b.center || a.amplitude != b.amplitude ||
+        a.phase != b.phase || a.seed != b.seed || !sameKeys(a.keys, b.keys) || a.axes.size() != b.axes.size()) return false;
+    for (size_t i = 0; i < a.axes.size(); ++i) if (!sameTrack(a.axes[i], b.axes[i])) return false;
+    return true;
+}
+
 bool sameAnimation(const Animation &a, const Animation &b)
 {
     if (a.duration != b.duration || a.loop != b.loop || a.repeat != b.repeat || a.speed != b.speed ||
-        a.tracks.size() != b.tracks.size())
-        return false;
-    for (size_t k = 0; k < a.tracks.size(); ++k) {
-        const AnimTrack &x = a.tracks[k], &y = b.tracks[k];
-        if (x.layer != y.layer || x.param != y.param || x.enabled != y.enabled || x.oscillator != y.oscillator || x.color != y.color ||
-            x.wave != y.wave || x.period != y.period || x.center != y.center || x.amplitude != y.amplitude ||
-            x.phase != y.phase || x.seed != y.seed || !sameKeys(x.keys, y.keys))
-            return false;
-    }
+        a.tracks.size() != b.tracks.size()) return false;
+    for (size_t i = 0; i < a.tracks.size(); ++i) if (!sameTrack(a.tracks[i], b.tracks[i])) return false;
     return true;
 }
 
@@ -1046,6 +1051,9 @@ TrackRow::TrackRow(AnimEditor *editor, int index) : m_ed(editor), m_e(editor->en
 
 AnimTrack &TrackRow::track() { return m_ed->m_edit.tracks[size_t(m_i)]; }
 const AnimTrack &TrackRow::track() const { return m_ed->m_edit.tracks[size_t(m_i)]; }
+AnimTrack &TrackRow::editedTrack() { return track().isPoint() ? track().axes[size_t(m_axisIndex)] : track(); }
+const AnimTrack &TrackRow::editedTrack() const { return track().isPoint() ? track().axes[size_t(m_axisIndex)] : track(); }
+
 
 void TrackRow::build()
 {
@@ -1065,7 +1073,29 @@ void TrackRow::build()
     g->setHorizontalSpacing(4);
     g->setVerticalSpacing(3);
     buildHeader(g);
-    const int r = g->count() ? g->rowCount() : 0;
+    int r = g->count() ? g->rowCount() : 0;
+    m_axisIndex = m_ed->laneView(m_i).axis;
+    m_axis = new QComboBox;
+    m_axis->setObjectName(QStringLiteral("xyAnimationAxis"));
+    m_axis->addItems({QStringLiteral("X"), QStringLiteral("Y")});
+    m_axis->setToolTip(QStringLiteral("One XY track, two independent curves or waves sharing the same transport"));
+    m_axisOn = new QCheckBox(QStringLiteral("Drive axis"));
+    m_axisOn->setObjectName(QStringLiteral("xyAnimationAxisEnabled"));
+    g->addWidget(m_axis, r, 0, 1, 2);
+    g->addWidget(m_axisOn, r, 2, 1, 2);
+    ++r;
+    connect(m_axis, qOverload<int>(&QComboBox::activated), this, [this](int axis) {
+        m_axisIndex = axis;
+        m_ed->laneView(m_i) = {};
+        m_ed->laneView(m_i).axis = axis;
+        fill();
+        m_ed->poll();
+    });
+    connect(m_axisOn, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_filling || !track().isPoint()) return;
+        editedTrack().enabled = on;
+        changed();
+    });
 
     m_kind = new QComboBox;
     m_kind->addItem(QStringLiteral("Keys"));
@@ -1087,7 +1117,8 @@ void TrackRow::build()
     m_period = numberBox(0.01, 36000, 2, 0.1, QStringLiteral(" s"));
     m_period->setToolTip(QStringLiteral("Seconds for one wave"));
     m_phase = numberBox(0, 1, 2, 0.05);
-    m_phase->setToolTip(QStringLiteral("Where the wave starts (0..1 of a period)"));
+    m_phase->setObjectName(QStringLiteral("animationPhase"));
+    m_phase->setToolTip(QStringLiteral("Phase in cycles (0..1). For XY: Y phase 0.25 relative to X 0 creates a quarter-cycle offset."));
     m_center = numberBox(-1e6, 1e6, 3, 0.01);
     m_center->setToolTip(QStringLiteral("The value the wave goes around"));
     m_amp = numberBox(-1e6, 1e6, 3, 0.01);
@@ -1100,7 +1131,7 @@ void TrackRow::build()
     // Their resets: a period of a second, no phase, the way a wave goes around this number (Engine::waveAround)
     auto around = [this](bool center) {
         double c = 0, a = 0;
-        m_e->waveAround(track().layer, track().param, &c, &a);
+        m_e->waveAround(editedTrack().layer, editedTrack().param, &c, &a);
         (center ? m_center : m_amp)->setValue(center ? c : a);
     };
     og->addWidget(small(QStringLiteral("Period"), [this] { m_period->setValue(AnimTrack().period); }), 0, 0);
@@ -1126,11 +1157,11 @@ void TrackRow::build()
     m_startCurrent->setToolTip(QStringLiteral("Start from the current value: capture the parameter when playback starts, instead of using a fixed first key"));
     g->addWidget(m_startCurrent, r + 2, 0, 1, 4);
     connect(m_startCurrent, &QPushButton::clicked, this, [this](bool on) {
-        if (track().oscillator || track().keys.empty()) return;
-        auto &key = track().keys.front();
+        if (editedTrack().oscillator || editedTrack().keys.empty()) return;
+        auto &key = editedTrack().keys.front();
         key.isCurrentValue = on;
         if (on) {
-            if (track().color) m_e->animColorValue(track().layer, track().param, &key.rgb);
+            if (editedTrack().color) m_e->animColorValue(editedTrack().layer, editedTrack().param, &key.rgb);
             else key.v = currentValue();
         }
         updateStartMode();
@@ -1146,39 +1177,39 @@ void TrackRow::build()
     m_colorLane = new ColorLane;
     m_colorLane->setCurrentColor([this] {
         std::array<double, 3> rgb{1, 1, 1};
-        m_e->animColorValue(track().layer, track().param, &rgb);
+        m_e->animColorValue(editedTrack().layer, editedTrack().param, &rgb);
         return rgb;
     });
     box->addWidget(m_colorLane, 1);
     connect(m_colorLane, &ColorLane::edited, this, [this](const AnimTrack &t, int gesture) {
-        track().keys = t.keys;
+        editedTrack().keys = t.keys;
         updateStartMode();
-        changed(false, gesture ? QStringLiteral("lane%1").arg(gesture) : QString());
+        changed(false, gesture ? QStringLiteral("lane%1/axis%2").arg(gesture).arg(m_axisIndex) : QString());
     });
     connect(m_colorLane, &ColorLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_colorLane, &ColorLane::panTime, m_ed, &AnimEditor::panTime);
 
     connect(m_kind, qOverload<int>(&QComboBox::activated), this, [this](int k) {
         const bool osc = k == 1;
-        if (osc == track().oscillator) return;
-        track().oscillator = osc;
+        if (osc == editedTrack().oscillator) return;
+        editedTrack().oscillator = osc;
         fill();
         changed();
     });
     connect(m_wave, qOverload<int>(&QComboBox::activated), this, [this](int k) {
-        track().wave = AnimWave(k);
+        editedTrack().wave = AnimWave(k);
         fill();
         changed();
     });
     connect(m_reseed, &QPushButton::clicked, this, [this] {
-        track().seed = QRandomGenerator::global()->generate() | 1u;
+        editedTrack().seed = QRandomGenerator::global()->generate() | 1u;
         changed();
     });
     auto value = [this](NumberBox *b, double AnimTrack::*field, const char *name) {
         connect(b, &QDoubleSpinBox::valueChanged, this, [this, field, name](double v) {
             if (m_filling) return;
-            track().*field = v;
-            changed(true, QStringLiteral("osc%1/%2").arg(m_i).arg(QLatin1String(name))); // the arrows: one step
+            editedTrack().*field = v;
+            changed(true, QStringLiteral("osc%1/%2/axis%3").arg(m_i).arg(QLatin1String(name)).arg(m_axisIndex)); // the arrows: one step
         });
     };
     value(m_period, &AnimTrack::period, "period");
@@ -1186,9 +1217,9 @@ void TrackRow::build()
     value(m_center, &AnimTrack::center, "center");
     value(m_amp, &AnimTrack::amplitude, "amplitude");
     connect(m_lane, &CurveLane::edited, this, [this](const AnimTrack &t, int gesture) {
-        track().keys = t.keys;
+        editedTrack().keys = t.keys;
         updateStartMode();
-        changed(false, gesture ? QStringLiteral("lane%1").arg(gesture) : QString());
+        changed(false, gesture ? QStringLiteral("lane%1/axis%2").arg(gesture).arg(m_axisIndex) : QString());
     });
     connect(m_lane, &CurveLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_lane, &CurveLane::panTime, m_ed, &AnimEditor::panTime);
@@ -1214,7 +1245,11 @@ void TrackRow::build()
 void TrackRow::fill()
 {
     m_filling = true;
-    const AnimTrack &t = track();
+    const AnimTrack &t = editedTrack();
+    m_axis->setVisible(track().isPoint());
+    m_axisOn->setVisible(track().isPoint());
+    m_axis->setCurrentIndex(m_axisIndex);
+    m_axisOn->setChecked(t.enabled);
     m_kind->setVisible(!t.color);
     m_lane->setVisible(!t.color);
     m_colorLane->setVisible(t.color);
@@ -1234,8 +1269,8 @@ void TrackRow::fill()
 
 void TrackRow::updateStartMode()
 {
-    const bool current = startsFromCurrent(track());
-    m_startCurrent->setVisible(!track().oscillator && !track().keys.empty());
+    const bool current = startsFromCurrent(editedTrack());
+    m_startCurrent->setVisible(!editedTrack().oscillator && !editedTrack().keys.empty());
     m_startCurrent->setChecked(current);
     m_startCurrent->setText(current ? QStringLiteral("↗ CURRENT VALUE") : QStringLiteral("Start: first key"));
     m_startCurrent->setAccessibleName(current ? QStringLiteral("Start from current value enabled") : QStringLiteral("Start from current value disabled"));
@@ -1244,25 +1279,26 @@ void TrackRow::updateStartMode()
 
 void TrackRow::setPlayhead(double pos, bool shown) { m_lane->setPlayhead(pos, shown); m_colorLane->setPlayhead(pos, shown); }
 
-void TrackRow::setLive(double captured, const std::array<double, 3> &capturedRgb, bool running)
+void TrackRow::setLive(double captured, const std::array<double, 3> &capturedRgb, const std::array<double, 2> &capturedXy, bool running)
 {
-    if (track().color) {
+    if (track().isPoint()) captured = capturedXy[size_t(m_axisIndex)];
+    if (editedTrack().color) {
         auto rgb = capturedRgb;
-        if (!running) m_e->animColorValue(track().layer, track().param, &rgb);
-        else if (!std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }) && !track().keys.empty())
-            rgb = track().keys.front().rgb; // enabled mid-play: the engine uses this placeholder until the next start
+        if (!running) m_e->animColorValue(editedTrack().layer, editedTrack().param, &rgb);
+        else if (!std::all_of(rgb.begin(), rgb.end(), [](double v) { return std::isfinite(v); }) && !editedTrack().keys.empty())
+            rgb = editedTrack().keys.front().rgb; // enabled mid-play: the engine uses this placeholder until the next start
         m_colorLane->setLive(rgb);
     } else if (!m_lane->track().keys.empty() && m_lane->track().keys.front().isCurrentValue)
-        m_lane->setLive(running ? (std::isfinite(captured) ? captured : track().keys.front().v) : currentValue());
+        m_lane->setLive(running ? (std::isfinite(captured) ? captured : editedTrack().keys.front().v) : currentValue());
 }
 
 std::pair<double, double> TrackRow::fullRange() const { return {m_lane->fullLo(), m_lane->fullHi()}; }
 
-std::pair<double, double> TrackRow::range() const { return m_ed->rangeOf(track()); }
+std::pair<double, double> TrackRow::range() const { return m_ed->rangeOf(editedTrack()); }
 
 double TrackRow::currentValue() const
 {
-    const AnimTrack &t = track();
+    const AnimTrack &t = editedTrack();
     double v = 0;
     if (!m_e->animParamValue(t.layer, t.param, &v)) v = range().first;
     return v;
@@ -1271,8 +1307,8 @@ double TrackRow::currentValue() const
 void TrackRow::updateLane()
 {
     const auto [lo, hi] = range();
-    m_lane->setTrack(track(), m_ed->m_edit.duration, lo, hi);
-    m_colorLane->setTrack(track(), m_ed->m_edit.duration);
+    m_lane->setTrack(editedTrack(), m_ed->m_edit.duration, lo, hi);
+    m_colorLane->setTrack(editedTrack(), m_ed->m_edit.duration);
     applyView();
 }
 
@@ -1505,8 +1541,10 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         if (m_filling) return;
         const bool whole = m_t0 <= 1e-9 && m_t1 >= m_edit.duration - 1e-9; // the whole stays shown
         m_edit.duration = d;
-        for (AnimTrack &t : m_edit.tracks)
+        for (AnimTrack &t : m_edit.tracks) {
+            for (auto &axis : t.axes) for (auto &key : axis.keys) key.t = std::min(key.t, d);
             for (AnimKey &k : t.keys) k.t = std::min(k.t, d); // nothing beyond the end
+        }
         if (whole) m_t0 = 0, m_t1 = d;
         commit(QStringLiteral("Animation Duration"), QStringLiteral("duration"));
         m_ruler->setDuration(d);
@@ -1648,7 +1686,8 @@ void AnimEditor::poll()
     for (size_t k = 0; k < m_rows.size(); ++k) {
         m_rows[k]->setPlayhead(pos, shown);
         m_rows[k]->setLive(k < a.captured.size() ? a.captured[k] : std::numeric_limits<double>::quiet_NaN(),
-                          k < a.capturedRgb.size() ? a.capturedRgb[k] : AnimTrack().capturedRgb, shown);
+                          k < a.capturedRgb.size() ? a.capturedRgb[k] : AnimTrack().capturedRgb,
+                          k < a.capturedXy.size() ? a.capturedXy[k] : std::array<double, 2>{NAN, NAN}, shown);
     }
     const double d = std::max(0.05, a.duration);
     if (!m_position->isSliderDown()) {
@@ -1748,6 +1787,10 @@ void AnimEditor::fitView()
     double a = d, b = 0;
     bool whole = false;
     for (const AnimTrack &t : m_edit.tracks) {
+        for (const auto &axis : t.axes) {
+            if (axis.oscillator) whole = true;
+            else if (!axis.keys.empty()) a = std::min(a, axis.keys.front().t), b = std::max(b, axis.keys.back().t);
+        }
         if (t.oscillator) whole = true;
         else if (!t.keys.empty()) a = std::min(a, t.keys.front().t), b = std::max(b, t.keys.back().t);
     }

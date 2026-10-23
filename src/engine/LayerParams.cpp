@@ -111,7 +111,7 @@ const std::vector<Parameter *> &Layer::parameters()
                     touch();
                 })
                 .limits(-1000, 1000)
-                .step(0.1);
+                .step(0.1).pointComponent(axis);
         }
         for (int axis = 0; axis < 2; ++axis) {
             const bool x = axis == 0;
@@ -122,7 +122,7 @@ const std::vector<Parameter *> &Layer::parameters()
                     (x ? m->position.rx() : m->position.ry()) = v / (x ? C().width() : C().height());
                     touch();
                 })
-                .step(1);
+                .step(1).pointComponent(axis);
         }
         for (int axis = 0; axis < 2; ++axis) {
             const bool x = axis == 0;
@@ -142,7 +142,7 @@ const std::vector<Parameter *> &Layer::parameters()
                 num(x ? "scale/x" : "scale/y", x ? "Spatial › Scale X (%)" : "Spatial › Scale Y (%)", 0.1, 400, 100.0,
                     [get] { return get() * 100.0; }, [put](double v) { put(v / 100.0); })
                     .limits(0.1, 2000)
-                    .step(0.1);
+                    .step(0.1).pointComponent(axis);
         }
         if (!isViewport) { // a viewport is a rectangle: no pins, no mesh
             static const char *const kCorners[] = {"top_left", "top_right", "bottom_right", "bottom_left"};
@@ -158,7 +158,7 @@ const std::vector<Parameter *> &Layer::parameters()
                             touch();
                         })
                         .limits(-1000, 1000)
-                        .step(0.01);
+                        .step(0.01).pointComponent(axis);
                 }
         }
         // ROI: the part of the source used (normalized, origin top left); its sides never cross

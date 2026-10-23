@@ -179,6 +179,8 @@ QString label(Engine *e, quint64 layer, const QString &param)
 {
     for (const auto &p : e->animatableColors(layer))
         if (p.path == param) return p.label;
+    for (const auto &p : e->animatablePoints(layer))
+        if (p.path == param) return p.label;
     for (const Engine::AnimParam &p : e->animatableParams(layer))
         if (p.path == param) return p.label;
     return param;
@@ -204,12 +206,21 @@ void animate(Engine *e, QUndoStack *undo, quint64 layer, const QString &param, i
     // One local driver per RGB channel: choosing a color replaces its separate R/G/B animations,
     // and explicitly animating one RGB channel replaces the grouped color. Alpha remains independent.
     const auto &target = created.tracks.front();
+    bool splitPoint = false;
+    if (!target.isPoint()) for (auto &animation : after) {
+        if (animation.tracks.empty() || !animation.tracks.front().isPoint()) continue;
+        for (auto &axis : animation.tracks.front().axes) if (axis.param == target.param && axis.enabled) {
+            axis.enabled = false;
+            splitPoint = true;
+        }
+    }
     after.erase(std::remove_if(after.begin(), after.end(), [&](const Animation &a) {
         if (a.tracks.empty()) return false;
         const auto &t = a.tracks.front();
-        return target.color ? target.drives(t.param) : t.color && t.drives(target.param);
+        const auto driven = target.drivenParams();
+        return std::any_of(driven.begin(), driven.end(), [&](const auto &p) { return t.drives(p); });
     }), after.end());
-    if (after.size() == before.size()) {
+    if (!splitPoint && after.size() == before.size()) {
         setAnim(e, undo, layer, param, std::nullopt, created, text);
         return;
     }
@@ -303,6 +314,7 @@ AnimateMenu::AnimateMenu(Engine *e, QUndoStack *undo, quint64 layer, std::functi
     : QObject(parent), m_e(e), m_undo(undo), m_layer(layer), m_edit(std::move(edit))
 {
     m_colors = e->animatableColors(layer);
+    m_points = e->animatablePoints(layer);
     for (const Engine::AnimParam &p : e->animatableParams(layer)) m_animatable << p.path;
     for (const Animation &a : e->layerAnims(layer))
         if (!a.tracks.empty()) m_animated << a.tracks.front().param;
@@ -324,9 +336,17 @@ void AnimateMenu::attach(QWidget *w, const QStringList &paths)
             break;
         }
     }
+    if (colorPath.isEmpty()) for (const auto &point : m_points)
+        if (paths.contains(point.path) || (paths.contains(point.path + "/x") && paths.contains(point.path + "/y"))) {
+            colorPath = point.path;
+            break;
+        }
     w->setProperty("valuePaths", paths);
     w->setProperty("animPaths", offered);
-    w->setProperty("animColorPath", colorPath);
+    w->setProperty("animGroupPath", colorPath);
+    const bool rgb = std::any_of(m_colors.begin(), m_colors.end(), [&](const auto &c) { return c.path == colorPath; });
+    w->setProperty("animColorPath", rgb ? colorPath : QString());
+    w->setProperty("animPointPath", rgb ? QString() : colorPath);
     w->installEventFilter(this);
     for (QWidget *c : w->findChildren<QWidget *>()) c->installEventFilter(this);
     auto *label = qobject_cast<QLabel *>(w);
@@ -354,7 +374,7 @@ bool AnimateMenu::eventFilter(QObject *o, QEvent *e)
     while (w && !w->property("valuePaths").isValid()) w = w->parentWidget();
     if (!w || !w->isEnabled()) return false;
     const QStringList paths = w->property("animPaths").toStringList(), values = w->property("valuePaths").toStringList();
-    const QString color = w->property("animColorPath").toString();
+    const QString color = w->property("animGroupPath").toString();
     // Shown without waiting here (no event loop inside this event): the menu goes with the widget, should the
     // inspector be rebuilt meanwhile
     auto *menu = new QMenu(w);
@@ -499,11 +519,14 @@ public:
         m_filling = true;
         m_on->setChecked(t.enabled);
         m_filling = false;
-        const QString what = t.color ? QStringLiteral("Color Keys · %1 s").arg(a.duration, 0, 'g', 3)
+        const QString what = t.isPoint() ? QStringLiteral("XY · %1 s · independent axes").arg(a.duration, 0, 'g', 3)
+                            : t.color ? QStringLiteral("Color Keys · %1 s").arg(a.duration, 0, 'g', 3)
                             : t.oscillator ? QStringLiteral("%1 · %2 s").arg(animWaveName(t.wave)).arg(t.period, 0, 'g', 3)
                                           : QStringLiteral("Keys · %1 s").arg(a.duration, 0, 'g', 3);
         const bool playing = a.state == AnimState::Playing && t.enabled;
-        const QString current = !t.oscillator && !t.keys.empty() && t.keys.front().isCurrentValue ?
+        const bool currentStart = (!t.oscillator && !t.keys.empty() && t.keys.front().isCurrentValue) ||
+            std::any_of(t.axes.begin(), t.axes.end(), [](const auto &axis) { return !axis.oscillator && !axis.keys.empty() && axis.keys.front().isCurrentValue; });
+        const QString current = currentStart ?
             QStringLiteral(" <span style='background-color:#f6c453; color:#19191d; font-weight:bold'> ↗ CURRENT </span>") : QString();
         m_summary->setText(QStringLiteral("%1%2 <span style='color:%3'>●</span>").arg(what, current, playing ? kPlaying.name() : QStringLiteral("#55555c")));
         m_summary->setToolTip(playing ? QStringLiteral("Playing") : QStringLiteral("Not playing"));

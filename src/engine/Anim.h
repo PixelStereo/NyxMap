@@ -60,13 +60,22 @@ struct AnimTrack {
     std::array<double, 3> capturedRgb{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
                                       std::numeric_limits<double>::quiet_NaN()};
     bool color = false; // drives param/r, param/g, param/b together; alpha is left alone
+    // A typed XY track owns two scalar curves/waves and one transport. Children
+    // are always scalar, with canonical /x and /y targets; no nested groups.
+    std::vector<AnimTrack> axes;
+    bool isPoint() const { return axes.size() == 2; }
     std::array<double, 3> keyColor(size_t k) const;
     std::array<double, 3> colorAt(double position) const;
     QStringList drivenParams() const
     {
+        if (isPoint()) {
+            QStringList paths;
+            for (int c = 0; c < 2; ++c) if (axes[size_t(c)].enabled) paths << param + (c ? "/y" : "/x");
+            return paths;
+        }
         return color ? QStringList{param + "/r", param + "/g", param + "/b"} : QStringList{param};
     }
-    bool drives(const QString &path) const { return path == param || (color && drivenParams().contains(path)); }
+    bool drives(const QString &path) const { return path == param || ((color || isPoint()) && drivenParams().contains(path)); }
 };
 
 struct Animation {

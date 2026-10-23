@@ -75,6 +75,7 @@ private:
     std::function<void(const QString &)> m_edit;
     QStringList m_animatable, m_animated;
     std::vector<Engine::AnimParam> m_colors;
+    std::vector<Engine::AnimParam> m_points;
 };
 
 // The Anim tab: every animation of the layer, as cards. "+ Animate" animates another number; the pinned cards stay at
