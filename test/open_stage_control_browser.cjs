@@ -33,6 +33,12 @@ async function commandSeen(address) {
                 canvas.getContext('2d').getImageData(Math.floor(canvas.width * .2), Math.floor(canvas.height * .5), 1, 1).data[3] > 0;
         }, null, {timeout: 10000});
         await page.getByText('0:04.2', {exact: true}).waitFor();
+        await page.waitForFunction(() => {
+            const c = document.querySelector('.pinol-phase-meter canvas');
+            if (!c || c.width < 10 || c.height < 1) return false;
+            const alpha = x => c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * .5), 1, 1).data[3];
+            return alpha(.2) > alpha(.8);
+        }, null, {timeout: 10000});
         const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});
         const cards = await page.locator('.pinol-cue').all();
         assert.equal(cards.length, 3);

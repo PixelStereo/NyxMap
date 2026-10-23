@@ -17,8 +17,8 @@ function fixture(port = 0) {
             text: cue.text, description: cue.description, phase: role === 'current' ? 'action' : role === 'previous' ? 'done' : '',
             elapsed_text: role === 'current' ? '0:04.2' : '0:00.0', remaining_text: role === 'current' ? '0:07.8' : '',
             prewait: 0, action: role === 'current' ? 12 : 0, postwait: 0,
-            progress: role === 'current' ? .35 : role === 'previous' ? 1 : 0, phase_prewait: 0, action: role === 'current' ? 12 : 0, postwait: 0,
-            progress: role === 'current' ? .35 : role === 'previous' ? 1 : 0, continue: cue.continue})) values[base + '/' + key] = value;
+            progress: role === 'current' ? .35 : role === 'previous' ? 1 : 0,
+            phase_progress: role === 'current' ? .35 : role === 'previous' ? 1 : 0, continue: cue.continue})) values[base + '/' + key] = value;
     }
     const state = {version: 1, values, timelines: [{id: '401', state: 'playing', position: 4.2, duration: 12, elapsed: 4.2, remaining: 7.8, progress: .35, pass: 1, speed: 1}], sequences: [{id: '501', active: true}]};
     const commands = [];

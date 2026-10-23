@@ -719,7 +719,8 @@
                                     "alphaFillOn": 0.6,
                                     "padding": 0,
                                     "lineWidth": 0,
-                                    "alphaFillOff": 0.08
+                                    "alphaFillOff": 0.08,
+                                    "css": "class: pinol-phase-meter;"
                                   },
                                   {
                                     "type": "text",
