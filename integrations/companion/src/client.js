@@ -1,7 +1,8 @@
 const {EventEmitter} = require('node:events');
 const http = require('node:http');
 const WebSocket = require('ws');
-const osc = require('osc');
+// Only the packet codec is needed; do not bundle OSC's optional serial/UDP transports.
+const osc = require('osc/src/osc');
 
 // One connection for commands and feedback. Offline presses are never queued.
 class PinolClient extends EventEmitter {
