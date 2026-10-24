@@ -128,8 +128,6 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         if (['T', 'F'].includes(node.TYPE)) return {...common, type: 'switch', layout: 'horizontal', values: {OFF: 0, ON: 1}, colorWidget: '#4cd964'};
         if (node.TYPE === 'N') return button(key, 'TRIGGER', '/pinol/layer/write', [selected, properties.preArgs[1]], {interaction: properties.interaction});
         if (node.TYPE === 's') return {...common, type: 'textarea', default: ''};
-        // The 1.31 input commits through its canvas focus handler. With noCanvas
-        // the native input never marks itself focused, so Enter/blur do not send.
         return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : .001, asYouType: false};
     }
     function hint(node, pair) {
@@ -184,8 +182,12 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         subscriptions(paths);
         emit('/pinol/layer/page', list.length ? `${page * PAGE + 1}–${Math.min((page + 1) * PAGE, list.length)} / ${list.length}` : 'EMPTY', true);
         emit('/pinol/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`, true);
-        for (const [key, node] of bindings) publish(key, node);
+        // Newly created OSC{} receivers start with their defaults. Replay every
+        // interaction flag after /EDIT, before values, even if it did not change.
         emit('/pinol/layer/ready', ready ? 1 : 0, true);
+        emit('/pinol/layer/locked', locked ? 1 : 0, true);
+        emit('/pinol/ui/online', isOnline() ? 1 : 0, true);
+        for (const [key, node] of bindings) publish(key, node);
     }
     function limits(range) {
         return {min: Number.isFinite(range?.MIN) ? range.MIN : 0, max: Number.isFinite(range?.MAX) ? range.MAX : 1};
