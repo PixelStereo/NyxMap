@@ -1,25 +1,30 @@
 # Open Stage Control · connection help
 
 Loading `pinol.json` displays the desk. Connecting it to Pinol also requires
-`pinol.js` as the **custom-module**, with its dependencies installed beside it.
+`pinol.js` as the **custom-module**. Both files and their portable dependencies
+are supplied in the repository: **no npm or separate Node.js installation needed**.
 
 ## Recommended setup
 
 1. Install [Open Stage Control 1.31.x](https://openstagecontrol.ammd.net/).
-2. Download **Pinol-OpenStageControl** from a successful
-   [controller workflow](https://github.com/PixelStereo/Pinol/actions/workflows/open-stage-control.yml).
-   Extract the artifact and the enclosed `Pinol-OpenStageControl.zip` completely.
-   Keep this folder together; copying only the JSON and JavaScript files is insufficient:
+2. If you already cloned Pinol, run `git pull` in **your own repository**, then
+   open `integrations/open-stage-control`. Use this folder directly.
+   Without Git, choose **Code → Download ZIP** on the
+   [Pinol repository](https://github.com/PixelStereo/Pinol), extract it and open
+   `integrations/open-stage-control`.
+
+   You can also download `Pinol-OpenStageControl.zip` from **Assets** on the
+   [latest release page](https://github.com/PixelStereo/Pinol/releases/latest).
+   Older releases may not include this ZIP; the repository folder works directly.
+   Keep the ready-to-load files together:
 
    ```text
-   Pinol-OpenStageControl/
+   open-stage-control/             # or Pinol-OpenStageControl/ from a release
      pinol.json
      pinol.js
      pinol-layers.cjs
-     node_modules/
-       ws/
-       osc/
-       …
+     pinol-dependencies.cjs
+     pinol-dependencies.LICENSE.txt
    ```
 
 3. Start Pinol. In **Settings → OSC**, enable **Control by OSC and publish the
@@ -29,15 +34,15 @@ Loading `pinol.json` displays the desk. Connecting it to Pinol also requires
 
    | Launcher option | File from the extracted folder |
    | :--- | :--- |
-   | **load** | `/path/to/Pinol-OpenStageControl/pinol.json` |
-   | **custom-module** | `/path/to/Pinol-OpenStageControl/pinol.js` |
+   | **load** | `/your/Pinol/integrations/open-stage-control/pinol.json` |
+   | **custom-module** | `/your/Pinol/integrations/open-stage-control/pinol.js` |
 
 5. Start the server with the triangle button. On the same computer, the desk
    should show **CONNECTED · 127.0.0.1:5678** and the open project's cue list.
    The **CONNECT** page changes the Pinol host and OSCQuery port; it cannot load
    a missing custom module.
 
-The downloaded pack needs no `npm install`. Commands and feedback share the
+For a release ZIP, use the same filenames in its extracted folder. Commands and feedback share the
 OSCQuery WebSocket connection; no UDP feedback target is needed for this desk.
 
 ## Computers and ports
@@ -77,7 +82,8 @@ add/remove layers and FX.
 | Message or symptom | Fix |
 | :--- | :--- |
 | **Load pinol.js as the custom module** | Set **custom-module** to `pinol.js`, restart the server, and check the launcher log for module errors. |
-| **Cannot find module 'ws'** or **'osc'** | Restore the complete pack, including `node_modules` beside `pinol.js`, or install the source dependencies below. |
+| **Cannot find module 'ws'** or **'osc'** | You are loading an older module. Run `git pull`, then point both launcher fields to the current repository folder. Current files include their runtime dependencies. |
+| **Cannot find module …pinol-dependencies.cjs** | Restore the complete current folder, including the dependency bundle beside `pinol.js`. |
 | **Cannot find module …pinol-layers.cjs** | Extract the complete current pack; keep this helper next to `pinol.js`. |
 | **Update Pinol to use the layer remote** | Update Pinol to a build publishing `layers` in `/show/catalog`. Other remote pages remain usable. |
 | **Could not open session file**, **Unexpected token**, or **not valid JSON** | **load** must point to `pinol.json`. JavaScript belongs in **custom-module**. |
@@ -93,18 +99,13 @@ these read-only URLs on the controller computer, adjusting the host and port:
 If both work but the desk remains offline, inspect the Open Stage Control
 launcher log and the **custom-module** path first.
 
-## Using a source checkout
+## Updates
 
-The repository does not include `node_modules`. Install the dependencies once
-inside the controller folder, using Node.js/npm:
-
-```sh
-cd /path/to/Pinol/integrations/open-stage-control
-npm install --ignore-scripts --omit=optional
-```
-
-Then set **load** and **custom-module** to that folder's JSON and JavaScript
-files. Repeat dependency installation if their package requirements change.
+Run `git pull` in your Pinol repository, or extract a new release ZIP. Stop and
+restart the Open Stage Control server to reload the updated module and session.
+Keep **load** and **custom-module** pointed at files from the same version.
+Dependency rebuilding is only for contributors; see
+[maintainer instructions](../integrations/open-stage-control/README.md#maintaining-the-dependency-bundle).
 
 See [desk operation](../integrations/open-stage-control/README.md#operating-rules)
 and the [OSC API](osc.md) for commands and feedback.

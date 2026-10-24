@@ -61,3 +61,12 @@ See `licenses/touchengine.txt` for the full Shared Use License. Pinol is an inde
 not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
 Commercial or Pro licence. Pinol neither installs nor activates that licence. Builders must explicitly opt in with
 `PINOL_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
+
+**Open Stage Control remote.** The ready-to-load integration includes pure
+JavaScript dependencies in `integrations/open-stage-control/pinol-dependencies.cjs`:
+[ws](https://github.com/websockets/ws) (MIT),
+[osc.js](https://github.com/colinbdclark/osc.js) (MIT option) and
+[long.js](https://github.com/dcodeIO/long.js) (Apache-2.0).
+Their versions and full license texts are preserved beside the bundle in
+`pinol-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
+GPL-3.0 application, installed by the user; it is not included in the remote ZIP.

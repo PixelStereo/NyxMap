@@ -1,7 +1,6 @@
-// Open Stage Control 1.x custom module. Uses ws/osc from the controller pack.
+// Open Stage Control 1.x custom module. Runtime dependencies ship in this folder.
 // Pinol state remains authoritative; feedback never replays a show command.
-const WebSocket = nativeRequire('ws');
-const osc = nativeRequire('osc');
+const {WebSocket, osc} = require('./pinol-dependencies.cjs');
 const http = nativeRequire('http');
 const {Buffer} = nativeRequire('buffer');
 const createLayerDesk = require('./pinol-layers.cjs');

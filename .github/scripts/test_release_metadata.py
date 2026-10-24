@@ -66,6 +66,19 @@ class ReleaseMetadataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             metadata.select_release([], REPO)
 
+    def test_remote_link_only_when_asset_is_published(self):
+        current = release()
+        _, urls = metadata.select_release([current], REPO)
+        self.assertNotIn('Download Open Stage Control remote', metadata.downloads(current, urls, REPO))
+        remote = {'name': 'Pinol-OpenStageControl.zip', 'state': 'uploaded', 'size': 123,
+                  'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/Pinol-OpenStageControl.zip'}
+        current['assets'].append(remote)
+        _, urls = metadata.select_release([current], REPO)
+        self.assertIn(remote['browser_download_url'], metadata.downloads(current, urls, REPO))
+        remote['browser_download_url'] = 'https://example.org/remote.zip'
+        with self.assertRaises(ValueError):
+            metadata.select_release([current], REPO)
+
     def test_missing_duplicate_or_reversed_markers_fail_without_writes(self):
         for text in ("no markers", metadata.START * 2 + metadata.END, metadata.END + metadata.START):
             with tempfile.TemporaryDirectory() as tmp:

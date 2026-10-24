@@ -20,31 +20,42 @@ For launcher settings, ports and connection errors, see the
 [connection help](../../docs/openstagecontrol-help.md).
 
 1. Install [Open Stage Control 1.31.x](https://openstagecontrol.ammd.net/).
-2. In Pinol **Settings**, enable **OSC / OSCQuery**. Its default TCP port is `5678`.
-3. Download **Pinol-OpenStageControl** from a successful [controller workflow](https://github.com/PixelStereo/Pinol/actions/workflows/open-stage-control.yml)
-   and extract the whole ZIP, including its `node_modules` folder. In the launcher,
-   set **load** to `pinol.json` and **custom-module** to `pinol.js`, then start.
-4. Open **CONNECT** to enter another Pinol computer or OSCQuery port. Open Stage
+2. **If you already have the Pinol repository:** run `git pull`, then use this
+   `integrations/open-stage-control` folder directly. It is ready to load;
+   **no npm installation or separate Node.js installation is required**.
+   **Without Git:** download the [repository ZIP](https://github.com/PixelStereo/Pinol/archive/refs/heads/main.zip)
+   using GitHub's **Code → Download ZIP**, extract it and open that same folder.
+   Packaged releases also provide `Pinol-OpenStageControl.zip` under
+   **[Releases → Assets](https://github.com/PixelStereo/Pinol/releases/latest)**.
+   Older releases may not contain the remote ZIP; use the repository files in that case.
+3. In Pinol **Settings**, enable **OSC / OSCQuery**. Its default TCP port is `5678`.
+4. Stop the Open Stage Control server before changing the launcher settings:
+
+   | Launcher field | File from the same remote folder |
+   | :--- | :--- |
+   | **load** | `pinol.json` |
+   | **custom-module** | `pinol.js` |
+
+   Keep `pinol-layers.cjs`, `pinol-dependencies.cjs` and
+   `pinol-dependencies.LICENSE.txt` beside them. Restart the server.
+5. Open **CONNECT** to enter another Pinol computer or OSCQuery port. Open Stage
    Control itself can be opened from a tablet at its HTTP address, normally
    `http://<controller-computer>:8080`.
 
-Equivalent command (adjust paths for your operating system):
+Equivalent command, using your repository's actual location:
 
 ```sh
-open-stage-control --load /path/to/pinol.json \
-  --custom-module /path/to/pinol.js --port 8080 --osc-port 11111
+open-stage-control --load /path/to/Pinol/integrations/open-stage-control/pinol.json \
+  --custom-module /path/to/Pinol/integrations/open-stage-control/pinol.js \
+  --port 8080 --osc-port 11111
 ```
 
-The controller pack includes its pure JavaScript `ws` and `osc` dependencies and
-their license files. Keep them next to the session. Pinol
-commands and feedback use **one OSCQuery/WebSocket connection**; no UDP feedback
-target or npm installation is needed for the downloaded pack. Widgets' local `127.0.0.1:1234`
-target is intercepted by the module, which sends their commands to the Pinol host
-chosen on CONNECT.
-
-For a source checkout, prepare the dependencies once with
-`npm install --ignore-scripts --omit=optional` in this folder. This step is done
-by GitHub CI when it builds the downloadable pack.
+The pure JavaScript WebSocket and OSC dependencies are included in
+`pinol-dependencies.cjs` in both the repository and release ZIP. Their license
+texts are in `pinol-dependencies.LICENSE.txt`. A `node_modules` folder is not
+needed at runtime. Pinol commands and feedback share **one OSCQuery/WebSocket
+connection**; no UDP feedback target is required. Widgets' local `127.0.0.1:1234`
+target is intercepted by the module, which sends commands to the Pinol host on CONNECT.
 
 ## Operating rules
 
@@ -98,3 +109,17 @@ The cue stack follows Pinol’s palette: green for the current cue, red for the
 next cue, yellow for pre-wait and blue for post-wait. Previous cues are dimmed.
 Progress fills the cue background in translucent phase color; the current cue
 has the strongest visual weight. Cues stay ordered vertically on every screen.
+
+## Maintaining the dependency bundle
+
+Only contributors changing dependencies need Node.js/npm:
+
+```sh
+npm ci --ignore-scripts --omit=optional
+npm run build:dependencies
+```
+
+Commit `package-lock.json`, `pinol-dependencies.cjs` and its license file together.
+CI checks that the committed bundle matches the locked dependencies, exercises
+an isolated copy and the actual Open Stage Control client, then packages the
+same ready-to-load files. Tag builds attach the tested ZIP to the Pinol release.
