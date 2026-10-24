@@ -1,0 +1,42 @@
+name: Companion module
+on:
+  pull_request:
+    paths: ['integrations/companion/**', 'test/companion*', 'test/open_stage_control_fixture.cjs', '.github/workflows/companion.yml']
+  push:
+    branches: [main]
+    paths: ['integrations/companion/**', 'test/companion*', 'test/open_stage_control_fixture.cjs', '.github/workflows/companion.yml']
+  workflow_dispatch:
+concurrency:
+  group: companion-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NODE_PATH: ${{ github.workspace }}/integrations/companion/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install module dependencies
+        working-directory: integrations/companion
+        run: npm install --ignore-scripts --omit=optional
+      - name: Protocol, presets and actual SDK runtime
+        run: |
+          node --test test/companion.test.cjs test/companion_runtime.cjs
+      - name: Validate metadata and package the module
+        working-directory: integrations/companion
+        run: |
+          npm run check
+          npm run package
+      - name: Exercise the packaged entrypoint without external dependencies
+        env:
+          PINOL_COMPANION_PACKED: '1'
+        run: node --test test/companion_runtime.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pinol-Companion
+          path: integrations/companion/*.tgz
+          if-no-files-found: error
