@@ -75,6 +75,7 @@ async function commandSeen(address) {
         await page.getByText('Main image · LIVE EDIT', {exact: true}).waitFor();
         const layerCard = title => page.locator('.pinol-layer-card').filter({has: page.getByText(title, {exact: true})});
         const opacity = layerCard('Opacity').locator('input');
+        assert.ok((await layerCard('Opacity').boundingBox()).height >= 176, 'Grid rows keep editor cards at a usable height');
         await opacity.fill('0.42'); await opacity.press('Enter');
         await commandSeen('/show/layer/by-id/801/opacity');
         const readback = await opacity.inputValue();

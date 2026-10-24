@@ -147,7 +147,9 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         const list = [...nodes.values()].filter(node => group(node.relative, node)[0] === section);
         page = Math.max(0, Math.min(page, Math.max(0, Math.ceil(list.length / PAGE) - 1)));
         const paths = [current().path + '/locked'];
-        const widgets = list.slice(page * PAGE, (page + 1) * PAGE).map((node, index) => {
+        const visible = list.slice(page * PAGE, (page + 1) * PAGE);
+        const rowHeight = visible.some(node => tuple(node) && (node.ACCESS & 2)) ? 368 : 184;
+        const widgets = visible.map((node, index) => {
             const key = 'layer_control_' + epoch + '_' + index, pair = tuple(node);
             const title = node.DESCRIPTION || node.relative;
             const controls = [text(key + '_title', title, {align: 'left', height: 36, css: 'font-weight:600;font-size:15px;'}),
@@ -173,7 +175,10 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                 padding: 8, colorBg: '#28282e', alphaStroke: .2, borderRadius: 5,
                 css: 'class: pinol-layer-card;\n> inner {border-left:2rem solid #638c80;}', widgets: controls};
         });
-        edit('layer_items', {widgets: widgets.length ? widgets : [text('layer_empty', 'No controls in this section.')]});
+        // Open Stage Control forces grid children to height:auto!important.
+        // Explicit grid rows provide their height, as on the library pages.
+        edit('layer_items', {css: `class: pinol-flow;\n> inner {grid-auto-rows:${rowHeight}rem;gap:12rem;}`,
+            widgets: widgets.length ? widgets : [text('layer_empty', 'No controls in this section.')]});
         subscriptions(paths);
         emit('/pinol/layer/page', list.length ? `${page * PAGE + 1}–${Math.min((page + 1) * PAGE, list.length)} / ${list.length}` : 'EMPTY', true);
         emit('/pinol/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`, true);

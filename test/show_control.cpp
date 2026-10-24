@@ -24,8 +24,11 @@ int runShowControlTests(Engine &e)
     e.setParameter(layer, "opacity", .2);
     const QString layerPath = QStringLiteral("/show/layer/by-id/%1").arg(layer);
     const auto layerCatalog = get("/show/catalog").value("layers").toArray();
-    check(layerCatalog.size() == 1 && layerCatalog[0].toObject().value("id").toString() == QString::number(layer) &&
-          layerCatalog[0].toObject().value("path").toString() == layerPath, "layer catalog publishes stable IDs and editor paths");
+    const auto selectedLayer = std::find_if(layerCatalog.cbegin(), layerCatalog.cend(), [layer](const QJsonValue &entry) {
+        return entry.toObject().value("id").toString() == QString::number(layer);
+    });
+    check(layerCatalog.size() == e.layerCount() && selectedLayer != layerCatalog.cend() &&
+          selectedLayer->toObject().value("path").toString() == layerPath, "layer catalog publishes stable IDs and editor paths, including viewports");
     int layerStatus = 0;
     auto layerTree = QJsonDocument::fromJson(server.httpGet(layerPath, &layerStatus)).object();
     check(layerStatus == 200 && layerTree.value("CONTENTS").toObject().value("id").toObject().value("VALUE").toArray()[0].toString() == QString::number(layer),
