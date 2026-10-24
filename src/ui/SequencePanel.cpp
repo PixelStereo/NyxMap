@@ -390,7 +390,7 @@ void CueStack::paintEvent(QPaintEvent *)
         const int textLeft = area.left() + (placeholder ? 0 : numberWidth);
         // Keep the outgoing behavior visible even on the compact previous/later rows.
         QFont badgeFont = font();
-        badgeFont.setPixelSize(9);
+        badgeFont.setPixelSize(10);
         badgeFont.setBold(true);
         const int badgeWidth = placeholder ? 0 : QFontMetrics(badgeFont).horizontalAdvance(continueName(r.continuation)) + 16;
         if (!placeholder) {
@@ -659,7 +659,6 @@ private:
         QColor ink = opt.palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
         if (col == ColNext) {
             QFont badgeFont = opt.font;
-            badgeFont.setPixelSize(11);
             drawContinueBadge(p, QRectF(opt.rect).adjusted(5, 4, -5, -4), next, badgeFont);
             return;
         }

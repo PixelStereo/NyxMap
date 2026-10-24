@@ -88,8 +88,11 @@ async function commandSeen(address) {
         await button('PAUSE').click();
         await commandSeen('/timeline/by-id/401/pause');
         await page.getByText('SHOW', {exact: true}).first().click();
+        const beforeNavigation = await (await fetch('http://127.0.0.1:5678/test/commands')).json();
         await button('LAYER CONTROL →').click();
         await page.getByText('LAYER REMOTE', {exact: true}).waitFor();
+        assert.equal((await (await fetch('http://127.0.0.1:5678/test/commands')).json()).length, beforeNavigation.length,
+            'Opening layer control never sends a Pinol show command');
         const layerMenus = page.locator('.dropdown-container:visible select');
         await layerMenus.nth(0).locator('option').filter({hasText: 'Main image'}).waitFor({state: 'attached'});
         await layerMenus.nth(0).selectOption({index: 0});

@@ -79,7 +79,7 @@
                     "mode": "momentary",
                     "address": "/pinol/noop",
                     "bypass": true,
-                    "onValue": "if (value) set('pages', 4);",
+                    "onValue": "set('pages', 4, {send: false});",
                     "width": "100%",
                     "height": 48,
                     "colorWidget": "#79cbb6",
