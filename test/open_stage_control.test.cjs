@@ -167,10 +167,11 @@ test('layer reset uses native actions and refuses stale, locked and offline requ
     const rgb = card('Add Color').widgets.find(widget => widget.type === 'rgb');
     send(rgb.address, ...rgb.preArgs, .2, .4, .6);
     await until(() => peer.commands.length === 2);
+    const colorBeforeReset = [...peer.nodes.get(endpoint('add')).VALUE];
     const red = card('Add Color').widgets.find(widget => widget.id.endsWith('_components')).widgets[0].widgets[0];
     send(red.address, ...red.preArgs, null);
     await until(() => peer.commands.length === 3);
-    assert.deepEqual(peer.nodes.get(endpoint('add')).VALUE, [0, .4, .6]);
+    assert.deepEqual(peer.nodes.get(endpoint('add')).VALUE, [0, colorBeforeReset[1], colorBeforeReset[2]]);
     reset('Add Color'); await until(() => peer.commands.length === 4);
     assert.deepEqual(peer.nodes.get(endpoint('add')).VALUE, [0, 0, 0]);
     send('/pinol/layer/section', 'source');
