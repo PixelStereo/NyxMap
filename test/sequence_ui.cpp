@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <QJsonArray>
 #include <QThread>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <cstdio>
 int main(int argc, char **argv)
 {
@@ -69,5 +71,26 @@ int main(int argc, char **argv)
     QThread::msleep(20); check(engine.sequencer().stepElapsed(0) > 0, "elapsed clock survives cue completion");
     engine.sequencer().stopAll(); poll();
     check(!stack->describe().contains("POST-WAIT") && !stack->describe().contains("PRE-WAIT"), "stop removes old wait progress");
+    // All outgoing modes remain visible before GO, including the compact later rows.
+    Sequencer::Sequence overview;
+    overview.steps.resize(3);
+    overview.steps[1].next = Sequencer::StepContinue::Follow;
+    overview.steps[2].next = Sequencer::StepContinue::AutoFollow;
+    engine.sequencer().setCurrent(engine.sequencer().add(overview));
+    CueStack overviewStack(&engine);
+    overviewStack.resize(650, 220);
+    overviewStack.rebuild();
+    check(overviewStack.describe().contains("WAIT · GO") && overviewStack.describe().contains("FOLLOW") &&
+          overviewStack.describe().contains("AUTO-FOLLOW"), "overview describes every outgoing mode");
+    SequenceWindow editor(&engine);
+    auto *steps = editor.findChild<QTableWidget *>("sequenceSteps");
+    check(steps && steps->horizontalHeader()->visualIndex(5) == 2, "continuation sits beside the target before timing columns");
+    if (steps) {
+        check(steps->item(1, 5)->toolTip().contains("overlap"), "Follow explains that actions may overlap");
+        check(steps->item(2, 5)->toolTip().contains("endless"), "Auto-follow explains a non-terminating action");
+        steps->item(1, 5)->setData(Qt::EditRole, int(Sequencer::StepContinue::Wait));
+        check(steps->item(1, 5)->data(Qt::AccessibleTextRole).toString() == "WAIT · GO" &&
+              steps->item(1, 5)->toolTip().contains("manual"), "edited mode updates its accessible label and help");
+    }
     return failures ? 1 : 0;
 }

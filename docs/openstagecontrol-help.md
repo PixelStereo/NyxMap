@@ -61,6 +61,10 @@ its source, color, transform, FX and playback capabilities. Color pickers keep
 individual RGB(A) fields; XY pads keep independent X/Y entry. Edits are live.
 All browsers share the remote selection, without changing Pinol's inspector.
 A deleted selection is cleared rather than replaced with another layer.
+SHOW also has a **LAYER CONTROL →** shortcut. If neither the shortcut nor the
+LAYERS tab appears, stop the server and update **both** launcher paths to the
+same freshly extracted pack. Loading an older `pinol.json` keeps the old pages
+even with a newer custom module.
 
 Commit text/numeric fields with Enter or by leaving the field; Shift+Enter adds
 a text line. File paths belong to the Pinol computer. Locks and read-only values

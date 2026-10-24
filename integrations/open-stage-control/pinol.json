@@ -73,6 +73,21 @@
                 "label": false,
                 "widgets": [
                   {
+                    "type": "button",
+                    "id": "show_layers",
+                    "label": "LAYER CONTROL \u2192",
+                    "mode": "momentary",
+                    "address": "/pinol/noop",
+                    "bypass": true,
+                    "onValue": "set('pages', 4, {send: false});",
+                    "width": "100%",
+                    "height": 48,
+                    "colorWidget": "#79cbb6",
+                    "alphaFillOff": 0.07,
+                    "alphaStroke": 0.45,
+                    "wrap": true
+                  },
+                  {
                     "type": "panel",
                     "id": "show_toolbar",
                     "label": false,
@@ -180,6 +195,20 @@
                               },
                               {
                                 "type": "text",
+                                "id": "previous_continuation",
+                                "value": "",
+                                "address": "/pinol/cue/previous/continuation",
+                                "width": "100%",
+                                "height": 32,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "align": "left",
+                                "alphaFillOff": 0,
+                                "colorText": "JS{var m=OSC{/sequence/cue/previous/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
+                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
+                              },
+                              {
+                                "type": "text",
                                 "id": "previous_label",
                                 "value": "",
                                 "width": "100%",
@@ -265,6 +294,20 @@
                                 "css": "font-size:11px;font-weight:700;letter-spacing:2px;",
                                 "alphaFillOff": 0,
                                 "align": "left"
+                              },
+                              {
+                                "type": "text",
+                                "id": "current_continuation",
+                                "value": "",
+                                "address": "/pinol/cue/current/continuation",
+                                "width": "100%",
+                                "height": 32,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "align": "left",
+                                "alphaFillOff": 0,
+                                "colorText": "JS{var m=OSC{/sequence/cue/current/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
+                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
                               },
                               {
                                 "type": "text",
@@ -394,6 +437,20 @@
                                 "css": "font-size:11px;font-weight:700;letter-spacing:2px;",
                                 "alphaFillOff": 0,
                                 "align": "left"
+                              },
+                              {
+                                "type": "text",
+                                "id": "next_continuation",
+                                "value": "",
+                                "address": "/pinol/cue/next/continuation",
+                                "width": "100%",
+                                "height": 32,
+                                "bypass": true,
+                                "wrap": "soft",
+                                "align": "left",
+                                "alphaFillOff": 0,
+                                "colorText": "JS{var m=OSC{/sequence/cue/next/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
+                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
                               },
                               {
                                 "type": "text",
@@ -725,13 +782,14 @@
                                   {
                                     "type": "text",
                                     "id": "continue_mode",
-                                    "value": "",
+                                    "value": "WAIT \u00b7 GO: manual advance\nFOLLOW: action start + post-wait\nAUTO-FOLLOW: action end + post-wait",
                                     "width": "100%",
-                                    "height": 32,
+                                    "height": 72,
                                     "bypass": true,
-                                    "wrap": true,
-                                    "address": "/sequence/cue/current/continue",
-                                    "alphaFillOff": 0
+                                    "wrap": "soft",
+                                    "alphaFillOff": 0,
+                                    "align": "left",
+                                    "css": "font-size:12px;line-height:1.6;"
                                   }
                                 ],
                                 "layout": "vertical",
@@ -858,7 +916,7 @@
                     "height": "auto",
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;",
+                    "css": "class: pinol-flow;\n> inner {gap:6rem;}",
                     "alphaStroke": 0
                   }
                 ],

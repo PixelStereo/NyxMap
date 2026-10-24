@@ -47,6 +47,12 @@ jobs:
           python3 - <<'PY'
           import os, pathlib, zipfile
           root = pathlib.Path('integrations/open-stage-control')
+          import json
+          for name in ['pinol.json', 'pinol.js', 'pinol-layers.cjs', 'node_modules/ws/package.json', 'node_modules/osc/package.json']:
+              assert (root / name).is_file(), f'Incomplete controller pack: {name}'
+          session = json.loads((root / 'pinol.json').read_text())
+          pages = next(widget for widget in session['content']['widgets'] if widget['id'] == 'pages')
+          assert any(tab['id'] == 'layers_tab' for tab in pages['tabs']), 'Show Control must include layer control'
           target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'Pinol-OpenStageControl.zip'
           with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
               for path in sorted(root.rglob('*')):

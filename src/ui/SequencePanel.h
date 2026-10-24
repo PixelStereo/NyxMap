@@ -50,6 +50,7 @@ public:
         QString timing;      // "PRE 2.0  ACTION 3.0  POST 4.0 s · Auto-follow"
         QString status;      // where its time is: "PRE-WAIT · 1.0 s left · 50%", "press GO"…
         QString aside;       // the step played: the time since its GO
+        Sequencer::StepContinue continuation = Sequencer::StepContinue::Wait;
         double pre = -1, action = -1, post = -1; // its times on their way (0..1), -1: not now
     };
     explicit CueStack(Engine *engine, QWidget *parent = nullptr);

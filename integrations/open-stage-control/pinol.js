@@ -75,18 +75,31 @@ function renderCues() {
     const widgets = entries.map(cue => {
         const number = Number(cue.index);
         const name = cue.text || cue.name || (cue.missing ? 'Missing target' : 'Empty cue');
-        const details = [cue.target_type, cue.name, cue.continue, cue.description].filter(Boolean).join(' · ');
-        return button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
-            height: 76, align: 'left',
+        const details = [cue.target_type, cue.name, cue.description].filter(Boolean).join(' · ');
+        const mode = continuation(cue.continue, cue.postwait);
+        return {type: 'panel', id: 'cue_row_' + cue.id, label: false, layout: 'horizontal',
+            height: 88, width: '100%', padding: 4, alphaStroke: 0, contain: false,
+            css: 'class: pinol-cue-row;', widgets: [button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
+            height: 80, width: 'auto', expand: true, align: 'left',
             colorWidget: `JS{return OSC{/sequence/cue/current/number,0,false} === ${number} ? '#4cd964' : OSC{/sequence/cue/next/number,0,false} === ${number} ? '#e84c3d' : '#6d6d78'}`,
             alphaFillOff: 0.08, alphaStroke: 0.45, borderRadius: 4,
-            css: ':host {font-size:14px;} label {justify-content:flex-start;text-align:left;padding-left:14rem;line-height:1.5;}'});
+            css: ':host {font-size:14px;min-width:0;} label {justify-content:flex-start;text-align:left;padding-left:14rem;line-height:1.5;}'}),
+            text('cue_mode_' + cue.id, mode.label + '\n' + mode.detail, {height: 80, width: 160,
+                colorText: mode.color, align: 'center', wrap: 'soft',
+                css: `class: pinol-continuation;\n:host {border:1rem solid ${mode.color}66;border-radius:4rem;background:${mode.color}12;font-size:12px;font-weight:600;line-height:1.7;}`})]};
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
     emit('/pinol/ui/online', online ? 1 : 0, true);
     if (playback) for (const role of ['current', 'next']) {
         const address = `/sequence/cue/${role}/number`; emit(address, playback.values[address], true);
     }
+}
+function continuation(mode, postwait) {
+    const delay = clock(Number(postwait) || 0);
+    if (mode === 'follow') return {label: 'FOLLOW', detail: `Start + ${delay}`, color: '#79cbb6'};
+    if (mode === 'auto-follow') return {label: 'AUTO-FOLLOW', detail: `End + ${delay}`, color: '#b7a1d9'};
+    if (mode === 'wait') return {label: 'WAIT · GO', detail: 'Manual advance', color: '#d5bd82'};
+    return {label: '—', detail: '', color: '#a4a4ae'};
 }
 function publishCatalog(force) {
     if (!catalog) return;
@@ -122,6 +135,11 @@ function publishState(state) {
     selected = String(state.values['/sequence/id'] || '0');
     playback = state;
     for (const address of Object.keys(state.values)) emit(address, state.values[address]);
+    for (const role of ['previous', 'current', 'next']) {
+        const base = '/sequence/cue/' + role;
+        const mode = continuation(state.values[base + '/continue'], state.values[base + '/postwait']);
+        emit('/pinol/cue/' + role + '/continuation', mode.label + ' · ' + mode.detail);
+    }
     for (const property of ['pause', 'blackout']) emit('/pinol/composition/' + property, state.values['/composition/' + property]);
     emit('/pinol/sequence/select', selected);
     const cue = Math.max(0, Number(state.values['/sequence/cue/current/number']) - 1) || 0;
