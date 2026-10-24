@@ -147,12 +147,13 @@ composition pause is not a universal freeze of every input.
 
 ### Catalog: `/show/catalog`
 
-Read through OSCQuery. `VALUE[0]` is a JSON string with **`version: 1`** and four
-arrays: `sequences`, `snapshots`, `presets`, `timelines`.
+Read through OSCQuery. `VALUE[0]` is a JSON string with **`version: 1`** and
+arrays: `sequences`, `snapshots`, `presets`, `timelines`, `layers`.
 
 ```json
 {
   "version": 1,
+  "layers": [{"id": "7", "parent": "0", "index": 1, "name": "Background", "group": false, "viewport": false, "path": "/show/layer/by-id/7"}],
   "snapshots": [{"id": "12", "index": 1, "name": "Opening look"}],
   "presets": [],
   "timelines": [{"id": "8", "index": 1, "name": "Fade", "duration": 12}],
@@ -251,6 +252,27 @@ under `param`; clocks under `clock`; FX expose their own parameter subtrees.
 Names are case-sensitive and made OSC-safe: spaces/reserved characters become
 underscores, with suffixes for duplicate siblings. Renaming or moving a layer
 changes its path. The OSCQuery `DESCRIPTION` retains its display name.
+
+For a remote editor, `/show/catalog.layers` lists every layer, group and viewport
+with string `id`/`parent`, 1-based `index`, `name`, Boolean `group`/`viewport` and
+`path`. The additive field does not change catalog schema version 1. Each `path`
+is `/show/layer/by-id/<id>`: GET it over OSCQuery to discover that object's types,
+ranges, access and values. Its read-only `/id` verifies the selected identity.
+Use this stable prefix for commands and LISTEN subscriptions, for example:
+
+```text
+/show/layer/by-id/<id>/opacity       <float>
+/show/layer/by-id/<id>/position      <x> <y>
+/show/layer/by-id/<id>/param/<name>   <value…>
+/show/layer/by-id/<id>/fx/<fx>/param/<name>  <value…>
+```
+
+These controls have the same behavior and lock rules as the name-based paths.
+Layer IDs survive renaming/moving; deleted IDs are refused. Each group exposes
+its own controls; select its children through their catalog IDs. Source and FX
+parameter paths can change after structural edits: invalidate the editor on
+PATH_CHANGED and rediscover it. Subscribe only to visible readable controls,
+and IGNORE them when leaving the section. Feedback must never echo as a write.
 
 **Tuples and components:** grouped XY and RGB(A) addresses accept multiple OSC
 arguments. Component addresses remain usable independently. XY uses raw numeric

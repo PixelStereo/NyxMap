@@ -22,6 +22,28 @@ int runShowControlTests(Engine &e)
     check(get("/show/catalog").value("sequences").toArray().isEmpty(), "empty show returns empty catalogs");
     const quint64 layer = e.layerId(e.addLayer("Control target"));
     e.setParameter(layer, "opacity", .2);
+    const QString layerPath = QStringLiteral("/show/layer/by-id/%1").arg(layer);
+    const auto layerCatalog = get("/show/catalog").value("layers").toArray();
+    const auto selectedLayer = std::find_if(layerCatalog.cbegin(), layerCatalog.cend(), [layer](const QJsonValue &entry) {
+        return entry.toObject().value("id").toString() == QString::number(layer);
+    });
+    check(layerCatalog.size() == e.layerCount() && selectedLayer != layerCatalog.cend() &&
+          selectedLayer->toObject().value("path").toString() == layerPath, "layer catalog publishes stable IDs and editor paths, including viewports");
+    int layerStatus = 0;
+    auto layerTree = QJsonDocument::fromJson(server.httpGet(layerPath, &layerStatus)).object();
+    check(layerStatus == 200 && layerTree.value("CONTENTS").toObject().value("id").toObject().value("VALUE").toArray()[0].toString() == QString::number(layer),
+          "stable layer subtree includes its identity and typed parameters");
+    e.layer(e.indexOfId(layer))->name = "Renamed target";
+    const quint64 replacement = e.layerId(e.addLayer("Control target", 0));
+    e.setParameter(replacement, "opacity", .9);
+    check(server.handleMessage({layerPath + "/opacity", "f", {.4}}) &&
+          std::abs(e.parameterValue(layer, "opacity").toDouble() - .4) < 1e-6 &&
+          std::abs(e.parameterValue(replacement, "opacity").toDouble() - .9) < 1e-6,
+          "stable layer writes survive renaming and insertion without targeting the new name owner");
+    check(server.handleMessage({layerPath + "/locked", "T", {true}}) &&
+          !server.handleMessage({layerPath + "/opacity", "f", {.8}}), "stable editor obeys layer locking");
+    check(server.handleMessage({layerPath + "/locked", "F", {false}}), "stable editor can unlock its selected layer");
+    e.setParameter(layer, "opacity", .2);
     Engine::Snapshot snapshot; snapshot.name = "Same name"; snapshot.layers = e.captureLayers(); snapshot.fade = 0;
     const int si = e.addSnapshot(snapshot); const quint64 sid = e.snapshot(si).id;
     Engine::Preset preset; preset.name = "Live preset"; preset.values.push_back({layer, "opacity", .7, 0, QString()});
@@ -76,6 +98,10 @@ int runShowControlTests(Engine &e)
     check(!server.handleMessage({timelinePath + "/play", "", {}}), "removed timeline IDs are refused");
     e.removeSnapshot(e.indexOfSnapshot(sid));
     check(!server.handleMessage({snapshotPath, "", {}}), "removed snapshot IDs cannot launch another snapshot");
+    e.removeLayer(e.indexOfId(layer));
+    check(!server.handleMessage({layerPath + "/opacity", "f", {.1}}) &&
+          std::abs(e.parameterValue(replacement, "opacity").toDouble() - .9) < 1e-6,
+          "a deleted layer ID cannot write to a surviving layer");
     e.newProject();
     return failures;
 }

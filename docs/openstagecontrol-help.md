@@ -15,6 +15,7 @@ Loading `pinol.json` displays the desk. Connecting it to Pinol also requires
    Pinol-OpenStageControl/
      pinol.json
      pinol.js
+     pinol-layers.cjs
      node_modules/
        ws/
        osc/
@@ -53,12 +54,28 @@ setting. `127.0.0.1` always means the computer running the Open Stage Control
 server, including when a tablet displays its interface. If LAN access fails,
 check that the selected interface and firewall allow the relevant TCP port.
 
+## Edit layers
+
+On **LAYERS**, choose a layer/group/output, then its section. Controls adapt to
+its source, color, transform, FX and playback capabilities. Color pickers keep
+individual RGB(A) fields; XY pads keep independent X/Y entry. Edits are live.
+All browsers share the remote selection, without changing Pinol's inspector.
+A deleted selection is cleared rather than replaced with another layer.
+
+Commit text/numeric fields with Enter or by leaving the field; Shift+Enter adds
+a text line. File paths belong to the Pinol computer. Locks and read-only values
+are respected. Existing automation can overwrite manual edits; see
+[parameter control](parameter-control.md). The remote does not upload files or
+add/remove layers and FX.
+
 ## Troubleshooting
 
 | Message or symptom | Fix |
 | :--- | :--- |
 | **Load pinol.js as the custom module** | Set **custom-module** to `pinol.js`, restart the server, and check the launcher log for module errors. |
 | **Cannot find module 'ws'** or **'osc'** | Restore the complete pack, including `node_modules` beside `pinol.js`, or install the source dependencies below. |
+| **Cannot find module …pinol-layers.cjs** | Extract the complete current pack; keep this helper next to `pinol.js`. |
+| **Update Pinol to use the layer remote** | Update Pinol to a build publishing `layers` in `/show/catalog`. Other remote pages remain usable. |
 | **Could not open session file**, **Unexpected token**, or **not valid JSON** | **load** must point to `pinol.json`. JavaScript belongs in **custom-module**. |
 | **ECONNREFUSED** or persistent **DISCONNECTED** | Start Pinol, enable OSC / OSCQuery, and match its host and OSCQuery port. Use `5678`, not UDP `1234` or the desk's HTTP `8080`. |
 | **Update Pinol: show-control API unavailable** | Use a Pinol build that includes `/show/catalog` and `/show/state`. |

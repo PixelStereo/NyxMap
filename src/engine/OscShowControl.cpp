@@ -13,10 +13,19 @@ double finiteTime(double seconds) { return std::isfinite(seconds) ? seconds : -1
 QJsonObject catalog(Engine *e)
 {
     Engine::Lock lock(&e->mutex());
-    QJsonArray snapshots, presets, timelines, sequences;
+    QJsonArray snapshots, presets, timelines, sequences, layers;
     auto item = [](quint64 id, int index, const QString &name) {
         return QJsonObject{{"id", idText(id)}, {"index", index + 1}, {"name", name}};
     };
+    for (int k = 0; k < e->layerCount(); ++k) {
+        const Layer *layer = e->layer(k);
+        auto entry = item(layer->id, k, layer->name);
+        entry["parent"] = idText(layer->parent);
+        entry["group"] = layer->isGroup;
+        entry["viewport"] = layer->isViewport;
+        entry["path"] = "/show/layer/by-id/" + idText(layer->id);
+        layers.append(entry);
+    }
     for (int k = 0; k < e->snapshotCount(); ++k) {
         const auto value = e->snapshot(k);
         snapshots.append(item(value.id, k, value.name));
@@ -67,7 +76,7 @@ QJsonObject catalog(Engine *e)
         entry["cues"] = cues;
         sequences.append(entry);
     }
-    return {{"version", 1}, {"snapshots", snapshots}, {"presets", presets}, {"timelines", timelines}, {"sequences", sequences}};
+    return {{"version", 1}, {"snapshots", snapshots}, {"presets", presets}, {"timelines", timelines}, {"sequences", sequences}, {"layers", layers}};
 }
 
 QJsonObject state(Engine *e)

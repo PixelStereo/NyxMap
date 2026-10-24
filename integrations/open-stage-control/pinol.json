@@ -22,7 +22,7 @@
           {
             "type": "text",
             "id": "brand",
-            "value": "PINOL  /  SHOW CONTROL",
+            "value": "PINOL  /  REMOTE CONTROL",
             "width": "100%",
             "height": 32,
             "bypass": true,
@@ -1205,6 +1205,166 @@
               }
             ],
             "contain": false
+          },
+          {
+            "type": "tab",
+            "id": "layers_tab",
+            "label": "LAYERS",
+            "layout": "vertical",
+            "scroll": true,
+            "contain": false,
+            "widgets": [
+              {
+                "type": "text",
+                "id": "layers_title",
+                "value": "LAYER REMOTE",
+                "width": "100%",
+                "height": 36,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "alphaFillOff": 0,
+                "css": "font-size:24px;font-weight:600;letter-spacing:2px;"
+              },
+              {
+                "type": "text",
+                "id": "layers_help",
+                "value": "Choose a layer, group or output. Edits are live; Pinol remains authoritative.",
+                "width": "100%",
+                "height": 36,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "alphaFillOff": 0,
+                "colorText": "#a4a4ae"
+              },
+              {
+                "type": "dropdown",
+                "id": "layer_select",
+                "address": "/pinol/layer/select",
+                "values": {
+                  "labels": [],
+                  "values": []
+                },
+                "label": "%key",
+                "width": "100%",
+                "height": 52,
+                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                "target": "127.0.0.1:1234",
+                "ignoreDefaults": true
+              },
+              {
+                "type": "text",
+                "id": "layer_status",
+                "value": "Choose a layer to edit.",
+                "width": "100%",
+                "height": 36,
+                "bypass": true,
+                "wrap": true,
+                "align": "left",
+                "alphaFillOff": 0,
+                "address": "/pinol/layer/status",
+                "colorText": "JS{return OSC{/pinol/layer/locked,0,false} ? '#e0b43a' : '#85b8aa'}",
+                "css": "font-weight:600;"
+              },
+              {
+                "type": "dropdown",
+                "id": "layer_sections",
+                "address": "/pinol/layer/section",
+                "values": {
+                  "labels": [],
+                  "values": []
+                },
+                "label": "%key",
+                "width": "100%",
+                "height": 52,
+                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                "target": "127.0.0.1:1234",
+                "ignoreDefaults": true
+              },
+              {
+                "type": "panel",
+                "id": "layer_pagination",
+                "label": false,
+                "layout": "horizontal",
+                "width": "100%",
+                "height": 56,
+                "padding": 4,
+                "contain": true,
+                "widgets": [
+                  {
+                    "type": "button",
+                    "id": "layer_previous",
+                    "label": "\u2039 PREVIOUS",
+                    "address": "/pinol/layer/page/change",
+                    "preArgs": [
+                      -1
+                    ],
+                    "mode": "momentary",
+                    "width": "auto",
+                    "height": 44,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true
+                  },
+                  {
+                    "type": "text",
+                    "id": "layer_page",
+                    "value": "",
+                    "width": "auto",
+                    "height": 36,
+                    "bypass": true,
+                    "wrap": true,
+                    "align": "center",
+                    "alphaFillOff": 0,
+                    "address": "/pinol/layer/page",
+                    "expand": 1
+                  },
+                  {
+                    "type": "button",
+                    "id": "layer_next",
+                    "label": "NEXT \u203a",
+                    "address": "/pinol/layer/page/change",
+                    "preArgs": [
+                      1
+                    ],
+                    "mode": "momentary",
+                    "width": "auto",
+                    "height": 44,
+                    "expand": true,
+                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "target": "127.0.0.1:1234",
+                    "ignoreDefaults": true
+                  }
+                ]
+              },
+              {
+                "type": "panel",
+                "id": "layer_items",
+                "label": false,
+                "layout": "grid",
+                "width": "100%",
+                "height": 100,
+                "padding": 4,
+                "contain": false,
+                "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+                "css": "class: pinol-flow;\n> inner {align-items:start;gap:12rem;}",
+                "widgets": [
+                  {
+                    "type": "text",
+                    "id": "layer_empty",
+                    "value": "Connect to Pinol to edit layers.",
+                    "width": "100%",
+                    "height": 36,
+                    "bypass": true,
+                    "wrap": true,
+                    "align": "left",
+                    "alphaFillOff": 0
+                  }
+                ]
+              }
+            ]
           },
           {
             "type": "tab",
