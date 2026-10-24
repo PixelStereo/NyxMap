@@ -4,7 +4,7 @@ const WebSocket = nativeRequire('ws');
 const osc = nativeRequire('osc');
 const http = nativeRequire('http');
 const {Buffer} = nativeRequire('buffer');
-const createLayerDesk = nativeRequire(__dirname + '/pinol-layers.cjs');
+const createLayerDesk = require('./pinol-layers.cjs');
 const PAGE_SIZE = 24;
 let host = '127.0.0.1', port = 5678, socket, timer, request, generation = 0;
 let catalog, playback, selected = '0', lastPong = 0, online = false, catalogKey = '';
@@ -15,7 +15,9 @@ const layerRequests = new Set();
 const id = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
 const sentValues = new Map();
 function emit(address, value, force = false) {
-    if (!force && sentValues.has(address) && JSON.stringify(sentValues.get(address)) === JSON.stringify(value)) return;
+    const previous = sentValues.get(address);
+    if (!force && sentValues.has(address) && (previous === value ||
+        (Array.isArray(previous) && Array.isArray(value) && previous.length === value.length && previous.every((v, i) => v === value[i])))) return;
     if (sentValues.size > 512) sentValues.clear();
     sentValues.set(address, value); receive(address, ...(Array.isArray(value) ? value : [value]));
 }

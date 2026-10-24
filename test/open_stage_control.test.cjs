@@ -25,7 +25,7 @@ test('session uses unique widgets, explicit one-shot triggers and dedicated page
 test('custom module follows actual WebSocket OSC feedback without command echoes', async t => {
     const peer = fixture(); await once(peer.server, 'listening');
     const incoming = [];
-    const context = {nativeRequire: require, __dirname: root, module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
+    const context = {nativeRequire: require, require: file => require(path.join(root, file)), module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
         receive: (...args) => incoming.push(args)};
     vm.runInNewContext(fs.readFileSync(path.join(root, 'pinol.js'), 'utf8'), context, {filename: 'pinol.js'});
     const controller = context.module.exports;
@@ -57,7 +57,7 @@ test('custom module follows actual WebSocket OSC feedback without command echoes
 test('layer desk edits typed controls, follows feedback and rejects stale or locked targets', async t => {
     const peer = fixture(); await once(peer.server, 'listening');
     const incoming = [];
-    const context = {nativeRequire: require, __dirname: root, module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
+    const context = {nativeRequire: require, require: file => require(path.join(root, file)), module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
         receive: (...args) => incoming.push(args)};
     vm.runInNewContext(fs.readFileSync(path.join(root, 'pinol.js'), 'utf8'), context, {filename: 'pinol.js'});
     const controller = context.module.exports;

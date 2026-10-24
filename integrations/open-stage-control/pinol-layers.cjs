@@ -67,7 +67,6 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
     }
     function tuple(node) {
         const children = node.CONTENTS || {};
-        const keys = Object.keys(children);
         if (/^ffff?$/.test(node.TYPE) && ['r', 'g', 'b'].every(key => children[key]))
             return {type: 'rgb', keys: node.TYPE.length === 4 ? ['r', 'g', 'b', 'a'] : ['r', 'g', 'b']};
         if (node.TYPE === 'ff' && children.x && children.y) return {type: 'xy', keys: ['x', 'y']};
@@ -129,7 +128,18 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         if (['T', 'F'].includes(node.TYPE)) return {...common, type: 'switch', layout: 'horizontal', values: {OFF: 0, ON: 1}, colorWidget: '#4cd964'};
         if (node.TYPE === 'N') return button(key, 'TRIGGER', '/pinol/layer/write', [selected, properties.preArgs[1]], {interaction: properties.interaction});
         if (node.TYPE === 's') return {...common, type: 'textarea', default: ''};
-        return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : node.TYPE === 'f' ? .001 : false, asYouType: false, maxLength: node.TYPE === 's' ? 4096 : '', noCanvas: true};
+        return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : .001, asYouType: false, noCanvas: true};
+    }
+    function hint(node, pair) {
+        if (!(node.ACCESS & 2)) return 'READ ONLY';
+        if (node.relative.includes('/anim/')) return node.relative.split('/anim/')[0].replaceAll('/param/', ' › ').replaceAll('/', ' › ').replaceAll('_', ' ');
+        if (pair) return pair.type === 'rgb' ? 'RGB' + (pair.keys.length === 4 ? 'A' : '') + ' · 0–1' : 'XY · native units';
+        if (node.RANGE?.[0]?.VALS) return 'Choose a value';
+        if (node.TYPE === 's') return 'Enter to apply · Shift+Enter for a new line';
+        if (node.TYPE === 'N') return 'Execute action';
+        if (['T', 'F'].includes(node.TYPE)) return 'On / Off';
+        const range = node.RANGE?.[0];
+        return Number.isFinite(range?.MIN) && Number.isFinite(range?.MAX) ? `${range.MIN} – ${range.MAX}` : 'Enter to apply';
     }
     function render() {
         if (!ready || !current()) return;
@@ -141,7 +151,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
             const key = 'layer_control_' + epoch + '_' + index, pair = tuple(node);
             const title = node.DESCRIPTION || node.relative;
             const controls = [text(key + '_title', title, {align: 'left', height: 36, css: 'font-weight:600;font-size:15px;'}),
-                text(key + '_path', node.relative + (!(node.ACCESS & 2) ? ' · READ ONLY' : ''), {align: 'left', height: 24, colorText: '#a4a4ae', css: 'font-size:11px;'})];
+                text(key + '_hint', hint(node, pair), {align: 'left', height: 24, colorText: '#a4a4ae', css: 'font-size:11px;'})];
             if (pair && node.ACCESS & 2) {
                 const properties = bind(node, paths), range = node.RANGE || [];
                 controls.push({...properties, type: pair.type, id: key + '_pad', label: false, width: '100%', height: 190,
