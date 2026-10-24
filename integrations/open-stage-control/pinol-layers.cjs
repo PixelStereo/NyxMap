@@ -159,10 +159,12 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                 controls.push({...properties, type: pair.type, id: key + '_pad', label: false, width: '100%', height: 190,
                     colorWidget: '#85b8aa', snap: true, range: {min: 0, max: 1}, rangeAlpha: {min: 0, max: 1},
                     alpha: pair.keys.length === 4, rangeX: limits(range[0]), rangeY: limits(range[1]), pips: true});
-                controls.push({type: 'panel', id: key + '_components', label: false, layout: 'horizontal', height: 66, width: '100%', padding: 2,
+                controls.push({type: 'panel', id: key + '_components', label: false, layout: 'horizontal', height: 86, width: '100%', padding: 2,
                     widgets: pair.keys.map(component => {
                         const child = node.CONTENTS[component];
-                        return {...editor({...child, relative: node.relative + '/' + component}, key + '_' + component, paths), label: component.toUpperCase(), width: 'auto', expand: true, height: 60};
+                        return {type: 'panel', id: key + '_' + component + '_field', label: false, layout: 'vertical', width: 'auto', expand: true, height: 80, padding: 1,
+                            widgets: [text(key + '_' + component + '_label', component.toUpperCase(), {height: 20, align: 'center', colorText: '#b2b2bc'}),
+                                editor({...child, relative: node.relative + '/' + component}, key + '_' + component, paths)]};
                     })});
             } else {
                 controls.push(editor(node, key + '_input', paths));
@@ -195,7 +197,8 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
     function publish(key, node) {
         if (!(node.ACCESS & 1) || !Array.isArray(node.VALUE)) return;
         // Open Stage Control matches incoming preArgs before applying the value.
-        emit('/pinol/layer/value/' + key, [selected, key, ...node.VALUE], true);
+        const values = ['T', 'F'].includes(node.TYPE) ? node.VALUE.map(value => Number(!!value)) : node.VALUE;
+        emit('/pinol/layer/value/' + key, [selected, key, ...values], true);
     }
     function feedback(address, args) {
         if (address === current()?.path + '/locked') {

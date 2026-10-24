@@ -74,6 +74,8 @@ async function commandSeen(address) {
         await layerMenus.nth(0).selectOption({index: 0});
         await page.getByText('Main image · LIVE EDIT', {exact: true}).waitFor();
         const layerCard = title => page.locator('.pinol-layer-card').filter({has: page.getByText(title, {exact: true})});
+        await layerCard('Locked').locator('.switch-container value.on').filter({hasText: 'OFF'}).waitFor();
+        await layerCard('Enable').locator('.switch-container value.on').filter({hasText: 'ON'}).waitFor();
         const opacity = layerCard('Opacity').locator('input');
         assert.ok((await layerCard('Opacity').boundingBox()).height >= 176, 'Grid rows keep editor cards at a usable height');
         await layerCard('Opacity').locator('.input-container').click();
@@ -90,6 +92,13 @@ async function commandSeen(address) {
         const rgbBox = await rgb.boundingBox();
         await rgb.click({position: {x: rgbBox.width * .6, y: rgbBox.height * .4}});
         await commandSeen('/show/layer/by-id/801/add');
+        for (const channel of ['R', 'G', 'B']) await layerCard('Add Color').getByText(channel, {exact: true}).waitFor();
+        const colorCommands = await (await fetch('http://127.0.0.1:5678/test/commands')).json();
+        const channels = colorCommands.filter(m => m.address === '/show/layer/by-id/801/add').at(-1).args.map(arg => arg.value);
+        await layerCard('Add Color').locator('.input-container').first().click();
+        const red = layerCard('Add Color').locator('input');
+        assert.ok(Math.abs(Number(await red.inputValue()) - channels[0]) < .002, 'RGB channel fields follow the color picker feedback');
+        await red.press('Escape');
         await capture('layer-color');
         await layerMenus.nth(1).selectOption({label: 'Transform'});
         const xy = layerCard('Position').locator('.xy-container canvas').first();
