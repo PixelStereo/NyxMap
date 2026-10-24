@@ -48,13 +48,13 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.3.2](https://github.com/PixelStereo/Pinol/releases/tag/v0.3.2)**.
+Latest published build: **[v0.3.3](https://github.com/PixelStereo/Pinol/releases/tag/v0.3.3)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.3.2/Pinol-macos-v0.3.2.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.3.2/Pinol-windows-v0.3.2.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.3.2/Pinol-linux-x86_64-v0.3.2.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-macos-v0.3.3.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-windows-v0.3.3.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-linux-x86_64-v0.3.3.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.2/Pinol-linux-x86_64-v0.3.2.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-linux-x86_64-v0.3.3.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
 <!-- release-downloads:end -->
 
 To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds Pinol and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
