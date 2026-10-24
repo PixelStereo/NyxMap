@@ -20,12 +20,12 @@ test('session uses unique widgets, explicit one-shot triggers and dedicated page
         for (const child of [...(widget.widgets || []), ...(widget.tabs || [])]) walk(child);
     }
     walk(session.content);
-    for (const id of ['show_tab', 'snapshots_tab', 'presets_tab', 'timelines_tab', 'connect_tab']) assert(ids.has(id));
+    for (const id of ['show_tab', 'snapshots_tab', 'presets_tab', 'timelines_tab', 'layers_tab', 'connect_tab']) assert(ids.has(id));
 });
 test('custom module follows actual WebSocket OSC feedback without command echoes', async t => {
     const peer = fixture(); await once(peer.server, 'listening');
     const incoming = [];
-    const context = {nativeRequire: require, module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
+    const context = {nativeRequire: require, __dirname: root, module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
         receive: (...args) => incoming.push(args)};
     vm.runInNewContext(fs.readFileSync(path.join(root, 'pinol.js'), 'utf8'), context, {filename: 'pinol.js'});
     const controller = context.module.exports;
@@ -53,4 +53,71 @@ test('custom module follows actual WebSocket OSC feedback without command echoes
     send('/pinol/sequence/go');
     assert.equal(peer.commands.length, 4, 'offline commands are dropped');
     assert.equal(send('/unrelated', 1).address, '/unrelated');
+});
+test('layer desk edits typed controls, follows feedback and rejects stale or locked targets', async t => {
+    const peer = fixture(); await once(peer.server, 'listening');
+    const incoming = [];
+    const context = {nativeRequire: require, __dirname: root, module: {exports: {}}, console, setTimeout, clearTimeout, setInterval, clearInterval,
+        receive: (...args) => incoming.push(args)};
+    vm.runInNewContext(fs.readFileSync(path.join(root, 'pinol.js'), 'utf8'), context, {filename: 'pinol.js'});
+    const controller = context.module.exports;
+    t.after(async () => { controller.unload(); await peer.close(); });
+    const send = (address, ...args) => controller.oscOutFilter({address, args: args.map(value => ({value}))});
+    const value = address => incoming.filter(m => m[0] === address).at(-1)?.[1];
+    const cards = () => JSON.parse(incoming.filter(m => m[0] === '/EDIT' && m[1] === 'layer_items').at(-1)[2]).widgets;
+    const card = title => cards().find(widget => widget.widgets?.[0]?.value === title);
+    const control = title => card(title)?.widgets.find(widget => ['input', 'textarea', 'dropdown', 'switch', 'xy', 'rgb', 'text'].includes(widget.type) && widget.preArgs);
+    const write = (widget, ...args) => send(widget.address, ...widget.preArgs, ...args);
+    const path = suffix => '/show/layer/by-id/802/' + suffix;
+    send('/pinol/connect', '127.0.0.1', peer.server.address().port);
+    await until(() => value('/pinol/ui/online') === 1);
+    assert.equal(value('/pinol/layer/select'), '', 'connecting does not silently select an editable layer');
+    send('/pinol/layer/select', '801');
+    await until(() => value('/pinol/layer/ready') === 1 && control('Opacity'));
+    const stale = control('Opacity');
+    write(stale, .3); await until(() => peer.commands.length === 1);
+    assert.equal(peer.commands[0].address, '/show/layer/by-id/801/opacity');
+    await until(() => Math.abs(incoming.filter(m => m[0] === stale.address).at(-1)?.[3] - .3) < 1e-6);
+    send('/pinol/layer/select', '802');
+    write(stale, .8);
+    await until(() => value('/pinol/layer/ready') === 1 && control('Opacity')?.preArgs[0] === '802');
+    assert.equal(peer.commands.length, 1, 'queued edits from the previous selection are refused');
+    write(control('Opacity'), NaN); write(control('Type'), 'video');
+    send('/pinol/layer/value/forged', '802', 'forged', .8);
+    assert.equal(peer.commands.length, 1, 'invalid values, read-only fields and unknown bindings cannot write');
+    peer.nodes.get(path('locked')).VALUE = [true]; peer.publishNode(path('locked'));
+    await until(() => value('/pinol/layer/locked') === 1);
+    write(control('Opacity'), .9); assert.equal(peer.commands.length, 1);
+    write(control('Enable'), 0); await until(() => peer.commands.length === 2);
+    assert.equal(peer.commands[1].address, path('enable'));
+    peer.nodes.get(path('locked')).VALUE = [false]; peer.publishNode(path('locked'));
+    await until(() => value('/pinol/layer/locked') === 0);
+    send('/pinol/layer/section', 'color');
+    const rgb = control('Add Color'); assert.equal(rgb.type, 'rgb');
+    write(rgb, .2, .4, .6); await until(() => peer.commands.length === 3);
+    assert.equal(peer.commands[2].address, path('add'));
+    assert.deepEqual(peer.commands[2].args.map(arg => arg.type), ['f', 'f', 'f']);
+    await until(() => Math.abs(incoming.filter(m => m[0] === rgb.address).at(-1)?.[4] - .4) < 1e-6);
+    send('/pinol/layer/section', 'transform');
+    const xy = control('Position'); assert.equal(xy.type, 'xy');
+    write(xy, 120, 340); await until(() => peer.commands.length === 4);
+    assert.equal(peer.commands[3].address, path('position'));
+    assert.deepEqual(peer.commands[3].args.map(arg => arg.value), [120, 340]);
+    const activePaths = [...peer.subscriptions.values()].flatMap(set => [...set]);
+    await until(() => [...peer.subscriptions.values()].every(set => !set.has(path('add'))));
+    assert(activePaths.includes('/show/state'), 'show feedback remains subscribed');
+    send('/pinol/layer/section', 'fx/Blur');
+    write(control('Blur radius'), 12); await until(() => peer.commands.length === 5);
+    assert.equal(peer.commands[4].address, path('fx/Blur/param/radius'));
+    const oldFx = control('Blur radius');
+    peer.catalog.layers = peer.catalog.layers.filter(entry => entry.id !== '802');
+    peer.trees.delete('/show/layer/by-id/802');
+    for (const socket of peer.ws.clients) socket.send(JSON.stringify({COMMAND: 'PATH_CHANGED', DATA: '/'}));
+    await until(() => value('/pinol/layer/select') === '');
+    write(oldFx, 20); assert.equal(peer.commands.length, 5, 'removing the selection does not retarget another layer');
+    send('/pinol/session/ready');
+    assert.equal(peer.commands.length, 5, 'rebuilding the editor never echoes values as commands');
+    for (const socket of peer.ws.clients) socket.close();
+    await until(() => value('/pinol/ui/online') === 0);
+    write(oldFx, 25); assert.equal(peer.commands.length, 5);
 });

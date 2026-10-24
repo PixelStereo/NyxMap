@@ -1,7 +1,7 @@
 # Pinol · Open Stage Control
 
-A live show desk with **SHOW**, **SNAPSHOTS**, **PRESETS**, **TIMELINES** and
-**CONNECT** pages. The show page follows Pinol's selected sequence, with previous,
+A live show desk with **SHOW**, **SNAPSHOTS**, **PRESETS**, **TIMELINES**,
+**LAYERS** and **CONNECT** pages. The show page follows Pinol's selected sequence, with previous,
 current and next cue cards, operator notes, elapsed/remaining time, phase meters,
 GO, GO BACK and stop-waits controls. Libraries follow the open project and are
 paged in groups of 24 to keep large shows responsive.
@@ -57,6 +57,29 @@ by GitHub CI when it builds the downloadable pack.
   was missed. IDs keep launches bound to the original object after list edits;
   deleted IDs are refused. Cue IDs are runtime identities: reload the catalog
   after loading a project, rather than saving cue IDs for use in another show.
+
+## Layer remote
+
+Choose a layer, group or output on **LAYERS**, then choose its section. Selection
+is shared by connected browsers and independent of Pinol's inspector selection.
+The editor discovers the selected object's OSCQuery controls: general settings,
+source and shader parameters, text/clocks, color, transform, each FX, playback,
+output routing and existing parameter animations. Sections appear when available.
+
+RGB(A) controls combine a color picker with individual channel fields. XY controls
+combine a pad with independent X/Y fields, in Pinol's native units. Numeric values
+have precise entry and a slider when a range is declared; choices use menus.
+Press Enter or leave a text/numeric field to commit. Text areas accept Shift+Enter
+for a new line. A source file path refers to the **Pinol computer's filesystem**.
+
+Edits act immediately and can compete with presets, interactions and timelines.
+Pinol supplies live values and enforces locks. Only visible controls subscribe
+to feedback; switching sections releases previous subscriptions. Stable layer
+IDs preserve targets after renaming/reordering. Removing the selected layer
+clears the selection; stale editor commands are discarded.
+
+The remote edits controls published by OSC; it does not create layers, add/remove
+FX or upload media. Keep `pinol-layers.cjs` beside `pinol.js` in the full pack.
 
 See the [OSC API guide](../../docs/osc.md) for commands, schemas, subscriptions
 and the optional legacy UDP cue feedback. Open Stage Control is a separate

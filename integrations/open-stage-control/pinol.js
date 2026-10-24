@@ -4,17 +4,20 @@ const WebSocket = nativeRequire('ws');
 const osc = nativeRequire('osc');
 const http = nativeRequire('http');
 const {Buffer} = nativeRequire('buffer');
+const createLayerDesk = nativeRequire(__dirname + '/pinol-layers.cjs');
 const PAGE_SIZE = 24;
 let host = '127.0.0.1', port = 5678, socket, timer, request, generation = 0;
 let catalog, playback, selected = '0', lastPong = 0, online = false, catalogKey = '';
 let pages = {snapshots: 0, presets: 0, timelines: 0, cues: 0};
 let retryAt = 0, lastCatalog = 0, catalogError = '';
+let catalogRefreshPending = false;
+const layerRequests = new Set();
 const id = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value);
 const sentValues = new Map();
 function emit(address, value, force = false) {
-    if (!force && sentValues.has(address) && sentValues.get(address) === value) return;
+    if (!force && sentValues.has(address) && JSON.stringify(sentValues.get(address)) === JSON.stringify(value)) return;
     if (sentValues.size > 512) sentValues.clear();
-    sentValues.set(address, value); receive(address, value);
+    sentValues.set(address, value); receive(address, ...(Array.isArray(value) ? value : [value]));
 }
 const edit = (widget, properties) => receive('/EDIT', widget, JSON.stringify(properties));
 const arg = (data, index) => data.args[index] && data.args[index].value;
@@ -85,6 +88,7 @@ function renderCues() {
 }
 function publishCatalog(force) {
     if (!catalog) return;
+    layers.setCatalog(catalog.layers, force);
     const key = JSON.stringify(catalog);
     if (!force && key === catalogKey) return;
     catalogKey = key;
@@ -127,7 +131,8 @@ function publishState(state) {
     status();
 }
 function fetchCatalog(force) {
-    if (request || !socket || socket.readyState !== WebSocket.OPEN) return;
+    if (request) { catalogRefreshPending = true; return; }
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     const token = generation;
     request = http.get({hostname: host, port, path: '/show/catalog?VALUE', timeout: 2500}, response => {
         let body = '', length = 0;
@@ -152,14 +157,54 @@ function fetchCatalog(force) {
     });
     request.on('timeout', () => request && request.destroy(Error('OSCQuery request timed out')));
     request.on('error', error => { if (token === generation) { catalog = null; catalogError = error.message; status(); } });
-    request.on('close', () => { if (token === generation) request = null; });
+    request.on('close', () => {
+        if (token !== generation) return;
+        request = null;
+        if (catalogRefreshPending) { catalogRefreshPending = false; fetchCatalog(true); }
+    });
 }
+function queryLayer(path) {
+    for (const pending of layerRequests) pending.destroy();
+    layerRequests.clear();
+    return new Promise((resolve, reject) => {
+        const token = generation;
+        const req = http.get({hostname: host, port, path: encodeURI(path), timeout: 4000}, response => {
+            let body = '', size = 0;
+            response.setEncoding('utf8');
+            response.on('data', chunk => {
+                size += Buffer.byteLength(chunk);
+                if (size > 4 * 1024 * 1024) { response.destroy(Error('Layer description is too large')); return; }
+                body += chunk;
+            });
+            response.on('error', reject);
+            response.on('end', () => {
+                if (token !== generation) { reject(Error('Connection changed')); return; }
+                try {
+                    if (response.statusCode !== 200) throw Error('Layer no longer exists; refresh the list.');
+                    resolve(JSON.parse(body));
+                } catch (error) { reject(error); }
+            });
+        });
+        layerRequests.add(req);
+        req.on('timeout', () => req.destroy(Error('Layer request timed out')));
+        req.on('error', reject);
+        req.on('close', () => layerRequests.delete(req));
+    });
+}
+function listenLayer(command, path) {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({COMMAND: command, DATA: path}));
+}
+const layers = createLayerDesk({emit, edit, button, text, target, query: queryLayer,
+    listen: listenLayer, sendCommand, isOnline: () => online});
 function connect(nextHost, nextPort) {
     if (typeof nextHost !== 'string' || !/^[a-zA-Z0-9_.:\-]+$/.test(nextHost) || !Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) {
         status('Enter a hostname/IP and an OSCQuery port from 1 to 65535.'); return;
     }
     ++generation;
     const token = generation;
+    layers.reset();
+    for (const req of layerRequests) req.destroy();
+    layerRequests.clear(); catalogRefreshPending = false;
     if (request) { request.destroy(); request = null; }
     if (socket) socket.terminate();
     host = nextHost; port = nextPort;
@@ -185,15 +230,17 @@ function connect(nextHost, nextPort) {
                 const visit = message => {
                     if (message.packets) { message.packets.forEach(visit); return; }
                     if (message.address === '/show/state') publishState(JSON.parse(message.args[0].value));
+                    else layers.feedback(message.address, (message.args || []).map(arg => arg.value));
                 };
                 visit(packet);
-            } else if (JSON.parse(data.toString()).COMMAND === 'PATH_CHANGED') fetchCatalog(false);
+            } else if (JSON.parse(data.toString()).COMMAND === 'PATH_CHANGED') { layers.invalidate(); fetchCatalog(false); }
         } catch (error) { playback = null; status('Invalid Pinol feedback: ' + error.message); }
     });
     socket.on('error', error => { if (token === generation) status('Connection error: ' + error.message); });
     socket.on('close', () => {
         if (token !== generation) return;
         catalog = playback = null; retryAt = Date.now() + 2000;
+        layers.reset();
         status('DISCONNECTED · reconnecting');
     });
 }
@@ -207,11 +254,15 @@ function command(data) {
     if (address === '/pinol/session/ready') {
         emit('/pinol/ui/host', host); emit('/pinol/ui/port', port); status();
         publishCatalog(true); if (playback) publishState(playback);
-        for (const [address, value] of sentValues) receive(address, value);
+        layers.replay();
+        for (const [address, value] of sentValues) receive(address, ...(Array.isArray(value) ? value : [value]));
     } else if (address === '/pinol/connect') {
         connect(String(arg(data, 0) || '').trim(), Number(arg(data, 1)));
     } else if (address === '/pinol/refresh') {
+        layers.invalidate();
         fetchCatalog(true);
+    } else if (address.startsWith('/pinol/layer/')) {
+        layers.command(address, data.args.map(arg => arg.value));
     } else if (address === '/pinol/library/page') {
         const kind = arg(data, 0), delta = Number(arg(data, 1));
         if (!Object.prototype.hasOwnProperty.call(pages, kind) || ![1, -1].includes(delta)) return;
@@ -246,6 +297,9 @@ function start() {
 }
 function stop() {
     ++generation;
+    layers.reset();
+    for (const req of layerRequests) req.destroy();
+    layerRequests.clear();
     if (timer) clearInterval(timer);
     if (request) request.destroy();
     if (socket) socket.terminate();

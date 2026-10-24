@@ -481,6 +481,11 @@ void OscNamespace::build()
         m_prefixOf[it.id] = base + '/' + seg;
         addLayer(base + '/' + seg, it.id);
         m_nodes[base + '/' + seg].description = it.name; // real name (spaces included) for the clients that show names
+        // Stable remote editing paths are separate from name-based paths and their wildcards.
+        // A group's alias exposes its own controls; its children have their own IDs.
+        const QString remote = QStringLiteral("/show/layer/by-id/%1").arg(it.id);
+        addLayer(remote, it.id);
+        m_nodes[remote].description = it.name;
     }
 
     // --- Interactions, by their names: their values (on / off, master level, ranges, filter, curve)
@@ -701,6 +706,7 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
     LayerNodes L{this, e, id, [this](const QString &p, const QString &t, int a, const QString &d) -> OscNode & {
                      return add(p, t, a, d);
                  }};
+    L.method(P + "/id", "s", 1, "Stable layer ID", [id](Layer &) { return QVariantList{QString::number(id)}; }, nullptr);
     bool isGroup, isViewport, topLevel, transport;
     std::vector<std::pair<quint64, QString>> viewports; // routing of a top-level item
     std::vector<std::pair<int, QString>> effects;
