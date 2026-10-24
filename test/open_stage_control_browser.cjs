@@ -76,10 +76,13 @@ async function commandSeen(address) {
         const layerCard = title => page.locator('.pinol-layer-card').filter({has: page.getByText(title, {exact: true})});
         const opacity = layerCard('Opacity').locator('input');
         assert.ok((await layerCard('Opacity').boundingBox()).height >= 176, 'Grid rows keep editor cards at a usable height');
+        await layerCard('Opacity').locator('.input-container').click();
         await opacity.fill('0.42'); await opacity.press('Enter');
         await commandSeen('/show/layer/by-id/801/opacity');
+        await layerCard('Opacity').locator('.input-container').click();
         const readback = await opacity.inputValue();
         assert.ok(Math.abs(Number(readback) - .42) < .001, 'Layer opacity receives native feedback');
+        await opacity.press('Escape');
         await capture('layers');
         await layerMenus.nth(1).selectOption({label: 'Color'});
         const rgb = page.locator('.rgb-container canvas').first();
@@ -97,6 +100,7 @@ async function commandSeen(address) {
         await capture('layer-tablet');
         await layerMenus.nth(1).selectOption({label: 'FX · Blur'});
         const radius = layerCard('Blur radius').locator('input');
+        await layerCard('Blur radius').locator('.input-container').click();
         await radius.fill('18'); await radius.press('Enter');
         await commandSeen('/show/layer/by-id/801/fx/Blur/param/radius');
         const commands = await (await fetch('http://127.0.0.1:5678/test/commands')).json();

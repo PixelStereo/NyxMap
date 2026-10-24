@@ -128,7 +128,9 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         if (['T', 'F'].includes(node.TYPE)) return {...common, type: 'switch', layout: 'horizontal', values: {OFF: 0, ON: 1}, colorWidget: '#4cd964'};
         if (node.TYPE === 'N') return button(key, 'TRIGGER', '/pinol/layer/write', [selected, properties.preArgs[1]], {interaction: properties.interaction});
         if (node.TYPE === 's') return {...common, type: 'textarea', default: ''};
-        return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : .001, asYouType: false, noCanvas: true};
+        // The 1.31 input commits through its canvas focus handler. With noCanvas
+        // the native input never marks itself focused, so Enter/blur do not send.
+        return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : .001, asYouType: false};
     }
     function hint(node, pair) {
         if (!(node.ACCESS & 2)) return 'READ ONLY';
