@@ -98,6 +98,8 @@ async function commandSeen(address) {
         await layerMenus.nth(0).selectOption({index: 0});
         await page.getByText('Main image · LIVE EDIT', {exact: true}).waitFor();
         const layerCard = title => page.locator('.pinol-layer-card').filter({has: page.getByText(title, {exact: true})});
+        const resetHeading = (title, label = title) => layerCard(title).locator('.pinol-reset-heading')
+            .filter({has: page.getByText(label, {exact: true})});
         await layerCard('Locked').locator('.switch-container value.on').filter({hasText: 'OFF'}).waitFor();
         await layerCard('Enable').locator('.switch-container value.on').filter({hasText: 'ON'}).waitFor();
         const opacity = layerCard('Opacity').locator('input');
@@ -110,7 +112,7 @@ async function commandSeen(address) {
         assert.ok(Math.abs(Number(readback) - .42) < .001, 'Layer opacity receives native feedback');
         await opacity.press('Escape');
         await capture('layers');
-        const opacityTitle = layerCard('Opacity').getByText('Opacity', {exact: true});
+        const opacityTitle = resetHeading('Opacity');
         await opacityTitle.click();
         await page.waitForTimeout(450); // single click must not become a destructive reset
         assert.equal((await (await fetch('http://127.0.0.1:5678/test/commands')).json()).filter(m => m.address.endsWith('/reset')).length, 0);
@@ -132,9 +134,9 @@ async function commandSeen(address) {
         const red = layerCard('Add Color').locator('input');
         assert.ok(Math.abs(Number(await red.inputValue()) - channels[0]) < .002, 'RGB channel fields follow the color picker feedback');
         await red.press('Escape');
-        await layerCard('Add Color').getByText('R', {exact: true}).dblclick();
+        await resetHeading('Add Color', 'R').dblclick();
         await commandSeen('/show/layer/by-id/801/add/r/reset');
-        await layerCard('Add Color').getByText('Add Color', {exact: true}).dblclick();
+        await resetHeading('Add Color').dblclick();
         await commandSeen('/show/layer/by-id/801/add/reset');
         await capture('layer-color');
         await layerMenus.nth(1).selectOption({label: 'Transform'});
@@ -142,7 +144,7 @@ async function commandSeen(address) {
         await xy.waitFor(); const xyBox = await xy.boundingBox();
         await xy.click({position: {x: xyBox.width * .4, y: xyBox.height * .6}});
         await commandSeen('/show/layer/by-id/801/position');
-        await layerCard('Position').getByText('Position', {exact: true}).dblclick();
+        await resetHeading('Position').dblclick();
         await commandSeen('/show/layer/by-id/801/position/reset');
         await page.setViewportSize({width: 768, height: 1024});
         await capture('layer-tablet');
@@ -152,7 +154,7 @@ async function commandSeen(address) {
         await radius.fill('18'); await radius.press('Enter');
         await commandSeen('/show/layer/by-id/801/fx/Blur/param/radius');
         await radius.press('Escape');
-        await layerCard('Blur radius').getByText('Blur radius', {exact: true}).dblclick();
+        await resetHeading('Blur radius').dblclick();
         await commandSeen('/show/layer/by-id/801/fx/Blur/param/radius/reset');
         const commands = await (await fetch('http://127.0.0.1:5678/test/commands')).json();
         assert.equal(commands.find(m => m.address === '/show/layer/by-id/801/add').args.length, 3);
