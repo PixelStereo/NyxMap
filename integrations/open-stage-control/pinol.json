@@ -1287,7 +1287,7 @@
               {
                 "type": "text",
                 "id": "layers_help",
-                "value": "Choose a layer, group or output. Edits are live; Pinol remains authoritative.",
+                "value": "Choose a layer, group or output. Double-click / double-tap a name marked \u21ba to reset to its default. Edits are live.",
                 "width": "100%",
                 "height": 36,
                 "bypass": true,

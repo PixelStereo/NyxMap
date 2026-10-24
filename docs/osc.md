@@ -289,6 +289,31 @@ An address claimed by an enabled OSC interaction feeds its mapping chain instead
 of also writing the native value. Audio, MIDI, OSC and automation can still
 compete on a target; see [parameter-control rules](parameter-control.md).
 
+### Reset a parameter
+
+Writable layer/source/FX parameters with a declared default publish two
+Pinol-specific OSCQuery attributes:
+
+| Attribute | Meaning |
+| :--- | :--- |
+| `PINOL_DEFAULT` | Typed default argument array, independent of `VALUE`. |
+| `PINOL_RESET` | Trigger address that resolves the native default when called. |
+
+For example, a layer's opacity advertises `[1]` and
+`/show/layer/by-id/<id>/opacity/reset`. Send a bare OSC message to that address.
+`…/position/reset` or `…/param/startColor/reset` restores a whole XY/RGB(A) value;
+`…/position/x/reset` or `…/param/startColor/r/reset` restores one component.
+Named layer paths expose the same actions. A numeric/Boolean trigger release of
+zero is refused. Triggers, read-only controls and values without a declared
+default do not advertise resets.
+
+Defaults come from Pinol's parameter registry, including ISF inputs. Reset
+actions resolve the current source, FX and composition dimensions under the
+engine lock. They obey layer locking and ordinary parameter limits; removed
+parameters/layers cannot reset another target. HTTP attribute queries support
+`?PINOL_DEFAULT` and `?PINOL_RESET`; `HOST_INFO.EXTENSIONS` advertises them.
+The remote uses these actions instead of writing cached default numbers.
+
 ## OSCQuery
 
 ### HTTP discovery

@@ -57,6 +57,15 @@ function fixture(port = 0) {
         leaf('duration', 'f', 12, null, 1, 'Duration');
         leaf('restart', 'N', undefined, null, 2, 'Restart');
         leaf('fx/Blur/param/radius', 'f', 5, [{MIN: 0, MAX: 40}], 3, 'Blur radius');
+        leaf('param/label', 's', 'Stage', null, 3, 'Caption');
+        for (const [suffix, defaults] of [['opacity', [1]], ['blend_mode', ['normal']],
+            ['add', [0, 0, 0]], ['add/r', [0]], ['add/g', [0]], ['add/b', [0]],
+            ['position', [960, 540]], ['position/x', [960]], ['position/y', [540]],
+            ['fx/Blur/param/radius', [5]], ['param/label', ['Hello']]]) {
+            const node = nodes.get(entry.path + '/' + suffix);
+            node.PINOL_DEFAULT = defaults; node.PINOL_RESET = node.FULL_PATH + '/reset';
+            leaf(suffix + '/reset', 'N', undefined, null, 2, 'Reset ' + node.DESCRIPTION).RESET_TARGET = node.FULL_PATH;
+        }
     }
     const commands = [];
     const server = http.createServer((req, res) => {
@@ -72,6 +81,16 @@ function fixture(port = 0) {
         for (const socket of ws.clients) if (subscriptions.get(socket)?.has(address))
             socket.send(osc.writePacket({address, args: node.VALUE.map((value, k) => ({type: 'TF'.includes(node.TYPE[k]) ? (value ? 'T' : 'F') : node.TYPE[k], value}))}, {metadata: true}));
     }
+    function updateNode(address, values) {
+        const node = nodes.get(address); node.VALUE = [...values]; publishNode(address);
+        for (const [part, k] of [['x', 0], ['y', 1], ['r', 0], ['g', 1], ['b', 2]])
+            if (node.CONTENTS?.[part] && k < node.VALUE.length) {
+                node.CONTENTS[part].VALUE = [node.VALUE[k]]; publishNode(address + '/' + part);
+            }
+        const parent = nodes.get(address.slice(0, address.lastIndexOf('/'))), part = address.split('/').at(-1);
+        const components = parent?.TYPE === 'ff' ? ['x', 'y'] : /^ffff?$/.test(parent?.TYPE || '') ? ['r', 'g', 'b', 'a'] : [];
+        if (components.includes(part)) { parent.VALUE[components.indexOf(part)] = values[0]; publishNode(parent.FULL_PATH); }
+    }
     ws.on('connection', socket => {
         subscriptions.set(socket, new Set());
         socket.on('close', () => subscriptions.delete(socket));
@@ -79,13 +98,8 @@ function fixture(port = 0) {
             if (binary) {
                 const command = osc.readPacket(data, {metadata: true}); commands.push(command);
                 const node = nodes.get(command.address);
-                if (node && node.TYPE !== 'N') {
-                    node.VALUE = command.args.map(arg => arg.value); publishNode(command.address);
-                    for (const [part, k] of [['x', 0], ['y', 1], ['r', 0], ['g', 1], ['b', 2]])
-                        if (node.CONTENTS?.[part] && k < node.VALUE.length) {
-                            node.CONTENTS[part].VALUE = [node.VALUE[k]]; publishNode(command.address + '/' + part);
-                        }
-                }
+                if (node?.RESET_TARGET) updateNode(node.RESET_TARGET, nodes.get(node.RESET_TARGET).PINOL_DEFAULT);
+                else if (node && node.TYPE !== 'N') updateNode(command.address, command.args.map(arg => arg.value));
             } else {
                 const {COMMAND, DATA} = JSON.parse(data);
                 if (COMMAND === 'IGNORE') subscriptions.get(socket).delete(DATA);
