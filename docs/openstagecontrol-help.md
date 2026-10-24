@@ -71,6 +71,11 @@ LAYERS tab appears, stop the server and update **both** launcher paths to the
 same freshly extracted pack. Loading an older `pinol.json` keeps the old pages
 even with a newer custom module.
 
+Names marked **↺** support a double-click or double-tap to restore the native
+default. Clicking once does nothing. The color/XY title resets all channels;
+R/G/B/A or X/Y labels reset just that component. Resets respect layer locks and
+are unavailable offline. Controls without declared defaults have no marker.
+
 Commit text/numeric fields with Enter or by leaving the field; Shift+Enter adds
 a text line. File paths belong to the Pinol computer. Locks and read-only values
 are respected. Existing automation can overwrite manual edits; see

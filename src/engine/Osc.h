@@ -49,6 +49,8 @@ struct OscNode {
     QString clip;   // "both" when the range is enforced
     QStringList children; // segment names, in order
     std::function<QVariantList()> get;
+    std::function<QVariantList()> defaults; // Pinol extension: live parameter defaults
+    QString resetPath; // Pinol extension: an explicit reset action, never a captured connection value
     std::function<bool(const QVariantList &)> set; // false: refused (locked layer, bad value)
 };
 

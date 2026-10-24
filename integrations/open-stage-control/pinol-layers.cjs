@@ -92,6 +92,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                 if (paired) for (const key of paired.keys) skip.add(path + '/' + key);
                 for (const [key, child] of Object.entries(node.CONTENTS || {})) {
                     if (relative === 'layer') continue; // groups are selected independently
+                    if (child.FULL_PATH === node.PINOL_RESET) continue; // reset is on the existing title, not another card
                     if (key !== 'layer') visit(child, skip);
                 }
             }
@@ -118,6 +119,17 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         if (node.ACCESS & 1) paths.push(node.FULL_PATH);
         return {address: '/pinol/layer/value/' + key, preArgs: [selected, key], interaction: interaction(node.relative),
             ...target, decimals: node.TYPE === 'i' ? 0 : 3};
+    }
+    function resettable(node) {
+        return !!(node.ACCESS & 2) && node.TYPE !== 'N' && node.PINOL_RESET === node.FULL_PATH + '/reset';
+    }
+    function heading(node, title, id, extra = {}) {
+        const style = {align: 'left', height: 36, css: 'font-weight:600;font-size:15px;', ...extra};
+        if (!resettable(node)) return text(id, title, style);
+        const key = bind(node, []).preArgs[1];
+        return button(id, title, '/pinol/layer/reset', [selected, key], {
+            ...style, doubleTap: true, interaction: interaction(''), alphaStroke: 0, alphaFillOff: 0,
+            css: `class: pinol-reset-heading;\n:host {font-weight:600;font-size:${extra.height === 20 ? 11 : 15}px;} label {justify-content:flex-start;text-align:left;} label::after {content:'↺';opacity:.45;margin-left:8rem;} :host:hover label::after {opacity:1;}`});
     }
     function editor(node, key, paths) {
         const properties = bind(node, paths), writable = !!(node.ACCESS & 2);
@@ -152,7 +164,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         const widgets = visible.map((node, index) => {
             const key = 'layer_control_' + epoch + '_' + index, pair = tuple(node);
             const title = node.DESCRIPTION || node.relative;
-            const controls = [text(key + '_title', title, {align: 'left', height: 36, css: 'font-weight:600;font-size:15px;'}),
+            const controls = [heading(node, title, key + '_title'),
                 text(key + '_hint', hint(node, pair), {align: 'left', height: 24, colorText: '#a4a4ae', css: 'font-size:11px;'})];
             if (pair && node.ACCESS & 2) {
                 const properties = bind(node, paths), range = node.RANGE || [];
@@ -163,7 +175,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                     widgets: pair.keys.map(component => {
                         const child = node.CONTENTS[component];
                         return {type: 'panel', id: key + '_' + component + '_field', label: false, layout: 'vertical', width: 'auto', expand: true, height: 80, padding: 1,
-                            widgets: [text(key + '_' + component + '_label', component.toUpperCase(), {height: 20, align: 'center', colorText: '#b2b2bc'}),
+                            widgets: [heading({...child, relative: node.relative + '/' + component}, component.toUpperCase(), key + '_' + component + '_label', {height: 20, align: 'center', colorText: '#b2b2bc'}),
                                 editor({...child, relative: node.relative + '/' + component}, key + '_' + component, paths)]};
                     })});
             } else {
@@ -251,6 +263,11 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
             section = args[0]; page = 0; emit(address, section, true); render();
         } else if (address === '/pinol/layer/page/change' && [-1, 1].includes(args[0])) {
             page += args[0]; render();
+        } else if (address === '/pinol/layer/reset') {
+            const node = bindings.get(args[1]);
+            if (args.length > 3 || (args.length === 3 && ![null, 1, true].includes(args[2]))) return;
+            if (!ready || !isOnline() || locked || args[0] !== selected || !node || !resettable(node)) return;
+            sendCommand(node.PINOL_RESET);
         } else if (address === '/pinol/layer/write' || address.startsWith('/pinol/layer/value/')) {
             write(args[0], args[1], args.slice(2));
         }

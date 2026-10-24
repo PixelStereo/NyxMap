@@ -553,6 +553,37 @@ struct LayerNodes {
     quint64 id;
     std::function<OscNode &(const QString &, const QString &, int, const QString &)> add;
 
+    void resettable(OscNode &node, const QStringList &paths)
+    {
+        Engine *eng = e;
+        const quint64 lid = id;
+        node.resetPath = node.path + QStringLiteral("/reset");
+        node.defaults = [eng, lid, paths] {
+            Engine::Lock lock(&eng->mutex());
+            Layer *layer = find(eng, lid);
+            QVariantList out;
+            for (const QString &path : paths) {
+                const Parameter *p = layer ? layer->parameter(path) : nullptr;
+                if (!p || !p->info().defaultValue.isValid()) return QVariantList();
+                out << p->info().defaultValue;
+            }
+            return out;
+        };
+        method(node.resetPath, "N", 2, QStringLiteral("Reset %1 to default").arg(node.description), nullptr,
+               edit([paths](Layer &layer, const QVariantList &args) {
+                   if (!args.isEmpty() && (args.size() != 1 || !truth(args[0]))) return false;
+                   std::vector<Parameter *> parameters;
+                   // Validate the entire tuple before changing any component.
+                   for (const QString &path : paths) {
+                       Parameter *p = layer.parameter(path);
+                       if (!p || !(p->info().access & ParamInfo::Write) || !p->info().defaultValue.isValid()) return false;
+                       parameters.push_back(p);
+                   }
+                   for (Parameter *p : parameters) if (!p->reset()) return false;
+                   return true;
+               }));
+    }
+
     // Read under the lock; writes refused on a locked layer unless `always`
     OscNode &method(const QString &path, const QString &type, int access, const QString &desc,
                     std::function<QVariantList(Layer &)> get, std::function<bool(int, const QVariantList &)> set,
@@ -637,6 +668,8 @@ struct LayerNodes {
             if (i.type != ParamInfo::Type::Bool && i.type != ParamInfo::Type::Text && i.type != ParamInfo::Type::Trigger)
                 node.range = {rangeOf(i)};
             if (number && i.min == i.lo && i.max == i.hi) node.clip = "both";
+            if ((i.access & ParamInfo::Write) && i.type != ParamInfo::Type::Trigger && i.defaultValue.isValid())
+                resettable(node, {path});
             const int cut = path.lastIndexOf('/');
             if (number && cut > 0) parts[path.left(cut)] << path.mid(cut + 1);
         }
@@ -695,6 +728,10 @@ struct LayerNodes {
                                        return true;
                                    }));
             node.range = range;
+            if (std::all_of(paths.cbegin(), paths.cend(), [&byPath](const QString &path) {
+                    const ParamInfo &i = byPath[path];
+                    return (i.access & ParamInfo::Write) && i.defaultValue.isValid();
+                })) resettable(node, paths);
         }
     }
 };
@@ -1092,6 +1129,13 @@ QJsonObject OscNamespace::toJson(const QString &path) const
             o["VALUE"] = a;
         }
         if (!n->range.isEmpty()) o["RANGE"] = n->range;
+        if (!n->resetPath.isEmpty() && n->defaults) {
+            QJsonArray defaults;
+            const QVariantList values = n->defaults();
+            for (int k = 0; k < values.size(); ++k) defaults.append(jsonValue(*n, values[k], k));
+            o["PINOL_DEFAULT"] = defaults;
+            o["PINOL_RESET"] = n->resetPath;
+        }
         if (!n->clip.isEmpty()) {
             QJsonArray c;
             for (int k = 0; k < n->type.size(); ++k) c.append(n->clip);
@@ -1308,7 +1352,8 @@ QJsonObject OscServer::hostInfo() const
         {"WS_PORT", int(queryPort())},
         {"EXTENSIONS", QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
                                    {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
-                                   {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true}}},
+                                   {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true},
+                                   {"PINOL_DEFAULT", true}, {"PINOL_RESET", true}}},
     };
 }
 
@@ -1328,7 +1373,7 @@ QByteArray OscServer::httpGet(const QString &target, int *status)
     }
     const QJsonObject o = m_ns.toJson(path);
     if (query.isEmpty()) return QJsonDocument(o).toJson(QJsonDocument::Compact);
-    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE"};
+    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE", "PINOL_DEFAULT", "PINOL_RESET"};
     if (!known.contains(query)) {
         *status = 400;
         return {};

@@ -97,6 +97,15 @@ to feedback; switching sections releases previous subscriptions. Stable layer
 IDs preserve targets after renaming/reordering. Removing the selected layer
 clears the selection; stale editor commands are discarded.
 
+**Reset a parameter:** double-click its name (double-tap on touchscreens) when
+marked **↺**. One click does nothing. A color/XY title resets the whole value;
+a channel label such as R or X resets only that component. Pinol resolves its
+current declared default at the time of the command, including source and FX
+defaults; the value captured when connecting is never used as a substitute.
+Read-only values, triggers and controls without a declared reset have no marker.
+Resets are disabled offline and while the layer is locked. Existing automation
+may overwrite a reset, just as it can overwrite another manual edit.
+
 The remote edits controls published by OSC; it does not create layers, add/remove
 FX or upload media. Keep `pinol-layers.cjs` beside `pinol.js` in the full pack.
 **LAYER CONTROL →** on SHOW opens this same editor without launching a cue.
