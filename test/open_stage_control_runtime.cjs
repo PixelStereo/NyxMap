@@ -12,8 +12,9 @@ if (process.argv[2] === '--isolated') {
     const root = process.argv[3];
     assert(!fs.existsSync(path.join(root, 'node_modules')));
     const nativeRequire = name => { assert(isBuiltin(name), 'Runtime tried to load an external npm dependency: ' + name); return require(name); };
-    const sandbox = {nativeRequire, module: {exports: {}}, Buffer, process, console,
-        setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate};
+    // Match Open Stage Control's VM: Buffer and setImmediate are not globals.
+    const sandbox = {nativeRequire, module: {exports: {}}, process, console,
+        setTimeout, clearTimeout, setInterval, clearInterval};
     sandbox.require = file => {
         assert(['./pinol-dependencies.cjs', './pinol-layers.cjs'].includes(file));
         const child = {...sandbox, module: {exports: {}}};

@@ -19,18 +19,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build the portable dependency bundle
+      - name: Verify the committed portable dependency bundle
         working-directory: integrations/open-stage-control
         run: |
-          npm install --ignore-scripts --omit=optional
-          npm run build:dependencies
-      - uses: actions/upload-artifact@v4
-        with:
-          name: controller-runtime
-          path: |
-            integrations/open-stage-control/pinol-dependencies.cjs
-            integrations/open-stage-control/pinol-dependencies.LICENSE.txt
-            integrations/open-stage-control/package-lock.json
+          npm ci --ignore-scripts --omit=optional
+          npm run check:dependencies
       - name: Package ready-to-load files outside the checkout
         run: python3 .github/scripts/package_open_stage_control.py "$RUNNER_TEMP/controller-pack"
       - name: Protocol, isolated runtime and session checks

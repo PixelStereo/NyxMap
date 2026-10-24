@@ -14,6 +14,11 @@ def package(repository, destination):
     folder.mkdir(parents=True, exist_ok=False)
     for name in FILES:
         shutil.copyfile(source / name, folder / name)
+    # Relative repository links do not exist beside a standalone release ZIP.
+    readme = folder / 'README.md'
+    text = readme.read_text(encoding='utf-8').replace('](../../docs/',
+        '](https://github.com/PixelStereo/Pinol/blob/main/docs/')
+    readme.write_text(text, encoding='utf-8')
     shutil.copyfile(repository / 'LICENSE', folder / 'LICENSE')
     archive = destination / 'Pinol-OpenStageControl.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:

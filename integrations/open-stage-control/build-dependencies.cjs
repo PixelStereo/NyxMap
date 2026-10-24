@@ -19,7 +19,10 @@ const compiler = webpack({
     externals: [({request}, done) => isBuiltin(request || '')
         ? done(null, `(typeof nativeRequire === 'function' ? nativeRequire : require)(${JSON.stringify(request)})`, 'var')
         : done()],
-    plugins: [new webpack.IgnorePlugin({resourceRegExp: /^(bufferutil|utf-8-validate)$/})]
+    plugins: [new webpack.IgnorePlugin({resourceRegExp: /^(bufferutil|utf-8-validate)$/}),
+        new webpack.BannerPlugin({raw: true, banner:
+            "const {Buffer} = (typeof nativeRequire === 'function' ? nativeRequire : require)('node:buffer');\n" +
+            "const {setImmediate, clearImmediate} = (typeof nativeRequire === 'function' ? nativeRequire : require)('node:timers');"})]
 });
 compiler.run((error, stats) => {
     compiler.close(closeError => {
