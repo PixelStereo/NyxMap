@@ -8,6 +8,9 @@ paged in groups of 24 to keep large shows responsive.
 
 ## Open it
 
+For launcher settings, ports and connection errors, see the
+[connection help](../../docs/openstagecontrol-help.md).
+
 1. Install [Open Stage Control 1.31.x](https://openstagecontrol.ammd.net/).
 2. In Pinol **Settings**, enable **OSC / OSCQuery**. Its default TCP port is `5678`.
 3. Download **Pinol-OpenStageControl** from a successful [controller workflow](https://github.com/PixelStereo/Pinol/actions/workflows/open-stage-control.yml)
