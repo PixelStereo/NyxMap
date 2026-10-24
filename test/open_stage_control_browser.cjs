@@ -153,9 +153,11 @@ async function commandSeen(address) {
         await layerCard('Blur radius').locator('.input-container').click();
         await radius.fill('18'); await radius.press('Enter');
         await commandSeen('/show/layer/by-id/801/fx/Blur/param/radius');
-        await radius.press('Escape');
         await resetHeading('Blur radius').dblclick();
         await commandSeen('/show/layer/by-id/801/fx/Blur/param/radius/reset');
+        await layerCard('Blur radius').locator('.input-container').click();
+        assert.ok(Math.abs(Number(await radius.inputValue()) - 5) < .001, 'FX reset receives its declared default');
+        await radius.press('Escape');
         const commands = await (await fetch('http://127.0.0.1:5678/test/commands')).json();
         assert.equal(commands.find(m => m.address === '/show/layer/by-id/801/add').args.length, 3);
         assert.equal(commands.find(m => m.address === '/show/layer/by-id/801/position').args.length, 2);
