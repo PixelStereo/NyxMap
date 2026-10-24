@@ -47,7 +47,26 @@ async function commandSeen(address) {
         assert.ok(current.height > previous.height, 'The current cue has visual priority');
         const cueText = await page.getByText('Start the film', {exact: true}).boundingBox();
         assert.ok(cueText.y >= current.y && cueText.y + cueText.height <= current.y + current.height, 'Cue text remains inside its card above the progress fill');
+        for (const label of ['AUTO-FOLLOW · End + 0:00.0', 'WAIT · GO · Manual advance'])
+            await page.getByText(label, {exact: true}).first().waitFor();
         await capture('show');
+        const cueRows = page.locator('.pinol-cue-row');
+        assert.equal(await cueRows.count(), 4);
+        for (const [i, label] of [[0, 'WAIT · GO'], [1, 'AUTO-FOLLOW'], [3, 'FOLLOW']]) {
+            const badge = cueRows.nth(i).locator('.pinol-continuation');
+            await badge.scrollIntoViewIfNeeded();
+            assert.ok((await badge.innerText()).includes(label));
+            const box = await badge.boundingBox();
+            assert.ok(box.width >= 150 && box.height >= 70, 'Continuation stays in a dedicated readable column');
+        }
+        await capture('cue-behavior');
+        await page.setViewportSize({width: 768, height: 1024});
+        const badge = cueRows.nth(3).locator('.pinol-continuation');
+        await badge.scrollIntoViewIfNeeded();
+        const rowBox = await cueRows.nth(3).boundingBox(), badgeBox = await badge.boundingBox();
+        assert.ok(badgeBox.x >= rowBox.x && badgeBox.x + badgeBox.width <= rowBox.x + rowBox.width + 1, 'Tablet retains the continuation column');
+        await capture('cue-behavior-tablet');
+        await page.setViewportSize({width: 1440, height: 1080});
         await button('GO ▶').click();
         await commandSeen('/sequence/by-id/501/go');
         await page.getByText('SNAPSHOTS', {exact: true}).first().click();
@@ -68,7 +87,9 @@ async function commandSeen(address) {
         await capture('timelines');
         await button('PAUSE').click();
         await commandSeen('/timeline/by-id/401/pause');
-        await page.getByText('LAYERS', {exact: true}).first().click();
+        await page.getByText('SHOW', {exact: true}).first().click();
+        await button('LAYER CONTROL →').click();
+        await page.getByText('LAYER REMOTE', {exact: true}).waitFor();
         const layerMenus = page.locator('.dropdown-container:visible select');
         await layerMenus.nth(0).locator('option').filter({hasText: 'Main image'}).waitFor({state: 'attached'});
         await layerMenus.nth(0).selectOption({index: 0});

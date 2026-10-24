@@ -6,6 +6,14 @@ current and next cue cards, operator notes, elapsed/remaining time, phase meters
 GO, GO BACK and stop-waits controls. Libraries follow the open project and are
 paged in groups of 24 to keep large shows responsive.
 
+Every cue has a dedicated continuation badge, also shown on previous/current/next
+cards: **WAIT · GO** (amber) requires a manual GO; **FOLLOW** (teal) advances after
+the action starts plus post-wait; **AUTO-FOLLOW** (lavender) advances after the
+action ends plus post-wait. FOLLOW can overlap actions. AUTO-FOLLOW holds on an
+endless action. The badge belongs to the cue that schedules the next GO; the next
+cue's own pre-wait then applies. The last cue wraps only if the sequence loops.
+Start/end delays stay visible beside each cue, independently of live timing.
+
 ## Open it
 
 For launcher settings, ports and connection errors, see the
@@ -80,6 +88,7 @@ clears the selection; stale editor commands are discarded.
 
 The remote edits controls published by OSC; it does not create layers, add/remove
 FX or upload media. Keep `pinol-layers.cjs` beside `pinol.js` in the full pack.
+**LAYER CONTROL →** on SHOW opens this same editor without launching a cue.
 
 See the [OSC API guide](../../docs/osc.md) for commands, schemas, subscriptions
 and the optional legacy UDP cue feedback. Open Stage Control is a separate

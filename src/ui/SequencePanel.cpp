@@ -107,10 +107,47 @@ static QString seconds(double t)
 static QString continueName(Sequencer::StepContinue c)
 {
     switch (c) {
-    case Sequencer::StepContinue::Follow: return QStringLiteral("↓ Follow");
-    case Sequencer::StepContinue::AutoFollow: return QStringLiteral("⤓ Auto-follow");
-    default: return QStringLiteral("Wait (GO)");
+    case Sequencer::StepContinue::Follow: return QStringLiteral("FOLLOW");
+    case Sequencer::StepContinue::AutoFollow: return QStringLiteral("AUTO-FOLLOW");
+    default: return QStringLiteral("WAIT · GO");
     }
+}
+
+static QColor continueColor(Sequencer::StepContinue c)
+{
+    switch (c) {
+    case Sequencer::StepContinue::Follow: return QColor("#79cbb6");
+    case Sequencer::StepContinue::AutoFollow: return QColor("#b7a1d9");
+    default: return QColor("#d5bd82");
+    }
+}
+
+static QString continueHelp(Sequencer::StepContinue c)
+{
+    switch (c) {
+    case Sequencer::StepContinue::Follow: return QStringLiteral("Next GO after this action starts + post-wait; actions may overlap.");
+    case Sequencer::StepContinue::AutoFollow: return QStringLiteral("Next GO after this action ends + post-wait; an endless action holds here.");
+    default: return QStringLiteral("Next step waits for a manual GO. Post-wait is not used.");
+    }
+}
+
+static void drawContinueBadge(QPainter *p, const QRectF &rect, Sequencer::StepContinue mode, QFont font)
+{
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    const QColor ink = continueColor(mode);
+    QColor fill = ink;
+    fill.setAlphaF(.12);
+    QColor edge = ink;
+    edge.setAlphaF(.6);
+    p->setPen(QPen(edge, 1));
+    p->setBrush(fill);
+    p->drawRoundedRect(rect, 3, 3);
+    font.setBold(true);
+    p->setFont(font);
+    p->setPen(ink);
+    p->drawText(rect, Qt::AlignCenter, continueName(mode));
+    p->restore();
 }
 
 // Where a step on its way is in each of its times: -1 not there yet (or none), 0..1 on the way, 1 over
@@ -221,6 +258,7 @@ void CueStack::rebuild()
         row.title = QStringLiteral("%1").arg(stepTarget(m_engine, st, false));
         row.text = st.text;
         row.note = st.description;
+        row.continuation = st.next;
         const double d = sq.stepDuration(st);
         row.timing = QStringLiteral("PRE %1   ACTION %2   POST %3 s   ·   %4")
                          .arg(seconds(st.preWait), std::isfinite(d) ? seconds(d) : QStringLiteral("∞"), seconds(st.postWait),
@@ -350,6 +388,15 @@ void CueStack::paintEvent(QPaintEvent *)
         if (!placeholder) p.drawText(numberRect, Qt::AlignLeft | Qt::AlignVCenter, QString::number(r.step + 1));
 
         const int textLeft = area.left() + (placeholder ? 0 : numberWidth);
+        // Keep the outgoing behavior visible even on the compact previous/later rows.
+        QFont badgeFont = font();
+        badgeFont.setPixelSize(9);
+        badgeFont.setBold(true);
+        const int badgeWidth = placeholder ? 0 : QFontMetrics(badgeFont).horizontalAdvance(continueName(r.continuation)) + 16;
+        if (!placeholder) {
+            const int badgeY = big || mid ? area.bottom() - 17 : area.top();
+            drawContinueBadge(&p, QRectF(area.right() - badgeWidth, badgeY, badgeWidth, 18), r.continuation, badgeFont);
+        }
         QFont title = font();
         title.setPixelSize(big ? 14 : mid ? 13 : 11);
         title.setBold(!dim && !placeholder);
@@ -377,7 +424,7 @@ void CueStack::paintEvent(QPaintEvent *)
         if (r.role == Current && m_modified && !placeholder) name += QStringLiteral("  (changed)");
         p.setFont(title);
         p.setPen(placeholder ? QColor(130, 130, 138) : dim ? QColor(150, 150, 158) : QColor(240, 240, 244));
-        const QRect titleRect(textLeft, area.top(), std::max(0, area.right() - rightWidth - textLeft), tm.height() + 4);
+        const QRect titleRect(textLeft, area.top(), std::max(0, area.right() - rightWidth - textLeft - (dim ? badgeWidth + 6 : 0)), tm.height() + 4);
         p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter, tm.elidedText(name, Qt::ElideRight, titleRect.width()));
         if (dim || placeholder) continue;
 
@@ -392,14 +439,16 @@ void CueStack::paintEvent(QPaintEvent *)
             p.setFont(italic);
             const QFontMetrics im(italic);
             p.setPen(QColor(200, 200, 206));
-            p.drawText(QRect(textLeft, line, area.right() - textLeft, im.height()), Qt::AlignLeft | Qt::AlignVCenter,
-                       im.elidedText(words, Qt::ElideRight, area.right() - textLeft));
+            const int wordsWidth = std::max(0, area.right() - textLeft - badgeWidth - 8);
+            p.drawText(QRect(textLeft, line, wordsWidth, im.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                       im.elidedText(words, Qt::ElideRight, wordsWidth));
             line += im.height();
         }
         p.setFont(small);
         p.setPen(QColor(128, 128, 136));
-        p.drawText(QRect(textLeft, area.bottom() - sm.height(), area.right() - textLeft, sm.height() + 1),
-                   Qt::AlignLeft | Qt::AlignBottom, sm.elidedText(r.timing, Qt::ElideRight, area.right() - textLeft));
+        const int timingWidth = std::max(0, area.right() - textLeft - badgeWidth - 8);
+        p.drawText(QRect(textLeft, area.bottom() - sm.height(), timingWidth, sm.height() + 1),
+                   Qt::AlignLeft | Qt::AlignBottom, sm.elidedText(r.timing, Qt::ElideRight, timingWidth));
     }
 }
 
@@ -609,9 +658,9 @@ private:
         const bool selected = opt.state & QStyle::State_Selected;
         QColor ink = opt.palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
         if (col == ColNext) {
-            if (next == Sequencer::StepContinue::Wait) ink.setAlphaF(0.45f);
-            p->setPen(ink);
-            p->drawText(opt.rect.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, continueName(next));
+            QFont badgeFont = opt.font;
+            badgeFont.setPixelSize(11);
+            drawContinueBadge(p, QRectF(opt.rect).adjusted(5, 4, -5, -4), next, badgeFont);
             return;
         }
         const double value = idx.data(Qt::EditRole).toDouble();
@@ -704,7 +753,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
                        "Auto-follow: the next step goes once this one's snapshot is over (plus the post-wait)"));
     m_steps->setItemDelegate(new StepDelegate(this));
     for (int c : {ColPre, ColAction, ColPost}) m_steps->setColumnWidth(c, 70);
-    m_steps->setColumnWidth(ColNext, 110);
+    m_steps->setColumnWidth(ColNext, 138);
+    m_steps->horizontalHeader()->moveSection(ColNext, 2); // beside the target, visible before timing/comment columns
+    m_steps->verticalHeader()->setDefaultSectionSize(32);
     m_steps->verticalHeader()->setVisible(false);
     m_steps->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_steps->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
@@ -802,7 +853,13 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         case ColDescription: st.description = it->text(); break;
         case ColPre: st.preWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
         case ColPost: st.postWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
-        case ColNext: st.next = Sequencer::StepContinue(std::clamp(it->data(Qt::EditRole).toInt(), 0, 2)); break;
+        case ColNext: {
+            st.next = Sequencer::StepContinue(std::clamp(it->data(Qt::EditRole).toInt(), 0, 2));
+            const QSignalBlocker blocker(m_steps);
+            it->setToolTip(continueHelp(st.next));
+            it->setData(Qt::AccessibleTextRole, continueName(st.next));
+            break;
+        }
         default: return;
         }
         m_engine->sequencer().setSequence(current(), s);
@@ -1048,6 +1105,8 @@ void SequenceWindow::refresh()
         post->setData(Qt::EditRole, st.postWait);
         auto *next = new QTableWidgetItem;
         next->setData(Qt::EditRole, int(st.next));
+        next->setToolTip(continueHelp(st.next));
+        next->setData(Qt::AccessibleTextRole, continueName(st.next));
         m_steps->setItem(k, ColNum, num);
         m_steps->setItem(k, ColSnapshot, mem);
         m_steps->setItem(k, ColPre, pre);

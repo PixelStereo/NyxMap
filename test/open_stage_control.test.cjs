@@ -36,6 +36,12 @@ test('custom module follows actual WebSocket OSC feedback without command echoes
     send('/pinol/connect', '127.0.0.1', peer.server.address().port);
     await until(() => value('/pinol/ui/online') === 1);
     assert.equal(value('/sequence/cue/current/text'), 'Start the film');
+    assert.equal(value('/pinol/cue/current/continuation'), 'AUTO-FOLLOW · End + 0:00.0');
+    assert.equal(value('/pinol/cue/next/continuation'), 'WAIT · GO · Manual advance');
+    const cueRows = JSON.parse(incoming.filter(m => m[0] === '/EDIT' && m[1] === 'cue_items').at(-1)[2]).widgets;
+    assert.equal(cueRows.length, 4);
+    assert.equal(cueRows[3].widgets[1].value, 'FOLLOW\nStart + 0:02.5');
+    assert.equal(cueRows[3].widgets[0].preArgs[1], '604', 'badge keeps the launch bound to its own cue');
     assert.equal(peer.commands.length, 0, 'feedback never recalls a cue');
     send('/pinol/sequence/go'); send('/pinol/recall', 'snapshots', '102');
     send('/pinol/timeline/control', '401', 'pause'); send('/pinol/sequence/cue/go', '501', '603');
