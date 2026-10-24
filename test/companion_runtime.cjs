@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const {fork} = require('node:child_process');
 const {once} = require('node:events');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const ejson = require('ejson');
 const fixture = require('./open_stage_control_fixture.cjs');
 async function until(condition) {
@@ -14,9 +16,14 @@ test('real Companion IPC runtime exposes presets, sends stable actions and updat
     const peer = fixture(); await once(peer.server, 'listening');
     const root = path.resolve(__dirname, '../integrations/companion');
     const packed = process.env.PINOL_COMPANION_PACKED === '1';
-    const entry = path.join(root, packed ? 'pkg/main.js' : 'src/main.js');
-    const manifest = path.join(root, packed ? 'pkg/companion/manifest.json' : 'companion/manifest.json');
-    const child = fork(entry, [], {stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: {...process.env,
+    // A sibling pkg/ can still resolve ../node_modules with NODE_PATH empty.
+    // Move the distribution outside the checkout to verify the shipped bundle.
+    const isolated = packed ? fs.mkdtempSync(path.join(os.tmpdir(), 'pinol-companion-')) : null;
+    if (isolated) fs.cpSync(path.join(root, 'pkg'), isolated, {recursive: true});
+    const moduleRoot = isolated || root;
+    const entry = path.join(moduleRoot, packed ? 'main.js' : 'src/main.js');
+    const manifest = path.join(moduleRoot, 'companion/manifest.json');
+    const child = fork(entry, [], {cwd: moduleRoot, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: {...process.env,
         MODULE_MANIFEST: manifest, CONNECTION_ID: 'pinol-test', VERIFICATION_TOKEN: 'pinol-ci', NODE_PATH: packed ? '' : process.env.NODE_PATH}});
     let output = '', next = 1000, registered = false;
     const pending = new Map(), messages = [], variables = {};
@@ -37,7 +44,10 @@ test('real Companion IPC runtime exposes presets, sends stable actions and updat
     });
     t.after(async () => {
         if (child.connected) await call('destroy', {}).catch(() => {});
-        child.kill(); await peer.close();
+        const exited = child.exitCode === null && child.signalCode === null ? once(child, 'exit') : null;
+        child.kill(); if (exited) await exited;
+        await peer.close();
+        if (isolated) fs.rmSync(isolated, {recursive: true, force: true});
     });
     try {
         await until(() => registered);
