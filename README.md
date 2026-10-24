@@ -17,6 +17,7 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 <a href="#built-for-the-show">Explore the features</a> &nbsp;·&nbsp;
 <a href="#download">Download</a> &nbsp;·&nbsp;
 <a href="docs/osc.md">OSC API</a> &nbsp;·&nbsp;
+<a href="docs/companion.md">Companion / Stream Deck</a> &nbsp;·&nbsp;
 <a href="docs/build.md">Build and technical details</a>
 </strong></p>
 

@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
+  "id": "pixelstereo-pinol",
+  "name": "Pixel Stereo: Pinol",
+  "shortname": "Pinol",
+  "description": "Show control, cue timing and timeline feedback for Pinol",
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": "git+https://github.com/PixelStereo/Pinol.git",
+  "bugs": "https://github.com/PixelStereo/Pinol/issues",
+  "maintainers": [{"name": "PIXEL STEREO"}],
+  "runtime": {"type": "node22", "api": "nodejs-ipc", "apiVersion": "0.0.0", "entrypoint": "../src/main.js"},
+  "legacyIds": [],
+  "manufacturer": "Pixel Stereo",
+  "products": ["Pinol"],
+  "keywords": ["OSC", "sequencer", "cue", "timeline", "Stream Deck"]
+}
