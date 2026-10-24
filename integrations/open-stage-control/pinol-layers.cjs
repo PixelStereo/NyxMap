@@ -60,9 +60,9 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         }
         if (/^(position|scale|pivot|corner|roi)(\/|$)/.test(path) || ['rotation', 'width', 'height'].includes(path)) return ['transform', 'Transform'];
         if (/^(color|temp|tint|add|remove|mask)(\/|$)/.test(path) || (node.DESCRIPTION || '').startsWith('Color ›')) return ['color', 'Color'];
-        if (/^(param|source|text|clock|tc|tox)(\/|$)/.test(path) || ['file', 'source_layer', 'source_tap'].includes(path)) return ['source', 'Source'];
+        if (/^(param|source|text|clock|tc|tox|web)(\/|$)/.test(path) || ['file', 'source_layer', 'source_tap'].includes(path)) return ['source', 'Source'];
         if (/^(viewport|output)(\/|$)/.test(path)) return ['routing', 'Output & routing'];
-        if (['play', 'restart', 'time', 'duration', 'speed', 'in', 'out', 'loop_mode', 'audio_level', 'audio_enable'].includes(path)) return ['playback', 'Playback'];
+        if (['play', 'restart', 'time', 'duration', 'speed', 'in', 'out', 'play_mode', 'volume', 'mute'].includes(path)) return ['playback', 'Playback'];
         return ['general', 'General'];
     }
     function tuple(node) {
@@ -87,7 +87,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                 const path = node.FULL_PATH;
                 if (typeof path !== 'string' || !path.startsWith(entry.path + '/')) return;
                 const relative = path.slice(entry.path.length + 1);
-                if (relative !== 'id' && supported(node) && !components.has(path)) nodes.set(path, {...node, relative});
+                if (relative !== 'id' && (relative !== 'testcard' || entry.viewport) && supported(node) && !components.has(path)) nodes.set(path, {...node, relative});
                 const paired = tuple(node), skip = new Set(components);
                 if (paired) for (const key of paired.keys) skip.add(path + '/' + key);
                 for (const [key, child] of Object.entries(node.CONTENTS || {})) {
