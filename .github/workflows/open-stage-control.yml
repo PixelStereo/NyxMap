@@ -1,10 +1,11 @@
 name: Open Stage Control
 on:
+  workflow_call:
   pull_request:
-    paths: ['integrations/open-stage-control/**', 'test/open_stage_control*', 'src/engine/OscShowControl.cpp', '.github/workflows/open-stage-control.yml']
+    paths: ['integrations/open-stage-control/**', 'test/open_stage_control*', 'src/engine/OscShowControl.cpp', '.github/scripts/package_open_stage_control.py', '.github/workflows/open-stage-control.yml']
   push:
     branches: [main]
-    paths: ['integrations/open-stage-control/**', 'test/open_stage_control*', 'src/engine/OscShowControl.cpp', '.github/workflows/open-stage-control.yml']
+    paths: ['integrations/open-stage-control/**', 'test/open_stage_control*', 'src/engine/OscShowControl.cpp', '.github/scripts/package_open_stage_control.py', '.github/workflows/open-stage-control.yml']
   workflow_dispatch:
 concurrency:
   group: open-stage-control-${{ github.event.pull_request.number || github.ref }}
@@ -18,12 +19,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Protocol and session checks
+      - name: Verify the committed portable dependency bundle
+        working-directory: integrations/open-stage-control
+        run: |
+          npm ci --ignore-scripts --omit=optional
+          npm run check:dependencies
+      - name: Package ready-to-load files outside the checkout
+        run: python3 .github/scripts/package_open_stage_control.py "$RUNNER_TEMP/controller-pack"
+      - name: Protocol, isolated runtime and session checks
         run: |
           npm install --prefix "$RUNNER_TEMP/controller-deps" --no-save ws@8 osc@2.4.5 playwright@1.56.1
-          npm install --prefix integrations/open-stage-control --ignore-scripts --omit=optional
           echo "NODE_PATH=$RUNNER_TEMP/controller-deps/node_modules" >> "$GITHUB_ENV"
-          NODE_PATH="$RUNNER_TEMP/controller-deps/node_modules" node --test test/open_stage_control.test.cjs
+          NODE_PATH="$RUNNER_TEMP/controller-deps/node_modules" node --test test/open_stage_control.test.cjs test/open_stage_control_runtime.cjs
           "$RUNNER_TEMP/controller-deps/node_modules/.bin/playwright" install --with-deps chromium
       - name: Build the official Open Stage Control client
         env:
@@ -38,31 +45,14 @@ jobs:
         run: |
           node test/open_stage_control_fixture.cjs > "$RUNNER_TEMP/pinol-fixture.log" 2>&1 &
           NODE_PATH='' node "$RUNNER_TEMP/open-stage-control/app" --no-gui --port 8080 --osc-port 11111 \
-            --custom-module "$PWD/integrations/open-stage-control/pinol.js" \
-            --load "$PWD/integrations/open-stage-control/pinol.json" > "$RUNNER_TEMP/open-stage-control.log" 2>&1 &
+            --custom-module "$RUNNER_TEMP/controller-pack/Pinol-OpenStageControl/pinol.js" \
+            --load "$RUNNER_TEMP/controller-pack/Pinol-OpenStageControl/pinol.json" > "$RUNNER_TEMP/open-stage-control.log" 2>&1 &
           node test/open_stage_control_browser.cjs
-      - name: Pack the ready-to-load controller
-        run: |
-          cp LICENSE integrations/open-stage-control/LICENSE
-          python3 - <<'PY'
-          import os, pathlib, zipfile
-          root = pathlib.Path('integrations/open-stage-control')
-          import json
-          for name in ['pinol.json', 'pinol.js', 'pinol-layers.cjs', 'node_modules/ws/package.json', 'node_modules/osc/package.json']:
-              assert (root / name).is_file(), f'Incomplete controller pack: {name}'
-          session = json.loads((root / 'pinol.json').read_text())
-          pages = next(widget for widget in session['content']['widgets'] if widget['id'] == 'pages')
-          assert any(tab['id'] == 'layers_tab' for tab in pages['tabs']), 'Show Control must include layer control'
-          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'Pinol-OpenStageControl.zip'
-          with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
-              for path in sorted(root.rglob('*')):
-                  if path.is_file():
-                      archive.write(path, pathlib.Path('Pinol-OpenStageControl') / path.relative_to(root))
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: Pinol-OpenStageControl
-          path: ${{ runner.temp }}/Pinol-OpenStageControl.zip
+          path: ${{ runner.temp }}/controller-pack/Pinol-OpenStageControl.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:

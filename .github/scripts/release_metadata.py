@@ -29,6 +29,12 @@ def release_assets(release, repository):
         if url != f"https://github.com/{repository}/releases/download/{tag}/{name}":
             raise ValueError(f"Unexpected asset URL: {url}")
         urls[platform] = url
+    remote = assets.get('Pinol-OpenStageControl.zip')
+    if remote:
+        expected = f'https://github.com/{repository}/releases/download/{tag}/Pinol-OpenStageControl.zip'
+        if remote['browser_download_url'] != expected:
+            raise ValueError(f'Unexpected remote URL: {remote["browser_download_url"]}')
+        urls['remote'] = expected
     return urls
 
 
@@ -47,6 +53,8 @@ def select_release(releases, repository):
 def downloads(release, urls, repository):
     tag = release["tag_name"]
     preview = " (preview)" if release.get("prerelease") else ""
+    remote = (f"\n\n**[Download Open Stage Control remote]({urls['remote']})** "
+              "— dependencies included; [setup guide](docs/openstagecontrol-help.md).") if 'remote' in urls else ''
     return f"""{START}
 Latest published build: **[{tag}](https://github.com/{repository}/releases/tag/{tag})**{preview}.
 
@@ -54,7 +62,7 @@ Latest published build: **[{tag}](https://github.com/{repository}/releases/tag/{
 | :---: | :---: | :---: |
 | **[Download macOS]({urls['mac']})** | **[Download Windows]({urls['win']})** | **[Download Ubuntu AppImage]({urls['linux']})** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive]({urls['portable']})** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive]({urls['portable']})** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).{remote}
 {END}"""
 
 

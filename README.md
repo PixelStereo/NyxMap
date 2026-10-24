@@ -17,6 +17,7 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 <a href="#built-for-the-show">Explore the features</a> &nbsp;·&nbsp;
 <a href="#download">Download</a> &nbsp;·&nbsp;
 <a href="docs/osc.md">OSC API</a> &nbsp;·&nbsp;
+<a href="integrations/open-stage-control/README.md">Open Stage Control</a> &nbsp;·&nbsp;
 <a href="docs/companion.md">Companion / Stream Deck</a> &nbsp;·&nbsp;
 <a href="docs/build.md">Build and technical details</a>
 </strong></p>
@@ -57,6 +58,8 @@ Latest published build: **[v0.3.3](https://github.com/PixelStereo/Pinol/releases
 
 Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-linux-x86_64-v0.3.3.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
 <!-- release-downloads:end -->
+
+**[Open Stage Control remote](integrations/open-stage-control/README.md)** — ready to load directly from this repository, with dependencies included. See the [setup guide](docs/openstagecontrol-help.md).
 
 To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds Pinol and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
 

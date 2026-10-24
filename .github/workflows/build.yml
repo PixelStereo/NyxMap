@@ -771,10 +771,15 @@ jobs:
           path: Pinol-windows*.zip
 
 
+  open-stage-control:
+    name: Release Open Stage Control remote
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/open-stage-control.yml
+
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
-    needs: [linux, macos, windows, validation]
+    needs: [linux, macos, windows, validation, open-stage-control]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -783,6 +788,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: Pinol-*
           merge-multiple: false
       - name: Publish release
         uses: softprops/action-gh-release@v2
