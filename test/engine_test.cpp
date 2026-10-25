@@ -909,6 +909,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             f.write("/*{\"ISFVSN\":\"2\",\"INPUTS\":[],\"IMPORTED\":{\"tex\":{\"PATH\":\"tex.png\"}}}*/\n"
                     "void main(){ gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }\n");
         }
+        CHECK(put(src + "/shaders/Pic.fs", src + "/shaders/Pic2.fs")); // both import the same tex.png
         const int img = e.addLayer(QStringLiteral("Image"));
         CHECK(e.setLayerImage(img, src + "/bars.png", &err));
         CHECK(e.addEffect(img, src + "/Flip.fs", &err) >= 0);
@@ -925,6 +926,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.setLayerAudio(snd, src + "/tone.wav", &err));
         const int gen = e.addLayer(QStringLiteral("Generator"));
         CHECK(e.setLayerIsf(gen, src + "/shaders/Pic.fs", &err));
+        const int gen2 = e.addLayer(QStringLiteral("Generator 2"));
+        CHECK(e.setLayerIsf(gen2, src + "/shaders/Pic2.fs", &err));
         e.addBinItems({src + "/missing.mov"});
         // A snapshot that gives the clip another file: that file is collected too
         Engine::Snapshot later;
@@ -947,9 +950,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         std::printf("       collect: %s; missing: %s\n", qPrintable(rel.join(", ")), qPrintable(plan.missing.join(", ")));
         for (const char *want : {"MEDIA/PICTS/bars.png", "MEDIA/PICTS/bars 2.png", "MEDIA/MOVIES/clip.mp4",
                                  "MEDIA/MOVIES/later.mp4", "MEDIA/AUDIO/tone.wav", "MEDIA/ISF/Flip.fs",
-                                 "MEDIA/ISF/Dissolve.fs", "MEDIA/ISF/Pic/Pic.fs", "MEDIA/ISF/Pic/tex.png"})
+                                 "MEDIA/ISF/Dissolve.fs", "MEDIA/ISF/Pic/Pic.fs", "MEDIA/ISF/Pic/tex.png",
+                                 "MEDIA/ISF/Pic2/Pic2.fs", "MEDIA/ISF/Pic2/tex.png"})
             CHECK(rel.contains(QString::fromLatin1(want)));
-        CHECK(plan.files.size() == 9 && plan.missing.size() == 1 && plan.missing.front().endsWith("missing.mov"));
+        CHECK(plan.files.size() == 11 && plan.missing.size() == 1 && plan.missing.front().endsWith("missing.mov"));
         CHECK(plan.projectFile == tmp + "/collect_out/Show/Show.pinol" && !QFileInfo::exists(plan.folder)); // nothing yet
         CHECK(e.collect(plan, &err));
         CHECK(!e.collect(plan, &err) && !err.isEmpty()); // the folder exists now: refused
@@ -987,13 +991,35 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         const Engine::CollectPlan moved = e.planCollect(tmp + "/collect_out", QStringLiteral("Moved"), {});
         CHECK(e.collect(moved, &err) && e.loadProject(moved.projectFile, nullptr, &err));
         QStringList failed;
-        CHECK(Engine::removeCollectedOriginals(moved, &failed) == int(moved.files.size()) && failed.isEmpty());
+        QSet<QString> originals;
+        for (const auto &f : moved.files) originals.insert(QFileInfo(f.from).canonicalFilePath());
+        CHECK(Engine::removeCollectedOriginals(moved, &failed) == originals.size() && failed.isEmpty());
         CHECK(!QFileInfo::exists(plan.folder + "/MEDIA/MOVIES/clip.mp4") && QFileInfo::exists(moved.folder + "/MEDIA/MOVIES/clip.mp4"));
         for (int k = 0; k < e.layerCount(); ++k) {
             Engine::Lock lk(&e.mutex());
             const Layer *l = e.layer(k);
             if (!l->isViewport) CHECK(QDir::cleanPath(l->sourcePath).startsWith(moved.folder + "/MEDIA/"));
         }
+        // Relocate the whole package; the old absolute paths must no longer work.
+        e.newProject();
+        const QString relocated = tmp + "/collect_out/Relocated";
+        CHECK(QDir().rename(moved.folder, relocated));
+        CHECK(e.loadProject(relocated + "/Moved.pinol", nullptr, &err));
+        const QString transition = relocated + "/MEDIA/ISF/Dissolve.fs";
+        for (int k = 0; k < e.layerCount(); ++k) {
+            Engine::Lock lk(&e.mutex());
+            const Layer *l = e.layer(k);
+            if (l->name == QStringLiteral("Clip")) CHECK(l->transition == transition && QFileInfo::exists(l->transition));
+        }
+        bool snapshotTransition = false;
+        const Engine::Snapshot relocatedSnapshot = e.snapshot(0);
+        for (const QJsonValue &v : relocatedSnapshot.layers) {
+            const QJsonObject source = v.toObject().value("source").toObject();
+            if (source.contains("transition")) snapshotTransition = source.value("transition").toString() == transition;
+        }
+        CHECK(snapshotTransition);
+        CHECK(QFileInfo::exists(relocated + "/MEDIA/ISF/Pic/tex.png") &&
+              QFileInfo::exists(relocated + "/MEDIA/ISF/Pic2/tex.png"));
         e.newProject();
     }
     { // Startup project: loaded as a template — same content, untitled, its file never written over

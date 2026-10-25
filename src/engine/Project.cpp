@@ -228,7 +228,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["psd_layer"] = l.psdLayer;
         src["psd_layer_name"] = l.psdLayerName;
     }
-    if (!l.transition.isEmpty()) src["transition"] = l.transition;
+    if (!l.transition.isEmpty()) {
+        src["transition"] = l.transition;
+        if (!projectDir.isEmpty()) src["relative_transition"] = QDir(projectDir).relativeFilePath(l.transition);
+    }
     o["source"] = src;
     QJsonArray fx;
     for (const auto &e : l.effects) fx.append(e->save(projectDir, false));
@@ -276,8 +279,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         for (auto it = vo.begin(); it != vo.end(); ++it)
             l->viewportOpacity[it.key().toULongLong()] = float(std::clamp(it.value().toDouble(1.0), 0.0, 1.0));
         {
-            const QString t = o.value("source").toObject().value("transition").toString();
-            l->transition = t.isEmpty() ? QString() : resolvePath(QJsonObject{{"path", t}}, projectDir);
+            const QJsonObject src = o.value("source").toObject();
+            const QString t = src.value("transition").toString();
+            l->transition = t.isEmpty() ? QString() : resolvePath(
+                QJsonObject{{"path", t}, {"relative_path", src.value("relative_transition")}}, projectDir);
         }
         l->colorModels = o.value("color_models").toInt(l->colorModels);
         l->color.maskLayer = o.value("mask").toString().toULongLong();
