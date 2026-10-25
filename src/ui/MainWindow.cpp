@@ -2540,7 +2540,9 @@ void MainWindow::collectFiles()
         if (!plan.skipped.isEmpty())
             text += QStringLiteral("<br><span style='color:#e0a040'>%1 ISF image(s) outside their shader's folder, not collected.</span>")
                         .arg(plan.skipped.size());
-        text += QStringLiteral("<br>The default transition of Settings is this machine's, not the project's: not collected."
+        if (!plan.kept.isEmpty())
+            text += QStringLiteral("<br>%1 file(s) from an ISF library: copied, never deleted by Move.").arg(plan.kept.size());
+        text +=QStringLiteral("<br>The default transition of Settings is this machine's, not the project's: not collected."
                                "<br>The collected project is opened afterwards; the project file open now is left as it "
                                "was last saved.");
         summary->setText(text);
@@ -2555,7 +2557,8 @@ void MainWindow::collectFiles()
         QMessageBox::question(this, QStringLiteral("Collect Files"),
                               QStringLiteral("Move %1 files into %2?\n\nThe originals are deleted once every copy is "
                                              "made and the collected project is open. Other projects that use them will "
-                                             "not find them any more.")
+                                             "not find them any more. Files from an ISF library are copied and "
+                                             "left where they are.")
                                   .arg(plan.files.size())
                                   .arg(plan.folder),
                               QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)

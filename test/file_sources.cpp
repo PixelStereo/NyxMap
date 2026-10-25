@@ -321,11 +321,50 @@ void streamTests(Engine &e, const QString &tmp)
     e.clearLayerSource(back);
     check(timer.elapsed() < 2000, "closing a stream that is connecting is immediate");
 }
+// Collect Files ▸ Move: a shader of an ISF library is copied, its original never deleted (other projects, and the
+// application's own bundled library, use it); a shader of the project's own is moved
+void collectLibraryTests(Engine &e, const QString &tmp)
+{
+    const QString lib = tmp + "/isf_library", own = tmp + "/own_shaders";
+    QDir(tmp + "/collect_library").removeRecursively();
+    check(QDir().mkpath(lib + "/Generators") && QDir().mkpath(own), "library and project shader folders");
+    auto put = [](const QString &path) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly)) return false;
+        f.write("/*{\"ISFVSN\":\"2\",\"INPUTS\":[]}*/\nvoid main(){ gl_FragColor = vec4(1.0); }\n");
+        return true;
+    };
+    const QString shared = lib + "/Generators/Shared.fs", mine = own + "/Mine.fs";
+    check(put(shared) && put(mine), "two generators written");
+    const QStringList folders = e.library().userFolders();
+    e.library().setUserFolders(folders + QStringList{lib});
+    e.newProject();
+    QString err;
+    check(e.setLayerIsf(e.addLayer("Library"), shared, &err) && e.setLayerIsf(e.addLayer("Own"), mine, &err),
+          "a library shader and a project shader");
+
+    const Engine::CollectPlan plan = e.planCollect(tmp + "/collect_library", "LibShow", {});
+    bool sharedKept = false, mineKept = true;
+    for (const Engine::CollectFile &f : plan.files) {
+        if (f.from == shared) sharedKept = f.keepOriginal;
+        if (f.from == mine) mineKept = f.keepOriginal;
+    }
+    check(sharedKept && !mineKept && plan.kept == QStringList{shared}, "only the library's shader is kept by Move");
+    check(e.collect(plan, &err) && e.loadProject(plan.projectFile, nullptr, &err), "collected and opened");
+    QStringList failed;
+    check(Engine::removeCollectedOriginals(plan, &failed) == 1 && failed.isEmpty(), "Move deletes one original");
+    check(QFileInfo::exists(shared) && !QFileInfo::exists(mine), "the library's shader is still there, the project's moved");
+    check(QFileInfo::exists(plan.folder + "/MEDIA/ISF/Shared.fs") && QFileInfo::exists(plan.folder + "/MEDIA/ISF/Mine.fs"),
+          "both shaders collected");
+    e.library().setUserFolders(folders);
+    e.newProject();
+}
 } // namespace
 
 int runFileSourceTests(Engine &e, const QString &tmp)
 {
     failures = 0;
+    collectLibraryTests(e, tmp);
     sequenceTests(e, tmp);
     svgTests(e, tmp);
     streamTests(e, tmp);
