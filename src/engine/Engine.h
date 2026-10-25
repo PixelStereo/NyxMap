@@ -738,12 +738,14 @@ public:
     struct CollectFile {
         QString from, to; // absolute paths
         qint64 bytes = 0;
+        bool keepOriginal = false; // in an ISF library folder: copied, never deleted by Move (others use it)
     };
     struct CollectPlan {
         QString folder, projectFile;
         std::vector<CollectFile> files;
         QStringList missing; // referenced, not found: their paths are kept as they are
         QStringList skipped; // found, not collected (an ISF image outside its shader's folder)
+        QStringList kept;    // collected from an ISF library folder: Move leaves the original where it is
         qint64 bytes = 0;
         QJsonObject project; // the project as it will be written there
     };

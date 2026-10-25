@@ -46,6 +46,13 @@ QString key(const QString &path)
     return canonical.isEmpty() ? QDir::cleanPath(fi.absoluteFilePath()) : canonical;
 }
 
+// The file is somewhere below the folder
+bool inside(const QString &file, const QString &folder)
+{
+    const QString rel = QDir(key(folder)).relativeFilePath(key(file));
+    return !rel.isEmpty() && rel != QLatin1String(".") && !rel.startsWith(QLatin1String("..")) && !QDir::isAbsolutePath(rel);
+}
+
 // Every string of the project, its key and the object it is in visited (read-only)
 void visit(const QJsonValue &v, const QString &key, const QJsonObject *in,
            const std::function<void(const QString &, const QString &, const QJsonObject *)> &fn)
@@ -230,6 +237,17 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
             plan.files.push_back(c);
         }
     }
+    // A shader library (bundled with the application, the system's, the user's) is shared by every project and by
+    // the library browser: its files are copied, Move never deletes them
+    const QStringList libraries = m_library.allFolders();
+    QSet<QString> seenKept;
+    for (CollectFile &f : plan.files) {
+        f.keepOriginal = std::any_of(libraries.begin(), libraries.end(), [&](const QString &l) { return inside(f.from, l); });
+        if (f.keepOriginal && !seenKept.contains(key(f.from))) {
+            seenKept.insert(key(f.from));
+            plan.kept << f.from;
+        }
+    }
     for (auto it = alias.cbegin(); it != alias.cend(); ++it) // its old spelling points to the copy too
         if (to.contains(key(it.value()))) to.insert(it.key(), to.value(key(it.value())));
     QJsonObject relocated = relocate(root, to, projectDir).toObject();
@@ -283,7 +301,7 @@ int Engine::removeCollectedOriginals(const CollectPlan &plan, QStringList *faile
     // file, canonicalFilePath() is empty and a symlinked parent (e.g. /var on
     // macOS) would otherwise give its later references a different key.
     for (const CollectFile &f : plan.files) {
-        if (!QFileInfo::exists(f.to)) continue; // never without its copy
+        if (f.keepOriginal || !QFileInfo::exists(f.to)) continue; // never a library's file, never without its copy
         const QString original = key(f.from);
         if (original == key(f.to) || processed.contains(original)) continue;
         processed.insert(original); // one original can have several necessary collected copies
