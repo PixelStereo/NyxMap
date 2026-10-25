@@ -385,6 +385,7 @@ public:
     // Undo snapshot recalls from the cue clock: serialize only existing layers
     // the recall can actually modify, rather than every layer in the show.
     QJsonArray captureRecallLayers(int snapshotIndex) const;
+    QJsonArray captureRecallLayersById(quint64 snapshotId) const; // found and captured under one lock
     void restoreRecallLayers(const QJsonArray &states); // Undo: exact animation definitions and transport, too
     // Applies layer states (those not excluded): opacity, volume, roi, color, mapping and ISF numbers fade in
     // `fade` seconds, or in the time a state gives them ("timing": key → seconds, 0 a cut); sources and effect chains change at once; a layer that became visible fades in from 0,
@@ -554,6 +555,9 @@ public:
     // Real seconds a timeline told to play now will play (0: endless or gone; infinity: frozen, speed 0)
     double animationPlayTime(quint64 id) const;
     void recallSnapshot(int i); // with its fade
+    // The same, found by its id: from another thread (the cue clock), where an index may change meanwhile (a snapshot
+    // added or removed in the interface). false: gone
+    bool recallSnapshotById(quint64 id);
     bool isFading() const;
     // The snapshot recalled last, and where its fade is (its longest time: values with times of their own included)
     struct RecallProgress {
@@ -1064,6 +1068,7 @@ private:
     void startLayerAnim(Animation &a); // from the start: the "current value" keys read now (lock held)
     void assignLayerAnims(Layer &l, const std::vector<Animation> &anims); // see setLayerAnims (lock held)
     void recallLayerAnims(Layer &l, const QJsonArray &stored);            // a snapshot's (lock held)
+    void recallSnapshotCopy(const Snapshot &m, int index);                 // recallSnapshot, its copy taken
     Sequencer *m_sequencer = nullptr; // a child QObject
     std::atomic<bool> m_fadesManual{false};
     void attachAudio(Layer &l, std::shared_ptr<AudioStream> s);

@@ -200,7 +200,7 @@ private:
     void startTimer();
     void runClock(); // clock thread
     void tick();     // clock thread
-    void fireSnapshot(int snapshotIndex);
+    void fireSnapshot(quint64 snapshotId); // by its id: on the cue clock, an index may change meanwhile
     void noteFired(double late); // lock held
 
     Engine &m_engine;
