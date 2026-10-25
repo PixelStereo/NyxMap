@@ -1490,6 +1490,8 @@ QJsonObject Engine::snapshotToJson(const Snapshot &m, const QString &dir) const
         auto rel = [&](QJsonObject x) {
             const QString p = x.value("path").toString();
             if (!p.isEmpty() && !dir.isEmpty()) x["relative_path"] = QDir(dir).relativeFilePath(p);
+            const QString t = x.value("transition").toString();
+            if (!t.isEmpty() && !dir.isEmpty()) x["relative_transition"] = QDir(dir).relativeFilePath(t);
             return x;
         };
         o["source"] = rel(o.value("source").toObject());
@@ -1525,6 +1527,10 @@ Engine::Snapshot Engine::snapshotFromJson(const QJsonObject &o, const QString &d
         auto resolve = [&](QJsonObject x) {
             if (x.contains("path")) x["path"] = resolvePath(x, dir);
             x.remove("relative_path");
+            const QString t = x.value("transition").toString();
+            if (!t.isEmpty()) x["transition"] = resolvePath(
+                QJsonObject{{"path", t}, {"relative_path", x.value("relative_transition")}}, dir);
+            x.remove("relative_transition");
             return x;
         };
         QJsonObject src = l.value("source").toObject();

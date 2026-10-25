@@ -81,6 +81,8 @@ QJsonValue relocate(const QJsonValue &v, const QHash<QString, QString> &to, cons
     for (auto it = o.begin(); it != o.end(); ++it) it.value() = relocate(it.value(), to, projectDir);
     if (o.contains("relative_path") && o.value("path").isString()) // from the new project's folder
         o["relative_path"] = projectDir.relativeFilePath(o.value("path").toString());
+    if (o.value("transition").isString())
+        o["relative_transition"] = projectDir.relativeFilePath(o.value("transition").toString());
     return o;
 }
 
@@ -164,9 +166,11 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
         }
     };
     QHash<QString, QString> to; // key of the original → new absolute path
+    QSet<QString> copies; // a dependency may be needed beside several shaders
     auto add = [&](const QString &from, const QString &dest) {
-        if (to.contains(key(from))) return;
-        to.insert(key(from), dest);
+        if (copies.contains(dest.toLower())) return;
+        copies.insert(dest.toLower());
+        if (!to.contains(key(from))) to.insert(key(from), dest);
         CollectFile f;
         f.from = QFileInfo(from).absoluteFilePath();
         f.to = dest;
