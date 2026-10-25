@@ -633,8 +633,7 @@ void Sequencer::tick()
     { QMutexLocker lock(&m_mutex); pending.swap(m_pendingSnapshots); }
     for (const auto &request : pending) {
         QMutexLocker dispatch(&m_dispatchMutex);
-        const int index = m_engine.indexOfSnapshot(request.id);
-        if (index >= 0 && request.valid->load()) fireSnapshot(index);
+        if (request.valid->load()) fireSnapshot(request.id);
     }
     advance(dt);
     bool empty;
@@ -648,7 +647,7 @@ void Sequencer::tick()
     }
 }
 
-void Sequencer::fireSnapshot(int mi)
+void Sequencer::fireSnapshot(quint64 snapshotId)
 {
     std::function<void(int)> recaller;
     std::function<void(int, const RecallBefore &)> recorder;
@@ -658,14 +657,17 @@ void Sequencer::fireSnapshot(int mi)
         recorder = m_recorder;
     }
     if (QThread::currentThread() == thread()) { // a GO, on the Sequencer's own thread: through the interface
+        // The interface edits snapshots on this thread: the index stays the same until the recall
+        const int mi = m_engine.indexOfSnapshot(snapshotId);
+        if (mi < 0) return;
         if (recaller) recaller(mi);
         else m_engine.recallSnapshot(mi);
         return;
     }
-    // The cue clock: record how long it takes to *actually* execute a
+    // The cue clock: by id only, the interface may add or remove a snapshot meanwhile (an index would then recall
+    // its neighbour). Record how long it takes to *actually* execute a
     // snapshot. CueTiming::noteFired() only measures timer lateness, which
     // can be tiny even when Undo capture or scene application is slow.
-    const auto snapshotId = m_engine.snapshot(mi).id;
     quint64 generation;
     { QMutexLocker lock(&m_mutex); generation = m_generation; }
     const qint64 start = FrameTiming::nowNs();
@@ -676,14 +678,14 @@ void Sequencer::fireSnapshot(int mi)
         m_workTiming.total.add(double(applied - start) / 1e6);
     };
     if (!recorder) {
-        m_engine.recallSnapshot(mi);
+        if (!m_engine.recallSnapshotById(snapshotId)) return;
         const qint64 done = FrameTiming::nowNs();
         recordWork(start, done); // no UI Undo recording, so capture time is zero
         return;
     }
-    RecallBefore before{m_engine.captureRecallLayers(mi), m_engine.captureComposition(), m_engine.captureInteractions()};
+    RecallBefore before{m_engine.captureRecallLayersById(snapshotId), m_engine.captureComposition(), m_engine.captureInteractions()};
     const qint64 captured = FrameTiming::nowNs();
-    m_engine.recallSnapshot(mi);
+    if (!m_engine.recallSnapshotById(snapshotId)) return;
     recordWork(captured, FrameTiming::nowNs());
     {
         QMutexLocker lock(&m_mutex);
@@ -807,9 +809,7 @@ void Sequencer::advance(double dt)
                 m_engine.controlAnimation(st.timeline, st.action, st.action == AnimAction::Speed ? st.speed : st.seekTime, st.loop, st.repeat);
                 continue;
             }
-            const int mi = m_engine.indexOfSnapshot(st.snapshot);
-            if (mi < 0) continue; // a step without its snapshot (gone): the position moves, nothing else
-            fireSnapshot(mi);
+            fireSnapshot(st.snapshot); // a step without its snapshot (gone): the position moves, nothing else
         }
         {
             QMutexLocker lk(&m_mutex); // the Plays are issued: their steps follow the timelines from now on

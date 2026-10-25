@@ -74,6 +74,23 @@ int runRecallIntegrityTests(Engine &engine) {
         check(std::abs(engine.parameterValue(id, "opacity").toDouble() - .2) < 1e-6,
               "Redo replays the captured parameter delay");
     }
+    { // By id (the cue clock): a snapshot inserted before it, or removed, never makes another one recalled
+        engine.newProject();
+        Engine::Snapshot a, b;
+        a.name = "A";
+        b.name = "B";
+        a.composition = b.composition = engine.captureComposition();
+        const quint64 bId = engine.snapshot(engine.addSnapshot(b)).id;
+        engine.addSnapshot(a, 0); // B moves from index 0 to index 1
+        check(engine.recallSnapshotById(bId) && engine.recallProgress().snapshot == bId,
+              "recall by id: the snapshot asked for, after one was inserted before it");
+        check(engine.captureRecallLayersById(bId) == engine.captureRecallLayers(engine.indexOfSnapshot(bId)),
+              "the undo capture by id is that snapshot's");
+        engine.removeSnapshot(engine.indexOfSnapshot(bId));
+        const quint64 before = engine.recallProgress().snapshot;
+        check(!engine.recallSnapshotById(bId) && engine.recallProgress().snapshot == before,
+              "recall by id of a snapshot removed: nothing recalled");
+    }
     engine.newProject();
     engine.setFadesManual(false);
     return failures;

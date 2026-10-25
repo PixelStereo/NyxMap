@@ -740,6 +740,12 @@ QJsonArray Engine::captureRecallLayers(int snapshotIndex) const
     return result;
 }
 
+QJsonArray Engine::captureRecallLayersById(quint64 snapshotId) const
+{
+    Lock lk(&m_mutex);
+    return captureRecallLayers(indexOfSnapshot(snapshotId));
+}
+
 void Engine::restoreRecallLayers(const QJsonArray &states)
 {
     Lock lock(&m_mutex);
@@ -883,9 +889,24 @@ void Engine::stepCompositionFade(double dt)
     }
 }
 
-void Engine::recallSnapshot(int i)
+void Engine::recallSnapshot(int i) { recallSnapshotCopy(snapshot(i), i); }
+
+bool Engine::recallSnapshotById(quint64 id)
 {
-    const Snapshot m = snapshot(i);
+    Snapshot m;
+    int i;
+    {
+        Lock lk(&m_mutex);
+        i = indexOfSnapshot(id);
+        if (i < 0) return false;
+        m = m_snapshots[size_t(i)];
+    }
+    recallSnapshotCopy(m, i);
+    return true;
+}
+
+void Engine::recallSnapshotCopy(const Snapshot &m, int i)
+{
     if (!m.id) return;
     resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
