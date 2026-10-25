@@ -383,6 +383,7 @@ bool Engine::start()
     {
         std::lock_guard<std::mutex> lk(m_taskMutex);
         m_renderFailed = false;
+        m_tasksClosed = false;
     }
     // The context must not be current on any thread before being handed to the render thread.
     if (QOpenGLContext::currentContext() == m_context) doneCurrent();
@@ -407,6 +408,8 @@ void Engine::stop()
 
 void Engine::shutdown()
 {
+    // The cue clock recalls snapshots on its own thread, and a recall may wait for the render thread: stopped first
+    m_sequencer->shutdownClock();
     m_audio->stop();
     m_audioInput->stop();
     if (!m_initialized) return;
@@ -442,6 +445,8 @@ void Engine::runGl(std::function<void()> fn, bool wait)
     task->fn = std::move(fn);
     std::unique_lock<std::mutex> lk(m_taskMutex);
     if (m_renderFailed) return; // the render thread could not start: nothing runs there
+    // It has quit: nobody would run this one or wake its caller. A release waits for the next start (if any)
+    if (m_tasksClosed && wait) return;
     m_tasks.push_back(task);
     if (!wait) return;
     m_taskCv.wait(lk, [&] { return task->done || !m_threaded; });
@@ -516,8 +521,9 @@ void Engine::renderLoop()
     runPendingTasks();
     releaseAll();
     {
-        // Release any callers still waiting
+        // Release any callers still waiting; those to come return at once (the render thread ends here)
         std::lock_guard<std::mutex> lk(m_taskMutex);
+        m_tasksClosed = true;
         for (auto &t : m_tasks) t->done = true;
         m_tasks.clear();
     }

@@ -886,6 +886,7 @@ private:
     mutable std::mutex m_taskMutex;
     std::condition_variable m_taskCv;
     bool m_renderFailed = false; // m_taskMutex held
+    bool m_tasksClosed = false;  // m_taskMutex held: the render thread has stopped taking tasks (it is quitting)
     static std::atomic<bool> s_failRenderStart;
     std::deque<std::shared_ptr<Task>> m_tasks;
 
