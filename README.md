@@ -50,13 +50,15 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.3.3](https://github.com/PixelStereo/Pinol/releases/tag/v0.3.3)**.
+Latest published build: **[v0.3.4](https://github.com/PixelStereo/Pinol/releases/tag/v0.3.4)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-macos-v0.3.3.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-windows-v0.3.3.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-linux-x86_64-v0.3.3.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-macos-v0.3.4.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-windows-v0.3.4.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-linux-x86_64-v0.3.4.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.3/Pinol-linux-x86_64-v0.3.3.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-linux-x86_64-v0.3.4.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+
+**[Download Open Stage Control remote](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
 <!-- release-downloads:end -->
 
 **[Open Stage Control remote](integrations/open-stage-control/README.md)** — ready to load directly from this repository, with dependencies included. See the [setup guide](docs/openstagecontrol-help.md).
