@@ -95,19 +95,26 @@ into the project, so the file is not needed afterwards.
 
 ## DMX outputs
 
+In the Composition tab: a list of the outputs (on, name, protocol, state), and the settings of the one selected. Only
+the settings that apply to its protocol and mode are shown.
+
 ```json
 { "id": "1", "name": "Nodes", "protocol": "artnet", "enabled": true,
-  "destination": "", "interface": "", "rate": 40 }
+  "unicast": true, "destinations": ["2.0.0.10", "2.0.0.11"], "interface": "192.168.1.20", "rate": 40 }
 ```
 
 - `protocol`: `artnet` (UDP 6454) or `sacn` (UDP 5568). `port` overrides the port.
-- `destination`: an IP address for unicast. When empty, Art-Net broadcasts (on the interface's broadcast address if
-  `interface` is set) and sACN uses the multicast group `239.255.hi.lo` of each universe.
-- `interface`: the local address to send from, which selects the network card.
+- `interface`: the local address to send from, chosen in a menu of this machine's network cards (empty: the system's
+  choice). It picks the card for broadcast and multicast too.
+- Art-Net: broadcast to the card's network, or `unicast` to one or more IP addresses (`destinations`, typed separated
+  by commas). The addresses only show in unicast.
+- sACN: each universe to its multicast group `239.255.hi.lo`, or `unicast` to the addresses given. sACN only:
+  `priority` (0..200, default 100) and `source_name`. The CID is kept in the app settings, so it stays the same on
+  this machine. When an output is removed or disabled, or Pinol quits, its sACN streams are terminated.
 - `rate`: packets per second for each universe (1..120, default 40). All of an output's universes are sent at that
   rate, whatever the render's frame rate.
-- sACN only: `priority` (0..200, default 100) and `source_name`. The CID is kept in the app settings, so it stays the
-  same on this machine. When an output is removed or disabled, or Pinol quits, its sACN streams are terminated.
+- An address that is not an IP, or unicast without any address, puts the output in error (shown in its state).
+- Projects saved with a single `destination` open in unicast to it.
 
 ## Not yet done
 

@@ -9,6 +9,11 @@ static constexpr const char *kClient = "Pinol"; // the name other software sees
 
 // Errors are told by the calls' results; RtMidi's warnings (no port…) are not printed
 static void quiet(RtMidiError::Type, const std::string &, void *) {}
+// An error a call reports through the callback only (a virtual port: isPortOpen() stays false even when it is made)
+static void record(RtMidiError::Type t, const std::string &m, void *error)
+{
+    if (t != RtMidiError::WARNING && t != RtMidiError::DEBUG_WARNING) *static_cast<std::string *>(error) = m;
+}
 
 template <class Port> static std::unique_ptr<Port> makePort()
 {
@@ -113,9 +118,14 @@ bool midi::Output::openVirtual(const QString &name, QString *err)
     }
     try {
         d->port = makePort<RtMidiOut>();
+        // RtMidi never counts a virtual port as open (isPortOpen() is about connections to others' ports): a failure
+        // is only reported to the error callback
+        std::string failed;
+        d->port->setErrorCallback(&record, &failed);
         d->port->openVirtualPort(name.toStdString());
-        if (!d->port->isPortOpen()) {
-            if (err) *err = QStringLiteral("cannot make the virtual port \"%1\"").arg(name);
+        d->port->setErrorCallback(&quiet);
+        if (!failed.empty()) {
+            if (err) *err = QStringLiteral("cannot make the virtual port \"%1\": %2").arg(name, QString::fromStdString(failed));
             d->port.reset();
             return false;
         }

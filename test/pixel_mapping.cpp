@@ -10,6 +10,7 @@
 #include <QNetworkDatagram>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QUdpSocket>
 #include <cmath>
 #include <cstdio>
@@ -89,7 +90,8 @@ static void modelTests()
     q.types.push_back(clash);
     DmxOutput o;
     o.protocol = DmxOutput::Protocol::Sacn;
-    o.destination = "10.0.0.5";
+    o.unicast = true;
+    o.destinations = {"10.0.0.5", "10.0.0.6"};
     o.priority = 150;
     q.outputs = {o, o};
     Fixture f;
@@ -108,8 +110,28 @@ static void modelTests()
               r.types[0].footer[0].value == 42 && r.types[0].byColumns,
           "a custom type keeps its channels and its order");
     check(r.outputs[0].protocol == DmxOutput::Protocol::Sacn && r.outputs[0].priority == 150 &&
-              r.outputs[0].effectivePort() == 5568,
-          "an sACN output keeps its settings");
+              r.outputs[0].effectivePort() == 5568 && r.outputs[0].unicast &&
+              r.outputs[0].destinations == QStringList({"10.0.0.5", "10.0.0.6"}),
+          "an sACN output keeps its settings, its unicast addresses too");
+    const DmxOutput old = DmxOutput::fromJson(QJsonObject{{"protocol", "artnet"}, {"destination", "2.0.0.9"}});
+    check(old.unicast && old.destinations == QStringList({"2.0.0.9"}), "a single destination before: unicast to it");
+    check(!DmxOutput::fromJson(QJsonObject{{"protocol", "artnet"}, {"destination", ""}}).unicast, "none: broadcast");
+
+    // The sender says what is wrong with an output's addresses
+    DmxSender sender;
+    DmxOutput bad;
+    bad.id = 4;
+    bad.unicast = true;
+    bad.destinations = {"10.0.0.1", "not.an.ip"};
+    DmxOutput empty;
+    empty.id = 5;
+    empty.unicast = true;
+    sender.follow({bad, empty});
+    for (int i = 0; i < 100 && sender.state(5).level == DmxOutputState::Off; ++i) QThread::msleep(10);
+    check(sender.state(4).level == DmxOutputState::Error && sender.state(4).text.contains("not.an.ip"),
+          "unicast to something that is not an IP address: an error");
+    check(sender.state(5).level == DmxOutputState::Error, "unicast without any address: an error");
+    sender.stop();
 }
 
 static void frameTests()
@@ -562,7 +584,8 @@ static void networkTests(Engine &e)
         DmxOutput o;
         o.id = 7;
         o.protocol = protocol;
-        o.destination = "127.0.0.1";
+        o.unicast = true;
+        o.destinations = {"127.0.0.1"};
         o.port = rx.localPort();
         o.rate = 50;
         p.outputs.push_back(o);

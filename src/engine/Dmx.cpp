@@ -93,7 +93,7 @@ QString sacnMulticastAddress(int universe)
 struct DmxSender::Link {
     DmxOutput settings;
     std::unique_ptr<QUdpSocket> socket;
-    QHostAddress destination; // Art-Net, sACN unicast (null: sACN multicast, by universe)
+    std::vector<QHostAddress> destinations; // unicast, or Art-Net's broadcast (none: sACN multicast, by universe)
     std::map<int, quint8> sequence;
     std::chrono::steady_clock::time_point next{};
     QString error;
@@ -169,7 +169,7 @@ void DmxSender::run()
     auto send = [&](Link &l, int universe, const QByteArray &data, bool terminated) {
         const DmxOutput &o = l.settings;
         QByteArray packet;
-        QHostAddress to = l.destination;
+        std::vector<QHostAddress> to = l.destinations;
         quint8 &seq = l.sequence[universe];
         if (o.protocol == DmxOutput::Protocol::ArtNet) {
             if (universe < 0 || universe > 32767) return QStringLiteral("Art-Net universe %1 out of 0..32767").arg(universe);
@@ -179,11 +179,12 @@ void DmxSender::run()
             if (universe < 1 || universe > 63999) return QStringLiteral("sACN universe %1 out of 1..63999").arg(universe);
             ++seq;
             packet = dmx::sacnPacket(m_cid, o.sourceName, quint8(o.priority), seq, universe, data, terminated);
-            if (to.isNull()) to = QHostAddress(dmx::sacnMulticastAddress(universe));
+            if (to.empty()) to.emplace_back(dmx::sacnMulticastAddress(universe));
         }
-        if (l.socket->writeDatagram(packet, to, quint16(o.effectivePort())) != packet.size())
-            return l.socket->errorString();
-        return QString();
+        QString error;
+        for (const QHostAddress &a : to)
+            if (l.socket->writeDatagram(packet, a, quint16(o.effectivePort())) != packet.size()) error = l.socket->errorString();
+        return error;
     };
     // sACN: receivers let go of the universe at once rather than holding the last values
     auto terminate = [&](Link &l) {
@@ -212,14 +213,18 @@ void DmxSender::run()
                         card = i;
                         if (!e.broadcast().isNull()) broadcast = e.broadcast();
                     }
-        if (!o.destination.isEmpty()) {
-            l.destination = QHostAddress(o.destination);
-            if (l.destination.isNull()) {
-                l.error = QStringLiteral("Not an IP address: %1").arg(o.destination);
-                l.socket.reset();
+        if (o.unicast) {
+            QStringList bad;
+            for (const QString &ip : o.destinations) {
+                const QHostAddress a(ip);
+                if (a.isNull()) bad << ip;
+                else l.destinations.push_back(a);
             }
+            if (!bad.isEmpty()) l.error = QStringLiteral("Not an IP address: %1").arg(bad.join(QStringLiteral(", ")));
+            else if (l.destinations.empty()) l.error = QStringLiteral("Unicast: no IP address to send to");
+            if (!l.error.isEmpty()) l.socket.reset();
         } else if (o.protocol == DmxOutput::Protocol::ArtNet) {
-            l.destination = broadcast;
+            l.destinations = {broadcast};
         } else if (card.isValid()) {
             l.socket->setMulticastInterface(card);
         }
