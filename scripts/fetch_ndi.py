@@ -49,7 +49,13 @@ def download(url: Path, dest: Path) -> str:
     print(f"downloading {url}", flush=True)
     # curl when there is one: it uses the system's certificates (a python.org Python on macOS has none of its own)
     if shutil.which("curl"):
-        subprocess.run(["curl", "-fsSL", "--retry", "3", "-A", "Pinol", "-o", str(dest), url], check=True)
+        cmd = ["curl", "-fsSL", "--retry", "3", "-A", "Pinol", "-o", str(dest), url]
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError:
+            # HTTP/2 streams from the NDI CDN are sometimes cut (curl 92): try again over HTTP/1.1
+            print("download failed, trying again over HTTP/1.1", flush=True)
+            subprocess.run(cmd[:1] + ["--http1.1"] + cmd[1:], check=True)
     else:
         req = urllib.request.Request(url, headers={"User-Agent": "Pinol"})
         with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
