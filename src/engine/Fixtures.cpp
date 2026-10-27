@@ -306,7 +306,7 @@ Fixture Fixture::fromJson(const QJsonObject &o)
 bool DmxOutput::operator==(const DmxOutput &o) const
 {
     return id == o.id && name == o.name && protocol == o.protocol && enabled == o.enabled &&
-           destination == o.destination && interfaceAddress == o.interfaceAddress && port == o.port &&
+           unicast == o.unicast && destinations == o.destinations && interfaceAddress == o.interfaceAddress && port == o.port &&
            rate == o.rate && priority == o.priority && sourceName == o.sourceName;
 }
 
@@ -314,7 +314,8 @@ QJsonObject DmxOutput::toJson() const
 {
     QJsonObject o{{"id", QString::number(id)}, {"name", name},
                   {"protocol", protocol == Protocol::Sacn ? "sacn" : "artnet"}, {"enabled", enabled},
-                  {"destination", destination}, {"interface", interfaceAddress}, {"rate", rate}};
+                  {"unicast", unicast}, {"destinations", QJsonArray::fromStringList(destinations)},
+                  {"interface", interfaceAddress}, {"rate", rate}};
     if (port > 0) o["port"] = port;
     if (protocol == Protocol::Sacn) {
         o["priority"] = priority;
@@ -330,7 +331,14 @@ DmxOutput DmxOutput::fromJson(const QJsonObject &o)
     d.name = o.value("name").toString();
     d.protocol = o.value("protocol").toString() == QLatin1String("sacn") ? Protocol::Sacn : Protocol::ArtNet;
     d.enabled = o.value("enabled").toBool(true);
-    d.destination = o.value("destination").toString().trimmed();
+    d.unicast = o.value("unicast").toBool(false);
+    for (const QJsonValue &v : o.value("destinations").toArray())
+        if (const QString ip = v.toString().trimmed(); !ip.isEmpty()) d.destinations << ip;
+    // One "destination" before: unicast to it
+    if (const QString one = o.value("destination").toString().trimmed(); !one.isEmpty() && !o.contains("unicast")) {
+        d.unicast = true;
+        d.destinations = {one};
+    }
     d.interfaceAddress = o.value("interface").toString().trimmed();
     d.port = o.value("port").toInt(0);
     d.rate = o.value("rate").toDouble(40);

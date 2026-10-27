@@ -13,6 +13,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QKeyEvent>
@@ -94,6 +95,36 @@ int main(int argc, char **argv)
     wait(100);
     auto *outputTable = outputs.findChild<QTableWidget *>("dmxOutputsTable");
     check(outputTable && outputTable->rowCount() == 1, "the outputs, in their own panel");
+    {
+        // The selected output's settings: those of its protocol and mode only
+        auto *mode = outputs.findChild<QComboBox *>("dmxOutputMode");
+        auto *addresses = outputs.findChild<QLineEdit *>("dmxOutputAddresses");
+        auto *priority = outputs.findChild<QSpinBox *>("dmxOutputPriority");
+        auto *iface = outputs.findChild<QComboBox *>("dmxOutputInterface");
+        check(mode && addresses && priority && iface, "the output's settings");
+        if (mode && addresses && priority && iface) {
+            check(iface->count() >= 1 && iface->itemData(0).toString().isEmpty(), "a menu of the network cards, Any first");
+            check(mode->itemText(0) == "Broadcast" && !addresses->isVisibleTo(&outputs) && !priority->isVisibleTo(&outputs),
+                  "Art-Net broadcast: no IP address, no priority");
+            mode->setCurrentIndex(1);
+            emit mode->activated(1);
+            wait(100);
+            check(engine.fixturePatch().outputs[0].unicast && addresses->isVisibleTo(&outputs), "unicast: the IP addresses");
+            addresses->setText("2.0.0.10, 2.0.0.11");
+            emit addresses->editingFinished();
+            check(engine.fixturePatch().outputs[0].destinations == QStringList({"2.0.0.10", "2.0.0.11"}), "several IP addresses");
+            cmd::editFixtures(&undo, &engine, {}, [](FixturePatch &q) { q.outputs[0].protocol = DmxOutput::Protocol::Sacn; });
+            wait(100);
+            check(mode->itemText(0) == "Multicast" && priority->isVisibleTo(&outputs), "sACN: multicast or unicast, a priority");
+            priority->setValue(150);
+            check(engine.fixturePatch().outputs[0].priority == 150, "the priority set");
+            for (int k = 0; k < 4; ++k) undo.undo(); // back to Art-Net broadcast
+            wait(100);
+            check(!engine.fixturePatch().outputs[0].unicast &&
+                      engine.fixturePatch().outputs[0].protocol == DmxOutput::Protocol::ArtNet,
+                  "the output's edits are undone");
+        }
+    }
     auto *table = panel.findChild<QTableWidget *>("fixturesTable");
     check(table && table->rowCount() == 2 && table->columnCount() == 6, "the list: on, lock, solo, name, intensity, DMX");
     if (!table || table->rowCount() != 2) return 1;

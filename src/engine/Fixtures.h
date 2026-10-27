@@ -13,6 +13,7 @@
 #include <QPointF>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QtGlobal>
 #include <array>
 #include <map>
@@ -111,7 +112,10 @@ struct DmxOutput {
     QString name;
     Protocol protocol = Protocol::ArtNet;
     bool enabled = true;
-    QString destination; // an IP address; empty: broadcast (Art-Net), multicast (sACN)
+    // Unicast: to each of these IP addresses. Otherwise Art-Net broadcasts (on the chosen card's network), sACN sends
+    // to each universe's multicast group
+    bool unicast = false;
+    QStringList destinations;
     QString interfaceAddress; // the local address sent from (its network card); empty: any
     int port = 0;        // 0: the protocol's (6454, 5568)
     double rate = 40;    // packets per second and universe
