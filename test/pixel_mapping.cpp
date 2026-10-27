@@ -1,6 +1,8 @@
 // Pixel mapping: the fixture model, the universes built from colours, the Art-Net and sACN packets, the composition
 // sampled on the GPU, the packets received over the loopback, and the patch saved with the project.
 #include "Engine.h"
+#include "Gdtf.h"
+#include "Zip.h"
 
 #include <QGuiApplication>
 #include <QImage>
@@ -214,6 +216,177 @@ static void packetTests()
     check(dmx::sacnMulticastAddress(300) == "239.255.1.44", "E1.31: multicast group");
 }
 
+// --- Zip and GDTF
+static QByteArray deflateRaw(const QByteArray &data)
+{
+    const QByteArray z = qCompress(data, 9); // 4 bytes of size, a zlib stream: its 2-byte header, the data, 4 of Adler
+    return z.mid(6, z.size() - 10);
+}
+
+static quint32 crcOf(const QByteArray &b)
+{
+    quint32 c = 0xffffffffu;
+    for (const char ch : b) {
+        c ^= quint8(ch);
+        for (int k = 0; k < 8; ++k) c = c & 1 ? 0xedb88320u ^ (c >> 1) : c >> 1;
+    }
+    return c ^ 0xffffffffu;
+}
+
+// A zip of these files, deflated (or stored)
+static QByteArray makeZip(const std::vector<std::pair<QString, QByteArray>> &files, bool deflate)
+{
+    QByteArray out, dir;
+    auto le16 = [](QByteArray &b, int v) { b.append(char(v & 0xff)).append(char((v >> 8) & 0xff)); };
+    auto le32 = [&](QByteArray &b, quint32 v) { le16(b, int(v & 0xffff)); le16(b, int(v >> 16)); };
+    for (const auto &[name, data] : files) {
+        const QByteArray packed = deflate ? deflateRaw(data) : data;
+        const QByteArray n = name.toUtf8();
+        const quint32 local = quint32(out.size());
+        le32(out, 0x04034b50); le16(out, 20); le16(out, 0); le16(out, deflate ? 8 : 0); le16(out, 0); le16(out, 0);
+        le32(out, crcOf(data)); le32(out, quint32(packed.size())); le32(out, quint32(data.size()));
+        le16(out, int(n.size())); le16(out, 0); out += n; out += packed;
+        le32(dir, 0x02014b50); le16(dir, 20); le16(dir, 20); le16(dir, 0); le16(dir, deflate ? 8 : 0); le16(dir, 0); le16(dir, 0);
+        le32(dir, crcOf(data)); le32(dir, quint32(packed.size())); le32(dir, quint32(data.size()));
+        le16(dir, int(n.size())); le16(dir, 0); le16(dir, 0); le16(dir, 0); le16(dir, 0); le32(dir, 0); le32(dir, local);
+        dir += n;
+    }
+    const quint32 at = quint32(out.size());
+    out += dir;
+    le32(out, 0x06054b50); le16(out, 0); le16(out, 0); le16(out, int(files.size())); le16(out, int(files.size()));
+    le32(out, quint32(dir.size())); le32(out, at); le16(out, 0);
+    return out;
+}
+
+static const char *kDescription = R"(<?xml version="1.0" encoding="UTF-8"?>
+<GDTF DataVersion="1.2">
+  <FixtureType Name="Bar4" LongName="Test Bar 4" Manufacturer="Pinol" FixtureTypeID="0000-TEST">
+    <Geometries>
+      <Geometry Name="Base" Position="{1,0,0,0}{0,1,0,0}{0,0,1,0}{0,0,0,1}">
+        <Axis Name="Head"><Beam Name="Beam"/></Axis>
+        <GeometryReference Name="Pixel 1" Geometry="Pixel" Position="{1,0,0,0.3}{0,1,0,0}{0,0,1,0}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="3"/></GeometryReference>
+        <GeometryReference Name="Pixel 2" Geometry="Pixel" Position="{1,0,0,0.1}{0,1,0,0}{0,0,1,0}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="6"/></GeometryReference>
+        <GeometryReference Name="Pixel 3" Geometry="Pixel" Position="{1,0,0,-0.1}{0,1,0,0}{0,0,1,0}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="9"/></GeometryReference>
+        <GeometryReference Name="Pixel 4" Geometry="Pixel" Position="{1,0,0,-0.3}{0,1,0,0}{0,0,1,0}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="12"/></GeometryReference>
+      </Geometry>
+      <Geometry Name="Panel">
+        <GeometryReference Name="P1" Geometry="Pixel" Position="{1,0,0,-0.1}{0,1,0,0}{0,0,1,0.1}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="1"/></GeometryReference>
+        <GeometryReference Name="P2" Geometry="Pixel" Position="{1,0,0,0.1}{0,1,0,0}{0,0,1,0.1}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="4"/></GeometryReference>
+        <GeometryReference Name="P3" Geometry="Pixel" Position="{1,0,0,-0.1}{0,1,0,0}{0,0,1,-0.1}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="7"/></GeometryReference>
+        <GeometryReference Name="P4" Geometry="Pixel" Position="{1,0,0,0.1}{0,1,0,0}{0,0,1,-0.1}{0,0,0,1}"><Break DMXBreak="1" DMXOffset="10"/></GeometryReference>
+      </Geometry>
+      <Geometry Name="Pixel"><Beam Name="PixelBeam"/></Geometry>
+    </Geometries>
+    <DMXModes>
+      <DMXMode Name="Pixel" Geometry="Base">
+        <DMXChannels>
+          <DMXChannel DMXBreak="1" Offset="1,2" Geometry="Beam" InitialFunction="Beam_Dimmer.Dimmer.Dimmer"><LogicalChannel Attribute="Dimmer"><ChannelFunction Name="Dimmer" Attribute="Dimmer" Default="0/2"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="1" Geometry="PixelBeam"><LogicalChannel Attribute="ColorAdd_R"><ChannelFunction Name="R" Default="0/1"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="2" Geometry="PixelBeam"><LogicalChannel Attribute="ColorAdd_G"><ChannelFunction Name="G" Default="0/1"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="3" Geometry="PixelBeam"><LogicalChannel Attribute="ColorAdd_B"><ChannelFunction Name="B" Default="0/1"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="15,16" Geometry="Head" InitialFunction="Head_Pan.Pan.Pan"><LogicalChannel Attribute="Pan"><ChannelFunction Name="Pan" Default="128/1"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="None" Geometry="Beam"><LogicalChannel Attribute="Shutter1"/></DMXChannel>
+        </DMXChannels>
+      </DMXMode>
+      <DMXMode Name="Basic" Geometry="Base">
+        <DMXChannels>
+          <DMXChannel DMXBreak="1" Offset="1" Geometry="Beam"><LogicalChannel Attribute="Dimmer"><ChannelFunction Name="Dimmer" Default="0/1"/></LogicalChannel></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="2" Geometry="Beam"><LogicalChannel Attribute="ColorAdd_R"/></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="3" Geometry="Beam"><LogicalChannel Attribute="ColorAdd_G"/></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="4" Geometry="Beam"><LogicalChannel Attribute="ColorAdd_B"/></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="5" Geometry="Head" Default="64/1"><LogicalChannel Attribute="Tilt"/></DMXChannel>
+          <DMXChannel DMXBreak="2" Offset="1" Geometry="Head"><LogicalChannel Attribute="Gobo1"/></DMXChannel>
+        </DMXChannels>
+      </DMXMode>
+      <DMXMode Name="Matrix" Geometry="Panel">
+        <DMXChannels>
+          <DMXChannel DMXBreak="1" Offset="1" Geometry="PixelBeam"><LogicalChannel Attribute="ColorSub_C"/></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="2" Geometry="PixelBeam"><LogicalChannel Attribute="ColorSub_M"/></DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="3" Geometry="PixelBeam"><LogicalChannel Attribute="ColorSub_Y"/></DMXChannel>
+        </DMXChannels>
+      </DMXMode>
+    </DMXModes>
+  </FixtureType>
+</GDTF>
+)";
+
+static void zipTests()
+{
+    QByteArray text;
+    for (int i = 0; i < 2000; ++i) text += QByteArray::number(i * 7919 % 1000) + (i % 3 ? " pixel " : " mapping\n");
+    bool ok = false;
+    check(zip::inflate(deflateRaw(text), &ok) == text && ok, "inflate: dynamic Huffman blocks");
+    check(zip::inflate(deflateRaw("ab"), &ok) == "ab" && ok, "inflate: a fixed Huffman block");
+    check(zip::inflate(qCompress(text, 0).mid(6), &ok) == text && ok, "inflate: stored blocks");
+    zip::inflate(QByteArray("\xff\xff\xff", 3), &ok);
+    check(!ok, "inflate: malformed data refused");
+    for (const bool deflate : {false, true}) {
+        const QByteArray z = makeZip({{"models/a.3ds", QByteArray(100, 'x')}, {"description.xml", text}}, deflate);
+        QString err;
+        check(zip::names(z).size() == 2, "zip: the directory");
+        check(zip::read(z, "Description.XML", &err) == text, deflate ? "zip: a deflated entry" : "zip: a stored entry");
+        check(zip::read(z, "missing.xml", &err).isEmpty() && !err.isEmpty(), "zip: a missing entry");
+        QByteArray damaged = z;
+        damaged[43] = char(damaged[43] ^ 0x55); // in the first entry's data
+        err.clear();
+        check(zip::read(damaged, "models/a.3ds", &err).isEmpty() && !err.isEmpty(), "zip: a corrupt entry refused");
+    }
+    QString err;
+    check(zip::read("not a zip", "x", &err).isEmpty() && !err.isEmpty(), "zip: not an archive");
+}
+
+static void gdtfTests()
+{
+    const QByteArray archive = makeZip({{"description.xml", kDescription}, {"thumbnail.png", QByteArray(64, '\0')}}, true);
+    const gdtf::Import im = gdtf::readArchive(archive, "Test@Bar4.gdtf");
+    check(im.error.isEmpty() && im.types.size() == 3, "GDTF: three modes, three types");
+    if (im.types.size() != 3) return;
+    const FixtureType &px = im.types[0], &basic = im.types[1], &matrix = im.types[2];
+    check(px.id == "gdtf:0000-TEST:Pixel" && px.name == "Test Bar 4 (Pixel)" && px.manufacturer == "Pinol" &&
+              px.origin.value("mode").toString() == "Pixel",
+          "GDTF: ids and names from the file and the mode");
+    check(px.pixelCount() == 4 && px.cols == 4 && px.rows == 1 && px.channelCount() == 16,
+          "GDTF: the geometry references are the pixels");
+    check(px.pixelCell(0) == QPoint(3, 0) && px.pixelCell(3) == QPoint(0, 0), "GDTF: pixels laid out by position");
+    check(!im.warnings.isEmpty(), "GDTF: a second DMX break is reported");
+
+    FixturePatch p;
+    p.types = im.types;
+    DmxOutput o;
+    o.id = 1;
+    p.outputs.push_back(o);
+    Fixture f;
+    f.type = px.id;
+    f.output = 1;
+    f.address = 101;
+    p.fixtures.push_back(f);
+    p.normalize();
+    check(p.types.size() == 3, "GDTF types are valid project types");
+    using C = std::array<float, 3>;
+    QByteArray u = buildDmxFrame(p, {C{1, 0, 0}, C{0, 1, 0}, C{0, 0, 1}, C{1, 1, 1}}).at({1, 1});
+    check(at(u, 101) == 255 && at(u, 102) == 255, "GDTF: the master dimmer (16 bits) at full intensity");
+    check(at(u, 103) == 255 && at(u, 104) == 0 && at(u, 107) == 255 && at(u, 111) == 255 && at(u, 112) == 255 &&
+              at(u, 114) == 255,
+          "GDTF: each pixel's RGB at its break offset");
+    check(at(u, 115) == 128 && at(u, 116) == 0, "GDTF: another attribute (pan) sends its default");
+
+    p.fixtures[0].type = basic.id;
+    u = buildDmxFrame(p, {C{0.0f, 1.0f, 0.0f}}).at({1, 1});
+    check(basic.pixelCount() == 1 && at(u, 101) == 255 && at(u, 103) == 255 && at(u, 105) == 64 && at(u, 106) == 0,
+          "GDTF: a single cell: dimmer at intensity, colour, default of the others, break 2 left out");
+
+    check(matrix.cols == 2 && matrix.rows == 2 && matrix.pixelCell(0) == QPoint(0, 0) && matrix.pixelCell(3) == QPoint(1, 1),
+          "GDTF: a 2x2 panel, the top row first");
+    p.fixtures[0].type = matrix.id;
+    u = buildDmxFrame(p, {C{1, 0, 0}, C{0, 0, 0}, C{0, 0, 0}, C{0, 0, 0}}).at({1, 1});
+    check(at(u, 101) == 0 && at(u, 102) == 255 && at(u, 103) == 255 && at(u, 104) == 255, "GDTF: CMY is 1 - RGB");
+
+    const FixtureType back = FixtureType::fromJson(px.toJson());
+    check(back.dmxMap == px.dmxMap && back.cells == px.cells && back.origin == px.origin, "an imported type survives JSON");
+    check(!gdtf::readDescription("<GDTF><Nope/></GDTF>").error.isEmpty(), "GDTF: not a fixture type");
+    check(!gdtf::readArchive("junk").error.isEmpty(), "GDTF: not an archive");
+}
+
 // The universe of output 1 once the GPU has sampled the composition (a few frames: read back without waiting)
 static QByteArray sampled(Engine &e, quint64 output, int universe)
 {
@@ -221,6 +394,18 @@ static QByteArray sampled(Engine &e, quint64 output, int universe)
     for (int i = 0; i < 30 && u.isEmpty(); ++i) {
         e.renderFrame();
         u = e.dmxUniverse(output, universe);
+    }
+    return u;
+}
+
+// Frames rendered until the universe says so (the GPU's readback trails by a frame or a few)
+template <typename F> static QByteArray settle(Engine &e, quint64 output, int universe, F ok)
+{
+    QByteArray u;
+    for (int i = 0; i < 60; ++i) {
+        e.renderFrame();
+        u = e.dmxUniverse(output, universe);
+        if (u.size() == 512 && ok(u)) break;
     }
     return u;
 }
@@ -267,14 +452,12 @@ static void gpuTests(Engine &e, const QString &tmp)
     p = e.fixturePatch();
     p.fixtures[0].rotation = 180;
     e.setFixturePatch(p);
-    for (int i = 0; i < 6; ++i) e.renderFrame();
-    u = e.dmxUniverse(1, 5);
+    u = settle(e, 1, 5, [](const QByteArray &x) { return at(x, 102) == 255; });
     check(u.size() == 512 && at(u, 100) == 0 && at(u, 102) == 255 && at(u, 105) == 0, "half a turn swaps the pixels");
 
     // The composition's opacity reaches the lights
     e.fadeCompositionOpacity(0.0, 0.0);
-    for (int i = 0; i < 6; ++i) e.renderFrame();
-    u = e.dmxUniverse(1, 5);
+    u = settle(e, 1, 5, [](const QByteArray &x) { return at(x, 102) == 0; });
     check(u.size() == 512 && at(u, 102) == 0, "composition opacity 0: the lights go out");
     e.fadeCompositionOpacity(1.0, 0.0);
 
@@ -352,6 +535,8 @@ int main(int argc, char **argv)
     modelTests();
     frameTests();
     packetTests();
+    zipTests();
+    gdtfTests();
 
     Engine e;
     QString err;

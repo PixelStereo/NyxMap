@@ -3,9 +3,29 @@
 Light fixtures placed on the composition. Each pixel of a fixture is sampled from the composition at every frame (after
 the composition's opacity and blackout) and streamed as DMX over Art-Net or sACN (E1.31).
 
-Phase 1 is engine-only: there is no editor yet. A patch is written in the project file under `pixel_mapping`, or set
-with `Engine::setFixturePatch`. Model: [Fixtures.h](../src/engine/Fixtures.h); network: [Dmx.h](../src/engine/Dmx.h);
-GPU sampling: [PixelSampler.h](../src/engine/PixelSampler.h).
+The patch is edited in the **Fixtures** tab (next to Composition) and saved in the project under `pixel_mapping`.
+Model: [Fixtures.h](../src/engine/Fixtures.h); network: [Dmx.h](../src/engine/Dmx.h); GPU sampling:
+[PixelSampler.h](../src/engine/PixelSampler.h); GDTF: [Gdtf.h](../src/engine/Gdtf.h).
+
+## In the interface
+
+- **Fixtures tab**:
+  - DMX outputs: protocol, destination, interface, rate, and the live state.
+  - Fixtures: on/off, name, type, output, universe, address, the channels each fixture uses, and its center, size,
+    rotation and intensity. Position and size are in composition pixels. Channels that overlap another fixture's on
+    the same output show in red.
+  - **+** adds a fixture of the chosen type at the next free address, and creates an Art-Net output if there is none.
+    **Duplicate** copies the selected fixtures at the next free addresses.
+  - **Import GDTF…** adds each DMX mode of a `.gdtf` file as a fixture type of the project.
+  - Every edit can be undone.
+- **Mapping view**, with its **Fixtures** button:
+  - Fixtures are drawn over the composition, with their pixels; the first pixel, where the DMX starts, is ringed.
+  - Click a fixture to select it (the table follows). Drag it to move it, drag its square to resize it about its
+    center, drag its circle to turn it (Shift: 15° steps).
+  - Arrow keys move it by one composition pixel (Shift: ten). Delete removes it.
+- **Previews**: each view has its own **Fixtures** button, shown when the view displays the composition or a
+  viewport. In a viewport, the fixtures are drawn through the viewport's frame. The choice of each view is remembered
+  on this machine, not in the project.
 
 ## Fixture types
 
@@ -24,8 +44,25 @@ Built in (never saved): `dimmer`, `rgb`, `rgbw`, `dimmer-rgb`. A project can add
   `{ "role": "red", "fine": true }` for 16 bits (two channels: coarse, then fine).
 - Grid order: `order` `rows` or `columns`; `start` `topLeft`, `topRight`, `bottomLeft` or `bottomRight`; `snake`
   makes every other row (or column) go back.
-- A per-pixel dimmer gets the pixel's luminance (Rec. 709). A header or footer dimmer gets the fixture's intensity.
-  `amber` and `uv` are sent at 0 for now.
+- A colour channel gets its pixel's colour. A channel of the whole fixture gets the average of its pixels.
+  `cyan`, `magenta` and `yellow` send 1 − red, green, blue.
+- A dimmer gets the fixture's intensity when its pixel (or, for a whole-fixture dimmer, the fixture) has colour
+  channels. Otherwise it gets the luminance (Rec. 709). `amber` and `uv` are sent at 0 for now.
+- An imported type gives its DMX map channel by channel (`dmxMap`: offset, channel, pixel) and each pixel's cell
+  (`cells`), instead of `perPixel` and the grid order. It stays in its universe: channels past 512 are not sent.
+
+## GDTF
+
+Each DMX mode of a `.gdtf` file becomes a fixture type with the id `gdtf:<FixtureTypeID>:<mode>`. The type is copied
+into the project, so the file is not needed afterwards.
+
+- Kept: intensity and colour attributes (`Dimmer`, `ColorAdd_R/G/B/W/WW/CW/A/UV`, `ColorRGB_*`, `ColorSub_C/M/Y`), in
+  8 or 16 bits. Every other channel (pan, tilt, gobo, strobe…) sends its default value.
+- Pixels: the geometry references of the mode's geometry. A template channel is repeated for each reference, at its
+  break's offset. The pixels are laid out in a grid from their positions. Without references, each geometry that
+  carries colour channels is a pixel; with only one, the fixture is a single pixel.
+- Only DMX break 1 is patched; channels on other breaks are reported and left out.
+- The zip reader is built in (stored and deflated entries, no zip64).
 
 ## Fixtures
 
@@ -62,5 +99,6 @@ Built in (never saved): `dimmer`, `rgb`, `rgbw`, `dimmer-rgb`. A project can add
 
 ## Not yet done
 
-The fixture editor and the patch table, placing fixtures in the mapping view, showing them in each viewer, auto-address
-and grid duplication, the DMX patch view, area sampling, Art-Net discovery (ArtPoll) and synchronization.
+An editor for custom fixture types (they can be written in the project's JSON for now), grid duplication, the DMX patch
+view (512 cells per universe), area sampling, GDTF multi-break fixtures, MVR import, Art-Net discovery (ArtPoll) and
+synchronization.

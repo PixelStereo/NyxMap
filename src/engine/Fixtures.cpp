@@ -9,7 +9,8 @@
 
 namespace {
 
-const char *const kRoleNames[] = {"dimmer", "red", "green", "blue", "white", "amber", "uv", "fixed", "ignore"};
+const char *const kRoleNames[] = {"dimmer", "red", "green", "blue", "white", "amber",
+                                  "uv",     "fixed", "ignore", "cyan", "magenta", "yellow"};
 
 const char *startName(FixtureType::Start s)
 {
@@ -55,25 +56,51 @@ FixtureType builtIn(const char *id, const char *name, std::vector<ChannelRole> h
     return t;
 }
 
-// The chunks of a fixture's channels in DMX order — the header, each pixel, the footer — each placed where it starts
-// (a chunk that would cross the end of a universe starts the next one). pixel: -1 header, pixelCount() footer
-void placeChunks(const FixtureType &t, int universe, int address,
-                 const std::function<void(int pixel, int universe, int address)> &fn)
+// A fixture's channels where they land. A grid type in DMX order — the header, each pixel, the footer — each chunk
+// placed where it starts (a chunk that would cross the end of a universe starts the next one); a type given channel
+// by channel at its offsets, in its universe (channels past 512 dropped)
+struct Placed {
+    int universe, address;
+    FixtureChannel channel;
+    int pixel; // -1: the whole fixture
+};
+
+std::vector<Placed> place(const FixtureType &t, int universe, int address)
 {
-    int u = universe, a = std::clamp(address, 1, 512);
-    auto place = [&](int pixel, int width) {
+    std::vector<Placed> out;
+    address = std::clamp(address, 1, 512);
+    if (!t.dmxMap.empty()) {
+        for (const FixtureSlot &s : t.dmxMap)
+            if (address + s.offset + s.channel.width() - 1 <= 512)
+                out.push_back({universe, address + s.offset, s.channel, s.pixel});
+        return out;
+    }
+    int u = universe, a = address;
+    auto chunk = [&](const std::vector<FixtureChannel> &chs, int pixel) {
+        const int width = FixtureType::width(chs);
         if (width <= 0) return;
         if (a + width - 1 > 512) {
             ++u;
             a = 1;
         }
-        fn(pixel, u, a);
-        a += width;
+        for (const FixtureChannel &c : chs) {
+            out.push_back({u, a, c, pixel});
+            a += c.width();
+        }
     };
-    place(-1, FixtureType::width(t.header));
-    const int w = FixtureType::width(t.perPixel);
-    for (int k = 0; k < t.pixelCount(); ++k) place(k, w);
-    place(t.pixelCount(), FixtureType::width(t.footer));
+    chunk(t.header, -1);
+    for (int k = 0; k < t.pixelCount(); ++k) chunk(t.perPixel, k);
+    chunk(t.footer, -1);
+    return out;
+}
+
+bool isColor(ChannelRole r)
+{
+    switch (r) {
+    case ChannelRole::Red: case ChannelRole::Green: case ChannelRole::Blue: case ChannelRole::White:
+    case ChannelRole::Cyan: case ChannelRole::Magenta: case ChannelRole::Yellow: return true;
+    default: return false;
+    }
 }
 
 bool active(const FixturePatch &p, const Fixture &f) { return f.enabled && p.findType(f.type); }
@@ -123,8 +150,17 @@ int FixtureType::width(const std::vector<FixtureChannel> &chs)
     return n;
 }
 
+int FixtureType::channelCount() const
+{
+    if (dmxMap.empty()) return width(header) + pixelCount() * width(perPixel) + width(footer);
+    int n = 0;
+    for (const FixtureSlot &s : dmxMap) n = std::max(n, s.offset + s.channel.width());
+    return n;
+}
+
 QPoint FixtureType::pixelCell(int k) const
 {
+    if (!cells.empty()) return k >= 0 && k < int(cells.size()) ? cells[size_t(k)] : QPoint();
     int c, r;
     if (!byColumns) {
         r = k / cols;
@@ -150,6 +186,11 @@ bool FixtureType::valid(QString *why) const
     if (cols < 1 || rows < 1 || cols > 1024 || rows > 1024) return fail(QStringLiteral("grid out of 1..1024"));
     if (width(header) > 512 || width(perPixel) > 512 || width(footer) > 512)
         return fail(QStringLiteral("more than 512 channels in one part"));
+    for (const FixtureSlot &s : dmxMap)
+        if (s.offset < 0 || s.offset + s.channel.width() > 512 || s.pixel < -1 || s.pixel >= pixelCount())
+            return fail(QStringLiteral("a channel out of the fixture"));
+    for (const QPoint &c : cells)
+        if (c.x() < 0 || c.y() < 0 || c.x() >= cols || c.y() >= rows) return fail(QStringLiteral("a pixel out of the grid"));
     if (channelCount() == 0) return fail(QStringLiteral("no channel"));
     return true;
 }
@@ -161,8 +202,23 @@ QJsonObject FixtureType::toJson() const
     o["pixels"] = QJsonObject{{"cols", cols}, {"rows", rows}, {"order", byColumns ? "columns" : "rows"},
                               {"start", startName(start)}, {"snake", snake}};
     if (!header.empty()) o["header"] = channelsToJson(header);
-    o["perPixel"] = channelsToJson(perPixel);
+    if (dmxMap.empty()) o["perPixel"] = channelsToJson(perPixel);
     if (!footer.empty()) o["footer"] = channelsToJson(footer);
+    if (!dmxMap.empty()) {
+        QJsonArray a;
+        for (const FixtureSlot &s : dmxMap) {
+            QJsonObject j{{"offset", s.offset}, {"channel", s.channel.toJson()}};
+            if (s.pixel >= 0) j["pixel"] = s.pixel;
+            a.append(j);
+        }
+        o["slots"] = a;
+    }
+    if (!cells.empty()) {
+        QJsonArray a;
+        for (const QPoint &c : cells) a.append(QJsonArray{c.x(), c.y()});
+        o["cells"] = a;
+    }
+    if (!origin.isEmpty()) o["origin"] = origin;
     return o;
 }
 
@@ -181,6 +237,15 @@ FixtureType FixtureType::fromJson(const QJsonObject &o)
     t.header = channelsFromJson(o.value("header"));
     t.perPixel = channelsFromJson(o.value("perPixel"));
     t.footer = channelsFromJson(o.value("footer"));
+    for (const QJsonValue &v : o.value("slots").toArray()) {
+        const QJsonObject j = v.toObject();
+        t.dmxMap.push_back({j.value("offset").toInt(0), FixtureChannel::fromJson(j.value("channel")), j.value("pixel").toInt(-1)});
+    }
+    for (const QJsonValue &v : o.value("cells").toArray()) {
+        const QJsonArray c = v.toArray();
+        t.cells.emplace_back(c.at(0).toInt(0), c.at(1).toInt(0));
+    }
+    t.origin = o.value("origin").toObject();
     return t;
 }
 
@@ -335,21 +400,41 @@ FixturePatch FixturePatch::fromJson(const QJsonObject &o)
     return p;
 }
 
+namespace {
+// A point of a fixture's frame (-0.5..0.5 across and down) on the composition, normalized: the rotation turns in
+// composition pixels about the fixture's center (y down: a positive angle turns clockwise)
+QPointF onComposition(const Fixture &f, QSize comp, double x, double y)
+{
+    const double cw = std::max(1, comp.width()), ch = std::max(1, comp.height());
+    const double a = qDegreesToRadians(f.rotation), cs = std::cos(a), sn = std::sin(a);
+    const double lx = x * f.size.width() * cw, ly = y * f.size.height() * ch;
+    return {f.center.x() + (lx * cs - ly * sn) / cw, f.center.y() + (lx * sn + ly * cs) / ch};
+}
+} // namespace
+
+std::vector<QPointF> fixturePixelPoints(const Fixture &f, const FixtureType &t, QSize comp)
+{
+    std::vector<QPointF> pts;
+    for (int k = 0; k < t.pixelCount(); ++k) {
+        const QPoint cell = t.pixelCell(k);
+        pts.push_back(onComposition(f, comp, (cell.x() + 0.5) / t.cols - 0.5, (cell.y() + 0.5) / t.rows - 0.5));
+    }
+    return pts;
+}
+
+std::array<QPointF, 4> fixtureCorners(const Fixture &f, QSize comp)
+{
+    return {onComposition(f, comp, -0.5, -0.5), onComposition(f, comp, 0.5, -0.5), onComposition(f, comp, 0.5, 0.5),
+            onComposition(f, comp, -0.5, 0.5)};
+}
+
 std::vector<QPointF> fixtureSamplePoints(const FixturePatch &p, QSize comp)
 {
     std::vector<QPointF> pts;
-    const double cw = std::max(1, comp.width()), ch = std::max(1, comp.height());
     for (const Fixture &f : p.fixtures) {
         if (!active(p, f)) continue;
-        const FixtureType &t = *p.findType(f.type);
-        const double a = qDegreesToRadians(f.rotation), cs = std::cos(a), sn = std::sin(a);
-        for (int k = 0; k < t.pixelCount(); ++k) {
-            const QPoint cell = t.pixelCell(k);
-            // In composition pixels, about the fixture's center (y down: a positive angle turns clockwise)
-            const double lx = ((cell.x() + 0.5) / t.cols - 0.5) * f.size.width() * cw;
-            const double ly = ((cell.y() + 0.5) / t.rows - 0.5) * f.size.height() * ch;
-            pts.emplace_back(f.center.x() + (lx * cs - ly * sn) / cw, f.center.y() + (lx * sn + ly * cs) / ch);
-        }
+        const std::vector<QPointF> mine = fixturePixelPoints(f, *p.findType(f.type), comp);
+        pts.insert(pts.end(), mine.begin(), mine.end());
     }
     return pts;
 }
@@ -357,12 +442,17 @@ std::vector<QPointF> fixtureSamplePoints(const FixturePatch &p, QSize comp)
 std::vector<DmxSpan> fixtureFootprint(const FixtureType &t, int universe, int address)
 {
     std::vector<DmxSpan> spans;
-    const int w = FixtureType::width(t.perPixel);
-    placeChunks(t, universe, address, [&](int pixel, int u, int a) {
-        const int width = pixel < 0 ? FixtureType::width(t.header) : pixel >= t.pixelCount() ? FixtureType::width(t.footer) : w;
-        if (!spans.empty() && spans.back().universe == u && spans.back().last + 1 == a) spans.back().last = a + width - 1;
-        else spans.push_back({u, a, a + width - 1});
+    std::vector<Placed> placed = place(t, universe, address);
+    std::sort(placed.begin(), placed.end(), [](const Placed &a, const Placed &b) {
+        return a.universe != b.universe ? a.universe < b.universe : a.address < b.address;
     });
+    for (const Placed &p : placed) {
+        const int last = p.address + p.channel.width() - 1;
+        if (!spans.empty() && spans.back().universe == p.universe && spans.back().last + 1 >= p.address)
+            spans.back().last = std::max(spans.back().last, last);
+        else
+            spans.push_back({p.universe, p.address, last});
+    }
     return spans;
 }
 
@@ -373,61 +463,80 @@ DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float
     for (const Fixture &f : p.fixtures) {
         if (!active(p, f)) continue;
         const FixtureType &t = *p.findType(f.type);
+        const int pixels = t.pixelCount();
         const size_t first = next;
-        next += size_t(t.pixelCount());
+        next += size_t(pixels);
         if (next > colors.size()) break; // sampled for another patch
         const DmxOutput *out = p.findOutput(f.output);
         if (!out) continue;
-        const bool hasWhite = std::any_of(t.perPixel.begin(), t.perPixel.end(),
-                                          [](const FixtureChannel &c) { return c.role == ChannelRole::White; });
-        const float k = float(f.intensity);
-        auto write = [&](int universe, int address, const std::vector<FixtureChannel> &chs, int pixel) {
-            QByteArray &u = frame[{out->id, universe}];
-            if (u.isEmpty()) u = QByteArray(512, '\0');
+        const std::vector<Placed> placed = place(t, f.universe, f.address);
+
+        // What each pixel (index pixels: the whole fixture) carries: colour channels, a white one
+        std::vector<char> hasColor(size_t(pixels) + 1, 0), hasWhite(size_t(pixels) + 1, 0);
+        for (const Placed &c : placed) {
+            const size_t g = c.pixel < 0 ? size_t(pixels) : size_t(c.pixel);
+            hasColor[g] |= isColor(c.channel.role);
+            hasWhite[g] |= c.channel.role == ChannelRole::White;
+        }
+        const bool anyColor = std::find(hasColor.begin(), hasColor.end(), 1) != hasColor.end();
+
+        // The colours as sent, by pixel then for the whole fixture (their average): gamma, the white taken out
+        struct Mix {
             float r = 0, g = 0, b = 0, w = 0, luma = 0;
-            if (pixel >= 0) {
-                const auto &c = colors[first + size_t(pixel)];
-                auto shape = [&](float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), float(f.gamma)); };
-                r = shape(c[0]);
-                g = shape(c[1]);
-                b = shape(c[2]);
-                luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                if (hasWhite && f.white == Fixture::White::Min) {
-                    w = std::min({r, g, b});
-                    r -= w;
-                    g -= w;
-                    b -= w;
-                }
-            }
-            int a = address;
-            for (const FixtureChannel &ch : chs) {
-                float v = 0;
-                switch (ch.role) {
-                case ChannelRole::Dimmer: v = (pixel >= 0 ? luma : 1.0f) * k; break;
-                case ChannelRole::Red: v = r * k; break;
-                case ChannelRole::Green: v = g * k; break;
-                case ChannelRole::Blue: v = b * k; break;
-                case ChannelRole::White: v = w * k; break;
-                default: break;
-                }
-                if (ch.role == ChannelRole::Fixed) {
-                    if (a <= 512) u[a - 1] = char(ch.value);
-                    if (ch.fine && a + 1 <= 512) u[a] = 0;
-                } else if (ch.fine) {
-                    const int x = int(std::lround(std::clamp(v, 0.0f, 1.0f) * 65535.0f));
-                    if (a <= 512) u[a - 1] = char(x >> 8);
-                    if (a + 1 <= 512) u[a] = char(x & 0xff);
-                } else if (a <= 512) {
-                    u[a - 1] = char(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
-                }
-                a += ch.width();
-            }
         };
-        placeChunks(t, f.universe, f.address, [&](int pixel, int u, int a) {
-            if (pixel < 0) write(u, a, t.header, -1);
-            else if (pixel >= t.pixelCount()) write(u, a, t.footer, -1);
-            else write(u, a, t.perPixel, pixel);
-        });
+        std::vector<Mix> mix(size_t(pixels) + 1);
+        Mix &whole = mix[size_t(pixels)];
+        for (int k = 0; k <= pixels; ++k) {
+            Mix &m = mix[size_t(k)];
+            if (k < pixels) {
+                const auto &c = colors[first + size_t(k)];
+                auto shape = [&](float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), float(f.gamma)); };
+                m.r = shape(c[0]);
+                m.g = shape(c[1]);
+                m.b = shape(c[2]);
+                whole.r += m.r / pixels;
+                whole.g += m.g / pixels;
+                whole.b += m.b / pixels;
+            }
+            m.luma = 0.2126f * m.r + 0.7152f * m.g + 0.0722f * m.b;
+            if (hasWhite[size_t(k)] && f.white == Fixture::White::Min) {
+                m.w = std::min({m.r, m.g, m.b});
+                m.r -= m.w;
+                m.g -= m.w;
+                m.b -= m.w;
+            }
+        }
+
+        const float k = float(f.intensity);
+        for (const Placed &c : placed) {
+            QByteArray &u = frame[{out->id, c.universe}];
+            if (u.isEmpty()) u = QByteArray(512, '\0');
+            const size_t g = c.pixel < 0 ? size_t(pixels) : size_t(c.pixel);
+            const Mix &m = mix[g];
+            const int a = c.address;
+            float v = 0;
+            switch (c.channel.role) {
+            case ChannelRole::Dimmer: v = (c.pixel < 0 ? anyColor : hasColor[g]) ? k : m.luma * k; break;
+            case ChannelRole::Red: v = m.r * k; break;
+            case ChannelRole::Green: v = m.g * k; break;
+            case ChannelRole::Blue: v = m.b * k; break;
+            case ChannelRole::White: v = m.w * k; break;
+            case ChannelRole::Cyan: v = 1.0f - m.r * k; break;
+            case ChannelRole::Magenta: v = 1.0f - m.g * k; break;
+            case ChannelRole::Yellow: v = 1.0f - m.b * k; break;
+            default: break;
+            }
+            if (c.channel.role == ChannelRole::Fixed) {
+                u[a - 1] = char(c.channel.value);
+                if (c.channel.fine) u[a] = 0;
+            } else if (c.channel.fine) {
+                const int x = int(std::lround(std::clamp(v, 0.0f, 1.0f) * 65535.0f));
+                u[a - 1] = char(x >> 8);
+                u[a] = char(x & 0xff);
+            } else {
+                u[a - 1] = char(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+            }
+        }
     }
     return frame;
 }

@@ -38,9 +38,15 @@ void Engine::stepPixelMapping()
     }
     // The colours of an earlier frame, once the GPU is done with them: they make this frame's universes. Moved or
     // retyped fixtures since: their pixels counted again, the colours of another patch are let go
-    std::vector<std::array<float, 3>> colors;
-    quint64 count = 0;
-    if (m_sampler.collect(&colors, &count) && count == m_fixturePoints.size()) {
+    std::vector<std::array<float, 3>> colors, newer;
+    quint64 count = 0, newerCount = 0;
+    bool got = false;
+    while (m_sampler.collect(&newer, &newerCount)) { // the newest of those finished
+        colors.swap(newer);
+        count = newerCount;
+        got = true;
+    }
+    if (got && count == m_fixturePoints.size()) {
         DmxFrame frame = buildDmxFrame(m_fixtures, colors);
         m_dmx.submit(frame);
         std::lock_guard<std::mutex> lk(m_dmxMutex);

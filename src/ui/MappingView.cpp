@@ -4,6 +4,7 @@
 #include <limits>
 #include "Commands.h"
 #include "Engine.h"
+#include "FixtureOverlay.h"
 #include "Widgets.h"
 
 #include <QUndoStack>
@@ -19,6 +20,7 @@
 #include <QNativeGestureEvent>
 #include <QToolButton>
 #include <QPainter>
+#include <QSettings>
 #include <QWheelEvent>
 #include <cmath>
 #include <functional>
@@ -54,6 +56,14 @@ MappingView::MappingView(Engine *engine, QWidget *parent) : QOpenGLWidget(parent
     m_maskModeButton->setObjectName(QStringLiteral("mappingSelectionMode"));
     m_maskModeButton->setCheckable(true);
     connect(m_maskModeButton, &QToolButton::toggled, this, &MappingView::setMaskEditMode);
+    m_fixturesButton = button(QStringLiteral("Fixtures"), QStringLiteral("Show the pixel mapping fixtures in this view: "
+                                                         "click one to select it, drag it to move it, its square to "
+                                                         "resize it, its circle to turn it (Shift: by 15°)"));
+    m_fixturesButton->setObjectName(QStringLiteral("mappingFixtures"));
+    m_fixturesButton->setCheckable(true);
+    connect(m_fixturesButton, &QToolButton::toggled, this, &MappingView::setShowFixtures);
+    connect(m_engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
+    setShowFixtures(QSettings().value(QStringLiteral("view/fixtures/mapping"), false).toBool());
     connect(m_zoomBar, &ZoomBar::zoomOutClicked, this, [this] { zoomBy(1 / 1.25); });
     connect(m_zoomBar, &ZoomBar::zoomInClicked, this, [this] { zoomBy(1.25); });
     connect(m_zoomBar, &ZoomBar::fitClicked, this, &MappingView::zoomToFit);
@@ -86,6 +96,106 @@ MappingView::MappingView(Engine *engine, QWidget *parent) : QOpenGLWidget(parent
         connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this] { typeCoordinate(); });
     }
     m_coordBar->hide();
+}
+
+void MappingView::setShowFixtures(bool on)
+{
+    if (m_fixturesButton) {
+        QSignalBlocker block(m_fixturesButton);
+        m_fixturesButton->setChecked(on);
+    }
+    if (m_showFixtures == on) return;
+    m_showFixtures = on;
+    m_fixtureDrag = FixtureDrag::None;
+    QSettings().setValue(QStringLiteral("view/fixtures/mapping"), on);
+    update();
+}
+
+void MappingView::setFixture(quint64 id)
+{
+    if (m_fixture == id) return;
+    m_fixture = id;
+    update();
+}
+
+void MappingView::paintFixtures()
+{
+    if (!m_showFixtures) return;
+    const FixturePatch patch = m_engine->fixturePatch();
+    if (patch.fixtures.empty()) return;
+    QPainter p(this);
+    fixtureview::paint(p, patch, m_engine->compositionSize(), [this](QPointF n) { return toWidget(n); }, m_fixture,
+                       !m_maskEditMode);
+}
+
+bool MappingView::pressFixture(QMouseEvent *e)
+{
+    if (!m_showFixtures || m_maskEditMode || m_drawing || e->button() != Qt::LeftButton) return false;
+    const FixturePatch patch = m_engine->fixturePatch();
+    const QSize comp = m_engine->compositionSize();
+    const auto toW = [this](QPointF n) { return toWidget(n); };
+    const QPointF at = e->position();
+    m_fixtureDrag = FixtureDrag::None;
+    for (const Fixture &f : patch.fixtures)
+        if (f.id == m_fixture) {
+            if (QLineF(at, fixtureview::rotateGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Rotate;
+            else if (QLineF(at, fixtureview::resizeGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Resize;
+        }
+    if (m_fixtureDrag == FixtureDrag::None) {
+        const quint64 id = fixtureview::hit(patch, comp, toW, at);
+        if (id != m_fixture) {
+            m_fixture = id;
+            emit fixturePicked(id);
+            update();
+        }
+        if (!id) return false; // the layers' turn
+        m_fixtureDrag = FixtureDrag::Move;
+    }
+    m_fixturesBefore = patch;
+    m_fixtureGrab = toNorm(at);
+    return true;
+}
+
+bool MappingView::dragFixture(QMouseEvent *e)
+{
+    if (m_fixtureDrag == FixtureDrag::None) return false;
+    FixturePatch patch = m_fixturesBefore;
+    const QSize comp = m_engine->compositionSize();
+    const double cw = std::max(1, comp.width()), ch = std::max(1, comp.height());
+    const QPointF now = toNorm(e->position());
+    for (Fixture &f : patch.fixtures) {
+        if (f.id != m_fixture) continue;
+        if (m_fixtureDrag == FixtureDrag::Move) {
+            f.center += now - m_fixtureGrab;
+        } else if (m_fixtureDrag == FixtureDrag::Rotate) {
+            // The angle of the pointer about the center, in composition pixels (y down: clockwise)
+            auto angle = [&](QPointF n) { return std::atan2((n.y() - f.center.y()) * ch, (n.x() - f.center.x()) * cw); };
+            double deg = f.rotation + (angle(now) - angle(m_fixtureGrab)) * 180.0 / kPi;
+            if (e->modifiers() & Qt::ShiftModifier) deg = std::round(deg / 15.0) * 15.0;
+            f.rotation = std::remainder(deg, 360.0);
+        } else {
+            // The corner follows the pointer, the center stays: the pointer in the fixture's frame, in pixels
+            const double a = f.rotation * kPi / 180.0;
+            const double dx = (now.x() - f.center.x()) * cw, dy = (now.y() - f.center.y()) * ch;
+            const double lx = dx * std::cos(a) + dy * std::sin(a), ly = -dx * std::sin(a) + dy * std::cos(a);
+            f.size = QSizeF(std::max(0.0, 2 * lx / cw), std::max(0.0, 2 * ly / ch));
+        }
+    }
+    m_engine->setFixturePatch(patch);
+    return true;
+}
+
+bool MappingView::releaseFixture()
+{
+    if (m_fixtureDrag == FixtureDrag::None) return false;
+    const FixtureDrag drag = m_fixtureDrag;
+    m_fixtureDrag = FixtureDrag::None;
+    FixturePatch after = m_engine->fixturePatch();
+    if (after.toJson() == m_fixturesBefore.toJson()) return true;
+    const QString text = drag == FixtureDrag::Move ? QStringLiteral("Move Fixture")
+                         : drag == FixtureDrag::Rotate ? QStringLiteral("Turn Fixture") : QStringLiteral("Resize Fixture");
+    if (m_undo) m_undo->push(new cmd::SetFixturePatch(m_engine, m_fixturesBefore, after, text));
+    return true;
 }
 
 void MappingView::setMaskEditMode(bool on)
@@ -423,6 +533,7 @@ void MappingView::paintGL()
     paintMasks();
     paintGuides();
     paintViewportNames();
+    paintFixtures();
     paintCoordinates();
     refreshCoordinateBar();
 }
@@ -908,6 +1019,10 @@ void MappingView::mousePressEvent(QMouseEvent *e)
         setCursor(Qt::ClosedHandCursor);
         return;
     }
+    if (pressFixture(e)) {
+        setFocus();
+        return;
+    }
     Engine::Lock lk(&m_engine->mutex());
     const QPointF p = e->position();
     m_lastNorm = toNorm(p);
@@ -1025,6 +1140,7 @@ void MappingView::mouseMoveEvent(QMouseEvent *e)
         update();
         return;
     }
+    if (dragFixture(e)) return;
     if (m_drawing) { // the line to the cursor; pressed: the last point's handles follow it
         m_cursor = e->position();
         if (m_drawPressing && !m_drawNodes.empty()) {
@@ -1151,6 +1267,7 @@ void MappingView::mouseReleaseEvent(QMouseEvent *)
         unsetCursor();
         return;
     }
+    if (releaseFixture()) return;
     if (m_drawing) {
         m_drawPressing = false;
         return;
@@ -1207,6 +1324,34 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishDrawing();
         else if (e->key() == Qt::Key_Escape) cancelDrawing();
         return;
+    }
+    // The selected fixture: arrows move it by a composition pixel (Shift: ten), Delete removes it
+    if (m_showFixtures && m_fixture && !m_maskEditMode) {
+        const int key = e->key();
+        const QSize comp = m_engine->compositionSize();
+        const double step = e->modifiers() & Qt::ShiftModifier ? 10 : 1;
+        QPointF d;
+        if (key == Qt::Key_Left) d = QPointF(-step / std::max(1, comp.width()), 0);
+        else if (key == Qt::Key_Right) d = QPointF(step / std::max(1, comp.width()), 0);
+        else if (key == Qt::Key_Up) d = QPointF(0, -step / std::max(1, comp.height()));
+        else if (key == Qt::Key_Down) d = QPointF(0, step / std::max(1, comp.height()));
+        const quint64 id = m_fixture;
+        if (!d.isNull()) {
+            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Move Fixture"), [&](FixturePatch &p) {
+                for (Fixture &f : p.fixtures)
+                    if (f.id == id) f.center += d;
+            }, QStringLiteral("nudge-fixture-%1").arg(id));
+            return;
+        }
+        if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
+            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Delete Fixture"), [&](FixturePatch &p) {
+                p.fixtures.erase(std::remove_if(p.fixtures.begin(), p.fixtures.end(), [&](const Fixture &f) { return f.id == id; }),
+                                 p.fixtures.end());
+            });
+            m_fixture = 0;
+            emit fixturePicked(0);
+            return;
+        }
     }
     // In Mask mode the arrow keys nudge selected mask nodes, not the layer geometry.
     if (m_maskEditMode && (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right ||

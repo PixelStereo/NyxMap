@@ -382,4 +382,25 @@ private:
 void editPresets(QUndoStack *undo, Engine *e, const QString &text, const std::function<void(std::vector<Engine::Preset> &)> &fn,
                  const QString &mergeKey = QString());
 
+// The pixel mapping edited (Fixtures.h): fixtures, outputs, types. Edits with the same non-empty merge key that follow
+// one another are one step
+class SetFixturePatch : public QUndoCommand
+{
+public:
+    SetFixturePatch(Engine *e, FixturePatch before, FixturePatch after, const QString &text, const QString &mergeKey = QString());
+    void undo() override { m_e->setFixturePatch(m_before); }
+    void redo() override { m_e->setFixturePatch(m_after); }
+    int id() const override { return m_mergeKey.isEmpty() ? -1 : 9502; }
+    bool mergeWith(const QUndoCommand *other) override;
+
+private:
+    Engine *m_e;
+    FixturePatch m_before, m_after;
+    QString m_mergeKey;
+    qint64 m_time;
+};
+// Pushes `fn`'s change of the pixel mapping as one step (nothing when it changes nothing)
+void editFixtures(QUndoStack *undo, Engine *e, const QString &text, const std::function<void(FixturePatch &)> &fn,
+                  const QString &mergeKey = QString());
+
 } // namespace cmd

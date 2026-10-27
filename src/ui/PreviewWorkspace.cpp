@@ -2,12 +2,15 @@
 #include "MappingView.h"
 #include "Engine.h"
 #include "GlDraw.h"
+#include "FixtureOverlay.h"
 #include "Widgets.h"
 #include <QComboBox>
 #include <QGridLayout>
 #include <QMenu>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
+#include <QPainter>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -31,7 +34,26 @@ public:
         connect(m_bar, &ZoomBar::zoomOutClicked, this, [this] { zoomAt(QPointF(width() / 2.0, height() / 2.0), 1 / 1.25); });
         connect(m_bar, &ZoomBar::zoomInClicked, this, [this] { zoomAt(QPointF(width() / 2.0, height() / 2.0), 1.25); });
         connect(m_bar, &ZoomBar::fitClicked, this, [this] { fit(); });
+        // Each view chooses whether it shows the pixel mapping fixtures (the composition's or a viewport's picture)
+        m_fixturesButton = m_bar->addButton(QStringLiteral("Fixtures"),
+                                            QStringLiteral("Show the pixel mapping fixtures over this view"));
+        m_fixturesButton->setObjectName(QStringLiteral("previewFixtures%1").arg(slot));
+        m_fixturesButton->setCheckable(true);
+        m_fixturesButton->setChecked(QSettings().value(settingsKey(), false).toBool());
+        connect(m_fixturesButton, &QToolButton::toggled, this, [this](bool on) {
+            QSettings().setValue(settingsKey(), on);
+            update();
+        });
+        connect(engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
     }
+    // The source shown (0: the composition): fixtures are drawn over the composition and the viewports only
+    void setSource(quint64 id)
+    {
+        m_source = id;
+        m_fixturesButton->setVisible(showsComposition());
+        update();
+    }
+    bool fixturesShown() const { return m_fixturesButton->isChecked() && showsComposition(); }
     ~PreviewPicture() override {
         if (context()) { makeCurrent(); m_draw.destroy(); doneCurrent(); }
     }
@@ -65,6 +87,23 @@ protected:
                       int(std::lround(r.width() * dpr)), int(std::lround(r.height() * dpr)));
         m_draw.drawTexture(texture);
         m_engine->finishPreviewRead(m_slot, buffer, f);
+        if (fixturesShown()) paintFixtures();
+    }
+    // Lock held
+    void paintFixtures()
+    {
+        const FixturePatch patch = m_engine->fixturePatch();
+        if (patch.fixtures.empty()) return;
+        const int index = m_source ? m_engine->indexOfId(m_source) : -1;
+        const Layer *viewport = index >= 0 ? m_engine->layer(index) : nullptr;
+        const QRectF r = viewRect();
+        // A composition point in the picture: through the viewport's frame when the picture is a viewport's
+        auto toWidget = [&](QPointF n) {
+            const QPointF uv = viewport ? viewport->mapping.unmap(n, n) : n;
+            return QPointF(r.left() + uv.x() * r.width(), r.top() + uv.y() * r.height());
+        };
+        QPainter p(this);
+        fixtureview::paint(p, patch, m_engine->compositionSize(), toWidget);
     }
     void wheelEvent(QWheelEvent *e) override
     {
@@ -130,8 +169,19 @@ private:
         update();
     }
 
+    bool showsComposition() const
+    {
+        if (!m_source) return true;
+        Engine::Lock lock(&m_engine->mutex());
+        const int index = m_engine->indexOfId(m_source);
+        return index >= 0 && m_engine->isViewport(index);
+    }
+    QString settingsKey() const { return QStringLiteral("view/fixtures/preview%1").arg(m_slot); }
+
     Engine *m_engine;
     int m_slot;
+    quint64 m_source = 0;
+    QToolButton *m_fixturesButton = nullptr;
     GlDraw m_draw;
     ZoomBar *m_bar = nullptr;
     QSize m_picture;
@@ -203,7 +253,7 @@ void PreviewWorkspace::selectSource(int slot, quint64 id, const QString &label)
     cell.source->setText(label);
     cell.pages->setCurrentWidget(slot == 0 && !id ? static_cast<QWidget *>(m_mapping) : cell.picture);
     m_engine->setPreviewSource(slot, id);
-    cell.picture->update();
+    cell.picture->setSource(id);
 }
 
 void PreviewWorkspace::setCount(int count)
