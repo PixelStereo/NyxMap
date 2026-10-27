@@ -28,6 +28,12 @@ QByteArray Engine::dmxUniverse(quint64 output, int universe) const
 
 DmxOutputState Engine::dmxOutputState(quint64 output) const { return m_dmx.state(output); }
 
+std::map<quint64, std::vector<std::array<float, 3>>> Engine::fixtureLooks() const
+{
+    std::lock_guard<std::mutex> lk(m_dmxMutex);
+    return m_fixtureLooks;
+}
+
 void Engine::stepPixelMapping()
 {
     if (m_fixturesFollowed != m_fixturesVersion || m_fixturePointsComp != m_compSize) {
@@ -48,11 +54,14 @@ void Engine::stepPixelMapping()
     }
     if (got && count == m_fixturePoints.size()) {
         DmxFrame frame = buildDmxFrame(m_fixtures, colors);
+        auto looks = fixtureOutput(m_fixtures, colors);
         m_dmx.submit(frame);
         std::lock_guard<std::mutex> lk(m_dmxMutex);
         m_dmxLast = std::move(frame);
+        m_fixtureLooks = std::move(looks);
     } else if (m_fixturePoints.empty()) {
         std::lock_guard<std::mutex> lk(m_dmxMutex);
+        m_fixtureLooks.clear();
         if (!m_dmxLast.empty()) {
             m_dmxLast.clear();
             m_dmx.submit({});

@@ -124,8 +124,10 @@ void MappingView::paintFixtures()
     const FixturePatch patch = m_engine->fixturePatch();
     if (patch.fixtures.empty()) return;
     QPainter p(this);
-    fixtureview::paint(p, patch, m_engine->compositionSize(), [this](QPointF n) { return toWidget(n); }, m_fixture,
-                       !m_maskEditMode);
+    const bool locked = std::any_of(patch.fixtures.begin(), patch.fixtures.end(),
+                                    [&](const Fixture &f) { return f.id == m_fixture && f.locked; });
+    fixtureview::paint(p, patch, m_engine->compositionSize(), [this](QPointF n) { return toWidget(n); },
+                       m_engine->fixtureLooks(), m_fixture, !m_maskEditMode && !locked);
 }
 
 bool MappingView::pressFixture(QMouseEvent *e)
@@ -137,7 +139,7 @@ bool MappingView::pressFixture(QMouseEvent *e)
     const QPointF at = e->position();
     m_fixtureDrag = FixtureDrag::None;
     for (const Fixture &f : patch.fixtures)
-        if (f.id == m_fixture) {
+        if (f.id == m_fixture && !f.locked) {
             if (QLineF(at, fixtureview::rotateGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Rotate;
             else if (QLineF(at, fixtureview::resizeGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Resize;
         }
@@ -149,6 +151,8 @@ bool MappingView::pressFixture(QMouseEvent *e)
             update();
         }
         if (!id) return false; // the layers' turn
+        const auto f = std::find_if(patch.fixtures.begin(), patch.fixtures.end(), [&](const Fixture &x) { return x.id == id; });
+        if (f != patch.fixtures.end() && f->locked) return true; // picked, not moved
         m_fixtureDrag = FixtureDrag::Move;
     }
     m_fixturesBefore = patch;
@@ -1325,7 +1329,11 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         else if (e->key() == Qt::Key_Escape) cancelDrawing();
         return;
     }
-    // The selected fixture: arrows move it by a composition pixel (Shift: ten), Delete removes it
+    // The selected fixture (not locked): arrows move it by a composition pixel (Shift: ten), Delete removes it
+    const FixturePatch current = m_showFixtures && m_fixture ? m_engine->fixturePatch() : FixturePatch();
+    const bool fixtureLocked = std::any_of(current.fixtures.begin(), current.fixtures.end(),
+                                           [&](const Fixture &f) { return f.id == m_fixture && f.locked; });
+    if (m_showFixtures && m_fixture && !m_maskEditMode && fixtureLocked) return;
     if (m_showFixtures && m_fixture && !m_maskEditMode) {
         const int key = e->key();
         const QSize comp = m_engine->compositionSize();

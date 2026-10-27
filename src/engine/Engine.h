@@ -660,6 +660,8 @@ public:
     void setFixturePatch(FixturePatch p); // normalized; the outputs follow it from the next frame
     QByteArray dmxUniverse(quint64 output, int universe) const; // the latest values (512 bytes; empty: not sent)
     DmxOutputState dmxOutputState(quint64 output) const;
+    // What each pixel of each enabled fixture gives out (fixtureOutput), as last sent: what the views show
+    std::map<quint64, std::vector<std::array<float, 3>>> fixtureLooks() const;
 
     // --- Composition opacity: 0..1 reached in `seconds` seconds (picture only)
     void fadeCompositionOpacity(double target, double seconds);
@@ -1183,6 +1185,7 @@ private:
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;
     DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
+    std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha

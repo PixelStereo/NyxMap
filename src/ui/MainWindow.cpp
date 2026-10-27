@@ -29,6 +29,8 @@
 #include "Osc.h"
 #include "SettingsPanel.h"
 #include "FixturePanel.h"
+#include "FixtureInspector.h"
+#include "DmxOutputsPanel.h"
 #include "Widgets.h"
 
 #include <QAction>
@@ -194,12 +196,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_viewportInspector, &LayerInspector::layerChanged, this, [this] { refreshLayerList(); markDirty(); });
     connect(m_viewportInspector, &LayerInspector::mappingChanged, m_view, qOverload<>(&QWidget::update));
     connect(m_viewportInspector, &LayerInspector::projectEdited, this, &MainWindow::markDirty);
-    // Pixel mapping: the patch here, the fixtures shown, picked and placed in the views
-    m_fixtures = new FixturePanel(m_engine, m_undo);
-    m_tabs->addTab(m_fixtures, QStringLiteral("Fixtures"));
-    connect(m_fixtures, &FixturePanel::fixtureSelected, m_view, &MappingView::setFixture);
-    connect(m_view, &MappingView::fixturePicked, m_fixtures, &FixturePanel::selectFixture);
-    connect(m_fixtures, &FixturePanel::projectEdited, this, &MainWindow::markDirty);
+    // Pixel mapping: the selected fixture's settings here (its list is on the left), the DMX outputs in Composition
+    m_fixtureInspector = new FixtureInspector(m_engine, m_undo);
+    m_fixtureInspector->setObjectName(QStringLiteral("fixtureInspector"));
+    m_fixtureTab = scrolled(m_fixtureInspector);
+    m_tabs->addTab(m_fixtureTab, QStringLiteral("Fixture"));
+    connect(m_fixtureInspector, &FixtureInspector::projectEdited, this, &MainWindow::markDirty);
+    auto *dmxOutputs = new DmxOutputsPanel(m_engine, m_undo);
+    m_composition->addSection(dmxOutputs);
+    connect(dmxOutputs, &DmxOutputsPanel::projectEdited, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
     m_tabs->addTab(scrolled(m_settings), QStringLiteral("Settings"));
     connect(m_settings, &SettingsPanel::playModeChanged, this,
@@ -239,6 +244,21 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs = new QTabWidget;
     m_leftTabs->addTab(m_bin, QStringLiteral("Media Bin"));
     m_leftTabs->addTab(m_layerTable, QStringLiteral("Layers"));
+    m_fixtures = new FixturePanel(m_engine, m_undo);
+    m_fixtures->setObjectName(QStringLiteral("fixturePanel"));
+    m_leftTabs->addTab(m_fixtures, QStringLiteral("Fixtures"));
+    // A fixture picked in the list or in the view: selected in both, its settings shown
+    auto showFixture = [this](quint64 id) {
+        m_view->setFixture(id);
+        m_fixtureInspector->setFixture(id);
+        if (id) m_tabs->setCurrentWidget(m_fixtureTab);
+    };
+    connect(m_fixtures, &FixturePanel::fixtureSelected, this, showFixture);
+    connect(m_view, &MappingView::fixturePicked, this, [this, showFixture](quint64 id) {
+        m_fixtures->selectFixture(id);
+        showFixture(id);
+    });
+    connect(m_fixtures, &FixturePanel::projectEdited, this, &MainWindow::markDirty);
     m_interactions = new InteractionPanel(m_engine, m_undo);
     m_leftTabs->addTab(m_interactions, QStringLiteral("Interactions"));
     m_logs = new LogPanel;

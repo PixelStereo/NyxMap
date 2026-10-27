@@ -263,11 +263,17 @@ const std::vector<FixtureType> &builtInFixtureTypes()
 
 QJsonObject Fixture::toJson() const
 {
-    return QJsonObject{{"id", QString::number(id)}, {"name", name}, {"type", type}, {"enabled", enabled},
-                       {"x", center.x()}, {"y", center.y()}, {"w", size.width()}, {"h", size.height()},
-                       {"rotation", rotation}, {"output", QString::number(output)}, {"universe", universe},
-                       {"address", address}, {"intensity", intensity}, {"gamma", gamma},
-                       {"white", white == White::Off ? "off" : "min"}};
+    QJsonObject o{{"id", QString::number(id)}, {"name", name}, {"type", type}, {"enabled", enabled},
+                  {"x", center.x()}, {"y", center.y()}, {"w", size.width()}, {"h", size.height()},
+                  {"rotation", rotation}, {"output", QString::number(output)}, {"universe", universe},
+                  {"address", address}, {"intensity", intensity}, {"gamma", gamma},
+                  {"white", white == White::Off ? "off" : "min"}};
+    if (locked) o["locked"] = true;
+    if (solo) o["solo"] = true;
+    if (cols != 1 || rows != 1 || byColumns || start != FixtureType::Start::TopLeft || snake)
+        o["pixels"] = QJsonObject{{"cols", cols}, {"rows", rows}, {"order", byColumns ? "columns" : "rows"},
+                                  {"start", startName(start)}, {"snake", snake}};
+    return o;
 }
 
 Fixture Fixture::fromJson(const QJsonObject &o)
@@ -281,7 +287,15 @@ Fixture Fixture::fromJson(const QJsonObject &o)
     f.size = {o.value("w").toDouble(0.1), o.value("h").toDouble(0.1)};
     f.rotation = o.value("rotation").toDouble(0);
     f.output = o.value("output").toString().toULongLong();
-    f.universe = o.value("universe").toInt(1);
+    f.locked = o.value("locked").toBool(false);
+    f.solo = o.value("solo").toBool(false);
+    const QJsonObject px = o.value("pixels").toObject();
+    f.cols = px.value("cols").toInt(1);
+    f.rows = px.value("rows").toInt(1);
+    f.byColumns = px.value("order").toString() == QLatin1String("columns");
+    f.start = startFromName(px.value("start").toString());
+    f.snake = px.value("snake").toBool(false);
+    f.universe = o.value("universe").toInt(0);
     f.address = o.value("address").toInt(1);
     f.intensity = o.value("intensity").toDouble(1);
     f.gamma = o.value("gamma").toDouble(1);
@@ -334,6 +348,23 @@ const FixtureType *FixturePatch::findType(const QString &id) const
     return nullptr;
 }
 
+bool takesFixtureGrid(const FixtureType &t) { return t.dmxMap.empty() && t.cells.empty() && t.pixelCount() == 1; }
+
+std::optional<FixtureType> FixturePatch::resolvedType(const Fixture &f) const
+{
+    const FixtureType *t = findType(f.type);
+    if (!t) return std::nullopt;
+    FixtureType r = *t;
+    if (takesFixtureGrid(r) && (f.cols > 1 || f.rows > 1)) {
+        r.cols = f.cols;
+        r.rows = f.rows;
+        r.byColumns = f.byColumns;
+        r.start = f.start;
+        r.snake = f.snake;
+    }
+    return r;
+}
+
 const DmxOutput *FixturePatch::findOutput(quint64 id) const
 {
     for (const DmxOutput &o : outputs)
@@ -373,7 +404,10 @@ void FixturePatch::normalize()
     }
     giveIds(fixtures);
     for (Fixture &f : fixtures) {
-        f.universe = std::clamp(f.universe, 0, 63999);
+        const DmxOutput *out = findOutput(f.output);
+        f.universe = std::clamp(f.universe, out && out->protocol == DmxOutput::Protocol::Sacn ? 1 : 0, 63999);
+        f.cols = std::clamp(f.cols, 1, 1024);
+        f.rows = std::clamp(f.rows, 1, 1024);
         f.address = std::clamp(f.address, 1, 512);
         f.intensity = std::clamp(std::isfinite(f.intensity) ? f.intensity : 1.0, 0.0, 1.0);
         f.gamma = std::clamp(std::isfinite(f.gamma) ? f.gamma : 1.0, 0.1, 10.0);
@@ -433,7 +467,7 @@ std::vector<QPointF> fixtureSamplePoints(const FixturePatch &p, QSize comp)
     std::vector<QPointF> pts;
     for (const Fixture &f : p.fixtures) {
         if (!active(p, f)) continue;
-        const std::vector<QPointF> mine = fixturePixelPoints(f, *p.findType(f.type), comp);
+        const std::vector<QPointF> mine = fixturePixelPoints(f, *p.resolvedType(f), comp);
         pts.insert(pts.end(), mine.begin(), mine.end());
     }
     return pts;
@@ -456,67 +490,96 @@ std::vector<DmxSpan> fixtureFootprint(const FixtureType &t, int universe, int ad
     return spans;
 }
 
-DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors)
+namespace {
+// A fixture ready to send: its channels placed, the colours of its pixels (index pixels: the whole fixture, their
+// average) with gamma and the white taken out, and what its pixels and the fixture carry
+struct Prepared {
+    struct Mix {
+        float r = 0, g = 0, b = 0, w = 0, luma = 0;
+    };
+    FixtureType type;
+    std::vector<Placed> placed;
+    std::vector<Mix> mix;
+    std::vector<char> hasColor;
+    bool anyColor = false;
+    float k = 1; // its intensity; 0 when another fixture is soloed
+};
+
+Prepared prepare(const Fixture &f, FixtureType t, const std::array<float, 3> *colors, bool soloed)
 {
-    DmxFrame frame;
+    Prepared p;
+    const int pixels = t.pixelCount();
+    p.placed = place(t, f.universe, f.address);
+    p.type = std::move(t);
+    p.hasColor.assign(size_t(pixels) + 1, 0);
+    std::vector<char> hasWhite(size_t(pixels) + 1, 0);
+    for (const Placed &c : p.placed) {
+        const size_t g = c.pixel < 0 ? size_t(pixels) : size_t(c.pixel);
+        p.hasColor[g] |= isColor(c.channel.role);
+        hasWhite[g] |= c.channel.role == ChannelRole::White;
+    }
+    p.anyColor = std::find(p.hasColor.begin(), p.hasColor.end(), 1) != p.hasColor.end();
+    p.mix.assign(size_t(pixels) + 1, {});
+    Prepared::Mix &whole = p.mix[size_t(pixels)];
+    for (int k = 0; k <= pixels; ++k) {
+        Prepared::Mix &m = p.mix[size_t(k)];
+        if (k < pixels) {
+            const auto &c = colors[k];
+            auto shape = [&](float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), float(f.gamma)); };
+            m.r = shape(c[0]);
+            m.g = shape(c[1]);
+            m.b = shape(c[2]);
+            whole.r += m.r / pixels;
+            whole.g += m.g / pixels;
+            whole.b += m.b / pixels;
+        }
+        m.luma = 0.2126f * m.r + 0.7152f * m.g + 0.0722f * m.b;
+        if (hasWhite[size_t(k)] && f.white == Fixture::White::Min) {
+            m.w = std::min({m.r, m.g, m.b});
+            m.r -= m.w;
+            m.g -= m.w;
+            m.b -= m.w;
+        }
+    }
+    p.k = soloed ? float(f.intensity) : 0.0f;
+    return p;
+}
+
+// Each enabled fixture of a known type with its colours: fn(fixture, prepared)
+template <typename F>
+void forEachPrepared(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors, F fn)
+{
+    const bool anySolo = std::any_of(p.fixtures.begin(), p.fixtures.end(),
+                                     [&](const Fixture &f) { return f.solo && active(p, f); });
     size_t next = 0; // the first colour of the current fixture
     for (const Fixture &f : p.fixtures) {
         if (!active(p, f)) continue;
-        const FixtureType &t = *p.findType(f.type);
-        const int pixels = t.pixelCount();
+        FixtureType t = *p.resolvedType(f);
         const size_t first = next;
-        next += size_t(pixels);
+        next += size_t(t.pixelCount());
         if (next > colors.size()) break; // sampled for another patch
+        fn(f, prepare(f, std::move(t), colors.data() + first, !anySolo || f.solo));
+    }
+}
+} // namespace
+
+DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors)
+{
+    DmxFrame frame;
+    forEachPrepared(p, colors, [&](const Fixture &f, const Prepared &pr) {
         const DmxOutput *out = p.findOutput(f.output);
-        if (!out) continue;
-        const std::vector<Placed> placed = place(t, f.universe, f.address);
-
-        // What each pixel (index pixels: the whole fixture) carries: colour channels, a white one
-        std::vector<char> hasColor(size_t(pixels) + 1, 0), hasWhite(size_t(pixels) + 1, 0);
-        for (const Placed &c : placed) {
-            const size_t g = c.pixel < 0 ? size_t(pixels) : size_t(c.pixel);
-            hasColor[g] |= isColor(c.channel.role);
-            hasWhite[g] |= c.channel.role == ChannelRole::White;
-        }
-        const bool anyColor = std::find(hasColor.begin(), hasColor.end(), 1) != hasColor.end();
-
-        // The colours as sent, by pixel then for the whole fixture (their average): gamma, the white taken out
-        struct Mix {
-            float r = 0, g = 0, b = 0, w = 0, luma = 0;
-        };
-        std::vector<Mix> mix(size_t(pixels) + 1);
-        Mix &whole = mix[size_t(pixels)];
-        for (int k = 0; k <= pixels; ++k) {
-            Mix &m = mix[size_t(k)];
-            if (k < pixels) {
-                const auto &c = colors[first + size_t(k)];
-                auto shape = [&](float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), float(f.gamma)); };
-                m.r = shape(c[0]);
-                m.g = shape(c[1]);
-                m.b = shape(c[2]);
-                whole.r += m.r / pixels;
-                whole.g += m.g / pixels;
-                whole.b += m.b / pixels;
-            }
-            m.luma = 0.2126f * m.r + 0.7152f * m.g + 0.0722f * m.b;
-            if (hasWhite[size_t(k)] && f.white == Fixture::White::Min) {
-                m.w = std::min({m.r, m.g, m.b});
-                m.r -= m.w;
-                m.g -= m.w;
-                m.b -= m.w;
-            }
-        }
-
-        const float k = float(f.intensity);
-        for (const Placed &c : placed) {
+        if (!out) return;
+        const int pixels = pr.type.pixelCount();
+        const float k = pr.k;
+        for (const Placed &c : pr.placed) {
             QByteArray &u = frame[{out->id, c.universe}];
             if (u.isEmpty()) u = QByteArray(512, '\0');
             const size_t g = c.pixel < 0 ? size_t(pixels) : size_t(c.pixel);
-            const Mix &m = mix[g];
+            const Prepared::Mix &m = pr.mix[g];
             const int a = c.address;
             float v = 0;
             switch (c.channel.role) {
-            case ChannelRole::Dimmer: v = (c.pixel < 0 ? anyColor : hasColor[g]) ? k : m.luma * k; break;
+            case ChannelRole::Dimmer: v = (c.pixel < 0 ? pr.anyColor : pr.hasColor[g]) ? k : m.luma * k; break;
             case ChannelRole::Red: v = m.r * k; break;
             case ChannelRole::Green: v = m.g * k; break;
             case ChannelRole::Blue: v = m.b * k; break;
@@ -537,6 +600,25 @@ DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float
                 u[a - 1] = char(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
             }
         }
-    }
+    });
     return frame;
+}
+
+std::map<quint64, std::vector<std::array<float, 3>>> fixtureOutput(const FixturePatch &p,
+                                                                   const std::vector<std::array<float, 3>> &colors)
+{
+    std::map<quint64, std::vector<std::array<float, 3>>> out;
+    forEachPrepared(p, colors, [&](const Fixture &f, const Prepared &pr) {
+        std::vector<std::array<float, 3>> &px = out[f.id];
+        const int pixels = pr.type.pixelCount();
+        for (int k = 0; k < pixels; ++k) {
+            const Prepared::Mix &m = pr.mix[size_t(k)];
+            // A pixel without colour of its own shows the fixture's (its average), or the grey of its level
+            const bool own = pr.hasColor[size_t(k)], whole = pr.hasColor[size_t(pixels)];
+            const Prepared::Mix &c = own ? m : whole ? pr.mix[size_t(pixels)] : m;
+            if (own || whole) px.push_back({(c.r + c.w) * pr.k, (c.g + c.w) * pr.k, (c.b + c.w) * pr.k});
+            else px.push_back({m.luma * pr.k, m.luma * pr.k, m.luma * pr.k});
+        }
+    });
+    return out;
 }

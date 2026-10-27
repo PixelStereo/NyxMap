@@ -16,6 +16,7 @@
 #include <QtGlobal>
 #include <array>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -82,14 +83,22 @@ struct Fixture {
     QString name;
     QString type; // FixtureType::id
     bool enabled = true;
+    bool locked = false; // not moved, turned or resized in the views
+    bool solo = false;   // soloed: the fixtures not soloed send black (their channels kept)
     QPointF center{0.5, 0.5};
     QSizeF size{0.1, 0.1};
     double rotation = 0; // degrees, clockwise on screen
+    // Its own grid of pixels, for a type of one pixel (RGB, RGBW, ...): the type's channels repeated for each pixel
+    // (its header and footer once), numbered in this order. Ignored for a type that has its own pixels
+    int cols = 1, rows = 1;
+    bool byColumns = false;
+    FixtureType::Start start = FixtureType::Start::TopLeft;
+    bool snake = false;
     quint64 output = 0;  // DmxOutput::id
-    int universe = 1;
+    int universe = 0;    // an sACN output's fixtures: 1 at least (normalize)
     int address = 1;
-    double intensity = 1; // 0..1, on every value (a header dimmer: its level)
-    double gamma = 1;     // on the sampled colour (1: linear)
+    double intensity = 1; // 0..1, on every value sent (a header dimmer: its level)
+    double gamma = 1;   // on the sampled colour (1: linear)
     White white = White::Min;
 
     QJsonObject toJson() const;
@@ -123,12 +132,17 @@ struct FixturePatch {
     std::vector<DmxOutput> outputs;
 
     const FixtureType *findType(const QString &id) const; // the project's, then the built-in ones
+    // The type as the fixture uses it: with the fixture's own grid of pixels when its type has one pixel
+    std::optional<FixtureType> resolvedType(const Fixture &f) const;
     const DmxOutput *findOutput(quint64 id) const;
     // Ids given where missing or taken, types colliding with a built-in one dropped, values clamped
     void normalize();
     QJsonObject toJson() const;
     static FixturePatch fromJson(const QJsonObject &o);
 };
+
+// A type a fixture can give a grid of pixels of its own (Fixture::cols, rows): one pixel, channels in grid form
+bool takesFixtureGrid(const FixtureType &t);
 
 // Where each pixel of the enabled fixtures (of a known type) is sampled, fixture after fixture, in DMX order.
 // comp: the composition's size in pixels (the rotation turns in pixels, not in normalized units)
@@ -142,6 +156,10 @@ std::array<QPointF, 4> fixtureCorners(const Fixture &f, QSize comp);
 using DmxKey = std::pair<quint64, int>; // output, universe
 using DmxFrame = std::map<DmxKey, QByteArray>; // 512 bytes each
 DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors);
+// What each pixel of the enabled fixtures gives out, from the same colours (0..1, by fixture id): its colour (a fixture
+// without colour channels: the grey of its level), intensity and solo included — what a view shows
+std::map<quint64, std::vector<std::array<float, 3>>> fixtureOutput(const FixturePatch &p,
+                                                                   const std::vector<std::array<float, 3>> &colors);
 
 // Where a fixture's channels land: one span per universe it uses. A type given channel by channel (dmxMap) stays in its
 // universe: channels past 512 are not sent

@@ -34,6 +34,7 @@ public:
     double compositionValue() const; // level set on the fader (0..1)
     double fadeTime() const;
 
+    void addSection(QWidget *w);  // another group at the end (the DMX outputs)
     void syncFromEngine();        // composition, sound (after opening a project)
     void refreshStatus();         // level, composition (called periodically)
 

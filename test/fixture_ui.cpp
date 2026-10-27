@@ -4,18 +4,24 @@
 #include "Commands.h"
 #include "Engine.h"
 #include "FixtureOverlay.h"
+#include "DmxOutputsPanel.h"
+#include "FixtureInspector.h"
 #include "FixturePanel.h"
+#include "Widgets.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QSurfaceFormat>
 #include <QTableWidget>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QToolButton>
 #include <QUndoStack>
 #include <cmath>
@@ -55,44 +61,72 @@ int main(int argc, char **argv)
 
     QUndoStack undo;
     FixturePanel panel(&engine, &undo);
+    FixtureInspector inspector(&engine, &undo);
+    DmxOutputsPanel outputs(&engine, &undo);
     MappingView view(&engine);
     view.setUndoStack(&undo);
     QObject::connect(&panel, &FixturePanel::fixtureSelected, &view, &MappingView::setFixture);
+    QObject::connect(&panel, &FixturePanel::fixtureSelected, &inspector, &FixtureInspector::setFixture);
     QObject::connect(&view, &MappingView::fixturePicked, &panel, &FixturePanel::selectFixture);
     view.resize(600, 600);
     view.show();
-    panel.resize(900, 500);
+    panel.resize(520, 300);
     panel.show();
+    inspector.show();
+    outputs.show();
     engine.renderFrame();
     wait(100);
 
-    // --- The panel: two fixtures at following addresses, an output made for the first
-    auto *type = panel.findChild<QComboBox *>("fixturesNewType");
-    auto *add = panel.findChild<QPushButton *>("fixturesAdd");
-    check(type && add, "the panel's controls");
-    if (!type || !add) return 1;
-    type->setCurrentIndex(type->findData("rgb"));
-    add->click();
-    add->click();
+    // --- The list: two fixtures at following addresses of Art-Net's universe 0, an output made for the first
+    check(panel.findChild<QToolButton *>("fixturesAdd") != nullptr, "the list's + button");
+    const quint64 first = panel.addFixture("rgb");
+    panel.addFixture("rgb");
     FixturePatch p = engine.fixturePatch();
     check(p.fixtures.size() == 2 && p.outputs.size() == 1, "two fixtures, one output made for them");
     if (p.fixtures.size() != 2) return 1;
-    check(p.fixtures[0].address == 1 && p.fixtures[1].address == 4 && p.fixtures[1].output == p.outputs[0].id,
-          "each new fixture at the next free address");
+    check(p.fixtures[0].universe == 0 && p.fixtures[0].address == 1 && p.fixtures[1].address == 4 &&
+              p.fixtures[1].output == p.outputs[0].id,
+          "each new fixture at the next free address, from Art-Net's universe 0");
     undo.undo();
     check(engine.fixturePatch().fixtures.size() == 1, "adding a fixture is undone");
     undo.redo();
     cmd::editFixtures(nullptr, &engine, {}, [](FixturePatch &q) { q.outputs[0].enabled = false; }); // nothing on the network
     wait(100);
+    auto *outputTable = outputs.findChild<QTableWidget *>("dmxOutputsTable");
+    check(outputTable && outputTable->rowCount() == 1, "the outputs, in their own panel");
     auto *table = panel.findChild<QTableWidget *>("fixturesTable");
-    check(table && table->rowCount() == 2, "the table lists the fixtures");
-    if (table && table->rowCount() == 2) {
-        table->item(0, 7)->setText("30"); // X, composition pixels
-        check(std::abs(engine.fixturePatch().fixtures[0].center.x() - 0.3) < 1e-9, "a position typed in the table");
-        table->item(1, 5)->setText("2"); // address 2: over the first fixture's channels
-        wait(100);
-        check(table->item(1, 5)->background().color().red() > 120, "an address conflict shows");
-    }
+    check(table && table->rowCount() == 2 && table->columnCount() == 6, "the list: on, lock, solo, name, intensity, DMX");
+    if (!table || table->rowCount() != 2) return 1;
+    check(table->item(0, 5)->text() == "0 · 1-3", "the list shows the DMX address");
+
+    // --- The inspector: the place, the grid of pixels, the address
+    panel.selectFixture(first);
+    emit panel.fixtureSelected(first);
+    inspector.findChild<QDoubleSpinBox *>("fixtureX")->setValue(30);
+    check(std::abs(engine.fixturePatch().fixtures[0].center.x() - 0.3) < 1e-9, "a position typed in the inspector");
+    const double width = engine.fixturePatch().fixtures[0].size.width();
+    inspector.findChild<QSpinBox *>("fixtureCols")->setValue(4);
+    p = engine.fixturePatch();
+    check(p.resolvedType(p.fixtures[0])->pixelCount() == 4 && std::abs(p.fixtures[0].size.width() - 4 * width) < 1e-9,
+          "an RGB fixture given 4 pixels across, each keeping its size");
+    wait(100);
+    check(table->item(0, 5)->text() == "0 · 1-12", "its address spans its pixels");
+    emit panel.fixtureSelected(p.fixtures[1].id);
+    inspector.setFixture(p.fixtures[1].id);
+    inspector.findChild<QSpinBox *>("fixtureAddress")->setValue(4); // still free? no: the first now ends at 12
+    wait(100);
+    check(table->item(1, 5)->foreground().color() == QColor(255, 110, 95), "an address conflict shows");
+    inspector.findChild<QSpinBox *>("fixtureAddress")->setValue(13);
+    wait(100);
+    check(table->item(1, 5)->foreground().color() != QColor(255, 110, 95), "and goes once moved");
+
+    // --- Lock and solo, from the list
+    emit table->cellClicked(0, 1);
+    check(engine.fixturePatch().fixtures[0].locked, "the padlock locks the fixture");
+    emit table->cellClicked(1, 2);
+    check(engine.fixturePatch().fixtures[1].solo, "S solos it");
+    emit table->cellClicked(1, 2);
+    check(!engine.fixturePatch().fixtures[1].solo, "and back");
 
     // --- The view: a fixture placed across the middle
     const quint64 id = engine.fixturePatch().fixtures[0].id;
@@ -121,6 +155,9 @@ int main(int argc, char **argv)
         send(QEvent::MouseButtonRelease, to, Qt::NoButton, mods);
     };
     auto fixture = [&] { return engine.fixturePatch().fixtures[0]; };
+    drag(at(0.5, 0.5), at(0.6, 0.55));
+    check(view.fixture() == id && std::abs(fixture().center.x() - 0.5) < 1e-6, "a locked fixture is picked, not moved");
+    emit table->cellClicked(0, 1); // unlocked
     drag(at(0.5, 0.5), at(0.6, 0.55));
     check(view.fixture() == id && panel.selectedFixture() == id, "a click picks the fixture, in the panel too");
     check(std::abs(fixture().center.x() - 0.6) < 1e-6 && std::abs(fixture().center.y() - 0.55) < 1e-6, "dragged");
@@ -153,13 +190,24 @@ int main(int argc, char **argv)
             bar.perPixel = {{ChannelRole::Red}, {ChannelRole::Green}, {ChannelRole::Blue}};
             q.types.push_back(bar);
             q.fixtures[1].type = "bar8x2";
-            q.fixtures[1].address = 10;
+            q.fixtures[1].address = 13;
             q.fixtures[1].size = {0.5, 0.1};
             q.fixtures[1].center = {0.45, 0.8};
             q.fixtures[1].rotation = -12;
         });
+        // A rainbow under them: their pixels show what they send
+        QImage rainbow(100, 100, QImage::Format_RGB32);
+        for (int y = 0; y < 100; ++y)
+            for (int x = 0; x < 100; ++x) rainbow.setPixelColor(x, y, QColor::fromHsvF(x / 100.0, 1.0, 0.4 + 0.6 * y / 100.0));
+        const QString picture = QString::fromLocal8Bit(dir) + "/rainbow.png";
+        rainbow.save(picture);
+        QString err;
+        engine.setLayerImage(engine.addLayer("Rainbow"), picture, &err);
+        for (int i = 0; i < 10; ++i) {
+            engine.renderFrame();
+            wait(10);
+        }
         view.setFixture(id);
-        engine.renderFrame();
         wait(200);
         view.grabFramebuffer().save(QString::fromLocal8Bit(dir) + "/fixtures_view.png");
         panel.grab().save(QString::fromLocal8Bit(dir) + "/fixtures_panel.png");

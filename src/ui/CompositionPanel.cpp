@@ -41,6 +41,12 @@ static QLabel *note(const QString &t)
     return l;
 }
 
+void CompositionPanel::addSection(QWidget *w)
+{
+    auto *v = static_cast<QVBoxLayout *>(layout());
+    v->insertWidget(v->count() - 1, w); // before the stretch
+}
+
 CompositionPanel::CompositionPanel(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(engine)
 {
     auto *v = new QVBoxLayout(this);
