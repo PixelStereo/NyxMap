@@ -10,6 +10,7 @@
 #                              include NDI (you accept the NDI SDK License Agreement) or not, without asking
 #   ./build.sh --clean         start from an empty build folder
 #   ./build.sh --debug         a Debug build
+#   ./build.sh --tests         also build the tests (off by default: much slower; CI runs them)
 #
 # What it installs: macOS, with Homebrew: qt ffmpeg cmake pkg-config dotnet git. Ubuntu/Debian, with apt: the packages
 # listed in docs/build.md. Windows, with winget: see build.ps1. OMT (built from source) needs dotnet, clang and git:
@@ -17,18 +18,19 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-INSTALL=1 RUN=1 CLEAN=0 NDI="" TOX="" TYPE=Release
+INSTALL=1 RUN=1 CLEAN=0 NDI="" TOX="" TYPE=Release TESTS=OFF
 for arg in "$@"; do
   case "$arg" in
     --no-install) INSTALL=0 ;;
     --no-run) RUN=0 ;;
     --clean) CLEAN=1 ;;
     --debug) TYPE=Debug ;;
+    --tests) TESTS=ON ;;
     --accept-ndi-license) NDI=ON ;;
     --no-ndi) NDI=OFF ;;
     --accept-touchengine-license) TOX=ON ;;
     --no-touchengine) TOX=OFF ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (see ./build.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -51,7 +53,7 @@ brew_shellenv() {
 }
 
 OS=$(uname -s)
-CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="$TYPE")
+CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="$TYPE" -DPINOL_TESTS="$TESTS")
 
 # --- Requirements
 if [[ $OS == Darwin ]]; then
@@ -134,7 +136,11 @@ step "Configuring (cmake ${CMAKE_ARGS[*]})"
 cmake -S . -B build "${CMAKE_ARGS[@]}"
 step "Building"
 JOBS=$( (have nproc && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-cmake --build build -j "$JOBS"
+if [[ $TESTS == ON ]]; then
+  cmake --build build -j "$JOBS"
+else
+  cmake --build build --target Pinol -j "$JOBS"
+fi
 
 # --- Open
 if [[ $OS == Darwin ]]; then
