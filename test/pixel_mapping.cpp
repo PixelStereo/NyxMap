@@ -189,6 +189,81 @@ static void frameTests()
     }
 }
 
+// A fixture's own grid of pixels, solo, what the pixels give out, the defaults
+static void fixtureGridTests()
+{
+    using C = std::array<float, 3>;
+    FixturePatch p = onePatch("rgb", 1, 0, 1);
+    check(Fixture().universe == 0, "a new fixture starts at universe 0 (Art-Net's first)");
+    p.fixtures[0].cols = 4;
+    p.fixtures[0].rows = 2;
+    p.fixtures[0].snake = true;
+    p.fixtures[0].size = {0.4, 0.2};
+    p.normalize();
+    const auto t = p.resolvedType(p.fixtures[0]);
+    check(t && t->pixelCount() == 8 && t->channelCount() == 24 && t->pixelCell(4) == QPoint(3, 1),
+          "an RGB fixture of 4 x 2 pixels, snaking");
+    std::vector<C> colors(8, C{0, 0, 0});
+    colors[1] = {1, 0, 0};
+    colors[7] = {0, 0, 1};
+    const QByteArray u = buildDmxFrame(p, colors).at({1, 0});
+    check(at(u, 4) == 255 && at(u, 24) == 255 && at(u, 1) == 0, "each of its pixels at its channels");
+    check(fixtureSamplePoints(p, {100, 100}).size() == 8, "each of its pixels sampled");
+    FixtureType bar;
+    bar.id = "bar";
+    bar.cols = 3;
+    bar.perPixel = {{ChannelRole::Red}};
+    p.types.push_back(bar);
+    p.fixtures[0].type = "bar";
+    p.normalize();
+    check(p.resolvedType(p.fixtures[0])->pixelCount() == 3, "a type with its own pixels keeps them");
+
+    // Solo: the others send black, their channels kept
+    FixturePatch s = onePatch("dimmer");
+    Fixture second = s.fixtures[0];
+    second.id = 2;
+    second.address = 2;
+    second.solo = true;
+    s.fixtures.push_back(second);
+    s.normalize();
+    QByteArray v = buildDmxFrame(s, {C{1, 1, 1}, C{1, 1, 1}}).at({1, 1});
+    check(at(v, 1) == 0 && at(v, 2) == 255, "solo: the fixture not soloed sends black");
+    s.fixtures[1].solo = false;
+    v = buildDmxFrame(s, {C{1, 1, 1}, C{1, 1, 1}}).at({1, 1});
+    check(at(v, 1) == 255 && at(v, 2) == 255, "no solo: both send");
+
+    // What the pixels give out: the colour times the intensity; a dimmer, the grey of its level
+    FixturePatch o = onePatch("rgbw");
+    o.fixtures[0].intensity = 0.5;
+    auto looks = fixtureOutput(o, {C{1.0f, 0.6f, 0.2f}});
+    check(looks.count(o.fixtures[0].id) && std::abs(looks[o.fixtures[0].id][0][0] - 0.5f) < 1e-6 &&
+              std::abs(looks[o.fixtures[0].id][0][1] - 0.3f) < 1e-6,
+          "a pixel shows its colour (white given back) times the intensity");
+    looks = fixtureOutput(onePatch("dimmer"), {C{0.0f, 1.0f, 0.0f}});
+    check(!looks.empty() && std::abs(looks.begin()->second[0][0] - 0.7152f) < 1e-4 &&
+              looks.begin()->second[0][0] == looks.begin()->second[0][2],
+          "a dimmer shows the grey of its level");
+
+    // JSON: the grid, lock, solo, the intensity; sACN universes from 1
+    Fixture j;
+    j.cols = 8;
+    j.rows = 2;
+    j.byColumns = true;
+    j.start = FixtureType::Start::BottomRight;
+    j.locked = true;
+    j.solo = true;
+    const Fixture back = Fixture::fromJson(j.toJson());
+    check(back.cols == 8 && back.rows == 2 && back.byColumns && back.start == FixtureType::Start::BottomRight &&
+              back.locked && back.solo,
+          "a fixture's grid, lock and solo survive JSON");
+    check(std::abs(Fixture::fromJson(Fixture{}.toJson()).intensity - 1.0) < 1e-9 &&
+              Fixture{}.toJson().contains("intensity"), "the intensity saved as \"intensity\"");
+    FixturePatch sacn = onePatch("rgb", 1, 0, 1);
+    sacn.outputs[0].protocol = DmxOutput::Protocol::Sacn;
+    sacn.normalize();
+    check(sacn.fixtures[0].universe == 1, "an sACN output's fixtures start at universe 1");
+}
+
 static void packetTests()
 {
     QByteArray data(512, '\0');
@@ -358,6 +433,7 @@ static void gdtfTests()
     Fixture f;
     f.type = px.id;
     f.output = 1;
+    f.universe = 1;
     f.address = 101;
     p.fixtures.push_back(f);
     p.normalize();
@@ -535,6 +611,7 @@ int main(int argc, char **argv)
     modelTests();
     frameTests();
     packetTests();
+    fixtureGridTests();
     zipTests();
     gdtfTests();
 

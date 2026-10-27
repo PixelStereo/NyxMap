@@ -326,6 +326,8 @@ set(APP_SOURCES
   src/ui/PreviewWorkspace.cpp
   src/ui/FixtureOverlay.cpp
   src/ui/FixturePanel.cpp
+  src/ui/FixtureInspector.cpp
+  src/ui/DmxOutputsPanel.cpp
   src/ui/MaskPanel.cpp
   src/ui/OutputWindow.cpp
   src/ui/GlDraw.cpp
@@ -720,7 +722,8 @@ if(PINOL_TESTS)
   target_include_directories(pinol_preview_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_preview_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND pinol_preview_ui_test)
-  add_executable(pinol_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureOverlay.cpp
+  add_executable(pinol_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
+                 src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
                  src/ui/MappingView.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
                  src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_fixture_ui_test PRIVATE src/ui)

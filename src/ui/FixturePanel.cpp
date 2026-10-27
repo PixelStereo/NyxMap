@@ -1,65 +1,51 @@
 #include "FixturePanel.h"
 #include "Commands.h"
 #include "Engine.h"
+#include "FixtureOverlay.h"
 #include "Gdtf.h"
+#include "Widgets.h"
 
 #include <QApplication>
-#include <QComboBox>
-#include <QLineEdit>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
-#include <QListWidget>
+#include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
-#include <QNetworkInterface>
-#include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTimer>
-#include <QUndoStack>
+#include <QToolButton>
 #include <QVBoxLayout>
+#include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace {
-enum FixtureColumn { FOn, FName, FType, FOutput, FUniverse, FAddress, FChannels, FX, FY, FW, FH, FRot, FIntensity, FCount };
-enum OutputColumn { OOn, OName, OProtocol, ODestination, OInterface, ORate, OState, OCount };
+enum Column { ColOn, ColLock, ColSolo, ColName, ColIntensity, ColDmx, ColCount };
 
-QTableWidgetItem *item(const QString &text, bool editable = true)
+QToolButton *barButton(const QString &text, const QString &tip)
 {
-    auto *i = new QTableWidgetItem(text);
-    if (!editable) i->setFlags(i->flags() & ~Qt::ItemIsEditable);
-    return i;
-}
-
-QTableWidgetItem *check(bool on)
-{
-    auto *i = new QTableWidgetItem;
-    i->setFlags((i->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
-    i->setCheckState(on ? Qt::Checked : Qt::Unchecked);
-    return i;
-}
-
-QPushButton *smallButton(const QString &text, const QString &tip)
-{
-    auto *b = new QPushButton(text);
+    auto *b = new QToolButton;
+    b->setText(text);
     b->setToolTip(tip);
-    if (text.size() <= 1) b->setFixedWidth(30);
+    b->setMinimumSize(30, 24);
     return b;
 }
 
-QString number(double v, int decimals = 1) { return QString::number(v, 'f', decimals); }
-
-// The next address free on an output, after every fixture already patched to it
+// The next address free on an output, after every fixture already patched to it (Art-Net counts universes from 0)
 std::pair<int, int> nextFree(const FixturePatch &p, quint64 output, int channels)
 {
-    int universe = 1, address = 1;
+    const DmxOutput *out = p.findOutput(output);
+    int universe = out && out->protocol == DmxOutput::Protocol::Sacn ? 1 : 0, address = 1;
     bool any = false;
     for (const Fixture &f : p.fixtures) {
-        const FixtureType *t = p.findType(f.type);
+        const std::optional<FixtureType> t = p.resolvedType(f);
         if (!t || f.output != output) continue;
         for (const DmxSpan &s : fixtureFootprint(*t, f.universe, f.address))
             if (!any || s.universe > universe || (s.universe == universe && s.last + 1 > address)) {
@@ -79,95 +65,150 @@ std::pair<int, int> nextFree(const FixturePatch &p, quint64 output, int channels
 FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     : QWidget(parent), m_engine(engine), m_undo(undo)
 {
-    auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 4, 4, 4);
+    auto *v = new QVBoxLayout(this);
+    v->setContentsMargins(8, 4, 8, 4);
+    v->setSpacing(4);
+    auto *bar = new QHBoxLayout;
+    bar->setSpacing(2);
+    m_add = barButton(QStringLiteral("+"), QStringLiteral("New fixture of a type, at the next free address"));
+    m_add->setObjectName(QStringLiteral("fixturesAdd"));
+    m_add->setPopupMode(QToolButton::InstantPopup);
+    m_addMenu = new QMenu(m_add);
+    m_add->setMenu(m_addMenu);
+    connect(m_addMenu, &QMenu::aboutToShow, this, &FixturePanel::fillAddMenu);
+    auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected fixtures (Del)"));
+    auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate the selected fixtures, at the next free addresses"));
+    for (auto *b : {m_add, remove, dup}) bar->addWidget(b);
+    bar->addStretch(1);
+    v->addLayout(bar);
 
-    // --- Outputs
-    auto *outHeader = new QHBoxLayout;
-    outHeader->addWidget(new QLabel(QStringLiteral("<b>DMX outputs</b>")));
-    auto *addOut = smallButton(QStringLiteral("+"), QStringLiteral("New DMX output (Art-Net or sACN)"));
-    auto *removeOut = smallButton(QStringLiteral("−"), QStringLiteral("Delete the selected output"));
-    addOut->setObjectName(QStringLiteral("fixturesAddOutput"));
-    outHeader->addStretch(1);
-    outHeader->addWidget(addOut);
-    outHeader->addWidget(removeOut);
-    layout->addLayout(outHeader);
-    m_outputs = new QTableWidget(0, OCount);
-    m_outputs->setObjectName(QStringLiteral("fixturesOutputs"));
-    m_outputs->setHorizontalHeaderLabels({QStringLiteral("On"), QStringLiteral("Name"), QStringLiteral("Protocol"),
-                                          QStringLiteral("Destination"), QStringLiteral("Interface"), QStringLiteral("Rate"),
-                                          QStringLiteral("State")});
-    m_outputs->horizontalHeaderItem(ODestination)->setToolTip(QStringLiteral("An IP address; empty: broadcast (Art-Net) or multicast (sACN)"));
-    QStringList locals;
-    for (const QHostAddress &a : QNetworkInterface::allAddresses())
-        if (a.protocol() == QAbstractSocket::IPv4Protocol) locals << a.toString();
-    m_outputs->horizontalHeaderItem(OInterface)->setToolTip(
-        QStringLiteral("The local address sent from (its network card); empty: any.\nThis machine: %1").arg(locals.join(QStringLiteral(", "))));
-    m_outputs->horizontalHeaderItem(ORate)->setToolTip(QStringLiteral("Packets per second and universe"));
-    m_outputs->verticalHeader()->hide();
-    m_outputs->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_outputs->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_outputs->horizontalHeader()->setStretchLastSection(true);
-    m_outputs->setMaximumHeight(130);
-    layout->addWidget(m_outputs);
-
-    // --- Fixtures
-    auto *fxHeader = new QHBoxLayout;
-    fxHeader->addWidget(new QLabel(QStringLiteral("<b>Fixtures</b>")));
-    fxHeader->addStretch(1);
-    m_newType = new QComboBox;
-    m_newType->setObjectName(QStringLiteral("fixturesNewType"));
-    m_newType->setToolTip(QStringLiteral("The type of the next fixture added"));
-    auto *add = smallButton(QStringLiteral("+"), QStringLiteral("New fixture of this type, at the next free address"));
-    add->setObjectName(QStringLiteral("fixturesAdd"));
-    auto *dup = smallButton(QStringLiteral("Duplicate"), QStringLiteral("Copies of the selected fixtures, at the next free addresses"));
-    auto *remove = smallButton(QStringLiteral("−"), QStringLiteral("Delete the selected fixtures"));
-    fxHeader->addWidget(m_newType);
-    fxHeader->addWidget(add);
-    fxHeader->addWidget(dup);
-    fxHeader->addWidget(remove);
-    layout->addLayout(fxHeader);
-    m_fixtures = new QTableWidget(0, FCount);
-    m_fixtures->setObjectName(QStringLiteral("fixturesTable"));
-    m_fixtures->setHorizontalHeaderLabels({QStringLiteral("On"), QStringLiteral("Name"), QStringLiteral("Type"),
-                                           QStringLiteral("Output"), QStringLiteral("Univ."), QStringLiteral("Addr."),
-                                           QStringLiteral("Channels"), QStringLiteral("X"), QStringLiteral("Y"),
-                                           QStringLiteral("W"), QStringLiteral("H"), QStringLiteral("Rot."), QStringLiteral("Int.")});
-    for (int c : {FX, FY, FW, FH})
-        m_fixtures->horizontalHeaderItem(c)->setToolTip(QStringLiteral("Center and size, in composition pixels"));
-    m_fixtures->horizontalHeaderItem(FRot)->setToolTip(QStringLiteral("Rotation, degrees clockwise"));
-    m_fixtures->horizontalHeaderItem(FIntensity)->setToolTip(QStringLiteral("Intensity, 0..100 %"));
-    m_fixtures->horizontalHeaderItem(FUniverse)->setToolTip(QStringLiteral("Art-Net: port address from 0; sACN: 1..63999"));
-    m_fixtures->verticalHeader()->hide();
-    m_fixtures->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_fixtures->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    layout->addWidget(m_fixtures, 1);
+    m_table = new QTableWidget(0, ColCount);
+    m_table->setObjectName(QStringLiteral("fixturesTable"));
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QStringLiteral("Fixture"),
+                                        QStringLiteral("Intensity"), QStringLiteral("DMX")});
+    m_table->horizontalHeaderItem(ColOn)->setToolTip(QStringLiteral("Enable"));
+    m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: not moved in the views"));
+    m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: the other fixtures send black"));
+    m_table->horizontalHeaderItem(ColIntensity)->setToolTip(QStringLiteral("A factor on everything the fixture sends"));
+    m_table->horizontalHeaderItem(ColDmx)->setToolTip(QStringLiteral("Universe · channels"));
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(26);
+    m_table->setShowGrid(false);
+    m_table->setAlternatingRowColors(true);
+    m_table->setIconSize(QSize(16, 16));
+    auto *h = m_table->horizontalHeader();
+    h->setHighlightSections(false);
+    for (auto [col, width] : {std::pair{ColOn, 30}, {ColLock, 28}, {ColSolo, 26}, {ColIntensity, 150}}) {
+        h->setSectionResizeMode(col, QHeaderView::Fixed);
+        m_table->setColumnWidth(col, width);
+    }
+    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
+    m_table->setColumnWidth(ColName, 170);
+    h->setStretchLastSection(true);
+    v->addWidget(m_table, 1);
     m_summary = new QLabel;
     m_summary->setWordWrap(true);
-    layout->addWidget(m_summary);
+    v->addWidget(m_summary);
 
-    // --- Types
-    auto *typeHeader = new QHBoxLayout;
-    typeHeader->addWidget(new QLabel(QStringLiteral("<b>Fixture types of the project</b>")));
-    typeHeader->addStretch(1);
-    auto *import = smallButton(QStringLiteral("Import GDTF…"), QStringLiteral("Each DMX mode of a .gdtf file becomes a fixture type"));
-    import->setObjectName(QStringLiteral("fixturesImportGdtf"));
-    auto *removeType = smallButton(QStringLiteral("−"), QStringLiteral("Delete the selected type (not while a fixture uses it)"));
-    typeHeader->addWidget(import);
-    typeHeader->addWidget(removeType);
-    layout->addLayout(typeHeader);
-    m_types = new QListWidget;
-    m_types->setObjectName(QStringLiteral("fixturesTypes"));
-    m_types->setMaximumHeight(100);
-    layout->addWidget(m_types);
+    connect(remove, &QToolButton::clicked, this, &FixturePanel::removeFixtures);
+    connect(dup, &QToolButton::clicked, this, &FixturePanel::duplicateFixtures);
+    auto *del = new QShortcut(QKeySequence::Delete, m_table, nullptr, nullptr, Qt::WidgetShortcut);
+    connect(del, &QShortcut::activated, this, &FixturePanel::removeFixtures);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
+        if (!m_updating) emit fixtureSelected(selectedFixture());
+    });
+    connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
+        if (m_updating) return;
+        const quint64 id = idAt(it->row());
+        if (it->column() == ColOn) {
+            const bool on = it->checkState() == Qt::Checked;
+            cmd::editFixtures(m_undo, m_engine, on ? QStringLiteral("Enable Fixture") : QStringLiteral("Disable Fixture"),
+                              [&](FixturePatch &p) {
+                                  for (Fixture &f : p.fixtures)
+                                      if (f.id == id) f.enabled = on;
+                              });
+        } else if (it->column() == ColName) {
+            const QString name = it->text().trimmed();
+            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Rename Fixture"), [&](FixturePatch &p) {
+                for (Fixture &f : p.fixtures)
+                    if (f.id == id) f.name = name;
+            });
+        } else {
+            return;
+        }
+        emit projectEdited();
+    });
+    connect(m_table, &QTableWidget::cellClicked, this, [this](int row, int col) {
+        if (col != ColLock && col != ColSolo) return;
+        const quint64 id = idAt(row);
+        cmd::editFixtures(m_undo, m_engine, col == ColLock ? QStringLiteral("Lock Fixture") : QStringLiteral("Solo Fixture"),
+                          [&](FixturePatch &p) {
+                              for (Fixture &f : p.fixtures)
+                                  if (f.id == id) (col == ColLock ? f.locked : f.solo) ^= true;
+                          });
+        emit projectEdited();
+    });
 
-    connect(addOut, &QPushButton::clicked, this, &FixturePanel::addOutput);
-    connect(removeOut, &QPushButton::clicked, this, &FixturePanel::removeOutput);
-    connect(add, &QPushButton::clicked, this, &FixturePanel::addFixture);
-    connect(dup, &QPushButton::clicked, this, &FixturePanel::duplicateFixture);
-    connect(remove, &QPushButton::clicked, this, &FixturePanel::removeFixtures);
-    connect(removeType, &QPushButton::clicked, this, &FixturePanel::removeType);
-    connect(import, &QPushButton::clicked, this, [this] {
+    // The list follows the engine; a burst of changes (a fixture dragged in a view) is one refresh
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    m_refreshTimer->setInterval(60);
+    connect(m_refreshTimer, &QTimer::timeout, this, &FixturePanel::refresh);
+    connect(m_engine, &Engine::fixturesChanged, m_refreshTimer, qOverload<>(&QTimer::start));
+    refresh();
+}
+
+quint64 FixturePanel::idAt(int row) const
+{
+    const QTableWidgetItem *i = row >= 0 ? m_table->item(row, ColName) : nullptr;
+    return i ? i->data(Qt::UserRole).toULongLong() : 0;
+}
+
+std::vector<quint64> FixturePanel::selectedIds() const
+{
+    std::vector<quint64> ids;
+    for (const QModelIndex &i : m_table->selectionModel()->selectedRows()) ids.push_back(idAt(i.row()));
+    return ids;
+}
+
+quint64 FixturePanel::selectedFixture() const
+{
+    const int row = m_table->currentRow();
+    if (row >= 0 && m_table->selectionModel()->isRowSelected(row, {})) return idAt(row);
+    const std::vector<quint64> ids = selectedIds();
+    return ids.empty() ? 0 : ids.front();
+}
+
+void FixturePanel::selectFixture(quint64 id)
+{
+    m_updating = true;
+    m_table->clearSelection();
+    for (int r = 0; r < m_table->rowCount(); ++r)
+        if (idAt(r) == id) {
+            m_table->selectionModel()->setCurrentIndex(m_table->model()->index(r, ColName),
+                                                       QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            m_table->scrollToItem(m_table->item(r, ColName));
+        }
+    m_updating = false;
+}
+
+void FixturePanel::fillAddMenu()
+{
+    m_addMenu->clear();
+    const FixturePatch p = m_engine->fixturePatch();
+    auto add = [this](const FixtureType &t) {
+        QAction *a = m_addMenu->addAction(t.pixelCount() > 1 ? QStringLiteral("%1  (%2 px)").arg(t.name).arg(t.pixelCount()) : t.name);
+        const QString id = t.id;
+        connect(a, &QAction::triggered, this, [this, id] { addFixture(id); });
+    };
+    for (const FixtureType &t : builtInFixtureTypes()) add(t);
+    if (!p.types.empty()) m_addMenu->addSeparator();
+    for (const FixtureType &t : p.types) add(t);
+    m_addMenu->addSeparator();
+    m_addMenu->addAction(QStringLiteral("Import GDTF…"), this, [this] {
         QSettings s;
         const QStringList paths = QFileDialog::getOpenFileNames(this, QStringLiteral("Import GDTF fixtures"),
                                                                 s.value(QStringLiteral("fixtures/gdtfFolder")).toString(),
@@ -176,305 +217,150 @@ FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         s.setValue(QStringLiteral("fixtures/gdtfFolder"), QFileInfo(paths.first()).absolutePath());
         QMessageBox::information(this, QStringLiteral("Import GDTF"), importGdtf(paths));
     });
-    connect(m_fixtures, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *i) {
-        if (!m_updating) editFixtureCell(i->row(), i->column());
+    QAction *clean = m_addMenu->addAction(QStringLiteral("Remove Unused Types"), this, [this] {
+        cmd::editFixtures(m_undo, m_engine, QStringLiteral("Remove Unused Fixture Types"), [](FixturePatch &q) {
+            q.types.erase(std::remove_if(q.types.begin(), q.types.end(), [&](const FixtureType &t) {
+                              return std::none_of(q.fixtures.begin(), q.fixtures.end(), [&](const Fixture &f) { return f.type == t.id; });
+                          }),
+                          q.types.end());
+        });
+        emit projectEdited();
     });
-    connect(m_outputs, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *i) {
-        if (!m_updating) editOutputCell(i->row(), i->column());
-    });
-    connect(m_fixtures, &QTableWidget::itemSelectionChanged, this, [this] {
-        if (!m_updating) emit fixtureSelected(selectedFixture());
-    });
-
-    // The tables follow the engine; a burst of changes (a fixture dragged in the view) is one refresh
-    m_refreshTimer = new QTimer(this);
-    m_refreshTimer->setSingleShot(true);
-    m_refreshTimer->setInterval(60);
-    connect(m_refreshTimer, &QTimer::timeout, this, &FixturePanel::refresh);
-    connect(m_engine, &Engine::fixturesChanged, m_refreshTimer, qOverload<>(&QTimer::start));
-    connect(m_engine, &Engine::compositionSizeChanged, m_refreshTimer, qOverload<>(&QTimer::start));
-    m_stateTimer = new QTimer(this);
-    m_stateTimer->setInterval(1000);
-    connect(m_stateTimer, &QTimer::timeout, this, &FixturePanel::refreshStates);
-    m_stateTimer->start();
-    refresh();
-}
-
-quint64 FixturePanel::selectedFixture() const
-{
-    const auto rows = m_fixtures->selectionModel()->selectedRows();
-    if (rows.isEmpty()) return 0;
-    const QTableWidgetItem *i = m_fixtures->item(rows.first().row(), FName);
-    return i ? i->data(Qt::UserRole).toULongLong() : 0;
-}
-
-void FixturePanel::selectFixture(quint64 id)
-{
-    QSignalBlocker block(m_fixtures);
-    m_updating = true;
-    m_fixtures->clearSelection();
-    for (int r = 0; r < m_fixtures->rowCount(); ++r)
-        if (m_fixtures->item(r, FName) && m_fixtures->item(r, FName)->data(Qt::UserRole).toULongLong() == id) {
-            m_fixtures->selectRow(r);
-            m_fixtures->scrollToItem(m_fixtures->item(r, FName));
-        }
-    m_updating = false;
+    clean->setEnabled(!p.types.empty());
 }
 
 void FixturePanel::refresh()
 {
-    // Not under an edit in progress: tried again a moment later
-    // (an editor open in a cell: a line edit inside the table has the focus)
-    auto editing = [](const QTableWidget *t) {
-        const QWidget *f = QApplication::focusWidget();
-        return f && t->viewport()->isAncestorOf(f) && qobject_cast<const QLineEdit *>(f);
-    };
-    if (editing(m_fixtures) || editing(m_outputs)) {
+    // Not under a rename in progress: tried again a moment later
+    if (const QWidget *f = QApplication::focusWidget(); f && m_table->viewport()->isAncestorOf(f) && qobject_cast<const QLineEdit *>(f)) {
         m_refreshTimer->start();
         return;
     }
     const FixturePatch p = m_engine->fixturePatch();
-    const QSize comp = m_engine->compositionSize();
     const quint64 selected = selectedFixture();
-    const int outRow = m_outputs->currentRow();
     m_updating = true;
-
-    // Types offered: the built-in ones, then the project's
-    {
-        const QString current = m_newType->currentData().toString();
-        QSignalBlocker block(m_newType);
-        m_newType->clear();
-        for (const FixtureType &t : builtInFixtureTypes()) m_newType->addItem(t.name, t.id);
-        for (const FixtureType &t : p.types) m_newType->addItem(t.name, t.id);
-        const int at = m_newType->findData(current);
-        m_newType->setCurrentIndex(at >= 0 ? at : 0);
-    }
-    m_types->clear();
-    for (const FixtureType &t : p.types) {
-        auto *i = new QListWidgetItem(QStringLiteral("%1 — %2 px, %3 ch").arg(t.name).arg(t.pixelCount()).arg(t.channelCount()));
-        i->setData(Qt::UserRole, t.id);
-        i->setToolTip(t.manufacturer + (t.origin.isEmpty() ? QString() : QStringLiteral("\n") + t.origin.value("file").toString()));
-        m_types->addItem(i);
-    }
-
-    // Outputs (rows made again: their combo boxes with them)
-    m_outputs->setRowCount(0);
-    m_outputs->setRowCount(int(p.outputs.size()));
-    for (int r = 0; r < int(p.outputs.size()); ++r) {
-        const DmxOutput &o = p.outputs[size_t(r)];
-        m_outputs->setItem(r, OOn, check(o.enabled));
-        auto *name = item(o.name.isEmpty() ? QStringLiteral("Output %1").arg(o.id) : o.name);
-        name->setData(Qt::UserRole, o.id);
-        m_outputs->setItem(r, OName, name);
-        auto *proto = new QComboBox;
-        proto->addItems({QStringLiteral("Art-Net"), QStringLiteral("sACN")});
-        proto->setCurrentIndex(o.protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
-        const quint64 id = o.id;
-        connect(proto, &QComboBox::currentIndexChanged, this, [this, id](int index) {
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Output Protocol"), [&](FixturePatch &q) {
-                for (DmxOutput &x : q.outputs)
-                    if (x.id == id) x.protocol = index == 1 ? DmxOutput::Protocol::Sacn : DmxOutput::Protocol::ArtNet;
-            });
-            emit projectEdited();
-        });
-        m_outputs->setCellWidget(r, OProtocol, proto);
-        m_outputs->setItem(r, ODestination, item(o.destination));
-        m_outputs->setItem(r, OInterface, item(o.interfaceAddress));
-        m_outputs->setItem(r, ORate, item(number(o.rate, 0)));
-        m_outputs->setItem(r, OState, item(QString(), false));
-    }
-    if (outRow >= 0 && outRow < m_outputs->rowCount()) m_outputs->selectRow(outRow);
 
     // Address conflicts: two fixtures on one channel of one output's universe
     std::map<std::tuple<quint64, int, int>, int> users;
     std::map<quint64, std::vector<DmxSpan>> footprints;
     for (const Fixture &f : p.fixtures) {
-        const FixtureType *t = p.findType(f.type);
+        const std::optional<FixtureType> t = p.resolvedType(f);
         if (!t || !f.enabled) continue;
         footprints[f.id] = fixtureFootprint(*t, f.universe, f.address);
         for (const DmxSpan &s : footprints[f.id])
             for (int a = s.first; a <= s.last; ++a) ++users[{f.output, s.universe, a}];
     }
+    const bool anySolo = std::any_of(p.fixtures.begin(), p.fixtures.end(), [](const Fixture &f) { return f.solo && f.enabled; });
     int conflicts = 0, channels = 0;
     std::set<std::pair<quint64, int>> universes;
 
-    m_fixtures->setRowCount(0);
-    m_fixtures->setRowCount(int(p.fixtures.size()));
+    // Rows made again only when their number changes: an intensity being dragged keeps its slider
+    if (m_table->rowCount() != int(p.fixtures.size())) {
+        m_table->clearContents();
+        m_table->setRowCount(int(p.fixtures.size()));
+    }
     for (int r = 0; r < int(p.fixtures.size()); ++r) {
         const Fixture &f = p.fixtures[size_t(r)];
-        const FixtureType *t = p.findType(f.type);
-        const quint64 id = f.id;
-        m_fixtures->setItem(r, FOn, check(f.enabled));
-        auto *name = item(f.name);
+        const std::optional<FixtureType> t = p.resolvedType(f);
+        auto cell = [&](int col, Qt::ItemFlags flags) {
+            QTableWidgetItem *it = m_table->item(r, col);
+            if (!it) {
+                it = new QTableWidgetItem;
+                it->setFlags(flags);
+                m_table->setItem(r, col, it);
+            }
+            return it;
+        };
+        QTableWidgetItem *on = cell(ColOn, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+        on->setCheckState(f.enabled ? Qt::Checked : Qt::Unchecked);
+        on->setToolTip(QStringLiteral("Enable"));
+        QTableWidgetItem *lock = cell(ColLock, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        if (lock->data(Qt::UserRole).toInt() != int(f.locked) + 1) {
+            lock->setIcon(padlockIcon(f.locked));
+            lock->setData(Qt::UserRole, int(f.locked) + 1);
+        }
+        lock->setToolTip(f.locked ? QStringLiteral("Locked — click to unlock") : QStringLiteral("Click to lock (not moved in the views)"));
+        QTableWidgetItem *solo = cell(ColSolo, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        solo->setText(QStringLiteral("S"));
+        solo->setTextAlignment(Qt::AlignCenter);
+        QFont sf = solo->font();
+        sf.setBold(true);
+        solo->setFont(sf);
+        solo->setForeground(f.solo ? QColor(255, 214, 90) : QColor(95, 95, 102));
+        solo->setToolTip(f.solo ? QStringLiteral("Soloed — click to send every fixture again")
+                                : QStringLiteral("Solo: the other fixtures send black"));
+        QTableWidgetItem *name = cell(ColName, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
         name->setData(Qt::UserRole, f.id);
-        m_fixtures->setItem(r, FName, name);
-        auto *type = new QComboBox;
-        for (int k = 0; k < m_newType->count(); ++k) type->addItem(m_newType->itemText(k), m_newType->itemData(k));
-        if (!t) type->addItem(QStringLiteral("(missing: %1)").arg(f.type), f.type);
-        type->setCurrentIndex(type->findData(f.type));
-        connect(type, &QComboBox::currentIndexChanged, this, [this, id, type] {
-            const QString typeId = type->currentData().toString();
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Type"), [&](FixturePatch &q) {
-                for (Fixture &x : q.fixtures)
-                    if (x.id == id) x.type = typeId;
+        const QString shown = f.name.isEmpty() ? QStringLiteral("Fixture %1").arg(f.id) : f.name;
+        if (name->text() != shown) name->setText(shown);
+        QFont nf = name->font();
+        nf.setBold(true);
+        name->setFont(nf);
+        name->setForeground(!t                        ? QColor(255, 110, 95)
+                            : anySolo && !f.solo     ? QColor(110, 110, 115)
+                                                      : QColor(230, 230, 233));
+        name->setToolTip(t ? QStringLiteral("%1 — %2 px, %3 channels").arg(t->name).arg(t->pixelCount()).arg(t->channelCount())
+                           : QStringLiteral("Missing type: %1").arg(f.type));
+
+        // Intensity: the application's bar, as on the layers
+        QWidget *box = m_table->cellWidget(r, ColIntensity);
+        SliderField *slider = box ? box->findChild<SliderField *>() : nullptr;
+        if (!box) {
+            box = new QWidget;
+            auto *hl = new QHBoxLayout(box);
+            hl->setContentsMargins(4, 0, 4, 0);
+            slider = new SliderField;
+            slider->setObjectName(QStringLiteral("fixtureIntensity"));
+            slider->setRange(0, 100);
+            slider->setDecimals(0);
+            slider->setSuffix(QStringLiteral(" %"));
+            slider->setSingleStep(1);
+            slider->setSnaps({100});
+            slider->setCompact(true);
+            slider->setFocusPolicy(Qt::NoFocus);
+            hl->addWidget(slider, 1);
+            m_table->setCellWidget(r, ColIntensity, box);
+            connect(slider, &SliderField::valueEdited, this, [this, slider](double value) {
+                if (m_updating) return;
+                for (int k = 0; k < m_table->rowCount(); ++k)
+                    if (QWidget *c = m_table->cellWidget(k, ColIntensity); c && c->isAncestorOf(slider)) {
+                        const quint64 id = idAt(k);
+                        cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Intensity"), [&](FixturePatch &q) {
+                            for (Fixture &x : q.fixtures)
+                                if (x.id == id) x.intensity = value / 100.0;
+                        }, QStringLiteral("fixture-intensity-%1").arg(id));
+                        emit projectEdited();
+                        break;
+                    }
             });
-            emit projectEdited();
-        });
-        m_fixtures->setCellWidget(r, FType, type);
-        auto *output = new QComboBox;
-        output->addItem(QStringLiteral("—"), QVariant::fromValue<quint64>(0));
-        for (const DmxOutput &o : p.outputs)
-            output->addItem(o.name.isEmpty() ? QStringLiteral("Output %1").arg(o.id) : o.name, QVariant::fromValue(o.id));
-        output->setCurrentIndex(std::max(0, output->findData(QVariant::fromValue(f.output))));
-        connect(output, &QComboBox::currentIndexChanged, this, [this, id, output] {
-            const quint64 out = output->currentData().toULongLong();
-            cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Output"), [&](FixturePatch &q) {
-                for (Fixture &x : q.fixtures)
-                    if (x.id == id) x.output = out;
-            });
-            emit projectEdited();
-        });
-        m_fixtures->setCellWidget(r, FOutput, output);
-        m_fixtures->setItem(r, FUniverse, item(QString::number(f.universe)));
-        auto *address = item(QString::number(f.address));
-        m_fixtures->setItem(r, FAddress, address);
-        QStringList spans;
+        }
+        const double pct = std::round(f.intensity * 100);
+        if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
+
+        QTableWidgetItem *dmx = cell(ColDmx, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        dmx->setText(fixtureview::address(p, f));
         bool clash = false;
         for (const DmxSpan &s : footprints[f.id]) {
-            spans << (s.first == s.last ? QStringLiteral("%1.%2").arg(s.universe).arg(s.first)
-                                        : QStringLiteral("%1.%2-%3").arg(s.universe).arg(s.first).arg(s.last));
             for (int a = s.first; a <= s.last; ++a) clash |= users[{f.output, s.universe, a}] > 1;
             channels += s.last - s.first + 1;
             universes.insert({f.output, s.universe});
         }
-        auto *chs = item(t ? QStringLiteral("%1 (%2)").arg(t->channelCount()).arg(spans.join(QStringLiteral(", "))) : QString(), false);
-        m_fixtures->setItem(r, FChannels, chs);
-        if (clash) {
-            ++conflicts;
-            for (QTableWidgetItem *i : {address, chs}) {
-                i->setBackground(QColor(160, 40, 40));
-                i->setToolTip(QStringLiteral("Its channels overlap another fixture's on this output"));
-            }
-        }
-        m_fixtures->setItem(r, FX, item(number(f.center.x() * comp.width())));
-        m_fixtures->setItem(r, FY, item(number(f.center.y() * comp.height())));
-        m_fixtures->setItem(r, FW, item(number(f.size.width() * comp.width())));
-        m_fixtures->setItem(r, FH, item(number(f.size.height() * comp.height())));
-        m_fixtures->setItem(r, FRot, item(number(f.rotation)));
-        m_fixtures->setItem(r, FIntensity, item(number(f.intensity * 100, 0)));
+        const DmxOutput *out = p.findOutput(f.output);
+        dmx->setForeground(clash ? QColor(255, 110, 95) : out ? QColor(200, 200, 205) : QColor(120, 120, 125));
+        dmx->setToolTip(clash ? QStringLiteral("Its channels overlap another fixture's on this output")
+                        : out ? out->name
+                              : QStringLiteral("No output: nothing sent"));
+        conflicts += clash;
     }
-    m_fixtures->resizeColumnsToContents();
     m_summary->setText(QStringLiteral("%1 fixtures, %2 channels in %3 universes%4")
                            .arg(p.fixtures.size()).arg(channels).arg(universes.size())
                            .arg(conflicts ? QStringLiteral(" — <span style='color:#e66'>%1 in conflict</span>").arg(conflicts) : QString()));
     m_updating = false;
     selectFixture(selected);
-    refreshStates();
 }
 
-void FixturePanel::refreshStates()
+quint64 FixturePanel::addFixture(const QString &typeId)
 {
-    if (!isVisible()) return;
-    m_updating = true;
-    for (int r = 0; r < m_outputs->rowCount(); ++r) {
-        QTableWidgetItem *name = m_outputs->item(r, OName), *state = m_outputs->item(r, OState);
-        if (!name || !state) continue;
-        const DmxOutputState s = m_engine->dmxOutputState(name->data(Qt::UserRole).toULongLong());
-        state->setText(s.level == DmxOutputState::Off     ? QStringLiteral("Off")
-                       : s.level == DmxOutputState::Error ? QStringLiteral("Error")
-                                                          : QStringLiteral("Sending · %1 packets").arg(s.packets));
-        state->setToolTip(s.text);
-        state->setForeground(s.level == DmxOutputState::Error ? QColor(230, 90, 90) : palette().color(QPalette::Text));
-    }
-    m_updating = false;
-}
-
-void FixturePanel::editFixtureCell(int row, int column)
-{
-    const QTableWidgetItem *name = m_fixtures->item(row, FName), *cell = m_fixtures->item(row, column);
-    if (!name || !cell) return;
-    const quint64 id = name->data(Qt::UserRole).toULongLong();
-    const QSize comp = m_engine->compositionSize();
-    const QString text = cell->text().trimmed();
-    bool ok = true;
-    const double v = text.toDouble(&ok);
-    if (column != FName && column != FOn && !ok) {
-        m_refreshTimer->start(); // back to the value it had
-        return;
-    }
-    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Edit Fixture"), [&](FixturePatch &p) {
-        for (Fixture &f : p.fixtures) {
-            if (f.id != id) continue;
-            switch (column) {
-            case FOn: f.enabled = cell->checkState() == Qt::Checked; break;
-            case FName: f.name = text; break;
-            case FUniverse: f.universe = int(v); break;
-            case FAddress: f.address = int(v); break;
-            case FX: f.center.setX(v / std::max(1, comp.width())); break;
-            case FY: f.center.setY(v / std::max(1, comp.height())); break;
-            case FW: f.size.setWidth(v / std::max(1, comp.width())); break;
-            case FH: f.size.setHeight(v / std::max(1, comp.height())); break;
-            case FRot: f.rotation = v; break;
-            case FIntensity: f.intensity = v / 100.0; break;
-            default: break;
-            }
-        }
-    });
-    m_refreshTimer->start(); // a clamped value shown as it is
-    emit projectEdited();
-}
-
-void FixturePanel::editOutputCell(int row, int column)
-{
-    const QTableWidgetItem *name = m_outputs->item(row, OName), *cell = m_outputs->item(row, column);
-    if (!name || !cell || column == OState) return;
-    const quint64 id = name->data(Qt::UserRole).toULongLong();
-    const QString text = cell->text().trimmed();
-    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Edit DMX Output"), [&](FixturePatch &p) {
-        for (DmxOutput &o : p.outputs) {
-            if (o.id != id) continue;
-            switch (column) {
-            case OOn: o.enabled = cell->checkState() == Qt::Checked; break;
-            case OName: o.name = text; break;
-            case ODestination: o.destination = text; break;
-            case OInterface: o.interfaceAddress = text; break;
-            case ORate: o.rate = text.toDouble() > 0 ? text.toDouble() : o.rate; break;
-            default: break;
-            }
-        }
-    });
-    m_refreshTimer->start();
-    emit projectEdited();
-}
-
-void FixturePanel::addOutput()
-{
-    cmd::editFixtures(m_undo, m_engine, QStringLiteral("New DMX Output"), [&](FixturePatch &p) {
-        DmxOutput o;
-        o.name = QStringLiteral("Art-Net %1").arg(p.outputs.size() + 1);
-        p.outputs.push_back(o);
-    });
-    emit projectEdited();
-}
-
-void FixturePanel::removeOutput()
-{
-    const int row = m_outputs->currentRow();
-    const QTableWidgetItem *name = row >= 0 ? m_outputs->item(row, OName) : nullptr;
-    if (!name) return;
-    const quint64 id = name->data(Qt::UserRole).toULongLong();
-    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Delete DMX Output"), [&](FixturePatch &p) {
-        p.outputs.erase(std::remove_if(p.outputs.begin(), p.outputs.end(), [&](const DmxOutput &o) { return o.id == id; }),
-                        p.outputs.end());
-        for (Fixture &f : p.fixtures)
-            if (f.output == id) f.output = 0;
-    });
-    emit projectEdited();
-}
-
-void FixturePanel::addFixture()
-{
-    const QString typeId = m_newType->currentData().toString();
     const QSize comp = m_engine->compositionSize();
     quint64 made = 0;
     cmd::editFixtures(m_undo, m_engine, QStringLiteral("New Fixture"), [&](FixturePatch &p) {
@@ -495,7 +381,6 @@ void FixturePanel::addFixture()
         const double cw = std::max(1, comp.width()), ch = std::max(1, comp.height());
         const double cell = std::min(cw / 3 / t->cols, ch / 3 / t->rows);
         f.size = QSizeF(cell * t->cols / cw, cell * t->rows / ch);
-        f.id = 0;
         for (const Fixture &x : p.fixtures) made = std::max(made, x.id);
         f.id = ++made;
         p.fixtures.push_back(f);
@@ -504,15 +389,15 @@ void FixturePanel::addFixture()
         refresh();
         selectFixture(made);
         emit fixtureSelected(made);
+        emit projectEdited();
     }
-    emit projectEdited();
+    return made;
 }
 
-void FixturePanel::duplicateFixture()
+void FixturePanel::duplicateFixtures()
 {
-    std::set<quint64> ids;
-    for (const QModelIndex &i : m_fixtures->selectionModel()->selectedRows())
-        if (const QTableWidgetItem *n = m_fixtures->item(i.row(), FName)) ids.insert(n->data(Qt::UserRole).toULongLong());
+    const std::vector<quint64> chosen = selectedIds();
+    const std::set<quint64> ids(chosen.begin(), chosen.end());
     if (ids.empty()) return;
     cmd::editFixtures(m_undo, m_engine, QStringLiteral("Duplicate Fixtures"), [&](FixturePatch &p) {
         quint64 next = 0;
@@ -522,8 +407,9 @@ void FixturePanel::duplicateFixture()
             if (!ids.count(f.id)) continue;
             Fixture copy = f;
             copy.id = ++next;
+            copy.solo = false;
             copy.center += QPointF(0, f.size.height() * 1.5); // just under it
-            if (const FixtureType *t = p.findType(f.type))
+            if (const std::optional<FixtureType> t = p.resolvedType(f))
                 std::tie(copy.universe, copy.address) = nextFree(p, f.output, t->channelCount());
             p.fixtures.push_back(copy);
         }
@@ -533,31 +419,14 @@ void FixturePanel::duplicateFixture()
 
 void FixturePanel::removeFixtures()
 {
-    std::set<quint64> ids;
-    for (const QModelIndex &i : m_fixtures->selectionModel()->selectedRows())
-        if (const QTableWidgetItem *n = m_fixtures->item(i.row(), FName)) ids.insert(n->data(Qt::UserRole).toULongLong());
+    const std::vector<quint64> chosen = selectedIds();
+    const std::set<quint64> ids(chosen.begin(), chosen.end());
     if (ids.empty()) return;
     cmd::editFixtures(m_undo, m_engine, QStringLiteral("Delete Fixtures"), [&](FixturePatch &p) {
         p.fixtures.erase(std::remove_if(p.fixtures.begin(), p.fixtures.end(), [&](const Fixture &f) { return ids.count(f.id) > 0; }),
                          p.fixtures.end());
     });
     emit fixtureSelected(0);
-    emit projectEdited();
-}
-
-void FixturePanel::removeType()
-{
-    const QListWidgetItem *i = m_types->currentItem();
-    if (!i) return;
-    const QString id = i->data(Qt::UserRole).toString();
-    const FixturePatch p = m_engine->fixturePatch();
-    if (std::any_of(p.fixtures.begin(), p.fixtures.end(), [&](const Fixture &f) { return f.type == id; })) {
-        QMessageBox::information(this, QStringLiteral("Fixture type"), QStringLiteral("Fixtures use this type: change or delete them first."));
-        return;
-    }
-    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Delete Fixture Type"), [&](FixturePatch &q) {
-        q.types.erase(std::remove_if(q.types.begin(), q.types.end(), [&](const FixtureType &t) { return t.id == id; }), q.types.end());
-    });
     emit projectEdited();
 }
 
@@ -568,7 +437,8 @@ QString FixturePanel::importGdtf(const QStringList &paths)
     for (const QString &path : paths) {
         const gdtf::Import im = gdtf::readFile(path);
         if (!im.error.isEmpty()) report << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(), im.error);
-        for (const FixtureType &t : im.types) report << QStringLiteral("Imported %1 (%2 px, %3 channels)").arg(t.name).arg(t.pixelCount()).arg(t.channelCount());
+        for (const FixtureType &t : im.types)
+            report << QStringLiteral("Imported %1 (%2 px, %3 channels)").arg(t.name).arg(t.pixelCount()).arg(t.channelCount());
         report += im.warnings;
         types.insert(types.end(), im.types.begin(), im.types.end());
     }
@@ -580,9 +450,6 @@ QString FixturePanel::importGdtf(const QStringList &paths)
                 else p.types.push_back(t);
             }
         });
-        refresh();
-        const int at = m_newType->findData(types.front().id);
-        if (at >= 0) m_newType->setCurrentIndex(at);
         emit projectEdited();
     }
     return report.join(QLatin1Char('\n'));

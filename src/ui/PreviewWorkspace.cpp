@@ -103,7 +103,7 @@ protected:
             return QPointF(r.left() + uv.x() * r.width(), r.top() + uv.y() * r.height());
         };
         QPainter p(this);
-        fixtureview::paint(p, patch, m_engine->compositionSize(), toWidget);
+        fixtureview::paint(p, patch, m_engine->compositionSize(), toWidget, m_engine->fixtureLooks());
     }
     void wheelEvent(QWheelEvent *e) override
     {

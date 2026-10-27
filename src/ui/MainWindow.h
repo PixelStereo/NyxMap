@@ -13,6 +13,7 @@ class LogPanel;
 class CompositionPanel;
 class SettingsPanel;
 class FixturePanel;
+class FixtureInspector;
 class SnapshotPanel;
 class SequenceBar;
 class SequenceFeedback;
@@ -139,6 +140,8 @@ private:
     CompositionPanel *m_composition = nullptr;
     SettingsPanel *m_settings = nullptr;
     FixturePanel *m_fixtures = nullptr;
+    FixtureInspector *m_fixtureInspector = nullptr;
+    QWidget *m_fixtureTab = nullptr; // the inspector's scroll area, in the right tabs
     SnapshotPanel *m_snapshots = nullptr;
     SequenceBar *m_seqBar = nullptr;
     SequenceFeedback *m_feedback = nullptr;
