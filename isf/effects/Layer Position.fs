@@ -30,6 +30,18 @@
 			"NAME": "repeatImage",
 			"TYPE": "bool",
 			"DEFAULT": 0.0
+		},
+		{
+			"NAME": "mirrorX",
+			"LABEL": "Miroir Horizontal",
+			"TYPE": "bool",
+			"DEFAULT": 0.0
+		},
+		{
+			"NAME": "mirrorY",
+			"LABEL": "Miroir Vertical",
+			"TYPE": "bool",
+			"DEFAULT": 0.0
 		}
 	]
 	
@@ -46,7 +58,27 @@ void main()	{
 	newLoc = (gl_FragCoord.xy + 2.0*newLoc) - topSize;
 	
 	if (repeatImage)	{
-		newLoc = mod(newLoc, RENDERSIZE);	
+		vec2 coord = newLoc / RENDERSIZE;
+		vec2 id = floor(coord);
+		vec2 f = fract(coord);
+		
+		// Inversion une répétition sur deux si le miroir est activé
+		if (mirrorX) {
+			if (mod(abs(id.x), 2.0) > 0.5) {
+				f.x = 1.0 - f.x;
+			}
+		}
+		if (mirrorY) {
+			if (mod(abs(id.y), 2.0) > 0.5) {
+				f.y = 1.0 - f.y;
+			}
+		}
+		
+		if (!mirrorX && !mirrorY) {
+			newLoc = mod(newLoc, RENDERSIZE);	
+		} else {
+			newLoc = f * RENDERSIZE;
+		}
 	}
 	
 	if ((newLoc.x >= 0.0)&&(newLoc.x < RENDERSIZE.x)&&(newLoc.y >= 0.0)&&(newLoc.y <= RENDERSIZE.y))	{
