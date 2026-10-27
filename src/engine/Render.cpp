@@ -1251,6 +1251,7 @@ void Engine::frame(double dt)
         renderPausedSources(rc);
     }
     composite();
+    stepPixelMapping(); // the fixtures read the composition as it goes out (opacity and blackout included)
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {
         if (!it->second.used) {

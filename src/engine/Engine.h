@@ -26,6 +26,9 @@
 #include "LayerTree.h"
 #include "Publish.h"
 #include "Publishing.h"
+#include "Dmx.h"
+#include "Fixtures.h"
+#include "PixelSampler.h"
 #include "TimecodeOutputs.h"
 #include "Interactions.h"
 
@@ -651,6 +654,13 @@ public:
     // Tests: Syphon / Spout publishers made by `f` on any platform (Publishing::setGpuPublisherFactoryForTests)
     void setGpuPublisherFactoryForTests(std::function<std::unique_ptr<GpuPublisher>(PublishKind)> f);
 
+    // --- Pixel mapping (Fixtures.h): fixtures placed on the composition, their pixels sampled at every frame (after
+    // the composition's opacity and blackout) and streamed as DMX by the outputs (Art-Net, sACN: Dmx.h)
+    FixturePatch fixturePatch() const;
+    void setFixturePatch(FixturePatch p); // normalized; the outputs follow it from the next frame
+    QByteArray dmxUniverse(quint64 output, int universe) const; // the latest values (512 bytes; empty: not sent)
+    DmxOutputState dmxOutputState(quint64 output) const;
+
     // --- Composition opacity: 0..1 reached in `seconds` seconds (picture only)
     void fadeCompositionOpacity(double target, double seconds);
     // Speed of the whole composition (0..10): a coefficient on every pace — media, shaders' TIME, timelines, fades,
@@ -767,6 +777,7 @@ public:
 
 signals:
     void layersChanged();
+    void fixturesChanged(); // the pixel mapping (setFixturePatch, a project loaded or cleared)
     void compositionSizeChanged(QSize size);
     void snapshotsChanged();
     void presetsChanged();
@@ -1161,6 +1172,17 @@ private:
 
     // Publishing: the viewports' publishers (Publishing.h)
     Publishing m_publishing{[this] { drawQuad(); }};
+    // Pixel mapping (Fixtures.h, PixelMapping.cpp)
+    void stepPixelMapping(); // render thread, lock held, after the composition is drawn
+    FixturePatch m_fixtures;                 // (m_mutex)
+    quint64 m_fixturesVersion = 1;           // (m_mutex) changes with it
+    quint64 m_fixturesFollowed = 0;          // render thread: the version the points and the sender follow
+    QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
+    std::vector<QPointF> m_fixturePoints;    // render thread
+    PixelSampler m_sampler{[this] { drawQuad(); }};
+    DmxSender m_dmx;
+    mutable std::mutex m_dmxMutex;
+    DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha

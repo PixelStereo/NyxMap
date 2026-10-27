@@ -109,7 +109,10 @@ void Engine::clearProject()
         m_interactionParamsDirty = true;
         m_nextInteractionId = 1;
         m_nextPatchId = 1;
+        m_fixtures = FixturePatch();
+        ++m_fixturesVersion;
     }
+    emit fixturesChanged();
     for (auto &l : old) {
         if (l->video) l->video->close();
         releaseAudio(*m_audio, l->audio);
@@ -505,6 +508,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["sequences"] = m_sequencer->toJson();
         root["current_sequence"] = m_sequencer->current();
         root["startup_sequence"] = m_sequencer->startupSequence();
+        if (!m_fixtures.types.empty() || !m_fixtures.fixtures.empty() || !m_fixtures.outputs.empty())
+            root["pixel_mapping"] = m_fixtures.toJson();
     }
     root["ui"] = uiState;
     return root;
@@ -555,6 +560,19 @@ static QString projectPreflightError(const QJsonObject &root)
         for (int i = 0; i < arr.size(); ++i) {
             if (!arr[i].isObject())
                 return invalid(QStringLiteral("$/%1/%2").arg(key).arg(i), QStringLiteral("object"));
+        }
+    }
+    const QJsonValue mapping = root.value("pixel_mapping");
+    if (!mapping.isUndefined()) {
+        if (!mapping.isObject()) return invalid(QStringLiteral("$/pixel_mapping"), QStringLiteral("object"));
+        for (const QString &key : {QStringLiteral("fixture_types"), QStringLiteral("fixtures"), QStringLiteral("dmx_outputs")}) {
+            const QJsonValue v = mapping.toObject().value(key);
+            if (v.isUndefined()) continue;
+            if (!v.isArray()) return invalid(QStringLiteral("$/pixel_mapping/") + key, QStringLiteral("array"));
+            const QJsonArray arr = v.toArray();
+            for (int i = 0; i < arr.size(); ++i)
+                if (!arr[i].isObject())
+                    return invalid(QStringLiteral("$/pixel_mapping/%1/%2").arg(key).arg(i), QStringLiteral("object"));
         }
     }
     const QString treeKey = QStringLiteral("snapshot_tree");
@@ -778,6 +796,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         }
         setInteractions(interactions);
     }
+    setFixturePatch(FixturePatch::fromJson(root.value("pixel_mapping").toObject()));
     emit layersChanged();
     emit timecodeRoutingChanged();
     if (!warnings.isEmpty() && err) *err = warnings.join('\n');

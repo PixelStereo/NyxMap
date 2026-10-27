@@ -231,6 +231,10 @@ bool Engine::initialize(QString *err)
     m_blitTexLoc = f->glGetUniformLocation(m_blitProgram, "u_tex");
     m_presentTexLoc = f->glGetUniformLocation(m_presentProgram, "u_tex");
     m_publishing.initGl(&log);
+    if (!m_sampler.initGl(&log)) {
+        if (err) *err = QStringLiteral("Pixel mapping shader: ") + log;
+        return false;
+    }
     // Layer preparation: roi (part of the source used), color (added / removed), unpremultiplied alpha (groups)
     m_prepProgram = compileProgram(quadVs,
                                    "#version 330 core\nuniform sampler2D u_tex; uniform vec4 u_roi; uniform vec3 u_add;\n"
@@ -546,6 +550,10 @@ void Engine::releaseAll()
     m_transitions.clear();
     // Publishers: GPU (current context required), then the send threads
     m_publishing.release();
+    // Pixel mapping: the sACN streams terminated, the sampler's GPU objects deleted
+    m_dmx.stop();
+    m_sampler.release();
+    m_fixturesFollowed = 0;
     {
         Lock lk(&m_mutex);
         releaseRetired(true);

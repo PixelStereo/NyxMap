@@ -89,6 +89,10 @@ add_library(pinol_engine STATIC
   src/engine/Snapshots.cpp
   src/engine/Sequencer.cpp
   src/engine/Publishing.cpp
+  src/engine/Fixtures.cpp
+  src/engine/Dmx.cpp
+  src/engine/PixelSampler.cpp
+  src/engine/PixelMapping.cpp
   src/engine/TestCard.cpp
   src/engine/Masks.cpp
   src/engine/Timecode.cpp
@@ -559,6 +563,11 @@ if(PINOL_TESTS)
   add_test(NAME image_import COMMAND pinol_image_import_test)
   add_executable(pinol_benchmark_rates_test test/benchmark_rates.cpp)
   add_test(NAME benchmark_rates COMMAND pinol_benchmark_rates_test)
+  add_executable(pinol_pixel_mapping_test test/pixel_mapping.cpp)
+  target_link_libraries(pinol_pixel_mapping_test PRIVATE pinol_engine)
+  target_compile_options(pinol_pixel_mapping_test PRIVATE ${PINOL_WARNINGS})
+  add_test(NAME pixel_mapping COMMAND pinol_pixel_mapping_test)
+  set_tests_properties(pixel_mapping PROPERTIES TIMEOUT 60)
   add_executable(pinol_show_clock_test test/show_clock.cpp)
   target_link_libraries(pinol_show_clock_test PRIVATE pinol_engine)
   add_test(NAME show_clock COMMAND pinol_show_clock_test)
