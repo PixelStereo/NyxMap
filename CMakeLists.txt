@@ -89,6 +89,12 @@ add_library(pinol_engine STATIC
   src/engine/Snapshots.cpp
   src/engine/Sequencer.cpp
   src/engine/Publishing.cpp
+  src/engine/Fixtures.cpp
+  src/engine/Dmx.cpp
+  src/engine/PixelSampler.cpp
+  src/engine/PixelMapping.cpp
+  src/engine/Zip.cpp
+  src/engine/Gdtf.cpp
   src/engine/TestCard.cpp
   src/engine/Masks.cpp
   src/engine/Timecode.cpp
@@ -318,6 +324,8 @@ set(APP_SOURCES
   src/ui/PresetEditor.cpp
   src/ui/MappingView.cpp
   src/ui/PreviewWorkspace.cpp
+  src/ui/FixtureOverlay.cpp
+  src/ui/FixturePanel.cpp
   src/ui/MaskPanel.cpp
   src/ui/OutputWindow.cpp
   src/ui/GlDraw.cpp
@@ -559,6 +567,11 @@ if(PINOL_TESTS)
   add_test(NAME image_import COMMAND pinol_image_import_test)
   add_executable(pinol_benchmark_rates_test test/benchmark_rates.cpp)
   add_test(NAME benchmark_rates COMMAND pinol_benchmark_rates_test)
+  add_executable(pinol_pixel_mapping_test test/pixel_mapping.cpp)
+  target_link_libraries(pinol_pixel_mapping_test PRIVATE pinol_engine)
+  target_compile_options(pinol_pixel_mapping_test PRIVATE ${PINOL_WARNINGS})
+  add_test(NAME pixel_mapping COMMAND pinol_pixel_mapping_test)
+  set_tests_properties(pixel_mapping PROPERTIES TIMEOUT 60)
   add_executable(pinol_show_clock_test test/show_clock.cpp)
   target_link_libraries(pinol_show_clock_test PRIVATE pinol_engine)
   add_test(NAME show_clock COMMAND pinol_show_clock_test)
@@ -678,7 +691,7 @@ if(PINOL_TESTS)
   target_include_directories(pinol_number_widgets_test PRIVATE src/ui)
   target_link_libraries(pinol_number_widgets_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME number_widgets COMMAND pinol_number_widgets_test)
-  add_executable(pinol_mask_ui_test test/mask_ui.cpp src/ui/MappingView.cpp src/ui/GlDraw.cpp
+  add_executable(pinol_mask_ui_test test/mask_ui.cpp src/ui/MappingView.cpp src/ui/FixtureOverlay.cpp src/ui/GlDraw.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/MaskPanel.cpp)
   target_include_directories(pinol_mask_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_mask_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -702,11 +715,18 @@ if(PINOL_TESTS)
   add_test(NAME color_parameter_ui COMMAND pinol_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)
   add_test(NAME selection_ui COMMAND pinol_workspace_ui_test --selection) # not in the Valgrind job: see the test
-  add_executable(pinol_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp
+  add_executable(pinol_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp src/ui/FixtureOverlay.cpp
                  src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_preview_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_preview_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND pinol_preview_ui_test)
+  add_executable(pinol_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureOverlay.cpp
+                 src/ui/MappingView.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
+                 src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+  target_include_directories(pinol_fixture_ui_test PRIVATE src/ui)
+  target_link_libraries(pinol_fixture_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
+  add_test(NAME fixture_ui COMMAND pinol_fixture_ui_test)
+  set_tests_properties(fixture_ui PROPERTIES TIMEOUT 60)
   add_executable(pinol_recall_delay_ui_test test/recall_delay_ui.cpp src/ui/SnapshotPanel.cpp src/ui/PresetEditor.cpp
                  src/ui/SequencePanel.cpp src/ui/TimelineActivity.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_recall_delay_ui_test PRIVATE src/ui)

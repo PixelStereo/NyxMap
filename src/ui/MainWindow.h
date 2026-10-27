@@ -12,6 +12,7 @@ class MediaBin;
 class LogPanel;
 class CompositionPanel;
 class SettingsPanel;
+class FixturePanel;
 class SnapshotPanel;
 class SequenceBar;
 class SequenceFeedback;
@@ -137,6 +138,7 @@ private:
     LogPanel *m_logs = nullptr;
     CompositionPanel *m_composition = nullptr;
     SettingsPanel *m_settings = nullptr;
+    FixturePanel *m_fixtures = nullptr;
     SnapshotPanel *m_snapshots = nullptr;
     SequenceBar *m_seqBar = nullptr;
     SequenceFeedback *m_feedback = nullptr;

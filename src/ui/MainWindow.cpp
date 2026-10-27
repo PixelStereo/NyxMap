@@ -28,6 +28,7 @@
 #include "OutputWindow.h"
 #include "Osc.h"
 #include "SettingsPanel.h"
+#include "FixturePanel.h"
 #include "Widgets.h"
 
 #include <QAction>
@@ -193,6 +194,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_viewportInspector, &LayerInspector::layerChanged, this, [this] { refreshLayerList(); markDirty(); });
     connect(m_viewportInspector, &LayerInspector::mappingChanged, m_view, qOverload<>(&QWidget::update));
     connect(m_viewportInspector, &LayerInspector::projectEdited, this, &MainWindow::markDirty);
+    // Pixel mapping: the patch here, the fixtures shown, picked and placed in the views
+    m_fixtures = new FixturePanel(m_engine, m_undo);
+    m_tabs->addTab(m_fixtures, QStringLiteral("Fixtures"));
+    connect(m_fixtures, &FixturePanel::fixtureSelected, m_view, &MappingView::setFixture);
+    connect(m_view, &MappingView::fixturePicked, m_fixtures, &FixturePanel::selectFixture);
+    connect(m_fixtures, &FixturePanel::projectEdited, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
     m_tabs->addTab(scrolled(m_settings), QStringLiteral("Settings"));
     connect(m_settings, &SettingsPanel::playModeChanged, this,

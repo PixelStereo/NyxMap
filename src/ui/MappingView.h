@@ -2,6 +2,7 @@
 #include "GlDraw.h"
 #include "Mapping.h"
 #include "Masks.h"
+#include "Fixtures.h"
 #include <QOpenGLWidget>
 #include <QPointF>
 #include <QRectF>
@@ -40,8 +41,14 @@ public:
     void setMaskIndex(int index); // -1: none
     void setMaskEditMode(bool on); // preview selects mask points or layer geometry explicitly
     void startMaskDrawing();
+    // Pixel mapping fixtures (Fixtures.h) shown over the composition, picked, moved, resized and turned here
+    void setShowFixtures(bool on);
+    bool showFixtures() const { return m_showFixtures; }
+    void setFixture(quint64 id); // the fixture selected (0: none)
+    quint64 fixture() const { return m_fixture; }
 
 signals:
+    void fixturePicked(quint64 id); // clicked here (0: the selection dropped)
     void masksEdited();         // a mask moved or drawn here
     void maskPicked(int index); // the mask just drawn
     void layerPicked(int index);
@@ -141,6 +148,18 @@ private:
     QToolButton *m_autoSelectButton = nullptr;
     QToolButton *m_maskModeButton = nullptr;
     bool m_maskEditMode = false;
+
+    // Fixtures
+    QToolButton *m_fixturesButton = nullptr;
+    bool m_showFixtures = false;
+    quint64 m_fixture = 0;
+    enum class FixtureDrag { None, Move, Resize, Rotate } m_fixtureDrag = FixtureDrag::None;
+    FixturePatch m_fixturesBefore; // at the start of the gesture, for undo
+    QPointF m_fixtureGrab;         // the press, normalized
+    void paintFixtures();
+    bool pressFixture(QMouseEvent *e); // true: taken by a fixture (not under the engine's lock)
+    bool dragFixture(QMouseEvent *e);
+    bool releaseFixture();
 
     // Masks
     int m_maskIndex = -1;

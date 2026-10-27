@@ -550,4 +550,31 @@ void editPresets(QUndoStack *undo, Engine *e, const QString &text, const std::fu
     undo->push(new SetPresets(e, before, after, text, mergeKey));
 }
 
+SetFixturePatch::SetFixturePatch(Engine *e, FixturePatch before, FixturePatch after, const QString &text, const QString &mergeKey)
+    : m_e(e), m_before(std::move(before)), m_after(std::move(after)), m_mergeKey(mergeKey), m_time(nowMs())
+{
+    setText(text);
+}
+
+bool SetFixturePatch::mergeWith(const QUndoCommand *other)
+{
+    auto *o = static_cast<const SetFixturePatch *>(other);
+    if (o->m_mergeKey != m_mergeKey || o->m_time - m_time > kMergeWindowMs) return false;
+    m_after = o->m_after;
+    m_time = o->m_time;
+    return true;
+}
+
+void editFixtures(QUndoStack *undo, Engine *e, const QString &text, const std::function<void(FixturePatch &)> &fn,
+                  const QString &mergeKey)
+{
+    FixturePatch before = e->fixturePatch();
+    FixturePatch after = before;
+    fn(after);
+    after.normalize();
+    if (after.toJson() == before.toJson()) return;
+    if (undo) undo->push(new SetFixturePatch(e, std::move(before), std::move(after), text, mergeKey));
+    else e->setFixturePatch(after);
+}
+
 } // namespace cmd
