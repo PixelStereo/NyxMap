@@ -16,7 +16,7 @@ OutputWindow::OutputWindow(Engine *engine, quint64 viewport) : m_engine(engine),
     // macOS: shown through Metal by the render thread; elsewhere through OpenGL
     setSurfaceType(Engine::metalOutput() ? QSurface::MetalSurface : QSurface::OpenGLSurface);
     if (surfaceType() == QSurface::OpenGLSurface) setFormat(QSurfaceFormat::defaultFormat());
-    setTitle(QStringLiteral("Pinol — Output"));
+    setTitle(QStringLiteral("NyxMap — Output"));
     create();
     m_engine->setViewportWindow(m_viewport, this);
     // Moved to another screen: its refresh rate is the render's pace from now on

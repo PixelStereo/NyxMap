@@ -51,10 +51,10 @@ extern "C" {
 
 // Upload buffers of every video layer: shared fairly among the layers that have some once they would take more than
 // 2 GiB (each keeps at least two). Fewer buffers than a stream's queue send its frames through the slow path (uploaded
-// from the decoder's memory by the render thread). PINOL_PBO_BUDGET_MB overrides it (measurements)
+// from the decoder's memory by the render thread). NYXMAP_PBO_BUDGET_MB overrides it (measurements)
 static size_t pboBudget()
 {
-    static const size_t forced = size_t(std::max(0, qEnvironmentVariableIntValue("PINOL_PBO_BUDGET_MB"))) << 20;
+    static const size_t forced = size_t(std::max(0, qEnvironmentVariableIntValue("NYXMAP_PBO_BUDGET_MB"))) << 20;
     return forced ? forced : size_t(2048) << 20;
 }
 static std::atomic<int> s_pboStreams{0};

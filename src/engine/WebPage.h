@@ -5,7 +5,7 @@
 // and its parameters (web/url, web/reload…: LayerParams.cpp), so snapshots, presets and OSC reach them.
 //
 // The engine has no browser of its own (it does not depend on widgets): the application registers one at startup
-// (setWebPageFactory; Pinol's, with Qt WebEngine, is src/ui/WebPageQt.cpp). Without one, a project's web layers are
+// (setWebPageFactory; NyxMap's, with Qt WebEngine, is src/ui/WebPageQt.cpp). Without one, a project's web layers are
 // kept with an error, and the Media Bin does not offer the generator.
 
 #include "LiveInput.h"

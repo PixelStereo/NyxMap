@@ -157,8 +157,8 @@ int runXyControlTests(Engine &engine, const QString &root)
 
     engine.setLayerAnim(layer, point, &wave);
     QTemporaryDir files;
-    check(engine.saveProject(files.filePath("xy.pinol"), {}, &error), "save XY timelines and local animation");
-    check(engine.loadProject(files.filePath("xy.pinol"), nullptr, &error), "reload XY project");
+    check(engine.saveProject(files.filePath("xy.nyxmap"), {}, &error), "save XY timelines and local animation");
+    check(engine.loadProject(files.filePath("xy.nyxmap"), nullptr, &error), "reload XY project");
     check(engine.interactions().size() == 1 && engine.interactions()[0].xyInputs.size() == 1 &&
           near(engine.interactions()[0].xyInputs[0].master, .5), "project loader restores the second input and its settings");
     engine.setInteractions({});

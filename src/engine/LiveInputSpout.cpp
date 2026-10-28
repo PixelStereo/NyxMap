@@ -1,5 +1,5 @@
 // Spout inputs (Windows): the senders other applications share, copied on the GPU (GL/DX interop) into the layer's
-// texture. Compiled only on Windows (PINOL_HAS_SPOUT), with the Spout2 SDK (BSD license).
+// texture. Compiled only on Windows (NYXMAP_HAS_SPOUT), with the Spout2 SDK (BSD license).
 // This file deliberately includes no Qt OpenGL header (Spout provides its own).
 
 #include "SpoutInput.h"

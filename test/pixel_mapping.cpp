@@ -300,13 +300,13 @@ static void packetTests()
     check(dmx::artDmxPacket(1, 1, QByteArray(3, '\1')).size() == 18 + 4, "ArtDmx: an odd length made even");
 
     const QUuid cid = QUuid::createUuid();
-    const QByteArray s = dmx::sacnPacket(cid, "Pinol test", 120, 9, 300, data);
+    const QByteArray s = dmx::sacnPacket(cid, "NyxMap test", 120, 9, 300, data);
     auto u16 = [&](int i) { return quint8(s[i]) << 8 | quint8(s[i + 1]); };
     check(s.size() == 638, "E1.31: 638 bytes for 512 slots");
     check(u16(0) == 0x10 && s.mid(4, 12) == QByteArray("ASC-E1.17\0\0\0", 12), "E1.31: preamble and identifier");
     check(u16(16) == (0x7000 | 622) && u16(38) == (0x7000 | 600) && u16(115) == (0x7000 | 523), "E1.31: PDU lengths");
     check(quint8(s[21]) == 4 && quint8(s[43]) == 2 && quint8(s[117]) == 2 && quint8(s[118]) == 0xa1, "E1.31: vectors");
-    check(s.mid(22, 16) == cid.toRfc4122() && s.mid(44, 10) == "Pinol test", "E1.31: CID and source name");
+    check(s.mid(22, 16) == cid.toRfc4122() && s.mid(44, 11) == "NyxMap test", "E1.31: CID and source name");
     check(quint8(s[108]) == 120 && quint8(s[111]) == 9 && s[112] == 0 && u16(113) == 300, "E1.31: priority, sequence, universe");
     check(u16(123) == 513 && s[125] == 0 && s[126] == 11 && s[637] == 22, "E1.31: start code and slots");
     check(quint8(dmx::sacnPacket(cid, "x", 100, 0, 1, data, true)[112]) == 0x40, "E1.31: stream terminated");
@@ -357,7 +357,7 @@ static QByteArray makeZip(const std::vector<std::pair<QString, QByteArray>> &fil
 
 static const char *kDescription = R"(<?xml version="1.0" encoding="UTF-8"?>
 <GDTF DataVersion="1.2">
-  <FixtureType Name="Bar4" LongName="Test Bar 4" Manufacturer="Pinol" FixtureTypeID="0000-TEST">
+  <FixtureType Name="Bar4" LongName="Test Bar 4" Manufacturer="NyxMap" FixtureTypeID="0000-TEST">
     <Geometries>
       <Geometry Name="Base" Position="{1,0,0,0}{0,1,0,0}{0,0,1,0}{0,0,0,1}">
         <Axis Name="Head"><Beam Name="Beam"/></Axis>
@@ -439,7 +439,7 @@ static void gdtfTests()
     check(im.error.isEmpty() && im.types.size() == 3, "GDTF: three modes, three types");
     if (im.types.size() != 3) return;
     const FixtureType &px = im.types[0], &basic = im.types[1], &matrix = im.types[2];
-    check(px.id == "gdtf:0000-TEST:Pixel" && px.name == "Test Bar 4 (Pixel)" && px.manufacturer == "Pinol" &&
+    check(px.id == "gdtf:0000-TEST:Pixel" && px.name == "Test Bar 4 (Pixel)" && px.manufacturer == "NyxMap" &&
               px.origin.value("mode").toString() == "Pixel",
           "GDTF: ids and names from the file and the mode");
     check(px.pixelCount() == 4 && px.cols == 4 && px.rows == 1 && px.channelCount() == 16,
@@ -560,7 +560,7 @@ static void gpuTests(Engine &e, const QString &tmp)
     e.fadeCompositionOpacity(1.0, 0.0);
 
     // Saved with the project, and back
-    const QString file = tmp + "/mapping.pinol";
+    const QString file = tmp + "/mapping.nyxmap";
     check(e.saveProject(file, {}, &err), "save the project");
     const QJsonObject before = e.fixturePatch().toJson();
     e.newProject();
@@ -637,7 +637,7 @@ static void snapshotTests(Engine &e, const QString &tmp)
 
     // With the project
     QString err;
-    const QString file = tmp + "/snapshots.pinol";
+    const QString file = tmp + "/snapshots.nyxmap";
     check(e.saveProject(file, {}, &err), "save the project with its snapshot");
     e.newProject();
     check(e.loadProject(file, nullptr, &err), "load it");

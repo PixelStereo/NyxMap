@@ -1,6 +1,6 @@
 #pragma once
-// The memory the process really holds (resident set), whatever allocated it: Pinol, Qt, FFmpeg, the drivers. The
-// internal budgets (decoded frames, upload buffers) count only Pinol's own; a leak shows here first.
+// The memory the process really holds (resident set), whatever allocated it: NyxMap, Qt, FFmpeg, the drivers. The
+// internal budgets (decoded frames, upload buffers) count only NyxMap's own; a leak shows here first.
 #include <cstdint>
 
 namespace processMemory {

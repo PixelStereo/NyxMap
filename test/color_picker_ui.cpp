@@ -17,7 +17,7 @@ int main(int argc, char **argv)
     QTemporaryDir directory;
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, directory.path());
-    app.setOrganizationName("PinolTests");
+    app.setOrganizationName("NyxMapTests");
     app.setApplicationName("ColorPicker");
     theme::applyToApplication(app);
     int failures = 0;

@@ -16,26 +16,26 @@ if (process.argv[2] === '--isolated') {
     const sandbox = {nativeRequire, module: {exports: {}}, process, console,
         setTimeout, clearTimeout, setInterval, clearInterval};
     sandbox.require = file => {
-        assert(['./pinol-dependencies.cjs', './pinol-layers.cjs'].includes(file));
+        assert(['./nyxmap-dependencies.cjs', './nyxmap-layers.cjs'].includes(file));
         const child = {...sandbox, module: {exports: {}}};
         vm.runInNewContext(fs.readFileSync(path.join(root, file), 'utf8'), child, {filename: file});
         return child.module.exports;
     };
-    const {WebSocket, osc} = sandbox.require('./pinol-dependencies.cjs');
+    const {WebSocket, osc} = sandbox.require('./nyxmap-dependencies.cjs');
     assert.equal(typeof WebSocket, 'function');
     assert.equal(typeof WebSocket.Server, 'function');
     const packet = osc.readPacket(osc.writePacket({address: '/roundtrip', args: [{type: 's', value: 'Ready'}, {type: 'f', value: .5}]}, {metadata: true}), {metadata: true});
     assert.equal(packet.address, '/roundtrip');
     assert.equal(packet.args[1].value, .5);
-    vm.runInNewContext(fs.readFileSync(path.join(root, 'pinol.js'), 'utf8'), {...sandbox, receive: () => {}}, {filename: 'pinol.js'});
+    vm.runInNewContext(fs.readFileSync(path.join(root, 'nyxmap.js'), 'utf8'), {...sandbox, receive: () => {}}, {filename: 'nyxmap.js'});
     assert.equal(typeof sandbox.module.exports.oscOutFilter, 'function');
     sandbox.module.exports.unload();
 } else {
     test('a fresh checkout loads without npm or machine-specific paths', () => {
         const root = path.resolve(__dirname, '../integrations/open-stage-control');
-        const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'pinol-remote-'));
+        const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'nyxmap-remote-'));
         try {
-            for (const name of ['pinol.json', 'pinol.js', 'pinol-layers.cjs', 'pinol-dependencies.cjs', 'pinol-dependencies.LICENSE.txt'])
+            for (const name of ['nyxmap.json', 'nyxmap.js', 'nyxmap-layers.cjs', 'nyxmap-dependencies.cjs', 'nyxmap-dependencies.LICENSE.txt'])
                 fs.copyFileSync(path.join(root, name), path.join(temporary, name));
             execFileSync(process.execPath, [__filename, '--isolated', temporary], {
                 cwd: temporary, env: {...process.env, NODE_PATH: ''}, stdio: 'pipe', timeout: 10000

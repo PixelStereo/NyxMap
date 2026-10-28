@@ -3,5 +3,5 @@
 *.sh text eol=lf
 # Preserve the checked dependency bundle and upstream license bytes exactly.
 # CI rebuilds and compares these files; upstream whitespace is intentional.
-integrations/open-stage-control/pinol-dependencies.cjs -text -whitespace linguist-generated=true
-integrations/open-stage-control/pinol-dependencies.LICENSE.txt -text -whitespace linguist-generated=true
+integrations/open-stage-control/nyxmap-dependencies.cjs -text -whitespace linguist-generated=true
+integrations/open-stage-control/nyxmap-dependencies.LICENSE.txt -text -whitespace linguist-generated=true

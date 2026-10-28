@@ -1,4 +1,4 @@
-Bundled runtime dependencies for the Pinol Open Stage Control remote.
+Bundled runtime dependencies for the NyxMap Open Stage Control remote.
 The original licenses below apply to their respective components.
 
 long@4.0.0

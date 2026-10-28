@@ -39,16 +39,16 @@ enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web,
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
-inline const QString kTextGeneratorPath = QStringLiteral("/Pinol/Generators/Text");
+inline const QString kTextGeneratorPath = QStringLiteral("/NyxMap/Generators/Text");
 inline bool isTextGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTextGeneratorPath); }
 // The Timecode generator: a text layer that shows a timecode (TimecodeClock.h), from the Media Bin like a file
-inline const QString kTimecodeGeneratorPath = QStringLiteral("/Pinol/Generators/Timecode");
+inline const QString kTimecodeGeneratorPath = QStringLiteral("/NyxMap/Generators/Timecode");
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
 // The Countdown, Stopwatch and Clock generators: text layers that show a time (ClockGenerator.h), from the Media Bin too
-inline const QString kCountdownGeneratorPath = QStringLiteral("/Pinol/Generators/Countdown");
-inline const QString kChronometerGeneratorPath = QStringLiteral("/Pinol/Generators/Chronometer");
-inline const QString kStopwatchGeneratorPath = QStringLiteral("/Pinol/Generators/Stopwatch"); // legacy drag paths
-inline const QString kClockGeneratorPath = QStringLiteral("/Pinol/Generators/Clock");
+inline const QString kCountdownGeneratorPath = QStringLiteral("/NyxMap/Generators/Countdown");
+inline const QString kChronometerGeneratorPath = QStringLiteral("/NyxMap/Generators/Chronometer");
+inline const QString kStopwatchGeneratorPath = QStringLiteral("/NyxMap/Generators/Stopwatch"); // legacy drag paths
+inline const QString kClockGeneratorPath = QStringLiteral("/NyxMap/Generators/Clock");
 inline std::optional<ClockKind> clockGeneratorOfPath(const QString &p)
 {
     const QString q = QString(p).replace('\\', '/');
@@ -62,7 +62,7 @@ inline QString clockGeneratorPath(ClockKind k)
     return k == ClockKind::Countdown ? kCountdownGeneratorPath : k == ClockKind::Stopwatch ? kChronometerGeneratorPath : kClockGeneratorPath;
 }
 // The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
-inline const QString kWebGeneratorPath = QStringLiteral("/Pinol/Generators/Web Page");
+inline const QString kWebGeneratorPath = QStringLiteral("/NyxMap/Generators/Web Page");
 inline bool isWebGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kWebGeneratorPath); }
 // The Line generator (LineGenerator.h): an ISF generator of the application, kLineGeneratorPath its virtual path
 // Where the picture of a layer used as a source is taken

@@ -25,7 +25,7 @@
 #include <functional>
 #include <thread>
 
-#ifdef PINOL_HAS_CAMERA
+#ifdef NYXMAP_HAS_CAMERA
 #include <QCamera>
 #include <QCameraDevice>
 #include <QCameraFormat>
@@ -37,20 +37,20 @@
 #include <QPermissions>
 #include <QScreen>
 #include <QScreenCapture>
-#define PINOL_HAS_SCREEN_CAPTURE // Qt 6.5: the screens
+#define NYXMAP_HAS_SCREEN_CAPTURE // Qt 6.5: the screens
 #endif
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QCapturableWindow>
 #include <QWindowCapture>
-#define PINOL_HAS_WINDOW_CAPTURE // Qt 6.6: the other applications' windows
+#define NYXMAP_HAS_WINDOW_CAPTURE // Qt 6.6: the other applications' windows
 #endif
 #endif
 
-#ifdef PINOL_HAS_SPOUT
+#ifdef NYXMAP_HAS_SPOUT
 #include "SpoutInput.h"
 #endif
 
-#ifdef PINOL_HAS_SYPHON
+#ifdef NYXMAP_HAS_SYPHON
 std::vector<LiveInputInfo> listSyphonInputs();
 std::unique_ptr<LiveInput> createSyphonInput(const QString &name, QString *err);
 #endif
@@ -146,7 +146,7 @@ private:
         c.color_format = ndi::kRecvRGBX_RGBA;
         c.bandwidth = ndi::kRecvBandwidthHighest;
         c.allow_video_fields = false;
-        c.p_ndi_recv_name = "Pinol";
+        c.p_ndi_recv_name = "NyxMap";
         void *recv = m_lib->recv_create_v3(&c);
         if (!recv) return;
         while (!m_quit) {
@@ -245,7 +245,7 @@ std::vector<LiveInputInfo> omtSources(const QString &folder)
     return out;
 }
 
-#ifdef PINOL_HAS_CAMERA
+#ifdef NYXMAP_HAS_CAMERA
 // The format a camera is opened in. Left to itself, the system may pick a square one (the cameras with Center
 // Stage, the iPhone's Continuity Camera offer them): the whole picture is wanted, so a wide format (not square),
 // at least 24 fps, as large as possible up to 4K, then the highest rate up to 60.
@@ -383,7 +383,7 @@ private:
     decklink::VideoInput m_in;   // last: it goes first, and no frame comes after
 };
 
-#ifdef PINOL_HAS_SPOUT
+#ifdef NYXMAP_HAS_SPOUT
 // --- Spout: the sender's texture copied on the GPU into the layer's, in the render thread
 class SpoutInput : public LiveInput
 {
@@ -413,7 +413,7 @@ private:
 };
 #endif
 
-#ifdef PINOL_HAS_SCREEN_CAPTURE
+#ifdef NYXMAP_HAS_SCREEN_CAPTURE
 const QString kScreenPermission = QStringLiteral("Screen Recording permission needed: System Settings › Privacy & Security");
 
 // The screens, by name (else by place, from 1)
@@ -428,12 +428,12 @@ std::vector<std::pair<QString, QScreen *>> screensById()
 }
 #endif
 
-#ifdef PINOL_HAS_WINDOW_CAPTURE
-// Pinol's own windows are not offered (a layer showing its own output window: a picture fed back into itself).
-// Qt does not say whose a window is: by its title, Pinol's (in the application's thread, its windows' titles too)
+#ifdef NYXMAP_HAS_WINDOW_CAPTURE
+// NyxMap's own windows are not offered (a layer showing its own output window: a picture fed back into itself).
+// Qt does not say whose a window is: by its title, NyxMap's (in the application's thread, its windows' titles too)
 bool isOwnWindow(const QString &title)
 {
-    if (title.contains(QLatin1String("Pinol"), Qt::CaseInsensitive)) return true;
+    if (title.contains(QLatin1String("NyxMap"), Qt::CaseInsensitive)) return true;
     QCoreApplication *app = QCoreApplication::instance();
     if (qobject_cast<QGuiApplication *>(app) && QThread::currentThread() == app->thread())
         for (const QWindow *w : QGuiApplication::topLevelWindows())
@@ -457,7 +457,7 @@ std::vector<std::pair<QString, QCapturableWindow>> windowsById()
 }
 #endif
 
-#ifdef PINOL_HAS_SCREEN_CAPTURE
+#ifdef NYXMAP_HAS_SCREEN_CAPTURE
 // --- A screen or a window: Qt Multimedia, in the application's thread, as a camera. Looked for again every few
 // seconds while it is not there (a window closed, a screen unplugged), the last picture kept meanwhile
 class ScreenInput : public LiveInput
@@ -503,7 +503,7 @@ public:
                     return false;
                 };
             } else {
-#ifdef PINOL_HAS_WINDOW_CAPTURE
+#ifdef NYXMAP_HAS_WINDOW_CAPTURE
                 auto *capture = new QWindowCapture(holder);
                 session->setWindowCapture(capture);
                 QObject::connect(capture, &QWindowCapture::errorOccurred, holder,
@@ -532,7 +532,7 @@ public:
         if (!app) return;
         holder->moveToThread(app->thread());
         QMetaObject::invokeMethod(app, [start, setStatus] {
-            // macOS: asked once (the system's prompt); granted, it applies when Pinol is opened again
+            // macOS: asked once (the system's prompt); granted, it applies when NyxMap is opened again
             if (!screenCaptureAllowed(true)) setStatus(kScreenPermission);
             else start();
         });
@@ -558,7 +558,7 @@ private:
 
 } // namespace
 
-static const QString kInputsFolder = QStringLiteral("/Pinol/Inputs/");
+static const QString kInputsFolder = QStringLiteral("/NyxMap/Inputs/");
 
 QString liveInputPath(const QString &uri) { return kInputsFolder + QString::fromLatin1(QUrl::toPercentEncoding(uri)); }
 
@@ -588,7 +588,7 @@ QString liveInputKind(const QString &uri)
 
 QString liveInputName(const QString &uri)
 {
-#ifdef PINOL_HAS_CAMERA
+#ifdef NYXMAP_HAS_CAMERA
     if (part(uri, 1) == QLatin1String("camera"))
         for (const QCameraDevice &d : QMediaDevices::videoInputs())
             if (QString::fromUtf8(d.id()) == rest(uri)) return d.description();
@@ -602,29 +602,29 @@ QString liveInputName(const QString &uri)
 std::vector<LiveInputInfo> listLiveInputs(const QString &folder)
 {
     std::vector<LiveInputInfo> out;
-#ifdef PINOL_HAS_CAMERA
+#ifdef NYXMAP_HAS_CAMERA
     for (const QCameraDevice &d : QMediaDevices::videoInputs())
         out.push_back({QStringLiteral("input:camera:") + QString::fromUtf8(d.id()), d.description(), QStringLiteral("Camera")});
 #endif
     for (const LiveInputInfo &i : ndiSources(folder)) out.push_back(i);
     for (const LiveInputInfo &i : omtSources(folder)) out.push_back(i);
-#ifdef PINOL_HAS_SYPHON
+#ifdef NYXMAP_HAS_SYPHON
     for (const LiveInputInfo &i : listSyphonInputs()) out.push_back(i);
 #endif
-#ifdef PINOL_HAS_SPOUT
+#ifdef NYXMAP_HAS_SPOUT
     for (const QString &name : spoutSenders()) out.push_back({QStringLiteral("input:spout:") + name, name, QStringLiteral("Spout")});
 #endif
     // The ports that take a signal in (looked up once: decklink::rescan looks again); none without the driver
     for (const decklink::Port &p : decklink::inputPorts())
         out.push_back({QStringLiteral("input:decklink:") + p.id, p.name, QStringLiteral("DeckLink")});
-#ifdef PINOL_HAS_SCREEN_CAPTURE
+#ifdef NYXMAP_HAS_SCREEN_CAPTURE
     for (const auto &s : screensById()) {
         const QSize size = s.second->size() * s.second->devicePixelRatio();
         out.push_back({QStringLiteral("input:screen:") + s.first, QStringLiteral("%1 (%2 × %3)").arg(s.first).arg(size.width()).arg(size.height()),
                        QStringLiteral("Screen")});
     }
 #endif
-#ifdef PINOL_HAS_WINDOW_CAPTURE
+#ifdef NYXMAP_HAS_WINDOW_CAPTURE
     for (const auto &w : windowsById()) out.push_back({QStringLiteral("input:window:") + w.first, w.first, QStringLiteral("Window")});
 #endif
     return out;
@@ -655,7 +655,7 @@ std::unique_ptr<LiveInput> createLiveInput(const QString &uri, const QString &fo
         return std::make_unique<OmtInput>(&lib, what);
     }
     if (kind == QLatin1String("camera")) {
-#ifdef PINOL_HAS_CAMERA
+#ifdef NYXMAP_HAS_CAMERA
         for (const QCameraDevice &d : QMediaDevices::videoInputs())
             if (QString::fromUtf8(d.id()) == what) return std::make_unique<CameraInput>(d);
         return fail(QStringLiteral("Camera not found: ") + what);
@@ -664,14 +664,14 @@ std::unique_ptr<LiveInput> createLiveInput(const QString &uri, const QString &fo
 #endif
     }
     if (kind == QLatin1String("syphon")) {
-#ifdef PINOL_HAS_SYPHON
+#ifdef NYXMAP_HAS_SYPHON
         return createSyphonInput(what, err);
 #else
         return fail(QStringLiteral("Syphon is only available on macOS"));
 #endif
     }
     if (kind == QLatin1String("spout")) {
-#ifdef PINOL_HAS_SPOUT
+#ifdef NYXMAP_HAS_SPOUT
         return std::make_unique<SpoutInput>(what);
 #else
         return fail(QStringLiteral("Spout is only available on Windows"));
@@ -685,9 +685,9 @@ std::unique_ptr<LiveInput> createLiveInput(const QString &uri, const QString &fo
         return input;
     }
     if (kind == QLatin1String("screen") || kind == QLatin1String("window")) {
-#ifdef PINOL_HAS_WINDOW_CAPTURE
+#ifdef NYXMAP_HAS_WINDOW_CAPTURE
         return std::make_unique<ScreenInput>(kind == QLatin1String("window"), what);
-#elif defined(PINOL_HAS_SCREEN_CAPTURE)
+#elif defined(NYXMAP_HAS_SCREEN_CAPTURE)
         if (kind == QLatin1String("screen")) return std::make_unique<ScreenInput>(false, what);
         return fail(QStringLiteral("Window capture needs Qt 6.6 or later"));
 #else

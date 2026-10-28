@@ -10,8 +10,8 @@ Usage:
                                        (BtbN's lgpl builds may use --enable-version3); prints the licence last
 
 Homebrew builds FFmpeg with --enable-gpl (libx264, libx265…): an application that ships it is a GPL work, which the
-NDI runtime and Pinol's own terms do not allow. This build has no --enable-gpl and no --enable-nonfree, so it is
-LGPL v2.1 or later. Pinol and Qt's FFmpeg plugin are built against Homebrew's FFmpeg of the same version, so its
+NDI runtime and NyxMap's own terms do not allow. This build has no --enable-gpl and no --enable-nonfree, so it is
+LGPL v2.1 or later. NyxMap and Qt's FFmpeg plugin are built against Homebrew's FFmpeg of the same version, so its
 libraries keep their names and interface; the tests run against Homebrew's, the package ships these.
 
 Needs Homebrew's ffmpeg and dav1d (AV1 decoding, BSD 2-clause), Xcode's compiler, curl.
@@ -142,7 +142,7 @@ def check(app: Path):
 
 
 def check_dlls(folder: Path):
-    """Windows: the FFmpeg DLLs next to Pinol.exe (avcodec-62.dll…), and no GPL-only postproc"""
+    """Windows: the FFmpeg DLLs next to NyxMap.exe (avcodec-62.dll…), and no GPL-only postproc"""
     files = sorted(p for p in folder.glob("*.dll") if re.match(r"^(av\w+|sw\w+|postproc)-\d+\.dll$", p.name, re.I))
     errors = [f"GPL-only library in the package: {p.name}" for p in files if p.name.lower().startswith("postproc")]
     errors += [f"{p.name}: {why}" for p in files if (why := licence_problem(p, allow_version3=True))]

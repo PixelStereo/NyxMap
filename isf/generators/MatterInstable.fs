@@ -1,6 +1,6 @@
 /*{
   "ISFVSN":"2", "DESCRIPTION":"Matières instables — particulate membranes, filaments and blue currents. Program audio drives energy, bass, brilliance and attack through Internal interactions.",
-  "CREDIT":"PINOL", "CATEGORIES":["Particles","Audio Reactive"],
+  "CREDIT":"NYXMAP", "CATEGORIES":["Particles","Audio Reactive"],
   "INPUTS":[
     {"NAME":"mode","TYPE":"long","DEFAULT":0,"VALUES":[0,1,2],"LABELS":["Particulate membrane","Filaments","Currents"]},
     {"NAME":"density","TYPE":"float","DEFAULT":0.55,"MIN":0,"MAX":1},

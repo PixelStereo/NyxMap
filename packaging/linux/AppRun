@@ -1,20 +1,20 @@
 #!/bin/sh
 set -eu
 APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-# The variables set below are for Pinol's own libraries only. Their values at launch are kept as PINOL_ORIG_<name>
-# (PINOL_ORIG_SET_<name>=1 when the variable was set), so that programs Pinol starts (xdg-open: the browser, the
-# file manager) get them back: usr/libexec/pinol-path/xdg-open restores them.
-PINOL_ENV_VARS="PATH LD_LIBRARY_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML2_IMPORT_PATH \
+# The variables set below are for NyxMap's own libraries only. Their values at launch are kept as NYXMAP_ORIG_<name>
+# (NYXMAP_ORIG_SET_<name>=1 when the variable was set), so that programs NyxMap starts (xdg-open: the browser, the
+# file manager) get them back: usr/libexec/nyxmap-path/xdg-open restores them.
+NYXMAP_ENV_VARS="PATH LD_LIBRARY_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML2_IMPORT_PATH \
 GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_PATH_1_0 GST_PLUGIN_SCANNER GST_REGISTRY_1_0 \
 ALSA_CONFIG_DIR ALSA_CONFIG_PATH ALSA_PLUGIN_DIR QT_QPA_FONTDIR FONTCONFIG_FILE QT_MEDIA_BACKEND \
 QTWEBENGINEPROCESS_PATH QTWEBENGINE_RESOURCES_PATH QTWEBENGINE_LOCALES_PATH"
-export PINOL_ENV_VARS
-for name in $PINOL_ENV_VARS; do
+export NYXMAP_ENV_VARS
+for name in $NYXMAP_ENV_VARS; do
   if eval "[ -n \"\${$name+set}\" ]"; then
-    eval "export PINOL_ORIG_SET_$name=1 PINOL_ORIG_$name=\"\$$name\""
+    eval "export NYXMAP_ORIG_SET_$name=1 NYXMAP_ORIG_$name=\"\$$name\""
   fi
 done
-export PATH="$APPDIR/usr/libexec/pinol-path${PATH:+:$PATH}"
+export PATH="$APPDIR/usr/libexec/nyxmap-path${PATH:+:$PATH}"
 export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
 export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
@@ -23,7 +23,7 @@ export GST_PLUGIN_SYSTEM_PATH_1_0="$APPDIR/usr/lib/gstreamer-1.0"
 export GST_PLUGIN_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
 export GST_PLUGIN_SCANNER="$APPDIR/usr/libexec/gst-plugin-scanner"
 # A registry of its own: the bundled plugins neither replace nor are mixed with the host's in its registry
-GST_CACHE="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/pinol"
+GST_CACHE="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/nyxmap"
 mkdir -p "$GST_CACHE" 2>/dev/null || true
 export GST_REGISTRY_1_0="$GST_CACHE/gstreamer-1.0-registry.bin"
 export ALSA_CONFIG_DIR="$APPDIR/usr/share/alsa"
@@ -39,4 +39,4 @@ if [ -x "$APPDIR/usr/libexec/QtWebEngineProcess" ]; then
   export QTWEBENGINE_RESOURCES_PATH="$APPDIR/usr/resources"
   export QTWEBENGINE_LOCALES_PATH="$APPDIR/usr/translations/qtwebengine_locales"
 fi
-exec "$APPDIR/usr/bin/Pinol" "$@"
+exec "$APPDIR/usr/bin/NyxMap" "$@"

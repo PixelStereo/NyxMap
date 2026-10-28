@@ -1,5 +1,5 @@
 // Golden-render tests compare finished viewport pixels with independently
-// specified expected colors. They must never learn a new reference from PINOL.
+// specified expected colors. They must never learn a new reference from NYXMAP.
 #include "Engine.h"
 #include "Isf.h"
 #include <QDir>

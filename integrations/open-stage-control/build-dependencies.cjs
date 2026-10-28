@@ -5,8 +5,8 @@ const {isBuiltin} = require('node:module');
 const webpack = require('webpack');
 const root = __dirname;
 const output = path.join(root, '.dependency-build');
-const filename = 'pinol-dependencies.cjs';
-const licenses = 'pinol-dependencies.LICENSE.txt';
+const filename = 'nyxmap-dependencies.cjs';
+const licenses = 'nyxmap-dependencies.LICENSE.txt';
 const check = process.argv.includes('--check');
 const compiler = webpack({
     mode: 'production', target: 'node18', context: root, devtool: false,
@@ -48,7 +48,7 @@ compiler.run((error, stats) => {
                     files.map(name => fs.readFileSync(path.join(directory, name), 'utf8').trim()).join('\n\n'));
             }
             if (!packages.size) throw Error('No bundled dependencies found');
-            const notice = 'Bundled runtime dependencies for the Pinol Open Stage Control remote.\n' +
+            const notice = 'Bundled runtime dependencies for the NyxMap Open Stage Control remote.\n' +
                 'The original licenses below apply to their respective components.\n\n' +
                 [...packages].sort(([a], [b]) => a.localeCompare(b, 'en')).map(([, text]) => text).join('\n\n' + '='.repeat(72) + '\n\n') + '\n';
             fs.writeFileSync(path.join(output, licenses), notice);

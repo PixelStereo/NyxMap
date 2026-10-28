@@ -64,21 +64,21 @@ jobs:
         run: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
       - name: The program, NDI and OMT are there
         run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then dir=build/Pinol.app/Contents/Frameworks; test -x build/Pinol.app/Contents/MacOS/Pinol
-          else dir=build; test -x build/Pinol; fi
+          if [[ "$RUNNER_OS" == macOS ]]; then dir=build/NyxMap.app/Contents/Frameworks; test -x build/NyxMap.app/Contents/MacOS/NyxMap
+          else dir=build; test -x build/NyxMap; fi
           ls "$dir" | grep -E '^lib(ndi|omt|vmx)'
           for lib in ndi omt vmx; do ls "$dir" | grep -q "^lib$lib" || { echo "lib$lib missing"; exit 1; }; done
       - name: macOS source build starts before packaging
         if: runner.os == 'macOS'
         run: |
-          for framework in build/runtimes/touchengine/TouchEngine.framework build/Pinol.app/Contents/Frameworks/TouchEngine.framework; do
+          for framework in build/runtimes/touchengine/TouchEngine.framework build/NyxMap.app/Contents/Frameworks/TouchEngine.framework; do
             codesign --verify --deep --strict --verbose=2 "$framework"
           done
-          ./build/Pinol.app/Contents/MacOS/Pinol --help
+          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
           # Reuse the build directory as build.sh does on subsequent invocations.
           ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
-          codesign --verify --deep --strict build/Pinol.app/Contents/Frameworks/TouchEngine.framework
-          ./build/Pinol.app/Contents/MacOS/Pinol --help
+          codesign --verify --deep --strict build/NyxMap.app/Contents/Frameworks/TouchEngine.framework
+          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
 
   windows:
     name: build.sh (windows-2022, Git Bash)
@@ -92,7 +92,7 @@ jobs:
       - name: The program, Qt, FFmpeg, NDI and OMT are there
         shell: pwsh
         run: |
-          foreach ($f in "Pinol.exe", "TouchEngine.dll", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
+          foreach ($f in "NyxMap.exe", "TouchEngine.dll", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
             if (-not (Test-Path "build\$f")) { throw "build\$f missing" }
           }
           if (-not (Get-ChildItem build\avcodec-*.dll)) { throw "FFmpeg DLLs missing" }

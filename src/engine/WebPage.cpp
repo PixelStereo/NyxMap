@@ -74,6 +74,6 @@ std::unique_ptr<WebPage> createWebPage(const WebSource &s, QString *err)
         f = factory();
     }
     std::unique_ptr<WebPage> page = f ? f(s) : nullptr;
-    if (!page && err) *err = QStringLiteral("Web pages are not available in this build of Pinol (built without Qt WebEngine)");
+    if (!page && err) *err = QStringLiteral("Web pages are not available in this build of NyxMap (built without Qt WebEngine)");
     return page;
 }

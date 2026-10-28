@@ -1,16 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {once} = require('node:events');
-const {PinolClient} = require('../integrations/companion/src/client');
+const {NyxMapClient} = require('../integrations/companion/src/client');
 const {presetDefinitions, variableValues, progressImage, COLORS} = require('../integrations/companion/src/definitions');
 const fixture = require('./open_stage_control_fixture.cjs');
 const until = async condition => {
     const end = Date.now() + 6000;
-    while (!condition()) { if (Date.now() > end) assert.fail('Timed out waiting for Pinol'); await new Promise(r => setTimeout(r, 10)); }
+    while (!condition()) { if (Date.now() > end) assert.fail('Timed out waiting for NyxMap'); await new Promise(r => setTimeout(r, 10)); }
 };
 test('Companion transport uses OSCQuery feedback and never queues offline presses', async t => {
     const peer = fixture(); await once(peer.server, 'listening');
-    const client = new PinolClient(); t.after(async () => { client.stop(); await peer.close(); });
+    const client = new NyxMapClient(); t.after(async () => { client.stop(); await peer.close(); });
     client.connect('127.0.0.1', peer.server.address().port);
     await until(() => client.online);
     assert.equal(client.state.values['/sequence/name'], 'Evening show');
@@ -32,13 +32,13 @@ test('Companion transport uses OSCQuery feedback and never queues offline presse
 });
 test('Stream Deck presets display native timing and bounded phase progress without release triggers', async t => {
     const peer = fixture(); await once(peer.server, 'listening'); t.after(() => peer.close());
-    const presets = presetDefinitions('Pinol', peer.catalog, 8);
+    const presets = presetDefinitions('NyxMap', peer.catalog, 8);
     assert.equal(presets.go.steps[0].down[0].actionId, 'sequence_go');
     assert.equal(presets.stop_all.steps[0].down.length, 0);
     assert.equal(presets.stop_all.steps[0][2000].options.runWhileHeld, true);
     for (const p of Object.values(presets)) assert.deepEqual(p.steps[0].up, []);
     assert(Object.keys(presets).filter(key => key.startsWith('snapshots_')).length < 30, 'project gallery is bounded');
-    assert.match(presets.remaining.style.text, /\$\(Pinol:current_remaining_text\)/);
+    assert.match(presets.remaining.style.text, /\$\(NyxMap:current_remaining_text\)/);
     const values = variableValues(peer.state, peer.catalog, true, 'Connected');
     assert.equal(values.current_elapsed_text, '0:04.2');
     assert.equal(values.current_remaining_text, '0:07.8');

@@ -132,7 +132,7 @@ const decklink::Mode *decklink::bestMode(const std::vector<Mode> &modes, QSize s
     return modes.empty() ? nullptr : &modes.front();
 }
 
-#ifndef PINOL_HAS_DECKLINK
+#ifndef NYXMAP_HAS_DECKLINK
 
 bool decklink::compiledIn() { return false; }
 QString decklink::driverVersion() { return {}; }
@@ -1061,4 +1061,4 @@ bool decklink::TimecodeInput::open(const QString &port, Callback cb, QString *er
 
 QString decklink::TimecodeInput::status() const { return d->capture ? d->capture->status() : QString(); }
 
-#endif // PINOL_HAS_DECKLINK
+#endif // NYXMAP_HAS_DECKLINK

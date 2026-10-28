@@ -1,12 +1,12 @@
 const {InstanceBase, InstanceStatus, runEntrypoint} = require('@companion-module/base');
-const {PinolClient} = require('./client');
+const {NyxMapClient} = require('./client');
 const {variableDefinitions, variableValues, actionDefinitions, feedbackDefinitions, presetDefinitions} = require('./definitions');
 const emptyCatalog = () => ({version: 1, sequences: [], snapshots: [], presets: [], timelines: []});
 
-class PinolInstance extends InstanceBase {
+class NyxMapInstance extends InstanceBase {
     async init(config) {
         this.catalog = emptyCatalog(); this.lastValues = {}; this.statusText = 'Disconnected';
-        this.client = new PinolClient();
+        this.client = new NyxMapClient();
         this.client.on('catalog', catalog => { this.catalog = catalog; this.defineControls(); this.publish(); });
         this.client.on('state', () => {
             if (!this.publishTimer) this.publishTimer = setTimeout(() => { this.publishTimer = null; this.publish(); }, 100);
@@ -20,11 +20,11 @@ class PinolInstance extends InstanceBase {
     }
     getConfigFields() {
         return [
-            {type: 'textinput', id: 'host', label: 'Pinol host / IP', width: 8, default: '127.0.0.1'},
+            {type: 'textinput', id: 'host', label: 'NyxMap host / IP', width: 8, default: '127.0.0.1'},
             {type: 'number', id: 'port', label: 'OSCQuery TCP port', width: 4, min: 1, max: 65535, default: 5678},
             {type: 'number', id: 'preset_limit', label: 'Project buttons in the preset gallery (0 disables)', width: 12, min: 0, max: 512, default: 96},
             {type: 'static-text', id: 'help', label: 'Connection', width: 12,
-                value: 'Enable OSC / OSCQuery in Pinol Settings. This module uses TCP 5678 for commands and live feedback; no UDP target or Open Stage Control is required.'}
+                value: 'Enable OSC / OSCQuery in NyxMap Settings. This module uses TCP 5678 for commands and live feedback; no UDP target or Open Stage Control is required.'}
         ];
     }
     async configUpdated(config) {
@@ -71,4 +71,4 @@ class PinolInstance extends InstanceBase {
         this.client?.stop(); this.client?.removeAllListeners();
     }
 }
-runEntrypoint(PinolInstance, []);
+runEntrypoint(NyxMapInstance, []);

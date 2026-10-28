@@ -255,7 +255,7 @@ int main(int argc, char **argv)
     QTemporaryDir settings;
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
-    app.setOrganizationName("PinolTests"); app.setApplicationName("Workspace");
+    app.setOrganizationName("NyxMapTests"); app.setApplicationName("Workspace");
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
@@ -623,7 +623,7 @@ int main(int argc, char **argv)
         engine.addViewport("Front", QSize(640, 360));
         for (const char *name : {"Under", "Over"}) engine.setLayerIsf(engine.addLayer(name), solid, &error);
         QTemporaryDir dir;
-        const QString project = dir.path() + "/reopen.pinol";
+        const QString project = dir.path() + "/reopen.nyxmap";
         check(engine.saveProject(project, {}, &error), "save project to reopen");
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();

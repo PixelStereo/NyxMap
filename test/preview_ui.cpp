@@ -17,7 +17,7 @@ int main(int argc, char **argv)
     QSurfaceFormat::setDefaultFormat(format);
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication app(argc, argv);
-    app.setApplicationName("PinolPreviewTest");
+    app.setApplicationName("NyxMapPreviewTest");
     Engine engine;
     QString error;
     if (!engine.initialize(&error)) { std::fprintf(stderr, "%s\n", qPrintable(error)); return 1; }

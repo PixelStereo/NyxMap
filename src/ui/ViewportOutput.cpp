@@ -303,7 +303,7 @@ ViewportOutputPanel::ViewportOutputPanel(Engine *engine, quint64 viewport, QUndo
     pv->addWidget(m_libInfo);
     if (decklink::compiledIn()) { // the ports are looked up once (DeckLink.h): a card plugged in since, found here
         auto *rescan = new QPushButton(QStringLiteral("Look for DeckLink Devices Again"));
-        rescan->setToolTip(QStringLiteral("A DeckLink card or UltraStudio connected since Pinol started"));
+        rescan->setToolTip(QStringLiteral("A DeckLink card or UltraStudio connected since NyxMap started"));
         pv->addWidget(rescan, 0, Qt::AlignLeft);
         connect(rescan, &QPushButton::clicked, this, [this] {
             decklink::rescan();
@@ -404,7 +404,7 @@ void ViewportOutputPanel::applyPublish()
         if (!m_pubEnabled[k]) continue;
         s.targets[k].enabled = m_pubEnabled[k]->isChecked();
         const QString n = m_pubName[k]->text().trimmed();
-        s.targets[k].name = n.isEmpty() ? QStringLiteral("Pinol") : n;
+        s.targets[k].name = n.isEmpty() ? QStringLiteral("NyxMap") : n;
     }
     s.omtQuality = m_omtQuality->currentData().toInt();
     s.libraryFolder = m_libFolder->text().trimmed();

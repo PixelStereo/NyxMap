@@ -793,9 +793,9 @@ void MainWindow::setBlackout(bool on)
 void MainWindow::buildMenus()
 {
     QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
-    auto *about = help->addAction(QStringLiteral("About PINOL"), this, [this] {
+    auto *about = help->addAction(QStringLiteral("About NYXMAP"), this, [this] {
         QMessageBox box(this);
-        box.setWindowTitle(QStringLiteral("About PINOL"));
+        box.setWindowTitle(QStringLiteral("About NYXMAP"));
         // The licence files travel with the program: Contents/Resources on macOS, next to it elsewhere
 #ifdef Q_OS_MACOS
         const QString docs = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../Resources"));
@@ -810,7 +810,7 @@ void MainWindow::buildMenus()
         };
         box.setTextFormat(Qt::RichText);
         box.setTextInteractionFlags(Qt::TextBrowserInteraction);
-        box.setText(QStringLiteral("<h2>PINOL</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
+        box.setText(QStringLiteral("<h2>NYXMAP</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
                                    "<p>© 2025-2026 PIXEL STEREO. Released under the %2.</p>"
                                    "<p>Built with Qt and FFmpeg (GNU LGPL) and other open source components: see the %3.</p>"
                                    "<p>TouchEngine and TouchDesigner are products of Derivative Inc. "
@@ -820,7 +820,7 @@ void MainWindow::buildMenus()
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
                         .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("MIT License")),
                              link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
-        box.setIconPixmap(QPixmap(QStringLiteral(":/branding/pinol.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        box.setIconPixmap(QPixmap(QStringLiteral(":/branding/nyxmap.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();
     });
     about->setMenuRole(QAction::AboutRole);
@@ -879,7 +879,7 @@ void MainWindow::buildMenus()
         refreshAll();
     });
     edit->addSeparator();
-    // On macOS, Qt moves it to the application menu (Pinol ▸ Settings…, ⌘,)
+    // On macOS, Qt moves it to the application menu (NyxMap ▸ Settings…, ⌘,)
     QAction *prefs = edit->addAction(QStringLiteral("Preferences…"), QKeySequence::Preferences, this,
                                      [this] { m_tabs->setCurrentWidget(m_tabs->widget(3)); }); // the Settings tab
     prefs->setMenuRole(QAction::PreferencesRole);
@@ -1059,7 +1059,7 @@ void MainWindow::syncOutputs()
             connect(o.window, &OutputWindow::keyPressed, this,
                     [this](int key, Qt::KeyboardModifiers mods) { handleControlKey(key, mods); });
         }
-        const QString title = QStringLiteral("Pinol — %1").arg(w.name);
+        const QString title = QStringLiteral("NyxMap — %1").arg(w.name);
         if (o.title != title) o.window->setTitle(o.title = title);
         QScreen *sc = OutputWindow::screenNamed(w.screen);
         const QString scName = sc ? sc->name() : QString();
@@ -2090,7 +2090,7 @@ void MainWindow::startOsc()
     QMetaObject::invokeMethod(
         m_osc,
         [this, on, udp, http, listen, &status] {
-            if (on) m_osc->start(quint16(udp), quint16(http), QStringLiteral("Pinol"), true, listen);
+            if (on) m_osc->start(quint16(udp), quint16(http), QStringLiteral("NyxMap"), true, listen);
             else m_osc->stop();
             status = m_osc->status();
         },
@@ -2243,7 +2243,7 @@ void MainWindow::markDirty()
 void MainWindow::updateTitle()
 {
     const QString p = m_engine->projectPath();
-    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — Pinol"));
+    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — NyxMap"));
     setWindowModified(isDirty());
 }
 
@@ -2257,7 +2257,7 @@ QJsonObject MainWindow::uiState() const
 bool MainWindow::maybeSave()
 {
     if (!isDirty()) return true;
-    QMessageBox box(QMessageBox::Question, QStringLiteral("Pinol"), QStringLiteral("Save changes to the project?"),
+    QMessageBox box(QMessageBox::Question, QStringLiteral("NyxMap"), QStringLiteral("Save changes to the project?"),
                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
     // ⌘D / Ctrl+D discards, as everywhere else on macOS
     if (auto *discard = qobject_cast<QPushButton *>(box.button(QMessageBox::Discard)))
@@ -2294,7 +2294,7 @@ void MainWindow::openProjectDialog()
     if (!maybeSave()) return;
     QSettings s;
     const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("Open Project"), s.value("dirs/project").toString(),
-                                                   QStringLiteral("Pinol Projects (*.pinol *.json)"));
+                                                   QStringLiteral("NyxMap Projects (*.nyxmap *.json)"));
     if (!f.isEmpty()) openProject(f);
 }
 
@@ -2384,9 +2384,9 @@ bool MainWindow::saveAs()
 {
     QSettings s;
     QString f = QFileDialog::getSaveFileName(this, QStringLiteral("Save Project"), s.value("dirs/project").toString(),
-                                             QStringLiteral("Pinol Projects (*.pinol)"));
+                                             QStringLiteral("NyxMap Projects (*.nyxmap)"));
     if (f.isEmpty()) return false;
-    if (QFileInfo(f).suffix().isEmpty()) f += ".pinol";
+    if (QFileInfo(f).suffix().isEmpty()) f += ".nyxmap";
     if (!saveTo(f)) return false;
     s.setValue("dirs/project", QFileInfo(f).absolutePath());
     s.setValue("project/last", f);
@@ -2397,7 +2397,7 @@ QString MainWindow::autosavePath()
 {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
-    return dir + "/autosave.pinol";
+    return dir + "/autosave.nyxmap";
 }
 
 void MainWindow::autosave()
@@ -2427,7 +2427,7 @@ bool MainWindow::offerRecovery()
     f.close();
     const QString original = ui.value("autosave_of").toString();
     const QDateTime when = QDateTime::fromString(ui.value("autosave_time").toString(), Qt::ISODate);
-    QMessageBox box(QMessageBox::Warning, QStringLiteral("Recovery"), QStringLiteral("Pinol did not quit normally."),
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("Recovery"), QStringLiteral("NyxMap did not quit normally."),
                     QMessageBox::NoButton, this);
     box.setInformativeText(QStringLiteral("Restore the session autosaved on %1 %2?")
                                .arg(when.isValid() ? when.toString("dd/MM 'at' HH:mm:ss") : QStringLiteral("(unknown date)"),
@@ -2472,7 +2472,7 @@ bool MainWindow::offerRecovery()
 }
 
 // ---------------------------------------------------------------------------
-// File opening (macOS: double-click .pinol file or drag to app icon)
+// File opening (macOS: double-click .nyxmap file or drag to app icon)
 // ---------------------------------------------------------------------------
 
 bool MainWindow::event(QEvent *e)
@@ -2497,7 +2497,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
         return;
     }
 #ifdef Q_OS_MACOS
-    // An output on a Space of its own leaves it first (macOS animates it), and only then does Pinol close: destroying
+    // An output on a Space of its own leaves it first (macOS animates it), and only then does NyxMap close: destroying
     // the window during that animation left the process hung once its interface was gone. 4 s at most.
     if (!m_quitting) {
         m_quitting = true;
@@ -2552,7 +2552,7 @@ void MainWindow::dropEvent(QDropEvent *e)
     for (const QUrl &u : e->mimeData()->urls()) {
         const QString path = u.toLocalFile();
         if (path.isEmpty()) continue;
-        if (QFileInfo(path).suffix().toLower() == "pinol") {
+        if (QFileInfo(path).suffix().toLower() == "nyxmap") {
             if (maybeSave()) openProject(path);
             e->acceptProposedAction();
             return;

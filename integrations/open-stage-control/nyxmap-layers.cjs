@@ -6,7 +6,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
     let listKey = '', layoutKey = '';
     const current = () => entries.find(entry => entry.id === selected);
     const allowedWhenLocked = path => ['enable', 'solo', 'testcard', 'locked', 'play', 'restart', 'time'].includes(path);
-    const interaction = path => `JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/pinol/layer/ready,0,false}${allowedWhenLocked(path) ? '' : ' && !OSC{/pinol/layer/locked,0,false}'}}`;
+    const interaction = path => `JS{return !!OSC{/nyxmap/ui/online,0,false} && !!OSC{/nyxmap/layer/ready,0,false}${allowedWhenLocked(path) ? '' : ' && !OSC{/nyxmap/layer/locked,0,false}'}}`;
     function subscriptions(paths) {
         const next = new Set(paths);
         for (const path of subscribed) if (!next.has(path)) listen('IGNORE', path);
@@ -15,19 +15,19 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
     }
     function invalidate(message = 'Updating layer controls…') {
         ++serial; ready = false; bindings.clear(); subscriptions([]);
-        emit('/pinol/layer/ready', 0);
-        emit('/pinol/layer/status', message);
+        emit('/nyxmap/layer/ready', 0);
+        emit('/nyxmap/layer/status', message);
     }
     function reset() {
         invalidate('Select a layer after connecting.');
         entries = []; selected = ''; nodes.clear(); listKey = layoutKey = '';
         edit('layer_select', {values: {labels: [], values: []}});
         edit('layer_sections', {values: {labels: [], values: []}});
-        edit('layer_items', {widgets: [text('layer_empty', 'Connect to Pinol to edit layers.')]});
+        edit('layer_items', {widgets: [text('layer_empty', 'Connect to NyxMap to edit layers.')]});
     }
     function setCatalog(layers, force = false) {
         if (!Array.isArray(layers)) {
-            reset(); emit('/pinol/layer/status', 'Update Pinol to use the layer remote.'); return;
+            reset(); emit('/nyxmap/layer/status', 'Update NyxMap to use the layer remote.'); return;
         }
         entries = layers.filter(entry => /^[1-9][0-9]*$/.test(entry.id) && entry.path === '/show/layer/by-id/' + entry.id);
         const key = JSON.stringify(entries);
@@ -50,7 +50,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
             edit('layer_items', {widgets: [text('layer_empty', entries.length ? 'Choose a layer above.' : 'No layers in this project.')]});
             edit('layer_sections', {values: {labels: [], values: []}});
         } else if (force || !ready || key !== layoutKey) load();
-        emit('/pinol/layer/select', selected, true);
+        emit('/nyxmap/layer/select', selected, true);
     }
     function group(path, node) {
         if (path.includes('/anim/')) return ['animation', 'Parameter animation'];
@@ -92,20 +92,20 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
                 if (paired) for (const key of paired.keys) skip.add(path + '/' + key);
                 for (const [key, child] of Object.entries(node.CONTENTS || {})) {
                     if (relative === 'layer') continue; // groups are selected independently
-                    if (child.FULL_PATH === node.PINOL_RESET) continue; // reset is on the existing title, not another card
+                    if (child.FULL_PATH === node.NYXMAP_RESET) continue; // reset is on the existing title, not another card
                     if (key !== 'layer') visit(child, skip);
                 }
             }
             for (const [key, node] of Object.entries(tree.CONTENTS || {})) if (key !== 'layer') visit(node);
             locked = !!tree.CONTENTS.locked?.VALUE?.[0];
             ready = true; layoutKey = listKey;
-            emit('/pinol/layer/locked', locked ? 1 : 0, true);
-            emit('/pinol/layer/ready', 1, true);
+            emit('/nyxmap/layer/locked', locked ? 1 : 0, true);
+            emit('/nyxmap/layer/ready', 1, true);
             const sections = new Map();
             for (const node of nodes.values()) { const [key, label] = group(node.relative, node); sections.set(key, label); }
             if (!sections.has(section)) { section = sections.has('general') ? 'general' : sections.keys().next().value || ''; page = 0; }
             edit('layer_sections', {values: {labels: [...sections.values()], values: [...sections.keys()]}});
-            emit('/pinol/layer/section', section, true);
+            emit('/nyxmap/layer/section', section, true);
             render();
         }).catch(error => {
             if (token !== serial) return;
@@ -117,19 +117,19 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         const key = 'v' + epoch + '_' + bindings.size;
         bindings.set(key, node);
         if (node.ACCESS & 1) paths.push(node.FULL_PATH);
-        return {address: '/pinol/layer/value/' + key, preArgs: [selected, key], interaction: interaction(node.relative),
+        return {address: '/nyxmap/layer/value/' + key, preArgs: [selected, key], interaction: interaction(node.relative),
             ...target, decimals: node.TYPE === 'i' ? 0 : 3};
     }
     function resettable(node) {
-        return !!(node.ACCESS & 2) && node.TYPE !== 'N' && node.PINOL_RESET === node.FULL_PATH + '/reset';
+        return !!(node.ACCESS & 2) && node.TYPE !== 'N' && node.NYXMAP_RESET === node.FULL_PATH + '/reset';
     }
     function heading(node, title, id, extra = {}) {
         const style = {align: 'left', height: 36, css: 'font-weight:600;font-size:15px;', ...extra};
         if (!resettable(node)) return text(id, title, style);
         const key = bind(node, []).preArgs[1];
-        return button(id, title, '/pinol/layer/reset', [selected, key], {
+        return button(id, title, '/nyxmap/layer/reset', [selected, key], {
             ...style, doubleTap: true, interaction: interaction(''), alphaStroke: 0, alphaFillOff: 0,
-            css: `class: pinol-reset-heading;\n:host {font-weight:600;font-size:${extra.height === 20 ? 11 : 15}px;} label {justify-content:flex-start;text-align:left;} label::after {content:'↺';opacity:.45;margin-left:8rem;} :host:hover label::after {opacity:1;}`});
+            css: `class: nyxmap-reset-heading;\n:host {font-weight:600;font-size:${extra.height === 20 ? 11 : 15}px;} label {justify-content:flex-start;text-align:left;} label::after {content:'↺';opacity:.45;margin-left:8rem;} :host:hover label::after {opacity:1;}`});
     }
     function editor(node, key, paths) {
         const properties = bind(node, paths), writable = !!(node.ACCESS & 2);
@@ -138,7 +138,7 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         const values = node.RANGE?.[0]?.VALS;
         if (Array.isArray(values)) return {...common, type: 'dropdown', label: '%key', values: {labels: values.map(String), values}};
         if (['T', 'F'].includes(node.TYPE)) return {...common, type: 'switch', layout: 'horizontal', values: {OFF: 0, ON: 1}, colorWidget: '#4cd964'};
-        if (node.TYPE === 'N') return button(key, 'TRIGGER', '/pinol/layer/write', [selected, properties.preArgs[1]], {interaction: properties.interaction});
+        if (node.TYPE === 'N') return button(key, 'TRIGGER', '/nyxmap/layer/write', [selected, properties.preArgs[1]], {interaction: properties.interaction});
         if (node.TYPE === 's') return {...common, type: 'textarea', default: ''};
         return {...common, type: 'input', numeric: node.TYPE === 'i' ? 1 : .001, asYouType: false};
     }
@@ -187,20 +187,20 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
             }
             return {type: 'panel', id: key, label: false, layout: 'vertical', width: '100%', height: pair ? 344 : controls.length > 3 ? 164 : 136,
                 padding: 8, colorBg: '#28282e', alphaStroke: .2, borderRadius: 5,
-                css: 'class: pinol-layer-card;\n> inner {border-left:2rem solid #638c80;}', widgets: controls};
+                css: 'class: nyxmap-layer-card;\n> inner {border-left:2rem solid #638c80;}', widgets: controls};
         });
         // Open Stage Control forces grid children to height:auto!important.
         // Explicit grid rows provide their height, as on the library pages.
-        edit('layer_items', {css: `class: pinol-flow;\n> inner {grid-auto-rows:${rowHeight}rem;gap:12rem;}`,
+        edit('layer_items', {css: `class: nyxmap-flow;\n> inner {grid-auto-rows:${rowHeight}rem;gap:12rem;}`,
             widgets: widgets.length ? widgets : [text('layer_empty', 'No controls in this section.')]});
         subscriptions(paths);
-        emit('/pinol/layer/page', list.length ? `${page * PAGE + 1}–${Math.min((page + 1) * PAGE, list.length)} / ${list.length}` : 'EMPTY', true);
-        emit('/pinol/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`, true);
+        emit('/nyxmap/layer/page', list.length ? `${page * PAGE + 1}–${Math.min((page + 1) * PAGE, list.length)} / ${list.length}` : 'EMPTY', true);
+        emit('/nyxmap/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`, true);
         // Newly created OSC{} receivers start with their defaults. Replay every
         // interaction flag after /EDIT, before values, even if it did not change.
-        emit('/pinol/layer/ready', ready ? 1 : 0, true);
-        emit('/pinol/layer/locked', locked ? 1 : 0, true);
-        emit('/pinol/ui/online', isOnline() ? 1 : 0, true);
+        emit('/nyxmap/layer/ready', ready ? 1 : 0, true);
+        emit('/nyxmap/layer/locked', locked ? 1 : 0, true);
+        emit('/nyxmap/ui/online', isOnline() ? 1 : 0, true);
         for (const [key, node] of bindings) publish(key, node);
     }
     function limits(range) {
@@ -210,12 +210,12 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         if (!(node.ACCESS & 1) || !Array.isArray(node.VALUE)) return;
         // Open Stage Control matches incoming preArgs before applying the value.
         const values = ['T', 'F'].includes(node.TYPE) ? node.VALUE.map(value => Number(!!value)) : node.VALUE;
-        emit('/pinol/layer/value/' + key, [selected, key, ...values], true);
+        emit('/nyxmap/layer/value/' + key, [selected, key, ...values], true);
     }
     function feedback(address, args) {
         if (address === current()?.path + '/locked') {
-            locked = !!args[0]; emit('/pinol/layer/locked', locked ? 1 : 0);
-            emit('/pinol/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`);
+            locked = !!args[0]; emit('/nyxmap/layer/locked', locked ? 1 : 0);
+            emit('/nyxmap/layer/status', `${current().name || 'Untitled'}${locked ? ' · LOCKED' : ' · LIVE EDIT'}`);
             for (const [key, node] of bindings) publish(key, node);
         }
         // Keep the schema's cached values current for section changes and late clients.
@@ -255,20 +255,20 @@ module.exports = function createLayerDesk({emit, edit, button, text, target, que
         sendCommand(node.FULL_PATH, args);
     }
     function command(address, args) {
-        if (address === '/pinol/layer/select') {
+        if (address === '/nyxmap/layer/select') {
             if (!entries.some(entry => entry.id === args[0])) return;
             selected = args[0]; section = ''; page = 0; emit(address, selected, true); load();
-        } else if (address === '/pinol/layer/section') {
+        } else if (address === '/nyxmap/layer/section') {
             if (![...nodes.values()].some(node => group(node.relative, node)[0] === args[0])) return;
             section = args[0]; page = 0; emit(address, section, true); render();
-        } else if (address === '/pinol/layer/page/change' && [-1, 1].includes(args[0])) {
+        } else if (address === '/nyxmap/layer/page/change' && [-1, 1].includes(args[0])) {
             page += args[0]; render();
-        } else if (address === '/pinol/layer/reset') {
+        } else if (address === '/nyxmap/layer/reset') {
             const node = bindings.get(args[1]);
             if (args.length > 3 || (args.length === 3 && ![null, 1, true].includes(args[2]))) return;
             if (!ready || !isOnline() || locked || args[0] !== selected || !node || !resettable(node)) return;
-            sendCommand(node.PINOL_RESET);
-        } else if (address === '/pinol/layer/write' || address.startsWith('/pinol/layer/value/')) {
+            sendCommand(node.NYXMAP_RESET);
+        } else if (address === '/nyxmap/layer/write' || address.startsWith('/nyxmap/layer/value/')) {
             write(args[0], args[1], args.slice(2));
         }
     }

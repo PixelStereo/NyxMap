@@ -3,7 +3,7 @@
 
 Usage: build_omt.py OUT_DIR
 
-Pinol loads libomt at run time and looks for it next to the application first (src/engine/Publish.cpp), so the
+NyxMap loads libomt at run time and looks for it next to the application first (src/engine/Publish.cpp), so the
 packages ship it there. All three projects are MIT licensed (github.com/openmediatransport); their licence texts are
 written to OUT_DIR/OMT-LICENSES.txt.
 
@@ -69,7 +69,7 @@ def build_vmx(src: Path, out: Path):
              f"-Wl,/DEF:{src / 'exports.def'}", s / "vmxcodec_x86.cpp", s / "vmxcodec_avx2.cpp", s / "vmxcodec.cpp",
              "-o", out / "libvmx.dll"], src)
     else:
-        # A soname: libomt asks for "libvmx.so", the copy Pinol loads first from the same folder
+        # A soname: libomt asks for "libvmx.so", the copy NyxMap loads first from the same folder
         run(["clang++", "-O3", "-std=c++17", "-fdeclspec", "-fPIC", "-mlzcnt", "-mavx2", "-mbmi", "-shared",
              "-Wl,-soname,libvmx.so", "-Wl,-rpath,$ORIGIN", s / "vmxcodec_x86.cpp", s / "vmxcodec_avx2.cpp",
              s / "vmxcodec.cpp", "-o", out / "libvmx.so"], src)
@@ -99,7 +99,7 @@ def build_omt(root: Path, out: Path):
 
 
 def licences(root: Path, out: Path):
-    parts = ["Open Media Transport runtime bundled with Pinol (libomt, libvmx), built from source:\n"]
+    parts = ["Open Media Transport runtime bundled with NyxMap (libomt, libvmx), built from source:\n"]
     for name, sha in REPOS.items():
         parts.append(f"\n===== {name} — https://github.com/openmediatransport/{name} @ {sha}\n\n")
         parts.append((root / name / "LICENSE.txt").read_text(encoding="utf-8-sig"))
@@ -107,7 +107,7 @@ def licences(root: Path, out: Path):
 
 
 def check(out: Path):
-    """The libraries load, as Pinol loads them (libvmx first, globally), and libomt exports its sender."""
+    """The libraries load, as NyxMap loads them (libvmx first, globally), and libomt exports its sender."""
     ext = {"Darwin": ".dylib", "Windows": ".dll"}.get(platform.system(), ".so")
     mode = getattr(ctypes, "RTLD_GLOBAL", 0)
     ctypes.CDLL(str(out / ("libvmx" + ext)), mode=mode)

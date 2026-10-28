@@ -755,7 +755,7 @@ public:
     QJsonObject projectToJson(const QString &projectDir, const QJsonObject &uiState) const; // what saveProject writes
 
     // --- Collect Files (ProjectCollect.cpp): the project and every file it uses gathered in one folder,
-    // <folder>/<name>.pinol and <folder>/MEDIA/{MOVIES, PICTS, AUDIO, ISF, OTHER}, the paths of the project (layers,
+    // <folder>/<name>.nyxmap and <folder>/MEDIA/{MOVIES, PICTS, AUDIO, ISF, OTHER}, the paths of the project (layers,
     // effects, ISF images, transitions, snapshots, media bin) pointing there. ISF shaders come with their vertex
     // shader and the images they import (a shader that imports some: in a folder of its own, ISF/<name>/)
     struct CollectFile {

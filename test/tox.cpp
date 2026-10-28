@@ -107,7 +107,7 @@ int runToxTests(Engine &e, const QString &tmp)
     e.setPaused(true); e.renderFrame();
     check(fake && fake->elapsed == beforePause, "show pause freezes component time");
     e.setPaused(false);
-    const QString project = tmp + "/tox.pinol";
+    const QString project = tmp + "/tox.nyxmap";
     check(e.saveProject(project, {}, &error), "save component project");
     e.newProject();
     check(e.loadProject(project, nullptr, &error), "restore component project");
@@ -124,7 +124,7 @@ int runToxTests(Engine &e, const QString &tmp)
     QJsonObject src = cyclic["source"].toObject();
     src["inputs"] = QJsonObject{{"in1", QString::number(id)}, {"in2", QString::number(bid)}}; cyclic["source"] = src;
     e.replaceLayerJson(e.indexOfId(id), cyclic);
-    const QString invalidProject = tmp + "/tox-invalid.pinol";
+    const QString invalidProject = tmp + "/tox-invalid.nyxmap";
     check(e.saveProject(invalidProject, {}, &error), "save deliberately invalid routing");
     e.newProject();
     check(e.loadProject(invalidProject, nullptr, &error), "load deliberately invalid routing");

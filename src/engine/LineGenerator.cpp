@@ -4,12 +4,12 @@
 #include <algorithm>
 #include <cmath>
 
-// Each pixel finds the nearest segment (pinolSegments: lineSegmentData), in pixels: within half the thickness it is on
+// Each pixel finds the nearest segment (nyxmapSegments: lineSegmentData), in pixels: within half the thickness it is on
 // the line, at a place along it (u, 0..1 from its start to its end: of the whole line, or of its segment) and across
 // it (v, 0..1). The animation lights it there; the joins are round, the edges smoothed over a pixel.
 static const char *kLineShader = R"ISF(/*{
     "DESCRIPTION": "Lines drawn on the layer, animated along them: fill, chase, strobe, pulse, or a media laid along them",
-    "CREDIT": "Pinol",
+    "CREDIT": "NyxMap",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator"],
     "INPUTS": [
@@ -33,7 +33,7 @@ static const char *kLineShader = R"ISF(/*{
     ]
 }*/
 
-uniform sampler2D pinolSegments;
+uniform sampler2D nyxmapSegments;
 
 // 1 on a band of width w (of a unit) centred on each whole x, 0 off it, its edges smoothed over a pixel
 float band(float x, float w)
@@ -48,11 +48,11 @@ float band(float x, float w)
 void main()
 {
     vec2 px = vec2(isf_FragNormCoord.x, 1.0 - isf_FragNormCoord.y) * RENDERSIZE; // the frame, y down, in pixels
-    int count = textureSize(pinolSegments, 0).x;
+    int count = textureSize(nyxmapSegments, 0).x;
     float best = 1e20, side = 0.0, u = 0.0, index = 0.0;
     for (int i = 0; i < count; ++i) {
-        vec4 s = texelFetch(pinolSegments, ivec2(i, 0), 0);
-        vec4 m = texelFetch(pinolSegments, ivec2(i, 1), 0);
+        vec4 s = texelFetch(nyxmapSegments, ivec2(i, 0), 0);
+        vec4 m = texelFetch(nyxmapSegments, ivec2(i, 1), 0);
         if (m.z < 0.0) continue; // none
         vec2 a = s.xy * RENDERSIZE, b = s.zw * RENDERSIZE, ab = b - a;
         float len2 = dot(ab, ab);

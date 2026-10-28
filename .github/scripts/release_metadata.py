@@ -14,10 +14,10 @@ def release_assets(release, repository):
     if not re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?", tag):
         return None
     names = {
-        "mac": f"Pinol-macos-{tag}.zip",
-        "win": f"Pinol-windows-{tag}.zip",
-        "linux": f"Pinol-linux-x86_64-{tag}.AppImage",
-        "portable": f"Pinol-linux-x86_64-{tag}.tar.gz",
+        "mac": f"NyxMap-macos-{tag}.zip",
+        "win": f"NyxMap-windows-{tag}.zip",
+        "linux": f"NyxMap-linux-x86_64-{tag}.AppImage",
+        "portable": f"NyxMap-linux-x86_64-{tag}.tar.gz",
     }
     assets = {a["name"]: a for a in release.get("assets", []) if a.get("state") == "uploaded" and a.get("size", 0) > 0}
     urls = {}
@@ -29,9 +29,9 @@ def release_assets(release, repository):
         if url != f"https://github.com/{repository}/releases/download/{tag}/{name}":
             raise ValueError(f"Unexpected asset URL: {url}")
         urls[platform] = url
-    remote = assets.get('Pinol-OpenStageControl.zip')
+    remote = assets.get('NyxMap-OpenStageControl.zip')
     if remote:
-        expected = f'https://github.com/{repository}/releases/download/{tag}/Pinol-OpenStageControl.zip'
+        expected = f'https://github.com/{repository}/releases/download/{tag}/NyxMap-OpenStageControl.zip'
         if remote['browser_download_url'] != expected:
             raise ValueError(f'Unexpected remote URL: {remote["browser_download_url"]}')
         urls['remote'] = expected

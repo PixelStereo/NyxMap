@@ -1133,8 +1133,8 @@ QJsonObject OscNamespace::toJson(const QString &path) const
             QJsonArray defaults;
             const QVariantList values = n->defaults();
             for (int k = 0; k < values.size(); ++k) defaults.append(jsonValue(*n, values[k], k));
-            o["PINOL_DEFAULT"] = defaults;
-            o["PINOL_RESET"] = n->resetPath;
+            o["NYXMAP_DEFAULT"] = defaults;
+            o["NYXMAP_RESET"] = n->resetPath;
         }
         if (!n->clip.isEmpty()) {
             QJsonArray c;
@@ -1353,7 +1353,7 @@ QJsonObject OscServer::hostInfo() const
         {"EXTENSIONS", QJsonObject{{"ACCESS", true}, {"VALUE", true}, {"RANGE", true}, {"DESCRIPTION", true},
                                    {"TAGS", false}, {"EXTENDED_TYPE", false}, {"UNIT", false}, {"CRITICAL", false},
                                    {"CLIPMODE", true}, {"LISTEN", true}, {"PATH_CHANGED", true},
-                                   {"PINOL_DEFAULT", true}, {"PINOL_RESET", true}}},
+                                   {"NYXMAP_DEFAULT", true}, {"NYXMAP_RESET", true}}},
     };
 }
 
@@ -1373,7 +1373,7 @@ QByteArray OscServer::httpGet(const QString &target, int *status)
     }
     const QJsonObject o = m_ns.toJson(path);
     if (query.isEmpty()) return QJsonDocument(o).toJson(QJsonDocument::Compact);
-    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE", "PINOL_DEFAULT", "PINOL_RESET"};
+    static const QStringList known = {"FULL_PATH", "CONTENTS", "TYPE", "VALUE", "RANGE", "ACCESS", "DESCRIPTION", "CLIPMODE", "NYXMAP_DEFAULT", "NYXMAP_RESET"};
     if (!known.contains(query)) {
         *status = 400;
         return {};

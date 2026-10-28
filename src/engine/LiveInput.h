@@ -26,7 +26,7 @@ struct LiveInputInfo {
 // may be (as for publishing)
 std::vector<LiveInputInfo> listLiveInputs(const QString &libraryFolder = QString());
 inline bool isLiveInputUri(const QString &s) { return s.startsWith(QLatin1String("input:")); }
-// As a (virtual) path, dragged from the Media Bin like a file: /Pinol/Inputs/<the URI, percent-encoded>
+// As a (virtual) path, dragged from the Media Bin like a file: /NyxMap/Inputs/<the URI, percent-encoded>
 QString liveInputPath(const QString &uri);
 QString liveInputUriOfPath(const QString &path); // empty: not one
 QString liveInputName(const QString &uri); // its name, from its URI ("FaceTime HD Camera", "MACHINE (Source)")

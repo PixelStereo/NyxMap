@@ -326,7 +326,7 @@ int runPsdLayerTests(Engine &e, const QString &tmp)
               near(src.pixelColor(6, 6), 0, 0, 255), "snapshot recall switches the PSD layer");
 
     // Saved and opened again with the project
-    const QString project = tmp + "/psd.pinol";
+    const QString project = tmp + "/psd.nyxmap";
     check(e.saveProject(project, {}, &err), "save the project");
     e.newProject();
     check(e.loadProject(project, nullptr, &err), "open the project");

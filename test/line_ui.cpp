@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     QSurfaceFormat::setDefaultFormat(format);
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication app(argc, argv);
-    app.setApplicationName("PinolLineUITest");
+    app.setApplicationName("NyxMapLineUITest");
     Engine engine;
     QString error;
     if (!engine.initialize(&error)) return 1;
@@ -141,8 +141,8 @@ int main(int argc, char **argv)
     undo.undo();
     check(lines().size() == 3, "undo: the line back");
 
-    // PINOL_SCREENSHOTS=<folder>: the view with its lines, as rendered and as edited
-    if (const QByteArray dir = qgetenv("PINOL_SCREENSHOTS"); !dir.isEmpty()) {
+    // NYXMAP_SCREENSHOTS=<folder>: the view with its lines, as rendered and as edited
+    if (const QByteArray dir = qgetenv("NYXMAP_SCREENSHOTS"); !dir.isEmpty()) {
         engine.setGeneratorSize(index, 100, 100);
         for (int i = 0; i < 5; ++i) engine.renderFrame();
         click(at(0.2, 0.2));

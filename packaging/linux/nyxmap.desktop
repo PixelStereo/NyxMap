@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Pinol
+Name=NyxMap
 Comment=Live visuals, mapping and show control
-Exec=Pinol %F
-Icon=pinol
+Exec=NyxMap %F
+Icon=nyxmap
 Categories=AudioVideo;Video;Graphics;
 Terminal=false

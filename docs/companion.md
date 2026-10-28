@@ -1,18 +1,18 @@
-# Pinol · Stream Deck with Companion
+# NyxMap · Stream Deck with Companion
 
-Use the [Pinol Companion module](../integrations/companion/README.md) to build a
+Use the [NyxMap Companion module](../integrations/companion/README.md) to build a
 show desk by dragging ready-made presets onto Stream Deck buttons.
 
 ## Installation
 
-Download **Pinol-Companion** from a successful
-[Companion module workflow](https://github.com/PixelStereo/Pinol/actions/workflows/companion.yml).
+Download **NyxMap-Companion** from a successful
+[Companion module workflow](https://github.com/PixelStereo/NyxMap/actions/workflows/companion.yml).
 Extract the ZIP, import its `.tgz` with **Modules → Import module package**, and
-add **Pixel Stereo: Pinol** as a connection. Requires Companion 4.2+ with Node 22
+add **Pixel Stereo: NyxMap** as a connection. Requires Companion 4.2+ with Node 22
 module support. This is a custom package; it is not yet in Bitfocus's store.
 
-Enable OSC / OSCQuery in Pinol Settings. Configure `127.0.0.1:5678` on the same
-computer, or Pinol's LAN IP from another computer. Then open Companion's Presets
+Enable OSC / OSCQuery in NyxMap Settings. Configure `127.0.0.1:5678` on the same
+computer, or NyxMap's LAN IP from another computer. Then open Companion's Presets
 pane and drag the module's buttons onto your Stream Deck layout.
 
 ## Suggested 15-key layout
@@ -28,12 +28,12 @@ pages. Sequence buttons select; GO starts the selected sequence's next cue.
 Direct cue buttons launch that cue immediately, with its configured waits.
 
 The current cue uses green, the next cue red, pre-wait yellow and post-wait blue,
-matching Pinol. Small progress bars leave the time and label legible. Monitoring
+matching NyxMap. Small progress bars leave the time and label legible. Monitoring
 buttons do nothing when pressed.
 
 ## Timing and control
 
-Times and phases come from Pinol. Cue elapsed/remaining and timeline animation
+Times and phases come from NyxMap. Cue elapsed/remaining and timeline animation
 time remain distinct; `∞` means unbounded. Companion batches changed values at
 up to 10 Hz, without fetching/rebuilding catalogs on each timing update.
 

@@ -49,8 +49,8 @@ struct OscNode {
     QString clip;   // "both" when the range is enforced
     QStringList children; // segment names, in order
     std::function<QVariantList()> get;
-    std::function<QVariantList()> defaults; // Pinol extension: live parameter defaults
-    QString resetPath; // Pinol extension: an explicit reset action, never a captured connection value
+    std::function<QVariantList()> defaults; // NyxMap extension: live parameter defaults
+    QString resetPath; // NyxMap extension: an explicit reset action, never a captured connection value
     std::function<bool(const QVariantList &)> set; // false: refused (locked layer, bad value)
 };
 
@@ -94,7 +94,7 @@ public:
     // Ports 0: chosen by the system (tests). Returns false if a port could not be opened.
     // announce: zeroconf (_oscjson._tcp, _osc._udp)
     // listen: the address of the network interface to listen on ("": all of them, "127.0.0.1": this computer only)
-    bool start(quint16 oscPort, quint16 queryPort, const QString &name = QStringLiteral("Pinol"), bool announce = true,
+    bool start(quint16 oscPort, quint16 queryPort, const QString &name = QStringLiteral("NyxMap"), bool announce = true,
                const QString &listen = QString());
     void stop();
     bool isRunning() const;

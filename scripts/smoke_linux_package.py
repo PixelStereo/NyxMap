@@ -46,22 +46,22 @@ def check_tree(tree):
 
 
 def check_xdg_open(tree):
-    """The xdg-open AppRun puts first in Pinol's PATH gives the system's xdg-open the environment of the launch."""
-    wrapper = tree / "usr/libexec/pinol-path/xdg-open"
+    """The xdg-open AppRun puts first in NyxMap's PATH gives the system's xdg-open the environment of the launch."""
+    wrapper = tree / "usr/libexec/nyxmap-path/xdg-open"
     if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
         sys.exit(f"Missing or not executable: {wrapper}")
-    with tempfile.TemporaryDirectory(prefix="pinol-xdg-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="nyxmap-xdg-") as tmp:
         system = Path(tmp) / "xdg-open"
         system.write_text("#!/bin/sh\nenv\n")
         system.chmod(0o755)
-        env = {"PINOL_ENV_VARS": "PATH LD_LIBRARY_PATH QT_PLUGIN_PATH",
-               "PATH": f"{wrapper.parent}:{tmp}", "LD_LIBRARY_PATH": "/pinol", "QT_PLUGIN_PATH": "/pinol",
-               "PINOL_ORIG_SET_PATH": "1", "PINOL_ORIG_PATH": f"{tmp}:/usr/bin:/bin",
-               "PINOL_ORIG_SET_LD_LIBRARY_PATH": "1", "PINOL_ORIG_LD_LIBRARY_PATH": "/host lib"}
+        env = {"NYXMAP_ENV_VARS": "PATH LD_LIBRARY_PATH QT_PLUGIN_PATH",
+               "PATH": f"{wrapper.parent}:{tmp}", "LD_LIBRARY_PATH": "/nyxmap", "QT_PLUGIN_PATH": "/nyxmap",
+               "NYXMAP_ORIG_SET_PATH": "1", "NYXMAP_ORIG_PATH": f"{tmp}:/usr/bin:/bin",
+               "NYXMAP_ORIG_SET_LD_LIBRARY_PATH": "1", "NYXMAP_ORIG_LD_LIBRARY_PATH": "/host lib"}
         output = subprocess.check_output([wrapper, "https://example.org"], env=env, text=True, timeout=15)
         child = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if (child.get("LD_LIBRARY_PATH") != "/host lib" or "QT_PLUGIN_PATH" in child
-                or child.get("PATH") != f"{tmp}:/usr/bin:/bin" or any(k.startswith("PINOL_") for k in child)):
+                or child.get("PATH") != f"{tmp}:/usr/bin:/bin" or any(k.startswith("NYXMAP_") for k in child)):
             sys.exit(f"xdg-open wrapper did not restore the launch environment:\n{output}")
 
 
@@ -77,7 +77,7 @@ def main():
     print("Extracting the portable archive", flush=True)
     with tarfile.open(next(packages.glob("*.tar.gz"))) as archive:
         archive.extractall(portable, filter="data")
-    tree = portable / "Pinol"
+    tree = portable / "NyxMap"
     check_tree(tree)
     smoke = Path(__file__).with_name("smoke_package.py")
     subprocess.run([sys.executable, smoke, tree / "AppRun", tree / "usr/bin/isf", media, work / "portable-render"], check=True)
@@ -113,7 +113,7 @@ def main():
 if __name__ == "__main__":
     # xvfb-run waits for a SIGUSR1 readiness handshake which can stall as a
     # container entrypoint. Start the display directly and bound its readiness.
-    with tempfile.TemporaryDirectory(prefix="pinol-xvfb-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="nyxmap-xvfb-") as tmp:
         log = Path(tmp) / "server.log"
         with log.open("w") as output:
             print("Starting the isolated X11 display", flush=True)

@@ -1,4 +1,4 @@
-# Writes OUT (a header defining PINOL_BUILD_SHA) from the Git revision of SRC, at every build: an incremental build
+# Writes OUT (a header defining NYXMAP_BUILD_SHA) from the Git revision of SRC, at every build: an incremental build
 # after a commit carries the new revision, "-dirty" marks uncommitted changes. The file is rewritten only when its
 # content changes, so nothing is recompiled for nothing.
 execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${SRC}"
@@ -12,7 +12,7 @@ else()
     set(sha "${sha}-dirty")
   endif()
 endif()
-set(content "#pragma once\n#define PINOL_BUILD_SHA \"${sha}\"\n")
+set(content "#pragma once\n#define NYXMAP_BUILD_SHA \"${sha}\"\n")
 set(old "")
 if(EXISTS "${OUT}")
   file(READ "${OUT}" old)

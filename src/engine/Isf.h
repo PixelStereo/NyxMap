@@ -49,7 +49,7 @@ struct IsfInput {
     // Or another layer's picture (after its effects), taken at every frame (0: none): its id, saved; the engine
     // binds the picture (extTex) before each render
     quint64 imageLayer = 0;
-    // A Pinol extension ("LAYER_ONLY": true): the input shows a layer, never an image file
+    // A NyxMap extension ("LAYER_ONLY": true): the input shows a layer, never an image file
     bool layerOnly = false;
     Texture2D imageTex;
     // A picture of the engine for this input instead (transitions: startImage, endImage); 0: none
@@ -91,7 +91,7 @@ struct IsfInput {
 struct IsfPass {
     QString target, widthExpr, heightExpr;
     bool persistent = false, isFloat = false;
-    // A Pinol extension for particles: the pass draws POINTS points (a number or an expression) instead of a quad,
+    // A NyxMap extension for particles: the pass draws POINTS points (a number or an expression) instead of a quad,
     // each a square of two triangles placed by the vertex shader: isf_PointIndex() says which point (typically read
     // from a FLOAT target holding the particles' state), gl_Position = isf_PointSprite(its centre, its size in
     // pixels); the fragment shader has gl_PointCoord. BLEND: "ADD" (default) or "ALPHA", premultiplied.

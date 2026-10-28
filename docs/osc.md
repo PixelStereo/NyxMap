@@ -1,6 +1,6 @@
 <div align="center">
 
-# Pinol · OSC API
+# NyxMap · OSC API
 
 **Discover the show. Drive it. Follow what actually plays.**
 
@@ -12,7 +12,7 @@
 
 ## Connect
 
-Enable **OSC / OSCQuery** in Pinol Settings. Choose the network interface that
+Enable **OSC / OSCQuery** in NyxMap Settings. Choose the network interface that
 the controller can reach.
 
 | Transport | Default | Use |
@@ -20,12 +20,12 @@ the controller can reach.
 | OSC / UDP | **1234** | Send commands and parameter values. |
 | OSCQuery / HTTP | **5678** | Discover addresses, types, ranges and current values. |
 | OSCQuery / WebSocket | **5678** | Subscribe to feedback; send binary OSC commands. |
-| Optional cue feedback / UDP | **11111** | Pinol sends cue state to configured `host:port` targets. |
+| Optional cue feedback / UDP | **11111** | NyxMap sends cue state to configured `host:port` targets. |
 
 ```mermaid
 flowchart LR
     C["Controller<br/>Open Stage Control · console · script"]
-    P["Pinol<br/>OSC namespace"]
+    P["NyxMap<br/>OSC namespace"]
     S["Show state<br/>Sequences · cues · timelines"]
     C -->|"HTTP · discover"| P
     C -->|"UDP or WebSocket · command"| P
@@ -34,7 +34,7 @@ flowchart LR
     S -.->|"Optional UDP · cue feedback"| C
 ```
 
-Quick checks, with Pinol running on this computer:
+Quick checks, with NyxMap running on this computer:
 
 ```sh
 curl 'http://127.0.0.1:5678/?HOST_INFO'
@@ -72,7 +72,7 @@ buttons rather than sending both press and release.
 
 ### Sequences
 
-The unqualified commands act on the sequence selected in Pinol. Several
+The unqualified commands act on the sequence selected in NyxMap. Several
 sequences may run concurrently; selection does not stop the others.
 
 | Address | Arguments | Result |
@@ -107,7 +107,7 @@ Read-only discovery: `/sequence/count`, `/sequence/<n>/name`, `/sequence/<n>/id`
 | `/preset/by-id/<id>/recall` | — | Recall a particular preset. |
 
 Each family exposes `/count`, `/<n>/name` and `/<n>/id`. Recalls use the fades,
-delays and captured controls stored in Pinol. A command does not grant permanent
+delays and captured controls stored in NyxMap. A command does not grant permanent
 ownership of its parameters: see [control rules](parameter-control.md).
 
 ### Timelines
@@ -245,7 +245,7 @@ inputs. Discover it instead of guessing shader names or hard-coding FX slots.
 /interaction/<name>/…
 ```
 
-Right-click a parameter in Pinol and choose **Copy OSC address**. The namespace
+Right-click a parameter in NyxMap and choose **Copy OSC address**. The namespace
 publishes each node's type, range, access and description. Source/ISF values are
 under `param`; clocks under `clock`; FX expose their own parameter subtrees.
 
@@ -292,12 +292,12 @@ compete on a target; see [parameter-control rules](parameter-control.md).
 ### Reset a parameter
 
 Writable layer/source/FX parameters with a declared default publish two
-Pinol-specific OSCQuery attributes:
+NyxMap-specific OSCQuery attributes:
 
 | Attribute | Meaning |
 | :--- | :--- |
-| `PINOL_DEFAULT` | Typed default argument array, independent of `VALUE`. |
-| `PINOL_RESET` | Trigger address that resolves the native default when called. |
+| `NYXMAP_DEFAULT` | Typed default argument array, independent of `VALUE`. |
+| `NYXMAP_RESET` | Trigger address that resolves the native default when called. |
 
 For example, a layer's opacity advertises `[1]` and
 `/show/layer/by-id/<id>/opacity/reset`. Send a bare OSC message to that address.
@@ -307,11 +307,11 @@ Named layer paths expose the same actions. A numeric/Boolean trigger release of
 zero is refused. Triggers, read-only controls and values without a declared
 default do not advertise resets.
 
-Defaults come from Pinol's parameter registry, including ISF inputs. Reset
+Defaults come from NyxMap's parameter registry, including ISF inputs. Reset
 actions resolve the current source, FX and composition dimensions under the
 engine lock. They obey layer locking and ordinary parameter limits; removed
 parameters/layers cannot reset another target. HTTP attribute queries support
-`?PINOL_DEFAULT` and `?PINOL_RESET`; `HOST_INFO.EXTENSIONS` advertises them.
+`?NYXMAP_DEFAULT` and `?NYXMAP_RESET`; `HOST_INFO.EXTENSIONS` advertises them.
 The remote uses these actions instead of writing cached default numbers.
 
 ## OSCQuery
@@ -332,7 +332,7 @@ Nodes use `FULL_PATH`, `CONTENTS`, `TYPE`, `VALUE`, `RANGE`, `ACCESS`,
 
 ### WebSocket subscriptions
 
-Connect to `ws://<pinol-host>:5678/`. Send text frames:
+Connect to `ws://<nyxmap-host>:5678/`. Send text frames:
 
 ```json
 {"COMMAND":"LISTEN","DATA":"/show/state"}
@@ -368,7 +368,7 @@ buffer of commands that accumulated offline.
 | A recall appears to be ignored | Layer lock, active drivers, stored fades/delays, or a removed ID. |
 | Clock says `∞` | Endless loop, frozen transport or another action with no finite completion. |
 
-Pinol publishes `_oscjson._tcp` and `_osc._udp` services when announcement is
+NyxMap publishes `_oscjson._tcp` and `_osc._udp` services when announcement is
 enabled. OSC/OSCQuery has no authentication or encryption; keep show control on
 the intended show network. No request in this guide changes project structure.
 

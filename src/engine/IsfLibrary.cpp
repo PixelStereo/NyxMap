@@ -29,8 +29,8 @@ QString IsfLibrary::bundledFolder()
     const QString app = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
         app + "/isf",                     // Windows / Linux: next to the executable
-        app + "/../Resources/isf",        // macOS: Pinol.app/Contents/Resources/isf
-        app + "/../share/pinol/isf",   // Linux, installed
+        app + "/../Resources/isf",        // macOS: NyxMap.app/Contents/Resources/isf
+        app + "/../share/nyxmap/isf",   // Linux, installed
         app + "/../isf",                  // build folder
         app + "/../../isf",
     };

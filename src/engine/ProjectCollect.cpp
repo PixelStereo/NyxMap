@@ -101,7 +101,7 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
     CollectPlan plan;
     const QString base = name.trimmed().isEmpty() ? QStringLiteral("Project") : name.trimmed();
     plan.folder = QDir::cleanPath(QDir(parent).absoluteFilePath(base));
-    plan.projectFile = plan.folder + '/' + base + QStringLiteral(".pinol");
+    plan.projectFile = plan.folder + '/' + base + QStringLiteral(".nyxmap");
     const QDir projectDir(plan.folder);
     const QString media = plan.folder + QStringLiteral("/MEDIA");
 

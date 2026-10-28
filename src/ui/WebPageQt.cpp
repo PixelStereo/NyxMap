@@ -9,13 +9,13 @@
 //
 // The cost is a GPU read back and a copy per new picture (a 1920 × 1080 page: 8 MB, a few milliseconds of the
 // application's thread at 30 fps). Rendering through QQuickRenderControl into a texture shared with the engine would
-// save them, but needs Qt Quick's private plumbing that differs between the Qt versions Pinol is built with.
+// save them, but needs Qt Quick's private plumbing that differs between the Qt versions NyxMap is built with.
 //
 // The engine creates, changes and destroys its pages from any thread with its lock held: everything here is passed
 // to the application's thread (queued to the application object), and each page's state shared with a mutex.
 #include "WebPageQt.h"
 
-#ifdef PINOL_HAS_WEB
+#ifdef NYXMAP_HAS_WEB
 
 #include "AnnotatedMutex.h"
 #include "Gl.h"

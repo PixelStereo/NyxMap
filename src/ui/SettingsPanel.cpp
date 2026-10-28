@@ -214,7 +214,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         rf->addRow(new ResetLabel(QStringLiteral("Antialiasing"), [this] { m_samples->setCurrentIndex(2); }), m_samples);
         rf->addRow(new ResetLabel(QStringLiteral("Internal precision"), [this] { m_depth->setCurrentIndex(0); }), m_depth);
         rf->addRow(note(QStringLiteral("16 bits (default): composition, ISF and effect render targets in RGBA16, so "
-                                       "generated gradients are not cut to 256 shades inside PINOL. 8 bits: half the GPU "
+                                       "generated gradients are not cut to 256 shades inside NYXMAP. 8 bits: half the GPU "
                                        "memory and bandwidth, for heavy 4K / 8K shows. Displays, media decoding and "
                                        "network outputs can still be 8-bit: no HDR or 10-bit output signal is implied.")));
         rf->addRow(m_mipmaps);
@@ -262,7 +262,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
                      swatch);
     lookForm->addRow(note(QStringLiteral("Used for the selected layer, the bars, the buttons that are on and the "
                                          "links. A click on the name puts it back to the default light grey.")));
-    // Magnetism: its state when Pinol starts (the button next to the zoom changes it meanwhile), its reach
+    // Magnetism: its state when NyxMap starts (the button next to the zoom changes it meanwhile), its reach
     auto *magnetOn = new FlagBox(QStringLiteral("Magnetism on at start"));
     magnetOn->setChecked(magnet::enabledAtStart());
     auto *reach = new IntBox;
@@ -331,7 +331,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         sf->addRow(new ResetLabel(QStringLiteral("At launch"), [mode] { mode->setCurrentIndex(0); }), mode);
         sf->addRow(QStringLiteral("Project"), path);
         sf->addRow(QString(), buttons);
-        sf->addRow(note(QStringLiteral("Opened when Pinol starts, instead of an empty project. It is used as a "
+        sf->addRow(note(QStringLiteral("Opened when NyxMap starts, instead of an empty project. It is used as a "
                                        "template: it opens untitled, \"Save\" asks where to save, and the startup "
                                        "file itself is never written over. Its startup sequence (Composition), if it has one, plays. A project given to open (double-click, "
                                        "command line) or a session to recover comes first.")));
@@ -345,7 +345,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
             const QString f = QFileDialog::getOpenFileName(
                 this, QStringLiteral("Startup Project"),
                 cur.isEmpty() ? s.value("dirs/project").toString() : QFileInfo(cur).absolutePath(),
-                QStringLiteral("Pinol Projects (*.pinol *.json)"));
+                QStringLiteral("NyxMap Projects (*.nyxmap *.json)"));
             if (f.isEmpty()) return;
             s.setValue(kStartupPathKey, QFileInfo(f).absoluteFilePath());
             showPath();

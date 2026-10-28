@@ -2,11 +2,11 @@
 
 Une pièce audiovisuelle de 180 secondes pour un seul nuage de particules et une caméra qui le parcourt. La bande sonore est celle de [Champ de rupture](../champ-de-rupture/README.md) : la même synthèse FM, les mêmes repères. Ici, aucun grain n'est simulé par du bruit : jusqu'à 262 144 particules ont chacune une position, une vitesse et une durée de vie, calculées à chaque image sur le GPU (`isf/generators/Particles.fs` et `Particles.vs`).
 
-Le projet demande la version de PINOL qui sait dessiner les passes `POINTS` des shaders ISF, avec l'onglet **Audio**.
+Le projet demande la version de NYXMAP qui sait dessiner les passes `POINTS` des shaders ISF, avec l'onglet **Audio**.
 
 ## Jouer
 
-1. Fabriquer le set (voir *Régénérer*), puis ouvrir `Nuee.pinol`. Garder les dossiers `audio` et `shaders` à côté.
+1. Fabriquer le set (voir *Régénérer*), puis ouvrir `Nuee.nyxmap`. Garder les dossiers `audio` et `shaders` à côté.
 2. Choisir la sortie audio et régler le niveau d'écoute.
 3. Dans le séquenceur, sélectionner **Nuée · particules / 3 minutes**, puis déclencher **GO une seule fois**. Les 4 mouvements lents sont armés, puis la bande et les 13 cues s'enchaînent.
 4. Pour rejouer, déclencher le premier step depuis son numéro. La dernière cue ramène l'image et le son au silence.

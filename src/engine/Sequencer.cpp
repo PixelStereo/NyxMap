@@ -598,7 +598,7 @@ void Sequencer::startTimer()
     }
     if (!m_clockThread) {
         m_clockThread = std::make_unique<QThread>();
-        m_clockThread->setObjectName(QStringLiteral("Pinol cue clock"));
+        m_clockThread->setObjectName(QStringLiteral("NyxMap cue clock"));
         m_clockContext = new CueClockContext([this] { runClock(); });
         connect(m_clockThread.get(), &QThread::finished, m_clockContext, [this] { tsanRelease(this); }, Qt::DirectConnection);
         connect(m_clockThread.get(), &QThread::finished, m_clockContext, &QObject::deleteLater);

@@ -35,7 +35,7 @@ int runColorAnimationTests(Engine &engine, const QString &root)
               "rendered midpoint matches the RGB strip");
     }
     QTemporaryDir files;
-    const QString project = files.filePath("rgb.pinol");
+    const QString project = files.filePath("rgb.nyxmap");
     check(engine.saveProject(project, {}, &error), "save typed RGB timeline");
     check(engine.loadProject(project, nullptr, &error), "load typed RGB timeline");
     check(engine.animation(engine.indexOfAnimation(tid)).tracks[0].color, "project loader retains color type");
@@ -181,8 +181,8 @@ int runColorAnimationTests(Engine &engine, const QString &root)
           nearRgb(restoredLocal.tracks[0].capturedRgb, capturedLocal.tracks[0].capturedRgb), "snapshot Undo restores RGB capture and clock exactly");
     check(!engine.layerJson(engine.indexOfId(currentId)).value("anims").toArray()[0].toObject().contains("_undo_captured_rgb"),
           "runtime RGB capture is absent from persisted layer JSON");
-    check(engine.saveProject(files.filePath("current-rgb.pinol"), {}, &error), "save current RGB mode");
-    check(engine.loadProject(files.filePath("current-rgb.pinol"), nullptr, &error), "reload current RGB mode");
+    check(engine.saveProject(files.filePath("current-rgb.nyxmap"), {}, &error), "save current RGB mode");
+    check(engine.loadProject(files.filePath("current-rgb.nyxmap"), nullptr, &error), "reload current RGB mode");
     check(engine.animation(engine.indexOfAnimation(currentTimelineId)).tracks[0].keys[0].isCurrentValue &&
           engine.layerAnim(currentId, "add", &restoredLocal) && restoredLocal.tracks[0].keys[0].isCurrentValue,
           "project reload retains current-value mode for global and local RGB tracks");

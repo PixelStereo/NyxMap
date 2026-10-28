@@ -43,21 +43,21 @@ jobs:
           npm run build
       - name: Exercise the actual controller UI
         run: |
-          node test/open_stage_control_fixture.cjs > "$RUNNER_TEMP/pinol-fixture.log" 2>&1 &
+          node test/open_stage_control_fixture.cjs > "$RUNNER_TEMP/nyxmap-fixture.log" 2>&1 &
           NODE_PATH='' node "$RUNNER_TEMP/open-stage-control/app" --no-gui --port 8080 --osc-port 11111 \
-            --custom-module "$RUNNER_TEMP/controller-pack/Pinol-OpenStageControl/pinol.js" \
-            --load "$RUNNER_TEMP/controller-pack/Pinol-OpenStageControl/pinol.json" > "$RUNNER_TEMP/open-stage-control.log" 2>&1 &
+            --custom-module "$RUNNER_TEMP/controller-pack/NyxMap-OpenStageControl/nyxmap.js" \
+            --load "$RUNNER_TEMP/controller-pack/NyxMap-OpenStageControl/nyxmap.json" > "$RUNNER_TEMP/open-stage-control.log" 2>&1 &
           node test/open_stage_control_browser.cjs
       - uses: actions/upload-artifact@v4
         with:
-          name: Pinol-OpenStageControl
-          path: ${{ runner.temp }}/controller-pack/Pinol-OpenStageControl.zip
+          name: NyxMap-OpenStageControl
+          path: ${{ runner.temp }}/controller-pack/NyxMap-OpenStageControl.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: open-stage-control
           path: |
-            ${{ runner.temp }}/pinol-controller-*.png
+            ${{ runner.temp }}/nyxmap-controller-*.png
             ${{ runner.temp }}/open-stage-control.log
-            ${{ runner.temp }}/pinol-fixture.log
+            ${{ runner.temp }}/nyxmap-fixture.log

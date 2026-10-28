@@ -365,7 +365,7 @@ DmxOutput DmxOutput::fromJson(const QJsonObject &o)
     d.port = o.value("port").toInt(0);
     d.rate = o.value("rate").toDouble(40);
     d.priority = o.value("priority").toInt(100);
-    d.sourceName = o.value("source_name").toString(QStringLiteral("Pinol"));
+    d.sourceName = o.value("source_name").toString(QStringLiteral("NyxMap"));
     return d;
 }
 

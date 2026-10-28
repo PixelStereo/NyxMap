@@ -161,7 +161,7 @@ DmxOutputsPanel::DmxOutputsPanel(Engine *engine, QUndoStack *undo, QWidget *pare
     });
     connect(m_sourceName, &QLineEdit::editingFinished, this, [this] {
         const QString name = m_sourceName->text().trimmed();
-        editOutput(QStringLiteral("Output Source Name"), {}, [&](DmxOutput &o) { o.sourceName = name.isEmpty() ? QStringLiteral("Pinol") : name; });
+        editOutput(QStringLiteral("Output Source Name"), {}, [&](DmxOutput &o) { o.sourceName = name.isEmpty() ? QStringLiteral("NyxMap") : name; });
     });
     connect(m_rate, &QSpinBox::valueChanged, this, [this](int v) {
         editOutput(QStringLiteral("Output Rate"), QStringLiteral("rate"), [&](DmxOutput &o) { o.rate = v; });

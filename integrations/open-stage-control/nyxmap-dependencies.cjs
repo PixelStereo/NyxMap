@@ -7620,7 +7620,7 @@ module.exports = (typeof nativeRequire === 'function' ? nativeRequire : require)
 /***/ 246
 (module, __unused_webpack_exports, __webpack_require__) {
 
-// Build input only. Users load pinol.js; its dependency bundle is checked in.
+// Build input only. Users load nyxmap.js; its dependency bundle is checked in.
 module.exports = {WebSocket: __webpack_require__(699), osc: __webpack_require__(26)};
 
 

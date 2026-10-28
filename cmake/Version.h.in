@@ -1,2 +1,2 @@
 #pragma once
-#define PINOL_VERSION "@PINOL_VERSION@"
+#define NYXMAP_VERSION "@NYXMAP_VERSION@"

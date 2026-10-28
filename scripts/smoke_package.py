@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Smoke test of a packaged Pinol, run from the extracted archive on the CI runner (not the build tree).
+"""Smoke test of a packaged NyxMap, run from the extracted archive on the CI runner (not the build tree).
 
 Checks that the NDI and OMT libraries shipped with it load (--check-libraries), then renders a small project headless
 (--render --strict): an ISF generator from the package's own isf folder, an image and a video decoded by the package's
 FFmpeg. Fails if the program cannot start (a library missing), the project does
 not load, a layer or an effect is in error, or no picture is written.
 
-usage: smoke_package.py <Pinol executable> <isf folder> <test media folder> <work folder> [--allow-no-gl]
+usage: smoke_package.py <NyxMap executable> <isf folder> <test media folder> <work folder> [--allow-no-gl]
   --allow-no-gl: exit code 1 (OpenGL unavailable on this runner) is reported but not a failure — the program did start,
                  so its libraries were found.
 """
@@ -32,13 +32,13 @@ def main():
     full = {"corners": [[0, 0], [1, 0], [1, 1], [0, 1]], "cols": 4, "rows": 4, "offsets": [[0, 0]] * 16}
     layer = lambda name, source: {"name": name, "enable": True, "opacity": 1.0, "blend_mode": "normal",
                                   "source": source, "fx": [], "spatial": full}
-    project = {"app": "Pinol", "format_version": 1, "composition": {"width": 320, "height": 180}, "layers": [
+    project = {"app": "NyxMap", "format_version": 1, "composition": {"width": 320, "height": 180}, "layers": [
         layer("Pattern", {"type": "isf", "path": gen, "width": 320, "height": 180}),
         layer("Bars", {"type": "image", "path": os.path.join(media, 'bars.png')}),
         layer("Video", {"type": "video", "path": os.path.join(media, 'h264.mp4'), "loop": True, "speed": 1,
                         "playing": True}),
     ]}
-    proj = os.path.join(work, 'smoke.pinol')
+    proj = os.path.join(work, 'smoke.nyxmap')
     with open(proj, 'w') as f:
         json.dump(project, f, indent=1)
     out = os.path.join(work, 'smoke.png')

@@ -1,6 +1,6 @@
 #pragma once
 // Reading zip archives (a GDTF file is one): the files stored or deflated in them, read whole in memory. No zip64, no
-// encryption. Self-contained: no zlib (not available on every platform Pinol builds on).
+// encryption. Self-contained: no zlib (not available on every platform NyxMap builds on).
 
 #include <QByteArray>
 #include <QString>

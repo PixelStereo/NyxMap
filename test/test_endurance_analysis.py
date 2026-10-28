@@ -21,7 +21,7 @@ class EnduranceAnalysisTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.csv"
             path.write_text(
-                '# PINOL endurance metrics\n# ' + json.dumps({"schema": schema}) + '\n'
+                '# NYXMAP endurance metrics\n# ' + json.dumps({"schema": schema}) + '\n'
                 'utc,frames,missed,interval_p99_ms,interval_max_ms,outputs_dropped_total,shares_skipped_total,late_events_lost,journal_lost\n'
                 f'2026-10-19T12:00:00Z,60,0,17,18,2,4,0,{loss}\n'
                 '2026-10-19T12:00:01Z,58,2,35,40,5,11,0,0\n', encoding="utf-8")

@@ -1,9 +1,9 @@
-# PINOL golden-render regression fixtures
+# NYXMAP golden-render regression fixtures
 
 These fixtures are **analytical reference results**, written independently of the GPU renderer.
 They are not snapshots silently regenerated from the implementation under test.
 
-Run `ctest --test-dir build -R '^golden$' --output-on-failure` after building `pinol_tests`.
+Run `ctest --test-dir build -R '^golden$' --output-on-failure` after building `nyxmap_tests`.
 Each scene renders into an exact 128 × 64 viewport and compares **every RGB pixel inside each approved interior rectangle**, avoiding texture boundaries and anti-aliased edges. The current fixtures validate more than ten thousand pixels per run.
 
 - `split`: opaque red and blue halves of an image.

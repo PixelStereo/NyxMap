@@ -187,7 +187,7 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     check(engine.layerAnim(layer, point, &local) && local.clock >= 1 && local.clock < 2,
           "seeking along the path stays in the current backwards pass");
     check(previewMatchesOutput(pathEditor), "path seeking updates both coordinates through the shared transport");
-    const QString captures = qEnvironmentVariable("PINOL_UI_CAPTURE_DIR");
+    const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR");
     if (!captures.isEmpty()) {
         check(QDir().mkpath(captures), "create XY screenshot directory");
         check(pathEditor.grab().save(QDir(captures).filePath("xy-path-wave.png")), "save XY wave preview in CI");

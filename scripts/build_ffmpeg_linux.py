@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Linux release's shared LGPL FFmpeg, before configuring Pinol.
+"""Build the Linux release's shared LGPL FFmpeg, before configuring NyxMap.
 
 Usage: build_ffmpeg_linux.py PREFIX
 Needs build-essential, nasm, pkg-config, libdav1d-dev, libva-dev, libdrm-dev, zlib1g-dev, libssl-dev and

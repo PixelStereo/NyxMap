@@ -15,7 +15,7 @@
 #include <vector>
 
 // In the Media Bin under Generators, dragged onto a layer like any media; the layer's source path in a project
-inline const QString kLineGeneratorPath = QStringLiteral("/Pinol/Generators/Line");
+inline const QString kLineGeneratorPath = QStringLiteral("/NyxMap/Generators/Line");
 inline bool isLineGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kLineGeneratorPath); }
 
 // The ISF source of the shader of a built-in generator path; empty for any other path

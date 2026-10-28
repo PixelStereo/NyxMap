@@ -123,7 +123,7 @@ static int runSourceColorTests(Engine &engine)
     engine.setParameter(id, "source/color_space", "srgb"); engine.renderFrame();
     check(matches(read(id), "srgb"), "ICC manual override still reads the original source samples");
     engine.setParameter(id, "source/color_space", "linear709");
-    const QString project = files.path()+"/source-color.pinol";
+    const QString project = files.path()+"/source-color.nyxmap";
     check(engine.saveProject(project, {}, &error) && engine.loadProject(project, nullptr, &error), "reload source color project");
     check(engine.parameterValue(id, "source/color_space") == "linear709", "project load restores the declaration");
     engine.renderFrame();
@@ -249,7 +249,7 @@ int runOutputColorTests(Engine &engine)
     engine.setParameter(first,"output/input_space","displayp3");
     engine.setParameter(first,"output/space","rec709-g24");
     engine.setParameter(first,"output/exposure",.25);
-    const QString project=files.path()+"/color.pinol";
+    const QString project=files.path()+"/color.nyxmap";
     check(engine.saveProject(project,{},&error),"save color output project");
     QJsonObject ui;
     check(engine.loadProject(project,&ui,&error),"reload color output project");

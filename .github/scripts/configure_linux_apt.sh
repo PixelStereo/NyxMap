@@ -17,7 +17,7 @@ fi
 printf '%s\tpriority:1\n%s\tpriority:2\n' \
     'https://archive.ubuntu.com/ubuntu/' \
     'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-sudo tee /etc/apt/apt.conf.d/80pinol-ci-network >/dev/null <<'APT'
+sudo tee /etc/apt/apt.conf.d/80nyxmap-ci-network >/dev/null <<'APT'
 Acquire::Retries "2";
 Acquire::http::Timeout "30";
 Acquire::https::Timeout "30";

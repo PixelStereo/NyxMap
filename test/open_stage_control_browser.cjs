@@ -28,19 +28,19 @@ async function commandSeen(address) {
         await page.getByText('Loading session…', {exact: true}).waitFor({state: 'hidden'});
         await page.getByText('Start the film', {exact: true}).waitFor();
         await page.waitForFunction(() => {
-            const canvas = document.querySelectorAll('.pinol-cue-fill canvas')[1];
+            const canvas = document.querySelectorAll('.nyxmap-cue-fill canvas')[1];
             return canvas && canvas.height > 50 && canvas.width > 50 &&
                 canvas.getContext('2d').getImageData(Math.floor(canvas.width * .2), Math.floor(canvas.height * .5), 1, 1).data[3] > 0;
         }, null, {timeout: 10000});
         await page.getByText('0:04.2', {exact: true}).waitFor();
         await page.waitForFunction(() => {
-            const c = document.querySelector('.pinol-phase-meter canvas');
+            const c = document.querySelector('.nyxmap-phase-meter canvas');
             if (!c || c.width < 10 || c.height < 1) return false;
             const alpha = x => c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * .5), 1, 1).data[3];
             return alpha(.2) > alpha(.8);
         }, null, {timeout: 10000});
-        const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-' + name + '.png')});
-        const cards = await page.locator('.pinol-cue').all();
+        const capture = name => page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'nyxmap-controller-' + name + '.png')});
+        const cards = await page.locator('.nyxmap-cue').all();
         assert.equal(cards.length, 3);
         const [previous, current, next] = await Promise.all(cards.map(card => card.boundingBox()));
         assert.ok(previous.y < current.y && current.y < next.y, 'Cues stack previous/current/next vertically');
@@ -50,10 +50,10 @@ async function commandSeen(address) {
         for (const label of ['AUTO-FOLLOW · End + 0:00.0', 'WAIT · GO · Manual advance'])
             await page.getByText(label, {exact: true}).first().waitFor();
         await capture('show');
-        const cueRows = page.locator('.pinol-cue-row');
+        const cueRows = page.locator('.nyxmap-cue-row');
         assert.equal(await cueRows.count(), 4);
         for (const [i, label] of [[0, 'WAIT · GO'], [1, 'AUTO-FOLLOW'], [3, 'FOLLOW']]) {
-            const badge = cueRows.nth(i).locator('.pinol-continuation');
+            const badge = cueRows.nth(i).locator('.nyxmap-continuation');
             await badge.scrollIntoViewIfNeeded();
             assert.ok((await badge.innerText()).includes(label));
             const box = await badge.boundingBox();
@@ -61,7 +61,7 @@ async function commandSeen(address) {
         }
         await capture('cue-behavior');
         await page.setViewportSize({width: 768, height: 1024});
-        const badge = cueRows.nth(3).locator('.pinol-continuation');
+        const badge = cueRows.nth(3).locator('.nyxmap-continuation');
         await badge.scrollIntoViewIfNeeded();
         const rowBox = await cueRows.nth(3).boundingBox(), badgeBox = await badge.boundingBox();
         assert.ok(badgeBox.x >= rowBox.x && badgeBox.x + badgeBox.width <= rowBox.x + rowBox.width + 1, 'Tablet retains the continuation column');
@@ -92,13 +92,13 @@ async function commandSeen(address) {
         await button('LAYER CONTROL →').click();
         await page.getByText('LAYER REMOTE', {exact: true}).waitFor();
         assert.equal((await (await fetch('http://127.0.0.1:5678/test/commands')).json()).length, beforeNavigation.length,
-            'Opening layer control never sends a Pinol show command');
+            'Opening layer control never sends a NyxMap show command');
         const layerMenus = page.locator('.dropdown-container:visible select');
         await layerMenus.nth(0).locator('option').filter({hasText: 'Main image'}).waitFor({state: 'attached'});
         await layerMenus.nth(0).selectOption({index: 0});
         await page.getByText('Main image · LIVE EDIT', {exact: true}).waitFor();
-        const layerCard = title => page.locator('.pinol-layer-card').filter({has: page.getByText(title, {exact: true})});
-        const resetHeading = (title, label = title) => layerCard(title).locator('.pinol-reset-heading')
+        const layerCard = title => page.locator('.nyxmap-layer-card').filter({has: page.getByText(title, {exact: true})});
+        const resetHeading = (title, label = title) => layerCard(title).locator('.nyxmap-reset-heading')
             .filter({has: page.getByText(label, {exact: true})});
         await layerCard('Locked').locator('.switch-container value.on').filter({hasText: 'OFF'}).waitFor();
         await layerCard('Enable').locator('.switch-container value.on').filter({hasText: 'ON'}).waitFor();
@@ -166,8 +166,8 @@ async function commandSeen(address) {
         await capture('tablet');
         assert.deepEqual(errors, []);
     } catch (error) {
-        if (page) console.error(await page.locator('.pinol-cue-fill canvas').evaluateAll(nodes => nodes.map(c => ({width:c.width, height:c.height, box:c.getBoundingClientRect().toJSON(), parent:c.parentNode.getBoundingClientRect().toJSON()}))).catch(() => []));
-        if (page) await page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'pinol-controller-failure.png')}).catch(() => {});
+        if (page) console.error(await page.locator('.nyxmap-cue-fill canvas').evaluateAll(nodes => nodes.map(c => ({width:c.width, height:c.height, box:c.getBoundingClientRect().toJSON(), parent:c.parentNode.getBoundingClientRect().toJSON()}))).catch(() => []));
+        if (page) await page.screenshot({path: path.join(process.env.RUNNER_TEMP, 'nyxmap-controller-failure.png')}).catch(() => {});
         throw error;
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
