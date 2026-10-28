@@ -482,6 +482,11 @@ Parameter *Engine::findParameter(quint64 layer, const QString &path)
                 if (p->path() == path) return p.get();
             return nullptr;
         }
+        if (path.startsWith(QLatin1String("fixture/"))) { // a fixture's of the pixel mapping
+            for (const auto &p : fixtureParams())
+                if (p->path() == path) return p.get();
+            return nullptr;
+        }
         for (Parameter *p : compositionParameters())
             if (p->path() == path) return p;
         return nullptr;
@@ -531,6 +536,11 @@ std::vector<Engine::AnimParam> Engine::animatableParams(quint64 layer) const
         if (i.animatable) out.push_back(i);
     // Interactions are addressed alongside composition values, but remain a separate stored category.
     if (!layer) for (const auto &p : const_cast<Engine *>(this)->interactionParams()) {
+        const auto info = p->info();
+        if (info.animatable) out.push_back(info);
+    }
+    // So are the fixtures' intensities (the pixel mapping)
+    if (!layer) for (const auto &p : const_cast<Engine *>(this)->fixtureParams()) {
         const auto info = p->info();
         if (info.animatable) out.push_back(info);
     }

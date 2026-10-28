@@ -98,6 +98,7 @@ public:
         QJsonArray layers;
         QJsonObject composition;
         QJsonArray interactions;
+        QJsonArray fixtures;
     };
     // How late the steps fired, after their pre-wait or their GO from the step before (seconds): the cue clock's
     // precision, measured. p99 and max over every step fired since the last reset.

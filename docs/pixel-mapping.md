@@ -97,6 +97,15 @@ into the project, so the file is not needed afterwards.
   layer, linked to it (`path.line_layer`, `path.line`), and the engine keeps its path where that line is on the
   composition.
 
+### In snapshots, OSC, interactions and timelines
+
+Each fixture's show values are parameters of the composition: `fixture/<id>/enable`, `fixture/<id>/solo` and
+`fixture/<id>/intensity`. A snapshot stores them for every fixture. The Snapshots inspector lists them under
+**Fixtures**, where each fixture can be left out. A recall sets on/off and solo at once and fades the intensity, in the
+snapshot's fade or the time given to it. A fixture made after the snapshot, or left out of it, is left alone. One removed
+since is not made again: the patch itself (types, placement, addresses, outputs) is not part of a snapshot. Intensity can
+also be driven by a timeline or an interaction.
+
 ## DMX outputs
 
 In the Composition tab: a list of the outputs (on, name, protocol, state), and the settings of the one selected. Only

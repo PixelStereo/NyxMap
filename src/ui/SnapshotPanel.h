@@ -79,6 +79,8 @@ private:
     void fillComposition(const QJsonObject &composition);
     void fillInteractions(const QJsonArray &interactions); // their part: each one, its values
     void setInteractionIncluded(int i, quint64 id, bool included);
+    void fillFixtures(const QJsonArray &fixtures); // their part: each one, on / off, solo, intensity
+    void setFixtureIncluded(int i, quint64 id, bool included);
     void refreshRows(); // value and time texts of the tree, after an edit (no rebuild)
     int selected() const;
     int indexOf(QTreeWidgetItem *it) const;  // the snapshot a row shows (-1: a group, none)

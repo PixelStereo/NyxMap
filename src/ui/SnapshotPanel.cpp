@@ -72,15 +72,23 @@ static QString valueText(const MemField &f, const QJsonValue &value)
     }
 }
 
-// The object a field's row refers to: a layer of the snapshot, (-1) its composition, or (-2 - k) its interaction k
+// The object a field's row refers to: a layer of the snapshot, (-1) its composition, (-2 - k) its interaction k, or
+// (kFixtureRow - k) its fixture k
+static constexpr int kFixtureRow = -1000000;
 static QJsonObject rowObject(const Engine::Snapshot &m, int row)
 {
+    if (row <= kFixtureRow) return kFixtureRow - row < m.fixtures.size() ? m.fixtures.at(kFixtureRow - row).toObject() : QJsonObject();
     if (row <= -2) return -2 - row < m.interactions.size() ? m.interactions.at(-2 - row).toObject() : QJsonObject();
     if (row < 0) return m.composition;
     return row < m.layers.size() ? m.layers.at(row).toObject() : QJsonObject();
 }
 static bool setRowObject(Engine::Snapshot &m, int row, const QJsonObject &o)
 {
+    if (row <= kFixtureRow) {
+        if (kFixtureRow - row >= m.fixtures.size()) return false;
+        m.fixtures[kFixtureRow - row] = o;
+        return true;
+    }
     if (row <= -2) {
         if (-2 - row >= m.interactions.size()) return false;
         m.interactions[-2 - row] = o;
@@ -635,6 +643,10 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
             setInteractionIncluded(selected(), it->data(0, IdRole).toULongLong(), it->checkState(0) == Qt::Checked);
             return;
         }
+        if (it->data(0, KeyRole).toString().startsWith(QLatin1String("F")) && it->data(0, IdRole).isValid()) {
+            setFixtureIncluded(selected(), it->data(0, IdRole).toULongLong(), it->checkState(0) == Qt::Checked);
+            return;
+        }
         if (!it->data(0, IdRole).isValid()) return;
         setInclusion(selected(), it->data(0, IdRole).toULongLong(), it->checkState(0) == Qt::Checked);
     });
@@ -864,6 +876,7 @@ void SnapshotPanel::showInspector(int i)
     QTreeWidgetItem *current = nullptr;
     fillComposition(m.composition);
     fillInteractions(m.interactions);
+    fillFixtures(m.fixtures);
     for (int row = 0; row < m.layers.size(); ++row) {
         const QJsonObject o = m.layers[row].toObject();
         auto *it = new QTreeWidgetItem(m_layers, {(o.contains("parent") ? QStringLiteral("    ") : QString()) + o.value("name").toString(),
@@ -1480,6 +1493,7 @@ void SnapshotPanel::store()
     m.layers = m_engine->captureLayers();
     m.composition = m_engine->captureComposition();
     m.interactions = m_engine->captureInteractions();
+    m.fixtures = m_engine->captureFixtures();
     m.thumbnail = m_engine->grabOutput().scaled(kThumb * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     const int sel = selected();
     const int i = m_engine->addSnapshot(m, sel >= 0 ? sel + 1 : -1); // after the selected one, in its group
@@ -1547,6 +1561,23 @@ void SnapshotPanel::updateSnapshot(int i)
             now[k] = o;
         }
         m.interactions = now;
+    }
+    // The fixtures: the same
+    {
+        QHash<QString, QJsonObject> before;
+        for (const QJsonValue &v : m.fixtures) before.insert(v.toObject().value("id").toString(), v.toObject());
+        QJsonArray now = m_engine->captureFixtures();
+        for (int k = 0; k < now.size(); ++k) {
+            QJsonObject o = now[k].toObject();
+            const auto b = before.constFind(o.value("id").toString());
+            if (b != before.constEnd()) {
+                o["included"] = b->value("included").toBool(true);
+                for (const char *key : {"timing", "easing", "delay"})
+                    if (b->contains(QLatin1String(key))) o[QLatin1String(key)] = b->value(QLatin1String(key));
+            }
+            now[k] = o;
+        }
+        m.fixtures = now;
     }
     m.thumbnail = m_engine->grabOutput().scaled(kThumb * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_engine->setSnapshot(i, m);
@@ -1752,6 +1783,77 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
         it->setExpanded(m_expanded.contains(it->data(0, KeyRole).toString()));
     }
     top->setExpanded(!m_expanded.contains(QStringLiteral("!interactions"))); // shown unless folded
+}
+
+// The fixtures in the snapshot (pixel mapping): each one (by its name now), included or not, on / off, solo and its
+// intensity — which fades in its time as a layer's number
+void SnapshotPanel::fillFixtures(const QJsonArray &fixtures)
+{
+    if (fixtures.isEmpty()) return;
+    auto *top = new QTreeWidgetItem(m_layers, {QStringLiteral("Fixtures"), QStringLiteral("%1").arg(fixtures.size())});
+    top->setData(0, KeyRole, QStringLiteral("fixtures"));
+    QFont bold = top->font(0);
+    bold.setBold(true);
+    top->setFont(0, bold);
+    top->setFlags(Qt::ItemIsEnabled);
+    const FixturePatch patch = m_engine->fixturePatch();
+    for (int k = 0; k < fixtures.size(); ++k) {
+        const QJsonObject o = fixtures[k].toObject();
+        const quint64 id = o.value("id").toString().toULongLong();
+        const QJsonObject params = o.value("params").toObject();
+        const Fixture *now = patch.findFixture(id);
+        auto *it = new QTreeWidgetItem(top, {now ? now->name : o.value("name").toString(),
+                                             (params.value("enable").toBool(true) ? QStringLiteral("✓ ") : QStringLiteral("— ")) +
+                                                 QStringLiteral("%1%").arg(std::lround(params.value("intensity").toDouble(1) * 100))});
+        it->setData(0, IdRole, id);
+        it->setData(0, KeyRole, QStringLiteral("F%1").arg(id));
+        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+        it->setCheckState(0, o.value("included").toBool(true) ? Qt::Checked : Qt::Unchecked);
+        if (!now) {
+            it->setForeground(0, QColor(255, 180, 90));
+            it->setToolTip(0, QStringLiteral("Removed since: left out by the recall"));
+        }
+        auto field = [&](MemField::Kind kind, const QString &key, const QString &label) {
+            MemField f;
+            f.kind = kind;
+            f.row = kFixtureRow - k;
+            f.path = {QStringLiteral("params"), key};
+            f.label = label;
+            return f;
+        };
+        for (const auto &[key, label] : {std::pair{"enable", "On"}, std::pair{"solo", "Solo"}})
+            if (params.contains(QLatin1String(key)))
+                addField(it, field(MemField::Bool, QLatin1String(key), QLatin1String(label)), params.value(QLatin1String(key)));
+        if (params.contains(QLatin1String("intensity"))) {
+            MemField f = field(MemField::Number, QStringLiteral("intensity"), QStringLiteral("Intensity"));
+            f.min = 0;
+            f.max = 1;
+            f.scale = 100;
+            f.decimals = 0;
+            f.suffix = QStringLiteral(" %");
+            f.step = 0.01;
+            f.timeKey = QStringLiteral("intensity"); // fades in its time
+            addField(it, f, params.value(QLatin1String("intensity")));
+        }
+        it->setExpanded(m_expanded.contains(it->data(0, KeyRole).toString()));
+    }
+    top->setExpanded(!m_expanded.contains(QStringLiteral("!fixtures"))); // shown unless folded
+}
+
+void SnapshotPanel::setFixtureIncluded(int i, quint64 id, bool included)
+{
+    if (i < 0) return;
+    Engine::Snapshot m = m_engine->snapshot(i);
+    for (int k = 0; k < m.fixtures.size(); ++k) {
+        QJsonObject o = m.fixtures[k].toObject();
+        if (o.value("id").toString().toULongLong() != id) continue;
+        o["included"] = included;
+        m.fixtures[k] = o;
+    }
+    m_applying = true;
+    m_engine->setSnapshot(i, m);
+    m_applying = false;
+    emit edited();
 }
 
 void SnapshotPanel::setInteractionIncluded(int i, quint64 id, bool included)

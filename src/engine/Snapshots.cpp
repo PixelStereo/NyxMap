@@ -910,10 +910,13 @@ void Engine::recallSnapshotCopy(const Snapshot &m, int i)
     if (!m.id) return;
     resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
-    if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && interactions().empty()) return;
+    if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && m.fixtures.isEmpty() &&
+        interactions().empty())
+        return;
     if (!m.layers.isEmpty()) applyLayers(m.layers, m.fade, true);
     applyComposition(m.composition, m.fade);
     applyInteractions(m.interactions, m.fade);
+    applyFixtures(m.fixtures, m.fade);
     {
         Lock lk(&m_mutex);
         m_recalledSnapshot = m.id;
@@ -1524,6 +1527,7 @@ QJsonObject Engine::snapshotToJson(const Snapshot &m, const QString &dir) const
     QJsonObject out{{"id", QString::number(m.id)}, {"name", m.name}, {"fade", m.fade}, {"layers", layers}};
     if (!m.composition.isEmpty()) out["composition"] = m.composition;
     if (!m.interactions.isEmpty()) out["interactions"] = m.interactions;
+    if (!m.fixtures.isEmpty()) out["fixtures"] = m.fixtures;
     if (!m.thumbnail.isNull()) {
         QByteArray png;
         QBuffer buf(&png);
@@ -1543,6 +1547,7 @@ Engine::Snapshot Engine::snapshotFromJson(const QJsonObject &o, const QString &d
     m.thumbnail.loadFromData(QByteArray::fromBase64(o.value("thumbnail").toString().toLatin1()), "PNG");
     m.composition = o.value("composition").toObject();
     m.interactions = o.value("interactions").toArray();
+    m.fixtures = o.value("fixtures").toArray();
     for (const QJsonValue &v : o.value("layers").toArray()) {
         QJsonObject l = v.toObject();
         auto resolve = [&](QJsonObject x) {
@@ -1591,10 +1596,11 @@ double Engine::snapshotDuration(quint64 id) const
     }
     if (!m->composition.isEmpty() && m->composition.value("included").toBool(true))
         scan(m->composition);
-    for (const QJsonValue &v : m->interactions) {
-        const QJsonObject o = v.toObject();
-        if (o.value("included").toBool(true)) scan(o);
-    }
+    for (const QJsonArray *list : {&m->interactions, &m->fixtures})
+        for (const QJsonValue &v : *list) {
+            const QJsonObject o = v.toObject();
+            if (o.value("included").toBool(true)) scan(o);
+        }
     return d;
 }
 
@@ -1672,11 +1678,16 @@ void Engine::applyInteractionValues(quint64 id, const QJsonObject &params, const
             emit interactionsChanged();
         }, Qt::QueuedConnection);
     }
-    // In the order of their keys: what it is (its source, its target) before its values
+    applyStoredValues(prefix, interactionKeys(), params, timing, easing, fade, delays);
+}
+
+void Engine::applyStoredValues(const QString &prefix, const QStringList &order, const QJsonObject &params,
+                               const QJsonObject &timing, const QJsonObject &easing, double fade, const QJsonObject &delays)
+{
+    // In the order of their keys (an interaction: what it is, its source and its target, before its values)
     QStringList keys;
     for (auto it = params.begin(); it != params.end(); ++it)
         keys << (it.key().startsWith(prefix) ? it.key().mid(prefix.size()) : it.key());
-    const QStringList order = interactionKeys();
     std::stable_sort(keys.begin(), keys.end(), [&](const QString &a, const QString &b) {
         const auto ia = order.indexOf(a), ib = order.indexOf(b);
         return (ia < 0 ? 1000 : ia) < (ib < 0 ? 1000 : ib);
@@ -1714,6 +1725,38 @@ void Engine::applyInteractionValues(quint64 id, const QJsonObject &params, const
         } else {
             p->setJson(value);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The fixtures in the snapshots: their values fade as an interaction's
+
+QStringList Engine::fixtureKeys() { return {QStringLiteral("enable"), QStringLiteral("solo"), QStringLiteral("intensity")}; }
+
+QJsonArray Engine::captureFixtures() const
+{
+    Lock lk(&m_mutex);
+    auto *self = const_cast<Engine *>(this);
+    QJsonArray out;
+    for (const Fixture &f : m_fixtures.fixtures) {
+        QJsonObject params;
+        const QString prefix = QStringLiteral("fixture/%1/").arg(f.id);
+        for (const QString &k : fixtureKeys())
+            if (const Parameter *p = self->findParameter(0, prefix + k)) params.insert(k, p->json());
+        out.append(QJsonObject{{"id", QString::number(f.id)}, {"name", f.name}, {"included", true}, {"params", params}});
+    }
+    return out;
+}
+
+void Engine::applyFixtures(const QJsonArray &states, double fade)
+{
+    Lock lk(&m_mutex);
+    for (const QJsonValue &v : states) {
+        const QJsonObject o = v.toObject();
+        const quint64 id = o.value("id").toString().toULongLong();
+        if (!o.value("included").toBool(true) || !m_fixtures.findFixture(id)) continue;
+        applyStoredValues(QStringLiteral("fixture/%1/").arg(id), fixtureKeys(), o.value("params").toObject(),
+                          o.value("timing").toObject(), o.value("easing").toObject(), fade, o.value("delay").toObject());
     }
 }
 
@@ -1844,6 +1887,13 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     }
     for (const auto &interaction : m_interactions)
         if (interaction.enabled && !interactionIds.contains(interaction.id)) return mismatch(QStringLiteral("Additional enabled interaction"));
+    for (const auto &value : snapshot.fixtures) {
+        const auto stored = value.toObject();
+        if (!stored.value("included").toBool(true)) continue;
+        const quint64 fixture = stored.value("id").toString().toULongLong();
+        if (!m_fixtures.findFixture(fixture)) continue; // removed since: the recall leaves it
+        if (!paramsMatch(0, stored.value("params").toObject(), QStringLiteral("fixture/%1/").arg(fixture))) return false;
+    }
     return true;
 }
 

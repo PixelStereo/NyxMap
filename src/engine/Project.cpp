@@ -111,6 +111,7 @@ void Engine::clearProject()
         m_nextPatchId = 1;
         m_fixtures = FixturePatch();
         ++m_fixturesVersion;
+        m_fixtureParamsDirty = true;
     }
     emit fixturesChanged();
     for (auto &l : old) {

@@ -683,7 +683,8 @@ void Sequencer::fireSnapshot(quint64 snapshotId)
         recordWork(start, done); // no UI Undo recording, so capture time is zero
         return;
     }
-    RecallBefore before{m_engine.captureRecallLayersById(snapshotId), m_engine.captureComposition(), m_engine.captureInteractions()};
+    RecallBefore before{m_engine.captureRecallLayersById(snapshotId), m_engine.captureComposition(), m_engine.captureInteractions(),
+                        m_engine.captureFixtures()};
     const qint64 captured = FrameTiming::nowNs();
     if (!m_engine.recallSnapshotById(snapshotId)) return;
     recordWork(captured, FrameTiming::nowNs());
