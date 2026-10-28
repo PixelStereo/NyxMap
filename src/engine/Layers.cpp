@@ -382,6 +382,27 @@ QList<int> Engine::groupMembers(int g) const
     return out;
 }
 
+std::vector<LinePath> Engine::layerLines(quint64 id) const
+{
+    Lock lk(&m_mutex);
+    const int i = indexOfId(id);
+    return i >= 0 ? m_layers[size_t(i)]->lines : std::vector<LinePath>{};
+}
+
+void Engine::setLayerLines(quint64 id, const std::vector<LinePath> &lines)
+{
+    {
+        Lock lk(&m_mutex);
+        const int i = indexOfId(id);
+        if (i < 0) return;
+        Layer &l = *m_layers[size_t(i)];
+        if (l.lines == lines) return;
+        l.lines = lines;
+        ++l.linesRevision;
+    }
+    emit layerLinesChanged(id);
+}
+
 std::vector<Mask> Engine::layerMasks(quint64 id) const
 {
     Lock lk(&m_mutex);
@@ -451,6 +472,8 @@ void Engine::releaseLayer(Layer &l)
     l.matteTarget.destroy();
     l.mattePicture.destroy();
     l.shapeMaskSurface.destroy();
+    l.linesTex.destroy();
+    l.linesTexRev = 0;
     l.shapeMaskComp.destroy();
     l.shapeMaskTarget.destroy();
     l.shapeMaskSurfaceRev = l.shapeMaskCompRev = 0;
@@ -1547,6 +1570,10 @@ bool Engine::setLayerIsf(int i, const QString &path, QString *err, IsfFailure on
             return false;
         }
         g = detachSource(*l);
+        if (!isLineGeneratorPath(path) && !l->lines.empty()) { // its lines are a Line generator's
+            l->lines.clear();
+            ++l->linesRevision;
+        }
         l->type = SourceType::Isf;
         l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         l->error = inst->error();

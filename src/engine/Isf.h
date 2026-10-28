@@ -148,6 +148,9 @@ public:
     // Texture of the engine bound to the image input `name` at the next renders (0: back to its own image)
     void setImageTexture(const QString &name, GLuint tex, int w, int h);
     IsfInput *input(const QString &name);
+    // A texture of the engine bound at the next renders to a sampler the shader declares itself (not one of its
+    // inputs: the Line generator's segments); 0 unbinds it
+    void setExtraTexture(const QByteArray &uniform, GLuint tex);
 
     // In a file: the shader (path), its mask, its image inputs' files ("images": input → path) and, unless its
     // values are kept elsewhere (a layer keeps its shaders' values in its own parameters), its parameters' values
@@ -204,6 +207,13 @@ private:
     std::vector<IsfPass> m_passes;
     std::vector<IsfTarget> m_targets;
     std::vector<IsfImported> m_imported;
+    struct ExtraTexture {
+        QByteArray uniform;
+        GLuint tex = 0;
+        GLint loc = -1;
+        GLuint program = 0; // the program its location was found in
+    };
+    std::vector<ExtraTexture> m_extraTextures;
 
     GLuint m_program = 0;
     GLint m_locPassIndex = -1, m_locRenderSize = -1, m_locTime = -1, m_locTimeDelta = -1, m_locDate = -1,

@@ -394,6 +394,64 @@ quint64 FixturePanel::addFixture(const QString &typeId)
     return made;
 }
 
+int FixturePanel::addLineFixtures(quint64 layer, const QString &typeId, int pixels)
+{
+    std::vector<std::vector<QPointF>> paths; // where each line is on the composition now (the engine keeps it so)
+    std::vector<bool> closed;
+    QString layerName;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_engine->indexOfId(layer));
+        if (!l) return 0;
+        layerName = l->name;
+        for (const LinePath &line : l->lines) {
+            std::vector<QPointF> pts;
+            for (const QPointF &q : line.points) pts.push_back(l->mapping.map(q.x(), q.y()));
+            paths.push_back(pts);
+            closed.push_back(line.closed);
+        }
+    }
+    if (paths.empty()) return 0;
+    int count = 0;
+    quint64 last = 0;
+    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixtures on Lines"), [&](FixturePatch &p) {
+        const FixtureType *t = p.findType(typeId);
+        if (!t || !takesFixtureGrid(*t)) return;
+        if (p.outputs.empty()) {
+            DmxOutput o;
+            o.name = QStringLiteral("Art-Net 1");
+            p.outputs.push_back(o);
+            p.normalize();
+        }
+        quint64 next = 0;
+        for (const Fixture &x : p.fixtures) next = std::max(next, x.id);
+        for (int i = 0; i < int(paths.size()); ++i) {
+            Fixture f;
+            f.type = typeId;
+            f.output = p.outputs.front().id;
+            f.cols = std::clamp(pixels, 1, 4096);
+            f.rows = 1;
+            f.path = paths[size_t(i)];
+            f.pathClosed = closed[size_t(i)];
+            f.lineLayer = layer;
+            f.lineIndex = i;
+            const std::optional<FixtureType> r = p.resolvedType(f);
+            std::tie(f.universe, f.address) = nextFree(p, f.output, r ? r->channelCount() : t->channelCount());
+            f.name = QStringLiteral("%1 · line %2").arg(layerName).arg(i + 1);
+            f.id = last = ++next;
+            p.fixtures.push_back(f);
+            ++count;
+        }
+    });
+    if (count) {
+        refresh();
+        selectFixture(last);
+        emit fixtureSelected(last);
+        emit projectEdited();
+    }
+    return count;
+}
+
 void FixturePanel::duplicateFixtures()
 {
     const std::vector<quint64> chosen = selectedIds();

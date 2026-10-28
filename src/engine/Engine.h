@@ -124,6 +124,9 @@ public:
     // Solo: by index, the layers another layer's solo leaves out (none when nothing is soloed). Lock held.
     std::vector<bool> soloLeftOut() const;
     // A layer's masks (Masks.h), by its id. Setting them redraws them.
+    // A Line generator's lines (LineGenerator.h), in its own frame
+    std::vector<LinePath> layerLines(quint64 id) const;
+    void setLayerLines(quint64 id, const std::vector<LinePath> &lines);
     std::vector<Mask> layerMasks(quint64 id) const;
     void setLayerMasks(quint64 id, const std::vector<Mask> &m);
     // The frame a layer's surface masks are drawn in, in pixels (its picture; a group: the composition; a viewport:
@@ -788,6 +791,7 @@ public:
 signals:
     void layersChanged();
     void fixturesChanged(); // the pixel mapping (setFixturePatch, a project loaded or cleared)
+    void layerLinesChanged(quint64 layer); // a Line generator's lines (setLayerLines)
     void compositionSizeChanged(QSize size);
     void snapshotsChanged();
     void presetsChanged();
@@ -1198,6 +1202,7 @@ private:
     void stepPixelMapping(); // render thread, lock held, after the composition is drawn
     FixturePatch m_fixtures;                 // (m_mutex)
     quint64 m_fixturesVersion = 1;           // (m_mutex) changes with it
+    void followLineFixtures(); // the strips on a Line generator's line: their paths where it is now (lock held)
     quint64 m_fixturesFollowed = 0;          // render thread: the version the points and the sender follow
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread

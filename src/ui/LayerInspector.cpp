@@ -883,7 +883,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         break;
     case SourceType::Isf:
         d << QStringLiteral("Color space: Unknown (shader RGB)");
-        kind = QStringLiteral("ISF Generator");
+        kind = isLineGeneratorPath(s.sourcePath) ? QStringLiteral("Generator") : QStringLiteral("ISF Generator");
         name = QFileInfo(s.sourcePath).completeBaseName();
         d << QStringLiteral("%1 × %2").arg(s.genW).arg(s.genH);
         break;
@@ -2586,6 +2586,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         res->addWidget(h);
         res->addWidget(fit);
         res->addWidget(reload);
+        reload->setVisible(builtInIsfSource(s.sourcePath).isEmpty()); // a shader of the application has no file
         v->addLayout(res);
         auto apply = [this, w, h] { m_engine->setGeneratorSize(m_layer, w->value(), h->value()); };
         connect(w, qOverload<int>(&QSpinBox::valueChanged), this, apply);
@@ -2605,6 +2606,64 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             m_engine->reloadIsf(gen);
             rebuild();
         });
+        if (isLineGeneratorPath(s.sourcePath)) { // its lines: drawn in the preview, removed, given LED strips
+            auto *lines = new QGroupBox(QStringLiteral("Lines"));
+            auto *lv = new QVBoxLayout(lines);
+            auto *count = new QLabel;
+            const quint64 id = m_layerId;
+            auto showCount = [this, count, id] {
+                const auto ls = m_engine->layerLines(id);
+                int segments = 0;
+                for (const LinePath &l : ls) segments += l.segmentCount();
+                count->setText(ls.empty() ? QStringLiteral("No line: draw one in the preview")
+                                          : QStringLiteral("%1 line%2, %3 segment%4").arg(ls.size()).arg(ls.size() == 1 ? "" : "s")
+                                                .arg(segments).arg(segments == 1 ? "" : "s"));
+            };
+            showCount();
+            connect(m_engine, &Engine::layerLinesChanged, count, [showCount, id](quint64 layer) {
+                if (layer == id) showCount();
+            });
+            auto *row = new QHBoxLayout;
+            auto *draw = new QPushButton(QStringLiteral("Draw Line"));
+            draw->setToolTip(QStringLiteral("Draw a line in the preview: click its points; a double-click, Enter or its first "
+                                            "point again ends it; Backspace takes a point back; Esc cancels.\n"
+                                            "Then drag its points, drag a segment to move the line, double-click a segment "
+                                            "to add a point, Delete removes the selected point or line."));
+            auto *clear = new QPushButton(QStringLiteral("Delete All"));
+            row->addWidget(draw);
+            row->addWidget(clear);
+            row->addStretch();
+            lv->addWidget(count);
+            lv->addLayout(row);
+            connect(draw, &QPushButton::clicked, this, &LayerInspector::lineDrawRequested);
+            connect(clear, &QPushButton::clicked, this, [this, id] {
+                const auto before = m_engine->layerLines(id);
+                if (before.empty()) return;
+                m_undo->push(new cmd::SetLines(m_engine, id, before, {}, QStringLiteral("Delete All Lines")));
+            });
+            // Pixel mapping: a strip on each line
+            auto *strip = new QHBoxLayout;
+            auto *type = new QComboBox;
+            for (const FixtureType &t : builtInFixtureTypes())
+                if (takesFixtureGrid(t)) type->addItem(t.name, t.id);
+            type->setCurrentIndex(std::max(0, type->findData(QStringLiteral("rgb"))));
+            auto *pixels = new IntBox;
+            pixels->setRange(1, 4096);
+            pixels->setValue(30);
+            pixels->setSuffix(QStringLiteral(" px"));
+            pixels->setToolTip(QStringLiteral("Pixels of each strip, spread along its line"));
+            auto *add = new QPushButton(QStringLiteral("Fixtures on Lines"));
+            add->setToolTip(QStringLiteral("A pixel mapping fixture on each line, its pixels along it, in DMX order from the "
+                                           "line's first point. It follows the line when the line or the layer moves."));
+            strip->addWidget(type);
+            strip->addWidget(pixels);
+            strip->addWidget(add, 1);
+            lv->addLayout(strip);
+            connect(add, &QPushButton::clicked, this, [this, type, pixels] {
+                emit lineFixturesRequested(type->currentData().toString(), pixels->value());
+            });
+            v->addWidget(lines);
+        }
         auto *params = new ParamPanel(m_engine, m_undo, m_layer, -1, ParamPanel::NoSpeed | ParamPanel::NoReset);
         params->setCoTargets(coTargets());
         connect(reset, &QPushButton::clicked, params, &ParamPanel::resetToDefaults);

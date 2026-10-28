@@ -93,8 +93,31 @@ std::map<quint64, std::vector<std::array<float, 3>>> Engine::fixtureLooks() cons
     return m_fixtureLooks;
 }
 
+void Engine::followLineFixtures()
+{
+    bool moved = false;
+    for (Fixture &f : m_fixtures.fixtures) {
+        if (!f.lineLayer) continue;
+        const int i = indexOfId(f.lineLayer);
+        if (i < 0) continue; // the layer gone: the strip stays where it was
+        const Layer &l = *m_layers[size_t(i)];
+        if (l.type != SourceType::Isf || !isLineGeneratorPath(l.sourcePath) || f.lineIndex >= int(l.lines.size())) continue;
+        const LinePath &line = l.lines[size_t(f.lineIndex)];
+        std::vector<QPointF> path;
+        path.reserve(line.points.size());
+        for (const QPointF &q : line.points) path.push_back(l.mapping.map(q.x(), q.y()));
+        if (path != f.path || line.closed != f.pathClosed) {
+            f.path = std::move(path);
+            f.pathClosed = line.closed;
+            moved = true;
+        }
+    }
+    if (moved) ++m_fixturesVersion; // its pixels sampled elsewhere
+}
+
 void Engine::stepPixelMapping()
 {
+    followLineFixtures();
     if (m_fixturesFollowed != m_fixturesVersion || m_fixturePointsComp != m_compSize) {
         m_fixturesFollowed = m_fixturesVersion;
         m_fixturePointsComp = m_compSize;

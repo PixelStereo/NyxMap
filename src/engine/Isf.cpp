@@ -1,5 +1,6 @@
 #include "Isf.h"
 #include "ImageFile.h"
+#include "LineGenerator.h"
 #include "Osc.h"
 
 #include <QDateTime>
@@ -21,6 +22,10 @@
 
 static bool readText(const QString &path, QString *out)
 {
+    if (const QString builtIn = builtInIsfSource(path); !builtIn.isEmpty()) { // a generator of the application
+        *out = builtIn;
+        return true;
+    }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return false;
     *out = QString::fromUtf8(f.readAll());
@@ -780,6 +785,16 @@ bool IsfInstance::load(const QString &path)
     return true;
 }
 
+void IsfInstance::setExtraTexture(const QByteArray &uniform, GLuint tex)
+{
+    for (ExtraTexture &x : m_extraTextures)
+        if (x.uniform == uniform) {
+            x.tex = tex;
+            return;
+        }
+    m_extraTextures.push_back({uniform, tex});
+}
+
 bool IsfInstance::reloadSafely()
 {
     // A new shader must never destroy the live picture before it is valid.
@@ -921,6 +936,13 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
             const RenderTarget &fr = t.rt[t.front];
             bindSampler(t.loc, t.sizeLoc, t.rectLoc, fr.tex, fr.w, fr.h);
         }
+        for (ExtraTexture &x : m_extraTextures) {
+            if (x.program != m_program) {
+                x.loc = f->glGetUniformLocation(m_program, x.uniform.constData());
+                x.program = m_program;
+            }
+            bindSampler(x.loc, -1, -1, x.tex, 1, 1);
+        }
     };
 
     static const std::vector<IsfPass> kSinglePass{IsfPass{}};
@@ -997,7 +1019,7 @@ QJsonObject IsfInstance::save(const QString &projectDir, bool withParams) const
 {
     QJsonObject o;
     o["path"] = m_path;
-    if (!projectDir.isEmpty()) o["relative_path"] = QDir(projectDir).relativeFilePath(m_path);
+    if (!projectDir.isEmpty() && builtInIsfSource(m_path).isEmpty()) o["relative_path"] = QDir(projectDir).relativeFilePath(m_path);
     if (maskLayer) {
         o["mask"] = QString::number(maskLayer); // ids are strings: JSON numbers are doubles
         o["mask_tap"] = maskPreFx ? "prefx" : "postfx";

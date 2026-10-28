@@ -214,6 +214,15 @@ SetMasks::SetMasks(Engine *e, quint64 layer, const std::vector<Mask> &before, co
 void SetMasks::undo() { m_e->setLayerMasks(m_layer, m_before); }
 void SetMasks::redo() { m_e->setLayerMasks(m_layer, m_after); }
 
+SetLines::SetLines(Engine *e, quint64 layer, const std::vector<LinePath> &before, const std::vector<LinePath> &after,
+                   const QString &text)
+    : m_e(e), m_layer(layer), m_before(before), m_after(after)
+{
+    setText(text);
+}
+void SetLines::undo() { m_e->setLayerLines(m_layer, m_before); }
+void SetLines::redo() { m_e->setLayerLines(m_layer, m_after); }
+
 // --- Layers -----------------------------------------------------------------
 
 AddLayer::AddLayer(Engine *e, int index, const QString &text) : m_e(e), m_index(index)

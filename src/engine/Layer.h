@@ -4,6 +4,7 @@
 #include "ClockGenerator.h"
 #include "Gl.h"
 #include "Isf.h"
+#include "LineGenerator.h"
 #include "LiveInput.h"
 #include "Mapping.h"
 #include "Masks.h"
@@ -63,6 +64,7 @@ inline QString clockGeneratorPath(ClockKind k)
 // The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
 inline const QString kWebGeneratorPath = QStringLiteral("/Pinol/Generators/Web Page");
 inline bool isWebGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kWebGeneratorPath); }
+// The Line generator (LineGenerator.h): an ISF generator of the application, kLineGeneratorPath its virtual path
 // Where the picture of a layer used as a source is taken
 enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
@@ -394,6 +396,13 @@ struct Layer {
     // A Countdown, Stopwatch or Clock generator (a text source showing its time): its settings and its transport
     std::shared_ptr<ClockGenerator> clockGen;
     unsigned masksRevision = 1;
+    // A Line generator's lines (LineGenerator.h), in its own frame: edited by the interface (linesRevision changes),
+    // handed to its shader by the render thread as a texture of segments
+    std::vector<LinePath> lines;
+    unsigned linesRevision = 1;
+    Texture2D linesTex;
+    unsigned linesTexRev = 0;
+    QSize linesTexSize; // the picture's size its lengths were measured in
     Texture2D shapeMaskSurface, shapeMaskComp; // their alpha, in its picture and in the composition
     unsigned shapeMaskSurfaceRev = 0, shapeMaskCompRev = 0;
     QSize shapeMaskSurfaceSize, shapeMaskCompSize;

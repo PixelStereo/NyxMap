@@ -139,7 +139,7 @@ bool MappingView::pressFixture(QMouseEvent *e)
     const QPointF at = e->position();
     m_fixtureDrag = FixtureDrag::None;
     for (const Fixture &f : patch.fixtures)
-        if (f.id == m_fixture && !f.locked) {
+        if (f.id == m_fixture && !f.locked && !f.onPath()) { // a strip has no grips
             if (QLineF(at, fixtureview::rotateGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Rotate;
             else if (QLineF(at, fixtureview::resizeGrip(f, comp, toW)).length() <= 7) m_fixtureDrag = FixtureDrag::Resize;
         }
@@ -152,7 +152,7 @@ bool MappingView::pressFixture(QMouseEvent *e)
         }
         if (!id) return false; // the layers' turn
         const auto f = std::find_if(patch.fixtures.begin(), patch.fixtures.end(), [&](const Fixture &x) { return x.id == id; });
-        if (f != patch.fixtures.end() && f->locked) return true; // picked, not moved
+        if (f != patch.fixtures.end() && (f->locked || f->lineLayer)) return true; // picked, not moved (a strip on a line follows it)
         m_fixtureDrag = FixtureDrag::Move;
     }
     m_fixturesBefore = patch;
@@ -171,6 +171,7 @@ bool MappingView::dragFixture(QMouseEvent *e)
         if (f.id != m_fixture) continue;
         if (m_fixtureDrag == FixtureDrag::Move) {
             f.center += now - m_fixtureGrab;
+            for (QPointF &q : f.path) q += now - m_fixtureGrab;
         } else if (m_fixtureDrag == FixtureDrag::Rotate) {
             // The angle of the pointer about the center, in composition pixels (y down: clockwise)
             auto angle = [&](QPointF n) { return std::atan2((n.y() - f.center.y()) * ch, (n.x() - f.center.x()) * cw); };
@@ -403,6 +404,9 @@ void MappingView::setLayer(int index)
         m_maskIndex = -1;
         m_maskDrag = MaskDrag::None;
         if (m_drawing) cancelDrawing();
+        if (m_lineDrawing) cancelLineDrawing();
+        m_lineSel = {};
+        m_lineDragging = false;
     }
     m_layer = index;
     update();
@@ -535,6 +539,7 @@ void MappingView::paintGL()
 {
     paintScene();
     paintMasks();
+    paintLines();
     paintGuides();
     paintViewportNames();
     paintFixtures();
@@ -1023,6 +1028,11 @@ void MappingView::mousePressEvent(QMouseEvent *e)
         setCursor(Qt::ClosedHandCursor);
         return;
     }
+    if (pressLine(e)) { // a Line generator's line, or a point of one being drawn
+        setFocus();
+        update();
+        return;
+    }
     if (pressFixture(e)) {
         setFocus();
         return;
@@ -1145,6 +1155,7 @@ void MappingView::mouseMoveEvent(QMouseEvent *e)
         return;
     }
     if (dragFixture(e)) return;
+    if (dragLine(e)) return;
     if (m_drawing) { // the line to the cursor; pressed: the last point's handles follow it
         m_cursor = e->position();
         if (m_drawPressing && !m_drawNodes.empty()) {
@@ -1272,6 +1283,7 @@ void MappingView::mouseReleaseEvent(QMouseEvent *)
         return;
     }
     if (releaseFixture()) return;
+    if (releaseLine()) return;
     if (m_drawing) {
         m_drawPressing = false;
         return;
@@ -1324,6 +1336,7 @@ void MappingView::mouseReleaseEvent(QMouseEvent *)
 
 void MappingView::keyPressEvent(QKeyEvent *e)
 {
+    if (keyLine(e)) return;
     if (m_drawing) {
         if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) finishDrawing();
         else if (e->key() == Qt::Key_Escape) cancelDrawing();
@@ -1347,7 +1360,10 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         if (!d.isNull()) {
             cmd::editFixtures(m_undo, m_engine, QStringLiteral("Move Fixture"), [&](FixturePatch &p) {
                 for (Fixture &f : p.fixtures)
-                    if (f.id == id) f.center += d;
+                    if (f.id == id && !f.lineLayer) { // a strip on a line follows it
+                        f.center += d;
+                        for (QPointF &q : f.path) q += d;
+                    }
             }, QStringLiteral("nudge-fixture-%1").arg(id));
             return;
         }
@@ -1719,6 +1735,7 @@ bool MappingView::pressMask(QMouseEvent *e)
 
 void MappingView::mouseDoubleClickEvent(QMouseEvent *e)
 {
+    if (doubleClickLine(e)) return;
     if (m_drawing) {
         finishDrawing();
         return;

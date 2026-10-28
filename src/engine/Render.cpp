@@ -492,6 +492,16 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         if (l.generator) {
             bindLayerImages(*l.generator);
             feedAudio(*l.generator);
+            if (isLineGeneratorPath(l.sourcePath)) { // its lines, as segments, uploaded again when they change
+                if (l.linesTexRev != l.linesRevision || l.linesTexSize != QSize(l.genWidth, l.genHeight)) {
+                    int count = 0;
+                    const std::vector<float> data = lineSegmentData(l.lines, l.genWidth, l.genHeight, &count);
+                    l.linesTex.uploadFloat(data.data(), count, 2);
+                    l.linesTexRev = l.linesRevision;
+                    l.linesTexSize = QSize(l.genWidth, l.genHeight);
+                }
+                l.generator->setExtraTexture(QByteArrayLiteral("pinolSegments"), l.linesTex.tex);
+            }
             l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {
                 tex = l.generatorTarget.tex;

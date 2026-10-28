@@ -3,6 +3,7 @@
 #include "Mapping.h"
 #include "Masks.h"
 #include "Fixtures.h"
+#include "LineGenerator.h"
 #include <QOpenGLWidget>
 #include <QPointF>
 #include <QRectF>
@@ -46,8 +47,15 @@ public:
     bool showFixtures() const { return m_showFixtures; }
     void setFixture(quint64 id); // the fixture selected (0: none)
     quint64 fixture() const { return m_fixture; }
+    // A Line generator's lines (LineGenerator.h), on the current layer when it is one: drawn point by point (click;
+    // a double-click, Enter or the first point again ends it; Backspace takes the last point back; Esc cancels),
+    // their points dragged, a line dragged whole by a segment, a point added by double-clicking a segment, the
+    // selected point or line removed with Delete. MappingViewLines.cpp
+    void startLineDrawing();
+    bool drawingLine() const { return m_lineDrawing; }
 
 signals:
+    void linesEdited(); // a line drawn, moved or removed here
     void fixturePicked(quint64 id); // clicked here (0: the selection dropped)
     void masksEdited();         // a mask moved or drawn here
     void maskPicked(int index); // the mask just drawn
@@ -160,6 +168,29 @@ private:
     bool pressFixture(QMouseEvent *e); // true: taken by a fixture (not under the engine's lock)
     bool dragFixture(QMouseEvent *e);
     bool releaseFixture();
+
+    // Lines (MappingViewLines.cpp)
+    bool m_lineDrawing = false;
+    std::vector<QPointF> m_linePoints; // the line being drawn, in the layer's frame
+    struct LinePick {
+        int line = -1, point = -1; // a point of a line, or (point -1) a line picked by a segment
+        bool valid() const { return line >= 0; }
+    };
+    LinePick m_lineSel;
+    bool m_lineDragging = false;
+    QPointF m_lineGrab;                    // the frame point of the last move
+    std::vector<LinePath> m_linesBefore;   // at the start of the gesture, for undo
+    bool isLineLayer() const;              // lock held
+    LinePick hitLine(QPointF widgetPos) const; // lock held
+    void paintLines();
+    bool pressLine(QMouseEvent *e);        // true: taken by the lines (not under the engine's lock)
+    bool dragLine(QMouseEvent *e);
+    bool releaseLine();
+    bool doubleClickLine(QMouseEvent *e);
+    bool keyLine(QKeyEvent *e);
+    void finishLineDrawing();
+    void cancelLineDrawing();
+    void commitLines(const std::vector<LinePath> &before, const std::vector<LinePath> &after, const QString &text);
 
     // Masks
     int m_maskIndex = -1;
