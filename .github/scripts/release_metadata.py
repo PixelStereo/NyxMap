@@ -9,15 +9,15 @@ START = "<!-- release-downloads:start -->"
 END = "<!-- release-downloads:end -->"
 
 
-def release_assets(release, repository):
+def release_assets(release, repository, product="NyxMap"):
     tag = release["tag_name"]
     if not re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?", tag):
         return None
     names = {
-        "mac": f"NyxMap-macos-{tag}.zip",
-        "win": f"NyxMap-windows-{tag}.zip",
-        "linux": f"NyxMap-linux-x86_64-{tag}.AppImage",
-        "portable": f"NyxMap-linux-x86_64-{tag}.tar.gz",
+        "mac": f"{product}-macos-{tag}.zip",
+        "win": f"{product}-windows-{tag}.zip",
+        "linux": f"{product}-linux-x86_64-{tag}.AppImage",
+        "portable": f"{product}-linux-x86_64-{tag}.tar.gz",
     }
     assets = {a["name"]: a for a in release.get("assets", []) if a.get("state") == "uploaded" and a.get("size", 0) > 0}
     urls = {}
@@ -29,9 +29,9 @@ def release_assets(release, repository):
         if url != f"https://github.com/{repository}/releases/download/{tag}/{name}":
             raise ValueError(f"Unexpected asset URL: {url}")
         urls[platform] = url
-    remote = assets.get('NyxMap-OpenStageControl.zip')
+    remote = assets.get(f'{product}-OpenStageControl.zip')
     if remote:
-        expected = f'https://github.com/{repository}/releases/download/{tag}/NyxMap-OpenStageControl.zip'
+        expected = f'https://github.com/{repository}/releases/download/{tag}/{product}-OpenStageControl.zip'
         if remote['browser_download_url'] != expected:
             raise ValueError(f'Unexpected remote URL: {remote["browser_download_url"]}')
         urls['remote'] = expected
@@ -44,7 +44,9 @@ def select_release(releases, repository):
     published = sorted((r for r in releases if not r.get("draft") and r.get("published_at")),
                        key=lambda r: (r["published_at"], r.get("id", 0)), reverse=True)
     for release in published:
-        urls = release_assets(release, repository)
+        # Releases published before the rename retain their original asset names.
+        # Require a complete set from one product, never mix partial packages.
+        urls = release_assets(release, repository) or release_assets(release, repository, "Pinol")
         if urls:
             return release, urls
     raise ValueError("No published release with all four platform packages")
