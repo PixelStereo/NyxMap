@@ -296,13 +296,14 @@ RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(e->
     m_before = e->captureRecallLayers(snapshot);
     m_beforeComposition = e->captureComposition();
     m_beforeInteractions = e->captureInteractions();
+    m_beforeFixtures = e->captureFixtures();
     setText(QStringLiteral("Recall \"%1\"").arg(e->snapshot(snapshot).name));
 }
 
 RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before, const QJsonObject &beforeComposition,
-                               const QJsonArray &beforeInteractions)
+                               const QJsonArray &beforeInteractions, const QJsonArray &beforeFixtures)
     : m_e(e), m_snapshot(e->snapshot(snapshot).id), m_before(before), m_beforeComposition(beforeComposition),
-      m_beforeInteractions(beforeInteractions), m_done(true)
+      m_beforeInteractions(beforeInteractions), m_beforeFixtures(beforeFixtures), m_done(true)
 {
     setText(QStringLiteral("Recall \"%1\"").arg(e->snapshot(snapshot).name));
 }
@@ -319,6 +320,7 @@ void RecallSnapshot::redo()
         if (!m.layers.isEmpty()) m_e->applyLayers(m.layers, 0, true);
         m_e->applyComposition(m.composition, 0);
         m_e->applyInteractions(m.interactions, 0);
+        m_e->applyFixtures(m.fixtures, 0);
     }
 }
 

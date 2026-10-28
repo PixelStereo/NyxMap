@@ -139,6 +139,8 @@ struct FixturePatch {
     // The type as the fixture uses it: with the fixture's own grid of pixels when its type has one pixel
     std::optional<FixtureType> resolvedType(const Fixture &f) const;
     const DmxOutput *findOutput(quint64 id) const;
+    Fixture *findFixture(quint64 id);
+    const Fixture *findFixture(quint64 id) const;
     // Ids given where missing or taken, types colliding with a built-in one dropped, values clamped
     void normalize();
     QJsonObject toJson() const;

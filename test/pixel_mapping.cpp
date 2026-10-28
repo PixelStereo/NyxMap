@@ -571,6 +571,82 @@ static void gpuTests(Engine &e, const QString &tmp)
     e.newProject();
 }
 
+// The fixtures' values in the snapshots: stored, recalled (the intensity faded), left out, kept in a project
+static void snapshotTests(Engine &e, const QString &tmp)
+{
+    e.newProject();
+    FixturePatch p = onePatch("rgb");
+    Fixture second = p.fixtures[0];
+    second.id = 0;
+    second.name = "Second";
+    second.address = 10;
+    p.fixtures.push_back(second);
+    e.setFixturePatch(p);
+    const quint64 a = e.fixturePatch().fixtures[0].id, b = e.fixturePatch().fixtures[1].id;
+    const QString ia = QStringLiteral("fixture/%1/intensity").arg(a), ib = QStringLiteral("fixture/%1/intensity").arg(b);
+    const QString ea = QStringLiteral("fixture/%1/enable").arg(a), sb = QStringLiteral("fixture/%1/solo").arg(b);
+    check(e.parameterValue(0, ia).toDouble() == 1.0 && e.parameterValue(0, ea).toBool(), "a fixture's values are parameters");
+    check(e.setParameter(0, ia, 0.25) && e.fixturePatch().fixtures[0].intensity == 0.25, "setting its intensity sets the fixture's");
+
+    Engine::Snapshot m;
+    m.name = "Look";
+    m.fade = 0;
+    m.fixtures = e.captureFixtures();
+    check(m.fixtures.size() == 2 && m.fixtures[0].toObject().value("params").toObject().value("intensity").toDouble() == 0.25,
+          "a snapshot holds each fixture's values");
+    const int look = e.addSnapshot(m);
+
+    e.setParameter(0, ia, 0.9);
+    e.setParameter(0, ea, false);
+    e.setParameter(0, sb, true);
+    check(!e.fixturePatch().fixtures[0].enabled && e.fixturePatch().fixtures[1].solo, "on / off and solo set");
+    e.recallSnapshot(look);
+    e.renderFrame();
+    FixturePatch now = e.fixturePatch();
+    check(now.fixtures[0].intensity == 0.25 && now.fixtures[0].enabled && !now.fixtures[1].solo,
+          "the recall puts the fixtures back as stored");
+
+    // A fade: the intensity goes there over the snapshot's time, on / off at once
+    Engine::Snapshot slow = e.snapshot(look);
+    slow.fade = 0.5;
+    e.setSnapshot(look, slow);
+    e.setParameter(0, ia, 1.0);
+    e.recallSnapshot(look);
+    double mid = -1;
+    for (int i = 0; i < 200; ++i) {
+        e.renderFrame();
+        QThread::msleep(5);
+        const double v = e.fixturePatch().fixtures[0].intensity;
+        if (v > 0.26 && v < 0.99) mid = v;
+        if (v == 0.25) break;
+    }
+    check(mid > 0, "the intensity fades");
+    check(e.fixturePatch().fixtures[0].intensity == 0.25, "and gets there");
+
+    // Left out: left alone
+    Engine::Snapshot out = e.snapshot(look);
+    out.fade = 0;
+    QJsonObject first = out.fixtures[0].toObject();
+    first["included"] = false;
+    out.fixtures[0] = first;
+    e.setSnapshot(look, out);
+    e.setParameter(0, ia, 0.7);
+    e.recallSnapshot(look);
+    e.renderFrame();
+    check(e.fixturePatch().fixtures[0].intensity == 0.7, "a fixture left out of the snapshot is left alone");
+
+    // With the project
+    QString err;
+    const QString file = tmp + "/snapshots.pinol";
+    check(e.saveProject(file, {}, &err), "save the project with its snapshot");
+    e.newProject();
+    check(e.loadProject(file, nullptr, &err), "load it");
+    check(e.snapshotCount() == 1 && e.snapshot(0).fixtures.size() == 2 &&
+              !e.snapshot(0).fixtures[0].toObject().value("included").toBool(true),
+          "the snapshot keeps its fixtures");
+    e.newProject();
+}
+
 // Packets received over the loopback, from a real output
 static void networkTests(Engine &e)
 {
@@ -646,6 +722,7 @@ int main(int argc, char **argv)
     }
     QTemporaryDir tmp;
     gpuTests(e, tmp.path());
+    snapshotTests(e, tmp.path());
     networkTests(e);
     e.shutdown();
     std::printf("pixel_mapping: %s (%d failure%s)\n", failures ? "FAIL" : "OK", failures, failures == 1 ? "" : "s");
