@@ -116,6 +116,21 @@ private:
     std::vector<Mask> m_before, m_after;
 };
 
+// A Line generator's lines before / after (drawn, moved, removed in the Mapping view, or from its inspector)
+class SetLines : public QUndoCommand
+{
+public:
+    SetLines(Engine *e, quint64 layer, const std::vector<LinePath> &before, const std::vector<LinePath> &after,
+             const QString &text);
+    void undo() override;
+    void redo() override;
+
+private:
+    Engine *m_e;
+    quint64 m_layer;
+    std::vector<LinePath> m_before, m_after;
+};
+
 // Layer added (already done at push time)
 class AddLayer : public QUndoCommand
 {

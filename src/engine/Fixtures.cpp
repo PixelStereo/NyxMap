@@ -1,4 +1,5 @@
 #include "Fixtures.h"
+#include "LineGenerator.h"
 
 #include <QJsonArray>
 #include <QtMath>
@@ -273,6 +274,17 @@ QJsonObject Fixture::toJson() const
     if (cols != 1 || rows != 1 || byColumns || start != FixtureType::Start::TopLeft || snake)
         o["pixels"] = QJsonObject{{"cols", cols}, {"rows", rows}, {"order", byColumns ? "columns" : "rows"},
                                   {"start", startName(start)}, {"snake", snake}};
+    if (onPath()) {
+        QJsonArray pts;
+        for (const QPointF &p : path) pts.append(QJsonArray{p.x(), p.y()});
+        QJsonObject po{{"points", pts}};
+        if (pathClosed) po["closed"] = true;
+        if (lineLayer) {
+            po["line_layer"] = QString::number(lineLayer); // ids are strings: JSON numbers are doubles
+            po["line"] = lineIndex;
+        }
+        o["path"] = po;
+    }
     return o;
 }
 
@@ -300,6 +312,16 @@ Fixture Fixture::fromJson(const QJsonObject &o)
     f.intensity = o.value("intensity").toDouble(1);
     f.gamma = o.value("gamma").toDouble(1);
     f.white = o.value("white").toString() == QLatin1String("off") ? White::Off : White::Min;
+    const QJsonObject po = o.value("path").toObject();
+    for (const QJsonValue &v : po.value("points").toArray()) {
+        const QJsonArray xy = v.toArray();
+        if (xy.size() >= 2 && std::isfinite(xy[0].toDouble()) && std::isfinite(xy[1].toDouble()))
+            f.path.emplace_back(xy[0].toDouble(), xy[1].toDouble());
+    }
+    if (f.path.size() < 2) f.path.clear();
+    f.pathClosed = po.value("closed").toBool(false);
+    f.lineLayer = po.value("line_layer").toString().toULongLong();
+    f.lineIndex = std::max(0, po.value("line").toInt(0));
     return f;
 }
 
@@ -456,6 +478,12 @@ QPointF onComposition(const Fixture &f, QSize comp, double x, double y)
 
 std::vector<QPointF> fixturePixelPoints(const Fixture &f, const FixtureType &t, QSize comp)
 {
+    if (f.onPath()) { // a strip: spread along its path
+        LinePath line;
+        line.points = f.path;
+        line.closed = f.pathClosed;
+        return line.spread(t.pixelCount(), std::max(1, comp.width()), std::max(1, comp.height()));
+    }
     std::vector<QPointF> pts;
     for (int k = 0; k < t.pixelCount(); ++k) {
         const QPoint cell = t.pixelCell(k);
@@ -466,6 +494,14 @@ std::vector<QPointF> fixturePixelPoints(const Fixture &f, const FixtureType &t, 
 
 std::array<QPointF, 4> fixtureCorners(const Fixture &f, QSize comp)
 {
+    if (f.onPath()) { // a strip: the box around its path
+        double x0 = f.path[0].x(), x1 = x0, y0 = f.path[0].y(), y1 = y0;
+        for (const QPointF &p : f.path) {
+            x0 = std::min(x0, p.x()), x1 = std::max(x1, p.x());
+            y0 = std::min(y0, p.y()), y1 = std::max(y1, p.y());
+        }
+        return {QPointF(x0, y0), QPointF(x1, y0), QPointF(x1, y1), QPointF(x0, y1)};
+    }
     return {onComposition(f, comp, -0.5, -0.5), onComposition(f, comp, 0.5, -0.5), onComposition(f, comp, 0.5, 0.5),
             onComposition(f, comp, -0.5, 0.5)};
 }

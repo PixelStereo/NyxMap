@@ -1,6 +1,7 @@
 // Collect Files: the project and every file it uses gathered in one folder (Engine.h, CollectPlan).
 #include "EngineInternal.h"
 #include "Isf.h"
+#include "LineGenerator.h"
 
 #include <QDir>
 #include <QFile>
@@ -118,6 +119,7 @@ Engine::CollectPlan Engine::planCollect(const QString &parent, const QString &na
     visit(root, QString(), nullptr, [&](const QString &k, const QString &s, const QJsonObject *in) {
         if (s.isEmpty()) return;
         if (k == QLatin1String("relative_path")) return; // with its "path"
+        if (!builtInIsfSource(s).isEmpty()) return;        // a generator of the application (Line): no file
         // A layer's sequence, or one imported into the Media Bin (a folder)
         if (k == QLatin1String("path") && QDir::isAbsolutePath(s) &&
             ((in && in->contains(QLatin1String("sequence"))) || QFileInfo(s).isDir())) {

@@ -133,7 +133,7 @@ void Engine::clearProject()
 QString Engine::resolvePath(const QJsonObject &o, const QString &projectDir) const
 {
     const QString abs = o.value("path").toString();
-    if (!abs.isEmpty() && QFile::exists(abs)) return abs;
+    if (!abs.isEmpty() && (QFile::exists(abs) || !builtInIsfSource(abs).isEmpty())) return abs; // a file, or built in
     if (!projectDir.isEmpty()) {
         const QString rel = o.value("relative_path").toString();
         if (!rel.isEmpty()) {
@@ -192,6 +192,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Isf:
         if (l.generator) src = l.generator->save(projectDir, false);
         src["type"] = "isf";
+        if (isLineGeneratorPath(l.sourcePath)) src["lines"] = linePathsToJson(l.lines);
         src["width"] = l.genWidth;
         src["height"] = l.genHeight;
         break;
@@ -222,7 +223,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["rtsp_tcp"] = l.videoSource.rtspTcp;
     } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox) {
         src["path"] = l.sourcePath;
-        if (!projectDir.isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
+        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
     if (type == SourceType::Video && l.videoSource.isSequence()) // an image sequence: the folder is the path
         src["sequence"] = QJsonObject{{"pattern", l.videoSource.pattern}, {"start", l.videoSource.start},
@@ -355,6 +356,12 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             gen = layer(index)->generator.get();
         }
         if (gen) runGl([gen, src, projectDir] { gen->restore(src, projectDir); });
+        if (isLineGeneratorPath(path)) { // a Line generator: its lines
+            Lock lk(&m_mutex);
+            Layer *l = layer(index);
+            l->lines = linePathsFromJson(src.value("lines").toArray());
+            ++l->linesRevision;
+        }
     } else if (type == "input") { // a live input: kept even when it is not there now (it may come later)
         const QString uri = src.value("uri").toString();
         if (!setLayerInput(index, uri, &err)) {

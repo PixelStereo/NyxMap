@@ -45,6 +45,7 @@ endif()
 add_library(pinol_engine STATIC
   src/engine/Gl.cpp
   src/engine/Isf.cpp
+  src/engine/LineGenerator.cpp
   src/engine/ImageFile.cpp
   src/engine/Psd.cpp
   src/engine/IsfLibrary.cpp
@@ -322,7 +323,7 @@ set(APP_SOURCES
   src/ui/LayerInspector.cpp
   src/ui/ParamPanel.cpp
   src/ui/PresetEditor.cpp
-  src/ui/MappingView.cpp
+  src/ui/MappingView.cpp src/ui/MappingViewLines.cpp
   src/ui/PreviewWorkspace.cpp
   src/ui/FixtureOverlay.cpp
   src/ui/FixturePanel.cpp
@@ -574,6 +575,12 @@ if(PINOL_TESTS)
   target_compile_options(pinol_pixel_mapping_test PRIVATE ${PINOL_WARNINGS})
   add_test(NAME pixel_mapping COMMAND pinol_pixel_mapping_test)
   set_tests_properties(pixel_mapping PROPERTIES TIMEOUT 60)
+  add_executable(pinol_line_generator_test test/line_generator.cpp)
+  target_link_libraries(pinol_line_generator_test PRIVATE pinol_engine)
+  target_compile_options(pinol_line_generator_test PRIVATE ${PINOL_WARNINGS})
+  target_compile_definitions(pinol_line_generator_test PRIVATE PINOL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME line_generator COMMAND pinol_line_generator_test)
+  set_tests_properties(line_generator PROPERTIES TIMEOUT 60)
   add_executable(pinol_midi_virtual_test test/midi_virtual.cpp)
   target_link_libraries(pinol_midi_virtual_test PRIVATE pinol_engine)
   add_test(NAME midi_virtual COMMAND pinol_midi_virtual_test)
@@ -697,11 +704,16 @@ if(PINOL_TESTS)
   target_include_directories(pinol_number_widgets_test PRIVATE src/ui)
   target_link_libraries(pinol_number_widgets_test PRIVATE pinol_engine Qt6::Widgets)
   add_test(NAME number_widgets COMMAND pinol_number_widgets_test)
-  add_executable(pinol_mask_ui_test test/mask_ui.cpp src/ui/MappingView.cpp src/ui/FixtureOverlay.cpp src/ui/GlDraw.cpp
+  add_executable(pinol_mask_ui_test test/mask_ui.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp src/ui/GlDraw.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/MaskPanel.cpp)
   target_include_directories(pinol_mask_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_mask_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME mask_ui COMMAND pinol_mask_ui_test)
+  add_executable(pinol_line_ui_test test/line_ui.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
+                 src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+  target_include_directories(pinol_line_ui_test PRIVATE src/ui)
+  target_link_libraries(pinol_line_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
+  add_test(NAME line_ui COMMAND pinol_line_ui_test)
   set(WORKSPACE_TEST_SOURCES ${APP_SOURCES})
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
   add_executable(pinol_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp ${WORKSPACE_TEST_SOURCES})
@@ -721,14 +733,14 @@ if(PINOL_TESTS)
   add_test(NAME color_parameter_ui COMMAND pinol_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)
   add_test(NAME selection_ui COMMAND pinol_workspace_ui_test --selection) # not in the Valgrind job: see the test
-  add_executable(pinol_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp src/ui/FixtureOverlay.cpp
+  add_executable(pinol_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
                  src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_preview_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_preview_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND pinol_preview_ui_test)
   add_executable(pinol_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
-                 src/ui/MappingView.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
+                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
                  src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(pinol_fixture_ui_test PRIVATE src/ui)
   target_link_libraries(pinol_fixture_ui_test PRIVATE pinol_engine Qt6::Widgets Qt6::OpenGLWidgets)

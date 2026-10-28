@@ -30,9 +30,24 @@ QPolygonF outline(const Fixture &f, QSize comp, const ToWidget &toWidget)
     return poly;
 }
 
+// A strip's path in the widget, closed or not
+static QPolygonF pathOf(const Fixture &f, const ToWidget &toWidget)
+{
+    QPolygonF poly;
+    for (const QPointF &q : f.path) poly << toWidget(q);
+    if (f.pathClosed && poly.size() > 2) poly << poly.front();
+    return poly;
+}
+
 quint64 hit(const FixturePatch &p, QSize comp, const ToWidget &toWidget, QPointF at)
 {
     for (auto it = p.fixtures.rbegin(); it != p.fixtures.rend(); ++it) {
+        if (it->onPath()) { // a strip: along its path
+            const QPolygonF poly = pathOf(*it, toWidget);
+            for (int k = 0; k + 1 < poly.size(); ++k)
+                if (distanceToSegment(at, poly[k], poly[k + 1]) <= kCatch) return it->id;
+            continue;
+        }
         const QPolygonF poly = outline(*it, comp, toWidget);
         if (poly.containsPoint(at, Qt::OddEvenFill)) return it->id;
         for (int k = 0; k < 4; ++k)
@@ -83,6 +98,43 @@ void paint(QPainter &painter, const FixturePatch &p, QSize comp, const ToWidget 
         const QColor color = f.id == selected ? kSelected : on ? kFixture : kFixtureOff;
         const QPolygonF poly = outline(f, comp, toWidget);
         const auto look = looks.find(f.id);
+        if (f.onPath()) { // a strip: its path, its pixels dots along it (filled with what they give out)
+            painter.setPen(QPen(color, f.id == selected ? 1.6 : 1.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawPolyline(pathOf(f, toWidget));
+            if (t) {
+                const std::vector<QPointF> px = fixturePixelPoints(f, *t, comp);
+                const bool looked = look != looks.end() && look->second.size() == px.size();
+                double step = 8;
+                if (px.size() > 1) step = QLineF(toWidget(px[0]), toWidget(px[1])).length();
+                const double r = std::clamp(step * 0.35, 1.0, 4.0);
+                painter.setPen(looked ? QPen(QColor(0, 0, 0, 140), 0.8) : Qt::NoPen);
+                for (size_t k = 0; k < px.size(); ++k) {
+                    if (looked) {
+                        const auto &rgb = look->second[k];
+                        painter.setBrush(QColor::fromRgbF(std::clamp(rgb[0], 0.0f, 1.0f), std::clamp(rgb[1], 0.0f, 1.0f),
+                                                          std::clamp(rgb[2], 0.0f, 1.0f)));
+                    } else {
+                        painter.setBrush(color);
+                    }
+                    painter.drawEllipse(toWidget(px[k]), r, r);
+                }
+                if (!px.empty()) { // where the DMX starts
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(color, 1.0));
+                    painter.drawEllipse(toWidget(px.front()), r + 2.5, r + 2.5);
+                }
+            }
+            const QPointF at = toWidget(f.path.front());
+            const QRectF text(at.x() + 8, at.y() - 18, 240, 14);
+            const QString name = label(p, f) + (f.lineLayer ? QStringLiteral("  ⟿") : QString()) +
+                                 (f.locked ? QStringLiteral("  🔒") : QString()) + (f.solo ? QStringLiteral("  S") : QString());
+            painter.setPen(QColor(0, 0, 0, 200));
+            painter.drawText(text.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, name);
+            painter.setPen(color);
+            painter.drawText(text, Qt::AlignLeft | Qt::AlignVCenter, name);
+            continue;
+        }
         if (t && look != looks.end() && int(look->second.size()) == t->pixelCount()) {
             // Each pixel's cell, filled with what it gives out (corners through toWidget: a viewport may bend them)
             const auto c = fixtureCorners(f, comp);

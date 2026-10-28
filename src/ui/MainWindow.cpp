@@ -492,6 +492,21 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
                                                 "point, a double-click or Enter closes it; Esc cancels"),
                                  10000);
     });
+    // A Line generator's lines: drawn in the preview, given LED strips (pixel mapping)
+    connect(m_inspector, &LayerInspector::lineDrawRequested, this, [this] {
+        m_view->startLineDrawing();
+        statusBar()->showMessage(QStringLiteral("Draw the line in the preview: click its points; a double-click, Enter or its "
+                                                "first point again ends it; Backspace takes a point back; Esc cancels"),
+                                 10000);
+    });
+    connect(m_inspector, &LayerInspector::lineFixturesRequested, this, [this](const QString &type, int pixels) {
+        const int made = m_fixtures->addLineFixtures(m_engine->layerId(currentLayer()), type, pixels);
+        statusBar()->showMessage(made ? QStringLiteral("%1 fixture%2 on the lines (the Fixtures tab)").arg(made).arg(made == 1 ? "" : "s")
+                                      : QStringLiteral("No line to put a fixture on: draw one first"),
+                                 6000);
+        if (made) markDirty();
+    });
+    connect(m_view, &MappingView::linesEdited, this, &MainWindow::markDirty);
     connect(m_view, &MappingView::masksEdited, m_inspector, &LayerInspector::refreshMasks);
     connect(m_view, &MappingView::maskPicked, this, [this](int index) {
         (m_tabs->currentIndex() == 1 ? m_viewportInspector : m_inspector)->selectMask(index);
@@ -1452,6 +1467,39 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         refreshAll();
         return true;
     }
+    if (isLineGeneratorPath(path)) { // the built-in Line generator, dragged from the Media Bin: a shader of the application
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && (l->isGroup || l->isViewport)) {
+                lk.unlock();
+                statusBar()->showMessage(QStringLiteral("A group or a viewport has no source: drop the lines onto a layer."), 6000);
+                return false;
+            }
+        }
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        QString err;
+        if (!m_engine->setLayerIsf(i, kLineGeneratorPath, &err)) {
+            QMessageBox::warning(this, QStringLiteral("Line"), err);
+            return false;
+        }
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = QStringLiteral("Line");
+        }
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Line Generator"), beforeAnimations));
+        selectLayer(i);
+        refreshAll();
+        if (!m_quiet && m_engine->layerLines(m_engine->layerId(i)).empty()) { // as in MadMapper: its first line drawn now
+            m_view->startLineDrawing();
+            statusBar()->showMessage(QStringLiteral("Draw the line in the preview: click its points; a double-click, Enter or "
+                                                    "its first point again ends it; Esc cancels"),
+                                     10000);
+        }
+        return true;
+    }
     if (isWebGeneratorPath(path)) { // the built-in Web Page generator, dragged from the Media Bin
         {
             Engine::Lock lk(&m_engine->mutex());
@@ -1585,7 +1633,8 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
     for (const QString &p : paths) {
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
-        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || !liveInputUriOfPath(p).isEmpty() ||
+        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
+            !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
         } else if (effect) {

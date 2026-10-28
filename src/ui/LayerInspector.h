@@ -72,6 +72,9 @@ signals:
     void kindChanged(const QString &kind); // "Layer", "Group" or "Viewport": the title of the tab
     void maskSelected(int index);          // the mask the preview edits (-1: none)
     void maskDrawRequested();              // the preview draws a new mask point by point
+    void lineDrawRequested();              // a Line generator: the preview draws a new line point by point
+    // A Line generator: a pixel mapping fixture of that type on each of its lines, its pixels along it
+    void lineFixturesRequested(const QString &typeId, int pixels);
 
 private:
     QString layoutKey() const;

@@ -92,6 +92,10 @@ into the project, so the file is not needed afterwards.
 - A pixel never straddles two universes: a pixel that would cross channel 512 starts at channel 1 of the next universe.
 - `gamma` applies to the sampled colour and `intensity` to every value. `white`: `min` moves the grey part of the
   colour (min of R, G, B) to the white channel; `off` leaves white at 0.
+- `path` (a strip): its pixels are spread evenly along a polyline instead of a rectangle, in DMX order from its first
+  point. **Fixtures on Lines** (a Line generator's Source tab, see `parameter-control.md`) makes one on each line of the
+  layer, linked to it (`path.line_layer`, `path.line`), and the engine keeps its path where that line is on the
+  composition.
 
 ## DMX outputs
 

@@ -270,7 +270,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_videos = new BinItem(m_tree, {QStringLiteral("Videos")});
     m_images = new BinItem(m_tree, {QStringLiteral("Images")});
     m_audios = new BinItem(m_tree, {QStringLiteral("Audio")});
-    // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock
+    // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock, Line
     m_generators = new BinItem(m_tree, m_audios);
     m_generators->setText(0, QStringLiteral("Generators"));
     auto generator = [this](const QString &name, const QString &path) {
@@ -288,6 +288,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_timecode = generator(QStringLiteral("Timecode"), kTimecodeGeneratorPath);
     for (ClockKind k : {ClockKind::Countdown, ClockKind::Stopwatch, ClockKind::Clock})
         m_clocks[int(k)] = generator(clockKindName(k), clockGeneratorPath(k));
+    m_line = generator(QStringLiteral("Line"), kLineGeneratorPath);
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
     m_inputs = new BinItem(m_tree, m_generators);
@@ -479,7 +480,7 @@ void MediaBin::refreshIsf()
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
-            if (l->type != SourceType::Isf || l->sourcePath.isEmpty()) continue;
+            if (l->type != SourceType::Isf || l->sourcePath.isEmpty() || isLineGeneratorPath(l->sourcePath)) continue; // Line: under Generators
             Gen &g = gens[QDir::cleanPath(QFileInfo(l->sourcePath).absoluteFilePath())];
             if (g.name.isEmpty()) {
                 const IsfInstance::Header h = IsfInstance::readHeader(l->sourcePath);
@@ -620,13 +621,14 @@ void MediaBin::refreshInputs()
 void MediaBin::refreshText()
 {
     const SortingPause sorting(m_tree);
-    QStringList texts, timecodes, webs, clocks[3];
+    QStringList texts, timecodes, webs, lines, clocks[3];
     {
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
             if (l->type == SourceType::Text) (l->clockGen ? clocks[int(l->clockGen->kind())] : l->timecode ? timecodes : texts) << l->name;
             if (l->type == SourceType::Web) webs << l->name;
+            if (l->type == SourceType::Isf && isLineGeneratorPath(l->sourcePath)) lines << l->name;
         }
     }
     auto show = [](QTreeWidgetItem *it, const QStringList &users, const QString &what) {
@@ -651,6 +653,9 @@ void MediaBin::refreshText()
     show(m_clocks[int(ClockKind::Clock)], clocks[int(ClockKind::Clock)],
          QStringLiteral("Clock generator: the time of day, 24 h or 12 h, with or without its seconds and its date, in the "
                         "system's time zone or another one"));
+    show(m_line, lines,
+         QStringLiteral("Line generator: parallel lines, rays from a centre or rings around it; their count, width, "
+                        "softness, angle, speed, phase, mirrored, waved or dashed, in a color over a background of their own"));
     if (m_web)
         show(m_web, webs,
              QStringLiteral("Web Page generator: a web page (an address, or a local HTML file) rendered at its own size and "

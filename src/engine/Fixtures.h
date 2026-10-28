@@ -101,6 +101,15 @@ struct Fixture {
     double intensity = 1; // 0..1, on every value sent (a header dimmer: its level)
     double gamma = 1;   // on the sampled colour (1: linear)
     White white = White::Min;
+    // Its pixels along a path instead of in its rectangle (a LED strip): its points on the composition (normalized),
+    // its pixels spread along it by length, in DMX order from its first point. A strip on a line of a Line generator
+    // (lineLayer: that layer's id, lineIndex: which of its lines) follows it: the engine keeps its path where that
+    // line is on the composition (and keeps its last place when the layer or the line goes)
+    std::vector<QPointF> path;
+    bool pathClosed = false;
+    quint64 lineLayer = 0;
+    int lineIndex = 0;
+    bool onPath() const { return path.size() >= 2; }
 
     QJsonObject toJson() const;
     static Fixture fromJson(const QJsonObject &o);

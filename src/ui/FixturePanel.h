@@ -24,6 +24,9 @@ public:
     quint64 selectedFixture() const;
     // A fixture of that type at the next free address of the first output (one made when there is none): its id
     quint64 addFixture(const QString &typeId);
+    // A strip of that type (one pixel, repeated `pixels` times) on each line of a Line generator layer, following it,
+    // at the next free addresses (one undo step); the number made
+    int addLineFixtures(quint64 layer, const QString &typeId, int pixels);
     // Each mode of each file a type of the project (a type of the same id replaced); the report: imported, warnings
     QString importGdtf(const QStringList &paths);
 

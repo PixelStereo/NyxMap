@@ -136,6 +136,37 @@ The Media Bin lists **Countdown**, **Chronometer** and **Clock** under Generator
 
 Countdowns and chronometers follow real time (not the composition speed). Only their own transport and **STOP ALL** pause them. A project saves the elapsed time and running state; on load, a running clock continues from the saved value.
 
+## Line generator
+
+The Media Bin also lists **Line** under Generators. It works like MadMapper's Line tool: you draw segments on a layer, then animate them along their length. Its shader is built into the application, so a project never loses it. The layer's source is saved as `/Pinol/Generators/Line` with its lines, and there is no file to find, relink or collect.
+
+**Drawing.** Dropping Line onto a layer starts drawing a line in the preview. **Draw Line** in its Source tab draws another; a layer holds as many lines as needed.
+- Click each point. Enter, a double-click, or the first point again ends the line (the first point again closes it).
+- Backspace takes the last point back. Esc cancels.
+- Afterwards: drag a point to move it, drag a segment to move the whole line, double-click a segment to add a point. Delete removes the selected point (or the line, below two points) or the selected line.
+- Every edit is undoable. **Delete All** removes them all.
+
+The points are in the layer's own frame, so moving, scaling or warping the layer moves its lines with it.
+
+**Animation.** These are the shader's inputs, layer parameters under `param/` (`/layer/<name>/param/rate`…), so they can be animated and reached from OSC, interactions, snapshots and presets. The Source tab's `speed` scales its time; Resolution sets its picture size, as for any ISF generator.
+
+| Address | Meaning |
+|---|---|
+| `param/animation` | `0` Solid, `1` Fill, `2` Chase, `3` Strobe, `4` Pulse, `5` Media. |
+| `param/lineColor/r,g,b,a` | The lines' color. With `param/gradient` on, it goes to `param/endColor` from each line's start to its end. |
+| `param/backColor/r,g,b,a` | Off the lines and where they are not lit (transparent by default). |
+| `param/thickness` | Pixels of the generator's picture. Joins and ends are round. `param/softness` feathers the edges. |
+| `param/rate` | Cycles per second, either way: the fill's loop, the dashes' scrolling, the strobe's and the pulse's frequency, the media's scrolling. |
+| `param/fill` | Fill with `rate` 0: the part lit from the start (animate it to grow the line). With a rate, the fill loops. |
+| `param/dashes`, `param/dashWidth` | Chase: dashes along each line, each one a fraction of its period. |
+| `param/duty` | Strobe: the part of each cycle lit. |
+| `param/along` | `0` each line from its start to its end, `1` each segment on its own. |
+| `param/reverse` | From the end to the start. |
+| `param/cascade`, `param/cascadeBy` | Offset: each line (`0`) or each segment of a line (`1`) starts this fraction of a cycle after the one before it. |
+| `param/media` | Media: an image or another layer's picture laid along the lines, its width along the path, its height across the thickness. |
+
+**Pixel mapping.** **Fixtures on Lines** in the Source tab puts a fixture of the chosen one-pixel type (RGB, RGBW…) on each line. Each one has that many pixels spread evenly along its line, in DMX order from the line's first point, at the next free addresses. It follows its line when the line is edited or the layer moves. In the views it shows as a strip: its path and its pixels. It cannot be moved, resized or turned on its own. A fixture keeps its last place if its layer or line is removed. A layer inside a group is followed through its own mapping only, not its group's.
+
 ## Proposed improvements — not implemented
 
 | Priority | Proposal | Acceptance criteria |
