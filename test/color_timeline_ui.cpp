@@ -30,7 +30,7 @@ int main(int argc, char **argv)
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     QApplication app(argc, argv);
     theme::applyToApplication(app);
-    app.setOrganizationName("PinolTests");
+    app.setOrganizationName("NyxMapTests");
     app.setApplicationName("ColorTimeline");
     int failures = 0;
     auto check = [&](bool ok, const char *why) { if (!ok) { ++failures; std::printf("FAIL color_timeline: %s\n", why); } };
@@ -89,7 +89,7 @@ int main(int argc, char **argv)
     undo.redo(); check(engine.animation(ai).tracks[0].keys[1].rgb[1] == 1, "Redo restores the complete color");
     undo.undo();
     QTemporaryDir directory;
-    const QString project = directory.filePath("color.pinol");
+    const QString project = directory.filePath("color.nyxmap");
     check(engine.saveProject(project, {}, &error), "project saves color tracks");
     QFile file(project);
     check(file.open(QIODevice::ReadOnly), "saved project is readable");

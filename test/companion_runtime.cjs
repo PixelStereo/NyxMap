@@ -15,16 +15,16 @@ async function until(condition) {
 test('real Companion IPC runtime exposes presets, sends stable actions and updates live timers', async t => {
     const peer = fixture(); await once(peer.server, 'listening');
     const root = path.resolve(__dirname, '../integrations/companion');
-    const packed = process.env.PINOL_COMPANION_PACKED === '1';
+    const packed = process.env.NYXMAP_COMPANION_PACKED === '1';
     // A sibling pkg/ can still resolve ../node_modules with NODE_PATH empty.
     // Move the distribution outside the checkout to verify the shipped bundle.
-    const isolated = packed ? fs.mkdtempSync(path.join(os.tmpdir(), 'pinol-companion-')) : null;
+    const isolated = packed ? fs.mkdtempSync(path.join(os.tmpdir(), 'nyxmap-companion-')) : null;
     if (isolated) fs.cpSync(path.join(root, 'pkg'), isolated, {recursive: true});
     const moduleRoot = isolated || root;
     const entry = path.join(moduleRoot, packed ? 'main.js' : 'src/main.js');
     const manifest = path.join(moduleRoot, 'companion/manifest.json');
     const child = fork(entry, [], {cwd: moduleRoot, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: {...process.env,
-        MODULE_MANIFEST: manifest, CONNECTION_ID: 'pinol-test', VERIFICATION_TOKEN: 'pinol-ci', NODE_PATH: packed ? '' : process.env.NODE_PATH}});
+        MODULE_MANIFEST: manifest, CONNECTION_ID: 'nyxmap-test', VERIFICATION_TOKEN: 'nyxmap-ci', NODE_PATH: packed ? '' : process.env.NODE_PATH}});
     let output = '', next = 1000, registered = false;
     const pending = new Map(), messages = [], variables = {};
     child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });
@@ -51,7 +51,7 @@ test('real Companion IPC runtime exposes presets, sends stable actions and updat
     });
     try {
         await until(() => registered);
-        await call('init', {label: 'Pinol', isFirstInit: false, lastUpgradeIndex: -1, secrets: {}, actions: {}, feedbacks: {},
+        await call('init', {label: 'NyxMap', isFirstInit: false, lastUpgradeIndex: -1, secrets: {}, actions: {}, feedbacks: {},
             config: {host: '127.0.0.1', port: peer.server.address().port, preset_limit: 16}});
         await until(() => variables.connected === true && variables.current_elapsed_text === '0:04.2');
         const presets = messages.filter(m => m.name === 'setPresetDefinitions').at(-1).payload.presets;

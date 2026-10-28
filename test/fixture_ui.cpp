@@ -1,5 +1,5 @@
 // Pixel mapping in the interface: fixtures added and edited in the patch panel, shown, picked, moved, turned, resized
-// and deleted in the mapping view (undoable), and each preview's own switch. PINOL_SCREENSHOTS=<folder>: pictures of
+// and deleted in the mapping view (undoable), and each preview's own switch. NYXMAP_SCREENSHOTS=<folder>: pictures of
 // the view and the panel saved there.
 #include "Commands.h"
 #include "Engine.h"
@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     QApplication app(argc, argv);
-    app.setApplicationName("PinolFixtureUITest");
+    app.setApplicationName("NyxMapFixtureUITest");
     Engine engine;
     QString error;
     if (!engine.initialize(&error)) return 1;
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
     drag(at(0.05, 0.05), at(0.05, 0.05)); // nothing there
     check(view.fixture() == 0, "a click elsewhere drops the selection");
 
-    if (const QByteArray dir = qgetenv("PINOL_SCREENSHOTS"); !dir.isEmpty()) {
+    if (const QByteArray dir = qgetenv("NYXMAP_SCREENSHOTS"); !dir.isEmpty()) {
         cmd::editFixtures(nullptr, &engine, {}, [&](FixturePatch &q) { // a bar of 8 x 2 pixels, turned
             FixtureType bar;
             bar.id = "bar8x2";

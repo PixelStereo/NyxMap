@@ -5,7 +5,7 @@
     "INPUTS": []
 }*/
 
-// FRAMEINDEX is assigned by Pinol's ISF renderer each generator frame.
+// FRAMEINDEX is assigned by NyxMap's ISF renderer each generator frame.
 // Within a single published image, all interior pixels must decode to the
 // same 24-bit frame number. The alternating border is an independent phase
 // marker; sample it separately in the receiver.

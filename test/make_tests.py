@@ -11,8 +11,8 @@ def layer(name, source, effects=(), mapping=None, blend='normal', opacity=1.0):
     return l
 
 def proj(name, layers, w=640, h=360):
-    p = {"app": "Pinol", "format_version": 1, "composition": {"width": w, "height": h}, "layers": layers}
-    path = os.path.join(root, 'projects', name + '.pinol')
+    p = {"app": "NyxMap", "format_version": 1, "composition": {"width": w, "height": h}, "layers": layers}
+    path = os.path.join(root, 'projects', name + '.nyxmap')
     json.dump(p, open(path, 'w'), indent=1)
     return path
 
@@ -53,7 +53,7 @@ proj('mapping', [
 ])
 # UI demo (test/ui_test.sh)
 video_quad = {"corners": [[0.0,0.45],[0.45,0.5],[0.42,1.0],[0.0,0.98]], "cols": 4, "rows": 4, "offsets": [[0,0]]*16}
-demo = {"app": "Pinol", "format_version": 1, "composition": {"width": 640, "height": 360}, "layers": [
+demo = {"app": "NyxMap", "format_version": 1, "composition": {"width": 640, "height": 360}, "layers": [
     layer('Plasma', {"type": "isf", "path": plasma, "width": 512, "height": 512}, mapping=quad, blend='add', opacity=0.9),
     layer('Test Pattern', {"type": "isf", "path": pattern, "width": 1280, "height": 720}, mapping=warp),
     layer('Video h264', video('h264.mp4'), [
@@ -61,5 +61,5 @@ demo = {"app": "Pinol", "format_version": 1, "composition": {"width": 640, "heig
         {"path": os.path.join(isf, 'effects', 'Soft Crop.fs'), "enable": True, "params": {"LeftFeather": 0.2, "RightFeather": 0.2}}], mapping=video_quad),
     layer('Act 2', {"type": "video", "path": os.path.join(root, 'out', 'missing', 'act2.mov'), "loop": True, "speed": 1, "playing": True}),
 ], "bin": [{"path": os.path.join(media, 'bars.png')}], "ui": {"selected_layer": 1}}
-json.dump(demo, open(os.path.join(root, 'projects', 'demo.pinol'), 'w'), indent=1)
+json.dump(demo, open(os.path.join(root, 'projects', 'demo.nyxmap'), 'w'), indent=1)
 print('ok')

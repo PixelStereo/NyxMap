@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build Pinol from source and open it: macOS, Linux (Ubuntu/Debian), and Windows from Git Bash (it runs build.ps1;
+# Build NyxMap from source and open it: macOS, Linux (Ubuntu/Debian), and Windows from Git Bash (it runs build.ps1;
 # without Git Bash, double-click build.cmd).
 #
-#   ./build.sh                 install what is missing, build, open Pinol
+#   ./build.sh                 install what is missing, build, open NyxMap
 #   ./build.sh --no-install    do not install anything (the requirements are there)
 #   ./build.sh --no-run        build only
 #   ./build.sh --accept-touchengine-license | --no-touchengine  (macOS/Windows; see licenses/touchengine.txt)
@@ -14,7 +14,7 @@
 #
 # What it installs: macOS, with Homebrew: qt ffmpeg cmake pkg-config dotnet git. Ubuntu/Debian, with apt: the packages
 # listed in docs/build.md. Windows, with winget: see build.ps1. OMT (built from source) needs dotnet, clang and git:
-# without them Pinol is built without it.
+# without them NyxMap is built without it.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -53,7 +53,7 @@ brew_shellenv() {
 }
 
 OS=$(uname -s)
-CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="$TYPE" -DPINOL_TESTS="$TESTS")
+CMAKE_ARGS=(-DCMAKE_BUILD_TYPE="$TYPE" -DNYXMAP_TESTS="$TESTS")
 
 # --- Requirements
 if [[ $OS == Darwin ]]; then
@@ -88,7 +88,7 @@ elif [[ $OS == Linux ]]; then
         qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
         libavutil-dev libasound2-dev clang
       # .NET for OMT: in Ubuntu's own packages (22.04 and later); elsewhere OMT is left out
-      $SUDO apt-get install -y dotnet-sdk-8.0 || echo "No dotnet-sdk-8.0 package here: Pinol is built without OMT."
+      $SUDO apt-get install -y dotnet-sdk-8.0 || echo "No dotnet-sdk-8.0 package here: NyxMap is built without OMT."
     else
       echo "No apt here: install the equivalents of the packages listed in docs/build.md, then run ./build.sh --no-install."
       echo "Trying with what is installed."
@@ -105,7 +105,7 @@ if [[ -d .git ]]; then
   step "Fetching the submodules"
   git submodule update --init --recursive
 elif [[ ! -f third_party/miniaudio/miniaudio.h ]]; then
-  fail "third_party/ is empty: clone the repository with git (git clone --recurse-submodules https://github.com/PixelStereo/Pinol.git)"
+  fail "third_party/ is empty: clone the repository with git (git clone --recurse-submodules https://github.com/PixelStereo/NyxMap.git)"
 fi
 
 # --- NDI: only with your agreement to the NDI SDK licence
@@ -114,13 +114,13 @@ if [[ -z $NDI ]]; then
     echo
     echo "NDI (video over the network) comes from the NDI SDK, under the NDI SDK License Agreement:"
     echo "  https://ndi.video/sdk/"
-    read -r -p "Do you accept it, to include NDI in Pinol? [y/N] " answer
+    read -r -p "Do you accept it, to include NDI in NyxMap? [y/N] " answer
     if [[ $answer =~ ^[YyOo] ]]; then NDI=ON; else NDI=OFF; fi
   else
     NDI=OFF
   fi
 fi
-CMAKE_ARGS+=(-DPINOL_BUNDLE_RUNTIMES=ON -DPINOL_ACCEPT_NDI_SDK_LICENSE="$NDI")
+CMAKE_ARGS+=(-DNYXMAP_BUNDLE_RUNTIMES=ON -DNYXMAP_ACCEPT_NDI_SDK_LICENSE="$NDI")
 
 # TouchEngine's Shared Use License requires that the builder has accepted the TouchDesigner licence.
 if [[ $OS == Darwin && -z $TOX && -t 0 ]]; then
@@ -128,7 +128,7 @@ if [[ $OS == Darwin && -z $TOX && -t 0 ]]; then
   read -r -p "Have you accepted the TouchDesigner licence and do you accept the SDK terms? [y/N] " answer
   if [[ $answer =~ ^[Yy] ]]; then TOX=ON; else TOX=OFF; fi
 fi
-CMAKE_ARGS+=(-DPINOL_ACCEPT_TOUCHENGINE_LICENSE="${TOX:-OFF}")
+CMAKE_ARGS+=(-DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE="${TOX:-OFF}")
 
 # --- Build
 if [[ $CLEAN == 1 ]]; then rm -rf build; fi
@@ -139,19 +139,19 @@ JOBS=$( (have nproc && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 if [[ $TESTS == ON ]]; then
   cmake --build build -j "$JOBS"
 else
-  cmake --build build --target Pinol -j "$JOBS"
+  cmake --build build --target NyxMap -j "$JOBS"
 fi
 
 # --- Open
 if [[ $OS == Darwin ]]; then
-  APP=build/Pinol.app
+  APP=build/NyxMap.app
   [[ -d $APP ]] || fail "$APP was not built"
-  echo; echo "Pinol is built: $(pwd)/$APP"
+  echo; echo "NyxMap is built: $(pwd)/$APP"
   if [[ $RUN == 1 ]]; then open "$APP"; fi
 else
-  APP=build/Pinol
+  APP=build/NyxMap
   [[ -x $APP ]] || fail "$APP was not built"
-  echo; echo "Pinol is built: $(pwd)/$APP"
-  if [[ $RUN == 1 ]]; then (cd build && nohup ./Pinol >/dev/null 2>&1 &); fi
+  echo; echo "NyxMap is built: $(pwd)/$APP"
+  if [[ $RUN == 1 ]]; then (cd build && nohup ./NyxMap >/dev/null 2>&1 &); fi
 fi
 exit 0

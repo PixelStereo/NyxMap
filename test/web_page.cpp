@@ -1,6 +1,6 @@
 // The Web Page generator (WebPage.h): its settings saved and loaded, its parameters (URL, reload…) as snapshots and
-// OSC reach them, with a browser of the test's own (a solid color). Then, when Pinol is built with Qt WebEngine
-// (PINOL_HAS_WEB), a real page: a local HTML file of one color, loaded, and its picture read back in the layer.
+// OSC reach them, with a browser of the test's own (a solid color). Then, when NyxMap is built with Qt WebEngine
+// (NYXMAP_HAS_WEB), a real page: a local HTML file of one color, loaded, and its picture read back in the layer.
 #include "Engine.h"
 #include "WebPage.h"
 #include "WebPageQt.h"
@@ -68,7 +68,7 @@ QColor centre(const QImage &img) { return img.isNull() ? QColor() : img.pixelCol
 
 int main(int argc, char **argv)
 {
-#ifdef PINOL_HAS_WEB
+#ifdef NYXMAP_HAS_WEB
     // Chromium in a CI container: no sandbox (no user namespaces there) and no GPU. Here only: the application keeps
     // Chromium's sandbox
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu");
@@ -134,7 +134,7 @@ int main(int argc, char **argv)
     check(e.parameterInfo(id, "web/reload", &info) && info.type == ParamInfo::Type::Trigger, "web/reload: a trigger");
     check(e.parameterInfo(id, "web/width", &info) && info.defaultValue.toInt() == 64, "web/width: composition's by default");
     check(e.parameterValue(id, "web/url") == QJsonValue(s.url), "web/url read");
-    check(e.setParameter(id, "web/url", QStringLiteral("https://pinol.fr")) && fakeLog.url == "https://pinol.fr",
+    check(e.setParameter(id, "web/url", QStringLiteral("https://nyxmap.fr")) && fakeLog.url == "https://nyxmap.fr",
           "web/url written: the page is given it");
     check(e.setParameter(id, "web/reload", true) && fakeLog.reloads == 1, "web/reload: the page reloads");
     check(e.setParameter(id, "web/zoom", 2.0) && e.parameterValue(id, "web/zoom").toDouble() == 2.0, "web/zoom written");
@@ -149,20 +149,20 @@ int main(int argc, char **argv)
     const QJsonArray held = e.captureLayers();
     e.setParameter(id, "web/url", QStringLiteral("https://elsewhere.example"));
     e.applyLayers(held, 0.0);
-    check(e.parameterValue(id, "web/url") == QJsonValue("https://pinol.fr") && fakeLog.url == "https://pinol.fr",
+    check(e.parameterValue(id, "web/url") == QJsonValue("https://nyxmap.fr") && fakeLog.url == "https://nyxmap.fr",
           "a snapshot recalls the URL");
 
     // Saved and loaded
     const QJsonObject before = e.layerJson(e.indexOfId(id)).value("source").toObject();
-    check(e.saveProject(tmp.filePath("web.pinol"), {}, &err), "project saved");
+    check(e.saveProject(tmp.filePath("web.nyxmap"), {}, &err), "project saved");
     e.newProject();
-    check(e.loadProject(tmp.filePath("web.pinol"), nullptr, &err), "project loaded");
+    check(e.loadProject(tmp.filePath("web.nyxmap"), nullptr, &err), "project loaded");
     check(e.indexOfId(id) >= 0 && e.layerJson(e.indexOfId(id)).value("source").toObject() == before, "web source loaded back");
-    check(e.parameterValue(id, "web/url") == QJsonValue("https://pinol.fr") && fakeLog.url == "https://pinol.fr",
+    check(e.parameterValue(id, "web/url") == QJsonValue("https://nyxmap.fr") && fakeLog.url == "https://nyxmap.fr",
           "loaded page shows its URL");
     e.newProject();
 
-#ifdef PINOL_HAS_WEB
+#ifdef NYXMAP_HAS_WEB
     // --- A real page, with Qt WebEngine: a local file of one color
     check(registerWebPages() && webPagesAvailable(), "Qt WebEngine registered");
     {

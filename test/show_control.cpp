@@ -34,9 +34,9 @@ int runShowControlTests(Engine &e)
     check(layerStatus == 200 && layerTree.value("CONTENTS").toObject().value("id").toObject().value("VALUE").toArray()[0].toString() == QString::number(layer),
           "stable layer subtree includes its identity and typed parameters");
     const auto opacityMetadata = layerTree.value("CONTENTS").toObject().value("opacity").toObject();
-    const auto opacityDefaults = opacityMetadata.value("PINOL_DEFAULT").toArray();
+    const auto opacityDefaults = opacityMetadata.value("NYXMAP_DEFAULT").toArray();
     check(opacityDefaults.size() == 1 && opacityDefaults[0].toDouble() == 1 &&
-          opacityMetadata.value("PINOL_RESET").toString() == layerPath + "/opacity/reset",
+          opacityMetadata.value("NYXMAP_RESET").toString() == layerPath + "/opacity/reset",
           "parameter defaults are published independently of their current values");
     check(server.handleMessage({layerPath + "/opacity/reset", "", {}}) &&
           e.parameterValue(layer, "opacity").toDouble() == 1, "reset invokes the native default");

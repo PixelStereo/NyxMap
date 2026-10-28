@@ -35,7 +35,7 @@ static LinePath path(std::initializer_list<QPointF> pts, bool closed = false)
 
 static void modelTests()
 {
-    check(isLineGeneratorPath(kLineGeneratorPath) && isLineGeneratorPath("C:\\Pinol\\Generators\\Line") &&
+    check(isLineGeneratorPath(kLineGeneratorPath) && isLineGeneratorPath("C:\\NyxMap\\Generators\\Line") &&
               !isLineGeneratorPath("/tmp/Lines.fs"),
           "its virtual path is recognised");
     const IsfInstance::Header h = IsfInstance::readHeader(kLineGeneratorPath);
@@ -228,7 +228,7 @@ int main(int argc, char **argv)
 
     // A project keeps it, its lines and its values, with its virtual path and no file to find
     QTemporaryDir tmp;
-    const QString file = tmp.path() + "/lines.pinol";
+    const QString file = tmp.path() + "/lines.nyxmap";
     e.setLayerLines(id, {path({{0.1, 0.1}, {0.9, 0.2}, {0.5, 0.8}}, true)});
     input("thickness")->fValue = 5;
     const QJsonObject source = e.layerJson(layer).value("source").toObject();
@@ -254,7 +254,7 @@ int main(int argc, char **argv)
 
     // Another generator in its place: its lines go
     if (loaded >= 0) {
-        e.setLayerIsf(loaded, QStringLiteral(PINOL_SOURCE_DIR "/isf/generators/SolidColor.fs"), &err);
+        e.setLayerIsf(loaded, QStringLiteral(NYXMAP_SOURCE_DIR "/isf/generators/SolidColor.fs"), &err);
         Engine::Lock lk(&e.mutex());
         check(e.layer(loaded)->lines.empty(), "another generator: no lines");
     }

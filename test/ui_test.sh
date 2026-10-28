@@ -12,15 +12,15 @@ Xvfb :97 -screen 0 1920x1080x24 >/dev/null 2>&1 & XV=$!
 sleep 1
 (openbox >/dev/null 2>&1 &)   # a real window manager: fullscreen, focus, stacking
 sleep 1
-AUTOSAVE="$HOME/.local/share/Pinol/Pinol/autosave.pinol"
+AUTOSAVE="$HOME/.local/share/NyxMap/NyxMap/autosave.nyxmap"
 rm -f "$AUTOSAVE"
 cp media/h264.mp4 "$OUT/act2_found.mov"
 shot() { xwd -root -silent | convert xwd:- "$OUT/$1.png"; }
 # Coordinates relative to the main window
 X0=0; Y0=0
-origin() { # the largest window whose title ends with "Pinol" (main window)
+origin() { # the largest window whose title ends with "NyxMap" (main window)
     local best=0 w
-    for w in $(xdotool search --name "Pinol$"); do
+    for w in $(xdotool search --name "NyxMap$"); do
         local info ax ay ww hh
         info=$(xwininfo -id "$w")
         ax=$(echo "$info" | awk '/Absolute upper-left X/ {print $4}')
@@ -40,7 +40,7 @@ same() { # number of differing pixels between two screenshots, within an area
 }
 PREVIEW=""
 
-../build/Pinol --endurance-csv "$OUT/endurance.csv" projects/demo.pinol >"$OUT/log1.txt" 2>&1 & APP=$!
+../build/NyxMap --endurance-csv "$OUT/endurance.csv" projects/demo.nyxmap >"$OUT/log1.txt" 2>&1 & APP=$!
 sleep 5
 xdotool key Return; sleep 1                      # "file not found" warning
 origin; PREVIEW=$(roi 400 180 700 380)
@@ -88,13 +88,13 @@ kill -9 $APP; sleep 1
 # Telemetry must survive an unclean process exit (rows flushed each second).
 test -s "$OUT/endurance.csv" || fail "endurance CSV not written"
 test -s "$OUT/endurance.csv.events.jsonl" || fail "endurance events log not written"
-grep -q '^# PINOL endurance metrics v2$' "$OUT/endurance.csv" || fail "endurance CSV metadata missing"
+grep -q '^# NYXMAP endurance metrics v2$' "$OUT/endurance.csv" || fail "endurance CSV metadata missing"
 grep -q 'process_resident_mb' "$OUT/endurance.csv" || fail "endurance CSV has no process memory column"
 for column in audio_callback_count_lifetime audio_callback_p99_ms_lifetime audio_callback_max_ms_lifetime audio_callback_over_quarter_lifetime audio_callback_over_budget_lifetime render_lock_wait_p99_ms_lifetime render_lock_wait_max_ms_lifetime render_lock_hold_p99_ms_lifetime interaction_events_dropped_lifetime; do
     grep '^utc,' "$OUT/endurance.csv" | tr ',' '\n' | grep -qx "$column" || fail "endurance CSV missing $column"
 done
 test "$(wc -l < "$OUT/endurance.csv")" -ge 6 || fail "endurance CSV has no periodic samples"
-../build/Pinol >"$OUT/log2.txt" 2>&1 & APP=$!
+../build/NyxMap >"$OUT/log2.txt" 2>&1 & APP=$!
 sleep 4; shot 12_recovery
 xdotool key Return; sleep 4; shot 13_restored
 kill -0 $APP 2>/dev/null || fail "the application exited after the recovery (log: $OUT/log2.txt)"

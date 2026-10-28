@@ -1,5 +1,5 @@
 // Regression: repeated parameter timelines, cue-chain deadlines and rendered pixels.
-// Standalone CTest area: pinol_tests --area timeline_repeat.
+// Standalone CTest area: nyxmap_tests --area timeline_repeat.
 // Manual frame stepping is deterministic, not proof of physical GPU display cadence.
 #include "Engine.h"
 #include "Sequencer.h"

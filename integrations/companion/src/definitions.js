@@ -47,7 +47,7 @@ function variableValues(state, catalog, online, status) {
 function actionDefinitions(instance) {
     const c = instance.catalog;
     const choices = kind => c[kind].map(item => ({id: item.id, label: `${item.index} · ${item.name || 'Untitled'}`}));
-    const sequence = () => dropdown('sequence', 'Sequence', [{id: 'selected', label: 'Selected sequence in Pinol'}, ...choices('sequences')]);
+    const sequence = () => dropdown('sequence', 'Sequence', [{id: 'selected', label: 'Selected sequence in NyxMap'}, ...choices('sequences')]);
     const actions = {};
     for (const action of ['go', 'back', 'stop', 'select']) actions['sequence_' + action] = {
         name: 'Sequence: ' + ({go: 'GO', back: 'GO BACK', stop: 'Stop waits / follows', select: 'Select'}[action]), options: [sequence()],

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Report Pinol wall-clock pacing around cue/timeline actions.
+"""Report NyxMap wall-clock pacing around cue/timeline actions.
 
 Usage: python3 scripts/analyze_timeline_endurance.py session.csv --fps 60
-The CSV comes from Pinol --endurance-csv, with adjacent .events.jsonl.
+The CSV comes from NyxMap --endurance-csv, with adjacent .events.jsonl.
 This is diagnostics, not an assertion of zero stutter at the physical receiver.
 """
 import argparse
@@ -32,7 +32,7 @@ def instant(value):
 
 
 def realtime_failures(rows):
-    """Conservative process-lifetime qualification; start Pinol fresh for each run.
+    """Conservative process-lifetime qualification; start NyxMap fresh for each run.
 
     Missing, invalid, reset or inactive telemetry is not evidence of passing.
     Histograms are lifetime values: never subtract percentiles between samples.
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     p.add_argument("csv", type=Path)
     p.add_argument("--fps", type=int, choices=(25, 30, 50, 60, 120), required=True)
     p.add_argument("--check", action="store_true",
-                   help="fail on callback/lock/control thresholds or incomplete telemetry; use a fresh Pinol process")
+                   help="fail on callback/lock/control thresholds or incomplete telemetry; use a fresh NyxMap process")
     args = p.parse_args()
     try:
         passed = summarize(args.csv, args.fps, args.check)

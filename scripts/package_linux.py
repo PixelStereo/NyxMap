@@ -2,7 +2,7 @@
 """Create the Linux x86_64 AppImage and a FUSE-free portable archive from the same AppDir.
 
 Usage: package_linux.py BUILD_DIR FFMPEG_PREFIX OMT_DIR NDI_DIR OUTPUT_DIR
-Run on Ubuntu 24.04 after building Pinol with build_ffmpeg_linux.py's FFmpeg.
+Run on Ubuntu 24.04 after building NyxMap with build_ffmpeg_linux.py's FFmpeg.
 Only glibc and the host's graphics driver stack are intentionally external.
 Fails when a bundled library comes from a Debian package whose copyright file is GPL only (see package_licence).
 """
@@ -29,7 +29,7 @@ FFMPEG_LIB = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresam
 GST_DIR = Path("/usr/lib/x86_64-linux-gnu/gstreamer-1.0")
 # The GStreamer plugins Qt Multimedia's GStreamer backend (Qt 6.4 on Ubuntu 24.04) needs for camera capture into a
 # QVideoSink, and nothing else: every other plugin's dependencies would come along too (aasink/cacasink pull GPL-only
-# libgpm and libslang, others hundreds of unneeded libraries). Pinol plays sound with miniaudio and decodes media with
+# libgpm and libslang, others hundreds of unneeded libraries). NyxMap plays sound with miniaudio and decodes media with
 # its own FFmpeg, so no audio or playback plugin. A missing plugin fails packaging.
 GST_PLUGINS = {
     # queue, tee, capsfilter, identity: the capture session and video sink pipelines
@@ -46,7 +46,7 @@ QT_PLUGIN_EXCLUDED = re.compile(r"ffmpeg|virtualkeyboard|^libqtiff\.so$")
 # Libraries the package may never contain, whatever their package's copyright file also lists (readline's has an ISC
 # stanza for one example file): GPL-only on Debian/Ubuntu
 GPL_ONLY_LINUX = re.compile(r"^lib(gpm|slang|readline|history|jbig|lzo2|cdio\w*|fftw3\w*)\.so")
-# Short licence names (DEP-5 "License:" fields) under which a library may be shipped with Pinol
+# Short licence names (DEP-5 "License:" fields) under which a library may be shipped with NyxMap
 PERMITTED_LICENCE = re.compile(
     r"\b(LGPL|MIT|BSD|0BSD|Apache|ISC|Zlib|MPL|public[ -]?domain|X11|Expat|Unlicense|CC0|BSL|Boost|OpenSSL|SSLeay|"
     r"curl|FTL|OFL|bzip2|libpng|IJG|Unicode|ICU|PSF|HPND|MIT-CMU)", re.I)
@@ -121,13 +121,13 @@ def tools(folder):
 
 def package(build, ffmpeg, omt, ndi, output):
     output.mkdir(parents=True, exist_ok=True)
-    app = output / "Pinol.AppDir"
+    app = output / "NyxMap.AppDir"
     if app.exists():
         shutil.rmtree(app)
     binary = app / "usr/bin"
     library = app / "usr/lib"
     library.mkdir(parents=True)
-    copy(build / "Pinol", binary / "Pinol")
+    copy(build / "NyxMap", binary / "NyxMap")
     shutil.copytree(build / "isf", binary / "isf")
     for name in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
         copy(ROOT / name, binary / name)
@@ -170,10 +170,10 @@ def package(build, ffmpeg, omt, ndi, output):
             copy(source, library / "gstreamer-1.0" / source.name)
     scanner = Path("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner")
     copy(scanner, app / "usr/libexec/gst-plugin-scanner")
-    # Child processes (xdg-open: the browser, the file manager) get the environment Pinol was started with, not the
-    # one AppRun made for Pinol's own libraries
-    copy(ROOT / "packaging/linux/xdg-open", app / "usr/libexec/pinol-path/xdg-open")
-    (app / "usr/libexec/pinol-path/xdg-open").chmod(0o755)
+    # Child processes (xdg-open: the browser, the file manager) get the environment NyxMap was started with, not the
+    # one AppRun made for NyxMap's own libraries
+    copy(ROOT / "packaging/linux/xdg-open", app / "usr/libexec/nyxmap-path/xdg-open")
+    (app / "usr/libexec/nyxmap-path/xdg-open").chmod(0o755)
     shutil.copytree("/usr/share/alsa", app / "usr/share/alsa")
     for name in ("libasound_module_pcm_pulse.so", "libasound_module_ctl_pulse.so"):
         copy(Path("/usr/lib/x86_64-linux-gnu/alsa-lib") / name, library / "alsa-lib" / name)
@@ -192,10 +192,10 @@ def package(build, ffmpeg, omt, ndi, output):
             if source.is_symlink():
                 (library / source.name).symlink_to(source.resolve().name)
 
-    # Qt WebEngine (the Web Page generator), when Pinol is built with it: Chromium's helper process, its resources
+    # Qt WebEngine (the Web Page generator), when NyxMap is built with it: Chromium's helper process, its resources
     # and locales, where qt.conf (Prefix=..) and AppRun's QTWEBENGINE* variables point; the NSS modules Chromium's
     # certificate checks load with dlopen()
-    if "libQt6WebEngineCore" in subprocess.check_output(["ldd", str(build / "Pinol")], text=True):
+    if "libQt6WebEngineCore" in subprocess.check_output(["ldd", str(build / "NyxMap")], text=True):
         webengine_process = Path("/usr/lib/qt6/libexec/QtWebEngineProcess")
         webengine_data = Path("/usr/share/qt6")
         copy(webengine_process, app / "usr/libexec/QtWebEngineProcess")
@@ -210,20 +210,20 @@ def package(build, ffmpeg, omt, ndi, output):
             if source.is_file():
                 copy(source, library / name)
     else:
-        print("Pinol is built without Qt WebEngine: no Web Page generator in the package", flush=True)
+        print("NyxMap is built without Qt WebEngine: no Web Page generator in the package", flush=True)
 
     tool = tools(output / "tools")
     # Freedesktop icon sizes stop at 512 in linuxdeploy; the source artwork is larger.
-    icon = output / "pinol.png"
-    with Image.open(ROOT / "assets/pinol-app.png") as artwork:
+    icon = output / "nyxmap.png"
+    with Image.open(ROOT / "assets/nyxmap-app.png") as artwork:
         artwork.resize((512, 512), Image.Resampling.LANCZOS).save(icon)
     env = {**os.environ, "APPIMAGE_EXTRACT_AND_RUN": "1", "NO_STRIP": "1",
            "LD_LIBRARY_PATH": f"{ffmpeg}/lib:{library}:{binary}"}
     # linuxdeploy handles desktop metadata and ELF rpaths; the closure below also
     # includes libraries its portable-baseline exclusion list would leave out.
-    run([tool["linuxdeploy"], "--appdir", app, "--executable", binary / "Pinol",
-         "--desktop-file", ROOT / "packaging/linux/pinol.desktop", "--icon-file", icon,
-         "--icon-filename", "pinol"], env=env)
+    run([tool["linuxdeploy"], "--appdir", app, "--executable", binary / "NyxMap",
+         "--desktop-file", ROOT / "packaging/linux/nyxmap.desktop", "--icon-file", icon,
+         "--icon-filename", "nyxmap"], env=env)
 
     origins = {}
     checked = set()
@@ -272,7 +272,7 @@ def package(build, ffmpeg, omt, ndi, output):
             notices.append(f"| {path.relative_to(app)} | FFmpeg { (ffmpeg / 'VERSION').read_text().splitlines()[0] } "
                            "| LGPL-2.1+ (built without GPL components) |")
             continue
-        if path.name in ("Pinol", "libndi.so.6", "libomt.so", "libvmx.so"):
+        if path.name in ("NyxMap", "libndi.so.6", "libomt.so", "libvmx.so"):
             continue
         source = origins.get(path)
         queries = [str(source), str(source.resolve()), "*/" + path.name] if source else ["*/" + path.name]
@@ -313,20 +313,20 @@ def package(build, ffmpeg, omt, ndi, output):
         "| File | Component / binary and source package versions | Licences |\n|---|---|---|\n"
         + "\n".join(notices) + "\n")
     (app / "README-Linux.txt").write_text(
-        "Pinol — Ubuntu 24.04 or newer, x86_64\n\n"
+        "NyxMap — Ubuntu 24.04 or newer, x86_64\n\n"
         "Portable archive: extract the whole folder, then run ./AppRun. No installation or FUSE needed.\n"
-        "AppImage: chmod +x Pinol-linux-x86_64*.AppImage, then run it.\n"
-        "If FUSE is unavailable: ./Pinol-linux-x86_64*.AppImage --appimage-extract-and-run\n"
+        "AppImage: chmod +x NyxMap-linux-x86_64*.AppImage, then run it.\n"
+        "If FUSE is unavailable: ./NyxMap-linux-x86_64*.AppImage --appimage-extract-and-run\n"
         "Qt, FFmpeg, audio/camera plugins, NDI and OMT are included. The host provides glibc, a desktop session "
         "and OpenGL 3.3 graphics drivers. Optional Blackmagic hardware needs Desktop Video.\n"
         "OMT discovery needs a running Avahi service; the application reports its absence.\n"
         "Licences and dependency/source versions: usr/bin/THIRD-PARTY-NOTICES.md, THIRD-PARTY-LINUX.md, "
         "DEPENDENCIES.txt and licenses/.\n")
     suffix = "-" + os.environ["GITHUB_REF_NAME"] if os.environ.get("GITHUB_REF_TYPE") == "tag" else ""
-    image = output / f"Pinol-linux-x86_64{suffix}.AppImage"
+    image = output / f"NyxMap-linux-x86_64{suffix}.AppImage"
     run([tool["appimagetool"], "--runtime-file", tool["runtime-x86_64"], app, image], env={**env, "ARCH": "x86_64"})
-    with tarfile.open(output / f"Pinol-linux-x86_64{suffix}.tar.gz", "w:gz") as archive:
-        archive.add(app, arcname="Pinol")
+    with tarfile.open(output / f"NyxMap-linux-x86_64{suffix}.tar.gz", "w:gz") as archive:
+        archive.add(app, arcname="NyxMap")
 
 
 if __name__ == "__main__":

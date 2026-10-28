@@ -3,7 +3,7 @@
 
 Usage: fetch_ndi.py OUT_DIR
 
-Pinol loads the NDI library at run time and looks for it next to the application first (src/engine/Publish.cpp), so
+NyxMap loads the NDI library at run time and looks for it next to the application first (src/engine/Publish.cpp), so
 the packages ship it there: Processing.NDI.Lib.x64.dll (Windows), libndi.dylib (macOS), libndi.so.6 (Linux). The NDI SDK
 licence lets an application distribute these binaries when its own terms cover the NDI SDK EULA's, with the third
 party licences of the library (Processing.NDI.Lib.Licenses.txt) beside it; both are written to OUT_DIR, with a notice
@@ -31,7 +31,7 @@ from pathlib import Path
 LOCK = Path(__file__).resolve().parents[1] / "packaging" / "ndi-sdk.json"
 LIBRARY = {"Windows": "Processing.NDI.Lib.x64.dll", "Darwin": "libndi.dylib", "Linux": "libndi.so.6"}
 
-NOTICE = """NDI runtime bundled with Pinol
+NOTICE = """NDI runtime bundled with NyxMap
 
 This application includes the NDI(R) runtime library from the NDI SDK, distributed under the NDI SDK License
 Agreement (https://ndi.video/sdk/). NDI(R) is a registered trademark of Vizrt NDI AB. https://ndi.video
@@ -49,7 +49,7 @@ def download(url: Path, dest: Path) -> str:
     print(f"downloading {url}", flush=True)
     # curl when there is one: it uses the system's certificates (a python.org Python on macOS has none of its own)
     if shutil.which("curl"):
-        cmd = ["curl", "-fsSL", "--retry", "3", "-A", "Pinol", "-o", str(dest), url]
+        cmd = ["curl", "-fsSL", "--retry", "3", "-A", "NyxMap", "-o", str(dest), url]
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError:
@@ -57,7 +57,7 @@ def download(url: Path, dest: Path) -> str:
             print("download failed, trying again over HTTP/1.1", flush=True)
             subprocess.run(cmd[:1] + ["--http1.1"] + cmd[1:], check=True)
     else:
-        req = urllib.request.Request(url, headers={"User-Agent": "Pinol"})
+        req = urllib.request.Request(url, headers={"User-Agent": "NyxMap"})
         with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
             shutil.copyfileobj(r, f)
     return hashlib.sha256(dest.read_bytes()).hexdigest()
@@ -78,7 +78,7 @@ def unpack(system: str, archive: Path, work: Path) -> Path:
         run(["pkgutil", "--expand-full", archive, tree])
         return tree
     if system == "Windows":
-        # The SDK's installer (Inno Setup), quietly: its EULA accepted for Pinol
+        # The SDK's installer (Inno Setup), quietly: its EULA accepted for NyxMap
         run([archive, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", f"/DIR={tree}"])
         return tree
     with tarfile.open(archive) as t:
@@ -88,7 +88,7 @@ def unpack(system: str, archive: Path, work: Path) -> Path:
         else:
             t.extractall(work)
     script = next(work.glob("Install_NDI_SDK_v6_Linux.sh"))
-    # It shows the licence and asks for its acceptance: accepted for Pinol
+    # It shows the licence and asks for its acceptance: accepted for NyxMap
     run(["bash", script], input=b"y\n", cwd=work, env={**os.environ, "PAGER": "cat"})
     return work
 

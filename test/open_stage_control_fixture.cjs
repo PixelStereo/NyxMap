@@ -63,7 +63,7 @@ function fixture(port = 0) {
             ['position', [960, 540]], ['position/x', [960]], ['position/y', [540]],
             ['fx/Blur/param/radius', [5]], ['param/label', ['Hello']]]) {
             const node = nodes.get(entry.path + '/' + suffix);
-            node.PINOL_DEFAULT = defaults; node.PINOL_RESET = node.FULL_PATH + '/reset';
+            node.NYXMAP_DEFAULT = defaults; node.NYXMAP_RESET = node.FULL_PATH + '/reset';
             leaf(suffix + '/reset', 'N', undefined, null, 2, 'Reset ' + node.DESCRIPTION).RESET_TARGET = node.FULL_PATH;
         }
     }
@@ -98,7 +98,7 @@ function fixture(port = 0) {
             if (binary) {
                 const command = osc.readPacket(data, {metadata: true}); commands.push(command);
                 const node = nodes.get(command.address);
-                if (node?.RESET_TARGET) updateNode(node.RESET_TARGET, nodes.get(node.RESET_TARGET).PINOL_DEFAULT);
+                if (node?.RESET_TARGET) updateNode(node.RESET_TARGET, nodes.get(node.RESET_TARGET).NYXMAP_DEFAULT);
                 else if (node && node.TYPE !== 'N') updateNode(command.address, command.args.map(arg => arg.value));
             } else {
                 const {COMMAND, DATA} = JSON.parse(data);

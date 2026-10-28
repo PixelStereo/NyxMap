@@ -129,7 +129,7 @@ struct DmxOutput {
     int port = 0;        // 0: the protocol's (6454, 5568)
     double rate = 40;    // packets per second and universe
     int priority = 100;  // sACN: 0..200
-    QString sourceName = QStringLiteral("Pinol"); // sACN
+    QString sourceName = QStringLiteral("NyxMap"); // sACN
 
     int effectivePort() const { return port > 0 ? port : protocol == Protocol::ArtNet ? 6454 : 5568; }
     bool operator==(const DmxOutput &o) const;

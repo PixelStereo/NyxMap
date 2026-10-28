@@ -4,14 +4,14 @@
 // what it orders; outside a ThreadSanitizer build the annotations are not compiled (no cost).
 
 #if defined(__SANITIZE_THREAD__)
-#define PINOL_TSAN 1
+#define NYXMAP_TSAN 1
 #elif defined(__has_feature)
 #if __has_feature(thread_sanitizer)
-#define PINOL_TSAN 1
+#define NYXMAP_TSAN 1
 #endif
 #endif
 
-#ifdef PINOL_TSAN
+#ifdef NYXMAP_TSAN
 extern "C" void __tsan_acquire(void *addr);
 extern "C" void __tsan_release(void *addr);
 #endif
@@ -20,13 +20,13 @@ extern "C" void __tsan_release(void *addr);
 // did before tsanRelease(x) happens before what another does after tsanAcquire(x)
 inline void tsanRelease([[maybe_unused]] void *x)
 {
-#ifdef PINOL_TSAN
+#ifdef NYXMAP_TSAN
     __tsan_release(x);
 #endif
 }
 inline void tsanAcquire([[maybe_unused]] void *x)
 {
-#ifdef PINOL_TSAN
+#ifdef NYXMAP_TSAN
     __tsan_acquire(x);
 #endif
 }
@@ -56,13 +56,13 @@ public:
 private:
     void acquired()
     {
-#ifdef PINOL_TSAN
+#ifdef NYXMAP_TSAN
         __tsan_acquire(this);
 #endif
     }
     void released()
     {
-#ifdef PINOL_TSAN
+#ifdef NYXMAP_TSAN
         __tsan_release(this);
 #endif
     }

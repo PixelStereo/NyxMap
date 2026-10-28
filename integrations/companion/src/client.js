@@ -5,7 +5,7 @@ const WebSocket = require('ws');
 const osc = require('osc/src/osc');
 
 // One connection for commands and feedback. Offline presses are never queued.
-class PinolClient extends EventEmitter {
+class NyxMapClient extends EventEmitter {
     constructor() {
         super(); this.generation = 0; this.online = false; this.catalog = null; this.state = null;
     }
@@ -31,7 +31,7 @@ class PinolClient extends EventEmitter {
     updateOnline() {
         const ready = !!(this.socket?.readyState === WebSocket.OPEN && this.catalog && this.state && Date.now() - this.lastPong < 6000);
         if (ready) this.setOnline(true);
-        else if (this.online) this.setOnline(false, 'Waiting for Pinol catalog / state');
+        else if (this.online) this.setOnline(false, 'Waiting for NyxMap catalog / state');
     }
     open() {
         const token = ++this.generation;
@@ -58,11 +58,11 @@ class PinolClient extends EventEmitter {
                     if (packet.packets) { packet.packets.forEach(visit); return; }
                     if (packet.address !== '/show/state') return;
                     const state = JSON.parse(packet.args[0].value);
-                    if (state.version !== 1 || !state.values || !Array.isArray(state.timelines)) throw Error('Unsupported Pinol state');
+                    if (state.version !== 1 || !state.values || !Array.isArray(state.timelines)) throw Error('Unsupported NyxMap state');
                     this.state = state; this.emit('state', state); this.updateOnline();
                 };
                 visit(osc.readPacket(data, {metadata: true}));
-            } catch (error) { this.state = null; this.setOnline(false, 'Invalid Pinol feedback: ' + error.message); }
+            } catch (error) { this.state = null; this.setOnline(false, 'Invalid NyxMap feedback: ' + error.message); }
         });
         socket.on('error', error => { if (token === this.generation) this.setOnline(false, error.message); });
         socket.on('close', () => {
@@ -80,7 +80,7 @@ class PinolClient extends EventEmitter {
             response.setEncoding('utf8');
             response.on('data', chunk => {
                 size += Buffer.byteLength(chunk);
-                if (size > 4 * 1024 * 1024) { response.destroy(Error('Pinol catalog is too large')); return; }
+                if (size > 4 * 1024 * 1024) { response.destroy(Error('NyxMap catalog is too large')); return; }
                 body += chunk;
             });
             const failed = error => { if (token === this.generation) { this.catalog = null; this.setOnline(false, error.message); } };
@@ -88,9 +88,9 @@ class PinolClient extends EventEmitter {
             response.on('end', () => {
                 if (token !== this.generation) return;
                 try {
-                    if (response.statusCode !== 200) throw Error('Update Pinol: show-control API unavailable');
+                    if (response.statusCode !== 200) throw Error('Update NyxMap: show-control API unavailable');
                     const catalog = JSON.parse(JSON.parse(body).VALUE[0]);
-                    if (catalog.version !== 1 || !['sequences', 'snapshots', 'presets', 'timelines'].every(key => Array.isArray(catalog[key]))) throw Error('Unsupported Pinol catalog');
+                    if (catalog.version !== 1 || !['sequences', 'snapshots', 'presets', 'timelines'].every(key => Array.isArray(catalog[key]))) throw Error('Unsupported NyxMap catalog');
                     this.catalog = catalog; this.lastCatalog = Date.now();
                     const key = JSON.stringify(catalog);
                     if (key !== this.catalogKey) { this.catalogKey = key; this.emit('catalog', catalog); }
@@ -108,7 +108,7 @@ class PinolClient extends EventEmitter {
     }
     send(address, args = []) {
         if (!this.online || this.socket?.readyState !== WebSocket.OPEN || Date.now() - this.lastPong >= 6000)
-            throw Error('Pinol is offline; command was not sent.');
+            throw Error('NyxMap is offline; command was not sent.');
         this.socket.send(osc.writePacket({address, args}, {metadata: true}));
     }
     stop() {
@@ -120,4 +120,4 @@ class PinolClient extends EventEmitter {
         this.setOnline(false);
     }
 }
-module.exports = {PinolClient};
+module.exports = {NyxMapClient};

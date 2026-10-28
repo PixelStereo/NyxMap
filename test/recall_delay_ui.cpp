@@ -13,7 +13,7 @@ int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
     QSurfaceFormat::setDefaultFormat(format);
-    QApplication app(argc, argv); app.setApplicationName("PinolRecallDelayUITest");
+    QApplication app(argc, argv); app.setApplicationName("NyxMapRecallDelayUITest");
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;
     engine.newProject(); engine.setCompositionSize(QSize(64, 64));

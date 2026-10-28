@@ -31,7 +31,7 @@ std::atomic<bool> Engine::s_failRenderStart{false};
 class RenderThread : public QThread
 {
 public:
-    explicit RenderThread(Engine *e) : m_engine(e) { setObjectName("Pinol-render"); }
+    explicit RenderThread(Engine *e) : m_engine(e) { setObjectName("NyxMap-render"); }
 
 protected:
     void run() override { m_engine->renderLoop(); }

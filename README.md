@@ -1,6 +1,6 @@
 <div align="center">
   
-# PINOL
+# NYXMAP
 
 ## Pixels In New Open Logic - Pixels In New Optimal Layout
 Visual Software for live visuals - From the first pixel to the final cue</p>
@@ -8,7 +8,7 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 <p>Built for projection, installations and live performance.</p>
 
 <p>
-  <a href="https://github.com/PixelStereo/Pinol/actions/workflows/build.yml"><img alt="Build" src="https://github.com/PixelStereo/Pinol/actions/workflows/build.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml"><img alt="Build" src="https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml/badge.svg?branch=main"></a>
   <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=flat-square">
   <img alt="Qt 6 · C++17 · FFmpeg" src="https://img.shields.io/badge/Qt%206%20%C2%B7%20C%2B%2B17%20%C2%B7%20FFmpeg-24272C?style=flat-square">
 </p>
@@ -27,7 +27,7 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 ---
 
 >
-> PINOL brings video, generative visuals, spatial mapping, interactive animation of parameters and live control together in one show environment. From a single projection to a complex multi-output installation, you can design the image and control what happens next without changing tools.
+> NYXMAP brings video, generative visuals, spatial mapping, interactive animation of parameters and live control together in one show environment. From a single projection to a complex multi-output installation, you can design the image and control what happens next without changing tools.
 
 ## Built for the show
 
@@ -50,21 +50,21 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.3.4](https://github.com/PixelStereo/Pinol/releases/tag/v0.3.4)**.
+Latest published build: **[v0.3.4](https://github.com/PixelStereo/NyxMap/releases/tag/v0.3.4)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-macos-v0.3.4.zip)** | **[Download Windows](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-windows-v0.3.4.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-linux-x86_64-v0.3.4.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.3.4/NyxMap-macos-v0.3.4.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.3.4/NyxMap-windows-v0.3.4.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.3.4/NyxMap-linux-x86_64-v0.3.4.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-linux-x86_64-v0.3.4.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.3.4/NyxMap-linux-x86_64-v0.3.4.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
 
-**[Download Open Stage Control remote](https://github.com/PixelStereo/Pinol/releases/download/v0.3.4/Pinol-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
+**[Download Open Stage Control remote](https://github.com/PixelStereo/NyxMap/releases/download/v0.3.4/NyxMap-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
 <!-- release-downloads:end -->
 
 **[Open Stage Control remote](integrations/open-stage-control/README.md)** — ready to load directly from this repository, with dependencies included. See the [setup guide](docs/openstagecontrol-help.md).
 
-To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds Pinol and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/Pinol/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
+To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NyxMap and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
 
 ## License
 
-Pinol is released under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
+NyxMap is released under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.

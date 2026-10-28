@@ -252,7 +252,7 @@ bool AudioStream::doSeek(double t)
     }
     if (result < 0) {
         m_lastSeekError = result;
-        qWarning("Pinol audio seek failed (%s): playback stops until the next seek", qPrintable(avErr(result)));
+        qWarning("NyxMap audio seek failed (%s): playback stops until the next seek", qPrintable(avErr(result)));
         return false;
     }
     avcodec_flush_buffers(m_codec);
@@ -351,7 +351,7 @@ bool AudioStream::decodeRaw(const float **samples, int *frames, double *local)
             av_channel_layout_uninit(&layout);
             if (!same && (m_frame->sample_rate <= 0 || m_frame->format < 0
                           || !configureResampler(&m_frame->ch_layout, m_frame->format, m_frame->sample_rate))) {
-                qWarning("Pinol audio: no resampler for a frame's format (%d Hz, %d channels): skipped",
+                qWarning("NyxMap audio: no resampler for a frame's format (%d Hz, %d channels): skipped",
                          m_frame->sample_rate, m_frame->ch_layout.nb_channels);
                 av_frame_unref(m_frame);
                 continue;
@@ -384,7 +384,7 @@ bool AudioStream::decodeRaw(const float **samples, int *frames, double *local)
             // Not the end of the file (EAGAIN, a disk / NAS error): read again after a pause, as the video does
             const int delayMs = std::min(800, 50 << m_readRetries); // 50, 100, 200, 400, 800 ms
             ++m_readRetries;
-            if (r != AVERROR(EAGAIN)) qWarning("Pinol audio read error (%s): retrying", qPrintable(avErr(r)));
+            if (r != AVERROR(EAGAIN)) qWarning("NyxMap audio read error (%s): retrying", qPrintable(avErr(r)));
             if (m_fmt->pb) { // the demuxer keeps its error: cleared so that the next read reaches the file again
                 m_fmt->pb->error = 0;
                 m_fmt->pb->eof_reached = 0;
@@ -395,7 +395,7 @@ bool AudioStream::decodeRaw(const float **samples, int *frames, double *local)
             continue;
         }
         if (r < 0) {
-            if (r != AVERROR_EOF) qWarning("Pinol audio read error (%s): the track ends here", qPrintable(avErr(r)));
+            if (r != AVERROR_EOF) qWarning("NyxMap audio read error (%s): the track ends here", qPrintable(avErr(r)));
             avcodec_send_packet(m_codec, nullptr); // flush
             m_draining = true;
             continue;

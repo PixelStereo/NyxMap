@@ -1,5 +1,5 @@
 /*{
- "ISFVSN":"2","DESCRIPTION":"Particles: up to 262 144 grains born by an emitter (sphere, shell, ring, point, line or the light of another layer), moved by forces (gravity, wind, drag, turbulence, vortex) and by two attractors (a negative strength repels: it disperses them), drawn with motion streaks, depth of field and bloom, coloured over their life. Their state lives in float textures; Pinol draws them as points (POINTS pass).","CREDIT":"PINOL","CATEGORIES":["Particles","Audio Reactive"],
+ "ISFVSN":"2","DESCRIPTION":"Particles: up to 262 144 grains born by an emitter (sphere, shell, ring, point, line or the light of another layer), moved by forces (gravity, wind, drag, turbulence, vortex) and by two attractors (a negative strength repels: it disperses them), drawn with motion streaks, depth of field and bloom, coloured over their life. Their state lives in float textures; NyxMap draws them as points (POINTS pass).","CREDIT":"NYXMAP","CATEGORIES":["Particles","Audio Reactive"],
  "INPUTS":[
  {"NAME":"count","LABEL":"Particles","TYPE":"float","DEFAULT":0.6,"MIN":0,"MAX":1},
  {"NAME":"emitShape","LABEL":"Emitter Shape","TYPE":"long","DEFAULT":1,"VALUES":[0,1,2,3,4,5],"LABELS":["Sphere","Shell","Ring","Point","Line","Layer"]},

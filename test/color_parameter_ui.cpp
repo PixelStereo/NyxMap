@@ -218,7 +218,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
               "snapshot values do not compete with their color animation");
     }
     QTemporaryDir files;
-    check(engine.saveProject(files.filePath("colors.pinol"), {}, &error), "save local color animations");
+    check(engine.saveProject(files.filePath("colors.nyxmap"), {}, &error), "save local color animations");
     inspector.hide(); timeline.hide(); pump();
 
     // Reproduce changing time/pass widths in both layouts using the real
@@ -268,7 +268,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
         seek(123); editor.poll();
         check(slider->value() == slider->maximum() / 4, "playback polling does not move the handle during a drag");
         slider->setSliderDown(false); editor.poll(); pump();
-        const QString captures = qEnvironmentVariable("PINOL_UI_CAPTURE_DIR");
+        const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR");
         if (!captures.isEmpty()) {
             seek(99999999.99); editor.poll(); pump();
             check(QDir().mkpath(captures), "create CI transport screenshot directory");
@@ -281,7 +281,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     checkTransport(narrow, [&](double clock) { engine.controlLayerAnim(transportLayer, "opacity", AnimAction::Seek, clock); },
                    [&] { Animation a; engine.layerAnim(transportLayer, "opacity", &a); return a; }, "parameter-animation");
     engine.removeAnimation(engine.indexOfAnimation(transportId)); engine.removeLayer(transportRow);
-    check(engine.loadProject(files.filePath("colors.pinol"), nullptr, &error), "reload local color animations");
+    check(engine.loadProject(files.filePath("colors.nyxmap"), nullptr, &error), "reload local color animations");
     Animation restored;
     check(engine.layerAnim(id, start, &restored) && restored.tracks[0].color, "project reload preserves grouped local RGB animation");
     const int index = engine.indexOfId(id);

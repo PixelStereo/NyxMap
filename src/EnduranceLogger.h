@@ -20,11 +20,11 @@
 #include <mutex>
 #include <thread>
 
-#if __has_include("pinol_build_sha.h")
-#include "pinol_build_sha.h" // generated at every build (cmake/BuildSha.cmake)
+#if __has_include("nyxmap_build_sha.h")
+#include "nyxmap_build_sha.h" // generated at every build (cmake/BuildSha.cmake)
 #endif
-#ifndef PINOL_BUILD_SHA
-#define PINOL_BUILD_SHA "unknown"
+#ifndef NYXMAP_BUILD_SHA
+#define NYXMAP_BUILD_SHA "unknown"
 #endif
 
 class EnduranceLogger
@@ -94,14 +94,14 @@ private:
             return;
         }
         QString project = m_engine->projectPath();
-        const QJsonObject meta{{"schema", 2}, {"version", m_version}, {"git_sha", QStringLiteral(PINOL_BUILD_SHA)},
+        const QJsonObject meta{{"schema", 2}, {"version", m_version}, {"git_sha", QStringLiteral(NYXMAP_BUILD_SHA)},
                                {"utc_start", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
                                {"host_os", QSysInfo::prettyProductName()},
                                {"gpu_vendor", m_engine->glVendor()}, {"gpu_renderer", m_engine->glRenderer()},
                                {"opengl_version", m_engine->glVersion()},
-                               {"driver_override", qEnvironmentVariable("PINOL_GPU_DRIVER", "unspecified")},
+                               {"driver_override", qEnvironmentVariable("NYXMAP_GPU_DRIVER", "unspecified")},
                                {"project", project}, {"project_sha256", fingerprint(project)}};
-        csv.write("# PINOL endurance metrics v2\n# ");
+        csv.write("# NYXMAP endurance metrics v2\n# ");
         csv.write(QJsonDocument(meta).toJson(QJsonDocument::Compact));
         csv.write("\n");
         csv.write("utc,frames,missed,interval_p99_ms,interval_max_ms,compute_p95_ms,compute_p99_ms,compute_max_ms,present_p99_ms,present_max_ms,osc_to_frame_p99_ms,cue_to_frame_p99_ms,osc_inputs,cue_inputs,outputs_dropped_total,shares_skipped_total,process_resident_mb,decoded_frames_mb,upload_buffers_mb,graphics_memory_free_mb,graphics_memory_total_mb,software_decode_threads,ffmpeg_errors_total,empty_video_loops_stopped_total,resource_warnings,late_events_lost,journal_lost,audio_callback_count_lifetime,audio_callback_p99_ms_lifetime,audio_callback_max_ms_lifetime,audio_callback_over_quarter_lifetime,audio_callback_over_budget_lifetime,render_lock_wait_p99_ms_lifetime,render_lock_wait_max_ms_lifetime,render_lock_hold_p99_ms_lifetime,interaction_events_dropped_lifetime\n");

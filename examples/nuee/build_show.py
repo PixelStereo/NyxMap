@@ -90,12 +90,12 @@ def build(out,audio=None,duration=BASE_DURATION):
         cuebook.append({"at":round(time*ratio,3),"duration":round(span,3),"name":name,"fade":round(fade,3),"camera":values["camPath"]})
     for timeline in timelines:steps.append({"timeline":timeline["id"],"action":"stop","continue":"follow","text":"Fin des mouvements"})
     snapshots[-1]["composition"]["volume"]=0
-    project={"app":"Pinol","format_version":1,"composition":{"width":1280,"height":720,"fps":60,"speed":1},"audio":{"volume":1},"layers":layers,"interactions":interactions,"timelines":timelines,"snapshots":snapshots,"snapshot_tree":[snap["id"] for snap in snapshots],"sequences":[{"name":"Nuée · particules / 3 minutes","loop":False,"steps":steps}],"current_sequence":0,"startup_sequence":-1,"ui":{"selected_layer":0}}
-    (out/"Nuee.pinol").write_text(json.dumps(project,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    project={"app":"NyxMap","format_version":1,"composition":{"width":1280,"height":720,"fps":60,"speed":1},"audio":{"volume":1},"layers":layers,"interactions":interactions,"timelines":timelines,"snapshots":snapshots,"snapshot_tree":[snap["id"] for snap in snapshots],"sequences":[{"name":"Nuée · particules / 3 minutes","loop":False,"steps":steps}],"current_sequence":0,"startup_sequence":-1,"ui":{"selected_layer":0}}
+    (out/"Nuee.nyxmap").write_text(json.dumps(project,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     (out/"cuebook.json").write_text(json.dumps({"audio":audio_path,"duration":duration,"cues":cuebook},ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     return project,cuebook
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--audio",type=Path);parser.add_argument("--out",type=Path,required=True);parser.add_argument("--duration",type=float,default=BASE_DURATION)
     args=parser.parse_args();project,cues=build(args.out,args.audio,args.duration)
-    print(f"Show ready: {args.out.resolve()/'Nuee.pinol'} ({len(project['timelines'])} timelines, {len(cues)} cues)")
+    print(f"Show ready: {args.out.resolve()/'Nuee.nyxmap'} ({len(project['timelines'])} timelines, {len(cues)} cues)")

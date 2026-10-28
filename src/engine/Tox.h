@@ -13,7 +13,7 @@ struct ToxSettings {
     double fps = 30;
     bool playing = true;
     QJsonObject values; // link identifiers -> scalar or vector values, including while loading
-    QMap<QString, quint64> inputs; // TOP input identifier -> Pinol layer ID (0: disconnected)
+    QMap<QString, quint64> inputs; // TOP input identifier -> NyxMap layer ID (0: disconnected)
     void sanitize();
     QJsonObject toJson() const;
     static ToxSettings fromJson(const QJsonObject &json);

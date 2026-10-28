@@ -26,7 +26,7 @@ int main(int argc, char **argv)
             std::printf("FAIL midi_virtual: %s\n", why);
         }
     };
-    const QString name = QStringLiteral("Pinol virtual test %1").arg(QCoreApplication::applicationPid());
+    const QString name = QStringLiteral("NyxMap virtual test %1").arg(QCoreApplication::applicationPid());
     midi::Output out;
     QString err;
     check(out.openVirtual(name, &err), qPrintable(QStringLiteral("a virtual port is made (%1)").arg(err)));

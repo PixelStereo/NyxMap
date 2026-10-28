@@ -7,13 +7,13 @@ import unittest
 
 import release_metadata as metadata
 
-REPO = "PixelStereo/Pinol"
+REPO = "PixelStereo/NyxMap"
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
-    names = [f"Pinol-macos-{tag}.zip", f"Pinol-windows-{tag}.zip",
-             f"Pinol-linux-x86_64-{tag}.AppImage", f"Pinol-linux-x86_64-{tag}.tar.gz"]
+    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}.zip",
+             f"NyxMap-linux-x86_64-{tag}.AppImage", f"NyxMap-linux-x86_64-{tag}.tar.gz"]
     return {"tag_name": tag, "published_at": date, "draft": False, "prerelease": False, **flags,
             "assets": [{"name": name, "state": "uploaded", "size": 123,
                         "browser_download_url": f"https://github.com/{REPO}/releases/download/{tag}/{name}"}
@@ -70,8 +70,8 @@ class ReleaseMetadataTests(unittest.TestCase):
         current = release()
         _, urls = metadata.select_release([current], REPO)
         self.assertNotIn('Download Open Stage Control remote', metadata.downloads(current, urls, REPO))
-        remote = {'name': 'Pinol-OpenStageControl.zip', 'state': 'uploaded', 'size': 123,
-                  'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/Pinol-OpenStageControl.zip'}
+        remote = {'name': 'NyxMap-OpenStageControl.zip', 'state': 'uploaded', 'size': 123,
+                  'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/NyxMap-OpenStageControl.zip'}
         current['assets'].append(remote)
         _, urls = metadata.select_release([current], REPO)
         self.assertIn(remote['browser_download_url'], metadata.downloads(current, urls, REPO))
@@ -97,9 +97,9 @@ class ReleaseMetadataTests(unittest.TestCase):
             (root / "VERSION").write_text("0.2.1\n")
             script = root / "check.cmake"
             script.write_text('include("${CMAKE_CURRENT_LIST_DIR}/cmake/Version.cmake")\n'
-                              'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/result" "${PINOL_VERSION}|${PINOL_VERSION_NUMERIC}")\n')
+                              'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/result" "${NYXMAP_VERSION}|${NYXMAP_VERSION_NUMERIC}")\n')
             env = {**os.environ, "GITHUB_REF_TYPE": "tag" if tag else "branch", "GITHUB_REF_NAME": tag or "main"}
-            cmd = ["cmake"] + ([f"-DPINOL_VERSION={override}"] if override else []) + ["-P", str(script)]
+            cmd = ["cmake"] + ([f"-DNYXMAP_VERSION={override}"] if override else []) + ["-P", str(script)]
             result = subprocess.run(cmd, env=env, capture_output=True, text=True)
             if result.returncode:
                 raise ValueError(result.stdout + result.stderr)

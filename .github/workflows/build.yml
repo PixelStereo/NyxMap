@@ -96,7 +96,7 @@ jobs:
         run: |
           # Network setup has its own budget, separate from package execution.
           for ubuntu_version in 24.04 26.04; do
-            timeout 420 docker build --progress=plain -t "pinol-clean-runtime:$ubuntu_version" \
+            timeout 420 docker build --progress=plain -t "nyxmap-clean-runtime:$ubuntu_version" \
               --secret id=ubuntu-ca,src=/etc/ssl/certs/ca-certificates.crt \
               --build-arg "UBUNTU_VERSION=$ubuntu_version" \
               -f packaging/linux/smoke.Dockerfile packaging/linux
@@ -123,7 +123,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j4
-          cmake --build build --target pinol_tests -j4
+          cmake --build build --target nyxmap_tests -j4
       - name: Engine tests
         run: |
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
@@ -135,9 +135,9 @@ jobs:
           # Each failed engine area again under gdb: where it crashed (the symbols of a release build: functions only)
           sudo apt-get install -y gdb
           for name in $(sed -n 's/^[0-9]*:\(.*\)$/\1/p' build/Testing/Temporary/LastTestsFailed*.log | sort -u); do
-            ctest --test-dir build -N -V -R "^${name}\$" | grep -q 'Test command: .*pinol_tests.*--area' || continue
+            ctest --test-dir build -N -V -R "^${name}\$" | grep -q 'Test command: .*nyxmap_tests.*--area' || continue
             echo "::group::gdb $name"
-            (cd build && timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args ./pinol_tests --area "$name") || true
+            (cd build && timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args ./nyxmap_tests --area "$name") || true
             echo "::endgroup::"
           done
       - name: Dependency versions
@@ -158,21 +158,21 @@ jobs:
         run: |
           # Only distribution files, fixtures and the test harness cross this boundary.
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
-          cp dist/Pinol-linux-x86_64*.AppImage dist/Pinol-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
+          cp dist/NyxMap-linux-x86_64*.AppImage dist/NyxMap-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
           cp scripts/smoke_package.py scripts/smoke_linux_package.py "$RUNNER_TEMP/linux-smoke-scripts/"
           for ubuntu_version in 24.04 26.04; do
             docker run --rm --init --network none \
               -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
               -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \
               -v "$PWD/test/media:/media:ro" \
-              "pinol-clean-runtime:$ubuntu_version" python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
+              "nyxmap-clean-runtime:$ubuntu_version" python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: Pinol-linux
+          name: NyxMap-linux
           path: |
-            dist/Pinol-linux-x86_64*.AppImage
-            dist/Pinol-linux-x86_64*.tar.gz
+            dist/NyxMap-linux-x86_64*.AppImage
+            dist/NyxMap-linux-x86_64*.tar.gz
 
   workspace-memory:
     if: needs.scope.outputs.memory == 'true'
@@ -198,13 +198,13 @@ jobs:
           cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
-          cmake --build build-asan --target pinol_workspace_ui_test -j4
+          cmake --build build-asan --target nyxmap_workspace_ui_test -j4
       - name: Exercise workspace lifetime
         timeout-minutes: 5
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           LP_NUM_THREADS: '1'
-          PINOL_UI_CAPTURE_DIR: ${{ runner.temp }}/animation-transport
+          NYXMAP_UI_CAPTURE_DIR: ${{ runner.temp }}/animation-transport
         run: xvfb-run -a ctest --test-dir build-asan --output-on-failure --timeout 120 -R '^(workspace_ui|xy_parameter_ui|color_parameter_ui|clock_preset_ui|system_isf_ui)$'
       - name: Animation transport screenshots
         uses: actions/upload-artifact@v4
@@ -235,13 +235,13 @@ jobs:
       - name: Build with debug symbols
         run: |
           cmake -S . -B build-memory -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          cmake --build build-memory --target pinol_workspace_ui_test -j4
+          cmake --build build-memory --target nyxmap_workspace_ui_test -j4
       - name: Check workspace allocation lifetime
         run: |
           xvfb-run -a valgrind --tool=memcheck --error-exitcode=99 \
             --undef-value-errors=no --show-realloc-size-zero=no --leak-check=no --num-callers=35 \
             --suppressions=test/valgrind.supp \
-            --log-file=workspace-valgrind.log ./build-memory/pinol_workspace_ui_test
+            --log-file=workspace-valgrind.log ./build-memory/nyxmap_workspace_ui_test
       - name: Memory diagnostics
         if: always()
         run: cat workspace-valgrind.log || true
@@ -251,7 +251,7 @@ jobs:
           name: workspace-memory-diagnostics
           path: workspace-valgrind.log
 
-  # The threads that share data (decoders, sound callback, OSC) under ThreadSanitizer: a race in Pinol's code
+  # The threads that share data (decoders, sound callback, OSC) under ThreadSanitizer: a race in NyxMap's code
   # fails the job. Libraries not built with it (Qt, Mesa, FFmpeg) are suppressed in test/tsan.supp; the engine's
   # Qt mutexes and the render thread's join are annotated (src/engine/AnnotatedMutex.h).
   tsan:
@@ -281,13 +281,13 @@ jobs:
           cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang-18 \
             -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
             -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
-          cmake --build build-tsan --target pinol_tests pinol_audio_analysis_concurrency_test pinol_publishing_concurrency_test pinol_cue_dispatch_test -j4
+          cmake --build build-tsan --target nyxmap_tests nyxmap_audio_analysis_concurrency_test nyxmap_publishing_concurrency_test nyxmap_cue_dispatch_test -j4
       - name: Tests under ThreadSanitizer
         run: |
           export TSAN_OPTIONS="halt_on_error=1 exitcode=66 suppressions=$PWD/test/tsan.supp"
           ctest --test-dir build-tsan -R '^audio_analysis_concurrency$' --output-on-failure
           xvfb-run -a ctest --test-dir build-tsan -R '^(publishing_concurrency|cue_dispatch)$' --output-on-failure
-          timeout 120 xvfb-run -a ./build-tsan/pinol_tests --area cue_lifecycle
+          timeout 120 xvfb-run -a ./build-tsan/nyxmap_tests --area cue_lifecycle
           # The decoders' threads, the sound callback and its decode threads, the OSC server. (The render-thread areas
           # render with llvmpipe, itself far too slow under ThreadSanitizer on a CI runner: run them locally.)
           # A sanitizer report (exit code 66, including a fatal signal) fails at once. Other failures can be timing checks under ThreadSanitizer's
@@ -298,7 +298,7 @@ jobs:
             ok=0
             for attempt in 1 2 3; do
               rc=0
-              timeout 600 xvfb-run -a ./build-tsan/pinol_tests --area $area || rc=$?
+              timeout 600 xvfb-run -a ./build-tsan/nyxmap_tests --area $area || rc=$?
               if [ $rc -eq 0 ]; then ok=1; break; fi
               if [ $rc -eq 66 ]; then echo "::error::ThreadSanitizer: race or fatal runtime error in area $area"; exit 66; fi
               echo "::warning::$area failed (exit $rc) under ThreadSanitizer, attempt $attempt of 3"
@@ -337,7 +337,7 @@ jobs:
         timeout-minutes: 15
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target Pinol -j4
+          cmake --build build --target NyxMap -j4
       - name: Scenario
         timeout-minutes: 5
         run: |
@@ -379,7 +379,7 @@ jobs:
             libavutil-dev ffmpeg
       - name: Build
         run: |
-          cmake -S . -B build-fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DPINOL_FUZZ=ON
+          cmake -S . -B build-fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DNYXMAP_FUZZ=ON
           cmake --build build-fuzz --target fuzz_hap fuzz_osc -j4
       - name: Fuzz (2 minutes)
         run: |
@@ -419,14 +419,14 @@ jobs:
         run: |
           # Keep packaging independent of any stale build artifacts.
           rm -rf build
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON
           cmake --build build -j4
-          cmake --build build --target pinol_tests -j4
+          cmake --build build --target nyxmap_tests -j4
       - name: macOS source build starts before packaging
         run: |
           codesign --verify --deep --strict build/runtimes/touchengine/TouchEngine.framework
-          codesign --verify --deep --strict build/Pinol.app/Contents/Frameworks/TouchEngine.framework
-          ./build/Pinol.app/Contents/MacOS/Pinol --help
+          codesign --verify --deep --strict build/NyxMap.app/Contents/Frameworks/TouchEngine.framework
+          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
       - name: Engine tests
         run: |
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing
@@ -455,8 +455,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="build/Pinol.app"
-          EXE="$APP/Contents/MacOS/Pinol"
+          APP="build/NyxMap.app"
+          EXE="$APP/Contents/MacOS/NyxMap"
           QT_PREFIX="$(brew --prefix qt)"
 
           test -d "$APP"
@@ -476,16 +476,16 @@ jobs:
           done < <(brew list --formula | sort -u)
 
           "$QT_PREFIX/bin/macdeployqt" "$APP" -verbose=2 -always-overwrite "${LIBPATH_ARGS[@]}"
-          # Qt Virtual Keyboard is GPL-3.0 only in Qt's open source edition, and Pinol has no use for it: macdeployqt
+          # Qt Virtual Keyboard is GPL-3.0 only in Qt's open source edition, and NyxMap has no use for it: macdeployqt
           # copies it with the input context plugins, take it out before the dependencies are resolved
           rm -rf "$APP"/Contents/Frameworks/QtVirtualKeyboard*.framework "$APP/Contents/PlugIns/virtualkeyboard" \
             "$APP"/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin*.dylib
 
-          # Open Media Transport (MIT, built from source, universal): in Frameworks, where Pinol looks for it first
+          # Open Media Transport (MIT, built from source, universal): in Frameworks, where NyxMap looks for it first
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
           cp "$RUNNER_TEMP/omt/libomt.dylib" "$RUNNER_TEMP/omt/libvmx.dylib" "$APP/Contents/Frameworks/"
           cp "$RUNNER_TEMP/omt/OMT-LICENSES.txt" "$APP/Contents/Resources/"
-          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
+          # The NDI runtime from the NDI SDK (its EULA accepted for NyxMap), with its licences and notice
           python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
           cp "$RUNNER_TEMP/ndi/libndi.dylib" "$APP/Contents/Frameworks/"
           cp "$RUNNER_TEMP/ndi/Processing.NDI.Lib.Licenses.txt" "$RUNNER_TEMP/ndi/NDI-NOTICE.txt" "$APP/Contents/Resources/"
@@ -535,7 +535,7 @@ jobs:
           python3 scripts/build_ffmpeg_lgpl.py check "$APP"
           python3 scripts/macos_notices.py "$APP"
           cat > "$APP/Contents/Resources/README-Dependencies.txt" <<'EOF'
-          Pinol macOS runtime notes
+          NyxMap macOS runtime notes
 
           The application bundle includes the Qt frameworks/plugins deployed by macdeployqt and the FFmpeg
           dynamic libraries discovered during packaging. The workflow checks for unresolved absolute Homebrew paths.
@@ -551,16 +551,16 @@ jobs:
           # The archive is intentionally not notarized. macOS users may need to approve
           # this app manually because it is not signed with a paid Developer ID certificate.
           cat > "$APP/Contents/Resources/README-macOS-First-Launch.txt" <<'EOF'
-          Pinol macOS — first launch
+          NyxMap macOS — first launch
 
           This build is not signed with an Apple Developer ID certificate and is not notarized.
           macOS may block the app when it is downloaded from the Internet.
 
-          First try: in Finder, Control-click Pinol.app, choose Open, then confirm Open.
+          First try: in Finder, Control-click NyxMap.app, choose Open, then confirm Open.
           If macOS still says the app is damaged, only if you trust this build, open Terminal
           and run the following command on the extracted app:
-            xattr -dr com.apple.quarantine "/path/to/Pinol.app"
-          Replace /path/to/Pinol.app with the actual path to Pinol.app, then open it again.
+            xattr -dr com.apple.quarantine "/path/to/NyxMap.app"
+          Replace /path/to/NyxMap.app with the actual path to NyxMap.app, then open it again.
 
           This removes the download quarantine flag; it does not repair a genuinely corrupted
           application. Do not run this command on software from an untrusted source.
@@ -569,18 +569,18 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then TAG_SUFFIX="-$GITHUB_REF_NAME"; fi
           cp deps-macos.txt "$APP/Contents/Resources/DEPENDENCIES.txt"
           codesign --force --sign - "$APP" # the resource added: sealed again
-          ditto -c -k --keepParent "$APP" "Pinol-macos${TAG_SUFFIX}.zip"
+          ditto -c -k --keepParent "$APP" "NyxMap-macos${TAG_SUFFIX}.zip"
       - name: Smoke test of the extracted app
         run: |
-          mkdir -p "$RUNNER_TEMP/clean" && ditto -x -k Pinol-macos*.zip "$RUNNER_TEMP/clean"
-          APP="$RUNNER_TEMP/clean/Pinol.app"
+          mkdir -p "$RUNNER_TEMP/clean" && ditto -x -k NyxMap-macos*.zip "$RUNNER_TEMP/clean"
+          APP="$RUNNER_TEMP/clean/NyxMap.app"
           codesign --verify --deep --strict "$APP"
-          python3 scripts/smoke_package.py "$APP/Contents/MacOS/Pinol" "$APP/Contents/Resources/isf" \
+          python3 scripts/smoke_package.py "$APP/Contents/MacOS/NyxMap" "$APP/Contents/Resources/isf" \
             "$PWD/test/media" "$RUNNER_TEMP/smoke"
       - uses: actions/upload-artifact@v4
         with:
-          name: Pinol-macos
-          path: Pinol-macos*.zip
+          name: NyxMap-macos
+          path: NyxMap-macos*.zip
 
   windows:
     if: needs.scope.outputs.build == 'true'
@@ -620,11 +620,11 @@ jobs:
         run: |
           # pwsh stops on cmdlet errors only: every native command's exit code is checked
           $ErrorActionPreference = "Stop"
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT="C:\ffmpeg\$env:FFMPEG_ZIP" -DPINOL_ACCEPT_TOUCHENGINE_LICENSE=ON
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFFMPEG_ROOT="C:\ffmpeg\$env:FFMPEG_ZIP" -DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
           cmake --build build
-          if ($LASTEXITCODE -ne 0) { throw "Pinol build failed" }
-          cmake --build build --target pinol_tests
+          if ($LASTEXITCODE -ne 0) { throw "NyxMap build failed" }
+          cmake --build build --target nyxmap_tests
           if ($LASTEXITCODE -ne 0) { throw "Test build failed" }
       - uses: actions/download-artifact@v4
         with:
@@ -649,17 +649,17 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force dist | Out-Null
 
-          Copy-Item build\Pinol.exe dist\Pinol.exe -Force
+          Copy-Item build\NyxMap.exe dist\NyxMap.exe -Force
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
           Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 
           # Deploy Qt libraries, platform plugins, multimedia plugins and the MSVC runtime.
-          # Use Pinol's FFmpeg DLLs, not Qt Multimedia's private FFmpeg build.
+          # Use NyxMap's FFmpeg DLLs, not Qt Multimedia's private FFmpeg build.
           # Keep the official MSVC redistributable installer in the archive instead of copying
           # compiler-runtime DLLs individually.
-          windeployqt --release --no-compiler-runtime --no-ffmpeg -multimedia dist\Pinol.exe
+          windeployqt --release --no-compiler-runtime --no-ffmpeg -multimedia dist\NyxMap.exe
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
           # Bundle the FFmpeg DLL set used by this build, including companion DLLs.
@@ -679,12 +679,12 @@ jobs:
           $ffmpegCheck
           $ffmpegLicence = $ffmpegCheck[-1]
 
-          # Open Media Transport (MIT, built from source): next to Pinol.exe, where Pinol looks for it first
+          # Open Media Transport (MIT, built from source): next to NyxMap.exe, where NyxMap looks for it first
           python scripts/build_omt.py "$env:RUNNER_TEMP\omt"
           if ($LASTEXITCODE -ne 0) { throw "OMT build failed" }
           Copy-Item "$env:RUNNER_TEMP\omt\libomt.dll", "$env:RUNNER_TEMP\omt\libvmx.dll", "$env:RUNNER_TEMP\omt\OMT-LICENSES.txt" -Destination dist -Force
 
-          # The NDI runtime from the NDI SDK (its EULA accepted for Pinol), with its licences and notice
+          # The NDI runtime from the NDI SDK (its EULA accepted for NyxMap), with its licences and notice
           python scripts/fetch_ndi.py "$env:RUNNER_TEMP\ndi"
           if ($LASTEXITCODE -ne 0) { throw "NDI fetch failed" }
           Copy-Item "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.x64.dll", "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.Licenses.txt", "$env:RUNNER_TEMP\ndi\NDI-NOTICE.txt" -Destination dist -Force
@@ -702,7 +702,7 @@ jobs:
           "vc_redist.x64.exe $vcVersion, SHA-256 $vcSha, signed by $($vcSignature.SignerCertificate.Subject)"
 
           # Basic packaging assertions.
-          if (-not (Test-Path dist\Pinol.exe)) { throw "Pinol.exe missing" }
+          if (-not (Test-Path dist\NyxMap.exe)) { throw "NyxMap.exe missing" }
           if (-not (Test-Path dist\isf)) { throw "ISF assets missing" }
           if (-not (Test-Path dist\platforms\qwindows.dll)) {
             throw "Qt Windows platform plugin missing after windeployqt"
@@ -719,12 +719,12 @@ jobs:
           }
 
           @'
-          Pinol Windows x64 runtime notes
+          NyxMap Windows x64 runtime notes
 
-          This archive bundles Pinol.exe, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
+          This archive bundles NyxMap.exe, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
           and Microsoft's official vc_redist.x64.exe installer.
-          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe, then start Pinol.exe.
-          Run Pinol.exe from this extracted directory.
+          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe, then start NyxMap.exe.
+          Run NyxMap.exe from this extracted directory.
 
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
@@ -754,21 +754,21 @@ jobs:
 
           $tagSuffix = ""
           if ($env:GITHUB_REF_TYPE -eq "tag") { $tagSuffix = "-$env:GITHUB_REF_NAME" }
-          Compress-Archive -Path dist\* -DestinationPath "Pinol-windows$tagSuffix.zip" -Force
+          Compress-Archive -Path dist\* -DestinationPath "NyxMap-windows$tagSuffix.zip" -Force
       - name: Smoke test of the extracted archive
         shell: pwsh
         run: |
           # Extracted elsewhere, with neither FFmpeg's nor Qt's folders in PATH: only what the archive holds
           $clean = Join-Path $env:RUNNER_TEMP "clean"
-          Expand-Archive (Get-ChildItem Pinol-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
+          Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
           # OpenGL comes from Mesa installed on the runner; without it the program still has to start (exit code 1)
-          python scripts/smoke_package.py "$clean\Pinol.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
+          python scripts/smoke_package.py "$clean\NyxMap.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: Pinol-windows
-          path: Pinol-windows*.zip
+          name: NyxMap-windows
+          path: NyxMap-windows*.zip
 
 
   open-stage-control:
@@ -788,13 +788,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: Pinol-*
+          pattern: NyxMap-*
           merge-multiple: false
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Pinol ${{ github.ref_name }}
+          name: NyxMap ${{ github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

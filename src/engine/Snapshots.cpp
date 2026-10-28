@@ -1212,7 +1212,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
     m_fadeElapsed = 0;
 }
 
-// Emergency stop for the operator (Escape in any Pinol window). Stop every pending
+// Emergency stop for the operator (Escape in any NyxMap window). Stop every pending
 // cue before touching the rendered state, to prevent the cue clock from issuing another
 // recall after the stop. The UI can be on a different thread from rendering; all
 // affected layer/transition/animation state is protected by the engine mutex.

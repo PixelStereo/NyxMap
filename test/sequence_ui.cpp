@@ -12,7 +12,7 @@
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    app.setApplicationName("PinolSequenceUITest");
+    app.setApplicationName("NyxMapSequenceUITest");
     Engine engine;
     Sequencer::Sequence sequence;
     Sequencer::Step first, second, third;

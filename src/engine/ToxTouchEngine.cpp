@@ -8,7 +8,7 @@
 #include <cmath>
 #include <mutex>
 
-#ifdef PINOL_HAS_TOUCHENGINE
+#ifdef NYXMAP_HAS_TOUCHENGINE
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX

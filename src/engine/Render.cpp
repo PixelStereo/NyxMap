@@ -500,7 +500,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                     l.linesTexRev = l.linesRevision;
                     l.linesTexSize = QSize(l.genWidth, l.genHeight);
                 }
-                l.generator->setExtraTexture(QByteArrayLiteral("pinolSegments"), l.linesTex.tex);
+                l.generator->setExtraTexture(QByteArrayLiteral("nyxmapSegments"), l.linesTex.tex);
             }
             l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {

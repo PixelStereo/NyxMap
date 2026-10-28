@@ -11,8 +11,8 @@
     "colorBg": "#202024",
     "colorText": "#ececf0",
     "padding": 12,
-    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.pinol-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.pinol-flow > inner {flex:none;}\n.text-container {--alpha-fill-off:0;--text-padding:0;}\n.pinol-cue > inner {border-radius:5rem;overflow:hidden;}\n.pinol-cue > inner > .widget:not(.pinol-cue-fill) {position:relative;z-index:1;}\n.pinol-cue > inner > .pinol-cue-fill {position:absolute!important;inset:0!important;width:auto!important;height:auto!important;min-height:0!important;z-index:0!important;}\n.navigation {background:#26262b;}\n.tablink {color:#a4a4ae;}\n.tablink.on {color:#ececf0;box-shadow:inset 0 -2rem #4cd964;}\n@media screen and (min-width:1000px) {\n .pinol-dashboard > inner {grid-template-columns:minmax(0,1.6fr) minmax(320rem,1fr)!important;}\n}",
-    "onCreate": "send('127.0.0.1:1234', '/pinol/session/ready');",
+    "css": ":host {font-family:Roboto,sans-serif;font-variant-numeric:tabular-nums;}\n.nyxmap-flow {height:auto!important;max-height:none!important;contain:layout style;flex-shrink:0;}\n.nyxmap-flow > inner {flex:none;}\n.text-container {--alpha-fill-off:0;--text-padding:0;}\n.nyxmap-cue > inner {border-radius:5rem;overflow:hidden;}\n.nyxmap-cue > inner > .widget:not(.nyxmap-cue-fill) {position:relative;z-index:1;}\n.nyxmap-cue > inner > .nyxmap-cue-fill {position:absolute!important;inset:0!important;width:auto!important;height:auto!important;min-height:0!important;z-index:0!important;}\n.navigation {background:#26262b;}\n.tablink {color:#a4a4ae;}\n.tablink.on {color:#ececf0;box-shadow:inset 0 -2rem #4cd964;}\n@media screen and (min-width:1000px) {\n .nyxmap-dashboard > inner {grid-template-columns:minmax(0,1.6fr) minmax(320rem,1fr)!important;}\n}",
+    "onCreate": "send('127.0.0.1:1234', '/nyxmap/session/ready');",
     "widgets": [
       {
         "type": "panel",
@@ -22,7 +22,7 @@
           {
             "type": "text",
             "id": "brand",
-            "value": "PINOL  /  REMOTE CONTROL",
+            "value": "NYXMAP  /  REMOTE CONTROL",
             "width": "100%",
             "height": 32,
             "bypass": true,
@@ -40,8 +40,8 @@
             "height": 32,
             "bypass": true,
             "wrap": true,
-            "address": "/pinol/ui/status",
-            "default": "Load pinol.js as the custom module",
+            "address": "/nyxmap/ui/status",
+            "default": "Load nyxmap.js as the custom module",
             "expand": 3,
             "align": "right",
             "alphaFillOff": 0,
@@ -77,7 +77,7 @@
                     "id": "show_layers",
                     "label": "LAYER CONTROL \u2192",
                     "mode": "momentary",
-                    "address": "/pinol/noop",
+                    "address": "/nyxmap/noop",
                     "bypass": true,
                     "onValue": "set('pages', 4, {send: false});",
                     "width": "100%",
@@ -95,7 +95,7 @@
                       {
                         "type": "dropdown",
                         "id": "sequence_select",
-                        "address": "/pinol/sequence/select",
+                        "address": "/nyxmap/sequence/select",
                         "values": {
                           "labels": [],
                           "values": []
@@ -103,7 +103,7 @@
                         "width": "auto",
                         "height": 48,
                         "expand": 3,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                        "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                         "target": "127.0.0.1:1234",
                         "ignoreDefaults": true,
                         "label": "%key"
@@ -111,7 +111,7 @@
                       {
                         "type": "text",
                         "id": "sequence_running",
-                        "value": "JS{return (OSC{/sequence/running,0,false} ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO') + ' \u00b7 ' + OSC{/pinol/ui/background,0,false} + ' background'}",
+                        "value": "JS{return (OSC{/sequence/running,0,false} ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO') + ' \u00b7 ' + OSC{/nyxmap/ui/background,0,false} + ' background'}",
                         "width": "100%",
                         "height": 32,
                         "bypass": true,
@@ -138,7 +138,7 @@
                     "height": "auto",
                     "contain": false,
                     "padding": 4,
-                    "css": "class: pinol-flow;\nclass: pinol-dashboard;",
+                    "css": "class: nyxmap-flow;\nclass: nyxmap-dashboard;",
                     "widgets": [
                       {
                         "type": "panel",
@@ -177,7 +177,7 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/previous/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "css": "class: nyxmap-cue-fill;\n:host {pointer-events:none;z-index:0;}",
                                 "lineWidth": 0
                               },
                               {
@@ -197,7 +197,7 @@
                                 "type": "text",
                                 "id": "previous_continuation",
                                 "value": "",
-                                "address": "/pinol/cue/previous/continuation",
+                                "address": "/nyxmap/cue/previous/continuation",
                                 "width": "100%",
                                 "height": 32,
                                 "bypass": true,
@@ -205,7 +205,7 @@
                                 "align": "left",
                                 "alphaFillOff": 0,
                                 "colorText": "JS{var m=OSC{/sequence/cue/previous/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
-                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
+                                "css": "class: nyxmap-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
                               },
                               {
                                 "type": "text",
@@ -244,7 +244,7 @@
                             "colorBg": "#242428",
                             "border": true,
                             "contain": false,
-                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #676771;border-radius:5rem;}",
+                            "css": "class: nyxmap-flow;\nclass: nyxmap-cue;\n:host {border-left:3rem solid #676771;border-radius:5rem;}",
                             "alphaStroke": 0
                           },
                           {
@@ -279,7 +279,7 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/current/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "css": "class: nyxmap-cue-fill;\n:host {pointer-events:none;z-index:0;}",
                                 "lineWidth": 0
                               },
                               {
@@ -299,7 +299,7 @@
                                 "type": "text",
                                 "id": "current_continuation",
                                 "value": "",
-                                "address": "/pinol/cue/current/continuation",
+                                "address": "/nyxmap/cue/current/continuation",
                                 "width": "100%",
                                 "height": 32,
                                 "bypass": true,
@@ -307,7 +307,7 @@
                                 "align": "left",
                                 "alphaFillOff": 0,
                                 "colorText": "JS{var m=OSC{/sequence/cue/current/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
-                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
+                                "css": "class: nyxmap-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
                               },
                               {
                                 "type": "text",
@@ -387,7 +387,7 @@
                             "colorBg": "#262b28",
                             "border": true,
                             "contain": false,
-                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #4cd964;border-radius:5rem;}",
+                            "css": "class: nyxmap-flow;\nclass: nyxmap-cue;\n:host {border-left:3rem solid #4cd964;border-radius:5rem;}",
                             "alphaStroke": 0
                           },
                           {
@@ -422,7 +422,7 @@
                                 "alphaStroke": 0,
                                 "padding": 0,
                                 "colorWidget": "JS{var p=OSC{/sequence/cue/next/phase,'',false};return p==='pre-wait'?'#e0b43a':p==='post-wait'?'#569ce6':'#4cd964';}",
-                                "css": "class: pinol-cue-fill;\n:host {pointer-events:none;z-index:0;}",
+                                "css": "class: nyxmap-cue-fill;\n:host {pointer-events:none;z-index:0;}",
                                 "lineWidth": 0
                               },
                               {
@@ -442,7 +442,7 @@
                                 "type": "text",
                                 "id": "next_continuation",
                                 "value": "",
-                                "address": "/pinol/cue/next/continuation",
+                                "address": "/nyxmap/cue/next/continuation",
                                 "width": "100%",
                                 "height": 32,
                                 "bypass": true,
@@ -450,7 +450,7 @@
                                 "align": "left",
                                 "alphaFillOff": 0,
                                 "colorText": "JS{var m=OSC{/sequence/cue/next/continue,'',false};return m==='wait'?'#d5bd82':m==='follow'?'#79cbb6':'#b7a1d9';}",
-                                "css": "class: pinol-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
+                                "css": "class: nyxmap-continuation;\n:host {font-size:12px;font-weight:700;letter-spacing:.5px;}"
                               },
                               {
                                 "type": "text",
@@ -530,7 +530,7 @@
                             "colorBg": "#2c2728",
                             "border": true,
                             "contain": false,
-                            "css": "class: pinol-flow;\nclass: pinol-cue;\n:host {border-left:3rem solid #e84c3d;border-radius:5rem;}",
+                            "css": "class: nyxmap-flow;\nclass: nyxmap-cue;\n:host {border-left:3rem solid #e84c3d;border-radius:5rem;}",
                             "alphaStroke": 0
                           }
                         ],
@@ -539,7 +539,7 @@
                         "height": "auto",
                         "padding": 8,
                         "contain": false,
-                        "css": "class: pinol-flow;",
+                        "css": "class: nyxmap-flow;",
                         "alphaStroke": 0
                       },
                       {
@@ -551,7 +551,7 @@
                         "height": "auto",
                         "contain": false,
                         "padding": 4,
-                        "css": "class: pinol-flow;",
+                        "css": "class: nyxmap-flow;",
                         "widgets": [
                           {
                             "type": "panel",
@@ -562,7 +562,7 @@
                                 "type": "button",
                                 "id": "back",
                                 "label": "\u2039 GO BACK",
-                                "address": "/pinol/sequence/back",
+                                "address": "/nyxmap/sequence/back",
                                 "preArgs": [],
                                 "mode": "momentary",
                                 "target": "127.0.0.1:1234",
@@ -570,7 +570,7 @@
                                 "width": "auto",
                                 "height": 52,
                                 "expand": true,
-                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/back_enabled,0,false}}",
+                                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false} && !!OSC{/sequence/back_enabled,0,false}}",
                                 "wrap": true,
                                 "colorWidget": "#94949f",
                                 "alphaFillOff": 0.08,
@@ -582,7 +582,7 @@
                                 "type": "button",
                                 "id": "go",
                                 "label": "GO \u25b6",
-                                "address": "/pinol/sequence/go",
+                                "address": "/nyxmap/sequence/go",
                                 "preArgs": [],
                                 "mode": "momentary",
                                 "target": "127.0.0.1:1234",
@@ -590,7 +590,7 @@
                                 "width": "auto",
                                 "height": 52,
                                 "expand": true,
-                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false} && !!OSC{/sequence/go_enabled,0,false}}",
+                                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false} && !!OSC{/sequence/go_enabled,0,false}}",
                                 "wrap": true,
                                 "colorWidget": "#4cd964",
                                 "css": ":host {grid-area:go;font-size:28px;font-weight:600;}",
@@ -602,7 +602,7 @@
                                 "type": "button",
                                 "id": "stop",
                                 "label": "STOP WAITS",
-                                "address": "/pinol/sequence/stop",
+                                "address": "/nyxmap/sequence/stop",
                                 "preArgs": [],
                                 "mode": "momentary",
                                 "target": "127.0.0.1:1234",
@@ -610,7 +610,7 @@
                                 "width": "auto",
                                 "height": 52,
                                 "expand": true,
-                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                                 "wrap": true,
                                 "colorWidget": "#e84c3d",
                                 "alphaFillOff": 0.08,
@@ -622,7 +622,7 @@
                                 "type": "button",
                                 "id": "stop_all",
                                 "label": "STOP ALL WAITS",
-                                "address": "/pinol/sequence/stop_all",
+                                "address": "/nyxmap/sequence/stop_all",
                                 "preArgs": [],
                                 "mode": "momentary",
                                 "target": "127.0.0.1:1234",
@@ -630,7 +630,7 @@
                                 "width": "auto",
                                 "height": 52,
                                 "expand": true,
-                                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                                 "wrap": true,
                                 "colorWidget": "#e84c3d",
                                 "doubleTap": true,
@@ -645,7 +645,7 @@
                             "height": "auto",
                             "padding": 4,
                             "contain": false,
-                            "css": "class: pinol-flow;",
+                            "css": "class: nyxmap-flow;",
                             "gridTemplate": "\"back go\" 78rem \"stop stopall\" 48rem / 1fr 1.4fr",
                             "alphaStroke": 0
                           },
@@ -690,7 +690,7 @@
                                 "height": "auto",
                                 "padding": 8,
                                 "contain": false,
-                                "css": "class: pinol-flow;",
+                                "css": "class: nyxmap-flow;",
                                 "colorBg": "#26262b",
                                 "alphaStroke": 0
                               },
@@ -731,7 +731,7 @@
                                 "height": "auto",
                                 "padding": 8,
                                 "contain": false,
-                                "css": "class: pinol-flow;",
+                                "css": "class: nyxmap-flow;",
                                 "colorBg": "#26262b",
                                 "alphaStroke": 0
                               },
@@ -777,7 +777,7 @@
                                     "padding": 0,
                                     "lineWidth": 0,
                                     "alphaFillOff": 0.08,
-                                    "css": "class: pinol-phase-meter;"
+                                    "css": "class: nyxmap-phase-meter;"
                                   },
                                   {
                                     "type": "text",
@@ -797,7 +797,7 @@
                                 "height": "auto",
                                 "padding": 8,
                                 "contain": false,
-                                "css": "class: pinol-flow;",
+                                "css": "class: nyxmap-flow;",
                                 "colorBg": "#26262b",
                                 "alphaStroke": 0
                               }
@@ -807,7 +807,7 @@
                             "height": "auto",
                             "padding": 4,
                             "contain": false,
-                            "css": "class: pinol-flow;",
+                            "css": "class: nyxmap-flow;",
                             "alphaStroke": 0
                           },
                           {
@@ -852,7 +852,7 @@
                         "type": "button",
                         "id": "cues_prev",
                         "label": "\u2039 PREVIOUS",
-                        "address": "/pinol/library/page",
+                        "address": "/nyxmap/library/page",
                         "preArgs": [
                           "cues",
                           -1
@@ -863,7 +863,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                        "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                         "wrap": true
                       },
                       {
@@ -874,7 +874,7 @@
                         "height": 32,
                         "bypass": true,
                         "wrap": true,
-                        "address": "/pinol/library/cues/page",
+                        "address": "/nyxmap/library/cues/page",
                         "css": "font-family:monospace;",
                         "expand": true,
                         "alphaFillOff": 0
@@ -883,7 +883,7 @@
                         "type": "button",
                         "id": "cues_next",
                         "label": "NEXT \u203a",
-                        "address": "/pinol/library/page",
+                        "address": "/nyxmap/library/page",
                         "preArgs": [
                           "cues",
                           1
@@ -894,7 +894,7 @@
                         "width": "auto",
                         "height": 52,
                         "expand": true,
-                        "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                        "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                         "wrap": true
                       }
                     ],
@@ -916,7 +916,7 @@
                     "height": "auto",
                     "padding": 8,
                     "contain": false,
-                    "css": "class: pinol-flow;\n> inner {gap:6rem;}",
+                    "css": "class: nyxmap-flow;\n> inner {gap:6rem;}",
                     "alphaStroke": 0
                   }
                 ],
@@ -926,7 +926,7 @@
                 "padding": 8,
                 "contain": false,
                 "scroll": true,
-                "css": "class: pinol-flow;",
+                "css": "class: nyxmap-flow;",
                 "alphaStroke": 0
               }
             ],
@@ -956,7 +956,7 @@
               {
                 "type": "text",
                 "id": "snapshots_help",
-                "value": "Launch on demand. The list follows the open Pinol project.",
+                "value": "Launch on demand. The list follows the open NyxMap project.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -973,7 +973,7 @@
                     "type": "button",
                     "id": "snapshots_prev",
                     "label": "\u2039 PREVIOUS",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "snapshots",
                       -1
@@ -984,7 +984,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -995,7 +995,7 @@
                     "height": 32,
                     "bypass": true,
                     "wrap": true,
-                    "address": "/pinol/library/snapshots/page",
+                    "address": "/nyxmap/library/snapshots/page",
                     "css": "font-family:monospace;",
                     "expand": true,
                     "alphaFillOff": 0
@@ -1004,7 +1004,7 @@
                     "type": "button",
                     "id": "snapshots_next",
                     "label": "NEXT \u203a",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "snapshots",
                       1
@@ -1015,7 +1015,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -1038,7 +1038,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}",
+                "css": "class: nyxmap-flow;\n> inner {grid-auto-rows:76rem;}",
                 "alphaStroke": 0
               }
             ],
@@ -1066,7 +1066,7 @@
               {
                 "type": "text",
                 "id": "presets_help",
-                "value": "Launch on demand. The list follows the open Pinol project.",
+                "value": "Launch on demand. The list follows the open NyxMap project.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1083,7 +1083,7 @@
                     "type": "button",
                     "id": "presets_prev",
                     "label": "\u2039 PREVIOUS",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "presets",
                       -1
@@ -1094,7 +1094,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -1105,7 +1105,7 @@
                     "height": 32,
                     "bypass": true,
                     "wrap": true,
-                    "address": "/pinol/library/presets/page",
+                    "address": "/nyxmap/library/presets/page",
                     "css": "font-family:monospace;",
                     "expand": true,
                     "alphaFillOff": 0
@@ -1114,7 +1114,7 @@
                     "type": "button",
                     "id": "presets_next",
                     "label": "NEXT \u203a",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "presets",
                       1
@@ -1125,7 +1125,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -1148,7 +1148,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:76rem;}",
+                "css": "class: nyxmap-flow;\n> inner {grid-auto-rows:76rem;}",
                 "alphaStroke": 0
               }
             ],
@@ -1176,7 +1176,7 @@
               {
                 "type": "text",
                 "id": "timelines_help",
-                "value": "Launch on demand. The list follows the open Pinol project.",
+                "value": "Launch on demand. The list follows the open NyxMap project.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1193,7 +1193,7 @@
                     "type": "button",
                     "id": "timelines_prev",
                     "label": "\u2039 PREVIOUS",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "timelines",
                       -1
@@ -1204,7 +1204,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   },
                   {
@@ -1215,7 +1215,7 @@
                     "height": 32,
                     "bypass": true,
                     "wrap": true,
-                    "address": "/pinol/library/timelines/page",
+                    "address": "/nyxmap/library/timelines/page",
                     "css": "font-family:monospace;",
                     "expand": true,
                     "alphaFillOff": 0
@@ -1224,7 +1224,7 @@
                     "type": "button",
                     "id": "timelines_next",
                     "label": "NEXT \u203a",
-                    "address": "/pinol/library/page",
+                    "address": "/nyxmap/library/page",
                     "preArgs": [
                       "timelines",
                       1
@@ -1235,7 +1235,7 @@
                     "width": "auto",
                     "height": 52,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "wrap": true
                   }
                 ],
@@ -1258,7 +1258,7 @@
                 "padding": 8,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
                 "contain": false,
-                "css": "class: pinol-flow;\n> inner {grid-auto-rows:166rem;}",
+                "css": "class: nyxmap-flow;\n> inner {grid-auto-rows:166rem;}",
                 "alphaStroke": 0
               }
             ],
@@ -1299,7 +1299,7 @@
               {
                 "type": "dropdown",
                 "id": "layer_select",
-                "address": "/pinol/layer/select",
+                "address": "/nyxmap/layer/select",
                 "values": {
                   "labels": [],
                   "values": []
@@ -1307,7 +1307,7 @@
                 "label": "%key",
                 "width": "100%",
                 "height": 52,
-                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                 "target": "127.0.0.1:1234",
                 "ignoreDefaults": true
               },
@@ -1321,14 +1321,14 @@
                 "wrap": true,
                 "align": "left",
                 "alphaFillOff": 0,
-                "address": "/pinol/layer/status",
-                "colorText": "JS{return OSC{/pinol/layer/locked,0,false} ? '#e0b43a' : '#85b8aa'}",
+                "address": "/nyxmap/layer/status",
+                "colorText": "JS{return OSC{/nyxmap/layer/locked,0,false} ? '#e0b43a' : '#85b8aa'}",
                 "css": "font-weight:600;"
               },
               {
                 "type": "dropdown",
                 "id": "layer_sections",
-                "address": "/pinol/layer/section",
+                "address": "/nyxmap/layer/section",
                 "values": {
                   "labels": [],
                   "values": []
@@ -1336,7 +1336,7 @@
                 "label": "%key",
                 "width": "100%",
                 "height": 52,
-                "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                 "target": "127.0.0.1:1234",
                 "ignoreDefaults": true
               },
@@ -1354,7 +1354,7 @@
                     "type": "button",
                     "id": "layer_previous",
                     "label": "\u2039 PREVIOUS",
-                    "address": "/pinol/layer/page/change",
+                    "address": "/nyxmap/layer/page/change",
                     "preArgs": [
                       -1
                     ],
@@ -1362,7 +1362,7 @@
                     "width": "auto",
                     "height": 44,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "target": "127.0.0.1:1234",
                     "ignoreDefaults": true
                   },
@@ -1376,14 +1376,14 @@
                     "wrap": true,
                     "align": "center",
                     "alphaFillOff": 0,
-                    "address": "/pinol/layer/page",
+                    "address": "/nyxmap/layer/page",
                     "expand": 1
                   },
                   {
                     "type": "button",
                     "id": "layer_next",
                     "label": "NEXT \u203a",
-                    "address": "/pinol/layer/page/change",
+                    "address": "/nyxmap/layer/page/change",
                     "preArgs": [
                       1
                     ],
@@ -1391,7 +1391,7 @@
                     "width": "auto",
                     "height": 44,
                     "expand": true,
-                    "interaction": "JS{return !!OSC{/pinol/ui/online,0,false}}",
+                    "interaction": "JS{return !!OSC{/nyxmap/ui/online,0,false}}",
                     "target": "127.0.0.1:1234",
                     "ignoreDefaults": true
                   }
@@ -1407,12 +1407,12 @@
                 "padding": 4,
                 "contain": false,
                 "gridTemplate": "none / repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-                "css": "class: pinol-flow;\n> inner {align-items:start;gap:12rem;}",
+                "css": "class: nyxmap-flow;\n> inner {align-items:start;gap:12rem;}",
                 "widgets": [
                   {
                     "type": "text",
                     "id": "layer_empty",
-                    "value": "Connect to Pinol to edit layers.",
+                    "value": "Connect to NyxMap to edit layers.",
                     "width": "100%",
                     "height": 36,
                     "bypass": true,
@@ -1434,7 +1434,7 @@
               {
                 "type": "text",
                 "id": "connect_title",
-                "value": "CONNECT TO PINOL",
+                "value": "CONNECT TO NYXMAP",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1446,7 +1446,7 @@
               {
                 "type": "text",
                 "id": "connect_help",
-                "value": "Enter the computer running Pinol and its OSCQuery TCP port. Enable OSC / OSCQuery in Pinol Settings. No UDP feedback configuration is required.",
+                "value": "Enter the computer running NyxMap and its OSCQuery TCP port. Enable OSC / OSCQuery in NyxMap Settings. No UDP feedback configuration is required.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1456,19 +1456,19 @@
               },
               {
                 "type": "input",
-                "id": "pinol_host",
-                "address": "/pinol/ui/host",
+                "id": "nyxmap_host",
+                "address": "/nyxmap/ui/host",
                 "value": "127.0.0.1",
                 "default": "127.0.0.1",
-                "label": "Pinol host",
+                "label": "NyxMap host",
                 "width": "100%",
                 "height": 60,
                 "bypass": true
               },
               {
                 "type": "input",
-                "id": "pinol_port",
-                "address": "/pinol/ui/port",
+                "id": "nyxmap_port",
+                "address": "/nyxmap/ui/port",
                 "value": 5678,
                 "default": 5678,
                 "label": "OSCQuery port",
@@ -1485,7 +1485,7 @@
                     "type": "button",
                     "id": "connect",
                     "label": "CONNECT",
-                    "address": "/pinol/noop",
+                    "address": "/nyxmap/noop",
                     "preArgs": [],
                     "mode": "momentary",
                     "target": "127.0.0.1:1234",
@@ -1495,13 +1495,13 @@
                     "expand": true,
                     "interaction": true,
                     "wrap": true,
-                    "onValue": "send('127.0.0.1:1234', '/pinol/connect', get('pinol_host'), Number(get('pinol_port')));"
+                    "onValue": "send('127.0.0.1:1234', '/nyxmap/connect', get('nyxmap_host'), Number(get('nyxmap_port')));"
                   },
                   {
                     "type": "button",
                     "id": "refresh",
                     "label": "REFRESH LISTS",
-                    "address": "/pinol/refresh",
+                    "address": "/nyxmap/refresh",
                     "preArgs": [],
                     "mode": "momentary",
                     "target": "127.0.0.1:1234",
@@ -1524,7 +1524,7 @@
               {
                 "type": "text",
                 "id": "connection_rules",
-                "value": "A disconnected controller disables show commands. Commands are never queued for replay after reconnecting. Each browser shares the same Pinol connection.",
+                "value": "A disconnected controller disables show commands. Commands are never queued for replay after reconnecting. Each browser shares the same NyxMap connection.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1535,7 +1535,7 @@
               {
                 "type": "text",
                 "id": "timing_units",
-                "value": "Cue timers use Pinol cue time. Timeline clocks use animation time; \u221e means no finite end. A frozen or paused timeline does not count down in wall-clock seconds.",
+                "value": "Cue timers use NyxMap cue time. Timeline clocks use animation time; \u221e means no finite end. A frozen or paused timeline does not count down in wall-clock seconds.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,
@@ -1546,7 +1546,7 @@
               {
                 "type": "text",
                 "id": "control_pages",
-                "value": "SHOW follows the selected sequence in Pinol. Sequence selection does not stop background sequences. Library recalls may override values controlled by the sequence.",
+                "value": "SHOW follows the selected sequence in NyxMap. Sequence selection does not stop background sequences. Library recalls may override values controlled by the sequence.",
                 "width": "100%",
                 "height": 32,
                 "bypass": true,

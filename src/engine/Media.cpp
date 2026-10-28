@@ -20,7 +20,7 @@ QStringList Engine::videoExtensions()
 QStringList Engine::imageExtensions()
 {
     static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"
-#ifdef PINOL_HAS_SVG
+#ifdef NYXMAP_HAS_SVG
                                   , "svg", "svgz"
 #endif
     };
@@ -100,7 +100,7 @@ bool Engine::isStreamUrl(const QString &s)
     return colon > 0 && schemes.contains(s.left(colon).trimmed().toLower());
 }
 
-static const QString kStreamsFolder = QStringLiteral("/Pinol/Streams/");
+static const QString kStreamsFolder = QStringLiteral("/NyxMap/Streams/");
 
 QString Engine::streamPath(const QString &url) { return kStreamsFolder + QString::fromLatin1(QUrl::toPercentEncoding(url)); }
 

@@ -1,10 +1,10 @@
 # Third-party notices
 
-Pinol's own code is under the MIT licence (see LICENSE). It uses the following third-party components, each under its
+NyxMap's own code is under the MIT licence (see LICENSE). It uses the following third-party components, each under its
 own licence; their full texts are in the `licenses` folder (and, for those fetched at packaging time, next to the
 library).
 
-| Component | Use in Pinol | Licence | Licence text | Source |
+| Component | Use in NyxMap | Licence | Licence text | Source |
 |---|---|---|---|---|
 | Qt 6 | User interface, OpenGL, multimedia, SVG images | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source (Linux package: Ubuntu's Qt, see below) |
 | Qt WebEngine (with Chromium) | Web Page generator (when the package is built with it) | GNU LGPL v3 (dynamically linked; also offered under GPL v2/v3); Chromium BSD 3-clause, its bundled components under their own licences | `licenses/LGPL-3.0.txt`, `licenses/chromium.txt` (Chromium's licence, and where the list of its components' licences is) | https://download.qt.io/official_releases/qt/ (Linux package: Ubuntu's `qt6-webengine`) |
@@ -22,16 +22,16 @@ library).
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
-**NDI runtime in the packages.** The NDI runtime is not covered by Pinol's MIT licence: it is provided by Vizrt NDI AB
+**NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's MIT licence: it is provided by Vizrt NDI AB
 under the NDI SDK License Agreement. You may not modify, disassemble, decompile or separately distribute the NDI
-components, nor use them outside Pinol. Vizrt NDI AB and its licensors provide them "as is", without warranty of any
+components, nor use them outside NyxMap. Vizrt NDI AB and its licensors provide them "as is", without warranty of any
 kind, and disclaim all liability for them to the extent permitted by law.
 
-**LGPL components (Qt, FFmpeg).** They are dynamically linked: you may replace the libraries shipped with Pinol by
-compatible modified versions (in `Pinol.app/Contents/Frameworks` on macOS, next to `Pinol.exe` on Windows, in
+**LGPL components (Qt, FFmpeg).** They are dynamically linked: you may replace the libraries shipped with NyxMap by
+compatible modified versions (in `NyxMap.app/Contents/Frameworks` on macOS, next to `NyxMap.exe` on Windows, in
 `usr/lib` on Linux). Their
 corresponding source code is available from the links above; the exact versions used by a package are listed in its
-`DEPENDENCIES.txt`, and the source of those versions can also be requested from Pinol's maintainers for three years.
+`DEPENDENCIES.txt`, and the source of those versions can also be requested from NyxMap's maintainers for three years.
 
 **Linux package.** Qt, FFmpeg and their dependencies are bundled as shared libraries in `usr/lib` of the portable
 directory (extract an AppImage with `--appimage-extract` to obtain the same directory). Compatible modified LGPL
@@ -46,7 +46,7 @@ both listed with their copyright files in `THIRD-PARTY-LINUX.md`. Qt SVG (LGPL v
 
 **macOS package.** It also contains the libraries Qt and FFmpeg depend on (images, fonts, compression, encryption,
 AV1 decoding…), copied from Homebrew when the package is built. Their list, versions, licences and licence texts are
-generated with the package: `THIRD-PARTY-MACOS.md` and `licenses/macos/` in `Pinol.app/Contents/Resources`. The
+generated with the package: `THIRD-PARTY-MACOS.md` and `licenses/macos/` in `NyxMap.app/Contents/Resources`. The
 package's FFmpeg is built from source without GPL components (Homebrew's own includes x264 and x265); the build checks
 that every FFmpeg library in it is LGPL and that no GPL-only library is in it.
 
@@ -56,17 +56,17 @@ parts, and records that licence in `DEPENDENCIES.txt`. Those builds include Open
 inside the FFmpeg DLLs, for TLS and SRT streams; their sources are linked from the BtbN/FFmpeg-Builds repository. Microsoft's `vc_redist.x64.exe` is included unmodified, under
 its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.
 
-TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by Pinol's MIT licence.
-See `licenses/touchengine.txt` for the full Shared Use License. Pinol is an independent integration; Derivative does
+TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by NyxMap's MIT licence.
+See `licenses/touchengine.txt` for the full Shared Use License. NyxMap is an independent integration; Derivative does
 not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
-Commercial or Pro licence. Pinol neither installs nor activates that licence. Builders must explicitly opt in with
-`PINOL_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
+Commercial or Pro licence. NyxMap neither installs nor activates that licence. Builders must explicitly opt in with
+`NYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
 
 **Open Stage Control remote.** The ready-to-load integration includes pure
-JavaScript dependencies in `integrations/open-stage-control/pinol-dependencies.cjs`:
+JavaScript dependencies in `integrations/open-stage-control/nyxmap-dependencies.cjs`:
 [ws](https://github.com/websockets/ws) (MIT),
 [osc.js](https://github.com/colinbdclark/osc.js) (MIT option) and
 [long.js](https://github.com/dcodeIO/long.js) (Apache-2.0).
 Their versions and full license texts are preserved beside the bundle in
-`pinol-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
+`nyxmap-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
 GPL-3.0 application, installed by the user; it is not included in the remote ZIP.

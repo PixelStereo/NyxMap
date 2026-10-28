@@ -2,11 +2,11 @@
 
 Une pièce audiovisuelle de 1 min 56 s. La matière commence en suspension, se charge, se fend, devient courant puis se consume. Les références visuelles guident le vocabulaire : poussière blanche sur fond noir, membranes cyan/violet, ramifications cuivre et vert pâle, grands courants bleus. Le son reste la cause du mouvement.
 
-Le projet demande la version de PINOL contenant l’analyse audio et les interactions internes `audio/level`, `audio/bass`, `audio/high` et `audio/onset`.
+Le projet demande la version de NYXMAP contenant l’analyse audio et les interactions internes `audio/level`, `audio/bass`, `audio/high` et `audio/onset`.
 
 ## Jouer
 
-1. Ouvrir `Matieres_instables.pinol`. Choisir la sortie audio et son niveau d’écoute.
+1. Ouvrir `Matieres_instables.nyxmap`. Choisir la sortie audio et son niveau d’écoute.
 2. Sélectionner la séquence « Calculated Rupture · Matières instables » et déclencher GO une seule fois. Les mouvements sont armés puis la bande et les cues partent automatiquement.
 3. Suivre les 18 timelines dans le rack LIVE du séquenceur. Double-cliquer une ligne ouvre son éditeur. ACTIVE conserve aussi les timelines en pause ; ALL affiche les timelines arrêtées.
 4. À la fin, l’image et le son s’éteignent, puis les mouvements s’arrêtent. Pour rejouer, déclencher le premier step depuis son numéro.
@@ -38,7 +38,7 @@ Les entrées à 16, 32, 48, 64, 80, 85.8, 88, 98.3, 102.8 et 108 secondes vienne
 - Aigus → finesse et visibilité des fibres et des points.
 - Attaques → poussées brèves et condensation lumineuse, suivies d’une détente.
 
-L’analyse porte sur le mix des fichiers réellement lus par PINOL, avant le fader général. Modifier le niveau d’écoute ne change donc pas les images. Le silence relâche les enveloppes. Les deux canaux sont mesurés séparément pour ne pas perdre un son en opposition de phase. Il s’agit de bandes d’énergie par filtres, pas d’une FFT affichée comme telle.
+L’analyse porte sur le mix des fichiers réellement lus par NYXMAP, avant le fader général. Modifier le niveau d’écoute ne change donc pas les images. Le silence relâche les enveloppes. Les deux canaux sont mesurés séparément pour ne pas perdre un son en opposition de phase. Il s’agit de bandes d’énergie par filtres, pas d’une FFT affichée comme telle.
 
 Les 18 timelines donnent six mouvements indépendants à chacune des trois matières : densité, turbulence, dérive, échelle, torsion et phase. Les cues possèdent les opacités, la teinte et la progression dramatique ; l’audio possède quatre entrées distinctes. Ils ne se disputent pas les mêmes paramètres.
 

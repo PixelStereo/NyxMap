@@ -138,7 +138,7 @@ Countdowns and chronometers follow real time (not the composition speed). Only t
 
 ## Line generator
 
-The Media Bin also lists **Line** under Generators. It works like MadMapper's Line tool: you draw segments on a layer, then animate them along their length. Its shader is built into the application, so a project never loses it. The layer's source is saved as `/Pinol/Generators/Line` with its lines, and there is no file to find, relink or collect.
+The Media Bin also lists **Line** under Generators. It works like MadMapper's Line tool: you draw segments on a layer, then animate them along their length. Its shader is built into the application, so a project never loses it. The layer's source is saved as `/NyxMap/Generators/Line` with its lines, and there is no file to find, relink or collect.
 
 **Drawing.** Dropping Line onto a layer starts drawing a line in the preview. **Draw Line** in its Source tab draws another; a layer holds as many lines as needed.
 - Click each point. Enter, a double-click, or the first point again ends the line (the first point again closes it).

@@ -31,11 +31,11 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Pinol uses the camera as the source of a layer.</string>
+	<string>NyxMap uses the camera as the source of a layer.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Pinol listens to an audio input when an audio interaction or a timecode follows it.</string>
+	<string>NyxMap listens to an audio input when an audio interaction or a timecode follows it.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Pinol finds and receives NDI and OMT sources on your network, and announces its OSC server.</string>
+	<string>NyxMap finds and receives NDI and OMT sources on your network, and announces its OSC server.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ndi._tcp</string>

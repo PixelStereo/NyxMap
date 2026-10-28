@@ -58,7 +58,7 @@ struct Slot {
     id<MTLTexture> mtl = nil;
     int w = 0, h = 0;
     // Metal still reads it: set at commit, cleared by the completion handler. Shared with that handler, so that a
-    // slot released before Metal is done (a window closed, Pinol quitting) is never written to once gone, and its
+    // slot released before Metal is done (a window closed, NyxMap quitting) is never written to once gone, and its
     // release never waits for the GPU (the command buffer keeps its own references to the texture and the surface)
     std::shared_ptr<std::atomic<bool>> busy = std::make_shared<std::atomic<bool>>(false);
 };

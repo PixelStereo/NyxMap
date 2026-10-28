@@ -2,7 +2,7 @@
 #include "EnduranceLogger.h"
 #include "MainWindow.h"
 #include "NetVideo.h"
-#include "PinolVersion.h"
+#include "NyxMapVersion.h"
 #include "Permissions.h"
 #include "WebPageQt.h"
 #include "Widgets.h"
@@ -42,18 +42,18 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     ignoreWheelOnFields(&app); // the trackpad scrolls the panels, it never changes a value
-    QApplication::setApplicationName("Pinol");
-    QApplication::setOrganizationName("Pinol");
-    QApplication::setApplicationVersion(PINOL_VERSION);
+    QApplication::setApplicationName("NyxMap");
+    QApplication::setOrganizationName("NyxMap");
+    QApplication::setApplicationVersion(NYXMAP_VERSION);
 #ifdef Q_OS_MACOS
-    app.setWindowIcon(QIcon(QStringLiteral(":/branding/pinol-app.png")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/branding/nyxmap-app.png")));
 #else
-    app.setWindowIcon(QIcon(QStringLiteral(":/branding/pinol.png")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/branding/nyxmap.png")));
 #endif
     theme::applyToApplication(app);
 
     QCommandLineParser cli;
-    cli.setApplicationDescription("Pinol — multi-layer video mapping, FFmpeg playback, ISF shaders");
+    cli.setApplicationDescription("NyxMap — multi-layer video mapping, FFmpeg playback, ISF shaders");
     cli.addHelpOption();
     cli.addVersionOption();
     QCommandLineOption renderOpt("render", "Render the project headless and save the output as PNG.", "output.png");
@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
     QCommandLineOption libsOpt("check-libraries", "Load the NDI and OMT libraries as publishing does, print where they "
                                                   "were found, then quit (exit code 5 if one does not load).");
     cli.addOption(libsOpt);
-    cli.addPositionalArgument("project", ".pinol project to open");
+    cli.addPositionalArgument("project", ".nyxmap project to open");
     // --render exit codes: 0 rendered, 1 OpenGL unavailable, 2 output not written, 3 project not loaded,
     // 4 a layer or an effect in error (--strict)
     cli.process(app);
@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
             qCritical("%s", qPrintable(err));
             return 1;
         }
-        QMessageBox::critical(nullptr, "Pinol", QStringLiteral("Could not initialize OpenGL:\n") + err);
+        QMessageBox::critical(nullptr, "NyxMap", QStringLiteral("Could not initialize OpenGL:\n") + err);
         return 1;
     }
 
@@ -157,7 +157,7 @@ int main(int argc, char *argv[])
     if (cli.isSet(enduranceOpt)) {
         QString logError;
         if (!endurance.start(engine, cli.value(enduranceOpt), &logError))
-            qWarning("Pinol endurance recorder: %s", qPrintable(logError));
+            qWarning("NyxMap endurance recorder: %s", qPrintable(logError));
     }
 
     int rc;
@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
         std::thread([] {
             for (int k = 0; k < 100 && !s_quitDone.load(); ++k) std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (s_quitDone.load()) return;
-            std::fprintf(stderr, "Pinol: quitting took more than 10 s, the process ends now\n");
+            std::fprintf(stderr, "NyxMap: quitting took more than 10 s, the process ends now\n");
             std::_Exit(3);
         }).detach();
     }

@@ -1,6 +1,6 @@
 #pragma once
 // Spout inputs (Windows): the senders other applications share, received on the GPU (LiveInputSpout.cpp, compiled
-// only with PINOL_HAS_SPOUT). This file depends on no OpenGL header (Spout brings its own): the texture is passed by
+// only with NYXMAP_HAS_SPOUT). This file depends on no OpenGL header (Spout brings its own): the texture is passed by
 // its name, and made by the caller at the size asked for (LiveInput.cpp).
 
 #include <QString>

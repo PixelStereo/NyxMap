@@ -79,8 +79,8 @@ int runClockPresetUiTests(Engine &engine)
         pump();
     };
     check(clockKindName(ClockKind::Stopwatch) == "Chronometer", "the public generator name is Chronometer");
-    check(clockGeneratorOfPath("/Pinol/Generators/Chronometer") == ClockKind::Stopwatch &&
-          clockGeneratorOfPath("/Pinol/Generators/Stopwatch") == ClockKind::Stopwatch &&
+    check(clockGeneratorOfPath("/NyxMap/Generators/Chronometer") == ClockKind::Stopwatch &&
+          clockGeneratorOfPath("/NyxMap/Generators/Stopwatch") == ClockKind::Stopwatch &&
           clockKindKey(ClockKind::Stopwatch) == "stopwatch", "legacy generator paths and projects stay readable");
     for (auto kind : {ClockKind::Stopwatch, ClockKind::Countdown, ClockKind::Clock}) {
         check(engine.setLayerClock(row, kind), "create the requested generator");
@@ -128,8 +128,8 @@ int runClockPresetUiTests(Engine &engine)
     engine.setParameter(id, "tc/rate", "30"); engine.recallSnapshot(si);
     check(engine.layerTimecode(row)->rate == TcRate::Fps25, "a snapshot restores changed Timecode configuration");
     QTemporaryDir files; QString error;
-    check(engine.saveProject(files.filePath("clocks.pinol"), {}, &error) &&
-          engine.loadProject(files.filePath("clocks.pinol"), nullptr, &error) && engine.preset(pi).indexOf(id, "tc/rate") >= 0,
+    check(engine.saveProject(files.filePath("clocks.nyxmap"), {}, &error) &&
+          engine.loadProject(files.filePath("clocks.nyxmap"), nullptr, &error) && engine.preset(pi).indexOf(id, "tc/rate") >= 0,
           "individual Timecode settings survive saving and reopening the project");
     return failures;
 }

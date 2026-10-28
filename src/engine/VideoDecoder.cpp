@@ -27,10 +27,10 @@ static constexpr size_t kStagingBudget = size_t(128) << 20; // upload buffers of
 static constexpr size_t kBytePool = 8;
 
 // Decoded frames kept in memory, across every decoder: a soft limit (see VideoDecoderInternal.h)
-// PINOL_FRAME_BUDGET_MB overrides the 512 MiB (measurements)
+// NYXMAP_FRAME_BUDGET_MB overrides the 512 MiB (measurements)
 static size_t defaultDecodedLimit()
 {
-    const int mb = qEnvironmentVariableIntValue("PINOL_FRAME_BUDGET_MB");
+    const int mb = qEnvironmentVariableIntValue("NYXMAP_FRAME_BUDGET_MB");
     return mb > 0 ? size_t(mb) << 20 : size_t(512) << 20;
 }
 static std::atomic<size_t> s_decodedLimit{defaultDecodedLimit()};
@@ -66,10 +66,10 @@ void bytePoolBudget::release(size_t bytes)
 }
 
 // FFmpeg's threads of a software decoder: the same for every one, whatever the order they were opened in (half the
-// cores, 2 to 16: one heavy stream keeps most of the machine, several share it evenly). PINOL_DECODE_THREADS
+// cores, 2 to 16: one heavy stream keeps most of the machine, several share it evenly). NYXMAP_DECODE_THREADS
 // overrides it (measurements).
 //
-// A process-wide soft budget guides new allocations (audit P1): twice the cores by default (PINOL_DECODE_THREAD_BUDGET,
+// A process-wide soft budget guides new allocations (audit P1): twice the cores by default (NYXMAP_DECODE_THREAD_BUDGET,
 // setSoftwareThreadBudget). Up to it, nothing changes (four heavy streams on any machine). Beyond it — 8, 16 software
 // streams — a new decoder gets an even share of the budget among the software decoders open, at least 2, instead of
 // half the cores. This reduces oversubscription but is not a hard cap: older decoders retain their threads,
@@ -80,14 +80,14 @@ static std::atomic<int> s_softwareThreadsInUse{0}, s_softwareDecodersOpen{0}, s_
 static int softwareThreadBudget()
 {
     if (const int o = s_threadBudgetOverride.load(std::memory_order_relaxed); o > 0) return o;
-    static const int env = qEnvironmentVariableIntValue("PINOL_DECODE_THREAD_BUDGET");
+    static const int env = qEnvironmentVariableIntValue("NYXMAP_DECODE_THREAD_BUDGET");
     if (env > 0) return env;
     return 2 * int(std::max(1u, std::thread::hardware_concurrency()));
 }
 
 static int softwareThreads()
 {
-    static const int forced = qEnvironmentVariableIntValue("PINOL_DECODE_THREADS");
+    static const int forced = qEnvironmentVariableIntValue("NYXMAP_DECODE_THREADS");
     if (forced > 0) return std::min(forced, 64);
     const int cores = int(std::max(1u, std::thread::hardware_concurrency()));
     const int base = std::min(std::max(1, cores), std::clamp(cores / 2, 2, 16));
@@ -1064,11 +1064,11 @@ void VideoDecoder::markDecodeError(int code, bool demux, bool fatal)
     char text[AV_ERROR_MAX_STRING_SIZE] = {0};
     av_strerror(code, text, sizeof text);
     if (fatal)
-        qWarning("Pinol decoder %s error (%s): playback stops until the next seek", demux ? "I/O" : "codec", text);
+        qWarning("NyxMap decoder %s error (%s): playback stops until the next seek", demux ? "I/O" : "codec", text);
     else if (demux)
-        qWarning("Pinol decoder I/O error (%s): retrying", text);
+        qWarning("NyxMap decoder I/O error (%s): retrying", text);
     else if (m_consecutiveCodecErrors <= 1)
-        qWarning("Pinol decoder: damaged picture skipped (%s)", text); // one line per damaged run, not per packet
+        qWarning("NyxMap decoder: damaged picture skipped (%s)", text); // one line per damaged run, not per packet
 }
 
 // Starts producing a leg at a position within it.
@@ -1236,7 +1236,7 @@ void VideoDecoder::runLive()
         releaseStreams();
         if (m_abort) break;
         if (reason.isEmpty()) reason = QStringLiteral("no picture");
-        qWarning("Pinol live stream %s: %s; connecting again", qPrintable(m_livePath), qPrintable(reason));
+        qWarning("NyxMap live stream %s: %s; connecting again", qPrintable(m_livePath), qPrintable(reason));
         // 0.5, 1, 2, 4, 8 s between attempts, then every 10 s
         const auto pause = std::chrono::milliseconds(std::min(10000, 500 << std::min(attempts - 1, 4)));
         std::unique_lock<std::mutex> lk(m_mutex);

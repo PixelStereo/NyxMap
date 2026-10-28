@@ -146,8 +146,8 @@ int runLiveInputTests(Engine &e)
         for (const LiveInputInfo &i : found)
             if (i.kind == QLatin1String("Screen") || i.kind == QLatin1String("Window"))
                 screens = screens && (i.uri.startsWith(QLatin1String("input:screen:")) || i.uri.startsWith(QLatin1String("input:window:"))) &&
-                          !i.name.contains(QLatin1String("Pinol"), Qt::CaseInsensitive); // never Pinol's own windows
-        check(screens, "screens and windows listed (Qt 6.5 / 6.6), not Pinol's");
+                          !i.name.contains(QLatin1String("NyxMap"), Qt::CaseInsensitive); // never NyxMap's own windows
+        check(screens, "screens and windows listed (Qt 6.5 / 6.6), not NyxMap's");
         check(liveInputKind("input:spout:A") == "Spout" && liveInputKind("input:decklink:p1") == "DeckLink" &&
                   liveInputKind("input:screen:1") == "Screen" && liveInputKind("input:window:Notes") == "Window",
               "the new kinds");

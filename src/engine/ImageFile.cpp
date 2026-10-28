@@ -6,7 +6,7 @@
 #include <QFileInfo>
 #include <QPainter>
 #include <cmath>
-#ifdef PINOL_HAS_SVG
+#ifdef NYXMAP_HAS_SVG
 #include <QSvgRenderer>
 #endif
 
@@ -71,7 +71,7 @@ bool isSvgFile(const QString &path)
     return ext == QLatin1String("svg") || ext == QLatin1String("svgz");
 }
 
-#ifdef PINOL_HAS_SVG
+#ifdef NYXMAP_HAS_SVG
 // Its view box (else its declared size), scaled up to the wanted longer side, within the largest texture made here
 static QSize svgSize(const QSvgRenderer &r, int longSide)
 {
@@ -86,7 +86,7 @@ static QSize svgSize(const QSvgRenderer &r, int longSide)
 
 QSize svgRenderSize(const QString &path, int svgLongSide)
 {
-#ifdef PINOL_HAS_SVG
+#ifdef NYXMAP_HAS_SVG
     QSvgRenderer r(path);
     return r.isValid() ? svgSize(r, svgLongSide) : QSize();
 #else
@@ -98,7 +98,7 @@ QSize svgRenderSize(const QString &path, int svgLongSide)
 
 static QImage readSvg(const QString &path, int longSide, QString *err)
 {
-#ifdef PINOL_HAS_SVG
+#ifdef NYXMAP_HAS_SVG
     QSvgRenderer r(path);
     const QSize size = r.isValid() ? svgSize(r, longSide) : QSize();
     if (!size.isValid()) {

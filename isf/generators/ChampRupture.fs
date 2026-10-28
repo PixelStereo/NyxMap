@@ -1,5 +1,5 @@
 /*{
- "ISFVSN":"2","DESCRIPTION":"Champ de rupture — projected grain, interference sheets and fracture beams. Original audiovisual performance generator.","CREDIT":"PINOL","CATEGORIES":["Particles","Audio Reactive"],
+ "ISFVSN":"2","DESCRIPTION":"Champ de rupture — projected grain, interference sheets and fracture beams. Original audiovisual performance generator.","CREDIT":"NYXMAP","CATEGORIES":["Particles","Audio Reactive"],
  "INPUTS":[
  {"NAME":"mode","TYPE":"long","DEFAULT":0,"VALUES":[0,1,2],"LABELS":["Gravitational dust","Interference sheets","Fracture beams"]},
  {"NAME":"energy","TYPE":"float","DEFAULT":0.3,"MIN":0,"MAX":1},

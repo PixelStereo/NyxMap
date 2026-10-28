@@ -55,8 +55,8 @@ PublishSettings PublishSettings::fromJson(const QJsonObject &o)
             s.targets[i].name = t.value("name").toString();
             continue;
         }
-        s.targets[i].name = t.value("name").toString(QStringLiteral("Pinol"));
-        if (s.targets[i].name.trimmed().isEmpty()) s.targets[i].name = QStringLiteral("Pinol");
+        s.targets[i].name = t.value("name").toString(QStringLiteral("NyxMap"));
+        if (s.targets[i].name.trimmed().isEmpty()) s.targets[i].name = QStringLiteral("NyxMap");
     }
     s.omtQuality = o.value("omt_quality").toInt(0);
     s.libraryFolder = o.value("library_folder").toString();
@@ -69,23 +69,23 @@ bool publishCompiledIn(PublishKind k)
     switch (k) {
     case PublishKind::Ndi:
     case PublishKind::Omt: return true;
-#ifdef PINOL_HAS_SYPHON
+#ifdef NYXMAP_HAS_SYPHON
     case PublishKind::Syphon: return true;
 #endif
-#ifdef PINOL_HAS_SPOUT
+#ifdef NYXMAP_HAS_SPOUT
     case PublishKind::Spout: return true;
 #endif
-#ifdef PINOL_HAS_DECKLINK
+#ifdef NYXMAP_HAS_DECKLINK
     case PublishKind::DeckLink: return true;
 #endif
     default: return false;
     }
 }
 
-#ifndef PINOL_HAS_SYPHON
+#ifndef NYXMAP_HAS_SYPHON
 std::unique_ptr<GpuPublisher> createSyphonPublisher() { return nullptr; }
 #endif
-#ifndef PINOL_HAS_SPOUT
+#ifndef NYXMAP_HAS_SPOUT
 std::unique_ptr<GpuPublisher> createSpoutPublisher() { return nullptr; }
 #endif
 
@@ -310,7 +310,7 @@ const Lib &lib(const QString &extra)
     QString failed;
     QLibrary *q = loadFirst(ndiCandidates(extra), &failed);
     if (!q) {
-        l.error = failed.isEmpty() ? QStringLiteral("NDI library not found: it comes with Pinol's packages, next to the "
+        l.error = failed.isEmpty() ? QStringLiteral("NDI library not found: it comes with NyxMap's packages, next to the "
                                                     "application; or install the NDI Runtime (ndi.video).")
                                    : QStringLiteral("NDI library found but not loaded: ") + failed;
         return l;
@@ -427,7 +427,7 @@ const Lib &lib(const QString &extra)
     QString failed;
     QLibrary *q = loadFirst(candidates, &failed);
     if (!q) {
-        l.error = failed.isEmpty() ? QStringLiteral("OMT library not found: it comes with Pinol's packages, next to the "
+        l.error = failed.isEmpty() ? QStringLiteral("OMT library not found: it comes with NyxMap's packages, next to the "
                                                     "application; or place libomt and libvmx (github.com/openmediatransport) "
                                                     "in the chosen folder.")
                                    : QStringLiteral("OMT library found but not loaded: ") + failed;

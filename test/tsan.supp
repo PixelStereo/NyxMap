@@ -1,7 +1,7 @@
 # ThreadSanitizer suppressions (TSAN_OPTIONS=suppressions=test/tsan.supp).
 # Only libraries not built with ThreadSanitizer: their own synchronization (futexes, atomics, thread pools) is
-# invisible to it, so the memory and the mutexes they recycle between their threads look like races. Pinol's own
-# code is never suppressed: a report with Pinol on both sides fails the job.
+# invisible to it, so the memory and the mutexes they recycle between their threads look like races. NyxMap's own
+# code is never suppressed: a report with NyxMap on both sides fails the job.
 called_from_lib:libQt6Core
 called_from_lib:libQt6Gui
 # Mesa is loaded and unloaded at run time (dlopen): called_from_lib would abort at exit ("library ... is

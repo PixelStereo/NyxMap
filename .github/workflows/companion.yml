@@ -33,10 +33,10 @@ jobs:
           npm run package
       - name: Exercise the packaged entrypoint without external dependencies
         env:
-          PINOL_COMPANION_PACKED: '1'
+          NYXMAP_COMPANION_PACKED: '1'
         run: node --test test/companion_runtime.cjs
       - uses: actions/upload-artifact@v4
         with:
-          name: Pinol-Companion
+          name: NyxMap-Companion
           path: integrations/companion/*.tgz
           if-no-files-found: error

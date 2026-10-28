@@ -4,7 +4,7 @@ the package's DEPENDENCIES.txt: https://download.qt.io/official_releases/qt/ (Li
 source package, https://launchpad.net/ubuntu/+source/qt6-webengine).
 
 Qt WebEngine itself is under the GNU LGPL v3 (licenses/LGPL-3.0.txt), or the GNU GPL v2 or v3, at the user's choice;
-Pinol uses it under the LGPL v3, dynamically linked. Chromium bundles third-party components under their own licences
+NyxMap uses it under the LGPL v3, dynamically linked. Chromium bundles third-party components under their own licences
 (BSD, MIT, Apache-2.0, LGPL, MPL and others). Their list and texts: https://doc.qt.io/qt-6/qtwebengine-licensing.html,
 and each component's LICENSE file under src/3rdparty/chromium in Qt WebEngine's source. The Linux package also holds
 Ubuntu's copyright file of Qt WebEngine (usr/bin/licenses/linux/libqt6webenginecore6*/copyright), which lists them all.

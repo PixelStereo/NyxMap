@@ -1,4 +1,4 @@
-# Build Pinol from source and open it, on Windows 10/11 (x64). Run from build.cmd (double-click), build.sh (Git Bash)
+# Build NyxMap from source and open it, on Windows 10/11 (x64). Run from build.cmd (double-click), build.sh (Git Bash)
 # or PowerShell: powershell -ExecutionPolicy Bypass -File build.ps1 [options]
 #
 #   --no-install            do not install anything (the requirements are there)
@@ -144,7 +144,7 @@ if (Test-Path .git) {
     Step "Fetching the submodules"
     git submodule update --init --recursive; Native "git submodule update"
 } elseif (-not (Test-Path third_party\miniaudio\miniaudio.h)) {
-    Fail "third_party\ is empty: clone the repository with git (git clone --recurse-submodules https://github.com/PixelStereo/Pinol.git)"
+    Fail "third_party\ is empty: clone the repository with git (git clone --recurse-submodules https://github.com/PixelStereo/NyxMap.git)"
 }
 
 if (-not $Tox) {
@@ -159,24 +159,24 @@ if (-not $Tox) {
 if (-not $Ndi) {
     Write-Host "`nNDI (video over the network) comes from the NDI SDK, under the NDI SDK License Agreement:"
     Write-Host "  https://ndi.video/sdk/"
-    $answer = Read-Host "Do you accept it, to include NDI in Pinol? [y/N]"
+    $answer = Read-Host "Do you accept it, to include NDI in NyxMap? [y/N]"
     $Ndi = if ($answer -match '^[YyOo]') { "ON" } else { "OFF" }
 }
 
 # --- Build
 if ($Clean -and (Test-Path build)) { Remove-Item -Recurse -Force build }
 $cmakeArgs = @("-S", ".", "-B", "build", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=$Type", "-DCMAKE_PREFIX_PATH=$qtDir",
-               "-DPINOL_ACCEPT_TOUCHENGINE_LICENSE=$Tox", "-DFFMPEG_ROOT=$ffDir", "-DPINOL_BUNDLE_RUNTIMES=ON", "-DPINOL_ACCEPT_NDI_SDK_LICENSE=$Ndi")
+               "-DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=$Tox", "-DFFMPEG_ROOT=$ffDir", "-DNYXMAP_BUNDLE_RUNTIMES=ON", "-DNYXMAP_ACCEPT_NDI_SDK_LICENSE=$Ndi")
 Step "Configuring (cmake $($cmakeArgs -join ' '))"
 cmake @cmakeArgs; Native "CMake configure"
 Step "Building"
 cmake --build build; Native "Build"
 # Qt's libraries and plugins next to the program (FFmpeg's are copied by the build)
-$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\Pinol.exe")
+$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\NyxMap.exe")
 & "$qtDir\bin\windeployqt.exe" @deployArgs | Out-Null; Native "windeployqt"
 
 # --- Open
-$exe = Join-Path $PSScriptRoot "build\Pinol.exe"
-if (-not (Test-Path $exe)) { Fail "build\Pinol.exe was not built" }
-Write-Host "`nPinol is built: $exe" -ForegroundColor Green
+$exe = Join-Path $PSScriptRoot "build\NyxMap.exe"
+if (-not (Test-Path $exe)) { Fail "build\NyxMap.exe was not built" }
+Write-Host "`nNyxMap is built: $exe" -ForegroundColor Green
 if ($Run) { Start-Process $exe -WorkingDirectory (Join-Path $PSScriptRoot "build") }

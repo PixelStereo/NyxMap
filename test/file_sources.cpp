@@ -158,7 +158,7 @@ void sequenceTests(Engine &e, const QString &tmp)
               e.layerJson(row).value("source").toObject().value("sequence").toObject().value("fps").toDouble() == 50,
           "at 50 fps the clip lasts 0.1 s");
 
-    const QString project = tmp + "/sequence.pinol";
+    const QString project = tmp + "/sequence.nyxmap";
     check(e.saveProject(project, {}, &err), "save the project");
     e.newProject();
     check(e.loadProject(project, nullptr, &err), "open it again");
@@ -302,7 +302,7 @@ void streamTests(Engine &e, const QString &tmp)
         if (r.path == "srt://127.0.0.1:9/feed") inBin = r.video && !r.missing;
     check(inBin, "a stream in the Media Bin: a video, never missing");
 
-    const QString project = tmp + "/stream.pinol";
+    const QString project = tmp + "/stream.nyxmap";
     check(e.saveProject(project, {}, &err), "save the project");
     e.newProject();
     check(e.loadProject(project, nullptr, &err), "open it again");

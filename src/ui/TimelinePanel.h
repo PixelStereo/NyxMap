@@ -9,7 +9,7 @@ class QUndoStack;
 class QMenu;
 
 // A timeline dragged from the list of the timelines carries its id (onto a step of a sequence)
-inline constexpr const char *kTimelineMime = "application/x-pinol-timeline";
+inline constexpr const char *kTimelineMime = "application/x-nyxmap-timeline";
 
 // The list of the timelines, a drag source
 class TimelineList : public QListWidget

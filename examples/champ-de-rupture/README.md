@@ -6,9 +6,9 @@ La musique et le shader sont créés pour ce projet. Aucun enregistrement, sampl
 
 ## Jouer
 
-Avec la version de PINOL contenant l'onglet **Audio** :
+Avec la version de NYXMAP contenant l'onglet **Audio** :
 
-1. Ouvrir `Champ_de_rupture.pinol`. Conserver les dossiers `audio` et `shaders` à côté.
+1. Ouvrir `Champ_de_rupture.nyxmap`. Conserver les dossiers `audio` et `shaders` à côté.
 2. Choisir la sortie audio et régler le niveau d'écoute.
 3. Dans le séquenceur, sélectionner **Champ de rupture · FM / 3 minutes**, puis déclencher **GO une seule fois**. Les 18 mouvements sont armés, puis la bande et les cues s'enchaînent.
 4. Dans Interactions → Audio, sélectionner une des routes pour voir sa bande du spectre et son mapping.
@@ -50,7 +50,7 @@ Chaque matière reçoit cinq routes Audio :
 - 6000–16000 Hz → densité du grain et des stries.
 - Attaques globales → poussées lumineuses courtes.
 
-La FFT analyse le mix lu par PINOL avant le fader général : le niveau d'écoute ne change pas l'image. Les paramètres de mouvement appartiennent aux timelines ; les paramètres audio appartiennent aux interactions ; les cues changent opacité et teinte. Aucun des trois ne réécrit les valeurs pilotées par les deux autres.
+La FFT analyse le mix lu par NYXMAP avant le fader général : le niveau d'écoute ne change pas l'image. Les paramètres de mouvement appartiennent aux timelines ; les paramètres audio appartiennent aux interactions ; les cues changent opacité et teinte. Aucun des trois ne réécrit les valeurs pilotées par les deux autres.
 
 ## Régénérer
 

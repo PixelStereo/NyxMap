@@ -1,9 +1,9 @@
-// Fuzz target (libFuzzer) for the OSC packets Pinol receives from the network (UDP, OSCQuery WebSocket frames):
+// Fuzz target (libFuzzer) for the OSC packets NyxMap receives from the network (UDP, OSCQuery WebSocket frames):
 // any datagram from any machine listened on reaches osc::decode. A malformed or hostile packet must be refused,
 // never read out of bounds (ASan / UBSan check it). What decodes is encoded again and decoded again, and the address
 // pattern matcher runs on what came in.
 //
-//   cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DPINOL_FUZZ=ON
+//   cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DNYXMAP_FUZZ=ON
 //   cmake --build build-fuzz --target fuzz_osc
 //   ./build-fuzz/fuzz_osc -max_total_time=60 corpus/      (seeds: test/make_fuzz_corpus.sh)
 

@@ -1,9 +1,9 @@
 // Open Stage Control 1.x custom module. Runtime dependencies ship in this folder.
-// Pinol state remains authoritative; feedback never replays a show command.
-const {WebSocket, osc} = require('./pinol-dependencies.cjs');
+// NyxMap state remains authoritative; feedback never replays a show command.
+const {WebSocket, osc} = require('./nyxmap-dependencies.cjs');
 const http = nativeRequire('http');
 const {Buffer} = nativeRequire('buffer');
-const createLayerDesk = require('./pinol-layers.cjs');
+const createLayerDesk = require('./nyxmap-layers.cjs');
 const PAGE_SIZE = 24;
 let host = '127.0.0.1', port = 5678, socket, timer, request, generation = 0;
 let catalog, playback, selected = '0', lastPong = 0, online = false, catalogKey = '';
@@ -23,12 +23,12 @@ function emit(address, value, force = false) {
 const edit = (widget, properties) => receive('/EDIT', widget, JSON.stringify(properties));
 const arg = (data, index) => data.args[index] && data.args[index].value;
 const target = {target: '127.0.0.1:1234', ignoreDefaults: true};
-const active = 'JS{return !!OSC{/pinol/ui/online,0,false}}';
+const active = 'JS{return !!OSC{/nyxmap/ui/online,0,false}}';
 
 function status(text) {
     const ready = !!(socket && socket.readyState === WebSocket.OPEN && catalog && playback && Date.now() - lastPong < 6000);
-    if (online !== ready) { online = ready; emit('/pinol/ui/online', ready ? 1 : 0); }
-    emit('/pinol/ui/status', text || catalogError || (ready ? `CONNECTED · ${host}:${port}` : `CONNECTING · ${host}:${port}`));
+    if (online !== ready) { online = ready; emit('/nyxmap/ui/online', ready ? 1 : 0); }
+    emit('/nyxmap/ui/status', text || catalogError || (ready ? `CONNECTED · ${host}:${port}` : `CONNECTING · ${host}:${port}`));
 }
 function button(widget, label, address, preArgs, extra) {
     return Object.assign({type: 'button', id: widget, label, mode: 'momentary', height: 48,
@@ -41,7 +41,7 @@ function range(kind, list) {
     const last = Math.max(0, Math.ceil(list.length / PAGE_SIZE) - 1);
     pages[kind] = Math.max(0, Math.min(last, pages[kind] || 0));
     const start = pages[kind] * PAGE_SIZE;
-    emit(`/pinol/library/${kind}/page`, list.length ? `${start + 1}–${Math.min(start + PAGE_SIZE, list.length)} / ${list.length}` : 'EMPTY');
+    emit(`/nyxmap/library/${kind}/page`, list.length ? `${start + 1}–${Math.min(start + PAGE_SIZE, list.length)} / ${list.length}` : 'EMPTY');
     return list.slice(start, start + PAGE_SIZE);
 }
 function renderLibrary(kind) {
@@ -50,8 +50,8 @@ function renderLibrary(kind) {
     const widgets = entries.map(entry => {
         const key = `${kind}_${entry.id}`, label = `${entry.index} · ${entry.name || 'Untitled'}`;
         if (kind !== 'timelines')
-            return button(key, label, '/pinol/recall', [kind, entry.id], {height: 76, colorWidget: kind === 'presets' ? '#e0b43a' : '#4cd964'});
-        const base = `/pinol/timeline/${entry.id}`;
+            return button(key, label, '/nyxmap/recall', [kind, entry.id], {height: 76, colorWidget: kind === 'presets' ? '#e0b43a' : '#4cd964'});
+        const base = `/nyxmap/timeline/${entry.id}`;
         return {type: 'panel', id: key, label: false, layout: 'vertical', height: 166, width: '100%',
             colorBg: '#26262b', contain: false, css: 'min-height:166rem!important;', padding: 8, widgets: [
                 text(key + '_name', label, {align: 'left', css: 'font-weight:600;font-size:17px;'}),
@@ -60,12 +60,12 @@ function renderLibrary(kind) {
                     height: 16, padding: 0, lineWidth: 0, alphaFillOff: 0.08, alphaFillOn: 0.6, width: '100%', interaction: false, bypass: true, input: false, range: {min: 0, max: 1}, colorWidget: '#56c4ff'},
                 {type: 'panel', id: key + '_buttons', label: false, layout: 'horizontal', height: 44, width: '100%', padding: 3,
                     widgets: ['play', 'pause', 'stop'].map(action => button(key + '_' + action, action.toUpperCase(),
-                        '/pinol/timeline/control', [entry.id, action], {height: 40, width: 'auto', expand: true,
+                        '/nyxmap/timeline/control', [entry.id, action], {height: 40, width: 'auto', expand: true,
                             colorWidget: action === 'stop' ? '#e84c3d' : '#56c4ff'}))}
             ]};
     });
     edit(kind + '_items', {widgets: widgets.length ? widgets : [text(kind + '_empty', 'No ' + kind + ' in this project.')]});
-    emit('/pinol/ui/online', online ? 1 : 0, true);
+    emit('/nyxmap/ui/online', online ? 1 : 0, true);
     if (playback) publishTimelineValues(true);
 }
 function renderCues() {
@@ -78,17 +78,17 @@ function renderCues() {
         const mode = continuation(cue.continue, cue.postwait);
         return {type: 'panel', id: 'cue_row_' + cue.id, label: false, layout: 'horizontal',
             height: 88, width: '100%', padding: 4, alphaStroke: 0, contain: false,
-            css: 'class: pinol-cue-row;', widgets: [button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/pinol/sequence/cue/go', [selected, cue.id], {
+            css: 'class: nyxmap-cue-row;', widgets: [button('cue_' + cue.id, `${cue.index} · ${name}\n${details}`, '/nyxmap/sequence/cue/go', [selected, cue.id], {
             height: 80, width: 'auto', expand: true, align: 'left',
             colorWidget: `JS{return OSC{/sequence/cue/current/number,0,false} === ${number} ? '#4cd964' : OSC{/sequence/cue/next/number,0,false} === ${number} ? '#e84c3d' : '#6d6d78'}`,
             alphaFillOff: 0.08, alphaStroke: 0.45, borderRadius: 4,
             css: ':host {font-size:14px;min-width:0;} label {justify-content:flex-start;text-align:left;padding-left:14rem;line-height:1.5;}'}),
             text('cue_mode_' + cue.id, mode.label + '\n' + mode.detail, {height: 80, width: 160,
                 colorText: mode.color, align: 'center', wrap: 'soft',
-                css: `class: pinol-continuation;\n:host {border:1rem solid ${mode.color}66;border-radius:4rem;background:${mode.color}12;font-size:12px;font-weight:600;line-height:1.7;}`})]};
+                css: `class: nyxmap-continuation;\n:host {border:1rem solid ${mode.color}66;border-radius:4rem;background:${mode.color}12;font-size:12px;font-weight:600;line-height:1.7;}`})]};
     });
     edit('cue_items', {widgets: widgets.length ? widgets : [text('cues_empty', 'Select a sequence containing cues.')]});
-    emit('/pinol/ui/online', online ? 1 : 0, true);
+    emit('/nyxmap/ui/online', online ? 1 : 0, true);
     if (playback) for (const role of ['current', 'next']) {
         const address = `/sequence/cue/${role}/number`; emit(address, playback.values[address], true);
     }
@@ -108,7 +108,7 @@ function publishCatalog(force) {
     catalogKey = key;
     edit('sequence_select', {values: {labels: catalog.sequences.map(s => `${s.index} · ${s.name || 'Untitled'}`),
         values: catalog.sequences.map(s => s.id)}});
-    emit('/pinol/sequence/select', selected, true);
+    emit('/nyxmap/sequence/select', selected, true);
     for (const kind of ['snapshots', 'presets', 'timelines']) renderLibrary(kind);
     renderCues();
 }
@@ -122,13 +122,13 @@ function publishTimelineValues(force = false) {
     const visible = new Set(catalog.timelines.slice(pages.timelines * PAGE_SIZE, (pages.timelines + 1) * PAGE_SIZE).map(t => t.id));
     for (const timeline of playback.timelines || []) {
         if (!visible.has(timeline.id)) continue;
-        const base = `/pinol/timeline/${timeline.id}`;
+        const base = `/nyxmap/timeline/${timeline.id}`;
         emit(base + '/progress', timeline.progress, force);
         emit(base + '/clock', `${timeline.state.toUpperCase()} · ${clock(timeline.position)} / ${clock(timeline.duration)} · Pass ${timeline.pass} · Left ${clock(timeline.remaining)}`, force);
     }
 }
 function publishState(state) {
-    if (!state || state.version !== 1 || !state.values || !Array.isArray(state.timelines)) throw Error('Unsupported Pinol state');
+    if (!state || state.version !== 1 || !state.values || !Array.isArray(state.timelines)) throw Error('Unsupported NyxMap state');
     const oldSelected = selected;
     const oldCue = playback && playback.values['/sequence/cue/current/number'];
     selected = String(state.values['/sequence/id'] || '0');
@@ -137,15 +137,15 @@ function publishState(state) {
     for (const role of ['previous', 'current', 'next']) {
         const base = '/sequence/cue/' + role;
         const mode = continuation(state.values[base + '/continue'], state.values[base + '/postwait']);
-        emit('/pinol/cue/' + role + '/continuation', mode.label + ' · ' + mode.detail);
+        emit('/nyxmap/cue/' + role + '/continuation', mode.label + ' · ' + mode.detail);
     }
-    for (const property of ['pause', 'blackout']) emit('/pinol/composition/' + property, state.values['/composition/' + property]);
-    emit('/pinol/sequence/select', selected);
+    for (const property of ['pause', 'blackout']) emit('/nyxmap/composition/' + property, state.values['/composition/' + property]);
+    emit('/nyxmap/sequence/select', selected);
     const cue = Math.max(0, Number(state.values['/sequence/cue/current/number']) - 1) || 0;
     if (selected !== oldSelected || (oldCue !== state.values['/sequence/cue/current/number'] && Math.floor(cue / PAGE_SIZE) !== pages.cues)) {
         pages.cues = Math.floor(cue / PAGE_SIZE); renderCues();
     }
-    emit('/pinol/ui/background', (state.sequences || []).filter(s => s.active && s.id !== selected).length);
+    emit('/nyxmap/ui/background', (state.sequences || []).filter(s => s.active && s.id !== selected).length);
     publishTimelineValues();
     status();
 }
@@ -158,17 +158,17 @@ function fetchCatalog(force) {
         response.setEncoding('utf8');
         response.on('data', chunk => {
             length += Buffer.byteLength(chunk);
-            if (length > 4 * 1024 * 1024) { response.destroy(Error('Pinol catalog is too large')); return; }
+            if (length > 4 * 1024 * 1024) { response.destroy(Error('NyxMap catalog is too large')); return; }
             body += chunk;
         });
         response.on('error', () => {});
         response.on('end', () => {
             if (token !== generation) return;
             try {
-                if (response.statusCode !== 200) throw Error('Update Pinol: show-control API unavailable');
+                if (response.statusCode !== 200) throw Error('Update NyxMap: show-control API unavailable');
                 const parsed = JSON.parse(JSON.parse(body).VALUE[0]);
                 if (parsed.version !== 1 || !['sequences', 'snapshots', 'presets', 'timelines'].every(k => Array.isArray(parsed[k])))
-                    throw Error('Unsupported Pinol catalog');
+                    throw Error('Unsupported NyxMap catalog');
                 catalog = parsed; lastCatalog = Date.now(); catalogError = '';
                 publishCatalog(force); status();
             } catch (error) { catalog = null; catalogError = error.message; status(); }
@@ -229,7 +229,7 @@ function connect(nextHost, nextPort) {
     host = nextHost; port = nextPort;
     sentValues.clear();
     catalog = playback = null; selected = '0'; catalogKey = ''; lastCatalog = 0; catalogError = '';
-    emit('/pinol/ui/host', host); emit('/pinol/ui/port', port);
+    emit('/nyxmap/ui/host', host); emit('/nyxmap/ui/port', port);
     emit('/sequence/name', 'Disconnected'); emit('/sequence/go_enabled', 0); emit('/sequence/back_enabled', 0);
     status();
     const authority = host.includes(':') ? `[${host}]` : host;
@@ -253,7 +253,7 @@ function connect(nextHost, nextPort) {
                 };
                 visit(packet);
             } else if (JSON.parse(data.toString()).COMMAND === 'PATH_CHANGED') { layers.invalidate(); fetchCatalog(false); }
-        } catch (error) { playback = null; status('Invalid Pinol feedback: ' + error.message); }
+        } catch (error) { playback = null; status('Invalid NyxMap feedback: ' + error.message); }
     });
     socket.on('error', error => { if (token === generation) status('Connection error: ' + error.message); });
     socket.on('close', () => {
@@ -270,37 +270,37 @@ function sendCommand(address, args) {
 }
 function command(data) {
     const address = data.address;
-    if (address === '/pinol/session/ready') {
-        emit('/pinol/ui/host', host); emit('/pinol/ui/port', port); status();
+    if (address === '/nyxmap/session/ready') {
+        emit('/nyxmap/ui/host', host); emit('/nyxmap/ui/port', port); status();
         publishCatalog(true); if (playback) publishState(playback);
         layers.replay();
         for (const [address, value] of sentValues) receive(address, ...(Array.isArray(value) ? value : [value]));
-    } else if (address === '/pinol/connect') {
+    } else if (address === '/nyxmap/connect') {
         connect(String(arg(data, 0) || '').trim(), Number(arg(data, 1)));
-    } else if (address === '/pinol/refresh') {
+    } else if (address === '/nyxmap/refresh') {
         layers.invalidate();
         fetchCatalog(true);
-    } else if (address.startsWith('/pinol/layer/')) {
+    } else if (address.startsWith('/nyxmap/layer/')) {
         layers.command(address, data.args.map(arg => arg.value));
-    } else if (address === '/pinol/library/page') {
+    } else if (address === '/nyxmap/library/page') {
         const kind = arg(data, 0), delta = Number(arg(data, 1));
         if (!Object.prototype.hasOwnProperty.call(pages, kind) || ![1, -1].includes(delta)) return;
         pages[kind] += delta;
         if (kind === 'cues') renderCues(); else renderLibrary(kind);
-    } else if (address === '/pinol/sequence/select' && id(arg(data, 0))) {
+    } else if (address === '/nyxmap/sequence/select' && id(arg(data, 0))) {
         sendCommand(`/sequence/by-id/${arg(data, 0)}/select`);
-    } else if (/^\/pinol\/sequence\/(go|back|stop)$/.test(address) && id(selected)) {
+    } else if (/^\/nyxmap\/sequence\/(go|back|stop)$/.test(address) && id(selected)) {
         sendCommand(`/sequence/by-id/${selected}/${address.split('/').pop()}`);
-    } else if (address === '/pinol/sequence/stop_all') {
+    } else if (address === '/nyxmap/sequence/stop_all') {
         sendCommand('/sequence/stop_all');
-    } else if (address === '/pinol/sequence/cue/go' && id(arg(data, 0)) && id(arg(data, 1))) {
+    } else if (address === '/nyxmap/sequence/cue/go' && id(arg(data, 0)) && id(arg(data, 1))) {
         sendCommand(`/sequence/by-id/${arg(data, 0)}/cue/go`, [{type: 's', value: arg(data, 1)}]);
-    } else if (address === '/pinol/recall' && ['snapshots', 'presets'].includes(arg(data, 0)) && id(arg(data, 1))) {
+    } else if (address === '/nyxmap/recall' && ['snapshots', 'presets'].includes(arg(data, 0)) && id(arg(data, 1))) {
         sendCommand(`/${arg(data, 0).slice(0, -1)}/by-id/${arg(data, 1)}/recall`);
-    } else if (address === '/pinol/timeline/control' && id(arg(data, 0)) && ['play', 'pause', 'stop', 'rewind'].includes(arg(data, 1))) {
+    } else if (address === '/nyxmap/timeline/control' && id(arg(data, 0)) && ['play', 'pause', 'stop', 'rewind'].includes(arg(data, 1))) {
         sendCommand(`/timeline/by-id/${arg(data, 0)}/${arg(data, 1)}`);
-    } else if (/^\/pinol\/composition\/(pause|blackout)$/.test(address) && [0, 1, true, false].includes(arg(data, 0))) {
-        sendCommand(address.replace('/pinol', ''), [{type: 'i', value: Number(arg(data, 0))}]);
+    } else if (/^\/nyxmap\/composition\/(pause|blackout)$/.test(address) && [0, 1, true, false].includes(arg(data, 0))) {
+        sendCommand(address.replace('/nyxmap', ''), [{type: 'i', value: Number(arg(data, 0))}]);
     }
 }
 function start() {
@@ -326,5 +326,5 @@ function stop() {
 }
 module.exports = {
     init: start, reload: start, stop, unload: stop,
-    oscOutFilter(data) { if (data.address.startsWith('/pinol/')) { command(data); return; } return data; }
+    oscOutFilter(data) { if (data.address.startsWith('/nyxmap/')) { command(data); return; } return data; }
 };

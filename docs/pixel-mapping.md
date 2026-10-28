@@ -114,7 +114,7 @@ the settings that apply to its protocol and mode are shown.
   by commas). The addresses only show in unicast.
 - sACN: each universe to its multicast group `239.255.hi.lo`, or `unicast` to the addresses given. sACN only:
   `priority` (0..200, default 100) and `source_name`. The CID is kept in the app settings, so it stays the same on
-  this machine. When an output is removed or disabled, or Pinol quits, its sACN streams are terminated.
+  this machine. When an output is removed or disabled, or NyxMap quits, its sACN streams are terminated.
 - `rate`: packets per second for each universe (1..120, default 40). All of an output's universes are sent at that
   rate, whatever the render's frame rate.
 - An address that is not an IP, or unicast without any address, puts the output in error (shown in its state).
