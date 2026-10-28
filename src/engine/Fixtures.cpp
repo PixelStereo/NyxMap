@@ -373,6 +373,15 @@ std::optional<FixtureType> FixturePatch::resolvedType(const Fixture &f) const
     return r;
 }
 
+Fixture *FixturePatch::findFixture(quint64 id)
+{
+    for (Fixture &f : fixtures)
+        if (f.id == id) return &f;
+    return nullptr;
+}
+
+const Fixture *FixturePatch::findFixture(quint64 id) const { return const_cast<FixturePatch *>(this)->findFixture(id); }
+
 const DmxOutput *FixturePatch::findOutput(quint64 id) const
 {
     for (const DmxOutput &o : outputs)

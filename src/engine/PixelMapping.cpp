@@ -15,7 +15,66 @@ void Engine::setFixturePatch(FixturePatch p)
         Lock lk(&m_mutex);
         m_fixtures = std::move(p);
         ++m_fixturesVersion;
+        m_fixtureParamsDirty = true;
     }
+    emit fixturesChanged();
+}
+
+// Each fixture's values a show changes: on / off, solo, its intensity. Read and written in the fixture of that id
+// (the lock held by the caller); on / off and solo change the pixels sampled, a write tells the interface
+const std::vector<std::unique_ptr<Parameter>> &Engine::fixtureParams()
+{
+    if (!m_fixtureParamsDirty) return m_fixtureParams;
+    m_fixtureParamsDirty = false;
+    m_fixtureParams.clear();
+    using T = Parameter::Type;
+    for (const Fixture &f : m_fixtures.fixtures) {
+        const quint64 id = f.id;
+        const QString prefix = QStringLiteral("fixture/%1/").arg(id);
+        const QString cat = QStringLiteral("Fixtures › %1 › ").arg(f.name.isEmpty() ? QStringLiteral("Fixture %1").arg(id) : f.name);
+        auto find = [this, id] { return m_fixtures.findFixture(id); };
+        auto flag = [&](const QString &key, const QString &name, bool def, bool Fixture::*field) {
+            m_fixtureParams.push_back(std::make_unique<Parameter>(prefix + key, cat + name, T::Bool));
+            m_fixtureParams.back()->byDefault(def).ramp(Parameter::Ramp::Cut).bind(
+                [find, field] {
+                    const Fixture *x = find();
+                    return x ? QVariant(x->*field) : QVariant();
+                },
+                [this, find, field](const QVariant &v) {
+                    Fixture *x = find();
+                    if (!x || x->*field == v.toBool()) return;
+                    x->*field = v.toBool();
+                    ++m_fixturesVersion; // the pixels sampled
+                    fixtureValuesTouched();
+                });
+        };
+        flag(QStringLiteral("enable"), QStringLiteral("On"), true, &Fixture::enabled);
+        flag(QStringLiteral("solo"), QStringLiteral("Solo"), false, &Fixture::solo);
+        m_fixtureParams.push_back(std::make_unique<Parameter>(prefix + QStringLiteral("intensity"), cat + QStringLiteral("Intensity"), T::Float));
+        m_fixtureParams.back()->range(0, 1).limits(0, 1).step(0.01).byDefault(1.0).animatable().bind(
+            [find] {
+                const Fixture *x = find();
+                return x ? QVariant(x->intensity) : QVariant();
+            },
+            [this, find](const QVariant &v) {
+                Fixture *x = find();
+                if (!x) return;
+                x->intensity = std::clamp(v.toDouble(), 0.0, 1.0);
+                fixtureValuesTouched();
+            });
+    }
+    return m_fixtureParams;
+}
+
+void Engine::fixtureValuesTouched()
+{
+    if (m_fixtureValuesPending.exchange(true)) return; // one is on its way
+    QMetaObject::invokeMethod(this, "notifyFixtureValuesChanged", Qt::QueuedConnection);
+}
+
+void Engine::notifyFixtureValuesChanged()
+{
+    m_fixtureValuesPending = false;
     emit fixturesChanged();
 }
 

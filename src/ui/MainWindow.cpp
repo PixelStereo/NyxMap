@@ -580,7 +580,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // A step the cue clock fired (its pre-wait, a follow): already recalled on time, recorded here for undo
     m_engine->sequencer().setRecallRecorder([this](int snapshot, const Sequencer::RecallBefore &before) {
         if (snapshot < 0 || snapshot >= m_engine->snapshotCount()) return;
-        m_undo->push(new cmd::RecallSnapshot(m_engine, snapshot, before.layers, before.composition, before.interactions));
+        m_undo->push(new cmd::RecallSnapshot(m_engine, snapshot, before.layers, before.composition, before.interactions,
+                                                 before.fixtures));
         scheduleRecallRefresh();
         m_cueUndoIndex = m_undo->index();
         m_seqBar->setModified(false);

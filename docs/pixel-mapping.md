@@ -93,6 +93,15 @@ into the project, so the file is not needed afterwards.
 - `gamma` applies to the sampled colour and `intensity` to every value. `white`: `min` moves the grey part of the
   colour (min of R, G, B) to the white channel; `off` leaves white at 0.
 
+### In snapshots, OSC, interactions and timelines
+
+Each fixture's show values are parameters of the composition: `fixture/<id>/enable`, `fixture/<id>/solo` and
+`fixture/<id>/intensity`. A snapshot stores them for every fixture. The Snapshots inspector lists them under
+**Fixtures**, where each fixture can be left out. A recall sets on/off and solo at once and fades the intensity, in the
+snapshot's fade or the time given to it. A fixture made after the snapshot, or left out of it, is left alone. One removed
+since is not made again: the patch itself (types, placement, addresses, outputs) is not part of a snapshot. Intensity can
+also be driven by a timeline or an interaction.
+
 ## DMX outputs
 
 In the Composition tab: a list of the outputs (on, name, protocol, state), and the settings of the one selected. Only

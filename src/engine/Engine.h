@@ -363,6 +363,10 @@ public:
         // "easing"}]
         // (one it does not hold, made since, is switched off by the recall)
         QJsonArray interactions;
+        // The pixel mapping's fixtures: each one's values (on / off, solo, intensity), by its id, with its name,
+        // "included", "timing", "easing" and "delay" as an interaction's: [{"id", "name", "included", "params"}]
+        // (one made since, or one it leaves out, is left alone; one removed since is not made again)
+        QJsonArray fixtures;
     };
     QJsonObject captureComposition() const;
     void applyComposition(const QJsonObject &c, double fade); // the recall's part for the composition
@@ -376,6 +380,10 @@ public:
     void applyInteractionValues(quint64 id, const QJsonObject &params, const QJsonObject &timing, const QJsonObject &easing,
                                 double fade, const QJsonObject &delays = {});
     static QStringList interactionKeys(); // the keys of an interaction's values, in their order
+    QJsonArray captureFixtures() const;   // every fixture's values (enable, solo, intensity), all included
+    // The recall's part for the fixtures: the intensity fades in its time, on / off and solo are set at once
+    void applyFixtures(const QJsonArray &states, double fade);
+    static QStringList fixtureKeys();     // the keys of a fixture's values: "enable", "solo", "intensity"
     bool snapshotMatches(quint64 id, QString *reason = nullptr) const; // static state, ignores playheads and active drivers
     int snapshotCount() const;
     Snapshot snapshot(int i) const;
@@ -1143,6 +1151,18 @@ private:
     std::atomic<bool> m_interactionValuesPending{false};
     void interactionValuesTouched(); // any thread: interactionValuesChanged soon, once
     Q_INVOKABLE void notifyInteractionValuesChanged(); // Engine's QObject thread; no captured event payload
+    // The fixtures' values as parameters of the composition: "fixture/<id>/enable", "…/solo", "…/intensity" (OSC,
+    // interactions, timelines, snapshots); made again when the patch changes (lock held)
+    std::vector<std::unique_ptr<Parameter>> m_fixtureParams;
+    bool m_fixtureParamsDirty = true;
+    const std::vector<std::unique_ptr<Parameter>> &fixtureParams();
+    std::atomic<bool> m_fixtureValuesPending{false};
+    void fixtureValuesTouched(); // any thread: fixturesChanged soon, once
+    Q_INVOKABLE void notifyFixtureValuesChanged();
+    // Stored values of the composition's parameters under `prefix`, in the order of `order`: numbers faded in their
+    // time (timing / easing / delay as a snapshot gives them), the rest set at once (lock held)
+    void applyStoredValues(const QString &prefix, const QStringList &order, const QJsonObject &params,
+                           const QJsonObject &timing, const QJsonObject &easing, double fade, const QJsonObject &delays);
     void makeInteractionParams();    // lock held
     const std::vector<std::unique_ptr<Parameter>> &interactionParams(); // made again when needed (lock held)
     struct InteractionFade {

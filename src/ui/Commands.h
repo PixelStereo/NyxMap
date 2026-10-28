@@ -194,12 +194,13 @@ public:
     RecallSnapshot(Engine *e, int snapshot);
     // Already recalled elsewhere (the cue clock), with the state it replaced: the first redo does nothing
     RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before, const QJsonObject &beforeComposition,
-                   const QJsonArray &beforeInteractions);
+                   const QJsonArray &beforeInteractions, const QJsonArray &beforeFixtures = {});
     void undo() override
     {
         m_e->restoreRecallLayers(m_before);
         m_e->applyComposition(m_beforeComposition, 0);
         m_e->applyInteractions(m_beforeInteractions, 0);
+        m_e->applyFixtures(m_beforeFixtures, 0);
     }
     void redo() override;
 
@@ -209,6 +210,7 @@ private:
     QJsonArray m_before;
     QJsonObject m_beforeComposition;
     QJsonArray m_beforeInteractions;
+    QJsonArray m_beforeFixtures;
     bool m_first = true;
     bool m_done = false; // recalled before it was pushed
 };
