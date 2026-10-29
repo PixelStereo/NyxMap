@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Wipe: a soft edge sweeps across the picture.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Transition"],
     "INPUTS": [

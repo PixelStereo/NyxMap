@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Fade out, fade in: the outgoing picture fades away (to what is beneath), then the incoming one fades in.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Transition"],
     "INPUTS": [

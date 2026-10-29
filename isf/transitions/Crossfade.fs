@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Crossfade: the outgoing picture dissolves into the incoming one.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Transition"],
     "INPUTS": [
