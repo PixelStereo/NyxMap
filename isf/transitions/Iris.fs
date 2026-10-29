@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Iris: the incoming picture opens as a circle from a point.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Transition"],
     "INPUTS": [

@@ -1,6 +1,6 @@
 /*{
     "DESCRIPTION": "Dissolve: the incoming picture appears in a grain of noise.",
-    "CREDIT": "Fulskrin",
+    "CREDIT": "Pixel Stereo",
     "ISFVSN": "2",
     "CATEGORIES": ["Transition"],
     "INPUTS": [
