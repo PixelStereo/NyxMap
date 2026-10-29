@@ -110,9 +110,11 @@ class EventLane : public QWidget
     Q_OBJECT
 public:
     explicit EventLane(QWidget *parent = nullptr);
-    void setTrack(const AnimTrack &track, double duration);
+    // `target`: what its flags drive — an action (fired), or a switch, a choice, a number (each flag sets its value)
+    void setTrack(const AnimTrack &track, double duration, const ParamInfo &target = ParamInfo{ {}, {}, ParamInfo::Type::Trigger });
     void setView(double t0, double t1);
     void setPlayhead(double position, bool shown);
+    QString valueText(int key) const; // what a flag sets ("On", "add", "12.5"); empty: an action
 signals:
     void edited(const AnimTrack &track, int gesture);
     void zoomTime(double factor, double anchor);
@@ -132,7 +134,10 @@ private:
     int keyAt(QPointF pos) const;
     void addKey(double time);
     void removeKey(int key);
+    void setKeyValue(int key, double v);
+    bool valued() const { return m_target.type != ParamInfo::Type::Trigger; }
     AnimTrack m_track;
+    ParamInfo m_target{{}, {}, ParamInfo::Type::Trigger};
     double m_duration = 4, m_t0 = 0, m_t1 = 4, m_playhead = 0;
     bool m_shown = false, m_panning = false, m_add = false;
     int m_selected = -1, m_drag = -1, m_gesture = 0;

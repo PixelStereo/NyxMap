@@ -197,6 +197,16 @@ void TimelineTrackRow::fillParams()
             a->setChecked(track().event && p.path == track().param);
         });
     }
+    // Flags that set a switch, a choice or a number a curve does not drive (Play, Blend Mode, Seek To…)
+    const auto settable = m_e->settableParams(track().layer);
+    if (!settable.empty()) {
+        auto *setMenu = menu->addMenu(QStringLiteral("Events (set a value)"));
+        addParamMenu(setMenu, settable, [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+            auto *a = into->addAction(text, this, [this, path = p.path] { selectEvent(path); });
+            a->setCheckable(true);
+            a->setChecked(track().event && p.path == track().param);
+        });
+    }
     const auto points = m_e->animatablePoints(track().layer);
     if (!points.empty()) {
         auto *pointMenu = menu->addMenu(QStringLiteral("Points (XY)"));
@@ -292,7 +302,9 @@ void TimelineTrackRow::fill()
     }
     m_layer->setCurrentIndex(li);
     QString label = t.param.isEmpty() ? QStringLiteral("(choose a parameter)") : QStringLiteral("(%1 — not on this layer)").arg(t.param);
-    const auto params = t.event ? m_e->triggerParams(t.layer) : t.isPoint() ? m_e->animatablePoints(t.layer)
+    auto events = m_e->triggerParams(t.layer);
+    if (t.event) for (const auto &p : m_e->settableParams(t.layer)) events.push_back(p);
+    const auto params = t.event ? events : t.isPoint() ? m_e->animatablePoints(t.layer)
                       : t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
     for (const Engine::AnimParam &p : params)
         if (p.path == t.param) label = (t.event ? QStringLiteral("⚑ ") : QString()) + p.label;

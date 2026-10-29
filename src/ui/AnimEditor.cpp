@@ -1249,15 +1249,36 @@ EventLane::EventLane(QWidget *parent) : QWidget(parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setFocusPolicy(Qt::StrongFocus);
     setToolTip(QStringLiteral("Click an empty space: add an event · drag a flag: move in time · double-click: delete\n"
-                              "Right-click: time, delete · Delete: remove selected flag · Ctrl/⌘+wheel: zoom time"));
+                              "Right-click: time, value, delete · Delete: remove selected flag · Ctrl/⌘+wheel: zoom time"));
 }
 
-void EventLane::setTrack(const AnimTrack &track, double duration)
+void EventLane::setTrack(const AnimTrack &track, double duration, const ParamInfo &target)
 {
     m_track = track;
+    m_target = target;
     m_duration = std::max(.05, duration);
     if (m_selected >= int(track.keys.size())) m_selected = -1;
     update();
+}
+
+QString EventLane::valueText(int key) const
+{
+    if (!valued() || key < 0 || key >= int(m_track.keys.size())) return {};
+    const double v = m_track.keys[size_t(key)].v;
+    switch (m_target.type) {
+    case ParamInfo::Type::Bool: return v >= .5 ? QStringLiteral("On") : QStringLiteral("Off");
+    case ParamInfo::Type::Choice:
+        return m_target.choices.value(std::clamp(int(std::lround(v)), 0, std::max(0, int(m_target.choices.size()) - 1)));
+    default: return QString::number(v, 'g', 5);
+    }
+}
+
+void EventLane::setKeyValue(int key, double v)
+{
+    if (key < 0 || key >= int(m_track.keys.size())) return;
+    m_track.keys[size_t(key)].v = v;
+    update();
+    emit edited(m_track, 0);
 }
 
 void EventLane::setView(double t0, double t1) { m_t0 = t0; m_t1 = std::max(t0 + 1e-6, t1); update(); }
@@ -1307,6 +1328,10 @@ void EventLane::paintEvent(QPaintEvent *)
         p.drawLine(QPointF(x, 6), QPointF(x, height() - 18));
         p.setBrush(selected ? QColor(Qt::white) : kEventFlag);
         p.drawPolygon(QPolygonF({QPointF(x, 6), QPointF(x + 14, 12), QPointF(x, 18)}));
+        if (valued()) { // what it sets, beside its pennant
+            p.setPen(selected ? QColor(Qt::white) : QColor(225, 225, 232));
+            p.drawText(QPointF(x + 17, 16), valueText(int(i)));
+        }
         if (selected) {
             p.setPen(QColor(210, 210, 220));
             p.drawText(QRectF(12, height() - 18, width() - 24, 16), Qt::AlignLeft | Qt::AlignVCenter,
@@ -1323,7 +1348,11 @@ void EventLane::addKey(double time)
 {
     auto it = std::lower_bound(m_track.keys.begin(), m_track.keys.end(), time, [](const AnimKey &k, double t) { return k.t < t; });
     m_selected = int(it - m_track.keys.begin());
-    m_track.keys.insert(it, AnimKey{time, 0, 0});
+    double v = 0; // a switch: the other state than the flag before it (on, off, on…); else as the flag before it
+    if (valued() && it != m_track.keys.begin()) v = m_target.type == ParamInfo::Type::Bool ? ((it - 1)->v >= .5 ? 0 : 1) : (it - 1)->v;
+    else if (m_target.type == ParamInfo::Type::Bool) v = 1;
+    else if (valued() && m_target.isNumber()) v = std::clamp(0.0, m_target.lo, m_target.hi);
+    m_track.keys.insert(it, AnimKey{time, v, 0});
     update();
     emit edited(m_track, 0);
 }
@@ -1414,6 +1443,33 @@ void EventLane::contextMenuEvent(QContextMenuEvent *e)
             m_track.keys[size_t(key)].t = t;
             update(); emit edited(m_track, 0);
         });
+        if (valued()) { // what it sets
+            const double v = m_track.keys[size_t(key)].v;
+            if (m_target.type == ParamInfo::Type::Bool) {
+                for (int on = 1; on >= 0; --on) {
+                    auto *a = menu->addAction(on ? QStringLiteral("Sets On") : QStringLiteral("Sets Off"), this,
+                                              [this, key, on] { setKeyValue(key, on); });
+                    a->setCheckable(true);
+                    a->setChecked((v >= .5) == bool(on));
+                }
+            } else if (m_target.type == ParamInfo::Type::Choice) {
+                auto *sets = menu->addMenu(QStringLiteral("Sets"));
+                for (int c = 0; c < m_target.choices.size(); ++c) {
+                    auto *a = sets->addAction(m_target.choices[c], this, [this, key, c] { setKeyValue(key, c); });
+                    a->setCheckable(true);
+                    a->setChecked(int(std::lround(v)) == c);
+                }
+            } else {
+                menu->addAction(QStringLiteral("Value…"), this, [this, key] {
+                    if (key < 0 || key >= int(m_track.keys.size())) return;
+                    bool ok = false;
+                    const QPointer<EventLane> guard(this);
+                    const double x = QInputDialog::getDouble(window(), QStringLiteral("Event"), m_target.name(),
+                                                             m_track.keys[size_t(key)].v, m_target.lo, m_target.hi, 3, &ok);
+                    if (guard && ok) setKeyValue(key, x);
+                });
+            }
+        }
         menu->addSeparator();
         menu->addAction(QStringLiteral("Delete Event"), this, [this, key] { removeKey(key); });
     }
@@ -1740,7 +1796,9 @@ void TrackRow::updateLane()
     const auto [lo, hi] = range();
     m_lane->setTrack(editedTrack(), m_ed->m_edit.duration, lo, hi);
     m_colorLane->setTrack(editedTrack(), m_ed->m_edit.duration);
-    m_eventLane->setTrack(track(), m_ed->m_edit.duration);
+    ParamInfo target{{}, {}, ParamInfo::Type::Trigger};
+    if (track().event) m_e->parameterInfo(track().layer, track().param, &target);
+    m_eventLane->setTrack(track(), m_ed->m_edit.duration, target);
     if (track().isPoint())
         m_pointPreview->setTrack(track(), m_ed->m_edit.duration, {m_ed->rangeOf(track().axes[0]), m_ed->rangeOf(track().axes[1])});
     applyView();

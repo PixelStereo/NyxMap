@@ -71,7 +71,7 @@ and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-syste
 | Snapshot | Recalls scene state, including sources, FX, values, local animation states and interaction settings, subject to inclusion choices. |
 | Preset | Recalls selected values and any stored categories, geometry or local drivers; it does not replace the whole scene. |
 | Layer animation | Drives a layer parameter or RGB color with keys or a waveform. |
-| Timeline | Drives one or more targets using a shared transport. An event track fires an action (Source › Rewind, Timecode › Rewind, a shader's event…) at each of its flags as the playhead reaches them; seeking does not fire them. |
+| Timeline | Drives one or more targets using a shared transport. An event track fires an action (Source › Rewind, Show › GO, a snapshot's recall, a shader's event…) or sets a value (a switch such as Source › Play or Layer › Visible, a choice such as Blend Mode, a number a curve does not drive such as Source › Seek To) at each of its flags as the playhead reaches them; seeking does not fire them. |
 | Interaction | Maps input through ranges, optional filtering, a curve and master level, then applies its takeover mode. |
 
 ## Current rules
@@ -95,6 +95,23 @@ For layer values, a successful animation or interaction write removes that addre
 MIDI, OSC and keyboard interactions normally write on fresh input or while their processed output changes. They do not permanently hold a value after one message. Audio is sampled every frame and can therefore keep overwriting automation. Internal interactions react to source changes. A grouped color interaction normally writes RGB; alpha requires explicit mapping. RGB pick-up waits for all mapped channels to meet their target.
 
 A video or audio layer exposes where it plays as two read-only values an Internal interaction can follow: `playhead` (**Source › Playhead (s)**, seconds into the media) and `progress` (**Source › Progress**, 0 at the in point, 1 at the out point). For example, map a video's Progress to another layer's Position X to move it along with the playhead. Neither is saved or animated.
+
+### Show actions and layer switches
+
+The show's own actions are values of the composition, so a key, a MIDI note, an OSC message, another value (Internal) or a timeline flag reaches them like any other target. Each one is addressed by the stable id of what it acts on, and the list follows the snapshots, presets, timelines and sequences as they are added, renamed or removed.
+
+| Address | Kind | Meaning |
+|---|---|---|
+| `show/go`, `show/back`, `show/stop`, `show/stop_all` | Action | The selected sequence's GO, GO Back, Stop; Stop All stops every sequence. |
+| `sequence/<id>/go`, `/back`, `/stop` | Action | One sequence, whatever is selected. |
+| `snapshot/<id>/recall`, `preset/<id>/recall` | Action | Recalls it, with its fade. |
+| `timeline/<id>/play`, `/pause`, `/stop`, `/rewind` | Action | A timeline's transport. |
+| `timeline/<id>/playing` | Read only | Whether it plays (an Internal interaction can follow it). |
+| `show/blackout`, `show/pause` | Switch | The blackout (with its default fade) and the pause. |
+
+Every layer also has **Layer › Visible** (`enable`) and **Layer › Solo** (`solo`), the switches of the layer list, and a video or audio layer has **Source › Seek To (s)** (`seek`, written only). None of these is saved in snapshots or presets: a snapshot shows and hides its layers itself, with its fades. An action runs right after it is written, on the engine's thread, exactly as the button that does the same.
+
+An Internal interaction can follow a switch (0 / 1) and a choice (its index: 0 for the first one).
 
 ### What a recall can change besides the value
 

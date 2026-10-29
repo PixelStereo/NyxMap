@@ -509,7 +509,11 @@ public:
     std::vector<AnimParam> animatableParams(quint64 layer) const;
     std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
     std::vector<AnimParam> animatablePoints(quint64 layer) const; // grouped XY targets, components remain addressable
-    std::vector<AnimParam> triggerParams(quint64 layer) const; // the actions an event track can fire (Source › Rewind…)
+    std::vector<AnimParam> triggerParams(quint64 layer) const;
+    // What an event track can also set at each flag: switches, choices, and the numbers a curve does not drive
+    // (Seek To, In / Out, a clock's elapsed time…)
+    std::vector<AnimParam> settableParams(quint64 layer) const;
+    static bool isEventTarget(const ParamInfo &p); // an action, or a value a flag of an event track sets // the actions an event track can fire (Source › Rewind…)
     bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
     struct AnimationTargetState {
         quint64 layer = 0;
@@ -1172,6 +1176,13 @@ private:
                            const QJsonObject &timing, const QJsonObject &easing, double fade, const QJsonObject &delays);
     void makeInteractionParams();    // lock held
     const std::vector<std::unique_ptr<Parameter>> &interactionParams(); // made again when needed (lock held)
+    // The show's actions and states as the composition's parameters (ShowParams.cpp): "show/go", "show/blackout",
+    // "snapshot/<id>/recall", "timeline/<id>/play"…; made again when what they act on changes (lock held)
+    const std::vector<std::unique_ptr<Parameter>> &showParams();
+    static bool isShowParam(const QString &path);
+    std::vector<std::unique_ptr<Parameter>> m_showParams;
+    QString m_showParamsKey;
+    void later(std::function<void()> f); // runs f on the engine's thread once the caller is done (any thread)
     struct InteractionFade {
         QString path; // "interaction/<id>/master"
         double from = 0, to = 0, time = 0, elapsed = 0;

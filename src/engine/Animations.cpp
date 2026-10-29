@@ -452,18 +452,30 @@ void Engine::fireAnimationEvents(const Animation &a, double from, double to, boo
         if (t.layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == t.layer && l->locked; }))
             continue; // a timeline leaves a locked layer alone
         Parameter *p = findParameter(t.layer, t.param);
-        if (!p || p->info().type != ParamInfo::Type::Trigger) continue;
+        if (!p || !isEventTarget(p->info())) continue;
+        const ParamInfo info = p->info();
         std::vector<double> fired(t.keys.size(), -1); // a ping-pong's turn: the same key ends one pass and starts the next
+        std::vector<std::pair<double, size_t>> due;   // the flags reached in this step, in the order of the clock
         for (double pass = first; pass <= last && pass - first < 1000; ++pass) {
             const bool back = a.backwardsAt(pass * d + d / 2);
             for (size_t k = 0; k < t.keys.size(); ++k) {
                 const double c = pass * d + (back ? d - t.keys[k].t : t.keys[k].t);
                 if ((c > from || (fromIncluded && c >= from)) && c <= end && std::abs(c - fired[k]) > 1e-9) {
                     fired[k] = c;
-                    p->setValue(QVariant());
-                    journal(QStringLiteral("timeline"), QStringLiteral("%1 event %2").arg(a.id).arg(t.param));
+                    due.push_back({c, k});
                 }
             }
+        }
+        std::stable_sort(due.begin(), due.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+        for (const auto &[c, k] : due) {
+            const double v = t.keys[k].v;
+            QVariant value; // an action: none
+            if (info.type == ParamInfo::Type::Bool) value = v >= 0.5;
+            else if (info.type == ParamInfo::Type::Choice)
+                value = info.choices.value(std::clamp(int(std::lround(v)), 0, std::max(0, int(info.choices.size()) - 1)));
+            else if (info.isNumber()) value = v;
+            p->setValue(value);
+            journal(QStringLiteral("timeline"), QStringLiteral("%1 event %2").arg(a.id).arg(t.param));
         }
     }
 }
@@ -514,6 +526,11 @@ Parameter *Engine::findParameter(quint64 layer, const QString &path)
                 if (p->path() == path) return p.get();
             return nullptr;
         }
+        if (isShowParam(path)) { // the show's actions and states
+            for (const auto &p : showParams())
+                if (p->path() == path) return p.get();
+            return nullptr;
+        }
         if (path.startsWith(QLatin1String("fixture/"))) { // a fixture's of the pixel mapping
             for (const auto &p : fixtureParams())
                 if (p->path() == path) return p.get();
@@ -557,6 +574,8 @@ std::vector<ParamInfo> Engine::parameters(quint64 layer) const
         if (l->id == layer) list = &l->parameters();
     if (list)
         for (const Parameter *p : *list) out.push_back(p->info());
+    if (!layer)
+        for (const auto &p : self->showParams()) out.push_back(p->info());
     return out;
 }
 
@@ -584,6 +603,26 @@ std::vector<Engine::AnimParam> Engine::triggerParams(quint64 layer) const
     std::vector<AnimParam> out;
     for (const ParamInfo &i : parameters(layer))
         if (i.type == ParamInfo::Type::Trigger && (i.access & ParamInfo::Write)) out.push_back(i);
+    return out;
+}
+
+bool Engine::isEventTarget(const ParamInfo &i)
+{
+    if (!(i.access & ParamInfo::Write)) return false;
+    switch (i.type) {
+    case ParamInfo::Type::Trigger:
+    case ParamInfo::Type::Bool:
+    case ParamInfo::Type::Choice: return true;
+    case ParamInfo::Type::Text: return false;
+    default: return !i.animatable; // a number a curve drives is a curve's, not a flag's (Seek To, In, Elapsed…)
+    }
+}
+
+std::vector<Engine::AnimParam> Engine::settableParams(quint64 layer) const
+{
+    std::vector<AnimParam> out;
+    for (const ParamInfo &i : parameters(layer))
+        if (i.type != ParamInfo::Type::Trigger && isEventTarget(i)) out.push_back(i);
     return out;
 }
 
@@ -1147,9 +1186,15 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
     if (t.event) {
         o["type"] = QStringLiteral("event");
         if (!t.enabled) o["enable"] = false;
-        QJsonArray times;
-        for (const AnimKey &k : t.keys) times.append(k.t);
+        QJsonArray times, values;
+        bool valued = false;
+        for (const AnimKey &k : t.keys) {
+            times.append(k.t);
+            values.append(k.v);
+            valued = valued || k.v != 0;
+        }
         o["keys"] = times;
+        if (valued) o["values"] = values; // what each flag sets (a switch, a choice, a number); none: an action
         return;
     }
     if (t.color) o["type"] = QStringLiteral("color");
@@ -1204,8 +1249,12 @@ static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
         t.color = t.oscillator = false;
         t.enabled = o.value("enable").toBool(true);
         t.keys.clear();
-        for (const QJsonValue &time : o.value("keys").toArray())
-            if (time.isDouble()) t.keys.push_back(AnimKey{std::clamp(time.toDouble(), 0.0, duration), 0, 0});
+        const QJsonArray times = o.value("keys").toArray(), values = o.value("values").toArray();
+        for (int k = 0; k < times.size(); ++k)
+            if (times[k].isDouble()) {
+                const double v = values.at(k).toDouble();
+                t.keys.push_back(AnimKey{std::clamp(times[k].toDouble(), 0.0, duration), std::isfinite(v) ? v : 0.0, 0});
+            }
         sortKeys(t);
         return;
     }

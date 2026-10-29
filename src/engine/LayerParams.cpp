@@ -79,6 +79,11 @@ const std::vector<Parameter *> &Layer::parameters()
     };
     const bool picture = hasPicture();
 
+    // On / off and solo, as the layer list's switches: driven by an interaction or a timeline, never saved in a
+    // snapshot or a preset (a snapshot shows and hides its layers itself, with its fades)
+    flag("enable", "Layer › Visible", true, &enabled).ramp(Parameter::Ramp::Cut).transient();
+    flag("solo", "Layer › Solo", false, &solo).ramp(Parameter::Ramp::Cut).transient();
+
     if (picture) {
         num("opacity", "Opacity", 0, 1, 1.0, [self] { return double(self->opacity); },
             [self](double v) { self->opacity = float(v); });
@@ -286,6 +291,13 @@ const std::vector<Parameter *> &Layer::parameters()
             self->ended = false;
             startMedia(*self);
         });
+        // To a time of the media (seconds), played or paused as it was: written by an interaction, an event of a
+        // timeline, OSC; read back as Playhead below
+        add("seek", "Source › Seek To (s)", T::Float)
+            .range(0, d > 0 ? d : 1)
+            .ramp(Parameter::Ramp::Cut)
+            .writeOnly()
+            .bind(nullptr, [self](const QVariant &v) { reposition(*self, v.toDouble(), self->dir); });
         // Where it plays, read back for an Internal interaction to follow (never saved): in seconds of the media, and
         // from its in point (0) to its out point (1)
         add("playhead", "Source › Playhead (s)", T::Float)
