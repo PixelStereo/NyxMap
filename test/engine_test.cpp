@@ -68,6 +68,7 @@ int runTimelineEventTests(Engine &e, const QString &root, const QString &tmp); /
 int runMediaPlayheadTests(Engine &e, const QString &root); // media_playhead.cpp
 int runShowActionTests(Engine &e, const QString &root, const QString &tmp); // show_actions.cpp
 int runInteractionActionTests(Engine &e, const QString &tmp); // interaction_actions.cpp
+int runInteractionFilterTests(Engine &e); // interaction_filters.cpp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
 int runLiveInputTests(Engine &e); // live_inputs.cpp
 int runClockGeneratorTests(Engine &e); // clock_generators.cpp
@@ -214,6 +215,7 @@ int main(int argc, char **argv)
     if (area("timeline_events")) failures += runTimelineEventTests(e, root, tmp);
     if (area("show_actions")) failures += runShowActionTests(e, root, tmp);
     if (area("interaction_actions")) failures += runInteractionActionTests(e, tmp);
+    if (area("interaction_filters")) failures += runInteractionFilterTests(e);
     if (area("media_playhead")) {
         failures += runMediaPlayheadTests(e, root);
     } // media_playhead
@@ -5242,7 +5244,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(waitFor([&]{return e.audioOutput().spectrum().band(400,480)>.15f;}));
         CHECK(e.audioOutput().spectrum().band(6000,16000)<.01f);
         Interaction audioBand=Interaction::made(InteractionSource::Audio);
-        audioBand.audioLow=400;audioBand.audioHigh=480;audioBand.param="opacity";audioBand.filterOn=false;
+        audioBand.audioLow=400;audioBand.audioHigh=480;audioBand.param="opacity";audioBand.filters.clear();
         audioBand.dstMin=.2;audioBand.dstMax=.8;
         CHECK(e.setParameter(0,"opacity",.05)); // outside either expected range: missing routing cannot pass
         const auto audioMapping=e.addInteraction(audioBand);
@@ -6198,7 +6200,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         live.audioInput = true;
         live.audioLow = 400;
         live.audioHigh = 480;
-        live.filterOn = false;
+        live.filters.clear();
         live.dstMin = .2;
         live.dstMax = .8;
         live.layer = e.layerId(e.addLayer(QStringLiteral("Live input target")));
@@ -6250,12 +6252,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         pr.input(it, 0.8);
         CHECK(near(*pr.step(it, 0.016), 0.4));
         it.master = 1;
-        it.curveOn = true; // an inverted curve
-        it.curve.keys[0].v = 1;
-        it.curve.keys[1].v = 0;
+        InteractionStage inverted = InteractionStage::made(InteractionFilter::Curve); // an inverted curve
+        inverted.curve.keys[0].v = 1;
+        inverted.curve.keys[1].v = 0;
+        it.filters = {inverted};
         pr.input(it, 0.25);
         CHECK(near(*pr.step(it, 0.016), 0.75));
-        it.curveOn = false;
+        it.filters.clear();
         // Toggle: up past the middle flips
         it.toggle = true;
         InteractionProcessor tg;
@@ -6269,10 +6272,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // Filters: from 0, a step to 1, sixty frames a second
         auto run = [&](InteractionFilter f, double a, double b, double seconds, double *peak = nullptr) {
             Interaction x = it;
-            x.filterOn = true;
-            x.filter = f;
-            x.filterA = a;
-            x.filterB = b;
+            InteractionStage s = InteractionStage::made(f);
+            s.a = a;
+            s.b = b;
+            x.filters = {s};
             InteractionProcessor q;
             q.input(x, 0);
             for (int k = 0; k < 120; ++k) q.step(x, 1.0 / 60); // at rest for two seconds
@@ -6307,12 +6310,12 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         it.midiPort = "nanoKONTROL";
         it.midiChannel = 3;
         it.midiNumber = 14;
-        it.filterOn = true;
-        it.filter = InteractionFilter::Damper;
+        it.filters = {InteractionStage::made(InteractionFilter::Damper)};
         it.layer = 42;
         it.param = "opacity";
         const Interaction back = Interaction::fromJson(it.toJson());
-        CHECK(back.toJson() == it.toJson() && back.midiPort == "nanoKONTROL" && back.filter == InteractionFilter::Damper);
+        CHECK(back.toJson() == it.toJson() && back.midiPort == "nanoKONTROL" && back.filters.size() == 1 &&
+              back.filters[0].kind == InteractionFilter::Damper);
     }
     // In the engine: MIDI, a key, OSC and another value drive the show's values, each frame
     {
@@ -6643,20 +6646,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(rgbNear(0.5, 0.5, 0.5) && std::abs(component("a") - 1.0) < 1e-6); // master on RGB, not on alpha
             chain.master = 1;
             chain.colorMapAlpha = false;
-            chain.curveOn = true;
-            chain.curve = Interaction::straightCurve();
-            chain.curve.keys[0].v = 1; // inverted: 0 → 1, 1 → 0
-            chain.curve.keys[1].v = 0;
+            InteractionStage inverted = InteractionStage::made(InteractionFilter::Curve);
+            inverted.curve.keys[0].v = 1; // inverted: 0 → 1, 1 → 0
+            inverted.curve.keys[1].v = 0;
+            chain.filters = {inverted};
             CHECK(e.setInteraction(chain));
             cm.types = QStringLiteral("fff");
             send(0.25, 0.5, 1.0); // the curve, per channel
             CHECK(rgbNear(0.75, 0.5, 0.0, 1e-3));
             // A filter: every channel smoothed by its own state, together
-            chain.curveOn = false;
-            chain.filterOn = true;
-            chain.filter = InteractionFilter::WeightedAverage;
-            chain.filterA = 1.0; // ~95% of the way in a second
-            CHECK(e.setInteraction(chain)); // the filter changed: its state starts again
+            InteractionStage smooth = InteractionStage::made(InteractionFilter::WeightedAverage);
+            smooth.a = 1.0; // ~95% of the way in a second
+            chain.filters = {smooth};
+            CHECK(e.setInteraction(chain)); // another kind of filter: its state starts again
             send(0.0, 0.0, 0.0);
             CHECK(rgbNear(0.0, 0.0, 0.0, 1e-3));
             send(1.0, 1.0, 1.0);
@@ -6668,7 +6670,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             }
             CHECK(component("r") > 0.97 && component("r") > first && std::abs(component("g") - component("r")) < 1e-9);
             // Pick-up: the color moved elsewhere is held until every channel has met it
-            chain.filterOn = false;
+            chain.filters.clear();
             chain.takeover = Takeover::PickUp;
             CHECK(e.setInteraction(chain));
             send(0.9, 0.9, 0.9);

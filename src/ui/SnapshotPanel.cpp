@@ -14,6 +14,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -1763,10 +1764,29 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
         }
         choice(QStringLiteral("takeover"), QStringLiteral("Takeover"), {QStringLiteral("pickup"), QStringLiteral("jump")},
                {QStringLiteral("Pick-up"), QStringLiteral("Jump")});
+        // Its filters: what they are (all together), then each one's on / off and settings
+        if (params.contains("filters")) {
+            const std::vector<InteractionStage> stages = Interaction::filtersFromJson(
+                QJsonObject{{"filters", QJsonDocument::fromJson(params.value("filters").toString().toUtf8()).array()}});
+            QStringList kinds;
+            for (const InteractionStage &s : stages) kinds << interactionFilterName(s.kind);
+            info(QStringLiteral("filters"), QStringLiteral("Filters"), kinds.isEmpty() ? QStringLiteral("None") : kinds.join(QStringLiteral(" → ")));
+            for (size_t k = 0; k < stages.size(); ++k) {
+                const QString base = QStringLiteral("filters/%1/").arg(k + 1);
+                const QString name = QStringLiteral("Filter %1 %2").arg(k + 1).arg(interactionFilterName(stages[k].kind));
+                flag(base + QStringLiteral("enable"), name);
+                for (int which = 0; which < 2; ++which) {
+                    const FilterSetting set = interactionFilterSetting(stages[k].kind, which);
+                    if (set.name.isEmpty()) continue;
+                    number(base + QChar(which ? 'b' : 'a'), name + QStringLiteral(" › ") + set.name, set.min, set.max, 1, set.suffix);
+                }
+            }
+        }
+        // Held before the filters were a list (a snapshot of then): one filter and a curve
         flag(QStringLiteral("filter/enable"), QStringLiteral("Filter"));
         {
             QStringList keys, labels;
-            for (int f = 0; f < kInteractionFilterCount; ++f) {
+            for (int f = 0; f <= int(InteractionFilter::Damper); ++f) {
                 labels << interactionFilterName(InteractionFilter(f));
                 keys << labels.back().toLower().replace(QLatin1Char(' '), QLatin1Char('_'));
             }

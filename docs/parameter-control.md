@@ -43,7 +43,7 @@ offer an **XY** target alongside their separate **X** and **Y** components.
 Presets can capture the pair or either component.
 
 An XY interaction has two input chains: choose **X input and mapping** or
-**Y input and mapping** to configure its source, ranges, filter, curve and
+**Y input and mapping** to configure its source, ranges, filters and
 takeover independently. For a single OSC XY message, use the same address with
 arguments `0` and `1`; separate addresses or protocols also work. A fresh X-only
 event does not resend a stale Y value.
@@ -72,7 +72,7 @@ and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-syste
 | Preset | Recalls selected values and any stored categories, geometry or local drivers; it does not replace the whole scene. |
 | Layer animation | Drives a layer parameter or RGB color with keys or a waveform. |
 | Timeline | Drives one or more targets using a shared transport. An event track fires an action (Source › Rewind, Show › GO, a snapshot's recall, a shader's event…) or sets a value (a switch such as Source › Play or Layer › Visible, a choice such as Blend Mode, a number a curve does not drive such as Source › Seek To) at each of its flags as the playhead reaches them; seeking does not fire them. |
-| Interaction | Maps input through ranges, optional filtering, a curve and master level, then applies its takeover mode. |
+| Interaction | Maps input through its source range, an ordered list of filters (smoothing, Curve, Math…) and master level, then applies its takeover mode. |
 
 ## Current rules
 
@@ -113,9 +113,32 @@ Every layer also has **Layer › Visible** (`enable`) and **Layer › Solo** (`s
 
 An Internal interaction can follow a switch (0 / 1) and a choice (its index: 0 for the first one).
 
+### Interaction filters
+
+A Mapping's **Filters** are a list, applied from the top, like a layer's effects: **+ Filter** adds one, each has its own on / off, ↑ ↓ move it, × removes it. The value enters the first one at 0..1 (after the source range and the toggle) and may leave 0..1 between them; after the last one it is brought back within 0..1, then scaled by the master level and placed in the target range.
+
+| Filter | Settings | What it does |
+|---|---|---|
+| **Curve** | its keys | Shapes the value with a drawn curve (easing, Bézier, hold), 0..1 in, 0..1 out. |
+| **Math** | operation, value *a* | `x + a`, `x − a`, `x × a`, `x ÷ a` (÷ 0 leaves it), modulo, power, min, max, absolute, floor / ceil / round to a step of *a*, **1 − x** (invert). |
+| **Clamp** | Min, Max | Keeps the value between two values. |
+| **Steps** | Steps | A few levels only, 0 and 1 included (3 steps: 0, 0.5, 1). |
+| **Threshold** | Threshold, Margin | 1 above the threshold, 0 below it; the margin around it keeps it from flickering. |
+| **Average** | Window | The average of the last moments. |
+| **Weighted Average** | Smoothing | Smoothed, about 95 % of the way in its time. |
+| **Attack Release** | Attack, Release | Rises and falls at speeds of their own. |
+| **Damper** | Response, Damping | A spring that follows, overshooting more or less. |
+| **Pulse Detection** | Threshold, Decay | A pulse on each sudden rise, decaying. |
+| **Delay** | Delay | The value of a moment ago. |
+| **Speed** | Full scale, Smoothing | How fast the value moves, either way (1: the full scale per second). |
+
+There is no Invert box any more: **Math › 1 − x** (or a falling Curve) inverts. A project or a snapshot saved before keeps its response: its filter and its curve become the first filters of the list, and an inverted target range becomes a final **1 − x**.
+
+Each filter's on / off and settings are values of the interaction — `interaction/<id>/filters/<n>/enable`, `/a`, `/b` (`<n>` from 1, in the order of the list) — so presets, snapshots, OSC and timelines reach them; `interaction/<id>/filters` is the whole list (its kinds, order, operations and curves), set at once.
+
 ### Interaction modes: Mapping and Action
 
-An interaction has a **Mode**. **Mapping** (the default) drives one target continuously through the chain: source range, toggle, filter, curve, master level, target range. **Action** does not map; it tests the source's value and acts when the answer changes, as Chataigne's actions do:
+An interaction has a **Mode**. **Mapping** (the default) drives one target continuously through the chain: source range, toggle, filters, master level, target range. **Action** does not map; it tests the source's value and acts when the answer changes, as Chataigne's actions do:
 
 - **Conditions** compare the value the source gives, in its own units (a key 1 / 0, MIDI 0..1, OSC as sent, Internal in the value's units: seconds for Playhead, 0 / 1 for a switch, the index for a choice), with `=`, `≠`, `>`, `≥`, `<`, `≤`, **in range** or **out of range** (both ends included, in either order). **True when** all of them hold (and) or any of them (or). With no condition, each value the source gives does the **If true** actions (a key: each press and each release).
 - When the answer **becomes true**, the actions **If true** are done, in order; when it **becomes false**, the actions **If false**. Nothing is done while it stays the same, and the very first answer only acts if it is true. Edited conditions are tried again at once on an Internal source's current value. A key pressed and released in one frame gives both, in order.

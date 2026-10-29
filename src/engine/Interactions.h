@@ -5,12 +5,16 @@
 // An interaction takes its source's value through a chain, in this order:
 //  1. the source range: the part of the source's values used, made 0..1 (beyond it: held at its ends);
 //  2. toggle: each time it goes up past the middle, the result flips between 0 and 1 (a key, a pad: on, then off);
-//  3. a filter, over time: Average (of the last moments), Weighted Average (smoothed), Pulse Detection (a pulse on
-//     each sudden rise, decaying), Attack Release (rises and falls at speeds of their own), Damper (a spring that
-//     follows, overshooting more or less);
-//  4. a curve (0..1 to 0..1, drawn as an animation's keys);
-//  5. the master level (scales the whole);
-//  6. the target range: where in the target's own values 0..1 lands.
+//  3. its filters, one after the other in their order, each on or off (as a layer's effects):
+//     over time — Average (of the last moments), Weighted Average (smoothed), Pulse Detection (a pulse on each sudden
+//     rise, decaying), Attack Release (rises and falls at speeds of their own), Damper (a spring that follows,
+//     overshooting more or less), Delay (the value of a moment ago), Speed (how fast it moves);
+//     on the value — Curve (0..1 to 0..1, drawn as an animation's keys), Math (+, −, ×, ÷, modulo, power, min, max,
+//     absolute, floor / ceil / round to a step, 1 − x), Clamp (kept within two values), Steps (a few levels only),
+//     Threshold (0 or 1, with a margin against flicker);
+//     between them a value may leave 0..1 (Math); it is brought back within 0..1 after the last one;
+//  4. the master level (scales the whole);
+//  5. the target range: where in the target's own values 0..1 lands.
 // A number receives it; a switch is on above the middle; a choice takes the one at that place in its list; an action
 // (trigger) fires each time it goes up past the middle.
 //
@@ -35,6 +39,7 @@
 
 #include "Anim.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <array>
@@ -43,8 +48,17 @@
 
 enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio };
 inline constexpr int kInteractionSourceCount = 5;
-enum class InteractionFilter { Average = 0, WeightedAverage, PulseDetection, AttackRelease, Damper };
-inline constexpr int kInteractionFilterCount = 5;
+enum class InteractionFilter {
+    Average = 0, WeightedAverage, PulseDetection, AttackRelease, Damper, // over time (as before: saved by these keys)
+    Curve, Math, Clamp, Steps, Threshold, Delay, Speed
+};
+inline constexpr int kInteractionFilterCount = 12;
+// A Math filter's operation on the value x, with its value a
+enum class MathOp { Add = 0, Subtract, Multiply, Divide, Modulo, Power, Min, Max, Abs, Floor, Ceil, Round, OneMinus };
+inline constexpr int kMathOpCount = 13;
+QString mathOpName(MathOp op); // "x + a", "x − a"…
+bool mathOpUsesValue(MathOp op);
+double applyMathOp(MathOp op, double x, double a);
 enum class MidiMessageKind { ControlChange = 0, Note, PitchBend, ProgramChange };
 enum class Takeover { PickUp = 0, Jump };
 enum class InteractionMode { Mapping = 0, Action };
@@ -79,6 +93,21 @@ struct FilterSetting {
     double min = 0, max = 1, def = 0;
 };
 FilterSetting interactionFilterSetting(InteractionFilter f, int which); // which: 0 (A) or 1 (B)
+QString interactionFilterKey(InteractionFilter f); // as saved: "average", "math"…
+InteractionFilter interactionFilterFromKey(const QString &k, bool *ok = nullptr);
+
+// One filter of an interaction's chain
+struct InteractionStage {
+    InteractionFilter kind = InteractionFilter::Average;
+    bool enabled = true;
+    double a = 0, b = 0;          // its settings (interactionFilterSetting)
+    MathOp op = MathOp::Multiply; // Math
+    AnimTrack curve;              // Curve: keys over 0..1 (time) to 0..1 (value)
+    static InteractionStage made(InteractionFilter kind); // with its defaults (a Curve: straight)
+    QJsonObject toJson() const;
+    static InteractionStage fromJson(const QJsonObject &o);
+    bool operator==(const InteractionStage &o) const;
+};
 
 // What came in from a source
 struct InteractionEvent {
@@ -126,7 +155,7 @@ struct Interaction {
     // tuples can carry an unused/zero alpha; opt in explicitly to map it.
     bool colorMapAlpha = false;
     // An XY mapping keeps X in this interaction and Y in one scalar child.
-    // Each axis has its own input, range, filter, curve and pick-up state.
+    // Each axis has its own input, range, filters and pick-up state.
     // The child has no independent ID or target and cannot contain children.
     std::vector<Interaction> xyInputs;
     bool drives(const QString &path) const
@@ -151,11 +180,8 @@ struct Interaction {
     bool toggle = false;
     double srcMin = 0, srcMax = 1;
     double dstMin = 0, dstMax = 1;
-    bool filterOn = false;
-    InteractionFilter filter = InteractionFilter::Average;
-    double filterA = 0.2, filterB = 0.3;
-    bool curveOn = false;
-    AnimTrack curve; // keys over 0..1 (time) to 0..1 (value)
+    std::vector<InteractionStage> filters; // in their order
+    bool movesOverTime() const; // a filter on that moves by itself between values (Average, Damper, Delay…)
     Takeover takeover = Takeover::Jump;
 
     bool matches(const InteractionEvent &e) const; // the event is from its source
@@ -165,6 +191,12 @@ struct Interaction {
     void applyState(const QJsonObject &state);
     QJsonObject toJson() const;
     static Interaction fromJson(const QJsonObject &o);
+    // The filters as saved ("filters"), or made from the keys of before (one filter, then a curve; a target range
+    // upside down: a filter 1 − x at the end)
+    static std::vector<InteractionStage> filtersFromJson(const QJsonObject &o, bool *inverted = nullptr);
+    static QJsonArray filtersToJson(const std::vector<InteractionStage> &filters);
+    // `base` with `over`'s keys: when `over` holds the filters as they were saved before, they replace `base`'s
+    static QJsonObject merged(QJsonObject base, const QJsonObject &over);
     static AnimTrack straightCurve(); // 0 → 0, 1 → 1
     // A new one, set for its kind of source (MIDI and OSC: pick-up; a source range that suits it)
     static Interaction made(InteractionSource s);
@@ -190,18 +222,22 @@ public:
     std::optional<double> step(const Interaction &it, double dt);
     std::optional<double> level() const { return m_level; } // after range and toggle (shown)
     std::optional<double> output() const { return m_out; }  // the last result of step
-    std::optional<double> curveInput() const { return m_curveIn; } // what entered the curve (after the filter)
+    std::optional<double> curveInput() const { return m_curveIn; } // what entered the first curve on
     void reset() { *this = InteractionProcessor(); }
 
 private:
+    // Each filter's state, made again when it is another kind of filter
+    struct StageState {
+        InteractionFilter kind = InteractionFilter::Average;
+        bool started = false, high = false;
+        double y = 0, v = 0, slow = 0, prev = 0;     // its value, its speed (Damper), its slow average (Pulse), the last input
+        std::deque<std::pair<double, double>> window; // Average, Delay: (time, value)
+    };
     std::optional<double> m_level;   // after range and toggle
     bool m_toggled = false, m_above = false;
     bool m_fresh = false;            // a value came in since the last step
-    double m_y = 0, m_v = 0;         // filter: its value, its speed (Damper)
-    bool m_started = false;
-    std::deque<std::pair<double, double>> m_window; // Average: (time, value)
     double m_time = 0;
-    double m_slow = 0;               // Pulse: the slow average it is compared with
+    std::vector<StageState> m_stages;
     std::optional<double> m_out, m_curveIn;
 };
 

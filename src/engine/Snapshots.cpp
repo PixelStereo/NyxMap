@@ -1617,13 +1617,52 @@ QStringList Engine::interactionKeys()
             QStringLiteral("source/audio/low"), QStringLiteral("source/audio/high"), QStringLiteral("target"), QStringLiteral("enable"),
             QStringLiteral("master"),        QStringLiteral("toggle"),             QStringLiteral("source/min"),
             QStringLiteral("source/max"),    QStringLiteral("target/min"),         QStringLiteral("target/max"),
-            QStringLiteral("takeover"),      QStringLiteral("filter/enable"),      QStringLiteral("filter/type"),
-            QStringLiteral("filter/a"),      QStringLiteral("filter/b"),           QStringLiteral("curve/enable"),
-            QStringLiteral("curve")};
+            QStringLiteral("takeover"),      QStringLiteral("filters")};
     const auto scalar = keys;
     for (const auto &key : scalar) if (key != QLatin1String("name") && key != QLatin1String("target"))
         keys << QStringLiteral("xy/y/") + key;
     return keys;
+}
+
+QStringList Engine::interactionKeys(const Interaction &it)
+{
+    // Then each filter's values (after "filters", which makes them)
+    QStringList keys = interactionKeys();
+    for (int axis = 0; axis < (it.xyInputs.empty() ? 1 : 2); ++axis) {
+        const Interaction &chain = axis ? it.xyInputs.front() : it;
+        const QString prefix = axis ? QStringLiteral("xy/y/") : QString();
+        for (size_t k = 0; k < chain.filters.size(); ++k) {
+            const QString path = prefix + QStringLiteral("filters/%1/").arg(k + 1);
+            keys << path + QStringLiteral("enable");
+            for (int which = 0; which < 2; ++which)
+                if (!interactionFilterSetting(chain.filters[k].kind, which).name.isEmpty()) keys << path + QChar(which ? 'b' : 'a');
+        }
+    }
+    return keys;
+}
+
+QJsonObject Engine::upgradedInteractionValues(QJsonObject params)
+{
+    // Held before the filters were a list: one filter and a curve ("filter/…", "curve/enable", "curve"), made a list
+    for (const QString prefix : {QString(), QStringLiteral("xy/y/")}) {
+        const QString legacy[] = {prefix + "filter/enable", prefix + "filter/type", prefix + "filter/a", prefix + "filter/b",
+                                  prefix + "curve/enable", prefix + "curve"};
+        if (params.contains(prefix + "filters") || std::none_of(std::begin(legacy), std::end(legacy),
+                                                                [&](const QString &k) { return params.contains(k); }))
+            continue;
+        QJsonObject before{{"filter_on", params.value(prefix + "filter/enable").toBool(false)},
+                           {"filter", params.value(prefix + "filter/type").toString()},
+                           {"curve_on", params.value(prefix + "curve/enable").toBool(false)}};
+        // A setting it does not hold: the filter's default (read from a null)
+        auto setting = [&](const char *k) { return params.value(prefix + k).isDouble() ? params.value(prefix + k) : QJsonValue(); };
+        before["filter_settings"] = QJsonArray{setting("filter/a"), setting("filter/b")};
+        const QJsonDocument curve = QJsonDocument::fromJson(params.value(prefix + "curve").toString().toUtf8());
+        if (curve.isArray()) before["curve"] = curve.array();
+        params[prefix + "filters"] = QString::fromUtf8(
+            QJsonDocument(Interaction::filtersToJson(Interaction::filtersFromJson(before))).toJson(QJsonDocument::Compact));
+        for (const QString &k : legacy) params.remove(k);
+    }
+    return params;
 }
 
 QJsonArray Engine::captureInteractions() const
@@ -1634,7 +1673,7 @@ QJsonArray Engine::captureInteractions() const
     for (const Interaction &it : m_interactions) {
         QJsonObject params;
         const QString prefix = QStringLiteral("interaction/%1/").arg(it.id);
-        for (const QString &k : interactionKeys())
+        for (const QString &k : interactionKeys(it))
             if (const Parameter *p = self->findParameter(0, prefix + k); p && p->isStored()) params.insert(k, p->json());
         out.append(QJsonObject{{"id", QString::number(it.id)}, {"name", it.name}, {"included", true}, {"params", params}});
     }
@@ -1678,7 +1717,7 @@ void Engine::applyInteractionValues(quint64 id, const QJsonObject &params, const
             emit interactionsChanged();
         }, Qt::QueuedConnection);
     }
-    applyStoredValues(prefix, interactionKeys(), params, timing, easing, fade, delays);
+    applyStoredValues(prefix, interactionKeys(), upgradedInteractionValues(params), timing, easing, fade, delays);
 }
 
 void Engine::applyStoredValues(const QString &prefix, const QStringList &order, const QJsonObject &params,
