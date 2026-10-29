@@ -424,7 +424,7 @@ void Engine::stepInteractions(double dt)
                     freshInput = true;
                 } else if (input.source == InteractionSource::Internal) {
                     if (const auto *source = findParameter(input.sourceLayer, input.sourceParam)) {
-                        const double raw = source->value().toDouble();
+                        const double raw = source->asNumber();
                         if (std::isfinite(raw) && raw != lastInternal) {
                             lastInternal = raw;
                             proc.input(input, raw);
@@ -471,8 +471,7 @@ void Engine::stepInteractions(double dt)
             fresh=true;
         } else if (it.source == InteractionSource::Internal) {
             if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
-                const QVariant v = src->value();
-                const double x = v.typeId() == QMetaType::Bool ? (v.toBool() ? 1.0 : 0.0) : v.toDouble();
+                const double x = src->asNumber();
                 if (std::isfinite(x) && !(x == run.lastInternal)) {
                     run.lastInternal = x;
                     run.proc.input(it, x);

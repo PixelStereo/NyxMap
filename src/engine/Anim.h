@@ -61,7 +61,8 @@ struct AnimTrack {
     std::array<double, 3> capturedRgb{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(),
                                       std::numeric_limits<double>::quiet_NaN()};
     bool color = false; // drives param/r, param/g, param/b together; alpha is left alone
-    bool event = false; // fires `param` (a Trigger) at each key's time; the keys' values and curves are unused
+    bool event = false; // at each key's time: fires `param` (a Trigger), or sets it to the key's value (a switch: 0 / 1,
+                        // a choice: its index, a number); the keys' curves are unused
     // A typed XY track owns two scalar curves/waves and one transport. Children
     // are always scalar, with canonical /x and /y targets; no nested groups.
     std::vector<AnimTrack> axes;

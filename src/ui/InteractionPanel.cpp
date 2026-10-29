@@ -1005,14 +1005,18 @@ void InteractionPanel::rebuildSettings()
             auto fill = [&](QMenu *into, quint64 layer) {
                 std::vector<ParamInfo> params;
                 for (const ParamInfo &p : m_engine->parameters(layer))
-                    if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) && (p.isNumber() || p.type == ParamInfo::Type::Bool)) params.push_back(p);
+                    if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) &&
+                        (p.isNumber() || p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice))
+                        params.push_back(p);
                 addParamMenu(into, params, [this, edit, layer](QMenu *m, const ParamInfo &p, const QString &text) {
                     m->addAction(text, this, [this, edit, layer, p] {
                         edit(QStringLiteral("Change Interaction Source"), [layer, p](Interaction &x) {
                             x.sourceLayer = layer;
                             x.sourceParam = p.path;
-                            x.srcMin = p.type == ParamInfo::Type::Bool ? 0 : p.min;
-                            x.srcMax = p.type == ParamInfo::Type::Bool ? 1 : p.max;
+                            // A switch follows as 0 / 1, a choice as its index
+                            x.srcMin = p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice ? 0 : p.min;
+                            x.srcMax = p.type == ParamInfo::Type::Bool ? 1
+                                     : p.type == ParamInfo::Type::Choice ? std::max(1, int(p.choices.size()) - 1) : p.max;
                         });
                         rebuildSettings();
                     });

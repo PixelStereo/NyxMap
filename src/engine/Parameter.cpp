@@ -70,6 +70,12 @@ Parameter &Parameter::writeOnly()
     return *this;
 }
 
+Parameter &Parameter::transient()
+{
+    m_transient = true;
+    return *this;
+}
+
 Parameter &Parameter::animatable(bool on)
 {
     m_info.animatable = on && m_info.isNumber() && (m_info.access & ParamInfo::Write);
@@ -124,6 +130,14 @@ QVariant Parameter::value() const
     return m_get();
 }
 
+double Parameter::asNumber() const
+{
+    const QVariant v = value();
+    if (m_info.type == Type::Bool) return v.toBool() ? 1.0 : 0.0;
+    if (m_info.type == Type::Choice) return m_info.choices.indexOf(v.toString());
+    return v.toDouble();
+}
+
 bool Parameter::setValue(const QVariant &v)
 {
     if (!(m_info.access & ParamInfo::Write) || !m_set) return false;
@@ -164,7 +178,7 @@ bool Parameter::setValue(const QVariant &v)
 
 bool Parameter::isStored() const
 {
-    return m_info.access == ParamInfo::ReadWrite && m_info.type != Type::Trigger && m_get && m_set;
+    return m_info.access == ParamInfo::ReadWrite && m_info.type != Type::Trigger && !m_transient && m_get && m_set;
 }
 
 QJsonValue Parameter::json() const

@@ -66,6 +66,7 @@ int runShowControlTests(Engine &engine);
 int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cpp
 int runTimelineEventTests(Engine &e, const QString &root, const QString &tmp); // timeline_events.cpp
 int runMediaPlayheadTests(Engine &e, const QString &root); // media_playhead.cpp
+int runShowActionTests(Engine &e, const QString &root, const QString &tmp); // show_actions.cpp
 int runPsdLayerTests(Engine &e, const QString &tmp); // psd_layers.cpp
 int runLiveInputTests(Engine &e); // live_inputs.cpp
 int runClockGeneratorTests(Engine &e); // clock_generators.cpp
@@ -210,6 +211,7 @@ int main(int argc, char **argv)
         failures += runTimelineRepeatTests(e, tmp);
     } // timeline_repeat
     if (area("timeline_events")) failures += runTimelineEventTests(e, root, tmp);
+    if (area("show_actions")) failures += runShowActionTests(e, root, tmp);
     if (area("media_playhead")) {
         failures += runMediaPlayheadTests(e, root);
     } // media_playhead

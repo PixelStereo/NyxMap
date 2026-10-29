@@ -1,5 +1,5 @@
 // The event lane of a timeline track: shown instead of the curve and the color lanes, a click adds a flag (one undo
-// step), Delete removes the selected one.
+// step), Delete removes the selected one; a flag that sets a switch shows its value.
 #include "AnimEditor.h"
 #include "EngineInternal.h"
 #include "TimelinePanel.h"
@@ -72,6 +72,31 @@ int main(int argc, char **argv)
         app.processEvents();
         k = keys();
         check(k.size() == 1 && std::abs(k[0].t - 3) < .05, "Delete removes the selected flag");
+    }
+    // A flag that sets a switch (Layer › Visible): it shows its value, a new one sets the other state
+    AnimTrack visible;
+    visible.layer = id;
+    visible.param = "enable";
+    visible.event = true;
+    visible.keys = {AnimKey{1, 0, 0}};
+    Animation sets;
+    sets.name = "Sets";
+    sets.duration = 4;
+    sets.tracks = {visible};
+    const quint64 sid = engine.animation(engine.addAnimation(sets)).id;
+    editor.setTimeline(sid); app.processEvents();
+    EventLane *valued = nullptr;
+    for (auto *candidate : editor.findChildren<EventLane *>()) if (candidate->isVisible()) valued = candidate;
+    check(valued && valued->valueText(0) == "Off", "a flag shows the value it sets");
+    if (valued) {
+        const QPointF pos(CurveLane::kMargin + (valued->width() - 2 * CurveLane::kMargin) * .75, valued->height() / 2.0);
+        QMouseEvent press(QEvent::MouseButtonPress, pos, valued->mapToGlobal(pos.toPoint()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(valued, &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, pos, valued->mapToGlobal(pos.toPoint()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(valued, &release);
+        app.processEvents();
+        const auto k = engine.animation(engine.indexOfAnimation(sid)).tracks.front().keys;
+        check(k.size() == 2 && k[1].v == 1, "a new flag on a switch sets the other state");
     }
     std::printf("timeline_events_ui: %d failures\n", failures);
     return failures ? 1 : 0;
