@@ -280,6 +280,12 @@ const std::vector<Parameter *> &Layer::parameters()
                       self->ended = false;
                       startMedia(*self);
                   });
+        // Back to the beginning (its out point backwards), played or paused as it was: an action (an event of a
+        // timeline, OSC), not a value — a media played to its end in one shot starts again if it was playing
+        add("rewind", "Source › Rewind", T::Trigger).bind(nullptr, [self](const QVariant &) {
+            self->ended = false;
+            startMedia(*self);
+        });
         // Where it plays, read back for an Internal interaction to follow (never saved): in seconds of the media, and
         // from its in point (0) to its out point (1)
         add("playhead", "Source › Playhead (s)", T::Float)

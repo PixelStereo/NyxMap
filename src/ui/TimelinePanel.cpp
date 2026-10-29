@@ -124,6 +124,7 @@ private:
     void selectParam(const QString &path);
     void selectColor(const QString &path);
     void selectPoint(const QString &path);
+    void selectEvent(const QString &path);
     TimelineEditor *m_tl;
     FlagBox *m_on = nullptr;
     QComboBox *m_layer = nullptr;
@@ -141,7 +142,7 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
     del->setToolTip(QStringLiteral("Delete the track"));
     m_param = new QPushButton;
     m_param->setObjectName(QStringLiteral("timelineParameter"));
-    m_param->setToolTip(QStringLiteral("Choose a point (XY), color (RGB), or individual numeric parameter"));
+    m_param->setToolTip(QStringLiteral("Choose a point (XY), color (RGB), individual numeric parameter, or an event (an action fired at each flag)"));
     m_param->setMenu(new QMenu(m_param));
     m_param->setStyleSheet(QStringLiteral("QPushButton { text-align:left; padding-left:6px; }"));
     g->addWidget(m_on, 0, 0);
@@ -160,6 +161,7 @@ void TimelineTrackRow::buildHeader(QGridLayout *g)
         // Its first number, from where it is
         track().param = params.empty() ? QString() : params.front().path;
         track().color = false;
+        track().event = false;
         track().axes.clear();
         track().keys = {AnimKey{0, currentValue(), 3}};
         fillParams();
@@ -186,6 +188,15 @@ void TimelineTrackRow::fillParams()
 {
     QMenu *menu = m_param->menu();
     menu->clear();
+    const auto events = m_e->triggerParams(track().layer);
+    if (!events.empty()) {
+        auto *eventMenu = menu->addMenu(QStringLiteral("Events (actions)"));
+        addParamMenu(eventMenu, events, [this](QMenu *into, const Engine::AnimParam &p, const QString &text) {
+            auto *a = into->addAction(text, this, [this, path = p.path] { selectEvent(path); });
+            a->setCheckable(true);
+            a->setChecked(track().event && p.path == track().param);
+        });
+    }
     const auto points = m_e->animatablePoints(track().layer);
     if (!points.empty()) {
         auto *pointMenu = menu->addMenu(QStringLiteral("Points (XY)"));
@@ -217,6 +228,7 @@ void TimelineTrackRow::fillParams()
 void TimelineTrackRow::selectParam(const QString &path)
 {
     track().color = false;
+    track().event = false;
     track().axes.clear();
     track().param = path;
     track().keys = {AnimKey{0, currentValue(), 3}};
@@ -231,6 +243,7 @@ void TimelineTrackRow::selectColor(const QString &path)
     auto &t = track();
     t.param = path;
     t.color = true;
+    t.event = false;
     t.axes.clear();
     t.oscillator = false;
     AnimKey key{0, 0, 0};
@@ -253,6 +266,20 @@ void TimelineTrackRow::selectPoint(const QString &path)
     changed();
 }
 
+void TimelineTrackRow::selectEvent(const QString &path)
+{
+    auto &t = track();
+    const bool wasEvent = t.event;
+    t.param = path;
+    t.event = true;
+    t.color = t.oscillator = false;
+    t.axes.clear();
+    if (!wasEvent) t.keys = {AnimKey{0, 0, 0}}; // one flag at the start; another action keeps the flags it has
+    fillParams();
+    fill();
+    changed();
+}
+
 void TimelineTrackRow::fill()
 {
     m_filling = true;
@@ -265,9 +292,10 @@ void TimelineTrackRow::fill()
     }
     m_layer->setCurrentIndex(li);
     QString label = t.param.isEmpty() ? QStringLiteral("(choose a parameter)") : QStringLiteral("(%1 — not on this layer)").arg(t.param);
-    const auto params = t.isPoint() ? m_e->animatablePoints(t.layer) : t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
+    const auto params = t.event ? m_e->triggerParams(t.layer) : t.isPoint() ? m_e->animatablePoints(t.layer)
+                      : t.color ? m_e->animatableColors(t.layer) : m_ed->paramsOf(t.layer);
     for (const Engine::AnimParam &p : params)
-        if (p.path == t.param) label = p.label;
+        if (p.path == t.param) label = (t.event ? QStringLiteral("⚑ ") : QString()) + p.label;
     m_param->setText(label);
     m_filling = false;
     TrackRow::fill();
@@ -284,7 +312,8 @@ TimelineEditor::TimelineEditor(Engine *engine, QUndoStack *undo, QWidget *parent
     m_addTrack->setToolTip(QStringLiteral("A track for the layer selected in the layer list"));
     bottom->addWidget(m_addTrack);
     auto *how = new QLabel(QStringLiteral("Color lane: click to add · drag to move · double-click to edit color · right-click for transitions.\n"
-                                          "Curve lane: click or draw keys · double-click to delete · right-click for curve and value."));
+                                          "Curve lane: click or draw keys · double-click to delete · right-click for curve and value.\n"
+                                          "Event lane: click to add a flag (its action fires as the playhead reaches it) · drag to move · double-click to delete."));
     how->setStyleSheet("color:#8a8a90; font-size:11px;");
     bottom->addWidget(how, 1);
     mainLayout()->addLayout(bottom);
