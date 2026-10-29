@@ -423,9 +423,14 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     case SourceType::Layer:
         // Picture of another layer, already rendered this frame (the render pass follows the references).
         if (const Layer *s = l.sourceLayer ? layer(indexOfId(l.sourceLayer)) : nullptr) {
-            tex = l.sourceTap == LayerTap::PreFx ? s->preFxTex : s->finalTex;
-            w = l.sourceTap == LayerTap::PreFx ? s->preFxW : s->finalW;
-            h = l.sourceTap == LayerTap::PreFx ? s->preFxH : s->finalH;
+            switch (l.sourceTap) {
+            case LayerTap::Source: // its source's picture, as it is (a group has none of its own: its composite)
+                if (s->isGroup) tex = s->finalTex, w = s->finalW, h = s->finalH;
+                else tex = s->rawTex, w = s->rawW, h = s->rawH;
+                break;
+            case LayerTap::PreFx: tex = s->preFxTex, w = s->preFxW, h = s->preFxH; break;
+            case LayerTap::PostFx: tex = s->finalTex, w = s->finalW, h = s->finalH; break;
+            }
             l.srcWidth = w; // what the inspector and the ROI editor show
             l.srcHeight = h;
         }

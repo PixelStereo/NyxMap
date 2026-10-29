@@ -919,7 +919,8 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         name = QStringLiteral("(gone)");
         for (const auto &c : s.candidates)
             if (c.first == s.sourceLayer) name = c.second;
-        d << (s.sourceTap == LayerTap::PreFx ? QStringLiteral("before its FX") : QStringLiteral("after its FX"));
+        d << (s.sourceTap == LayerTap::Source ? QStringLiteral("its source, before ROI, color and FX")
+              : s.sourceTap == LayerTap::PreFx ? QStringLiteral("before its FX") : QStringLiteral("after its FX"));
         break;
     }
     default:
@@ -1083,30 +1084,57 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     auto *v = new QVBoxLayout(g);
     v->setContentsMargins(0, 0, 0, 0);
 
-    if (s.type == SourceType::Layer) {
-        auto *row = new QHBoxLayout;
-        auto *tap = new QComboBox;
-        tap->addItem(QStringLiteral("Pre-FX"), int(LayerTap::PreFx));
-        tap->addItem(QStringLiteral("Post-FX"), int(LayerTap::PostFx));
-        tap->setCurrentIndex(s.sourceTap == LayerTap::PreFx ? 0 : 1);
-        tap->setToolTip(QStringLiteral("Where the picture is taken in that layer:\n"
-                                       "Pre-FX — after its ROI and color, before its FX\n"
-                                       "Post-FX — after its FX"));
-        auto setTap = [this](LayerTap t) {
-            editSource(QStringLiteral("Change Source Tap"), [this, t] { m_engine->setLayerTap(m_layer, t); });
+    // Another layer's picture as this one's source, already made this frame (nothing decoded, generated or computed
+    // again): which layer, and where in it — its source as it is, before its FX, after them
+    {
+        auto *form = new QFormLayout;
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        auto *pick = new QComboBox;
+        pick->setObjectName(QStringLiteral("sourceLayer"));
+        pick->addItem(s.type == SourceType::Layer ? QStringLiteral("(choose a layer)") : QStringLiteral("None (its own source)"),
+                      QVariant::fromValue<qulonglong>(0));
+        for (const auto &c : s.candidates) pick->addItem(c.second, QVariant::fromValue<qulonglong>(c.first));
+        if (s.type == SourceType::Layer && s.sourceLayer && pick->findData(QVariant::fromValue<qulonglong>(s.sourceLayer)) < 0)
+            pick->addItem(QStringLiteral("(layer gone)"), QVariant::fromValue<qulonglong>(s.sourceLayer));
+        pick->setCurrentIndex(s.type == SourceType::Layer
+                                  ? std::max(0, pick->findData(QVariant::fromValue<qulonglong>(s.sourceLayer))) : 0);
+        pick->setEnabled(!m_locked && !s.candidates.empty());
+        pick->setToolTip(QStringLiteral("Use another layer's picture as this one's source: the texture it already made "
+                                        "this frame, without reading its file or running its shader again.\n"
+                                        "Layers that use this one are not offered (the picture would feed back on itself)."));
+        form->addRow(QStringLiteral("From layer"), pick);
+        const LayerTap currentTap = s.type == SourceType::Layer ? s.sourceTap : LayerTap::PostFx;
+        connect(pick, &QComboBox::activated, this, [this, pick, currentTap, candidates = s.candidates](int k) {
+            const quint64 id = pick->itemData(k).toULongLong();
+            if (!id || !std::any_of(candidates.begin(), candidates.end(), [id](const auto &c) { return c.first == id; })) return;
+            QString err;
+            bool ok = false;
+            editSource(QStringLiteral("Use Layer as Source"),
+                       [this, id, currentTap, &err, &ok] { ok = m_engine->setLayerSourceLayer(m_layer, id, currentTap, &err); });
+            if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Source"), err);
             emit layerChanged();
             QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
-        };
-        row->addWidget(new ResetLabel(QStringLiteral("Tap"), [setTap] { setTap(LayerTap::PostFx); }));
-        row->addWidget(tap, 1);
-        v->addLayout(row);
-        connect(tap, &QComboBox::activated, this, [tap, setTap](int i) { setTap(LayerTap(tap->itemData(i).toInt())); });
-        auto *hint = new QLabel(QStringLiteral("To use another layer, drag it from the list onto the source above, or "
-                                               "right-click it › Load into Layer."));
-        hint->setWordWrap(true);
-        hint->setStyleSheet("color:#888; font-size:11px;");
-        v->addWidget(hint);
-        return g;
+        });
+        if (s.type == SourceType::Layer) {
+            auto *tap = new QComboBox;
+            tap->setObjectName(QStringLiteral("sourceTap"));
+            for (LayerTap t : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx}) tap->addItem(layerTapName(t), int(t));
+            tap->setCurrentIndex(std::max(0, tap->findData(int(s.sourceTap))));
+            tap->setEnabled(!m_locked);
+            tap->setToolTip(QStringLiteral("Where the picture is taken in that layer:\n"
+                                           "Source — its source as decoded or generated, before its ROI, color and FX\n"
+                                           "Pre-FX — after its ROI and color, before its FX\n"
+                                           "Post-FX — after its FX (its own mapping and opacity are never part of it)"));
+            auto setTap = [this](LayerTap t) {
+                editSource(QStringLiteral("Change Source Tap"), [this, t] { m_engine->setLayerTap(m_layer, t); });
+                emit layerChanged();
+                QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+            };
+            form->addRow(new ResetLabel(QStringLiteral("Taken"), [setTap] { setTap(LayerTap::PostFx); }), tap);
+            connect(tap, &QComboBox::activated, this, [tap, setTap](int i) { setTap(LayerTap(tap->itemData(i).toInt())); });
+        }
+        v->addLayout(form);
+        if (s.type == SourceType::Layer) return g;
     }
 
     // A Photoshop file: all its layers, or one of them alone at its place on the canvas (groups are not a choice).

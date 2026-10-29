@@ -7087,6 +7087,21 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             Engine::Lock lk(&e.mutex());
             CHECK(e.layer(B())->rawTex == e.layer(A())->preFxTex);
         }
+        // ... or its source's own picture, before its ROI, its color and its effects (nothing made again)
+        CHECK(e.setLayerTap(B(), LayerTap::Source));
+        e.renderFrame();
+        {
+            Engine::Lock lk(&e.mutex());
+            CHECK(e.layer(A())->rawTex != 0 && e.layer(B())->rawTex == e.layer(A())->rawTex);
+            CHECK(e.layer(A())->rawTex != e.layer(A())->preFxTex); // A's ROI and color make another picture
+            CHECK(e.layer(B())->srcWidth == e.layer(A())->rawW && e.layer(B())->srcHeight == e.layer(A())->rawH);
+        }
+        {
+            const QJsonObject saved = e.layerJson(B());
+            CHECK(saved.value("source").toObject().value("tap").toString() == "source");
+            CHECK(layerTapFromKey("source") == LayerTap::Source && layerTapKey(LayerTap::Source) == "source");
+        }
+        CHECK(e.setLayerTap(B(), LayerTap::PreFx));
         // Refused: itself, and anything that would feed the picture back on itself
         CHECK(!e.setLayerSourceLayer(B(), idB, LayerTap::PostFx, &err) && !err.isEmpty());
         CHECK(!e.setLayerSourceLayer(A(), idB, LayerTap::PostFx, &err) && !err.isEmpty());
