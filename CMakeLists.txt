@@ -543,7 +543,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NYXMAP_TESTS "Build the engine tests" ON)
 if(NYXMAP_TESTS)
-  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/media_playhead.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(nyxmap_tests PRIVATE src/ui)
   target_link_libraries(nyxmap_tests PRIVATE nyxmap_engine)
   target_compile_options(nyxmap_tests PRIVATE ${NYXMAP_WARNINGS})
@@ -689,7 +689,7 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_cue_dispatch_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND nyxmap_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
-  foreach(area show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat media_playhead recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
   endforeach()

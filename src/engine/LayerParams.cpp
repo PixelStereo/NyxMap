@@ -280,6 +280,20 @@ const std::vector<Parameter *> &Layer::parameters()
                       self->ended = false;
                       startMedia(*self);
                   });
+        // Where it plays, read back for an Internal interaction to follow (never saved): in seconds of the media, and
+        // from its in point (0) to its out point (1)
+        add("playhead", "Source › Playhead (s)", T::Float)
+            .range(0, d > 0 ? d : 1)
+            .readOnly()
+            .bind([self] { return QVariant(self->position()); }, nullptr);
+        add("progress", "Source › Progress", T::Float)
+            .range(0, 1)
+            .readOnly()
+            .bind([self] {
+                const Timeline t = self->timeline();
+                const double span = t.hi() - t.lo();
+                return QVariant(span > 0 ? std::clamp((self->position() - t.lo()) / span, 0.0, 1.0) : 0.0);
+            }, nullptr);
     }
 
     // A Timecode generator's transport (its free run): played, paused, sought, its in / out points and play mode.

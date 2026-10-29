@@ -94,6 +94,8 @@ For layer values, a successful animation or interaction write removes that addre
 
 MIDI, OSC and keyboard interactions normally write on fresh input or while their processed output changes. They do not permanently hold a value after one message. Audio is sampled every frame and can therefore keep overwriting automation. Internal interactions react to source changes. A grouped color interaction normally writes RGB; alpha requires explicit mapping. RGB pick-up waits for all mapped channels to meet their target.
 
+A video or audio layer exposes where it plays as two read-only values an Internal interaction can follow: `playhead` (**Source › Playhead (s)**, seconds into the media) and `progress` (**Source › Progress**, 0 at the in point, 1 at the out point). For example, map a video's Progress to another layer's Position X to move it along with the playhead. Neither is saved or animated.
+
 ### What a recall can change besides the value
 
 - A snapshot restores included interaction settings and disables interactions absent from its stored list. An interaction present but excluded from recall stays unchanged.
