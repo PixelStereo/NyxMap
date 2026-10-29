@@ -358,7 +358,9 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     std::sort(it.curve.keys.begin(), it.curve.keys.end(), [](const AnimKey &a, const AnimKey &b) { return a.t < b.t; });
     if (it.curve.keys.empty()) it.curve = straightCurve();
     it.takeover = o.value("takeover").toString() == QLatin1String("pickup") ? Takeover::PickUp : Takeover::Jump;
-    it.mode = o.value("mode").toString() == QLatin1String("action") ? InteractionMode::Action : InteractionMode::Mapping;
+    // An XY mapping drives its point: never an Action
+    it.mode = o.value("mode").toString() == QLatin1String("action") && it.xyInputs.empty() ? InteractionMode::Action
+                                                                                           : InteractionMode::Mapping;
     for (const QJsonValue &v : o.value("conditions").toArray()) {
         const QJsonObject c = v.toObject();
         InteractionCondition cond;

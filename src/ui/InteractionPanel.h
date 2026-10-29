@@ -57,6 +57,8 @@ private:
     std::optional<InteractionSource> shownKind() const; // the sub-tab's (none: All)
     void rebuildList();
     void rebuildSettings();
+    // A menu of the show's values by owner: the composition's, then each layer's (not the groups'), each sub-menu filled
+    void fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill);
     // An Action's settings: its conditions, what it does if true, if false (rebuildSettings)
     using EditFn = std::function<void(const QString &, const std::function<void(Interaction &)> &, const QString &)>;
     void buildActionSettings(class QFormLayout *form, const Interaction &it, const EditFn &edit);

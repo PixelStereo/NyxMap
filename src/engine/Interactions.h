@@ -25,7 +25,9 @@
 // Action mode (instead of that chain, the Mapping mode): each value the source gives (in its own units: a key 1 / 0,
 // MIDI 0..1, OSC as sent, Internal in the value's own units — seconds, a switch 0 / 1, a choice's index) is tested
 // against its conditions (all of them, or any). When the answer becomes true, the "if true" actions are done; when it
-// becomes false, the "if false" ones (the very first answer: only if true). Each action sets a value of the show — an
+// becomes false, the "if false" ones (the very first answer: only if true); with no condition, each value does the
+// "if true" ones. Changed conditions are tried again on an Internal source's current value, from the answer it had.
+// Each action sets a value of the show — an
 // action fired, a switch on / off, a choice (its index), a number — as an event of a timeline does.
 //
 // Sources feed events into the engine from any thread (Engine::feedInteraction); the engine runs the chains each frame
@@ -142,7 +144,7 @@ struct Interaction {
     bool conditionsAll = true;
     std::vector<InteractionConsequence> onTrue, onFalse;
     bool isAction() const { return mode == InteractionMode::Action; }
-    bool conditionsMet(double x) const; // none: true
+    bool conditionsMet(double x) const; // none: true (and then each value does the "if true" actions)
 
     // The chain
     double master = 1;    // 0..1

@@ -74,9 +74,7 @@ QStringList PresetEditor::stored(quint64 layer, const QStringList &paths) const
         if (layer && p.startsWith(QLatin1String("category/"))) { out << p; continue; }
         if (layer && p == QLatin1String("geometry/mesh")) { out << p; continue; }
         ParamInfo info;
-        if (m_engine->parameterInfo(layer, p, &info) && info.type != ParamInfo::Type::Trigger &&
-            (info.access & ParamInfo::Write))
-            out << p;
+        if (m_engine->parameterInfo(layer, p, &info) && info.stored) out << p;
     }
     out.removeDuplicates();
     return out;
@@ -417,7 +415,7 @@ std::vector<std::pair<QString, QStringList>> PresetEditor::layerValues(Engine *e
 {
     std::vector<std::pair<QString, QStringList>> out;
     for (const ParamInfo &i : engine->parameters(layer)) {
-        if (i.type == ParamInfo::Type::Trigger || i.access != ParamInfo::ReadWrite) continue;
+        if (!i.stored) continue; // actions, read-only values, states of the show (Visible, Solo, Blackout)
         const int cut = i.label.indexOf(QStringLiteral(" › "));
         const QString cat = cut < 0 ? QStringLiteral("Layer") : i.label.left(cut);
         auto it = std::find_if(out.begin(), out.end(), [&](const auto &c) { return c.first == cat; });

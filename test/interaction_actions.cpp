@@ -59,6 +59,23 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
     check(visible(b), "pressed and let go in one frame: both, in order");
     e.removeInteraction(keyId);
 
+    // No condition: each value the source gives does the actions if true (counted in the journal)
+    Interaction each = key;
+    each.conditions.clear();
+    each.onTrue = {InteractionConsequence{b, QStringLiteral("enable"), 1}};
+    each.onFalse.clear();
+    const quint64 eachId = e.addInteraction(each);
+    e.takeFrameTimingWindow();
+    for (int n = 0; n < 3; ++n) {
+        press("H", 1);
+        e.renderFrame();
+    }
+    int acted = 0;
+    for (const auto &j : e.takeFrameTimingWindow().journal)
+        acted += j.kind == QLatin1String("interaction") && j.detail == QStringLiteral("%1 true").arg(eachId);
+    check(acted == 3, "no condition: each press does the actions");
+    e.removeInteraction(eachId);
+
     // Internal: A's opacity in a range sets B's
     Interaction range = Interaction::made(InteractionSource::Internal);
     range.sourceLayer = a;
@@ -81,6 +98,21 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
     e.setParameter(a, "opacity", 0.8);
     e.renderFrame();
     check(near(opacity(b), 0.1), "out of the range: if false");
+
+    // A condition changed: tried again on the source's current value (which does not move)
+    Interaction wider = e.interactions().back();
+    wider.conditions = {InteractionCondition{ConditionOp::InRange, 0.2, 0.9}};
+    check(e.setInteraction(wider), "widen the range");
+    e.renderFrame();
+    check(near(opacity(b), 0.9), "a changed condition is tried again at once");
+    wider.conditions = {InteractionCondition{ConditionOp::InRange, 0.2, 0.4}};
+    e.setInteraction(wider);
+    e.renderFrame();
+    e.setParameter(a, "opacity", 0.3);
+    e.renderFrame();
+    e.setParameter(a, "opacity", 0.8);
+    e.renderFrame();
+    check(near(opacity(b), 0.1), "back to the narrow range");
 
     // Any of them: below 0.2 or above 0.7
     Interaction any = e.interactions().back();
@@ -137,6 +169,9 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
     check(back.isAction() && back.conditions == any.conditions && back.conditionsAll == any.conditionsAll &&
               back.onTrue == any.onTrue && back.onFalse == any.onFalse,
           "an Action read back as it was written");
+    Interaction xy = any;
+    xy.xyInputs = {Interaction::made(InteractionSource::Osc)};
+    check(!Interaction::fromJson(xy.toJson()).isAction(), "an XY mapping is never read back as an Action");
     const QJsonObject state = any.stateJson();
     check(!state.contains("conditions") && !state.contains("if_true") && !state.contains("mode"), "a snapshot keeps its on / off, not its definition");
     QString err;

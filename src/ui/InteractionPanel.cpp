@@ -141,6 +141,7 @@ QJsonObject chainJson(const Interaction &it)
     for (const char *k : {"id", "name", "enabled", "source", "key", "port", "channel", "message", "number", "address",
                           "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param", "xy_y"})
         o.remove(QLatin1String(k));
+    o["mode"] = it.isAction() ? QStringLiteral("action") : QStringLiteral("mapping"); // pasted, a Mapping stays one
     return o;
 }
 
@@ -757,6 +758,14 @@ bool InteractionPanel::eventFilter(QObject *o, QEvent *e)
     return true;
 }
 
+void InteractionPanel::fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill)
+{
+    fill(menu->addMenu(QStringLiteral("Composition")), 0);
+    Engine::Lock lk(&m_engine->mutex());
+    for (int i = 0; i < m_engine->layerCount(); ++i)
+        if (const Layer *l = m_engine->layer(i); l && !l->isGroup) fill(menu->addMenu(l->name), l->id);
+}
+
 void InteractionPanel::rebuildSettings()
 {
     const std::optional<Interaction> cur = selected();
@@ -1053,10 +1062,7 @@ void InteractionPanel::rebuildSettings()
                     });
                 });
             };
-            fill(menu->addMenu(QStringLiteral("Composition")), 0);
-            Engine::Lock lk(&m_engine->mutex());
-            for (int i = 0; i < m_engine->layerCount(); ++i)
-                if (const Layer *l = m_engine->layer(i); l && !l->isGroup) fill(menu->addMenu(l->name), l->id);
+            fillByOwner(menu, fill);
         });
         form->addRow(QStringLiteral("Follows"), source);
         attachPreset({source}, {QStringLiteral("source/internal")});
@@ -1123,10 +1129,7 @@ void InteractionPanel::rebuildSettings()
                 });
             });
         };
-        fill(targetMenu->addMenu(QStringLiteral("Composition")), 0);
-        Engine::Lock lk(&m_engine->mutex());
-        for (int i = 0; i < m_engine->layerCount(); ++i)
-            if (const Layer *l = m_engine->layer(i); l && !l->isGroup) fill(targetMenu->addMenu(l->name), l->id);
+        fillByOwner(targetMenu, fill);
     });
     form->addRow(QStringLiteral("Target"), target);
     attachPreset({target}, {QStringLiteral("target")});
@@ -1535,10 +1538,7 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
                         });
                     });
                 };
-                fill(menu->addMenu(QStringLiteral("Composition")), 0);
-                Engine::Lock lk(&m_engine->mutex());
-                for (int k = 0; k < m_engine->layerCount(); ++k)
-                    if (const Layer *l = m_engine->layer(k); l && !l->isGroup) fill(menu->addMenu(l->name), l->id);
+                fillByOwner(menu, fill);
             });
             h->addWidget(target, 2);
             // What it is set to, by the kind of value

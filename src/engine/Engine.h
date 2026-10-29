@@ -1185,7 +1185,7 @@ private:
     const std::vector<std::unique_ptr<Parameter>> &showParams();
     static bool isShowParam(const QString &path);
     std::vector<std::unique_ptr<Parameter>> m_showParams;
-    QString m_showParamsKey;
+    quint64 m_showParamsKey = 0;
     void later(std::function<void()> f); // runs f on the engine's thread once the caller is done (any thread)
     struct InteractionFade {
         QString path; // "interaction/<id>/master"

@@ -5,8 +5,8 @@
 // An animation has a duration (one pass), a loop mode and a speed, and tracks, each driving one number: a curve
 // (keys over the duration, each eased towards the next one — the pattern repeats when it loops) or an oscillator
 // (a wave of its own period, on the time played so that it goes on without a jump across the loops). Values are
-// absolute. An event track drives no number: each of its keys fires an action (a Trigger parameter: Source › Rewind…)
-// when the playhead reaches it.
+// absolute. An event track drives no number: as the playhead reaches each of its keys, it fires an action (a Trigger
+// parameter: Source › Rewind, Show › GO…) or sets a switch, a choice or a number to the key's value.
 
 #include <QString>
 #include <QStringList>

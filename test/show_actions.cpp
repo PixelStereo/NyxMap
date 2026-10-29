@@ -135,6 +135,9 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     check(e.setParameter(video, "play", false), "pause the video");
     auto layerOf = [&](quint64 id) { return e.layer(e.indexOfId(id)); };
     check(e.setParameter(video, "enable", false) && !layerOf(video)->enabled, "Visible switches the layer off");
+    check(e.parameterInfo(video, "enable", &info) && !info.stored && e.parameterInfo(video, "opacity", &info) && info.stored &&
+              e.parameterInfo(0, "show/blackout", &info) && !info.stored,
+          "Visible, Solo, the blackout: not offered to presets (not stored)");
     check(e.setParameter(video, "solo", true) && layerOf(video)->solo, "Solo");
     {
         const QJsonObject params = e.layerJson(e.indexOfId(video)).value(QStringLiteral("params")).toObject();

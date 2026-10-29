@@ -449,9 +449,8 @@ void Engine::fireAnimationEvents(const Animation &a, double from, double to, boo
     const double first = std::min(std::floor(from / d), passes - 1), last = std::min(std::floor(end / d), passes - 1);
     for (const AnimTrack &t : a.tracks) {
         if (!t.event || !t.enabled || t.param.isEmpty() || t.keys.empty()) continue;
-        if (t.layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == t.layer && l->locked; }))
-            continue; // a timeline leaves a locked layer alone
-        Parameter *p = findParameter(t.layer, t.param);
+        // A flag sets what a flag can (not a number a curve drives); setEventValue leaves a locked layer alone
+        const Parameter *p = findParameter(t.layer, t.param);
         if (!p || !isEventTarget(p->info())) continue;
         std::vector<double> fired(t.keys.size(), -1); // a ping-pong's turn: the same key ends one pass and starts the next
         std::vector<std::pair<double, size_t>> due;   // the flags reached in this step, in the order of the clock

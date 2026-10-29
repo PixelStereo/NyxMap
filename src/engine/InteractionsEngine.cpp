@@ -131,11 +131,18 @@ bool Engine::setInteraction(const Interaction &it)
         const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->filterOn != it.filterOn ||
                                    f->filter != it.filter || f->layer != it.layer || f->param != it.param ||
                                    f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
-                                   ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it));
+                                   ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it)) ||
+                                   f->mode != it.mode;
+        // An Action's test changed: tried again on the source's current value, from the answer it had (so that the
+        // change itself can make it true, or false)
+        const bool testChanged = f->conditions != it.conditions || f->conditionsAll != it.conditionsAll;
         *f = it;
         nameInteractions(m_interactions);
         m_interactionParamsDirty = true;
         if (sourceChanged) m_interactionRun.erase(it.id); // starts again from what comes next
+        else if (testChanged)
+            if (auto run = m_interactionRun.find(it.id); run != m_interactionRun.end())
+                run->second.lastInternal = std::numeric_limits<double>::quiet_NaN();
     }
     updateMidiInputs();
     emit interactionsChanged();
@@ -425,6 +432,12 @@ void Engine::stepInteractions(double dt)
             for (const double x : values) {
                 if (!std::isfinite(x)) continue;
                 run.proc.input(it, x); // shown (In)
+                if (it.conditions.empty()) { // no test: each value the source gives does the "if true" actions
+                    run.actionMet = true;
+                    for (const InteractionConsequence &c : it.onTrue) setEventValue(c.layer, c.param, c.value, true);
+                    journal(QStringLiteral("interaction"), QStringLiteral("%1 true").arg(it.id));
+                    continue;
+                }
                 const bool met = it.conditionsMet(x);
                 const bool first = !run.actionMet;
                 if (!first && *run.actionMet == met) continue; // only when the answer changes
@@ -436,7 +449,7 @@ void Engine::stepInteractions(double dt)
             }
             continue;
         }
-        if (!it.enabled || it.param.isEmpty() || it.isAction()) continue;
+        if (!it.enabled || it.param.isEmpty() || (it.isAction() && it.xyInputs.empty())) continue;
         InteractionRun &run = m_interactionRun[it.id];
         if (!it.xyInputs.empty()) {
             std::array<Parameter *, 2> params{};
