@@ -946,10 +946,10 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                  [](Layer &l) { return QVariantList{layerTapKey(l.sourceTap)}; },
                  [e](int idx, const QVariantList &a) {
                      const QString k = a.value(0).toString().toLower();
-                     if (k != "prefx" && k != "postfx") return false;
+                     if (k != "source" && k != "prefx" && k != "postfx") return false;
                      return e->setLayerTap(idx, layerTapFromKey(k));
                  })
-            .range = {vals({"prefx", "postfx"})};
+            .range = {vals({"source", "prefx", "postfx"})};
     }
     if (transport) {
         L.method(P + "/play", "T", 3, "Play", [](Layer &l) { return QVariantList{l.playing}; },

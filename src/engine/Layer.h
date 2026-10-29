@@ -69,7 +69,9 @@ inline bool isWebGeneratorPath(const QString &p) { return QString(p).replace('\\
 enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
     PostFx = 1, // after its effect chain (its own mapping and opacity are not part of it)
+    Source = 2, // its source's own picture, as decoded or generated: before its ROI, its color and its effects
 };
+QString layerTapName(LayerTap t); // "Source", "Pre-FX", "Post-FX"
 QString layerTapKey(LayerTap t);
 LayerTap layerTapFromKey(const QString &k);
 enum class BlendMode { Normal, Add, Screen, Multiply, Subtract, Difference };

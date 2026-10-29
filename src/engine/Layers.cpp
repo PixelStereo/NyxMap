@@ -67,9 +67,20 @@ PlayMode playModeFromKey(const QString &k, PlayMode fallback)
     return fallback;
 }
 
-QString layerTapKey(LayerTap t) { return t == LayerTap::PreFx ? QStringLiteral("prefx") : QStringLiteral("postfx"); }
+QString layerTapKey(LayerTap t)
+{
+    return t == LayerTap::Source ? QStringLiteral("source") : t == LayerTap::PreFx ? QStringLiteral("prefx") : QStringLiteral("postfx");
+}
 
-LayerTap layerTapFromKey(const QString &k) { return k == "prefx" ? LayerTap::PreFx : LayerTap::PostFx; }
+LayerTap layerTapFromKey(const QString &k)
+{
+    return k == "source" ? LayerTap::Source : k == "prefx" ? LayerTap::PreFx : LayerTap::PostFx;
+}
+
+QString layerTapName(LayerTap t)
+{
+    return t == LayerTap::Source ? QStringLiteral("Source") : t == LayerTap::PreFx ? QStringLiteral("Pre-FX") : QStringLiteral("Post-FX");
+}
 
 BlendMode blendModeFromKey(const QString &k)
 {

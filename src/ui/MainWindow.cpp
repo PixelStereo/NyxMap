@@ -1247,7 +1247,7 @@ void MainWindow::refreshLayerList()
                 const Layer *src = m_engine->layer(m_engine->indexOfId(l->sourceLayer));
                 r.source = QStringLiteral("layer %1 · %2")
                                .arg(src ? src->name : QStringLiteral("(gone)"),
-                                    l->sourceTap == LayerTap::PreFx ? QStringLiteral("pre-fx") : QStringLiteral("post-fx"));
+                                    layerTapName(l->sourceTap).toLower());
                 r.error = r.error || !src;
                 break;
             }
