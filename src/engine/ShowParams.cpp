@@ -19,11 +19,16 @@ void Engine::later(std::function<void()> f)
 
 const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
 {
-    // What they are made from: the ids and names of what they act on
-    QString key = QString::number(m_sequencer->revision());
-    for (const Snapshot &s : m_snapshots) key += QStringLiteral("|s%1:%2").arg(s.id).arg(s.name);
-    for (const Preset &p : m_presets) key += QStringLiteral("|p%1:%2").arg(p.id).arg(p.name);
-    for (const Animation &a : m_animations) key += QStringLiteral("|t%1:%2").arg(a.id).arg(a.name);
+    // What they are made from: the ids and names of what they act on (a hash: asked for at each frame an Internal
+    // interaction follows one of them, without building anything)
+    quint64 key = m_sequencer->revision();
+    auto mix = [&key](quint64 tag, quint64 id, const QString &name) {
+        key = (key ^ (tag + id * 0x9e3779b97f4a7c15ULL)) * 0x100000001b3ULL;
+        key ^= qHash(name, size_t(id));
+    };
+    for (const Snapshot &s : m_snapshots) mix(1, s.id, s.name);
+    for (const Preset &p : m_presets) mix(2, p.id, p.name);
+    for (const Animation &a : m_animations) mix(3, a.id, a.name);
     if (key == m_showParamsKey && !m_showParams.empty()) return m_showParams;
     m_showParamsKey = key;
     m_showParams.clear();

@@ -130,6 +130,7 @@ int runToxTests(Engine &e, const QString &tmp)
     check(e.loadProject(invalidProject, nullptr, &error), "load deliberately invalid routing");
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in1") == 0, "invalid saved routing repaired on load");
     const QString relinked = tmp + "/relinked.tox";
+    QFile::remove(relinked); // left by an earlier run: QFile::copy does not overwrite
     check(QFile::copy(component, relinked) && e.relinkLayerMedia(e.indexOfId(id), component, relinked, &error), "relink component");
     check(e.layer(e.indexOfId(id))->tox.inputs.value("in2") == bid && e.layer(e.indexOfId(id))->tox.output == "out2", "relink preserves TOP settings");
     bool inBin = false;

@@ -294,7 +294,7 @@ const std::vector<Parameter *> &Layer::parameters()
         // To a time of the media (seconds), played or paused as it was: written by an interaction, an event of a
         // timeline, OSC; read back as Playhead below
         add("seek", "Source › Seek To (s)", T::Float)
-            .range(0, d > 0 ? d : 1)
+            .range(0, hi)
             .ramp(Parameter::Ramp::Cut)
             .writeOnly()
             .bind(nullptr, [self](const QVariant &v) { reposition(*self, v.toDouble(), self->dir); });

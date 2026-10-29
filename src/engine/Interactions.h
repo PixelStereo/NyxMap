@@ -22,6 +22,14 @@
 // apply. Pick-up waits for every channel to have met the target's (each within the tolerance, or crossed it) before
 // it takes the color over. Alpha only with Map alpha and a fourth channel. A single number driving a color: a gray.
 //
+// Action mode (instead of that chain, the Mapping mode): each value the source gives (in its own units: a key 1 / 0,
+// MIDI 0..1, OSC as sent, Internal in the value's own units — seconds, a switch 0 / 1, a choice's index) is tested
+// against its conditions (all of them, or any). When the answer becomes true, the "if true" actions are done; when it
+// becomes false, the "if false" ones (the very first answer: only if true); with no condition, each value does the
+// "if true" ones. Changed conditions are tried again on an Internal source's current value, from the answer it had.
+// Each action sets a value of the show — an
+// action fired, a switch on / off, a choice (its index), a number — as an event of a timeline does.
+//
 // Sources feed events into the engine from any thread (Engine::feedInteraction); the engine runs the chains each frame
 // (its lock held) and sets the targets, as an animation does (the snapshots' fades let them go).
 
@@ -39,6 +47,28 @@ enum class InteractionFilter { Average = 0, WeightedAverage, PulseDetection, Att
 inline constexpr int kInteractionFilterCount = 5;
 enum class MidiMessageKind { ControlChange = 0, Note, PitchBend, ProgramChange };
 enum class Takeover { PickUp = 0, Jump };
+enum class InteractionMode { Mapping = 0, Action };
+// A test of the source's value: Equal (within a millionth), Not Equal, Greater, Greater or Equal, Less, Less or Equal,
+// In Range [a, b], Out of Range
+enum class ConditionOp { Equal = 0, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual, InRange, OutOfRange };
+inline constexpr int kConditionOpCount = 8;
+QString conditionOpName(ConditionOp op); // "=", "≠", ">", "≥", "<", "≤", "in range", "out of range"
+
+struct InteractionCondition {
+    ConditionOp op = ConditionOp::GreaterOrEqual;
+    double a = 0.5, b = 1; // b: the range's upper end
+    bool test(double x) const;
+    bool operator==(const InteractionCondition &o) const { return op == o.op && a == o.a && b == o.b; }
+};
+
+// What an Action does: sets a value of the show (a layer's id, 0: the composition) — fires an action, sets a switch
+// (0 / 1), a choice (its index) or a number
+struct InteractionConsequence {
+    quint64 layer = 0;
+    QString param;
+    double value = 1;
+    bool operator==(const InteractionConsequence &o) const { return layer == o.layer && param == o.param && value == o.value; }
+};
 
 QString interactionSourceName(InteractionSource s); // "Keyboard", "MIDI", "OSC", "Internal"
 QString interactionFilterName(InteractionFilter f); // "Average"…
@@ -107,6 +137,15 @@ struct Interaction {
                (colorMapAlpha && path == param + "/a");
     }
 
+    // Action mode: its conditions on the source's value, all of them (or any) true, and what it does when that becomes
+    // true, and when it becomes false (Mapping: the chain below drives the target)
+    InteractionMode mode = InteractionMode::Mapping;
+    std::vector<InteractionCondition> conditions;
+    bool conditionsAll = true;
+    std::vector<InteractionConsequence> onTrue, onFalse;
+    bool isAction() const { return mode == InteractionMode::Action; }
+    bool conditionsMet(double x) const; // none: true (and then each value does the "if true" actions)
+
     // The chain
     double master = 1;    // 0..1
     bool toggle = false;
@@ -137,6 +176,7 @@ struct InteractionTelemetry {
     double input = 0, output = 0, curveInput = 0;
     double yInput = 0, yOutput = 0, yCurveInput = 0;
     bool hasY = false;
+    int met = -1; // an Action: its conditions held (1) or not (0) at the last value; -1: none yet, or a Mapping
 };
 
 // The chain of one interaction, from its source's values to the value of its target. Pure: no engine, no clock.

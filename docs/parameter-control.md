@@ -113,6 +113,15 @@ Every layer also has **Layer › Visible** (`enable`) and **Layer › Solo** (`s
 
 An Internal interaction can follow a switch (0 / 1) and a choice (its index: 0 for the first one).
 
+### Interaction modes: Mapping and Action
+
+An interaction has a **Mode**. **Mapping** (the default) drives one target continuously through the chain: source range, toggle, filter, curve, master level, target range. **Action** does not map; it tests the source's value and acts when the answer changes, as Chataigne's actions do:
+
+- **Conditions** compare the value the source gives, in its own units (a key 1 / 0, MIDI 0..1, OSC as sent, Internal in the value's units: seconds for Playhead, 0 / 1 for a switch, the index for a choice), with `=`, `≠`, `>`, `≥`, `<`, `≤`, **in range** or **out of range** (both ends included, in either order). **True when** all of them hold (and) or any of them (or). With no condition, each value the source gives does the **If true** actions (a key: each press and each release).
+- When the answer **becomes true**, the actions **If true** are done, in order; when it **becomes false**, the actions **If false**. Nothing is done while it stays the same, and the very first answer only acts if it is true. Edited conditions are tried again at once on an Internal source's current value. A key pressed and released in one frame gives both, in order.
+- Each action sets a value of the show: fires an action (GO, a snapshot's recall, Source › Rewind…), sets a switch On or Off, a choice, or a number. A locked layer is left alone, and a fade running on the value lets go, as for a Mapping.
+- The list shows **true** / **false** in its Value column; the settings show the input and whether the conditions hold now. A snapshot keeps an Action's on / off state, not its conditions or actions. Switching back to Mapping keeps the Action's settings for later.
+
 ### What a recall can change besides the value
 
 - A snapshot restores included interaction settings and disables interactions absent from its stored list. An interaction present but excluded from recall stays unchanged.

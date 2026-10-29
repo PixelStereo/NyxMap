@@ -280,11 +280,21 @@ void TimelineTrackRow::selectEvent(const QString &path)
 {
     auto &t = track();
     const bool wasEvent = t.event;
+    ParamInfo before, after;
+    const bool hadTarget = wasEvent && m_e->parameterInfo(t.layer, t.param, &before);
+    m_e->parameterInfo(t.layer, path, &after);
     t.param = path;
     t.event = true;
     t.color = t.oscillator = false;
     t.axes.clear();
-    if (!wasEvent) t.keys = {AnimKey{0, 0, 0}}; // one flag at the start; another action keeps the flags it has
+    // What a flag sets at first: a switch on, the first choice, nothing else (a number: 0, as the lane adds one)
+    const double first = after.type == ParamInfo::Type::Bool ? 1 : 0;
+    if (!wasEvent) t.keys = {AnimKey{0, first, 0}}; // one flag at the start
+    else if (!hadTarget || before.type != after.type || before.choices != after.choices) {
+        // Another kind of value: the flags keep their times, not values that would mean something else here
+        for (size_t k = 0; k < t.keys.size(); ++k)
+            t.keys[k].v = after.type == ParamInfo::Type::Bool ? (k % 2 == 0 ? 1 : 0) : 0;
+    }
     fillParams();
     fill();
     changed();

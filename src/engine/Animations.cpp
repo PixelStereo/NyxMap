@@ -449,11 +449,9 @@ void Engine::fireAnimationEvents(const Animation &a, double from, double to, boo
     const double first = std::min(std::floor(from / d), passes - 1), last = std::min(std::floor(end / d), passes - 1);
     for (const AnimTrack &t : a.tracks) {
         if (!t.event || !t.enabled || t.param.isEmpty() || t.keys.empty()) continue;
-        if (t.layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == t.layer && l->locked; }))
-            continue; // a timeline leaves a locked layer alone
-        Parameter *p = findParameter(t.layer, t.param);
+        // A flag sets what a flag can (not a number a curve drives); setEventValue leaves a locked layer alone
+        const Parameter *p = findParameter(t.layer, t.param);
         if (!p || !isEventTarget(p->info())) continue;
-        const ParamInfo info = p->info();
         std::vector<double> fired(t.keys.size(), -1); // a ping-pong's turn: the same key ends one pass and starts the next
         std::vector<std::pair<double, size_t>> due;   // the flags reached in this step, in the order of the clock
         for (double pass = first; pass <= last && pass - first < 1000; ++pass) {
@@ -468,13 +466,7 @@ void Engine::fireAnimationEvents(const Animation &a, double from, double to, boo
         }
         std::stable_sort(due.begin(), due.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
         for (const auto &[c, k] : due) {
-            const double v = t.keys[k].v;
-            QVariant value; // an action: none
-            if (info.type == ParamInfo::Type::Bool) value = v >= 0.5;
-            else if (info.type == ParamInfo::Type::Choice)
-                value = info.choices.value(std::clamp(int(std::lround(v)), 0, std::max(0, int(info.choices.size()) - 1)));
-            else if (info.isNumber()) value = v;
-            p->setValue(value);
+            setEventValue(t.layer, t.param, t.keys[k].v, false);
             journal(QStringLiteral("timeline"), QStringLiteral("%1 event %2").arg(a.id).arg(t.param));
         }
     }
@@ -604,6 +596,24 @@ std::vector<Engine::AnimParam> Engine::triggerParams(quint64 layer) const
     for (const ParamInfo &i : parameters(layer))
         if (i.type == ParamInfo::Type::Trigger && (i.access & ParamInfo::Write)) out.push_back(i);
     return out;
+}
+
+bool Engine::setEventValue(quint64 layer, const QString &param, double v, bool release)
+{
+    if (layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == layer && l->locked; }))
+        return false;
+    Parameter *p = findParameter(layer, param);
+    if (!p) return false;
+    const ParamInfo info = p->info();
+    if (!(info.access & ParamInfo::Write) || info.type == ParamInfo::Type::Text) return false;
+    QVariant value; // an action: none
+    if (info.type == ParamInfo::Type::Bool) value = v >= 0.5;
+    else if (info.type == ParamInfo::Type::Choice)
+        value = info.choices.value(std::clamp(int(std::lround(v)), 0, std::max(0, int(info.choices.size()) - 1)));
+    else if (info.isNumber()) value = v;
+    const bool wrote = p->setValue(value);
+    if (wrote && release && layer) releaseFromFades(layer, param); // a fade running on it lets go
+    return wrote;
 }
 
 bool Engine::isEventTarget(const ParamInfo &i)

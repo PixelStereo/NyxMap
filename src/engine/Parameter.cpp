@@ -1,5 +1,7 @@
 #include "Parameter.h"
 
+#include <limits>
+
 #include <algorithm>
 #include <cmath>
 
@@ -121,6 +123,7 @@ ParamInfo Parameter::info() const
 {
     ParamInfo i = m_info;
     if (m_default) i.defaultValue = m_default();
+    i.stored = isStored();
     return i;
 }
 
@@ -134,7 +137,10 @@ double Parameter::asNumber() const
 {
     const QVariant v = value();
     if (m_info.type == Type::Bool) return v.toBool() ? 1.0 : 0.0;
-    if (m_info.type == Type::Choice) return m_info.choices.indexOf(v.toString());
+    if (m_info.type == Type::Choice) {
+        const qsizetype k = m_info.choices.indexOf(v.toString());
+        return k >= 0 ? double(k) : std::numeric_limits<double>::quiet_NaN(); // none of its keys: followed as nothing
+    }
     return v.toDouble();
 }
 
