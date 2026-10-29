@@ -280,7 +280,7 @@ void Engine::setAnimation(int i, const Animation &a)
             t.captured = std::numeric_limits<double>::quiet_NaN();
             t.capturedRgb = AnimTrack().capturedRgb;
             for (const AnimTrack &o : old.tracks)
-                if (o.layer == t.layer && o.param == t.param && o.color == t.color) {
+                if (o.layer == t.layer && o.param == t.param && o.color == t.color && o.event == t.event) {
                     t.captured = o.captured;
                     t.capturedRgb = o.capturedRgb;
                     if (t.isPoint() && o.isPoint()) for (int c = 0; c < 2; ++c)
@@ -348,6 +348,7 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
             a->oscillatorOffset = 0;
             a->reversed = false;
             capture();
+            if (!owner) fireAnimationEvents(*a, 0, 0, true); // the events at the start
         }
         a->state = AnimState::Playing;
         apply(); // its first values now, not a frame later
@@ -367,6 +368,7 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
         a->reversed = false;
         capture();
         apply();
+        if (!owner && a->state == AnimState::Playing) fireAnimationEvents(*a, 0, 0, true); // played again from the start
         break;
     case AnimAction::Seek:
         if (a->state == AnimState::Stopped) {
@@ -391,7 +393,7 @@ void Engine::applyAnimation(Animation &a)
 {
     const double pos = a.position(), played = a.played();
     for (const AnimTrack &t : a.tracks) {
-        if (!t.enabled || t.param.isEmpty()) continue;
+        if (!t.enabled || t.param.isEmpty() || t.event) continue;
         if (t.isPoint()) {
             setAnimPoint(t, pos, played);
             continue;
@@ -425,13 +427,43 @@ void Engine::stepAnimations(double dt)
     }
     for (Animation &a : m_animations) {
         if (a.state != AnimState::Playing) continue;
+        const double from = a.clock;
         const bool going = a.advance(dt);
         applyAnimation(a);
+        fireAnimationEvents(a, from, a.clock, false);
         if (!going) { // over: its last values stay
             a.state = AnimState::Stopped;
             a.clock = 0;
             a.oscillatorOffset = 0;
             a.reversed = false;
+        }
+    }
+}
+
+void Engine::fireAnimationEvents(const Animation &a, double from, double to, bool fromIncluded)
+{
+    const double d = passDuration(a.duration), end = std::min(to, a.length());
+    if (!(end >= from)) return;
+    // The passes the clock goes through (the last one of a finite count ends at length(): no pass after it)
+    const double passes = a.loop == AnimLoop::Once ? 1 : a.repeat > 0 ? a.repeat : std::numeric_limits<double>::infinity();
+    const double first = std::min(std::floor(from / d), passes - 1), last = std::min(std::floor(end / d), passes - 1);
+    for (const AnimTrack &t : a.tracks) {
+        if (!t.event || !t.enabled || t.param.isEmpty() || t.keys.empty()) continue;
+        if (t.layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == t.layer && l->locked; }))
+            continue; // a timeline leaves a locked layer alone
+        Parameter *p = findParameter(t.layer, t.param);
+        if (!p || p->info().type != ParamInfo::Type::Trigger) continue;
+        std::vector<double> fired(t.keys.size(), -1); // a ping-pong's turn: the same key ends one pass and starts the next
+        for (double pass = first; pass <= last && pass - first < 1000; ++pass) {
+            const bool back = a.backwardsAt(pass * d + d / 2);
+            for (size_t k = 0; k < t.keys.size(); ++k) {
+                const double c = pass * d + (back ? d - t.keys[k].t : t.keys[k].t);
+                if ((c > from || (fromIncluded && c >= from)) && c <= end && std::abs(c - fired[k]) > 1e-9) {
+                    fired[k] = c;
+                    p->setValue(QVariant());
+                    journal(QStringLiteral("timeline"), QStringLiteral("%1 event %2").arg(a.id).arg(t.param));
+                }
+            }
         }
     }
 }
@@ -544,6 +576,14 @@ std::vector<Engine::AnimParam> Engine::animatableParams(quint64 layer) const
         const auto info = p->info();
         if (info.animatable) out.push_back(info);
     }
+    return out;
+}
+
+std::vector<Engine::AnimParam> Engine::triggerParams(quint64 layer) const
+{
+    std::vector<AnimParam> out;
+    for (const ParamInfo &i : parameters(layer))
+        if (i.type == ParamInfo::Type::Trigger && (i.access & ParamInfo::Write)) out.push_back(i);
     return out;
 }
 
@@ -1104,6 +1144,14 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
         o["axes"] = axes;
         return;
     }
+    if (t.event) {
+        o["type"] = QStringLiteral("event");
+        if (!t.enabled) o["enable"] = false;
+        QJsonArray times;
+        for (const AnimKey &k : t.keys) times.append(k.t);
+        o["keys"] = times;
+        return;
+    }
     if (t.color) o["type"] = QStringLiteral("color");
     if (!t.enabled) o["enable"] = false;
     if (t.oscillator) {
@@ -1148,6 +1196,16 @@ static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
             trackFromJson(axis, child, duration);
             t.axes.push_back(axis);
         }
+        sortKeys(t);
+        return;
+    }
+    t.event = o.value("type").toString() == QLatin1String("event");
+    if (t.event) {
+        t.color = t.oscillator = false;
+        t.enabled = o.value("enable").toBool(true);
+        t.keys.clear();
+        for (const QJsonValue &time : o.value("keys").toArray())
+            if (time.isDouble()) t.keys.push_back(AnimKey{std::clamp(time.toDouble(), 0.0, duration), 0, 0});
         sortKeys(t);
         return;
     }

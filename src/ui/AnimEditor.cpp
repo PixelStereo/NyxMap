@@ -145,7 +145,7 @@ static bool sameKeys(const std::vector<AnimKey> &a, const std::vector<AnimKey> &
 static bool sameTrack(const AnimTrack &a, const AnimTrack &b)
 {
     if (a.layer != b.layer || a.param != b.param || a.enabled != b.enabled || a.oscillator != b.oscillator || a.color != b.color ||
-        a.wave != b.wave || a.period != b.period || a.center != b.center || a.amplitude != b.amplitude ||
+        a.event != b.event || a.wave != b.wave || a.period != b.period || a.center != b.center || a.amplitude != b.amplitude ||
         a.phase != b.phase || a.seed != b.seed || !sameKeys(a.keys, b.keys) || a.axes.size() != b.axes.size()) return false;
     for (size_t i = 0; i < a.axes.size(); ++i) if (!sameTrack(a.axes[i], b.axes[i])) return false;
     return true;
@@ -1238,6 +1238,189 @@ void ColorLane::contextMenuEvent(QContextMenuEvent *e)
 }
 
 // ---------------------------------------------------------------------------
+// EventLane
+
+static const QColor kEventFlag(255, 140, 66);
+
+EventLane::EventLane(QWidget *parent) : QWidget(parent)
+{
+    setObjectName(QStringLiteral("eventLane"));
+    setMinimumHeight(56);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setFocusPolicy(Qt::StrongFocus);
+    setToolTip(QStringLiteral("Click an empty space: add an event · drag a flag: move in time · double-click: delete\n"
+                              "Right-click: time, delete · Delete: remove selected flag · Ctrl/⌘+wheel: zoom time"));
+}
+
+void EventLane::setTrack(const AnimTrack &track, double duration)
+{
+    m_track = track;
+    m_duration = std::max(.05, duration);
+    if (m_selected >= int(track.keys.size())) m_selected = -1;
+    update();
+}
+
+void EventLane::setView(double t0, double t1) { m_t0 = t0; m_t1 = std::max(t0 + 1e-6, t1); update(); }
+void EventLane::setPlayhead(double position, bool shown)
+{
+    if (position == m_playhead && shown == m_shown) return;
+    m_playhead = position; m_shown = shown; update();
+}
+double EventLane::xOf(double t) const { return CurveLane::kMargin + (t - m_t0) / (m_t1 - m_t0) * (width() - 2 * CurveLane::kMargin); }
+double EventLane::tOf(double x) const
+{
+    return std::clamp(m_t0 + (x - CurveLane::kMargin) / std::max(1, width() - 2 * CurveLane::kMargin) * (m_t1 - m_t0), 0.0, m_duration);
+}
+int EventLane::keyAt(QPointF pos) const
+{
+    int best = -1;
+    double distance = 9;
+    for (size_t i = 0; i < m_track.keys.size(); ++i) {
+        const double d = std::abs(xOf(m_track.keys[i].t) - pos.x());
+        if (d <= distance) best = int(i), distance = d;
+    }
+    return best;
+}
+
+void EventLane::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.fillRect(rect(), QColor(26, 26, 30));
+    const double step = tickStep(m_t1 - m_t0, width() - 2 * CurveLane::kMargin, 70);
+    for (double t = std::ceil(m_t0 / step) * step; t <= m_t1 + 1e-9; t += step) {
+        p.setPen(QColor(65, 65, 73));
+        p.drawLine(QPointF(xOf(t), height() - 18), QPointF(xOf(t), height()));
+    }
+    p.setPen(QColor(74, 74, 82));
+    p.drawLine(QPointF(CurveLane::kMargin, height() - 18), QPointF(width() - CurveLane::kMargin, height() - 18));
+    if (m_track.keys.empty()) {
+        p.setPen(QColor(175, 175, 182));
+        p.drawText(rect().adjusted(0, 0, 0, -18), Qt::AlignCenter, QStringLiteral("Click to add an event"));
+    }
+    p.setRenderHint(QPainter::Antialiasing);
+    for (size_t i = 0; i < m_track.keys.size(); ++i) {
+        const double x = xOf(m_track.keys[i].t);
+        if (x < -20 || x > width() + 20) continue;
+        const bool selected = int(i) == m_selected;
+        // A flag: its pole down to the time line, its pennant at the top
+        p.setPen(QPen(selected ? QColor(Qt::white) : kEventFlag, selected ? 2 : 1.5));
+        p.drawLine(QPointF(x, 6), QPointF(x, height() - 18));
+        p.setBrush(selected ? QColor(Qt::white) : kEventFlag);
+        p.drawPolygon(QPolygonF({QPointF(x, 6), QPointF(x + 14, 12), QPointF(x, 18)}));
+        if (selected) {
+            p.setPen(QColor(210, 210, 220));
+            p.drawText(QRectF(12, height() - 18, width() - 24, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                       QStringLiteral("%1 s").arg(m_track.keys[i].t, 0, 'f', 2));
+        }
+    }
+    if (m_shown) {
+        p.setPen(QPen(kPlayhead, 1.5));
+        p.drawLine(QPointF(xOf(m_playhead), 0), QPointF(xOf(m_playhead), height()));
+    }
+}
+
+void EventLane::addKey(double time)
+{
+    auto it = std::lower_bound(m_track.keys.begin(), m_track.keys.end(), time, [](const AnimKey &k, double t) { return k.t < t; });
+    m_selected = int(it - m_track.keys.begin());
+    m_track.keys.insert(it, AnimKey{time, 0, 0});
+    update();
+    emit edited(m_track, 0);
+}
+
+void EventLane::removeKey(int key)
+{
+    if (key < 0 || key >= int(m_track.keys.size())) return;
+    m_track.keys.erase(m_track.keys.begin() + key);
+    m_selected = m_drag = -1;
+    update();
+    emit edited(m_track, 0);
+}
+
+void EventLane::mousePressEvent(QMouseEvent *e)
+{
+    m_press = e->position();
+    m_panning = e->button() == Qt::MiddleButton;
+    if (e->button() != Qt::LeftButton) return;
+    setFocus();
+    m_selected = m_drag = keyAt(e->position());
+    m_add = m_drag < 0;
+    if (m_drag >= 0) {
+        m_pressTime = m_track.keys[size_t(m_drag)].t;
+        m_gesture = ++s_gestures;
+    }
+    update();
+}
+
+void EventLane::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_panning) {
+        emit panTime(-(e->position().x() - m_press.x()) / std::max(1, width() - 2 * CurveLane::kMargin) * (m_t1 - m_t0));
+        m_press = e->position();
+    } else if (m_drag >= 0 && m_drag < int(m_track.keys.size())) {
+        const double lo = m_drag > 0 ? m_track.keys[size_t(m_drag - 1)].t + 1e-6 : 0;
+        const double hi = m_drag + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(m_drag + 1)].t - 1e-6 : m_duration;
+        if (lo > hi) return;
+        m_track.keys[size_t(m_drag)].t = std::clamp(tOf(xOf(m_pressTime) + e->position().x() - m_press.x()), lo, hi);
+        update();
+        emit edited(m_track, m_gesture);
+    }
+}
+
+void EventLane::mouseReleaseEvent(QMouseEvent *e)
+{
+    const bool add = m_add && e->button() == Qt::LeftButton && (e->position() - m_press).manhattanLength() < QApplication::startDragDistance();
+    m_add = m_panning = false;
+    m_drag = -1;
+    if (add) addKey(tOf(e->position().x()));
+}
+void EventLane::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_add = false; m_drag = -1;
+    removeKey(keyAt(e->position()));
+}
+void EventLane::keyPressEvent(QKeyEvent *e)
+{
+    if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) { removeKey(m_selected); e->accept(); }
+    else QWidget::keyPressEvent(e);
+}
+void EventLane::wheelEvent(QWheelEvent *e)
+{
+    const double steps = (e->angleDelta().y() ? e->angleDelta().y() : e->angleDelta().x()) / 120.0;
+    if (e->modifiers() & Qt::ControlModifier) emit zoomTime(std::pow(1.2, steps), tOf(e->position().x()));
+    else if ((e->modifiers() & Qt::ShiftModifier) || e->angleDelta().x()) emit panTime(-steps * .1 * (m_t1 - m_t0));
+    else { e->ignore(); return; }
+    e->accept();
+}
+void EventLane::contextMenuEvent(QContextMenuEvent *e)
+{
+    const int key = keyAt(e->pos());
+    auto *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    if (key < 0) menu->addAction(QStringLiteral("Add Event"), this, [this, t = tOf(e->pos().x())] { addKey(t); });
+    else {
+        m_selected = key; update();
+        menu->addAction(QStringLiteral("Time…"), this, [this, key] {
+            if (key < 0 || key >= int(m_track.keys.size())) return; // reloaded meanwhile
+            const double lo = key > 0 ? m_track.keys[size_t(key - 1)].t + 1e-6 : 0;
+            const double hi = key + 1 < int(m_track.keys.size()) ? m_track.keys[size_t(key + 1)].t - 1e-6 : m_duration;
+            if (lo > hi) return;
+            bool ok = false;
+            const QPointer<EventLane> guard(this);
+            const double t = QInputDialog::getDouble(window(), QStringLiteral("Event"), QStringLiteral("Time (s)"),
+                                                     m_track.keys[size_t(key)].t, lo, hi, 3, &ok);
+            if (!guard || !ok || key >= int(m_track.keys.size())) return;
+            m_track.keys[size_t(key)].t = t;
+            update(); emit edited(m_track, 0);
+        });
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("Delete Event"), this, [this, key] { removeKey(key); });
+    }
+    menu->popup(e->globalPos());
+}
+
+// ---------------------------------------------------------------------------
 // TrackRow
 
 static NumberBox *numberBox(double lo, double hi, int decimals, double step, const QString &suffix = {})
@@ -1412,6 +1595,14 @@ void TrackRow::build()
     });
     connect(m_colorLane, &ColorLane::zoomTime, m_ed, &AnimEditor::zoomTime);
     connect(m_colorLane, &ColorLane::panTime, m_ed, &AnimEditor::panTime);
+    m_eventLane = new EventLane;
+    box->addWidget(m_eventLane, 1);
+    connect(m_eventLane, &EventLane::edited, this, [this](const AnimTrack &t, int gesture) {
+        track().keys = t.keys;
+        changed(false, gesture ? QStringLiteral("lane%1/events").arg(gesture) : QString());
+    });
+    connect(m_eventLane, &EventLane::zoomTime, m_ed, &AnimEditor::zoomTime);
+    connect(m_eventLane, &EventLane::panTime, m_ed, &AnimEditor::panTime);
 
     connect(m_kind, qOverload<int>(&QComboBox::activated), this, [this](int k) {
         const bool osc = k == 1;
@@ -1477,14 +1668,16 @@ void TrackRow::fill()
     m_showPath->setVisible(track().isPoint());
     m_showPath->setChecked(m_ed->laneView(m_i).xyPreview);
     m_pointPreview->setVisible(track().isPoint() && m_showPath->isChecked());
-    m_kind->setVisible(!t.color);
-    m_lane->setVisible(!t.color);
-    m_colorLane->setVisible(t.color);
+    const bool number = !t.color && !t.event;
+    m_kind->setVisible(number);
+    m_lane->setVisible(number);
+    m_colorLane->setVisible(t.color && !t.event);
+    m_eventLane->setVisible(t.event);
     m_kind->setCurrentIndex(t.oscillator ? 1 : 0);
     m_wave->setCurrentIndex(int(t.wave));
-    m_wave->setVisible(!t.color && t.oscillator);
-    m_reseed->setVisible(!t.color && t.oscillator && (t.wave == AnimWave::Random || t.wave == AnimWave::SmoothRandom));
-    m_osc->setVisible(!t.color && t.oscillator);
+    m_wave->setVisible(number && t.oscillator);
+    m_reseed->setVisible(number && t.oscillator && (t.wave == AnimWave::Random || t.wave == AnimWave::SmoothRandom));
+    m_osc->setVisible(number && t.oscillator);
     m_period->setValue(t.period);
     m_phase->setValue(t.phase);
     m_center->setValue(t.center);
@@ -1497,7 +1690,7 @@ void TrackRow::fill()
 void TrackRow::updateStartMode()
 {
     const bool current = startsFromCurrent(editedTrack());
-    m_startCurrent->setVisible(!editedTrack().oscillator && !editedTrack().keys.empty());
+    m_startCurrent->setVisible(!editedTrack().oscillator && !editedTrack().event && !editedTrack().keys.empty());
     m_startCurrent->setChecked(current);
     m_startCurrent->setText(current ? QStringLiteral("↗ CURRENT VALUE") : QStringLiteral("Start: first key"));
     m_startCurrent->setAccessibleName(current ? QStringLiteral("Start from current value enabled") : QStringLiteral("Start from current value disabled"));
@@ -1508,6 +1701,7 @@ void TrackRow::setPlayhead(double pos, double played, bool backwards, bool shown
 {
     m_lane->setPlayhead(pos, shown, played, backwards);
     m_colorLane->setPlayhead(pos, shown);
+    m_eventLane->setPlayhead(pos, shown);
     m_pointPreview->setPlayhead(pos, played, backwards, shown);
 }
 
@@ -1546,6 +1740,7 @@ void TrackRow::updateLane()
     const auto [lo, hi] = range();
     m_lane->setTrack(editedTrack(), m_ed->m_edit.duration, lo, hi);
     m_colorLane->setTrack(editedTrack(), m_ed->m_edit.duration);
+    m_eventLane->setTrack(track(), m_ed->m_edit.duration);
     if (track().isPoint())
         m_pointPreview->setTrack(track(), m_ed->m_edit.duration, {m_ed->rangeOf(track().axes[0]), m_ed->rangeOf(track().axes[1])});
     applyView();
@@ -1557,6 +1752,7 @@ void TrackRow::applyView()
     m_ed->viewOfLane(m_i, m_lane->fullLo(), m_lane->fullHi(), &vlo, &vhi);
     m_lane->setView(m_ed->m_t0, m_ed->m_t1, vlo, vhi);
     m_colorLane->setView(m_ed->m_t0, m_ed->m_t1);
+    m_eventLane->setView(m_ed->m_t0, m_ed->m_t1);
 }
 
 void TrackRow::changed(bool lane, const QString &mergeKey)

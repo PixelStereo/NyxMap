@@ -103,6 +103,43 @@ private:
     std::function<std::array<double, 3>()> m_current;
 };
 
+// One event track: a flag at each key's time, where its action fires. A click adds a flag, a flag is dragged in time;
+// double-click or Delete removes it, right-click: its time, delete.
+class EventLane : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit EventLane(QWidget *parent = nullptr);
+    void setTrack(const AnimTrack &track, double duration);
+    void setView(double t0, double t1);
+    void setPlayhead(double position, bool shown);
+signals:
+    void edited(const AnimTrack &track, int gesture);
+    void zoomTime(double factor, double anchor);
+    void panTime(double seconds);
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
+    void contextMenuEvent(QContextMenuEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
+    void wheelEvent(QWheelEvent *) override;
+private:
+    double xOf(double time) const;
+    double tOf(double x) const;
+    int keyAt(QPointF pos) const;
+    void addKey(double time);
+    void removeKey(int key);
+    AnimTrack m_track;
+    double m_duration = 4, m_t0 = 0, m_t1 = 4, m_playhead = 0;
+    bool m_shown = false, m_panning = false, m_add = false;
+    int m_selected = -1, m_drag = -1, m_gesture = 0;
+    QPointF m_press;
+    double m_pressTime = 0;
+};
+
 // The name of a wave, of a key's curve
 QString animWaveName(AnimWave w);
 QString animCurveName(int curve);
@@ -255,6 +292,7 @@ private:
     void updateStartMode();
     class CurveLane *m_lane = nullptr;
     ColorLane *m_colorLane = nullptr;
+    EventLane *m_eventLane = nullptr;
 };
 
 class AnimEditor : public QWidget

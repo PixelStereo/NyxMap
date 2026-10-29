@@ -509,6 +509,7 @@ public:
     std::vector<AnimParam> animatableParams(quint64 layer) const;
     std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
     std::vector<AnimParam> animatablePoints(quint64 layer) const; // grouped XY targets, components remain addressable
+    std::vector<AnimParam> triggerParams(quint64 layer) const; // the actions an event track can fire (Source › Rewind…)
     bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
     struct AnimationTargetState {
         quint64 layer = 0;
@@ -1076,6 +1077,8 @@ private:
     std::vector<Animation> m_animations;
     quint64 m_nextAnimationId = 1;
     void applyAnimation(Animation &a); // sets its values where it is (lock held)
+    // Fires the event keys its clock crosses in (from, to] — and those at `from` too when `fromIncluded` (lock held)
+    void fireAnimationEvents(const Animation &a, double from, double to, bool fromIncluded);
     // owner: the layer of one of its own animations (its values are set on it even when it is locked)
     void controlLocked(Animation *a, AnimAction action, double time, AnimLoop loop, int repeat, Layer *owner = nullptr);
     void applyLayerAnim(Layer &l, Animation &a); // sets its value where it is (lock held)

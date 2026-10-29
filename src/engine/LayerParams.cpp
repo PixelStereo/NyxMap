@@ -280,6 +280,12 @@ const std::vector<Parameter *> &Layer::parameters()
                       self->ended = false;
                       startMedia(*self);
                   });
+        // Back to the beginning (its out point backwards), played or paused as it was: an action (an event of a
+        // timeline, OSC), not a value — a media played to its end in one shot starts again if it was playing
+        add("rewind", "Source › Rewind", T::Trigger).bind(nullptr, [self](const QVariant &) {
+            self->ended = false;
+            startMedia(*self);
+        });
     }
 
     // A Timecode generator's transport (its free run): played, paused, sought, its in / out points and play mode.

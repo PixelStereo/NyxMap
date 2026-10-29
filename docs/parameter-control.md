@@ -71,7 +71,7 @@ and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-syste
 | Snapshot | Recalls scene state, including sources, FX, values, local animation states and interaction settings, subject to inclusion choices. |
 | Preset | Recalls selected values and any stored categories, geometry or local drivers; it does not replace the whole scene. |
 | Layer animation | Drives a layer parameter or RGB color with keys or a waveform. |
-| Timeline | Drives one or more targets using a shared transport. |
+| Timeline | Drives one or more targets using a shared transport. An event track fires an action (Source › Rewind, Timecode › Rewind, a shader's event…) at each of its flags as the playhead reaches them; seeking does not fire them. |
 | Interaction | Maps input through ranges, optional filtering, a curve and master level, then applies its takeover mode. |
 
 ## Current rules
