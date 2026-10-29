@@ -179,6 +179,7 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
         if (!level && !run.xyY.level()) continue;
         const double x = level.value_or(0);
         out->push_back({id, x, run.proc.output().value_or(x), run.proc.curveInput().value_or(x)});
+        if (run.actionMet) out->back().met = *run.actionMet ? 1 : 0;
         if (const auto y = run.xyY.level()) {
             auto &sample = out->back();
             sample.hasY = true;
@@ -400,7 +401,42 @@ void Engine::stepInteractions(double dt)
         return value;
     };
     for (const Interaction &it : m_interactions) {
-        if (!it.enabled || it.param.isEmpty()) continue;
+        if (it.enabled && it.isAction() && it.xyInputs.empty()) {
+            InteractionRun &run = m_interactionRun[it.id];
+            // Each value the source gives, in order (a key pressed then let go in one frame: both), in its own units
+            std::vector<double> values;
+            if (it.source == InteractionSource::Audio) {
+                const AudioAnalysis::Values &audio = audios[it.audioInput];
+                values.push_back(it.audioFeature == Interaction::AudioFeature::Band
+                                     ? bandValue(it.audioInput, float(it.audioLow), float(it.audioHigh))
+                                     : it.audioFeature == Interaction::AudioFeature::Level ? audio.level : audio.onset);
+            } else if (it.source == InteractionSource::Internal) {
+                if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
+                    const double x = src->asNumber();
+                    if (std::isfinite(x) && !(x == run.lastInternal)) {
+                        run.lastInternal = x;
+                        values.push_back(x);
+                    }
+                }
+            } else {
+                for (const InteractionEvent &e : events)
+                    if (it.matches(e)) values.push_back(e.value);
+            }
+            for (const double x : values) {
+                if (!std::isfinite(x)) continue;
+                run.proc.input(it, x); // shown (In)
+                const bool met = it.conditionsMet(x);
+                const bool first = !run.actionMet;
+                if (!first && *run.actionMet == met) continue; // only when the answer changes
+                run.actionMet = met;
+                if (first && !met) continue; // nothing was true before: nothing to undo
+                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse)
+                    setEventValue(c.layer, c.param, c.value, true);
+                journal(QStringLiteral("interaction"), QStringLiteral("%1 %2").arg(it.id).arg(met ? QStringLiteral("true") : QStringLiteral("false")));
+            }
+            continue;
+        }
+        if (!it.enabled || it.param.isEmpty() || it.isAction()) continue;
         InteractionRun &run = m_interactionRun[it.id];
         if (!it.xyInputs.empty()) {
             std::array<Parameter *, 2> params{};

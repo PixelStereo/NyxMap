@@ -11,6 +11,47 @@ static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "a
 static const char *const kFilters[] = {"average", "weighted_average", "pulse_detection", "attack_release", "damper"};
 static const char *const kMidi[] = {"cc", "note", "pitch_bend", "program"};
 
+static const char *const kOps[] = {"eq", "ne", "gt", "ge", "lt", "le", "in", "out"};
+
+QString conditionOpName(ConditionOp op)
+{
+    switch (op) {
+    case ConditionOp::Equal: return QStringLiteral("=");
+    case ConditionOp::NotEqual: return QStringLiteral("≠");
+    case ConditionOp::Greater: return QStringLiteral(">");
+    case ConditionOp::GreaterOrEqual: return QStringLiteral("≥");
+    case ConditionOp::Less: return QStringLiteral("<");
+    case ConditionOp::LessOrEqual: return QStringLiteral("≤");
+    case ConditionOp::InRange: return QStringLiteral("in range");
+    case ConditionOp::OutOfRange: return QStringLiteral("out of range");
+    }
+    return QString();
+}
+
+bool InteractionCondition::test(double x) const
+{
+    const bool same = std::abs(x - a) <= 1e-6 * std::max(1.0, std::abs(a));
+    const double lo = std::min(a, b), hi = std::max(a, b);
+    switch (op) {
+    case ConditionOp::Equal: return same;
+    case ConditionOp::NotEqual: return !same;
+    case ConditionOp::Greater: return x > a && !same;
+    case ConditionOp::GreaterOrEqual: return x >= a || same;
+    case ConditionOp::Less: return x < a && !same;
+    case ConditionOp::LessOrEqual: return x <= a || same;
+    case ConditionOp::InRange: return x >= lo && x <= hi;
+    case ConditionOp::OutOfRange: return x < lo || x > hi;
+    }
+    return false;
+}
+
+bool Interaction::conditionsMet(double x) const
+{
+    if (conditions.empty()) return true;
+    if (conditionsAll) return std::all_of(conditions.begin(), conditions.end(), [x](const auto &c) { return c.test(x); });
+    return std::any_of(conditions.begin(), conditions.end(), [x](const auto &c) { return c.test(x); });
+}
+
 QString interactionSourceName(InteractionSource s)
 {
     switch (s) {
@@ -118,7 +159,8 @@ QString Interaction::label() const
 }
 
 static const char *const kNotState[] = {"id", "name", "source", "key", "port", "channel", "message", "number", "address",
-                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param"};
+                                        "argument", "source_layer", "source_param", "audio_low", "audio_high", "audio_feature", "audio_input", "layer", "param",
+                                        "mode", "conditions", "conditions_all", "if_true", "if_false"}; // an Action's: its definition
 
 QJsonObject Interaction::stateJson() const
 {
@@ -219,6 +261,22 @@ QJsonObject Interaction::toJson() const
     }
     o["curve"] = keys;
     o["takeover"] = takeover == Takeover::PickUp ? "pickup" : "jump";
+    if (isAction()) {
+        o["mode"] = QStringLiteral("action");
+        QJsonArray conds;
+        for (const InteractionCondition &c : conditions)
+            conds.append(QJsonObject{{"op", kOps[std::clamp(int(c.op), 0, kConditionOpCount - 1)]}, {"a", c.a}, {"b", c.b}});
+        o["conditions"] = conds;
+        o["conditions_all"] = conditionsAll;
+        auto list = [](const std::vector<InteractionConsequence> &v) {
+            QJsonArray a;
+            for (const InteractionConsequence &c : v)
+                a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value}});
+            return a;
+        };
+        o["if_true"] = list(onTrue);
+        o["if_false"] = list(onFalse);
+    }
     return o;
 }
 
@@ -300,6 +358,32 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     std::sort(it.curve.keys.begin(), it.curve.keys.end(), [](const AnimKey &a, const AnimKey &b) { return a.t < b.t; });
     if (it.curve.keys.empty()) it.curve = straightCurve();
     it.takeover = o.value("takeover").toString() == QLatin1String("pickup") ? Takeover::PickUp : Takeover::Jump;
+    it.mode = o.value("mode").toString() == QLatin1String("action") ? InteractionMode::Action : InteractionMode::Mapping;
+    for (const QJsonValue &v : o.value("conditions").toArray()) {
+        const QJsonObject c = v.toObject();
+        InteractionCondition cond;
+        cond.op = ConditionOp(keyIndex(kOps, c.value("op").toString(), int(ConditionOp::GreaterOrEqual)));
+        const double a = c.value("a").toDouble(0.5), b = c.value("b").toDouble(1);
+        cond.a = std::isfinite(a) ? a : 0.5;
+        cond.b = std::isfinite(b) ? b : 1;
+        it.conditions.push_back(cond);
+    }
+    it.conditionsAll = o.value("conditions_all").toBool(true);
+    auto list = [](const QJsonValue &v) {
+        std::vector<InteractionConsequence> out;
+        for (const QJsonValue &x : v.toArray()) {
+            const QJsonObject c = x.toObject();
+            InteractionConsequence q;
+            q.layer = c.value("layer").toString().toULongLong();
+            q.param = c.value("param").toString();
+            const double value = c.value("value").toDouble(1);
+            q.value = std::isfinite(value) ? value : 1;
+            if (!q.param.isEmpty()) out.push_back(q);
+        }
+        return out;
+    };
+    it.onTrue = list(o.value("if_true"));
+    it.onFalse = list(o.value("if_false"));
     return it;
 }
 

@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QPointer>
 #include <QWidget>
+#include <functional>
 #include <optional>
 
 class Engine;
@@ -56,6 +57,9 @@ private:
     std::optional<InteractionSource> shownKind() const; // the sub-tab's (none: All)
     void rebuildList();
     void rebuildSettings();
+    // An Action's settings: its conditions, what it does if true, if false (rebuildSettings)
+    using EditFn = std::function<void(const QString &, const std::function<void(Interaction &)> &, const QString &)>;
+    void buildActionSettings(class QFormLayout *form, const Interaction &it, const EditFn &edit);
     void refreshLevels();
     void pollLearn();
     void applyLearned(const InteractionEvent &e);
@@ -85,6 +89,7 @@ private:
     QLabel *m_settingsTitle = nullptr;
     QPushButton *m_copy = nullptr, *m_paste = nullptr;
     QProgressBar *m_inMeter = nullptr, *m_outMeter = nullptr;
+    QLabel *m_actionState = nullptr; // an Action: whether its conditions hold now
     QPointer<class CurveLane> m_lane;
     bool m_revealCurve = false;
     class QScrollArea *m_scroll = nullptr;

@@ -509,11 +509,14 @@ public:
     std::vector<AnimParam> animatableParams(quint64 layer) const;
     std::vector<AnimParam> animatableColors(quint64 layer) const; // grouped RGB targets, path without /r,g,b
     std::vector<AnimParam> animatablePoints(quint64 layer) const; // grouped XY targets, components remain addressable
-    std::vector<AnimParam> triggerParams(quint64 layer) const;
+    std::vector<AnimParam> triggerParams(quint64 layer) const; // the actions an event track can fire (Source › Rewind…)
     // What an event track can also set at each flag: switches, choices, and the numbers a curve does not drive
     // (Seek To, In / Out, a clock's elapsed time…)
     std::vector<AnimParam> settableParams(quint64 layer) const;
-    static bool isEventTarget(const ParamInfo &p); // an action, or a value a flag of an event track sets // the actions an event track can fire (Source › Rewind…)
+    static bool isEventTarget(const ParamInfo &p); // an action, or a value a flag of an event track sets
+    // Sets a value as an event does (a timeline's flag, an interaction's Action): fires an action, a switch from 0 / 1,
+    // a choice from its index, a number; a locked layer is left alone; release: a fade running on it lets go (lock held)
+    bool setEventValue(quint64 layer, const QString &param, double v, bool release);
     bool animColorValue(quint64 layer, const QString &path, std::array<double, 3> *value) const;
     struct AnimationTargetState {
         quint64 layer = 0;
@@ -1141,6 +1144,7 @@ private:
         InteractionTargetState xyYTarget;
         std::optional<double> xyYLastOut;
         double xyYLastInternal = std::numeric_limits<double>::quiet_NaN();
+        std::optional<bool> actionMet; // an Action: whether its conditions held at the last value (none: no value yet)
     };
     std::map<quint64, InteractionRun> m_interactionRun; // render thread (m_mutex held)
     std::mutex m_interactionEventsMutex;

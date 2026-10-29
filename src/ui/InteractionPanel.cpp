@@ -447,7 +447,9 @@ void InteractionPanel::rebuildList()
     QTreeWidgetItem *current = nullptr;
     for (const Interaction &it : m_engine->interactions()) {
         if (kind && it.source != *kind) continue;
-        const QString src = describe(it), dst = targetLabel(it.layer, it.param);
+        const QString src = describe(it);
+        const QString dst = it.isAction() ? QStringLiteral("Action · %1 if true · %2 if false").arg(it.onTrue.size()).arg(it.onFalse.size())
+                                          : targetLabel(it.layer, it.param);
         if (!search.isEmpty() && !it.name.contains(search, Qt::CaseInsensitive) && !src.contains(search, Qt::CaseInsensitive) &&
             !dst.contains(search, Qt::CaseInsensitive))
             continue;
@@ -530,7 +532,9 @@ void InteractionPanel::refreshLevels()
     for (int i = 0; i < m_list->topLevelItemCount(); ++i) {
         QTreeWidgetItem *item = m_list->topLevelItem(i);
         const auto *value = sampled(item->data(0, Qt::UserRole).toULongLong());
-        const QString text = value ? QStringLiteral("%1 %").arg(std::lround(value->output * 100)) : QStringLiteral("—");
+        const QString text = !value ? QStringLiteral("—")
+                           : value->met >= 0 ? (value->met ? QStringLiteral("true") : QStringLiteral("false"))
+                                             : QStringLiteral("%1 %").arg(std::lround(value->output * 100));
         if (item->text(3) != text) {
             m_filling = true;
             item->setText(3, text);
@@ -542,6 +546,11 @@ void InteractionPanel::refreshLevels()
     if (m_lane) m_lane->setPlayhead(value ? (y ? value->yCurveInput : value->curveInput) : 0, value != nullptr);
     if (m_inMeter) m_inMeter->setValue(value ? int((y ? value->yInput : value->input) * 1000) : 0);
     if (m_outMeter) m_outMeter->setValue(value ? int((y ? value->yOutput : value->output) * 1000) : 0);
+    if (m_actionState) {
+        const QString state = !value || value->met < 0 ? QStringLiteral("— (no value yet)")
+                            : value->met ? QStringLiteral("TRUE") : QStringLiteral("FALSE");
+        if (m_actionState->text() != state) m_actionState->setText(state);
+    }
     if (m_copy) m_copy->setEnabled(m_shown != 0);
     if (m_paste) m_paste->setEnabled(QApplication::clipboard()->mimeData() && QApplication::clipboard()->mimeData()->hasFormat(kMime) &&
                                      !m_list->selectedItems().isEmpty());
@@ -754,6 +763,7 @@ void InteractionPanel::rebuildSettings()
     if (!cur || cur->id != m_shown || cur->xyInputs.empty()) m_xyAxis = 0;
     m_shown = cur ? cur->id : 0;
     m_inMeter = m_outMeter = nullptr;
+    m_actionState = nullptr;
     m_lane = nullptr;
     while (QLayoutItem *item = m_settingsLayout->takeAt(0)) {
         if (QWidget *w = item->widget()) { w->hide(); w->deleteLater(); }
@@ -810,6 +820,27 @@ void InteractionPanel::rebuildSettings()
     connect(name, &QLineEdit::editingFinished, this, [editRoot, name] {
         editRoot(QStringLiteral("Rename Interaction"), [name](Interaction &x) { x.name = name->text().trimmed(); });
     });
+
+    // Mapping: the source drives the target through the chain · Action: tests on the source's value, and what is done
+    // when they become true, false
+    if (root.xyInputs.empty()) {
+        auto *mode = new QComboBox;
+        mode->setObjectName(QStringLiteral("interactionMode"));
+        mode->addItems({QStringLiteral("Mapping"), QStringLiteral("Action")});
+        mode->setCurrentIndex(int(it.mode));
+        mode->setToolTip(QStringLiteral("Mapping: the source drives a value of the show through the chain below\n"
+                                        "Action: when the source's value meets its conditions, it does the actions "
+                                        "\"if true\"; when it no longer does, the actions \"if false\""));
+        form->addRow(QStringLiteral("Mode"), mode);
+        connect(mode, qOverload<int>(&QComboBox::activated), this, [this, editRoot](int m) {
+            editRoot(QStringLiteral("Change Interaction Mode"), [m](Interaction &x) {
+                x.mode = InteractionMode(m);
+                if (x.isAction() && x.conditions.empty()) x.conditions = {InteractionCondition{}};
+            });
+            rebuildSettings();
+            rebuildList();
+        });
+    }
 
     if (!root.xyInputs.empty()) {
         auto *axisBox = new QComboBox;
@@ -1036,6 +1067,12 @@ void InteractionPanel::rebuildSettings()
         }
         break;
     }
+    }
+
+    if (it.isAction() && root.xyInputs.empty()) {
+        buildActionSettings(form, it, editRoot);
+        m_settingsLayout->addStretch();
+        return;
     }
 
     // The target
@@ -1369,4 +1406,193 @@ void InteractionPanel::rebuildSettings()
         });
     }
     m_settingsLayout->addStretch();
+}
+
+// ---------------------------------------------------------------------------
+// Action mode: the conditions on the source's value, then what is done when they become true, and false
+// ---------------------------------------------------------------------------
+void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction &it, const EditFn &edit)
+{
+    m_inMeter = meter();
+    m_inMeter->setToolTip(QStringLiteral("The source, within its source range"));
+    form->addRow(QStringLiteral("Input"), m_inMeter);
+    m_actionState = new QLabel(QStringLiteral("— (no value yet)"));
+    m_actionState->setObjectName(QStringLiteral("actionState"));
+    m_actionState->setToolTip(QStringLiteral("Whether the conditions hold for the source's last value"));
+    form->addRow(QStringLiteral("Now"), m_actionState);
+
+    auto *all = new QComboBox;
+    all->setObjectName(QStringLiteral("actionMatch"));
+    all->addItems({QStringLiteral("All conditions are true (and)"), QStringLiteral("Any condition is true (or)")});
+    all->setCurrentIndex(it.conditionsAll ? 0 : 1);
+    form->addRow(QStringLiteral("True when"), all);
+    connect(all, qOverload<int>(&QComboBox::activated), this, [edit](int k) {
+        edit(QStringLiteral("Change Action Conditions"), [k](Interaction &x) { x.conditionsAll = k == 0; }, QString());
+    });
+
+    // Each condition: the source's value, an operator, one value (two for a range), removed by −
+    auto number = [](double v) {
+        auto *box = new QDoubleSpinBox;
+        box->setRange(-1e9, 1e9);
+        box->setDecimals(3);
+        box->setSingleStep(0.1);
+        box->setValue(v);
+        box->setKeyboardTracking(false);
+        return box;
+    };
+    for (size_t i = 0; i < it.conditions.size(); ++i) {
+        const InteractionCondition c = it.conditions[i];
+        auto *row = new QWidget;
+        auto *h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        auto *op = new QComboBox;
+        op->setObjectName(QStringLiteral("conditionOp%1").arg(i));
+        for (int k = 0; k < kConditionOpCount; ++k) op->addItem(conditionOpName(ConditionOp(k)));
+        op->setCurrentIndex(int(c.op));
+        auto *a = number(c.a), *b = number(c.b);
+        a->setObjectName(QStringLiteral("conditionA%1").arg(i));
+        b->setObjectName(QStringLiteral("conditionB%1").arg(i));
+        const bool range = c.op == ConditionOp::InRange || c.op == ConditionOp::OutOfRange;
+        b->setVisible(range);
+        auto *remove = new QToolButton;
+        remove->setText(QStringLiteral("−"));
+        remove->setToolTip(QStringLiteral("Remove this condition"));
+        h->addWidget(op);
+        h->addWidget(a, 1);
+        h->addWidget(b, 1);
+        h->addWidget(remove);
+        form->addRow(i == 0 ? QStringLiteral("If value") : it.conditionsAll ? QStringLiteral("and") : QStringLiteral("or"), row);
+        connect(op, qOverload<int>(&QComboBox::activated), this, [this, edit, i](int k) {
+            edit(QStringLiteral("Change Action Condition"), [i, k](Interaction &x) {
+                if (i < x.conditions.size()) x.conditions[i].op = ConditionOp(k);
+            }, QString());
+            rebuildSettings();
+        });
+        connect(a, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, i](double v) {
+            edit(QStringLiteral("Change Action Condition"), [i, v](Interaction &x) {
+                if (i < x.conditions.size()) x.conditions[i].a = v;
+            }, QStringLiteral("condition%1/a").arg(i));
+        });
+        connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, i](double v) {
+            edit(QStringLiteral("Change Action Condition"), [i, v](Interaction &x) {
+                if (i < x.conditions.size()) x.conditions[i].b = v;
+            }, QStringLiteral("condition%1/b").arg(i));
+        });
+        connect(remove, &QToolButton::clicked, this, [this, edit, i] {
+            edit(QStringLiteral("Remove Action Condition"), [i](Interaction &x) {
+                if (i < x.conditions.size()) x.conditions.erase(x.conditions.begin() + long(i));
+            }, QString());
+            rebuildSettings();
+        });
+    }
+    auto *addCondition = new QPushButton(QStringLiteral("+ Condition"));
+    addCondition->setObjectName(QStringLiteral("addCondition"));
+    form->addRow(QString(), addCondition);
+    connect(addCondition, &QPushButton::clicked, this, [this, edit] {
+        edit(QStringLiteral("Add Action Condition"), [](Interaction &x) { x.conditions.push_back(InteractionCondition{}); }, QString());
+        rebuildSettings();
+    });
+    if (it.conditions.empty()) form->addRow(QString(), note(QStringLiteral("No condition: true at each value the source gives.")));
+
+    // What it does: each action a value of the show (a layer's, the composition's) and what it is set to
+    auto actions = [&](bool whenTrue) {
+        const std::vector<InteractionConsequence> &list = whenTrue ? it.onTrue : it.onFalse;
+        const QString title = whenTrue ? QStringLiteral("If true") : QStringLiteral("If false");
+        auto listOf = [whenTrue](Interaction &x) -> std::vector<InteractionConsequence> & { return whenTrue ? x.onTrue : x.onFalse; };
+        auto *header = new QLabel(QStringLiteral("<b>%1</b>").arg(title));
+        form->addRow(header);
+        for (size_t i = 0; i < list.size(); ++i) {
+            const InteractionConsequence c = list[i];
+            auto *row = new QWidget;
+            auto *h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            auto *target = new QToolButton;
+            target->setObjectName(QStringLiteral("%1Target%2").arg(whenTrue ? "true" : "false").arg(i));
+            target->setText(targetLabel(c.layer, c.param));
+            target->setPopupMode(QToolButton::InstantPopup);
+            target->setToolButtonStyle(Qt::ToolButtonTextOnly);
+            target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            target->setToolTip(QStringLiteral("The value of the show it sets: an action (fired), a switch, a choice, a number"));
+            auto *menu = new QMenu(target);
+            target->setMenu(menu);
+            connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i] {
+                menu->clear();
+                auto fill = [&](QMenu *into, quint64 layer) {
+                    std::vector<ParamInfo> params;
+                    for (const ParamInfo &p : m_engine->parameters(layer))
+                        if ((p.access & ParamInfo::Write) && p.type != ParamInfo::Type::Text) params.push_back(p);
+                    addParamMenu(into, params, [this, edit, listOf, i, layer](QMenu *m, const ParamInfo &p, const QString &text) {
+                        m->addAction(text, this, [this, edit, listOf, i, layer, p] {
+                            // What it is set to at first: on, the first choice, the number as it is now
+                            double v = 1;
+                            if (p.type == ParamInfo::Type::Choice) v = 0;
+                            else if (p.isNumber()) v = m_engine->parameterValue(layer, p.path).toDouble(p.defaultValue.toDouble());
+                            edit(QStringLiteral("Change Action Target"), [listOf, i, layer, p, v](Interaction &x) {
+                                auto &l = listOf(x);
+                                if (i < l.size()) l[i] = InteractionConsequence{layer, p.path, v};
+                            }, QString());
+                            rebuildSettings();
+                        });
+                    });
+                };
+                fill(menu->addMenu(QStringLiteral("Composition")), 0);
+                Engine::Lock lk(&m_engine->mutex());
+                for (int k = 0; k < m_engine->layerCount(); ++k)
+                    if (const Layer *l = m_engine->layer(k); l && !l->isGroup) fill(menu->addMenu(l->name), l->id);
+            });
+            h->addWidget(target, 2);
+            // What it is set to, by the kind of value
+            auto setValue = [edit, listOf, i](double v, const QString &merge) {
+                edit(QStringLiteral("Change Action Value"), [listOf, i, v](Interaction &x) {
+                    auto &l = listOf(x);
+                    if (i < l.size()) l[i].value = v;
+                }, merge);
+            };
+            ParamInfo info;
+            const bool known = !c.param.isEmpty() && m_engine->parameterInfo(c.layer, c.param, &info);
+            if (known && (info.type == ParamInfo::Type::Bool || info.type == ParamInfo::Type::Choice)) {
+                auto *value = new QComboBox;
+                value->setObjectName(QStringLiteral("%1Value%2").arg(whenTrue ? "true" : "false").arg(i));
+                if (info.type == ParamInfo::Type::Bool) value->addItems({QStringLiteral("Off"), QStringLiteral("On")});
+                else value->addItems(info.choices);
+                value->setCurrentIndex(std::clamp(int(std::lround(c.value)), 0, std::max(0, value->count() - 1)));
+                h->addWidget(value, 1);
+                connect(value, qOverload<int>(&QComboBox::activated), this, [setValue](int k) { setValue(k, QString()); });
+            } else if (known && info.isNumber()) {
+                auto *value = number(c.value);
+                value->setObjectName(QStringLiteral("%1Value%2").arg(whenTrue ? "true" : "false").arg(i));
+                value->setRange(info.lo, info.hi);
+                value->setValue(c.value);
+                h->addWidget(value, 1);
+                connect(value, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setValue, whenTrue, i](double v) {
+                    setValue(v, QStringLiteral("%1value%2").arg(whenTrue ? "true" : "false").arg(i));
+                });
+            } else if (known) {
+                h->addWidget(new QLabel(QStringLiteral("fires")));
+            }
+            auto *remove = new QToolButton;
+            remove->setText(QStringLiteral("−"));
+            remove->setToolTip(QStringLiteral("Remove this action"));
+            h->addWidget(remove);
+            form->addRow(QString(), row);
+            connect(remove, &QToolButton::clicked, this, [this, edit, listOf, i] {
+                edit(QStringLiteral("Remove Action"), [listOf, i](Interaction &x) {
+                    auto &l = listOf(x);
+                    if (i < l.size()) l.erase(l.begin() + long(i));
+                }, QString());
+                rebuildSettings();
+                rebuildList();
+            });
+        }
+        auto *add = new QPushButton(QStringLiteral("+ Action %1").arg(whenTrue ? QStringLiteral("if true") : QStringLiteral("if false")));
+        add->setObjectName(whenTrue ? QStringLiteral("addTrueAction") : QStringLiteral("addFalseAction"));
+        form->addRow(QString(), add);
+        connect(add, &QPushButton::clicked, this, [this, edit, listOf] {
+            edit(QStringLiteral("Add Action"), [listOf](Interaction &x) { listOf(x).push_back(InteractionConsequence{}); }, QString());
+            rebuildSettings();
+            rebuildList();
+        });
+    };
+    actions(true);
+    actions(false);
 }
