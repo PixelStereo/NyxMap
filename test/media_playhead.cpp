@@ -61,6 +61,8 @@ int runMediaPlayheadTests(Engine &e, const QString &root)
     check(e.setParameter(video, QStringLiteral("in"), 0.5) && e.setParameter(video, QStringLiteral("out"), 1.5), "set in and out");
     e.seekLayer(vi, 1.0);
     check(near(value("progress"), 0.5), "the progress runs from the in point to the out point");
+    check(e.parameterInfo(video, QStringLiteral("playhead"), &info) && near(info.min, 0.5) && near(info.max, 1.5),
+          "the playhead's range is the played one (an Internal interaction's source range starts from it)");
 
     // A layer's Position X follows the video's progress
     const int ti = e.addLayer(QStringLiteral("Follower"));

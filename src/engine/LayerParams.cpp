@@ -28,7 +28,9 @@ quint64 keyOf(const Layer &l)
     for (quint64 v : {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
                       quint64(l.isGroup), quint64(c.width()), quint64(c.height()), quint64(quintptr(l.generator.get())),
                       quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
-                      quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get()))})
+                      quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
+                      // the played range: the playhead's (an Internal interaction takes its range from it)
+                      quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000))})
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
@@ -300,8 +302,10 @@ const std::vector<Parameter *> &Layer::parameters()
             .bind(nullptr, [self](const QVariant &v) { reposition(*self, v.toDouble(), self->dir); });
         // Where it plays, read back for an Internal interaction to follow (never saved): in seconds of the media, and
         // from its in point (0) to its out point (1)
+        // (its range: the played one, from the in point to the out point)
+        const Timeline played = timeline();
         add("playhead", "Source › Playhead (s)", T::Float)
-            .range(0, d > 0 ? d : 1)
+            .range(d > 0 ? played.lo() : 0, d > 0 ? played.hi() : 1)
             .readOnly()
             .bind([self] { return QVariant(self->position()); }, nullptr);
         add("progress", "Source › Progress", T::Float)

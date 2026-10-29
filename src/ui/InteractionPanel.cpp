@@ -270,6 +270,9 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         if (!on) m_learnKind.reset(); // the next Learn: of any kind
     });
     connect(m_list, &QTreeWidget::itemSelectionChanged, this, [this] {
+        // The list made again (after each edit) empties then selects again: not a choice. Its settings stay, or a
+        // curve dragged would be replaced under the mouse (rebuildList shows another one's settings when it changed)
+        if (m_filling) return;
         m_remove->setEnabled(!m_list->selectedItems().isEmpty());
         if (selectedId() != m_shown) rebuildSettings();
     });
