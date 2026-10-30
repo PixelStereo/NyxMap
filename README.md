@@ -94,15 +94,15 @@ Every button, parameter and cue in NYXMAP has an address.
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.5](https://github.com/PixelStereo/NyxMap/releases/tag/v0.5)**.
+Latest published build: **[v0.5.1](https://github.com/PixelStereo/NyxMap/releases/tag/v0.5.1)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-macos-v0.5.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-windows-v0.5.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-linux-x86_64-v0.5.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-macos-v0.5.1.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-windows-v0.5.1.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-linux-x86_64-v0.5.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
 
-**[Download Open Stage Control remote](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
+**[Download Open Stage Control remote](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
 <!-- release-downloads:end -->
 
 Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/build.md) and the [known limitations](docs/README.md).
