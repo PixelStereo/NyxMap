@@ -62,7 +62,18 @@ int main(int argc, char **argv)
     }
     check(filters()[0].op == MathOp::OneMinus, "Math › 1 − x");
     check(!panel.findChild<QWidget *>("filter0a"), "1 − x has no value to set");
-    if (auto *up = panel.findChild<QToolButton *>("filterUp1")) up->click();
+    auto select = [&](int k) { // a click on a filter (its frame, not a field)
+        if (auto *block = panel.findChild<QWidget *>(QStringLiteral("filterBlock%1").arg(k))) {
+            const QPointF at(block->width() - 4, 4);
+            QMouseEvent press(QEvent::MouseButtonPress, at, block->mapToGlobal(at.toPoint()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(block, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, at, block->mapToGlobal(at.toPoint()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(block, &release);
+        }
+        settle();
+    };
+    select(1);
+    if (auto *up = panel.findChild<QToolButton *>("filterUp")) up->click();
     settle();
     check(filters()[0].kind == InteractionFilter::Clamp && filters()[1].kind == InteractionFilter::Math, "Clamp moved before Math");
     undo.undo();
@@ -71,12 +82,24 @@ int main(int argc, char **argv)
     if (auto *on = panel.findChild<QCheckBox *>("filterOn0")) on->setChecked(false);
     settle();
     check(!filters()[0].enabled, "a filter switched off");
-    if (auto *remove = panel.findChild<QToolButton *>("filterRemove1")) remove->click();
+    select(1);
+    if (auto *remove = panel.findChild<QToolButton *>("removeFilter")) remove->click();
     settle();
     check(filters().size() == 1 && filters()[0].kind == InteractionFilter::Math, "Clamp removed");
     undo.undo();
     settle();
     check(filters().size() == 2, "the removal undoes");
+    check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
+
+    // Any value: a filter's setting, the ranges (number fields, no slider and no bounds)
+    if (auto *clampMax = panel.findChild<QDoubleSpinBox *>("filter1b")) clampMax->setValue(250);
+    settle();
+    check(filters()[1].kind == InteractionFilter::Clamp && filters()[1].b == 250, "a setting beyond its usual range");
+    QDoubleSpinBox *targetMax = nullptr;
+    for (auto *box : panel.findChildren<QDoubleSpinBox *>())
+        if (box->isVisible() && std::abs(box->value() - 1.0) < 1e-9 && box->maximum() >= 1e5) targetMax = box; // the target range's Max
+    check(targetMax != nullptr, "the ranges are number fields without bounds");
+
 
     check(add("Curve") && filters().size() == 3 && panel.findChild<CurveLane *>("filterCurve2"), "a Curve, with its editor");
     // Drawn on: a key where it is clicked, then moved by a drag
@@ -115,8 +138,24 @@ int main(int argc, char **argv)
         auto *lane = panel.findChild<CurveLane *>("filterCurve0");
         check(lane != nullptr, "its curve shown");
         if (lane) {
+            // Where a press takes the key at 0.999 (1.005), at the top right (a press beside it would draw a key)
+            QPointF at(-1, -1);
+            for (int y = 2; y < 50 && at.x() < 0; y += 2)
+                for (int x = lane->width() - 2; x > lane->width() - 60 && at.x() < 0; x -= 2) {
+                    const size_t n = filters()[0].curve.keys.size();
+                    mouse(lane, QEvent::MouseButtonPress, QPointF(x, y), Qt::LeftButton);
+                    mouse(lane, QEvent::MouseButtonRelease, QPointF(x, y), Qt::NoButton);
+                    settle();
+                    lane = panel.findChild<CurveLane *>("filterCurve0");
+                    if (filters()[0].curve.keys.size() == n) at = QPointF(x, y);
+                    else {
+                        undo.undo();
+                        settle();
+                        lane = panel.findChild<CurveLane *>("filterCurve0");
+                    }
+                }
+            check(at.x() >= 0, "its key can be taken");
             const QPointer<CurveLane> held(lane);
-            const QPointF at(658, 14); // where a press takes the key at 0.999 (1.005), in a lane 690 wide
             mouse(lane, QEvent::MouseButtonPress, at, Qt::LeftButton);
             for (int k = 1; k <= 5; ++k) mouse(lane, QEvent::MouseMove, at + QPointF(-30 * k, 10 * k), Qt::LeftButton);
             check(held && held->isVisible(), "the curve dragged is not replaced while it is dragged");

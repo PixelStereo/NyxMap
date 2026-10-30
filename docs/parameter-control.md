@@ -115,7 +115,7 @@ An Internal interaction can follow a switch (0 / 1) and a choice (its index: 0 f
 
 ### Interaction filters
 
-A Mapping's **Filters** are a list, applied from the top, like a layer's effects: **+ Filter** adds one, each has its own on / off, ↑ ↓ move it, × removes it. The value enters the first one at 0..1 (after the source range and the toggle) and may leave 0..1 between them; after the last one it is brought back within 0..1, then scaled by the master level and placed in the target range.
+A Mapping's **Filters** are a list in a frame, applied from the top, like a layer's effects: **+** adds one (of the kind chosen), a click on a filter selects it, **−** removes the selected one and **▲ ▼** move it; each has its own on / off. Their settings, like the source and target ranges, are number fields with no bounds (press and slide sideways, or click to type any value). The value enters the first one at 0..1 (after the source range and the toggle) and may leave 0..1 between them; after the last one it is brought back within 0..1, then scaled by the master level and placed in the target range.
 
 | Filter | Settings | What it does |
 |---|---|---|
