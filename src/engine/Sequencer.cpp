@@ -140,6 +140,8 @@ void Sequencer::setSequence(int i, const Sequence &s)
         const auto &old = m_sequences[size_t(i)].steps;
         const int position = m_positions[size_t(i)];
         const quint64 played = position >= 0 && position < int(old.size()) ? old[size_t(position)].runtimeId : 0;
+        // The startup step follows its step when steps are inserted, removed or moved before it
+        const quint64 startup = i == m_startupSequence && m_startupStep < int(old.size()) ? old[size_t(m_startupStep)].runtimeId : 0;
         m_sequences[size_t(i)] = s;
         auto &steps = m_sequences[size_t(i)].steps;
         QSet<quint64> seen;
@@ -154,6 +156,7 @@ void Sequencer::setSequence(int i, const Sequence &s)
             return -1;
         };
         if (played) m_positions[size_t(i)] = indexOf(played);
+        if (startup) m_startupStep = std::max(0, indexOf(startup)); // its step deleted: the first
         if (m_positions[size_t(i)] >= int(s.steps.size())) m_positions[size_t(i)] = int(s.steps.size()) - 1;
         const quint64 owner = m_sequenceIds[size_t(i)];
         m_runs.erase(std::remove_if(m_runs.begin(), m_runs.end(), [&](const Run &r) {
@@ -198,8 +201,10 @@ void Sequencer::remove(int i)
         m_sequences.erase(m_sequences.begin() + i);
         m_positions.erase(m_positions.begin() + i);
         m_sequenceIds.erase(m_sequenceIds.begin() + i);
-        if (m_startupSequence == i) m_startupSequence = -1;
-        else if (m_startupSequence > i) --m_startupSequence;
+        if (m_startupSequence == i) {
+            m_startupSequence = -1;
+            m_startupStep = 0;
+        } else if (m_startupSequence > i) --m_startupSequence;
         if (m_current == i) {
             m_current = m_sequences.empty() ? -1 : std::min(i, int(m_sequences.size()) - 1);
         } else if (m_current > i) {

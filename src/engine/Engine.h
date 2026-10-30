@@ -1184,6 +1184,7 @@ private:
     const std::vector<std::unique_ptr<Parameter>> &showParams();
     static bool isShowParam(const QString &path);
     std::vector<std::unique_ptr<Parameter>> m_showParams;
+    QHash<QString, Parameter *> m_showParamIndex; // by path: an Internal interaction looks one up each frame
     quint64 m_showParamsKey = 0;
     void later(std::function<void()> f); // runs f on the engine's thread once the caller is done (any thread)
     struct InteractionFade {

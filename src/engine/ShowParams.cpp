@@ -32,6 +32,7 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
     if (key == m_showParamsKey && !m_showParams.empty()) return m_showParams;
     m_showParamsKey = key;
     m_showParams.clear();
+    m_showParamIndex.clear();
     using T = Parameter::Type;
     auto add = [this](const QString &path, const QString &label, T type) -> Parameter & {
         m_showParams.push_back(std::make_unique<Parameter>(path, label, type));
@@ -123,8 +124,9 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
         add(base + "pass", cat + "Pass", T::Int).range(0, 100).readOnly().bind(
             read([](const Animation &x) { return QVariant(x.state == AnimState::Stopped ? 0 : x.pass()); }, 0), nullptr);
         add(base + "position", cat + "Position", T::Float).range(0, 1).readOnly().bind(
-            read([](const Animation &x) { return QVariant(x.position() / std::max(1e-9, x.duration)); }, 0.0), nullptr);
+            read([](const Animation &x) { return QVariant(x.progress()); }, 0.0), nullptr);
     }
+    for (const auto &p : m_showParams) m_showParamIndex.insert(p->path(), p.get());
     return m_showParams;
 }
 

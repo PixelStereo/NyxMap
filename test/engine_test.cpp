@@ -2503,6 +2503,17 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.sequencer().setStartupGo(true);
             e.sequencer().playStartup();
             CHECK(e.sequencer().position() == 2);
+            {   // a step inserted before it: the startup step follows its step; that step deleted: the first
+                e.sequencer().setStartupStep(1);
+                Sequencer::Sequence edited = e.sequencer().sequence(1);
+                edited.steps.insert(edited.steps.begin(), Sequencer::Step{});
+                e.sequencer().setSequence(1, edited);
+                CHECK(e.sequencer().startupStep() == 2);
+                edited = e.sequencer().sequence(1);
+                edited.steps.erase(edited.steps.begin() + 2);
+                e.sequencer().setSequence(1, edited);
+                CHECK(e.sequencer().startupStep() == 0);
+            }
             e.sequencer().setStartupStep(0);
             CHECK(e.sequencer().add(copy, 0) == 0 && e.sequencer().startupSequence() == 2);
             e.sequencer().remove(0);
