@@ -892,8 +892,8 @@ void InteractionPanel::rebuildSettings()
     // The source
     // What the source gives and the target takes, as they usually go: a Remap added from + starts with them, the
     // In / Out meters show them
-    const auto [srcLo, srcHi] = sourceSpan(it);
-    const auto [tgtLo, tgtHi] = targetSpan(root, m_xyAxis);
+    const auto srcSpan = sourceSpan(it), tgtSpan = targetSpan(root, m_xyAxis);
+    const double srcLo = srcSpan.first, srcHi = srcSpan.second, tgtLo = tgtSpan.first, tgtHi = tgtSpan.second;
     m_inSpan = {srcLo, srcHi};
     m_outSpan = {tgtLo, tgtHi};
     switch (it.source) {
@@ -1224,7 +1224,7 @@ void InteractionPanel::rebuildSettings()
     const InteractionFilter onValue[] = {InteractionFilter::Remap, InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
                                          InteractionFilter::Steps, InteractionFilter::Threshold, InteractionFilter::Toggle};
     auto offer = [this, edit, addMenu, count, srcLo, srcHi, tgtLo, tgtHi](InteractionFilter kind) {
-        addMenu->addAction(interactionFilterName(kind), this, [=, this] {
+        addMenu->addAction(interactionFilterName(kind), this, [this, edit, kind, count, srcLo, srcHi, tgtLo, tgtHi] {
             m_revealCurve = kind == InteractionFilter::Curve;
             m_selectedFilter = count; // the new one
             // A Remap: from what the source gives to what the target takes, as they usually go

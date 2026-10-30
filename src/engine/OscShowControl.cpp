@@ -149,16 +149,16 @@ void OscNamespace::addShowControl()
         const QString base = "/timeline/by-id/" + idText(id);
         for (const auto &[word, action] : {std::pair{"play", AnimAction::Play}, {"pause", AnimAction::Pause},
                                          {"stop", AnimAction::Stop}, {"rewind", AnimAction::Rewind}})
-            add(base + '/' + word, "N", 2, word).set = [e, id, action](const QVariantList &args) {
+            add(base + '/' + word, "N", 2, word).set = [e, id, act = action](const QVariantList &args) {
                 if (!trigger(args) || e->indexOfAnimation(id) < 0) return false;
-                e->controlAnimation(id, action); return true;
+                e->controlAnimation(id, act); return true;
             };
         for (const auto &[word, action] : {std::pair{"seek", AnimAction::Seek}, {"speed", AnimAction::Speed}})
-            add(base + '/' + word, "f", 2, word).set = [e, id, action](const QVariantList &args) {
+            add(base + '/' + word, "f", 2, word).set = [e, id, act = action](const QVariantList &args) {
                 bool ok = false;
                 const double value = args.value(0).toDouble(&ok);
                 if (!ok || !std::isfinite(value) || e->indexOfAnimation(id) < 0) return false;
-                e->controlAnimation(id, action, value); return true;
+                e->controlAnimation(id, act, value); return true;
             };
     }
     auto &sq = e->sequencer();
