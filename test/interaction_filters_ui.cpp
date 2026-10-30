@@ -11,6 +11,9 @@
 #include <QMenu>
 #include <QPointer>
 #include <QMouseEvent>
+#include <QProgressBar>
+#include <QTreeWidget>
+#include <QLabel>
 #include <QToolButton>
 #include <QUndoStack>
 #include <cstdio>
@@ -91,17 +94,34 @@ int main(int argc, char **argv)
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
 
-    // Any value: a filter's setting, the ranges (number fields, no slider and no bounds)
+    // Any value: a filter's setting (a number field, no slider and no bounds)
     if (auto *clampMax = panel.findChild<QDoubleSpinBox *>("filter1b")) clampMax->setValue(250);
     settle();
     check(filters()[1].kind == InteractionFilter::Clamp && filters()[1].b == 250, "a setting beyond its usual range");
-    QDoubleSpinBox *targetMax = nullptr;
-    for (auto *box : panel.findChildren<QDoubleSpinBox *>())
-        if (box->isVisible() && std::abs(box->value() - 1.0) < 1e-9 && box->maximum() >= 1e5) targetMax = box; // the target range's Max
-    check(targetMax != nullptr, "the ranges are number fields without bounds");
+    bool ranges = false, toggle = false; // a range is a Remap, a toggle a Toggle: no fields of their own
+    for (auto *l : panel.findChildren<QLabel *>()) ranges = ranges || (l->isVisible() && (l->text() == "Source range" || l->text() == "Target range"));
+    for (auto *box : panel.findChildren<QCheckBox *>()) toggle = toggle || (box->isVisible() && box->text() == "Toggle");
+    check(!ranges && !toggle, "no ranges nor toggle of their own: filters");
 
 
     check(add("Curve") && filters().size() == 3 && panel.findChild<CurveLane *>("filterCurve2"), "a Curve, with its editor");
+    check(panel.findChild<QProgressBar *>("filterMeter0") && panel.findChild<QProgressBar *>("filterMeter2") &&
+              panel.findChild<QLabel *>("filterValue1"),
+          "each filter shows what comes out of it");
+    if (auto *list = panel.findChild<QTreeWidget *>()) check(list->columnCount() == 3, "no Value column in the list");
+    // A Remap from +: from what the source gives (OSC: 0..1) to what the target takes (the composition's opacity: 0..1)
+    check(add("Remap") && filters().size() == 4 && filters()[3].kind == InteractionFilter::Remap && filters()[3].a == 0 &&
+              filters()[3].b == 1 && filters()[3].c == 0 && filters()[3].d == 1,
+          "a Remap starts from the source's range to the target's");
+    check(panel.findChild<QDoubleSpinBox *>("filter3d") != nullptr, "its four ends as numbers");
+    {
+        auto list = filters();
+        list.pop_back();
+        Interaction g = engine.interactions().back();
+        g.filters = list;
+        engine.setInteraction(g);
+        settle();
+    }
     // Drawn on: a key where it is clicked, then moved by a drag
     auto mouse = [&](QWidget *w, QEvent::Type type, QPointF pos, Qt::MouseButtons buttons) {
         QMouseEvent ev(type, pos, w->mapToGlobal(pos.toPoint()), Qt::LeftButton, buttons, Qt::NoModifier);

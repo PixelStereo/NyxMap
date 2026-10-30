@@ -71,12 +71,9 @@ int runMediaPlayheadTests(Engine &e, const QString &root)
     Interaction link = Interaction::made(InteractionSource::Internal);
     link.sourceLayer = video;
     link.sourceParam = QStringLiteral("progress");
-    link.srcMin = 0;
-    link.srcMax = 1;
+    link.filters = {InteractionStage::remap(0, 1, 100, 300)};
     link.layer = follower;
     link.param = QStringLiteral("position/x");
-    link.dstMin = 100;
-    link.dstMax = 300;
     link.takeover = Takeover::Jump;
     e.addInteraction(link);
     e.renderFrame();

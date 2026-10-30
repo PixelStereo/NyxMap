@@ -1,6 +1,6 @@
-// An interaction's filters as a list (as a layer's effects): applied in their order, each on or off — the filters over
-// time, Curve, Math, Clamp, Steps, Threshold, Delay, Speed; what was saved before (one filter, a curve, an inverted
-// target range) read as such a list; each filter's settings reached as values (presets, snapshots, OSC).
+// An interaction's filters as a list (as a layer's effects): applied in their order, each on or off — Remap, the filters
+// over time, Curve, Math, Clamp, Steps, Threshold, Toggle, Delay, Speed; none: the value as it comes; each filter's
+// settings reached as values (presets, snapshots, OSC).
 // Standalone CTest area: nyxmap_tests --area interaction_filters.
 #include "EngineInternal.h"
 
@@ -44,13 +44,13 @@ int runInteractionFilterTests(Engine &e)
     check(near(math(MathOp::Round, 0.25, 0.4), 0.5) && near(math(MathOp::Floor, 0.25, 0.4), 0.25) &&
               near(math(MathOp::Ceil, 0.25, 0.3), 0.5), "floor, ceil, round to a step");
     check(near(math(MathOp::OneMinus, 0, 0.2), 0.8), "1 − x inverts");
-    check(near(math(MathOp::Multiply, 3, 0.5), 1.0), "brought back within 0..1 at the end");
+    check(near(math(MathOp::Multiply, 3, 0.5), 1.5), "as it comes out: no range of its own");
 
     // Order matters, and a value may leave 0..1 between filters
     check(near(through({stage(InteractionFilter::Math, 3, 0, MathOp::Multiply), stage(InteractionFilter::Math, 1.2, 0, MathOp::Subtract)}, 0.5), 0.3),
           "× 3 then − 1.2: 0.3 (1.5 kept between them)");
-    check(near(through({stage(InteractionFilter::Math, 1.2, 0, MathOp::Subtract), stage(InteractionFilter::Math, 3, 0, MathOp::Multiply)}, 0.5), 0.0),
-          "the other order: 0");
+    check(near(through({stage(InteractionFilter::Math, 1.2, 0, MathOp::Subtract), stage(InteractionFilter::Math, 3, 0, MathOp::Multiply)}, 0.5), -2.1),
+          "the other order: −2.1");
     InteractionStage off = stage(InteractionFilter::Math, 0, 0, MathOp::OneMinus);
     off.enabled = false;
     check(near(through({off}, 0.2), 0.2), "a filter off lets the value through");
@@ -105,47 +105,41 @@ int runInteractionFilterTests(Engine &e)
         check(y < 0.02, "still: no speed");
     }
 
-    // Saved before: one filter, a curve, an inverted target range — the same list, the same response
+    // Remap: a range to another (either way round), held at its ends; Toggle: on, off at each press
+    check(near(through({InteractionStage::remap(0, 16, 100, 300)}, 4), 150), "remap into the target's units");
+    check(near(through({InteractionStage::remap(0, 16, 100, 300)}, 20), 300) && near(through({InteractionStage::remap(0, 16, 100, 300)}, -3), 100),
+          "held at its ends");
+    check(near(through({InteractionStage::remap(0, 1, 1, 0)}, 0.25), 0.75), "Out the other way round inverts");
+    check(near(through({}, 42.5), 42.5), "no filter: the value as it comes");
     {
-        QJsonObject old = Interaction::made(InteractionSource::Osc).toJson();
-        old.remove("filters");
-        old["filter_on"] = true;
-        old["filter"] = "damper";
-        old["filter_settings"] = QJsonArray{0.3, 0.7};
-        old["curve_on"] = true;
-        old["curve"] = QJsonArray{QJsonObject{{"t", 0}, {"v", 0}, {"curve", 0}}, QJsonObject{{"t", 1}, {"v", 0.5}, {"curve", 0}}};
-        old["target_range"] = QJsonArray{1, 0};
-        const Interaction read = Interaction::fromJson(old);
-        check(read.filters.size() == 3 && read.filters[0].kind == InteractionFilter::Damper && near(read.filters[0].a, 0.3) &&
-                  near(read.filters[0].b, 0.7) && read.filters[1].kind == InteractionFilter::Curve &&
-                  read.filters[2].kind == InteractionFilter::Math && read.filters[2].op == MathOp::OneMinus,
-              "a filter, a curve, an inverted range: three filters");
-        check(near(read.dstMin, 0) && near(read.dstMax, 1), "the target range the right way up");
-        old["filter_on"] = false;
-        old["curve_on"] = false;
-        old["target_range"] = QJsonArray{0, 1};
-        check(Interaction::fromJson(old).filters.empty(), "none on: no filter");
-        const Interaction again = Interaction::fromJson(read.toJson());
-        check(again.filters == read.filters && near(again.dstMin, 0) && near(again.dstMax, 1), "written and read back as a list");
-        // Pasted settings copied before (their filter, their curve) replace the filters
-        Interaction target = Interaction::made(InteractionSource::Osc);
-        target.filters = {stage(InteractionFilter::Clamp)};
-        const Interaction pasted = Interaction::fromJson(Interaction::merged(target.toJson(), QJsonObject{{"filter_on", true}, {"filter", "average"}}));
-        check(pasted.filters.size() == 1 && pasted.filters[0].kind == InteractionFilter::Average, "settings of before pasted");
+        // What comes out of each filter (the meters): in the order of the chain, an off one passing it on
+        Interaction it = Interaction::made(InteractionSource::Osc);
+        InteractionStage off = stage(InteractionFilter::Math, 100, 0, MathOp::Add);
+        off.enabled = false;
+        it.filters = {InteractionStage::remap(0, 16, 0, 1), stage(InteractionFilter::Math, 10, 0, MathOp::Multiply), off};
+        InteractionProcessor p;
+        p.input(it, 4);
+        p.step(it, 1.0 / 60);
+        const auto &outs = p.stageOutputs();
+        check(outs.size() == 3 && near(outs[0], 0.25) && near(outs[1], 2.5) && near(outs[2], 2.5), "each filter's output");
     }
-    // A snapshot of before: its filter values made a list
     {
-        const QJsonObject upgraded = Engine::upgradedInteractionValues(
-            QJsonObject{{"master", 1}, {"filter/enable", true}, {"filter/type", "attack_release"}, {"filter/a", 0.1}, {"curve/enable", false},
-                        {"xy/y/filter/enable", false}});
-        const QJsonArray list = QJsonDocument::fromJson(upgraded.value("filters").toString().toUtf8()).array();
-        check(!upgraded.contains("filter/enable") && !upgraded.contains("filter/a") && upgraded.contains("master"), "its keys replaced");
-        check(list.size() == 1 && list[0].toObject().value("type").toString() == "attack_release" &&
-                  near(list[0].toObject().value("a").toDouble(), 0.1) &&
-                  near(list[0].toObject().value("b").toDouble(), interactionFilterSetting(InteractionFilter::AttackRelease, 1).def),
-              "the filter it held, its missing setting at its default");
-        check(upgraded.contains("xy/y/filters") && QJsonDocument::fromJson(upgraded.value("xy/y/filters").toString().toUtf8()).array().isEmpty(),
-              "its Y chain too");
+        Interaction it = Interaction::made(InteractionSource::Keyboard);
+        it.filters = {stage(InteractionFilter::Toggle, 0.5)};
+        InteractionProcessor p;
+        std::vector<double> outs;
+        for (double x : {0.0, 1.0, 0.0, 1.0, 0.0}) {
+            p.input(it, x);
+            outs.push_back(*p.step(it, 1.0 / 60));
+        }
+        check(outs == std::vector<double>({0, 1, 1, 0, 0}), "toggle: each press the other state");
+        const Interaction again = Interaction::fromJson(it.toJson());
+        check(again.filters == it.filters, "written and read back");
+        Interaction r = it;
+        r.filters = {InteractionStage::remap(-2, 5, 10, 20)};
+        const Interaction back = Interaction::fromJson(r.toJson());
+        check(back.filters.size() == 1 && near(back.filters[0].a, -2) && near(back.filters[0].b, 5) && near(back.filters[0].c, 10) &&
+                  near(back.filters[0].d, 20), "a Remap's four ends written and read back");
     }
 
     // In the engine: each filter's settings are values (fade, preset, OSC), the list one value set at once

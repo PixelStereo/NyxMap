@@ -2,28 +2,27 @@
 // Interactions: a value of the show driven from outside (a key, a MIDI controller, an OSC message) or by another value
 // of the show (Internal), without a protocol in between.
 //
-// An interaction takes its source's value through a chain, in this order:
-//  1. the source range: the part of the source's values used, made 0..1 (beyond it: held at its ends);
-//  2. toggle: each time it goes up past the middle, the result flips between 0 and 1 (a key, a pad: on, then off);
-//  3. its filters, one after the other in their order, each on or off (as a layer's effects):
+// An interaction takes its source's value, as the source gives it (a key 1 / 0, MIDI 0..1, OSC as sent, Internal in
+// the value's own units), through its filters, one after the other in their order, each on or off (as a layer's
+// effects) — none: the value as it comes:
+//     ranges — Remap (a range of values to another: In Min..Max to Out Min..Max, held within Out at its ends);
 //     over time — Average (of the last moments), Weighted Average (smoothed), Pulse Detection (a pulse on each sudden
 //     rise, decaying), Attack Release (rises and falls at speeds of their own), Damper (a spring that follows,
 //     overshooting more or less), Delay (the value of a moment ago), Speed (how fast it moves);
 //     on the value — Curve (0..1 to 0..1, drawn as an animation's keys), Math (+, −, ×, ÷, modulo, power, min, max,
-//     absolute, floor / ceil / round to a step, 1 − x), Clamp (kept within two values), Steps (a few levels only),
-//     Threshold (0 or 1, with a margin against flicker);
-//     between them a value may leave 0..1 (Math); it is brought back within 0..1 after the last one;
-//  4. the master level (scales the whole);
-//  5. the target range: where in the target's own values 0..1 lands.
-// A number receives it; a switch is on above the middle; a choice takes the one at that place in its list; an action
-// (trigger) fires each time it goes up past the middle.
+//     absolute, floor / ceil / round to a step, 1 − x), Clamp (kept within two values), Steps (a few levels in 0..1),
+//     Threshold (0 or 1, with a margin against flicker), Toggle (flips between 0 and 1 each time it goes up past its
+//     threshold: a key, a pad: on, then off);
+// then the master level scales the result, which the target receives as it is, in its own units: a number that
+// value; a switch is on from 0.5; a choice takes the one of that index in its list; an action (trigger) fires each
+// time it goes up past 0.5.
 //
 // Pick-up (faders, knobs): once the target was moved by something else (a snapshot, the interface), the interaction
 // leaves it alone until its own value meets the target's (it is not made to jump). Jump: it sets it at once.
 //
-// A whole color (an OSC 'r', or 3 / 4 numbers) driving a color: each channel goes through the same chain — source
-// range, filter, curve, master (not the alpha's), target range — with a filter state of its own; toggle does not
-// apply. Pick-up waits for every channel to have met the target's (each within the tolerance, or crossed it) before
+// A whole color (an OSC 'r', or 3 / 4 numbers) driving a color: each channel goes through the same chain — its
+// filters, the master (not the alpha's) — with a filter state of its own, the result kept within 0..1; a Toggle does
+// not apply. Pick-up waits for every channel to have met the target's (each within the tolerance, or crossed it) before
 // it takes the color over. Alpha only with Map alpha and a fourth channel. A single number driving a color: a gray.
 //
 // Action mode (instead of that chain, the Mapping mode): each value the source gives (in its own units: a key 1 / 0,
@@ -50,9 +49,10 @@ enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio };
 inline constexpr int kInteractionSourceCount = 5;
 enum class InteractionFilter {
     Average = 0, WeightedAverage, PulseDetection, AttackRelease, Damper, // over time (as before: saved by these keys)
-    Curve, Math, Clamp, Steps, Threshold, Delay, Speed
+    Curve, Math, Clamp, Steps, Threshold, Delay, Speed, Remap, Toggle
 };
-inline constexpr int kInteractionFilterCount = 12;
+inline constexpr int kInteractionFilterCount = 14;
+inline constexpr int kFilterSettingCount = 4; // a, b, c, d (Remap: In Min, In Max, Out Min, Out Max)
 // A Math filter's operation on the value x, with its value a
 enum class MathOp { Add = 0, Subtract, Multiply, Divide, Modulo, Power, Min, Max, Abs, Floor, Ceil, Round, OneMinus };
 inline constexpr int kMathOpCount = 13;
@@ -92,7 +92,7 @@ struct FilterSetting {
     QString name, suffix;
     double min = 0, max = 1, def = 0;
 };
-FilterSetting interactionFilterSetting(InteractionFilter f, int which); // which: 0 (A) or 1 (B)
+FilterSetting interactionFilterSetting(InteractionFilter f, int which); // which: 0..3 (a, b, c, d)
 QString interactionFilterKey(InteractionFilter f); // as saved: "average", "math"…
 InteractionFilter interactionFilterFromKey(const QString &k, bool *ok = nullptr);
 
@@ -100,10 +100,13 @@ InteractionFilter interactionFilterFromKey(const QString &k, bool *ok = nullptr)
 struct InteractionStage {
     InteractionFilter kind = InteractionFilter::Average;
     bool enabled = true;
-    double a = 0, b = 0;          // its settings (interactionFilterSetting)
+    double a = 0, b = 0, c = 0, d = 0; // its settings (interactionFilterSetting)
+    double &setting(int which) { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
+    double setting(int which) const { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
     MathOp op = MathOp::Multiply; // Math
     AnimTrack curve;              // Curve: keys over 0..1 (time) to 0..1 (value)
     static InteractionStage made(InteractionFilter kind); // with its defaults (a Curve: straight)
+    static InteractionStage remap(double inMin, double inMax, double outMin, double outMax);
     QJsonObject toJson() const;
     static InteractionStage fromJson(const QJsonObject &o);
     bool operator==(const InteractionStage &o) const;
@@ -175,11 +178,8 @@ struct Interaction {
     bool isAction() const { return mode == InteractionMode::Action; }
     bool conditionsMet(double x) const; // none: true (and then each value does the "if true" actions)
 
-    // The chain
+    // The chain: its filters in their order, then the master level
     double master = 1;    // 0..1
-    bool toggle = false;
-    double srcMin = 0, srcMax = 1;
-    double dstMin = 0, dstMax = 1;
     std::vector<InteractionStage> filters; // in their order
     bool movesOverTime() const; // a filter on that moves by itself between values (Average, Damper, Delay…)
     Takeover takeover = Takeover::Jump;
@@ -191,12 +191,9 @@ struct Interaction {
     void applyState(const QJsonObject &state);
     QJsonObject toJson() const;
     static Interaction fromJson(const QJsonObject &o);
-    // The filters as saved ("filters"), or made from the keys of before (one filter, then a curve; a target range
-    // upside down: a filter 1 − x at the end)
-    static std::vector<InteractionStage> filtersFromJson(const QJsonObject &o, bool *inverted = nullptr);
+    static std::vector<InteractionStage> filtersFromJson(const QJsonObject &o); // its "filters"
     static QJsonArray filtersToJson(const std::vector<InteractionStage> &filters);
-    // `base` with `over`'s keys: when `over` holds the filters as they were saved before, they replace `base`'s
-    static QJsonObject merged(QJsonObject base, const QJsonObject &over);
+    static QJsonObject merged(QJsonObject base, const QJsonObject &over); // `base` with `over`'s keys
     static AnimTrack straightCurve(); // 0 → 0, 1 → 1
     // A new one, set for its kind of source (MIDI and OSC: pick-up; a source range that suits it)
     static Interaction made(InteractionSource s);
@@ -209,20 +206,22 @@ struct InteractionTelemetry {
     double yInput = 0, yOutput = 0, yCurveInput = 0;
     bool hasY = false;
     int met = -1; // an Action: its conditions held (1) or not (0) at the last value; -1: none yet, or a Mapping
+    std::vector<double> stages, yStages; // the value after each filter (X's, Y's), in their order
 };
 
 // The chain of one interaction, from its source's values to the value of its target. Pure: no engine, no clock.
 class InteractionProcessor
 {
 public:
-    // A value from the source (in the source's units). Returns its place 0..1 after the range and the toggle.
+    // A value from the source (in the source's units)
     void input(const Interaction &it, double raw);
-    // One frame of `dt` seconds: the filter moves on. The result 0..1 after the filter, the curve and the master
-    // (none: nothing came in yet)
+    // One frame of `dt` seconds: the filters move on. The result after the filters and the master, for the target as it
+    // is (none: nothing came in yet)
     std::optional<double> step(const Interaction &it, double dt);
-    std::optional<double> level() const { return m_level; } // after range and toggle (shown)
+    std::optional<double> level() const { return m_level; } // the source's last value (shown)
     std::optional<double> output() const { return m_out; }  // the last result of step
     std::optional<double> curveInput() const { return m_curveIn; } // what entered the first curve on
+    const std::vector<double> &stageOutputs() const { return m_stageOut; } // the value after each filter (shown)
     void reset() { *this = InteractionProcessor(); }
 
 private:
@@ -233,11 +232,11 @@ private:
         double y = 0, v = 0, slow = 0, prev = 0;     // its value, its speed (Damper), its slow average (Pulse), the last input
         std::deque<std::pair<double, double>> window; // Average, Delay: (time, value)
     };
-    std::optional<double> m_level;   // after range and toggle
-    bool m_toggled = false, m_above = false;
+    std::optional<double> m_level;   // the source's last value
     bool m_fresh = false;            // a value came in since the last step
     double m_time = 0;
     std::vector<StageState> m_stages;
+    std::vector<double> m_stageOut;
     std::optional<double> m_out, m_curveIn;
 };
 
@@ -246,7 +245,7 @@ struct InteractionColorTargetState {
     bool caught = false;
     std::array<bool, 4> met{{false, false, false, false}};
     std::optional<std::array<double, 4>> written, prevOut;
-    // `v`: the interaction's color (0..1 per channel, after the target range); `current`: the target's now;
+    // `v`: the interaction's color (0..1 per channel); `current`: the target's now;
     // `channels`: 3 or 4. The values to write, if any (none: held by pick-up, or already there)
     std::optional<std::array<double, 4>> toWrite(const Interaction &it, const std::array<double, 4> &v,
                                                   const std::array<double, 4> &current, int channels, double tolerance);
@@ -257,6 +256,6 @@ struct InteractionTargetState {
     bool caught = false;
     std::optional<double> written, prevOut;
     bool above = false; // trigger: the last output was above the middle
-    // A result (0..1) and the target's value now: the value to write, if any (number targets)
+    // A result (the target's value to be) and the target's value now: the value to write, if any (number targets)
     std::optional<double> numberToWrite(const Interaction &it, double out, double current, double tolerance);
 };

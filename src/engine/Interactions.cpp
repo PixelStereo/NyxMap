@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 static const char *const kSources[] = {"keyboard", "midi", "osc", "internal", "audio"};
 static const char *const kFilters[] = {"average", "weighted_average", "pulse_detection", "attack_release", "damper",
-                                       "curve", "math", "clamp", "steps", "threshold", "delay", "speed"};
+                                       "curve", "math", "clamp", "steps", "threshold", "delay", "speed", "remap", "toggle"};
 static const char *const kMathOps[] = {"add", "subtract", "multiply", "divide", "modulo", "power", "min", "max",
                                        "abs", "floor", "ceil", "round", "one_minus"};
 
@@ -97,6 +97,8 @@ QString interactionFilterName(InteractionFilter f)
     case InteractionFilter::Threshold: return QStringLiteral("Threshold");
     case InteractionFilter::Delay: return QStringLiteral("Delay");
     case InteractionFilter::Speed: return QStringLiteral("Speed");
+    case InteractionFilter::Remap: return QStringLiteral("Remap");
+    case InteractionFilter::Toggle: return QStringLiteral("Toggle");
     }
     return QString();
 }
@@ -173,24 +175,25 @@ QString midiMessageName(MidiMessageKind k)
 FilterSetting interactionFilterSetting(InteractionFilter f, int which)
 {
     const QString s = QStringLiteral(" s");
+    auto two = [which](FilterSetting a, FilterSetting b = FilterSetting{}) { return which == 0 ? a : which == 1 ? b : FilterSetting{}; };
     switch (f) {
-    case InteractionFilter::Average: return which == 0 ? FilterSetting{"Window", s, 0.01, 5, 0.2} : FilterSetting{};
-    case InteractionFilter::WeightedAverage: return which == 0 ? FilterSetting{"Smoothing", s, 0.01, 5, 0.2} : FilterSetting{};
-    case InteractionFilter::PulseDetection:
-        return which == 0 ? FilterSetting{"Threshold", "", 0.01, 1, 0.2} : FilterSetting{"Decay", s, 0.01, 5, 0.3};
-    case InteractionFilter::AttackRelease:
-        return which == 0 ? FilterSetting{"Attack", s, 0.001, 5, 0.05} : FilterSetting{"Release", s, 0.001, 5, 0.5};
-    case InteractionFilter::Damper:
-        return which == 0 ? FilterSetting{"Response", s, 0.02, 5, 0.4} : FilterSetting{"Damping", "", 0.05, 2, 0.4};
+    case InteractionFilter::Average: return two({"Window", s, 0.01, 5, 0.2});
+    case InteractionFilter::WeightedAverage: return two({"Smoothing", s, 0.01, 5, 0.2});
+    case InteractionFilter::PulseDetection: return two({"Threshold", "", 0.01, 1, 0.2}, {"Decay", s, 0.01, 5, 0.3});
+    case InteractionFilter::AttackRelease: return two({"Attack", s, 0.001, 5, 0.05}, {"Release", s, 0.001, 5, 0.5});
+    case InteractionFilter::Damper: return two({"Response", s, 0.02, 5, 0.4}, {"Damping", "", 0.05, 2, 0.4});
     case InteractionFilter::Curve: return FilterSetting{};
-    case InteractionFilter::Math: return which == 0 ? FilterSetting{"Value", "", -100, 100, 1} : FilterSetting{};
-    case InteractionFilter::Clamp: return which == 0 ? FilterSetting{"Min", "", 0, 1, 0} : FilterSetting{"Max", "", 0, 1, 1};
-    case InteractionFilter::Steps: return which == 0 ? FilterSetting{"Steps", "", 2, 64, 4} : FilterSetting{};
-    case InteractionFilter::Threshold:
-        return which == 0 ? FilterSetting{"Threshold", "", 0, 1, 0.5} : FilterSetting{"Margin", "", 0, 0.5, 0.05};
-    case InteractionFilter::Delay: return which == 0 ? FilterSetting{"Delay", s, 0, 10, 0.5} : FilterSetting{};
-    case InteractionFilter::Speed:
-        return which == 0 ? FilterSetting{"Full scale", " /s", 0.01, 100, 1} : FilterSetting{"Smoothing", s, 0.001, 5, 0.1};
+    case InteractionFilter::Math: return two({"Value", "", -100, 100, 1});
+    case InteractionFilter::Clamp: return two({"Min", "", 0, 1, 0}, {"Max", "", 0, 1, 1});
+    case InteractionFilter::Steps: return two({"Steps", "", 2, 64, 4});
+    case InteractionFilter::Threshold: return two({"Threshold", "", 0, 1, 0.5}, {"Margin", "", 0, 0.5, 0.05});
+    case InteractionFilter::Delay: return two({"Delay", s, 0, 10, 0.5});
+    case InteractionFilter::Speed: return two({"Full scale", " /s", 0.01, 100, 1}, {"Smoothing", s, 0.001, 5, 0.1});
+    case InteractionFilter::Toggle: return two({"Threshold", "", 0, 1, 0.5});
+    case InteractionFilter::Remap: {
+        const FilterSetting r[] = {{"In Min", "", 0, 1, 0}, {"In Max", "", 0, 1, 1}, {"Out Min", "", 0, 1, 0}, {"Out Max", "", 0, 1, 1}};
+        return which >= 0 && which < 4 ? r[which] : FilterSetting{};
+    }
     }
     return FilterSetting{};
 }
@@ -282,15 +285,25 @@ InteractionStage InteractionStage::made(InteractionFilter kind)
 {
     InteractionStage s;
     s.kind = kind;
-    s.a = interactionFilterSetting(kind, 0).def;
-    s.b = interactionFilterSetting(kind, 1).def;
+    for (int w = 0; w < kFilterSettingCount; ++w) s.setting(w) = interactionFilterSetting(kind, w).def;
     if (kind == InteractionFilter::Curve) s.curve = Interaction::straightCurve();
+    return s;
+}
+
+InteractionStage InteractionStage::remap(double inMin, double inMax, double outMin, double outMax)
+{
+    InteractionStage s = made(InteractionFilter::Remap);
+    s.a = inMin;
+    s.b = inMax;
+    s.c = outMin;
+    s.d = outMax;
     return s;
 }
 
 bool InteractionStage::operator==(const InteractionStage &o) const
 {
-    if (kind != o.kind || enabled != o.enabled || a != o.a || b != o.b || op != o.op || curve.keys.size() != o.curve.keys.size())
+    if (kind != o.kind || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
+        curve.keys.size() != o.curve.keys.size())
         return false;
     for (size_t k = 0; k < curve.keys.size(); ++k) {
         const AnimKey &x = curve.keys[k], &y = o.curve.keys[k];
@@ -338,8 +351,8 @@ QJsonObject InteractionStage::toJson() const
 {
     QJsonObject o{{"type", interactionFilterKey(kind)}};
     if (!enabled) o["enabled"] = false;
-    if (!interactionFilterSetting(kind, 0).name.isEmpty()) o["a"] = a;
-    if (!interactionFilterSetting(kind, 1).name.isEmpty()) o["b"] = b;
+    for (int w = 0; w < kFilterSettingCount; ++w)
+        if (!interactionFilterSetting(kind, w).name.isEmpty()) o[QString(QChar('a' + w))] = setting(w);
     if (kind == InteractionFilter::Math) o["op"] = QString::fromLatin1(kMathOps[std::clamp(int(op), 0, kMathOpCount - 1)]);
     if (kind == InteractionFilter::Curve) o["curve"] = curveToJson(curve);
     return o;
@@ -349,9 +362,10 @@ InteractionStage InteractionStage::fromJson(const QJsonObject &o)
 {
     InteractionStage s = made(interactionFilterFromKey(o.value("type").toString()));
     s.enabled = o.value("enabled").toBool(true);
-    const double a = o.value("a").toDouble(s.a), b = o.value("b").toDouble(s.b);
-    s.a = std::isfinite(a) ? a : s.a;
-    s.b = std::isfinite(b) ? b : s.b;
+    for (int w = 0; w < kFilterSettingCount; ++w) {
+        const double v = o.value(QString(QChar('a' + w))).toDouble(s.setting(w));
+        if (std::isfinite(v)) s.setting(w) = v;
+    }
     s.op = MathOp(keyIndex(kMathOps, o.value("op").toString(), int(MathOp::Multiply)));
     if (s.kind == InteractionFilter::Curve) s.curve = curveFromJson(o.value("curve").toArray());
     return s;
@@ -364,46 +378,16 @@ QJsonArray Interaction::filtersToJson(const std::vector<InteractionStage> &filte
     return a;
 }
 
-std::vector<InteractionStage> Interaction::filtersFromJson(const QJsonObject &o, bool *inverted)
+std::vector<InteractionStage> Interaction::filtersFromJson(const QJsonObject &o)
 {
-    if (inverted) *inverted = false;
     std::vector<InteractionStage> out;
-    if (o.contains("filters")) {
-        for (const QJsonValue &v : o.value("filters").toArray())
-            if (v.isObject()) out.push_back(InteractionStage::fromJson(v.toObject()));
-        return out;
-    }
-    // Saved before: one filter (on or off), then a curve (on or off); a target range upside down (Invert)
-    if (o.value("filter_on").toBool(false)) {
-        InteractionStage s = InteractionStage::made(InteractionFilter(keyIndex(kFilters, o.value("filter").toString(), 0)));
-        if (int(s.kind) > int(InteractionFilter::Damper)) s = InteractionStage::made(InteractionFilter::Average);
-        const QJsonArray fs = o.value("filter_settings").toArray();
-        s.a = fs.at(0).toDouble(s.a);
-        s.b = fs.at(1).toDouble(s.b);
-        out.push_back(s);
-    }
-    if (o.value("curve_on").toBool(false)) {
-        InteractionStage s = InteractionStage::made(InteractionFilter::Curve);
-        s.curve = curveFromJson(o.value("curve").toArray());
-        out.push_back(s);
-    }
-    const QJsonArray tr = o.value("target_range").toArray();
-    if (tr.size() == 2 && tr.at(0).toDouble() > tr.at(1).toDouble()) {
-        InteractionStage s = InteractionStage::made(InteractionFilter::Math);
-        s.op = MathOp::OneMinus;
-        out.push_back(s);
-        if (inverted) *inverted = true;
-    }
+    for (const QJsonValue &v : o.value("filters").toArray())
+        if (v.isObject()) out.push_back(InteractionStage::fromJson(v.toObject()));
     return out;
 }
 
 QJsonObject Interaction::merged(QJsonObject base, const QJsonObject &over)
 {
-    // The filters as saved before ("filter_on", "curve_on"…, no "filters"): they are the ones, not base's
-    if (!over.contains("filters") && (over.contains("filter_on") || over.contains("curve_on") || over.contains("filter"))) {
-        base.remove("filters");
-        for (const char *k : {"filter_on", "filter", "filter_settings", "curve_on", "curve"}) base.remove(QLatin1String(k));
-    }
     for (auto it = over.begin(); it != over.end(); ++it) base[it.key()] = it.value();
     return base;
 }
@@ -474,9 +458,6 @@ QJsonObject Interaction::toJson() const
         o["xy_y"] = y.toJson();
     }
     o["master"] = master;
-    o["toggle"] = toggle;
-    o["source_range"] = QJsonArray{srcMin, srcMax};
-    o["target_range"] = QJsonArray{dstMin, dstMax};
     o["filters"] = filtersToJson(filters);
     o["takeover"] = takeover == Takeover::PickUp ? "pickup" : "jump";
     if (isAction()) {
@@ -542,15 +523,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
         it.xyInputs.push_back(fromJson(y));
     }
     it.master = std::clamp(o.value("master").toDouble(1), 0.0, 1.0);
-    it.toggle = o.value("toggle").toBool(false);
-    const QJsonArray sr = o.value("source_range").toArray(), tr = o.value("target_range").toArray();
-    it.srcMin = sr.at(0).toDouble(0);
-    it.srcMax = sr.at(1).toDouble(1);
-    it.dstMin = tr.at(0).toDouble(0);
-    it.dstMax = tr.at(1).toDouble(1);
-    bool inverted = false;
-    it.filters = filtersFromJson(o, &inverted);
-    if (inverted) std::swap(it.dstMin, it.dstMax); // its 1 − x filter does it now
+    it.filters = filtersFromJson(o);
     it.takeover = o.value("takeover").toString() == QLatin1String("pickup") ? Takeover::PickUp : Takeover::Jump;
     // An XY mapping drives its point: never an Action
     it.mode = o.value("mode").toString() == QLatin1String("action") && it.xyInputs.empty() ? InteractionMode::Action
@@ -588,17 +561,9 @@ Interaction Interaction::fromJson(const QJsonObject &o)
 // ---------------------------------------------------------------------------
 void InteractionProcessor::input(const Interaction &it, double raw)
 {
+    (void)it;
     if (!std::isfinite(raw)) return;
-    const double span = it.srcMax - it.srcMin;
-    double n = std::abs(span) < 1e-12 ? (raw >= it.srcMax ? 1.0 : 0.0) : (raw - it.srcMin) / span;
-    n = std::clamp(n, 0.0, 1.0);
-    if (it.toggle) {
-        const bool above = n > 0.5;
-        if (above && !m_above) m_toggled = !m_toggled; // up past the middle: flips
-        m_above = above;
-        n = m_toggled ? 1.0 : 0.0;
-    }
-    m_level = n;
+    m_level = raw;
     m_fresh = true;
 }
 
@@ -610,18 +575,23 @@ std::optional<double> InteractionProcessor::step(const Interaction &it, double d
     double y = *m_level;
     m_curveIn.reset();
     if (m_stages.size() != it.filters.size()) m_stages.resize(it.filters.size());
+    m_stageOut.resize(it.filters.size());
     auto toward = [dt](double from, double to, double tau) { return from + (to - from) * (1.0 - std::exp(-dt / tau)); };
     for (size_t i = 0; i < it.filters.size(); ++i) {
         const InteractionStage &f = it.filters[i];
         StageState &st = m_stages[i];
         if (st.kind != f.kind) st = StageState{f.kind}; // another kind of filter: from scratch
-        if (!f.enabled) continue;
+        if (!f.enabled) {
+            m_stageOut[i] = y; // through
+            continue;
+        }
         const double x = y;
         if (!st.started) { // starts where its input is (not from 0)
             st.y = f.kind == InteractionFilter::PulseDetection || f.kind == InteractionFilter::Speed ? 0.0 : x;
             st.slow = st.prev = x;
             st.v = 0;
-            st.high = x >= f.a;
+            st.high = f.kind != InteractionFilter::Toggle && x >= f.a; // a Toggle: off, its first press turns it on
+            if (f.kind == InteractionFilter::Toggle) st.v = 0;
             st.started = true;
         }
         const double a = std::max(1e-3, f.a), b = std::max(1e-3, f.b);
@@ -689,6 +659,21 @@ std::optional<double> InteractionProcessor::step(const Interaction &it, double d
             y = st.window.front().second;
             break;
         }
+        case InteractionFilter::Remap: {
+            // In Min..In Max to Out Min..Out Max, held within Out at its ends (either way round)
+            const double span = f.b - f.a;
+            const double n = std::abs(span) < 1e-12 ? (x >= f.b ? 1.0 : 0.0) : std::clamp((x - f.a) / span, 0.0, 1.0);
+            y = f.c + n * (f.d - f.c);
+            break;
+        }
+        case InteractionFilter::Toggle: {
+            // Each time it goes up past its threshold: the other state (0, 1, 0…)
+            const bool above = x > f.a;
+            if (above && !st.high) st.v = st.v > 0.5 ? 0.0 : 1.0;
+            st.high = above;
+            y = st.v;
+            break;
+        }
         case InteractionFilter::Speed: {
             // How fast it moves (either way), `a` per second being 1, smoothed over `b`
             const double rate = dt > 0 ? std::abs(x - st.prev) / dt : 0.0;
@@ -699,16 +684,17 @@ std::optional<double> InteractionProcessor::step(const Interaction &it, double d
         }
         }
         if (!std::isfinite(y)) y = x;
+        m_stageOut[i] = y;
     }
     m_fresh = false;
-    y = std::clamp(y, 0.0, 1.0) * std::clamp(it.master, 0.0, 1.0);
+    y *= std::clamp(it.master, 0.0, 1.0);
     m_out = y;
     return y;
 }
 
 std::optional<double> InteractionTargetState::numberToWrite(const Interaction &it, double out, double current, double tolerance)
 {
-    const double v = it.dstMin + out * (it.dstMax - it.dstMin);
+    const double v = out;
     if (it.takeover == Takeover::Jump) {
         caught = true;
     } else {

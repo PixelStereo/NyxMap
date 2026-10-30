@@ -95,6 +95,14 @@ private:
     QPointer<class CurveLane> m_lane;
     bool m_revealCurve = false;
     int m_selectedFilter = 0; // the filter − removes and ▲ ▼ move, in the one shown
+    std::pair<double, double> m_inSpan{0, 1}, m_outSpan{0, 1}; // the meters' ranges: the source's, the target's
+    // Each filter's meter (its output), its range (as the values go there) and its number
+    struct StageMeter { QProgressBar *bar; QLabel *number; std::pair<double, double> span; };
+    std::vector<StageMeter> m_stageMeters;
+    // How the source usually goes (Internal: its value's range; a key, MIDI, OSC, Audio: 0..1), and the target (its
+    // range; a switch, an action: 0..1; a choice: its indexes)
+    std::pair<double, double> sourceSpan(const Interaction &it) const;
+    std::pair<double, double> targetSpan(const Interaction &root, int axis) const;
     class QScrollArea *m_scroll = nullptr;
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;

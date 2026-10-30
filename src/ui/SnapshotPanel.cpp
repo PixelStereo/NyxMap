@@ -1702,17 +1702,6 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
             f.labels = labels;
             addField(it, f, params.value(key));
         };
-        // The ranges as the interaction's own values (its parameters say them)
-        auto rangeOf = [&](const QString &key, double *lo, double *hi) {
-            ParamInfo info;
-            if (m_engine->parameterInfo(0, QStringLiteral("interaction/%1/%2").arg(id).arg(key), &info)) {
-                *lo = std::min(info.min, params.value(key).toDouble());
-                *hi = std::max(info.max, params.value(key).toDouble());
-            } else {
-                *lo = std::min(0.0, params.value(key).toDouble());
-                *hi = std::max(1.0, params.value(key).toDouble());
-            }
-        };
         // What it is: shown as it reads (set at once by the recall, which makes it again when it was removed)
         auto info = [&](const QString &key, const QString &label, const QString &shown) {
             if (params.contains(key)) addField(it, field(MemField::Info, key, label), QJsonValue(shown));
@@ -1754,14 +1743,6 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
         info(QStringLiteral("target"), QStringLiteral("Target"), refText(params.value("target").toString()));
         flag(QStringLiteral("enable"), QStringLiteral("On"));
         number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 100, QStringLiteral(" %"));
-        flag(QStringLiteral("toggle"), QStringLiteral("Toggle"));
-        for (const char *key : {"source/min", "source/max", "target/min", "target/max"}) {
-            double lo = 0, hi = 1;
-            rangeOf(QString::fromLatin1(key), &lo, &hi);
-            const QString k = QString::fromLatin1(key);
-            number(k, (k.startsWith("source") ? QStringLiteral("Source ") : QStringLiteral("Target ")) +
-                          (k.endsWith("min") ? QStringLiteral("Min") : QStringLiteral("Max")), lo, hi, 1, QString());
-        }
         choice(QStringLiteral("takeover"), QStringLiteral("Takeover"), {QStringLiteral("pickup"), QStringLiteral("jump")},
                {QStringLiteral("Pick-up"), QStringLiteral("Jump")});
         // Its filters: what they are (all together), then each one's on / off and settings
@@ -1775,31 +1756,13 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
                 const QString base = QStringLiteral("filters/%1/").arg(k + 1);
                 const QString name = QStringLiteral("Filter %1 %2").arg(k + 1).arg(interactionFilterName(stages[k].kind));
                 flag(base + QStringLiteral("enable"), name);
-                for (int which = 0; which < 2; ++which) {
+                for (int which = 0; which < kFilterSettingCount; ++which) {
                     const FilterSetting set = interactionFilterSetting(stages[k].kind, which);
                     if (set.name.isEmpty()) continue;
-                    number(base + QChar(which ? 'b' : 'a'), name + QStringLiteral(" › ") + set.name, set.min, set.max, 1, set.suffix);
+                    number(base + QChar('a' + which), name + QStringLiteral(" › ") + set.name, set.min, set.max, 1, set.suffix);
                 }
             }
         }
-        // Held before the filters were a list (a snapshot of then): one filter and a curve
-        flag(QStringLiteral("filter/enable"), QStringLiteral("Filter"));
-        {
-            QStringList keys, labels;
-            for (int f = 0; f <= int(InteractionFilter::Damper); ++f) {
-                labels << interactionFilterName(InteractionFilter(f));
-                keys << labels.back().toLower().replace(QLatin1Char(' '), QLatin1Char('_'));
-            }
-            choice(QStringLiteral("filter/type"), QStringLiteral("Filter Type"), keys, labels);
-        }
-        for (const char *key : {"filter/a", "filter/b"}) {
-            double lo = 0, hi = 1;
-            rangeOf(QString::fromLatin1(key), &lo, &hi);
-            number(QString::fromLatin1(key), QString::fromLatin1(key) == QLatin1String("filter/a") ? QStringLiteral("Filter A")
-                                                                                              : QStringLiteral("Filter B"),
-                   lo, hi, 1, QString());
-        }
-        flag(QStringLiteral("curve/enable"), QStringLiteral("Curve"));
         it->setExpanded(m_expanded.contains(it->data(0, KeyRole).toString()));
     }
     top->setExpanded(!m_expanded.contains(QStringLiteral("!interactions"))); // shown unless folded

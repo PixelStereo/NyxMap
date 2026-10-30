@@ -5244,8 +5244,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(waitFor([&]{return e.audioOutput().spectrum().band(400,480)>.15f;}));
         CHECK(e.audioOutput().spectrum().band(6000,16000)<.01f);
         Interaction audioBand=Interaction::made(InteractionSource::Audio);
-        audioBand.audioLow=400;audioBand.audioHigh=480;audioBand.param="opacity";audioBand.filters.clear();
-        audioBand.dstMin=.2;audioBand.dstMax=.8;
+        audioBand.audioLow=400;audioBand.audioHigh=480;audioBand.param="opacity";
+        audioBand.filters={InteractionStage::remap(0,1,.2,.8)};
         CHECK(e.setParameter(0,"opacity",.05)); // outside either expected range: missing routing cannot pass
         const auto audioMapping=e.addInteraction(audioBand);
         Interaction duplicateBand=audioBand;duplicateBand.layer=e.layerId(e.addLayer("Band mapping target",e.layerCount()));
@@ -6200,9 +6200,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         live.audioInput = true;
         live.audioLow = 400;
         live.audioHigh = 480;
-        live.filters.clear();
-        live.dstMin = .2;
-        live.dstMax = .8;
+        live.filters = {InteractionStage::remap(0, 1, .2, .8)};
         live.layer = e.layerId(e.addLayer(QStringLiteral("Live input target")));
         live.param = QStringLiteral("opacity");
         CHECK(Interaction::fromJson(live.toJson()).audioInput && !Interaction::fromJson(Interaction().toJson()).audioInput);
@@ -6233,21 +6231,27 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.audioInput().spectrum().band(400, 480) < .01f && !e.audioInput().isRunning());
         e.newProject();
     }
-    // The chain of an interaction, on its own: range, toggle, filters, curve, master, pick-up
+    // The chain of an interaction, on its own: as it comes, a Remap, a Toggle, filters, curve, master, pick-up
     {
         auto near = [](double a, double b, double eps = 1e-6) { return std::abs(a - b) < eps; };
         Interaction it = Interaction::made(InteractionSource::Midi);
         CHECK(it.takeover == Takeover::PickUp && Interaction::made(InteractionSource::Keyboard).takeover == Takeover::Jump);
         InteractionProcessor pr;
         CHECK(!pr.step(it, 0.016));
-        it.srcMin = 0.2;
-        it.srcMax = 0.8;
+        pr.input(it, 7.5);
+        CHECK(near(*pr.step(it, 0.016), 7.5)); // no filter: the value as it comes (no range of its own)
+        it.filters = {InteractionStage::remap(0.2, 0.8, 0, 1)};
         pr.input(it, 0.5);
         CHECK(near(*pr.step(it, 0.016), 0.5));
         pr.input(it, 0.95);
         CHECK(near(*pr.step(it, 0.016), 1.0)); // beyond the range: held at its end
-        it.srcMin = 0;
-        it.srcMax = 1;
+        it.filters = {InteractionStage::remap(0, 1, 100, 300)};
+        pr.input(it, 0.25);
+        CHECK(near(*pr.step(it, 0.016), 150)); // into the target's units
+        it.filters = {InteractionStage::remap(0, 1, 1, 0)};
+        pr.input(it, 0.25);
+        CHECK(near(*pr.step(it, 0.016), 0.75)); // either way round
+        it.filters.clear();
         it.master = 0.5;
         pr.input(it, 0.8);
         CHECK(near(*pr.step(it, 0.016), 0.4));
@@ -6259,8 +6263,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         pr.input(it, 0.25);
         CHECK(near(*pr.step(it, 0.016), 0.75));
         it.filters.clear();
-        // Toggle: up past the middle flips
-        it.toggle = true;
+        // Toggle: up past its threshold flips
+        it.filters = {InteractionStage::made(InteractionFilter::Toggle)};
         InteractionProcessor tg;
         std::vector<double> outs;
         for (double x : {1.0, 0.0, 1.0, 0.0, 0.3, 1.0}) {
@@ -6268,7 +6272,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             outs.push_back(*tg.step(it, 0.016));
         }
         CHECK(outs == std::vector<double>({1, 1, 0, 0, 0, 1}));
-        it.toggle = false;
+        it.filters.clear();
         // Filters: from 0, a step to 1, sixty frames a second
         auto run = [&](InteractionFilter f, double a, double b, double seconds, double *peak = nullptr) {
             Interaction x = it;
@@ -6368,10 +6372,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         midiCc(1, 7, 0.85);
         e.renderFrame();
         CHECK(std::abs(opacity(a) - 0.85) < 1e-6);
-        // Target range: 0..1 lands on 0.2..0.4; disabled: nothing
+        // A Remap: 0..1 lands on 0.2..0.4; disabled: nothing
         fader.takeover = Takeover::Jump;
-        fader.dstMin = 0.2;
-        fader.dstMax = 0.4;
+        fader.filters = {InteractionStage::remap(0, 1, 0.2, 0.4)};
         CHECK(e.setInteraction(fader));
         midiCc(1, 7, 0.5);
         e.renderFrame();
@@ -6401,7 +6404,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // A key toggling a switch (a picture layer's effects)
         Interaction key = Interaction::made(InteractionSource::Keyboard);
         key.key = "Space";
-        key.toggle = true;
+        key.filters = {InteractionStage::made(InteractionFilter::Toggle)};
         key.layer = a;
         key.param = "fx/enable";
         e.addInteraction(key);
@@ -6433,8 +6436,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         osc.oscAddress = "/fader/1";
         osc.oscArgument = 1;
         osc.takeover = Takeover::Jump;
-        osc.srcMin = 0;
-        osc.srcMax = 100;
+        osc.filters = {InteractionStage::remap(0, 100, 0, 1)};
         osc.layer = b;
         osc.param = "opacity";
         e.addInteraction(osc);
@@ -6615,10 +6617,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             chain.layer = colorLayer;
             chain.param = QStringLiteral("param/color");
             chain.takeover = Takeover::Jump;
-            chain.srcMin = 0;
-            chain.srcMax = 1;
-            chain.dstMin = 0.2;
-            chain.dstMax = 0.6;
+            chain.filters = {InteractionStage::remap(0, 1, 0.2, 0.6)};
             chain.id = e.addInteraction(chain);
             osc::Message cm;
             cm.address = chain.oscAddress;
@@ -6632,10 +6631,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 return std::abs(component("r") - r) < tol && std::abs(component("g") - g) < tol &&
                        std::abs(component("b") - b) < tol;
             };
-            send(0.0, 0.5, 1.0); // the target range, per channel
+            send(0.0, 0.5, 1.0); // the Remap, per channel
             CHECK(rgbNear(0.2, 0.4, 0.6) && std::abs(component("a") - 0.75) < 1e-6);
-            chain.dstMin = 0;
-            chain.dstMax = 1;
+            chain.filters.clear();
             chain.master = 0.5;
             chain.colorMapAlpha = true;
             CHECK(e.setInteraction(chain));
@@ -6717,8 +6715,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         link.sourceParam = "opacity";
         link.layer = b;
         link.param = "opacity";
-        link.dstMin = 1;
-        link.dstMax = 0;
+        link.filters = {InteractionStage::remap(0, 1, 1, 0)};
         e.addInteraction(link);
         CHECK(e.setParameter(a, "opacity", 0.3));
         e.renderFrame();
@@ -6754,7 +6751,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.interactions().empty());
         CHECK(e.loadProject(tmp + "/interactions.nyxmap", nullptr, &err));
         CHECK(e.interactions().size() == 1 && e.interactions()[0].source == InteractionSource::Internal &&
-              e.interactions()[0].sourceLayer == a && e.interactions()[0].layer == b && e.interactions()[0].dstMin == 1);
+              e.interactions()[0].sourceLayer == a && e.interactions()[0].layer == b &&
+              e.interactions()[0].filters.size() == 1 && e.interactions()[0].filters[0].c == 1);
         CHECK(e.addInteraction(Interaction::made(InteractionSource::Keyboard)) > e.interactions()[0].id);
     }
     // In the snapshots and the presets: each interaction's values are the composition's ("interaction/<id>/…")
@@ -6767,6 +6765,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         fader.layer = a;
         fader.param = "opacity";
         fader.takeover = Takeover::Jump;
+        fader.filters = {InteractionStage::remap(0, 1, 0, 1)};
         const quint64 f = e.addInteraction(fader);
         const QString master = QStringLiteral("interaction/%1/master").arg(f), on = QStringLiteral("interaction/%1/enable").arg(f);
         bool inComposition = false; // not among the composition's values: reached by their address
@@ -6785,7 +6784,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         pr.name = "Half";
         pr.fade = 0;
         pr.values.push_back(e.presetValue(0, master));
-        pr.values.push_back(e.presetValue(0, QStringLiteral("interaction/%1/target/max").arg(f)));
+        pr.values.push_back(e.presetValue(0, QStringLiteral("interaction/%1/filters/1/d").arg(f))); // its Remap's Out Max
         e.addPreset(pr);
         CHECK(e.setParameter(0, master, 1.0));
         e.recallPreset(e.presetCount() - 1);

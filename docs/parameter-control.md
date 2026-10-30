@@ -72,7 +72,7 @@ and [ossia component addressing](https://ossia.io/score-docs/in-depth/unit-syste
 | Preset | Recalls selected values and any stored categories, geometry or local drivers; it does not replace the whole scene. |
 | Layer animation | Drives a layer parameter or RGB color with keys or a waveform. |
 | Timeline | Drives one or more targets using a shared transport. An event track fires an action (Source › Rewind, Show › GO, a snapshot's recall, a shader's event…) or sets a value (a switch such as Source › Play or Layer › Visible, a choice such as Blend Mode, a number a curve does not drive such as Source › Seek To) at each of its flags as the playhead reaches them; seeking does not fire them. |
-| Interaction | Maps input through its source range, an ordered list of filters (smoothing, Curve, Math…) and master level, then applies its takeover mode. |
+| Interaction | Passes its source's value through an ordered list of filters (Remap, smoothing, Curve, Math…) and its master level to its target, then applies its takeover mode. |
 
 ## Current rules
 
@@ -115,15 +115,19 @@ An Internal interaction can follow a switch (0 / 1) and a choice (its index: 0 f
 
 ### Interaction filters
 
-A Mapping's **Filters** are a list in a frame, applied from the top, like a layer's effects: **+** adds one (of the kind chosen), a click on a filter selects it, **−** removes the selected one and **▲ ▼** move it; each has its own on / off. Their settings, like the source and target ranges, are number fields with no bounds (press and slide sideways, or click to type any value). The value enters the first one at 0..1 (after the source range and the toggle) and may leave 0..1 between them; after the last one it is brought back within 0..1, then scaled by the master level and placed in the target range.
+A Mapping's **Filters** are a list in a frame, applied from the top, like a layer's effects: **+** adds one (of the kind chosen), a click on a filter selects it, **−** removes the selected one and **▲ ▼** move it; each has its own on / off, and a meter with the number of what comes out of it now. Their settings are number fields with no bounds (press and slide sideways, or click to type any value).
+
+There is no range of its own: the value enters the first filter as the source gives it (a key 1 / 0, MIDI 0..1, OSC as sent, Internal in the value's own units, a choice as its index) and the target receives what comes out of the last one, scaled by the master level, in its own units — a number that value, a switch on from 0.5, a choice the one of that index, an action fired each time it goes up past 0.5. With no filter, the value goes through as it is. To fit one range into another, add a **Remap** (from **+** it starts from the source's usual range to the target's).
 
 | Filter | Settings | What it does |
 |---|---|---|
+| **Remap** | In Min, In Max, Out Min, Out Max | From one range to another (either way round: Out Max below Out Min inverts), held within Out at its ends. |
 | **Curve** | its keys | Shapes the value with a drawn curve (easing, Bézier, hold), 0..1 in, 0..1 out. |
 | **Math** | operation, value *a* | `x + a`, `x − a`, `x × a`, `x ÷ a` (÷ 0 leaves it), modulo, power, min, max, absolute, floor / ceil / round to a step of *a*, **1 − x** (invert). |
 | **Clamp** | Min, Max | Keeps the value between two values. |
 | **Steps** | Steps | A few levels only, 0 and 1 included (3 steps: 0, 0.5, 1). |
 | **Threshold** | Threshold, Margin | 1 above the threshold, 0 below it; the margin around it keeps it from flickering. |
+| **Toggle** | Threshold | Each time the value goes up past the threshold, the other state (0, 1, 0…): a key or a pad, on then off. |
 | **Average** | Window | The average of the last moments. |
 | **Weighted Average** | Smoothing | Smoothed, about 95 % of the way in its time. |
 | **Attack Release** | Attack, Release | Rises and falls at speeds of their own. |
@@ -132,13 +136,13 @@ A Mapping's **Filters** are a list in a frame, applied from the top, like a laye
 | **Delay** | Delay | The value of a moment ago. |
 | **Speed** | Full scale, Smoothing | How fast the value moves, either way (1: the full scale per second). |
 
-There is no Invert box any more: **Math › 1 − x** (or a falling Curve) inverts. A project or a snapshot saved before keeps its response: its filter and its curve become the first filters of the list, and an inverted target range becomes a final **1 − x**.
+**Math › 1 − x**, a falling Curve or a Remap with its Out the other way round inverts.
 
-Each filter's on / off and settings are values of the interaction — `interaction/<id>/filters/<n>/enable`, `/a`, `/b` (`<n>` from 1, in the order of the list) — so presets, snapshots, OSC and timelines reach them; `interaction/<id>/filters` is the whole list (its kinds, order, operations and curves), set at once.
+Each filter's on / off and settings are values of the interaction — `interaction/<id>/filters/<n>/enable`, `/a`, `/b`, `/c`, `/d` (`<n>` from 1, in the order of the list; a Remap: In Min, In Max, Out Min, Out Max) — so presets, snapshots, OSC and timelines reach them; `interaction/<id>/filters` is the whole list (its kinds, order, operations and curves), set at once.
 
 ### Interaction modes: Mapping and Action
 
-An interaction has a **Mode**. **Mapping** (the default) drives one target continuously through the chain: source range, toggle, filters, master level, target range. **Action** does not map; it tests the source's value and acts when the answer changes, as Chataigne's actions do:
+An interaction has a **Mode**. **Mapping** (the default) drives one target continuously through its filters and its master level. **Action** does not map; it tests the source's value and acts when the answer changes, as Chataigne's actions do:
 
 - **Conditions** compare the value the source gives, in its own units (a key 1 / 0, MIDI 0..1, OSC as sent, Internal in the value's units: seconds for Playhead, 0 / 1 for a switch, the index for a choice), with `=`, `≠`, `>`, `≥`, `<`, `≤`, **in range** or **out of range** (both ends included, in either order). **True when** all of them hold (and) or any of them (or). With no condition, each value the source gives does the **If true** actions (a key: each press and each release).
 - When the answer **becomes true**, the actions **If true** are done, in order; when it **becomes false**, the actions **If false**. Nothing is done while it stays the same, and the very first answer only acts if it is true. Edited conditions are tried again at once on an Internal source's current value. A key pressed and released in one frame gives both, in order.

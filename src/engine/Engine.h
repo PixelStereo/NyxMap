@@ -384,8 +384,6 @@ public:
                                 double fade, const QJsonObject &delays = {});
     static QStringList interactionKeys(); // the keys of an interaction's values, in their order
     static QStringList interactionKeys(const Interaction &it); // and its filters' (filters/<n>/enable, a, b)
-    // Values of an interaction held before its filters were a list ("filter/…", "curve…"): as "filters"
-    static QJsonObject upgradedInteractionValues(QJsonObject params);
     QJsonArray captureFixtures() const;   // every fixture's values (enable, solo, intensity), all included
     // The recall's part for the fixtures: the intensity fades in its time, on / off and solo are set at once
     void applyFixtures(const QJsonArray &states, double fade);

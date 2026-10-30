@@ -35,7 +35,7 @@ static bool sameInputBinding(const Interaction &a, const Interaction &b)
            a.midiMessage == b.midiMessage && a.midiNumber == b.midiNumber && a.oscAddress == b.oscAddress &&
            a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
            a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
-           a.audioInput == b.audioInput && a.toggle == b.toggle &&
+           a.audioInput == b.audioInput &&
            a.layer == b.layer && a.param == b.param;
 }
 
@@ -54,23 +54,16 @@ void Engine::configureInteractionTarget(Interaction &it, quint64 layer, const QS
     ParamInfo x, y;
     if (parameterInfo(layer, path + "/x", &x) && x.pointComponent == 0 &&
         parameterInfo(layer, path + "/y", &y) && y.pointComponent == 1) {
-        it.dstMin = x.min;
-        it.dstMax = x.max;
         Interaction second = it;
         second.id = 0;
         second.name.clear();
         second.layer = 0;
         second.param.clear();
-        second.dstMin = y.min;
-        second.dstMax = y.max;
         if (second.source == InteractionSource::Osc) second.oscArgument = std::min(63, second.oscArgument + 1);
         if (second.source == InteractionSource::Midi) second.midiNumber = std::min(127, second.midiNumber + 1);
         if (second.source == InteractionSource::Internal && second.sourceParam.endsWith("/x"))
             second.sourceParam = second.sourceParam.chopped(2) + "/y";
         it.xyInputs.push_back(second);
-    } else if (parameterInfo(layer, path, &x)) {
-        it.dstMin = x.isNumber() ? x.min : 0;
-        it.dstMax = x.isNumber() ? x.max : 1;
     }
 }
 
@@ -129,7 +122,7 @@ bool Engine::setInteraction(const Interaction &it)
         auto f = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const Interaction &x) { return x.id == it.id; });
         if (f == m_interactions.end()) return false;
         // (its filters: each one's state is kept, made again when it becomes another kind of filter)
-        const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->layer != it.layer || f->param != it.param ||
+        const bool sourceChanged = f->source != it.source || f->layer != it.layer || f->param != it.param ||
                                    f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
                                    ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it)) ||
                                    f->mode != it.mode;
@@ -187,6 +180,8 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
         const double x = level.value_or(0);
         out->push_back({id, x, run.proc.output().value_or(x), run.proc.curveInput().value_or(x)});
         if (run.actionMet) out->back().met = *run.actionMet ? 1 : 0;
+        out->back().stages = run.proc.stageOutputs();
+        out->back().yStages = run.xyY.stageOutputs();
         if (const auto y = run.xyY.level()) {
             auto &sample = out->back();
             sample.hasY = true;
@@ -491,7 +486,7 @@ void Engine::stepInteractions(double dt)
                 if (!changed) return std::nullopt;
                 const auto info = targetParam->info();
                 return targetState.numberToWrite(input, *output, targetParam->number(),
-                                                  std::max(info.step, 0.01 * std::abs(input.dstMax - input.dstMin)));
+                                                  std::max(info.step, 0.01 * std::abs(info.max - info.min)));
             };
             const auto x = evaluate(it, run.proc, run.target, run.lastOut, run.lastInternal, params[0]);
             const auto y = evaluate(it.xyInputs.front(), run.xyY, run.xyYTarget, run.xyYLastOut, run.xyYLastInternal, params[1]);
@@ -511,6 +506,18 @@ void Engine::stepInteractions(double dt)
         // values and filters still advance once per frame with the full dt.
         const Parameter *target = findParameter(it.layer, it.param);
         const bool eventTrigger = !it.movesOverTime() && target && target->info().type == ParamInfo::Type::Trigger;
+        // A Toggle counts each press, even several in a frame: the chain takes each value as it comes
+        const bool eachValue = eventTrigger || std::any_of(it.filters.begin(), it.filters.end(), [](const InteractionStage &f) {
+            return f.enabled && f.kind == InteractionFilter::Toggle;
+        });
+        // A whole color: each channel through the chain, but a Toggle (a channel is not pressed)
+        auto colorChain = [](const Interaction &from) {
+            Interaction chain = from;
+            chain.filters.erase(std::remove_if(chain.filters.begin(), chain.filters.end(),
+                                               [](const InteractionStage &f) { return f.kind == InteractionFilter::Toggle; }),
+                                chain.filters.end());
+            return chain;
+        };
         unsigned rises = 0;
         if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
@@ -531,17 +538,18 @@ void Engine::stepInteractions(double dt)
             for (const InteractionEvent &e : events)
                 if (it.matches(e)) {
                     run.proc.input(it, e.value);
-                    if (eventTrigger) {
+                    if (eachValue) {
                         const auto value = run.proc.step(it, 0);
-                        const bool above = value && *value > 0.5;
-                        if (above && !run.target.above) ++rises;
-                        run.target.above = above;
+                        if (eventTrigger) {
+                            const bool above = value && *value > 0.5;
+                            if (above && !run.target.above) ++rises;
+                            run.target.above = above;
+                        }
                     }
                     run.color = e.color;
                     run.colorComponents = e.colorComponents;
                     if (e.colorComponents >= 3) { // a whole color: each channel through its own chain (no toggle)
-                        Interaction chain = it;
-                        chain.toggle = false;
+                        const Interaction chain = colorChain(it);
                         for (int c = 0; c < 4; ++c) run.channels[size_t(c)].input(chain, e.color[size_t(c)]);
                     }
                     fresh = true;
@@ -553,8 +561,7 @@ void Engine::stepInteractions(double dt)
         // without the master level
         bool colorMoved = false;
         if (run.colorComponents >= 3) {
-            Interaction chain = it;
-            chain.toggle = false;
+            Interaction chain = colorChain(it);
             for (int c = 0; c < 4; ++c) {
                 if (c == 3) chain.master = 1;
                 const std::optional<double> o = run.channels[size_t(c)].step(chain, dt);
@@ -597,11 +604,11 @@ void Engine::stepInteractions(double dt)
             for (int c = 0; c < n; ++c) {
                 const std::optional<double> o = whole ? run.channelOut[size_t(c)] : out;
                 if (!o) ready = false;
-                want[size_t(c)] = std::clamp(it.dstMin + o.value_or(0) * (it.dstMax - it.dstMin), 0.0, 1.0);
+                want[size_t(c)] = std::clamp(o.value_or(0), 0.0, 1.0);
                 current[size_t(c)] = channels[size_t(c)]->number();
             }
             if (!ready) continue;
-            const double tolerance = std::max(0.004, 0.01 * std::abs(it.dstMax - it.dstMin));
+            const double tolerance = 0.004;
             const std::optional<std::array<double, 4>> w = run.colorTarget.toWrite(it, want, current, n, tolerance);
             if (!w) continue;
             for (int c = 0; c < n; ++c) {
@@ -617,20 +624,20 @@ void Engine::stepInteractions(double dt)
         switch (info.type) {
         case ParamInfo::Type::Float:
         case ParamInfo::Type::Int: {
-            const double tolerance = std::max(info.step, 0.01 * std::abs(it.dstMax - it.dstMin));
+            const double tolerance = std::max(info.step, 0.01 * std::abs(info.max - info.min));
             if (const std::optional<double> v = run.target.numberToWrite(it, *out, p->number(), tolerance))
                 wrote = p->setNumber(*v);
             break;
         }
         case ParamInfo::Type::Bool: {
-            const bool on = it.dstMin + *out * (it.dstMax - it.dstMin) >= 0.5;
+            const bool on = *out >= 0.5;
             if (on != p->value().toBool()) wrote = p->setValue(on);
             break;
         }
         case ParamInfo::Type::Choice: {
             if (info.choices.isEmpty()) break;
             const int n = int(info.choices.size());
-            const int k = std::clamp(int(std::lround(*out * (n - 1))), 0, n - 1);
+            const int k = std::clamp(int(std::lround(*out)), 0, n - 1); // the one of that index
             if (!run.choiceSet || k != run.lastChoice) {
                 run.choiceSet = true;
                 run.lastChoice = k;
@@ -728,11 +735,9 @@ void Engine::makeInteractionParams()
                 if (p->path() == path) return p.get();
             return nullptr;
         };
+        // (a Remap's: its In shown in the source's, its Out in the target's)
         double sLo = 0, sHi = 1, tLo = 0, tHi = 1;
-        if (it.source == InteractionSource::Osc) {
-            sLo = std::min(0.0, it.srcMin);
-            sHi = std::max(1.0, it.srcMax);
-        } else if (it.source == InteractionSource::Internal) {
+        if (it.source == InteractionSource::Internal) {
             if (const Parameter *p = lookup(it.sourceLayer, it.sourceParam); p && p->isNumber()) {
                 sLo = p->info().min;
                 sHi = p->info().max;
@@ -747,15 +752,8 @@ void Engine::makeInteractionParams()
         number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 1, [](Interaction &x) -> double & { return x.master; })
             .limits(0, 1)
             .animatable();
-        flag(QStringLiteral("toggle"), QStringLiteral("Toggle"), false, [](Interaction &x) -> bool & { return x.toggle; });
         flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"), false,
              [](Interaction &x) -> bool & { return x.colorMapAlpha; });
-        number(QStringLiteral("source/min"), QStringLiteral("Source Min"), sLo, sHi, sLo, [](Interaction &x) -> double & { return x.srcMin; });
-        number(QStringLiteral("source/max"), QStringLiteral("Source Max"), sLo, sHi, sHi, [](Interaction &x) -> double & { return x.srcMax; });
-        number(QStringLiteral("target/min"), QStringLiteral("Target Min"), tLo, tHi, tLo, [](Interaction &x) -> double & { return x.dstMin; })
-            .animatable();
-        number(QStringLiteral("target/max"), QStringLiteral("Target Max"), tLo, tHi, tHi, [](Interaction &x) -> double & { return x.dstMax; })
-            .animatable();
         add(QStringLiteral("takeover"), QStringLiteral("Takeover"), T::Choice)
             .choices({QStringLiteral("pickup"), QStringLiteral("jump")})
             .byDefault(QStringLiteral("jump"))
@@ -779,13 +777,16 @@ void Engine::makeInteractionParams()
                 static bool gone = false; // the filters changed meanwhile (the list is made again)
                 return k < x.filters.size() ? x.filters[k].enabled : gone;
             });
-            for (int which = 0; which < 2; ++which) {
+            for (int which = 0; which < kFilterSettingCount; ++which) {
                 const FilterSetting set = interactionFilterSetting(f.kind, which);
                 if (set.name.isEmpty()) continue;
-                number(path + QChar(which ? 'b' : 'a'), name + set.name, set.min, set.max, set.def, [k, which](Interaction &x) -> double & {
+                const bool remap = f.kind == InteractionFilter::Remap;
+                const double lo = remap ? (which < 2 ? sLo : tLo) : set.min, hi = remap ? (which < 2 ? sHi : tHi) : set.max;
+                Parameter &p = number(path + QChar('a' + which), name + set.name, lo, hi, set.def, [k, which](Interaction &x) -> double & {
                     static double gone = 0;
-                    return k < x.filters.size() ? (which ? x.filters[k].b : x.filters[k].a) : gone;
+                    return k < x.filters.size() ? x.filters[k].setting(which) : gone;
                 });
+                if (remap && which >= 2) p.animatable(); // its Out: where the target goes (a timeline can move it)
             }
         }
 

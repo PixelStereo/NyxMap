@@ -200,8 +200,7 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     Interaction link2 = Interaction::made(InteractionSource::Internal);
     link2.sourceLayer = v2;
     link2.sourceParam = QStringLiteral("blend_mode");
-    link2.srcMin = 0;
-    link2.srcMax = blends.size() - 1;
+    link2.filters = {InteractionStage::remap(0, blends.size() - 1, 0, 1)}; // a choice comes as its index
     link2.layer = follower;
     link2.param = QStringLiteral("opacity");
     link2.takeover = Takeover::Jump;

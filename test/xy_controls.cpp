@@ -91,7 +91,7 @@ int runXyControlTests(Engine &engine, const QString &root)
     engine.configureInteractionTarget(mapping, layer, point);
     if (mapping.xyInputs.size() != 1) { check(false, "create XY mapping"); return failures; }
     check(mapping.xyInputs[0].oscArgument == 1, "one OSC XY message defaults to arguments zero and one");
-    mapping.srcMax = mapping.xyInputs[0].srcMax = 1000;
+    mapping.filters = mapping.xyInputs[0].filters = {InteractionStage::remap(0, 1000, 0, 1)};
     const quint64 mid = engine.addInteraction(mapping);
     mapping.id = mid;
     OscServer server(&engine);
@@ -100,8 +100,7 @@ int runXyControlTests(Engine &engine, const QString &root)
     check(near(read(0), .25) && near(read(1), .75), "raw OSC pair uses independent ranges without RGB byte conversion");
     mapping.xyInputs[0].oscAddress = "/xy/vertical";
     mapping.xyInputs[0].oscArgument = 0;
-    mapping.xyInputs[0].dstMin = .2;
-    mapping.xyInputs[0].dstMax = .6;
+    mapping.xyInputs[0].filters = {InteractionStage::remap(0, 1000, .2, .6)};
     check(engine.setInteraction(mapping), "edit second input binding");
     server.handleMessage({"/xy/vertical", "f", {500.0}});
     engine.renderFrame();
@@ -116,7 +115,7 @@ int runXyControlTests(Engine &engine, const QString &root)
     mapping.source = InteractionSource::Internal;
     mapping.sourceLayer = layer;
     mapping.sourceParam = "opacity";
-    mapping.srcMax = 1;
+    mapping.filters.clear(); // the opacity as it is
     check(engine.setInteraction(mapping), "combine Internal X with OSC Y");
     check(engine.setParameter(layer, "opacity", .7), "set internal X source");
     server.handleMessage({"/xy/vertical", "f", {250.0}});
@@ -131,7 +130,8 @@ int runXyControlTests(Engine &engine, const QString &root)
     check(engine.setInteraction(mapping), "store independent Y settings");
     const auto decodedMapping = Interaction::fromJson(mapping.toJson());
     check(decodedMapping.xyInputs.size() == 1 && decodedMapping.xyInputs[0].oscAddress == "/xy/new-address" &&
-          near(decodedMapping.xyInputs[0].dstMax, .6), "full mapping round-trip preserves both sources and ranges");
+          decodedMapping.xyInputs[0].filters.size() == 1 && near(decodedMapping.xyInputs[0].filters[0].d, .6),
+          "full mapping round-trip preserves both sources and their Remaps");
     InteractionStage damper = InteractionStage::made(InteractionFilter::Damper);
     damper.b = .77;
     mapping.xyInputs[0].filters = {damper};
