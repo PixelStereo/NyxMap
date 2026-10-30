@@ -31,11 +31,15 @@ Visual Software for live visuals - From the first pixel to the final cue</p>
 
 ## Built for the show
 
-| | |
-| :--- | :--- |
-| **01 — PLAY**<br>**Your media, all together.**<br>Video, HAP, image sequences (TGA, TIFF, DPX, EXR, PNG, JPEG), images and SVG drawings, audio, text, timecode, countdown, stopwatch and clock generators, network streams (RTSP, RTMP, SRT, UDP/RTP, HLS), live inputs (cameras, screens and windows, DeckLink, NDI, OMT, Syphon and Spout), web pages and ISF generators. Layer, group, blend and combine them with effects, or reuse another layer's picture (its source as it is, before or after its effects) without decoding or computing it again. | **02 — MAP**<br>**Take the picture beyond the rectangle.**<br>Position, scale, rotate, corner-pin and warp with a mesh. Shape content to a surface, crop it with ROI and route it through viewports. |
-| **03 — CUE**<br>**Build the moment. Then recall it.**<br>Snapshots, selective presets and sequences with waits, fades and auto-follow. Animate parameters with waveforms, Bézier keys and timelines. | **04 — CONTROL**<br>**Hands on. Eyes up.**<br>OSC, OSCQuery, MIDI, keyboard and internal interactions, with Learn, ranges, chains of filters (curves, math, smoothing…) and pick-up or jump takeover. |
-| **05 — SYNC**<br>**Keep the show on time.**<br>Time-of-day and transport-based clocks, LTC, MTC and ATC, plus routing to MIDI, audio and supported video destinations. | **06 — OUTPUT**<br>**From preview to projection.**<br>Fullscreen output windows, Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio—depending on your platform and installed runtimes. |
+**01 — PLAY**<br>**Your media, all together.**<br>Video, HAP, image sequences (TGA, TIFF, DPX, EXR, PNG, JPEG), images and SVG drawings, audio, text, timecode, countdown, stopwatch and clock generators, network streams (RTSP, RTMP, SRT, UDP/RTP, HLS), live inputs (cameras, screens and windows, DeckLink, NDI, OMT, Syphon and Spout), web pages and ISF generators. Layer, group, blend and combine them with effects, or reuse another layer's picture (its source as it is, before or after its effects) without decoding or computing it again.
+
+**02 — MAP**<br>**Take the picture beyond the rectangle.**<br>Position, scale, rotate, corner-pin and warp with a mesh. Shape content to a surface, crop it with ROI and route it through viewports.
+
+**03 — CUE**<br>**Build the moment. Then recall it.**<br>Snapshots, selective presets and sequences with waits, fades and auto-follow. Animate parameters with waveforms, Bézier keys and timelines.
+
+**04 — CONTROL**<br>**Hands on. Eyes up.**<br>OSC, OSCQuery, MIDI, keyboard and internal interactions, with Learn, ranges, chains of filters (curves, math, smoothing…) and pick-up or jump takeover.
+
+**05 — SYNC**<br>**Keep the show on time.**<br>Time-of-day and transport-based clocks, LTC, MTC and ATC, plus routing to MIDI, audio and supported video destinations. | **06 — OUTPUT**<br>**From preview to projection.**<br>Fullscreen output windows, Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio—depending on your platform and installed runtimes.
 
 ## Made to be played live
 
