@@ -1,55 +1,95 @@
 <div align="center">
-  
+
+<img src="assets/nyxmap.png" alt="NYXMAP" width="160">
+
 # NYXMAP
 
-## Pixels In New Open Logic - Pixels In New Optimal Layout
-Visual Software for live visuals - From the first pixel to the final cue</p>
+### Projection mapping, live visuals and show control — in one app.
 
-<p>Built for projection, installations and live performance.</p>
+**Map it. Cue it. Play it live.**<br>
+From a single projector to a multi-output installation, design the image and run the show without switching tools.
 
 <p>
-  <a href="https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml"><img alt="Build" src="https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml/badge.svg?branch=main"></a>
-  <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=flat-square">
-  <img alt="Qt 6 · C++17 · FFmpeg" src="https://img.shields.io/badge/Qt%206%20%C2%B7%20C%2B%2B17%20%C2%B7%20FFmpeg-24272C?style=flat-square">
+  <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
+  <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge">
+  <img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-MIT-24272C?style=for-the-badge">
 </p>
 
 <p><strong>
-<a href="#built-for-the-show">Explore the features</a> &nbsp;·&nbsp;
+<a href="#what-you-can-do">Features</a> &nbsp;·&nbsp;
 <a href="#download">Download</a> &nbsp;·&nbsp;
-<a href="docs/osc.md">OSC API</a> &nbsp;·&nbsp;
-<a href="integrations/open-stage-control/README.md">Open Stage Control</a> &nbsp;·&nbsp;
-<a href="docs/companion.md">Companion / Stream Deck</a> &nbsp;·&nbsp;
-<a href="docs/build.md">Build and technical details</a>
+<a href="#control-it-from-anything">Remote control</a> &nbsp;·&nbsp;
+<a href="docs/build.md">Build from source</a>
 </strong></p>
 
 </div>
 
+<p align="center">
+  <img src="docs/assets/readme-mapping.png" alt="NYXMAP mapping a test pattern with corner pins, a plasma warped on a mesh and a floor grid onto a stage" width="100%">
+</p>
+
 ---
 
->
-> NYXMAP brings video, generative visuals, spatial mapping, interactive animation of parameters and live control together in one show environment. From a single projection to a complex multi-output installation, you can design the image and control what happens next without changing tools.
+## Why NYXMAP
 
-## Built for the show
+Most shows end up juggling a media server, a mapping tool, a cue list and a bridge for the lighting desk. **NYXMAP puts all of it in one window**: bring in your media, shape it to the room, build your cues, and drive everything from OSC, MIDI, a Stream Deck or a timecode — live, with the picture on screen the whole time.
 
-**01 — PLAY**<br>**Your media, all together.**<br>Video, HAP, image sequences (TGA, TIFF, DPX, EXR, PNG, JPEG), images and SVG drawings, audio, text, timecode, countdown, stopwatch and clock generators, network streams (RTSP, RTMP, SRT, UDP/RTP, HLS), live inputs (cameras, screens and windows, DeckLink, NDI, OMT, Syphon and Spout), web pages and ISF generators. Layer, group, blend and combine them with effects, or reuse another layer's picture (its source as it is, before or after its effects) without decoding or computing it again.
+- 🎯 **Made for the stage.** Big GO button, fades on every value, a STOP that never surprises you.
+- 🧩 **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
+- 🆓 **Free, open source, cross-platform.** macOS, Windows and Linux, MIT licensed.
 
-**02 — MAP**<br>**Take the picture beyond the rectangle.**<br>Position, scale, rotate, corner-pin and warp with a mesh. Shape content to a surface, crop it with ROI and route it through viewports.
+## What you can do
 
-**03 — CUE**<br>**Build the moment. Then recall it.**<br>Snapshots, selective presets and sequences with waits, fades and auto-follow. Animate parameters with waveforms, Bézier keys and timelines.
+### 🗺️ Map — take the picture beyond the rectangle
 
-**04 — CONTROL**<br>**Hands on. Eyes up.**<br>OSC, OSCQuery, MIDI, keyboard and internal interactions, with Learn, ranges, chains of filters (curves, math, smoothing…) and pick-up or jump takeover.
+Fit your content to any surface: a building, a set piece, a floor, a dome.
 
-**05 — SYNC**<br>**Keep the show on time.**<br>Time-of-day and transport-based clocks, LTC, MTC and ATC, plus routing to MIDI, audio and supported video destinations. | **06 — OUTPUT**<br>**From preview to projection.**<br>Fullscreen output windows, Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio—depending on your platform and installed runtimes.
+- **Corner pin** to snap a picture onto a flat surface in seconds.
+- **Mesh warp** to bend it over curves and uneven walls, point by point.
+- **Position, scale, rotate, crop (ROI) and masks** to shape every layer.
+- **Viewports** to split the composition across projectors and screens.
 
-## Made to be played live
+### 🎬 Play — all your media, together
 
-**Build visually.** Combine videos, generators, images and effects in layers and groups. Correct color, animate parameters, and transform the composition to fit the space.
+Video (including **HAP** for heavy playback), image sequences, images and SVG, audio, text, clocks and countdowns, network streams (RTSP, SRT, HLS…), live inputs (cameras, screens, **NDI**, **Syphon**, **Spout**, **DeckLink**), web pages and **ISF generative shaders**.
 
-**Perform with confidence.** Store the state of a scene in a snapshot, recall only the values you want with a preset, or build a sequence of cues. Each value can have its own fade and easing.
+Stack them in layers and groups, blend them, add effects and correct the colour. A layer can even reuse another layer's picture, before or after its effects, at no extra cost.
 
-**Connect everything.** Learn incoming OSC, MIDI or keyboard controls; shape the response with ranges, filtering and curves; or let one parameter drive another internally. OSCQuery exposes a browsable address tree for your show.
+### ⏱️ Cue — build the moment, then recall it
 
-**Feed the room.** Route viewports to displays and supported video protocols. Use timecode where the show needs to stay in step with other equipment.
+<p align="center">
+  <img src="docs/assets/readme-show.png" alt="A sequence of cues with GO, snapshots and timelines in NYXMAP" width="100%">
+</p>
+
+- **Snapshots** capture the whole scene; **presets** recall only what you choose.
+- **Sequences** chain your cues with waits, fades and auto-follow. One GO, and the show runs.
+- **Timelines** animate any parameter with Bézier keys, waveforms and colour gradients.
+- Each value gets **its own fade and easing**, so transitions look exactly as intended.
+
+### 🎛️ Control — hands on, eyes up
+
+- **Learn** a fader, a knob, a key or an OSC address: move it, it is mapped.
+- Shape the response with **filters** (remap, curves, math, smoothing, toggle…) and watch the value at every stage.
+- **Action mode**: when a value crosses a threshold, fire a cue, start a timeline or flip a switch.
+- **Internal links**: let the audio level, a video's playhead or another parameter drive anything.
+- **Pick-up or jump takeover**, so a fader never makes the picture leap.
+
+### 🕰️ Sync — keep the show on time
+
+Time-of-day and transport clocks, **LTC, MTC and ATC** timecode, and routing to MIDI, audio and supported video destinations.
+
+### 📽️ Output — from preview to projection
+
+Fullscreen windows on every display, plus **Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio** (depending on your platform).
+
+## Control it from anything
+
+Every button, parameter and cue in NYXMAP has an address.
+
+- **OSC and OSCQuery**: browse the whole show from any OSC tool. → [OSC API](docs/osc.md)
+- **Open Stage Control**: a ready-made touch remote for tablets and phones. → [Setup guide](docs/openstagecontrol-help.md)
+- **Bitfocus Companion / Stream Deck**: GO, STOP and cues on physical buttons. → [Companion guide](docs/companion.md)
+- **MIDI controllers and the keyboard**, with Learn.
 
 ## Download
 
@@ -65,10 +105,8 @@ Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelS
 **[Download Open Stage Control remote](https://github.com/PixelStereo/NyxMap/releases/download/v0.5/NyxMap-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
 <!-- release-downloads:end -->
 
-**[Open Stage Control remote](integrations/open-stage-control/README.md)** — ready to load directly from this repository, with dependencies included. See the [setup guide](docs/openstagecontrol-help.md).
-
-To build it yourself, clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NyxMap and opens it. For builds between releases, download the platform artifact from a successful [GitHub Actions run](https://github.com/PixelStereo/NyxMap/actions/workflows/build.yml). See [build, installation and technical details](docs/build.md), or [limitations and remaining work](docs/README.md).
+Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/build.md) and the [known limitations](docs/README.md).
 
 ## License
 
-NyxMap is released under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
+NYXMAP is free software under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
