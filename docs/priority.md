@@ -129,13 +129,13 @@ returns to the timeline's current value, optionally over 300 ms, without rewindi
   arbitration. Preserve locks and explicit safety controls independently.
 - Cache rule resolution per parameter; invalidate on profile, rule, namespace or
   topology changes instead of matching wildcard strings for every write/frame.
-- Existing projects retain legacy behavior until they opt in. Missing profiles or
-  deleted targets need visible diagnostics and a defined fallback.
+- Missing profiles or deleted targets need visible diagnostics and a defined
+  fallback.
 
 ## Implementation order and acceptance
 
 1. Specify rule precedence, base values and ownership transitions; introduce the
-   central arbiter with a legacy compatibility mode.
+   central arbiter.
 2. Add saved profiles, scoped rules and an inspector explaining the winning rule.
 3. Add atomic snapshot/sequence profile selection, holds and return fades.
 

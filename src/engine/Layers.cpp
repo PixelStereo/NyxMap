@@ -129,7 +129,6 @@ std::unique_ptr<Layer> Engine::makeLayerLocked(const QString &name)
     l->compSize = &m_compSize;
     l->mapping.aspect = double(m_compSize.width()) / std::max(1, m_compSize.height());
     l->id = newIdLocked();
-    l->colorModels = m_defaultColorModels;
     l->name = name.isEmpty() ? QStringLiteral("Layer %1").arg(m_layers.size() + 1) : name;
     l->genWidth = m_compSize.width();
     l->genHeight = m_compSize.height();

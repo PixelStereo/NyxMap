@@ -1356,8 +1356,7 @@ AnimState animStateFromJson(const QJsonObject &o)
     const QString s = o.value("state").toString();
     if (s == QLatin1String("paused")) return AnimState::Paused;
     if (s == QLatin1String("stopped")) return AnimState::Stopped;
-    if (s == QLatin1String("playing")) return AnimState::Playing;
-    return o.value("enable").toBool(true) ? AnimState::Playing : AnimState::Stopped; // none: the ones on play
+    return AnimState::Playing; // "playing"
 }
 
 Animation layerAnimFromJson(const QJsonObject &o, quint64 layer)

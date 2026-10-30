@@ -4850,7 +4850,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             Engine::Lock lk(&e.mutex());
             CHECK(std::abs(e.layer(w)->color.remove[1] - 1.0f) < 1e-6); // the value is kept
         }
-        // Switches saved with the project (a project without them has everything on)
+        // Switches saved with the project
         CHECK(e.saveProject(tmp + "/colorswitch.nyxmap", {}, &err));
         CHECK(e.loadProject(tmp + "/colorswitch.nyxmap", nullptr, &err));
         {
@@ -4858,11 +4858,11 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             Layer *l = e.layer(V + 0);
             CHECK(l && !l->color.enabled && l->color.removeOn && std::abs(l->color.remove[1] - 1.0f) < 1e-6);
         }
-        QJsonObject legacy = e.layerJson(V + 0);
-        QJsonObject params = legacy.value("params").toObject();
+        QJsonObject partial = e.layerJson(V + 0); // switches left out: their defaults, on
+        QJsonObject params = partial.value("params").toObject();
         for (const QString &k : {QStringLiteral("color/enable"), QStringLiteral("remove/enable")}) params.remove(k);
-        legacy["params"] = params;
-        e.replaceLayerJson(V + 0, legacy);
+        partial["params"] = params;
+        e.replaceLayerJson(V + 0, partial);
         {
             Engine::Lock lk(&e.mutex());
             CHECK(e.layer(V + 0)->color.enabled && e.layer(V + 0)->color.removeOn);

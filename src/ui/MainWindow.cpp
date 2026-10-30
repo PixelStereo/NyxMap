@@ -212,10 +212,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding());
     connect(m_settings, &SettingsPanel::hardwareDecodingChanged, this,
             [] { VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding()); });
-    // For the layers created from now on; each layer keeps its own choice
-    connect(m_settings, &SettingsPanel::colorModelsChanged, this,
-            [this] { m_engine->setDefaultColorModels(SettingsPanel::colorModels()); });
-    m_engine->setDefaultColorModels(SettingsPanel::colorModels());
     // Rendering: the machine's defaults, and the main screen's refresh rate (the pace without an output shown)
     m_engine->setRenderDefaults(SettingsPanel::renderDefaults());
     m_engine->setGpuShareOneFrameLate(SettingsPanel::gpuShareOneFrameLate());

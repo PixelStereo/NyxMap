@@ -64,7 +64,7 @@ or loading another project. Cue IDs identify runtime cues and must not be saved
 as reusable show identifiers.
 
 For the new `/by-id/…` trigger methods, an optional nonzero numeric argument is
-accepted; `0` is ignored so a push-button release does not trigger twice. Older
+accepted; `0` is ignored so a push-button release does not trigger twice. The
 indexed trigger methods execute on each message: configure these as one-shot
 buttons rather than sending both press and release.
 
@@ -364,7 +364,7 @@ buffer of commands that accumulated offline.
 | No connection | OSC/OSCQuery enabled; chosen interface, host and TCP port reachable. |
 | UDP works, lists are empty | TCP `5678` is separate from OSC UDP `1234`. |
 | Commands work, no UDP counters | Feedback enabled; target points to the controller's UDP input. The bundled desk uses WebSocket instead. |
-| Button fires twice | Use a bare one-shot trigger; do not send a release to legacy trigger methods. |
+| Button fires twice | Use a bare one-shot trigger; do not send a release to the indexed trigger methods. |
 | A recall appears to be ignored | Layer lock, active drivers, stored fades/delays, or a removed ID. |
 | Clock says `∞` | Endless loop, frozen transport or another action with no finite completion. |
 

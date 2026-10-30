@@ -47,13 +47,12 @@ inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replac
 // The Countdown, Stopwatch and Clock generators: text layers that show a time (ClockGenerator.h), from the Media Bin too
 inline const QString kCountdownGeneratorPath = QStringLiteral("/NyxMap/Generators/Countdown");
 inline const QString kChronometerGeneratorPath = QStringLiteral("/NyxMap/Generators/Chronometer");
-inline const QString kStopwatchGeneratorPath = QStringLiteral("/NyxMap/Generators/Stopwatch"); // legacy drag paths
 inline const QString kClockGeneratorPath = QStringLiteral("/NyxMap/Generators/Clock");
 inline std::optional<ClockKind> clockGeneratorOfPath(const QString &p)
 {
     const QString q = QString(p).replace('\\', '/');
     if (q.endsWith(kCountdownGeneratorPath)) return ClockKind::Countdown;
-    if (q.endsWith(kChronometerGeneratorPath) || q.endsWith(kStopwatchGeneratorPath)) return ClockKind::Stopwatch;
+    if (q.endsWith(kChronometerGeneratorPath)) return ClockKind::Stopwatch;
     if (q.endsWith(kClockGeneratorPath)) return ClockKind::Clock;
     return std::nullopt;
 }
@@ -264,14 +263,13 @@ struct Layer {
     int vpMode = 0;                      // 0 hidden, 1 windowed, 2 fullscreen
     bool testCard = false;               // a viewport shows its test card instead (a setup aid: not saved)
     // Output-only calibration, after viewport effects/opacity and before the
-    // composition fader/blackout. Raw defaults preserve legacy pixel values.
+    // composition fader/blackout. Its defaults leave the pixels as they are.
     QString outputInputSpace = QStringLiteral("srgb"), outputSpace = QStringLiteral("same");
     double outputExposure = 0; // stops, applied between decode and encode
     PublishSettings vpPublish;           // NDI, OMT, Syphon, Spout of this viewport
     // How much of this item each viewport shows (an item at the top of the list; inside a group, the group decides).
     // A viewport that is not in the map shows it fully, so a viewport created later shows everything.
     std::map<quint64, float> viewportOpacity;
-    int colorModels = 1;    // models shown by the Color tab for this layer (interface state, saved)
 
     QString name;
     bool enabled = true; // off: the layer is not rendered, not heard, not shown

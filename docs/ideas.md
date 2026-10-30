@@ -1,6 +1,6 @@
 # Workflow and performance ideas
 
-Proposals from the code and competitor review, not implemented features. Performance gains require measurement; keep existing projects compatible.
+Proposals from the code and competitor review, not implemented features. Performance gains require measurement.
 
 ## Priorities
 

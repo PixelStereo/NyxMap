@@ -27,7 +27,6 @@ For launcher settings, ports and connection errors, see the
    using GitHub's **Code → Download ZIP**, extract it and open that same folder.
    Packaged releases also provide `NyxMap-OpenStageControl.zip` under
    **[Releases → Assets](https://github.com/PixelStereo/NyxMap/releases/latest)**.
-   Older releases may not contain the remote ZIP; use the repository files in that case.
 3. In NyxMap **Settings**, enable **OSC / OSCQuery**. Its default TCP port is `5678`.
 4. Stop the Open Stage Control server before changing the launcher settings:
 
@@ -111,7 +110,7 @@ FX or upload media. Keep `nyxmap-layers.cjs` beside `nyxmap.js` in the full pack
 **LAYER CONTROL →** on SHOW opens this same editor without launching a cue.
 
 See the [OSC API guide](../../docs/osc.md) for commands, schemas, subscriptions
-and the optional legacy UDP cue feedback. Open Stage Control is a separate
+and the optional UDP cue feedback. Open Stage Control is a separate
 GPL-3.0 application; it is not bundled or linked into NyxMap.
 
 The cue stack follows NyxMap’s palette: green for the current cue, red for the

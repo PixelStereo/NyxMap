@@ -58,7 +58,6 @@ LogPanel::LogPanel(QWidget *parent, EventLog *log) : QWidget(parent), m_log(log 
     m_timer.start();
 }
 
-void LogPanel::appendEvent(const QString &channel, const QString &message) { m_log->append(channel, message); }
 
 void LogPanel::refresh()
 {

@@ -15,7 +15,6 @@ are supplied in the repository: **no npm or separate Node.js installation needed
 
    You can also download `NyxMap-OpenStageControl.zip` from **Assets** on the
    [latest release page](https://github.com/PixelStereo/NyxMap/releases/latest).
-   Older releases may not include this ZIP; the repository folder works directly.
    Keep the ready-to-load files together:
 
    ```text
@@ -68,8 +67,7 @@ All browsers share the remote selection, without changing NyxMap's inspector.
 A deleted selection is cleared rather than replaced with another layer.
 SHOW also has a **LAYER CONTROL →** shortcut. If neither the shortcut nor the
 LAYERS tab appears, stop the server and update **both** launcher paths to the
-same freshly extracted pack. Loading an older `nyxmap.json` keeps the old pages
-even with a newer custom module.
+same freshly extracted pack.
 
 Names marked **↺** support a double-click or double-tap to restore the native
 default. Clicking once does nothing. The color/XY title resets all channels;
@@ -87,7 +85,6 @@ add/remove layers and FX.
 | Message or symptom | Fix |
 | :--- | :--- |
 | **Load nyxmap.js as the custom module** | Set **custom-module** to `nyxmap.js`, restart the server, and check the launcher log for module errors. |
-| **Cannot find module 'ws'** or **'osc'** | You are loading an older module. Run `git pull`, then point both launcher fields to the current repository folder. Current files include their runtime dependencies. |
 | **Cannot find module …nyxmap-dependencies.cjs** | Restore the complete current folder, including the dependency bundle beside `nyxmap.js`. |
 | **Cannot find module …nyxmap-layers.cjs** | Extract the complete current pack; keep this helper next to `nyxmap.js`. |
 | **Update NyxMap to use the layer remote** | Update NyxMap to a build publishing `layers` in `/show/catalog`. Other remote pages remain usable. |

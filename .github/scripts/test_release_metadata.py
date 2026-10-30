@@ -52,20 +52,9 @@ class ReleaseMetadataTests(unittest.TestCase):
             chosen, _ = metadata.select_release([old, draft, partial, current], REPO)
             self.assertEqual(chosen["tag_name"], "v1.2.3")
 
-    def test_legacy_packages_after_repository_rename(self):
-        legacy = release("v0.4")
-        for asset in legacy["assets"]:
-            asset["name"] = asset["name"].replace("NyxMap-", "Pinol-")
-            asset["browser_download_url"] = asset["browser_download_url"].replace("NyxMap-", "Pinol-")
-        pending = release("v0.5", "2026-10-23T10:00:00Z")
-        pending["assets"] = []
-        chosen, urls = metadata.select_release([pending, legacy], REPO)
-        self.assertEqual(chosen["tag_name"], "v0.4")
-        self.assertIn("/NyxMap/releases/download/v0.4/Pinol-", urls["mac"])
-        chosen, _ = metadata.select_release([release("v0.5", "2026-10-23T10:00:00Z"), legacy], REPO)
-        self.assertEqual(chosen["tag_name"], "v0.5")
+    def test_other_package_names_never_publish(self):
         mixed = release()
-        mixed["assets"][0]["name"] = mixed["assets"][0]["name"].replace("NyxMap-", "Pinol-")
+        mixed["assets"][0]["name"] = mixed["assets"][0]["name"].replace("NyxMap-", "Other-")
         with self.assertRaises(ValueError):
             metadata.select_release([mixed], REPO)
 

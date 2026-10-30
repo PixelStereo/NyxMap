@@ -30,8 +30,6 @@ int main(int argc, char **argv)
     }
     QString reason;
     check(engine.snapshotMatches(target, &reason), qPrintable("fresh capture matches: " + reason));
-    engine.layer(row)->colorModels = 7;
-    check(engine.snapshotMatches(target), "changing displayed color controls is not a scene edit");
     editor.selectSnapshot(target);
     engine.setParameter(layer, "opacity", .37);
     QMenu menu;

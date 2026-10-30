@@ -54,11 +54,14 @@ class EnduranceAnalysisTest(unittest.TestCase):
         ])
         self.assertIn(">2x-budget events: 4, within 250 ms of a cue/timeline: 2", result)
 
-    def test_legacy_csv_and_lost_events_are_visible(self):
-        result = self.report([], schema=1, loss=9)
-        self.assertIn("older files may silently log zero", result)
+    def test_lost_events_are_visible(self):
+        result = self.report([], loss=9)
         self.assertIn("9 telemetry events lost", result)
         self.assertIn("correlation is incomplete", result)
+
+    def test_only_schema_2_is_read(self):
+        with self.assertRaises(ValueError):
+            self.report([], schema=1)
 
 
 class RealtimeAcceptanceTest(unittest.TestCase):
@@ -92,7 +95,7 @@ class RealtimeAcceptanceTest(unittest.TestCase):
         del rows[-1]["audio_callback_over_budget_lifetime"]
         self.assertTrue(analysis.realtime_failures(rows))
 
-    def test_cli_exit_status_and_legacy_telemetry(self):
+    def test_cli_exit_status_and_incomplete_telemetry(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.csv"
             def write(rows):

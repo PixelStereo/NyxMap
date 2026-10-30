@@ -79,9 +79,7 @@ int runClockPresetUiTests(Engine &engine)
         pump();
     };
     check(clockKindName(ClockKind::Stopwatch) == "Chronometer", "the public generator name is Chronometer");
-    check(clockGeneratorOfPath("/NyxMap/Generators/Chronometer") == ClockKind::Stopwatch &&
-          clockGeneratorOfPath("/NyxMap/Generators/Stopwatch") == ClockKind::Stopwatch &&
-          clockKindKey(ClockKind::Stopwatch) == "stopwatch", "legacy generator paths and projects stay readable");
+    check(clockGeneratorOfPath("/NyxMap/Generators/Chronometer") == ClockKind::Stopwatch, "the Chronometer generator's path");
     for (auto kind : {ClockKind::Stopwatch, ClockKind::Countdown, ClockKind::Clock}) {
         check(engine.setLayerClock(row, kind), "create the requested generator");
         engine.setParameter(id, "clock/format", "custom");

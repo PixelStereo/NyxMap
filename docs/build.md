@@ -32,8 +32,6 @@ For Linux, choose either package:
 
 The Linux baseline is **Ubuntu 24.04, x86_64**; older glibc releases and other architectures are unsupported. The host supplies glibc, a desktop session and OpenGL 3.3 graphics drivers. OMT discovery uses the host's Avahi service and reports when it is unavailable. Optional Blackmagic hardware needs Desktop Video. These system services and hardware drivers are not application libraries.
 
-**Legacy v0.2 Linux archive:** this older package is not autonomous. On Ubuntu 24.04 it needs `sudo apt install libqt6widgets6 libqt6openglwidgets6 libqt6opengl6 libqt6multimedia6 qt6-qpa-plugins libgl1 libasound2t64 libavformat60 libavcodec60 libswscale7 libswresample4 libavutil58`. Extract it and run `./NyxMap`. Use a newer autonomous package to avoid installing these libraries.
-
 OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, under its licence agreement) are included. See [known problems](README.md#known-problems) and [third-party notices](../THIRD-PARTY-NOTICES.md).
 
 ### Linux release packaging

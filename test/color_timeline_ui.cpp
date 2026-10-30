@@ -67,7 +67,7 @@ int main(int argc, char **argv)
     engine.advanceFades(1);
     check(engine.animColorValue(id, "text/color", &rgb) && near(rgb[0], .75) && near(rgb[2], .25), "playback writes a complete RGB color");
     check(near(engine.parameterValue(id, "text/color/a").toDouble(), .37), "RGB track leaves alpha unchanged");
-    check(near(engine.parameterValue(id, "opacity").toDouble(), .4), "legacy numeric track still plays beside RGB");
+    check(near(engine.parameterValue(id, "opacity").toDouble(), .4), "a numeric track still plays beside RGB");
     engine.controlAnimation(aid, AnimAction::Seek, 3);
     check(engine.animColorValue(id, "text/color", &rgb) && near(rgb[0], .25) && near(rgb[2], .75), "scrubbing evaluates RGB immediately");
     engine.layer(layer)->locked = true;

@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     };
     check(engine.parameterValue(id, "output/input_space") == "srgb" &&
           engine.parameterValue(id, "output/space") == "same" &&
-          engine.parameterValue(id, "output/exposure").toDouble() == 0, "legacy projects default to unchanged output");
+          engine.parameterValue(id, "output/exposure").toDouble() == 0, "a new viewport outputs its pixels unchanged");
     const auto gray=colorReference::convert({.5,.5,.5},"srgb","linear709");
     check(std::abs(gray[0]-.21404114048223255)<1e-12, "reference matches the standard sRGB gray value");
     const auto p3red=colorReference::solve(colorReference::rgbToXyz(false),

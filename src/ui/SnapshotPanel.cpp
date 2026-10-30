@@ -1279,8 +1279,7 @@ void SnapshotPanel::fillLayer(QTreeWidgetItem *parent, int row, const QJsonObjec
         QTreeWidgetItem *sec = node(parent, QStringLiteral("Animations (%1)").arg(anims.size()), QStringLiteral("anims"), QString());
         for (const QJsonValue &v : anims) {
             const QJsonObject a = v.toObject();
-            const QString state = a.value("state").toString(a.value("enable").toBool(true) ? QStringLiteral("playing")
-                                                                                          : QStringLiteral("stopped"));
+            const QString state = a.value("state").toString(QStringLiteral("playing"));
             const QString what = a.contains("oscillator") ? a.value("oscillator").toObject().value("wave").toString() : QStringLiteral("keys");
             info(sec, a.value("param").toString(),
                  state == "paused" ? QStringLiteral("paused at %1 s").arg(a.value("clock").toDouble(), 0, 'f', 2) : state,
@@ -1604,22 +1603,16 @@ void SnapshotPanel::setCompositionIncluded(int i, bool included)
     emit edited();
 }
 
-// The composition in the snapshot: its opacity and the sound volume (a snapshot stored before they were kept:
-// nothing, the recall leaves them)
+// The composition in the snapshot: its opacity and the sound volume (none: the recall leaves them)
 void SnapshotPanel::fillComposition(const QJsonObject &c)
 {
+    if (c.isEmpty()) return;
     auto *top = new QTreeWidgetItem(m_layers, {QStringLiteral("Composition"),
-                                               c.isEmpty() ? QStringLiteral("—")
-                                                           : QStringLiteral("%1%").arg(std::lround(c.value("opacity").toDouble(1) * 100))});
+                                               QStringLiteral("%1%").arg(std::lround(c.value("opacity").toDouble(1) * 100))});
     top->setData(0, KeyRole, QStringLiteral("composition"));
     QFont bold = top->font(0);
     bold.setBold(true);
     top->setFont(0, bold);
-    if (c.isEmpty()) {
-        top->setFlags(Qt::ItemIsEnabled);
-        top->setToolTip(0, QStringLiteral("Stored before snapshots kept the composition: Update to add it"));
-        return;
-    }
     top->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
     top->setCheckState(0, c.value("included").toBool(true) ? Qt::Checked : Qt::Unchecked);
     auto num = [&](const QString &label, const QString &key, double hi, const QString &tip) {

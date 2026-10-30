@@ -69,7 +69,7 @@ static int runSourceColorTests(Engine &engine)
     }
     check(engine.setParameter(id, "source/color_space", "auto"), "restore Auto");
     engine.renderFrame();
-    check(matches(read(id), "srgb"), "unknown Auto preserves legacy samples");
+    check(matches(read(id), "srgb"), "untagged Auto reads the samples as sRGB");
     source.setColorSpace(QColorSpace::DisplayP3);
     check(source.save(path) && engine.setLayerImage(engine.indexOfId(id), path, &error), "replace with tagged P3 source");
     engine.renderFrame();

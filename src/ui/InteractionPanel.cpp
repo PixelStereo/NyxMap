@@ -115,31 +115,6 @@ NumberBox *chainNumber(double value, double span, int decimals)
     return box;
 }
 
-// A range's two ends side by side, as numbers (no slider: no bounds)
-struct RangeBoxes {
-    QWidget *widget;
-    NumberBox *minimum;
-    NumberBox *maximum;
-};
-
-RangeBoxes makeRangeBoxes(double span, double lowValue, double highValue, int decimals)
-{
-    auto *root = new QWidget;
-    auto *row = new QHBoxLayout(root);
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(5);
-    auto add = [&](const QString &caption, double value) {
-        row->addWidget(new QLabel(caption));
-        auto *field = chainNumber(value, span, decimals);
-        field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        row->addWidget(field, 1);
-        return field;
-    };
-    auto *minimum = add(QStringLiteral("Min"), lowValue);
-    auto *maximum = add(QStringLiteral("Max"), highValue);
-    return {root, minimum, maximum};
-}
-
 QProgressBar *meter()
 {
     auto *m = new QProgressBar;

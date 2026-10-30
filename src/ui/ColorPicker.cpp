@@ -317,22 +317,11 @@ void ColorPicker::setSwatchVisible(bool on) { m_swatch->setVisible(on); }
 
 void ColorPicker::setSettingsKey(const QString &key)
 {
-    // Older versions wrote their forced Wheel view even when the user had never
-    // chosen it. Keep explicit choices separately so those defaults cannot mask HSL.
-    m_settingsKey = key.isEmpty() ? QString() : key + QStringLiteral("/selectedView");
-    QSettings settings;
+    // Its own view, once the user chose one there; else the default one (Settings › Interface)
+    m_settingsKey = key.isEmpty() ? QString() : key + QStringLiteral("/view");
     bool ok = false;
-    int value = m_settingsKey.isEmpty() ? -1 : settings.value(m_settingsKey).toInt(&ok);
+    const int value = m_settingsKey.isEmpty() ? -1 : QSettings().value(m_settingsKey).toInt(&ok);
     m_hasLocalView = !m_settingsKey.isEmpty() && ok && validView(value);
-    if (!m_hasLocalView && !key.isEmpty()) {
-        const int previous = settings.value(key).toInt(&ok);
-        // A non-Wheel value could only have resulted from an explicit choice.
-        if (ok && validView(previous) && previous != Wheel) {
-            value = previous;
-            m_hasLocalView = true;
-            settings.setValue(m_settingsKey, value);
-        }
-    }
     applyView(m_hasLocalView ? View(value) : defaultView());
 }
 

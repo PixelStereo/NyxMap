@@ -215,7 +215,6 @@ public:
     // In / out points (seconds; out < 0: end of the media). Playback, loops and ping-pong stay within them.
     void setLayerInOut(int i, double in, double out);
     // Color models shown by the Color tab of a new layer (preference); each layer then keeps its own
-    void setDefaultColorModels(int m) { m_defaultColorModels = m; }
     // Mode given to a video or a sound when it is loaded into a layer (preference)
     void setDefaultPlayMode(PlayMode m) { m_defaultPlayMode = m; }
 
@@ -359,9 +358,9 @@ public:
         QImage thumbnail;   // output at the time it was stored
         QJsonArray layers;  // layerJson of the layers, with "included" (false: left alone by the recall)
         // The composition: its opacity and the sound volume, with "included" and "timing" as a layer's
-        // (empty: a snapshot stored before it was kept, left alone by the recall)
+        // (empty: left alone by the recall)
         QJsonObject composition;
-        // The interactions: each one's values (on / off, master level, ranges, filter, curve), by its id, with its
+        // The interactions: each one's values (on / off, master level, filters), by its id, with its
         // name, "included", "timing" and "easing" as a layer's: [{"id", "name", "included", "params", "timing",
         // "easing"}]
         // (one it does not hold, made since, is switched off by the recall)
@@ -744,7 +743,7 @@ public:
     // OSC /composition/budget. Sampled by the render thread once a second; a budget newly exceeded is logged.
     QJsonObject resourcesJson() const;
     // Syphon/Spout: true (default) publishes the prior complete viewport picture using
-    // a protected third buffer; false waits for GPU completion with glFinish (legacy mode).
+    // a protected third buffer; false waits for GPU completion with glFinish (the same frame, at a cost).
     void setGpuShareOneFrameLate(bool on) { m_shareOneFrameLate = on; }
     bool gpuShareOneFrameLate() const { return m_shareOneFrameLate.load(); }
     quint64 mipmapsMade() const { return m_mipmapsMade.load(); } // layers' mipmaps generated since the start
@@ -1038,7 +1037,6 @@ private:
     std::unique_ptr<AudioOutput> m_audio;
     std::unique_ptr<AudioInput> m_audioInput = std::make_unique<AudioInput>();
     PlayMode m_defaultPlayMode = PlayMode::Loop;
-    int m_defaultColorModels = 1;
     std::vector<Snapshot> m_snapshots;
     std::vector<SnapshotNode> m_snapshotTree;
     quint64 m_nextSnapshotGroupId = 1;

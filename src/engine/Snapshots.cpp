@@ -1854,7 +1854,7 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
                 auto clean = [](QJsonValue value) { auto o = value.toObject(); o.remove("relative_path"); return QJsonValue(o); };
                 a = clean(a); b = clean(b);
             }
-            // Older snapshots omit optional empty/default fields.
+            // An optional field left out: the same as empty
             if (b.isUndefined()) {
                 if (a.isUndefined() || (a.isArray() && a.toArray().isEmpty()) ||
                     (a.isObject() && a.toObject().isEmpty())) continue;

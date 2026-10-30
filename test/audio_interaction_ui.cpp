@@ -14,8 +14,7 @@
 int main(int argc,char **argv){
     QApplication app(argc,argv);theme::applyToApplication(app);Engine engine;QUndoStack undo;int failures=0;
     auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL audio_interaction_ui: %s\n",why);}};
-    auto old=Interaction::fromJson({{"source","internal"},{"source_layer","0"},{"source_param","audio/bass"},{"layer","101"},{"param","opacity"}});
-    check(old.source==InteractionSource::Audio && old.audioLow==20 && old.audioHigh==180,"legacy program audio migrates to Audio band");
+    Interaction old=Interaction::made(InteractionSource::Audio);old.layer=101;old.param="opacity";
     old.audioLow=340;old.audioHigh=1240;old.name="Metal";
     auto roundtrip=Interaction::fromJson(old.toJson());
     check(roundtrip.source==InteractionSource::Audio && roundtrip.audioLow==340 && roundtrip.audioHigh==1240 && roundtrip.name=="Metal","custom frequency interval survives project serialization");

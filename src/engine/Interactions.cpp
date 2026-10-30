@@ -502,18 +502,6 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     if(it.audioLow>it.audioHigh)std::swap(it.audioLow,it.audioHigh);
     it.audioFeature=AudioFeature(std::clamp(o.value("audio_feature").toInt(),0,2));
     it.audioInput=o.value("audio_input").toBool(false);
-    // Older shows exposed these program-audio values through Internal.
-    if(it.source==InteractionSource::Internal && !it.sourceLayer && it.sourceParam.startsWith("audio/")){
-        const QString part=it.sourceParam.mid(6);
-        if(part=="level"||part=="onset"||part=="bass"||part=="mid"||part=="high"){
-            it.source=InteractionSource::Audio;
-            if(part=="level")it.audioFeature=AudioFeature::Level;
-            else if(part=="onset")it.audioFeature=AudioFeature::Onset;
-            else if(part=="bass")it.audioHigh=180;
-            else if(part=="mid"){it.audioLow=180;it.audioHigh=2500;}
-            else it.audioLow=2500;
-        }
-    }
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();
     it.colorMapAlpha = o.value("color_map_alpha").toBool(false);

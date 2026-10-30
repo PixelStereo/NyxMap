@@ -176,7 +176,6 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     o["locked"] = l.locked;
     if (!l.masks.empty()) o["masks"] = masks::toJson(l.masks);
     if (l.matte.layer) o["matte"] = l.matte.toJson();
-    o["color_models"] = l.colorModels;
     if (l.color.maskLayer) o["mask"] = QString::number(l.color.maskLayer);
 
     QJsonObject src;
@@ -289,7 +288,6 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             l->transition = t.isEmpty() ? QString() : resolvePath(
                 QJsonObject{{"path", t}, {"relative_path", src.value("relative_transition")}}, projectDir);
         }
-        l->colorModels = o.value("color_models").toInt(l->colorModels);
         l->color.maskLayer = o.value("mask").toString().toULongLong();
         // Saved id kept unless another layer already has it
         const quint64 id = o.value("id").toString().toULongLong();
@@ -435,10 +433,9 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     if (o.contains("mesh")) l->mapping.setMeshJson(o.value("mesh").toObject());
     parametersFromJson(l->parameters(), o.value("params").toObject(), &l->extraParams);
     if (l->hasTransport()) {
-        // Played or paused: its parameter when the state has it (a snapshot that restarts it plays it), else the older
-        // key of the projects
+        // Played or paused: its parameter (a snapshot that restarts it plays it)
         const QJsonObject params = o.value("params").toObject();
-        l->playing = params.value("restart").toBool(false) || params.value("play").toBool(o.value("play").toBool(true));
+        l->playing = params.value("restart").toBool(false) || params.value("play").toBool(true);
         startMedia(*l); // its speed: backwards starts from the end
     }
     loadLayerAnims(*l, o.value("anims").toArray());

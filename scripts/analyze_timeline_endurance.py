@@ -107,6 +107,8 @@ def summarize(path, fps, check=False):
         rows = list(csv.DictReader(metrics()))
     if not rows:
         raise ValueError("No 1Hz metrics rows found")
+    if metadata.get("schema") != 2:
+        raise ValueError("CSV schema 2 required")
     budget_ms = 1000.0 / fps
     worst = max(rows, key=lambda r: number(r, "interval_max_ms"))
     slow = [r for r in rows if number(r, "interval_max_ms") > 1.5 * budget_ms]
@@ -158,8 +160,6 @@ def summarize(path, fps, check=False):
         print(f"Correlated event log: {events_path}")
     else:
         print("No JSONL event file found: action correlation unavailable")
-    if metadata.get("schema") != 2:
-        print("Warning: only CSV schema 2 has verified GPU sharing skip counters; older files may silently log zero.")
     lost = sum(number(row, "late_events_lost") + number(row, "journal_lost") for row in rows)
     if lost:
         print(f"Warning: {int(lost)} telemetry events lost; action correlation is incomplete.")
@@ -173,8 +173,6 @@ def summarize(path, fps, check=False):
             print(f"{label}: {max(number(row, key) for row in rows):g}")
     if check:
         failures = realtime_failures(rows)
-        if metadata.get("schema") != 2:
-            failures.append("CSV schema 2 required")
         print("Realtime acceptance: " + ("FAIL" if failures else "PASS"))
         for failure in failures:
             print("  " + failure)

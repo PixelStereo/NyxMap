@@ -20,7 +20,6 @@ class LogPanel final : public QWidget
     Q_OBJECT
 public:
     explicit LogPanel(QWidget *parent = nullptr, EventLog *log = nullptr);
-    void appendEvent(const QString &channel, const QString &message); // into the log (kept for older callers)
     void refresh();                                                   // what the ring holds now (the timer does)
 
 private:

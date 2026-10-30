@@ -34,8 +34,6 @@ public:
     // Videos decoded by the graphics hardware when it can (on unless changed)
     static bool hardwareDecoding();
     static bool gpuShareOneFrameLate(); // Syphon / Spout: the frame before, without waiting for the GPU
-    // Legacy layer UI metadata, derived from the shared picker preference (HSL by default).
-    static int colorModels();
     // OSC control and OSCQuery publication (defaults of libossia / score: OSC 1234, OSCQuery 5678)
     static bool oscEnabled();
     static int oscPort();      // UDP, OSC messages
@@ -64,7 +62,6 @@ public:
 signals:
     void playModeChanged();
     void hardwareDecodingChanged();
-    void colorModelsChanged();
     void oscChanged();
     void feedbackChanged();
     void transitionChanged(const QString &path);

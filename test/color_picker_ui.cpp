@@ -32,12 +32,8 @@ int main(int argc, char **argv)
     second.setSettingsKey("ui/colorPickerMode/second");
     following.setSettingsKey("ui/colorPickerMode/following");
     check(first.view() == ColorPicker::HSL && second.view() == ColorPicker::HSL,
-          "every unchosen location follows the global preference, ignoring old auto-written Wheel defaults");
-    check(!QSettings().contains("ui/colorPickerMode/first/selectedView"), "opening does not create a local override");
-    QSettings().setValue("ui/colorPickerMode/oldExplicit", int(ColorPicker::Palette));
-    ColorPicker oldExplicit;
-    oldExplicit.setSettingsKey("ui/colorPickerMode/oldExplicit");
-    check(oldExplicit.view() == ColorPicker::Palette, "an old explicit non-default choice is preserved");
+          "every unchosen location follows the global preference");
+    check(!QSettings().contains("ui/colorPickerMode/first/view"), "opening does not create a local override");
     first.setView(ColorPicker::RGB);
     second.setView(ColorPicker::Palette);
     ColorPicker::setDefaultView(ColorPicker::HSV);
@@ -49,7 +45,7 @@ int main(int argc, char **argv)
     restoredSecond.setSettingsKey("ui/colorPickerMode/second");
     check(restoredFirst.view() == ColorPicker::RGB && restoredSecond.view() == ColorPicker::Palette,
           "recreating an inspector restores each location separately");
-    QSettings().setValue("ui/colorPickerMode/invalid/selectedView", 999);
+    QSettings().setValue("ui/colorPickerMode/invalid/view", 999);
     ColorPicker invalid;
     invalid.setSettingsKey("ui/colorPickerMode/invalid");
     check(invalid.view() == ColorPicker::HSV, "invalid local preferences fall back to the global default");

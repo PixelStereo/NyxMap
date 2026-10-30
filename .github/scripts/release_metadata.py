@@ -9,7 +9,8 @@ START = "<!-- release-downloads:start -->"
 END = "<!-- release-downloads:end -->"
 
 
-def release_assets(release, repository, product="NyxMap"):
+def release_assets(release, repository):
+    product = "NyxMap"
     tag = release["tag_name"]
     if not re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?", tag):
         return None
@@ -44,9 +45,7 @@ def select_release(releases, repository):
     published = sorted((r for r in releases if not r.get("draft") and r.get("published_at")),
                        key=lambda r: (r["published_at"], r.get("id", 0)), reverse=True)
     for release in published:
-        # Releases published before the rename retain their original asset names.
-        # Require a complete set from one product, never mix partial packages.
-        urls = release_assets(release, repository) or release_assets(release, repository, "Pinol")
+        urls = release_assets(release, repository)
         if urls:
             return release, urls
     raise ValueError("No published release with all four platform packages")

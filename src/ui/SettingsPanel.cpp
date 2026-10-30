@@ -81,7 +81,6 @@ bool SettingsPanel::followFades()
     if (s_followFades < 0) s_followFades = QSettings().value(kFollowKey, true).toBool() ? 1 : 0;
     return s_followFades == 1;
 }
-int SettingsPanel::colorModels() { return ColorPicker::defaultView() == ColorPicker::HSL ? ColorEditor::Hsl : ColorEditor::Rgb; }
 QString SettingsPanel::startupProject()
 {
     QSettings s;
@@ -381,7 +380,6 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
     interfacePage->addWidget(color);
     connect(m_colorModels, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
         ColorPicker::setDefaultView(ColorPicker::View(m_colorModels->currentData().toInt()));
-        emit colorModelsChanged();
     });
 
     auto *osc = new QGroupBox(QStringLiteral("OSC"));

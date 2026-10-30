@@ -81,7 +81,6 @@ struct LayerValues {
     ColorAdjust color;
     bool effectsEnabled = true;
     bool solo = false;
-    int colorModels = 1;
     double aspect = 16.0 / 9.0; // source picture (before roi)
     QString name, sourcePath, error;
     bool enabled = true;
@@ -147,7 +146,6 @@ struct LayerValues {
         s.roi = l->roi;
         s.color = l->color;
         s.effectsEnabled = l->effectsEnabled;
-        s.colorModels = l->colorModels;
         const QSize comp = e->compositionSize();
         const QSize own = l->isViewport ? l->viewportSize() : l->isGroup ? comp : QSize(l->sourceWidth(), l->sourceHeight());
         const int sw = own.width(), sh = own.height();
@@ -1330,6 +1328,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         for (const ToxControl &c : s.toxControls) {
             if (c.color && c.count >= 3 && c.count <= 4) {
                 auto *picker = new ColorPicker(c.count == 4);
+                picker->setSettingsKey(QStringLiteral("ui/colorPickerMode/layer/%1/tox/%2").arg(m_layerId).arg(c.id)); // its own view
                 auto color = [&] { return QColor::fromRgbF(float(c.value(s.tox, 0).toDouble()), float(c.value(s.tox, 1).toDouble()),
                                   float(c.value(s.tox, 2).toDouble()), c.count == 4 ? float(c.value(s.tox, 3).toDouble()) : 1.f); };
                 picker->setColor(color());
@@ -3859,7 +3858,7 @@ QString LayerInspector::layoutKey() const
     const Layer *layer = m_engine->layer(m_layer);
     if (!layer) return {};
     QStringList key{QString::number(layer->id), QString::number(int(layer->type)), layer->sourcePath,
-        QString::number(layer->colorModels), QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
+        QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};
