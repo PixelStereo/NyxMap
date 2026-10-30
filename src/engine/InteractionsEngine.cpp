@@ -402,11 +402,12 @@ void Engine::stepInteractions(double dt)
         if (bandCount < bands.size()) bands[bandCount++] = {input, low, high, value};
         return value;
     };
+    std::vector<double> values; // reused from one Action to the next: no allocation each frame
     for (const Interaction &it : m_interactions) {
         if (it.enabled && it.isAction() && it.xyInputs.empty()) {
             InteractionRun &run = m_interactionRun[it.id];
             // Each value the source gives, in order (a key pressed then let go in one frame: both), in its own units
-            std::vector<double> values;
+            values.clear();
             if (it.source == InteractionSource::Audio) {
                 const AudioAnalysis::Values &audio = audios[it.audioInput];
                 values.push_back(it.audioFeature == Interaction::AudioFeature::Band
@@ -504,7 +505,7 @@ void Engine::stepInteractions(double dt)
         bool fresh = false;
         // Stateless trigger mappings retain every edge in a batch. Continuous
         // values and filters still advance once per frame with the full dt.
-        const Parameter *target = findParameter(it.layer, it.param);
+        Parameter *const target = findParameter(it.layer, it.param);
         const bool eventTrigger = !it.movesOverTime() && target && target->info().type == ParamInfo::Type::Trigger;
         // A Toggle counts each press, even several in a frame: the chain takes each value as it comes
         const bool eachValue = eventTrigger || std::any_of(it.filters.begin(), it.filters.end(), [](const InteractionStage &f) {
@@ -577,7 +578,7 @@ void Engine::stepInteractions(double dt)
             const int li = indexOfId(it.layer);
             if (li < 0 || m_layers[size_t(li)]->locked) continue; // a locked layer is left alone
         }
-        Parameter *p = findParameter(it.layer, it.param);
+        Parameter *p = target; // nothing in between adds or removes a parameter
         if (!p) {
             // An ISF color has four scalar Parameter entries but OSC and the
             // ColorPicker expose the natural group address (param/color).

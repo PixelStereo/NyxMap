@@ -165,6 +165,11 @@ double Animation::position(double c) const
     return backwardsAt(c) ? passDuration(duration) - within : within;
 }
 
+double Animation::progress() const
+{
+    return std::clamp(position() / passDuration(duration), 0.0, 1.0);
+}
+
 int Animation::pass() const
 {
     double pass = 0, within = 0;
@@ -526,9 +531,8 @@ Parameter *Engine::findParameter(quint64 layer, const QString &path)
             return nullptr;
         }
         if (isShowParam(path)) { // the show's actions and states
-            for (const auto &p : showParams())
-                if (p->path() == path) return p.get();
-            return nullptr;
+            showParams(); // made again if what they act on changed
+            return m_showParamIndex.value(path);
         }
         if (path.startsWith(QLatin1String("fixture/"))) { // a fixture's of the pixel mapping
             for (const auto &p : fixtureParams())

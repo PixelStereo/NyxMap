@@ -116,6 +116,15 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     for (int i = 0; i < 250; ++i) e.advanceFades(0.01); // 2.5 s of 2 s passes
     check(e.animParamValue(0, pass, &passValue) && passValue == 2, "in its second pass: pass 2");
     check(e.animParamValue(0, where, &whereValue) && std::abs(whereValue - 0.25) < 0.02, "a quarter into it: position 0.25");
+    {   // a pass shorter than the engine's shortest: its position still within 0..1
+        Engine::Animation instant = e.animation(e.indexOfAnimation(timelineId));
+        instant.duration = 0;
+        e.setAnimation(e.indexOfAnimation(timelineId), instant);
+        e.advanceFades(0.01);
+        check(e.animParamValue(0, where, &whereValue) && whereValue >= 0 && whereValue <= 1, "a zero duration: position in 0..1");
+        instant.duration = 2;
+        e.setAnimation(e.indexOfAnimation(timelineId), instant);
+    }
     for (int i = 0; i < 500; ++i) e.advanceFades(0.01); // past its 3 passes: stopped
     check(e.animParamValue(0, pass, &passValue) && passValue == 0, "its passes done, stopped: pass 0");
     e.setParameter(0, QStringLiteral("timeline/%1/stop").arg(timelineId), true);

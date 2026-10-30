@@ -100,6 +100,7 @@ struct Animation {
     double position(double clock) const; // within the pass: 0..duration
     double position() const { return position(clock); }
     int pass() const; // the pass it is in: 1, 2… (the last one once its passes are done)
+    double progress() const; // where it is within its pass: 0..1 (back down on a ping-pong's way back)
     double played() const { return std::min(clock, length()) + oscillatorOffset; }
     bool backwardsAt(double clock) const; // the pass at that clock goes from the end to the start
     double clockAt(double position) const; // the clock giving `position` within the pass it is in now
