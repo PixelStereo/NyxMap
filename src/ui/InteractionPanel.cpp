@@ -17,6 +17,7 @@
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
@@ -25,6 +26,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -77,6 +79,20 @@ constexpr char kMime[] = "application/x-nyxmap-interaction-settings";
 const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi, InteractionSource::Osc,
                                     InteractionSource::Internal, InteractionSource::Audio};
 
+// A frame that tells when it is clicked (where no child takes the click): a filter selected
+class ClickFrame : public QFrame
+{
+public:
+    std::function<void()> pressed;
+
+protected:
+    void mousePressEvent(QMouseEvent *e) override
+    {
+        if (pressed && e->button() == Qt::LeftButton) pressed();
+        QFrame::mousePressEvent(e);
+    }
+};
+
 QLabel *note(const QString &t)
 {
     auto *l = new QLabel(t);
@@ -85,37 +101,38 @@ QLabel *note(const QString &t)
     return l;
 }
 
-// Two independent SliderField controls, with the same numeric boxes and
-// painting as the Temp/Tint parameters. RangeField's overlapping handles are
-// difficult to grab precisely, especially for narrow ranges.
-struct RangeSliders {
+// A value of an interaction's chain: the application's number field (press and slide sideways; a click types it),
+// with no limit of its own — a range, a filter's setting can be any value. `span`: what sliding across ~200 pixels covers
+constexpr double kUnbounded = 1e6;
+NumberBox *chainNumber(double value, double span, int decimals)
+{
+    auto *box = new NumberBox;
+    box->setRange(-kUnbounded, kUnbounded);
+    box->setDecimals(decimals);
+    box->setSingleStep(std::max(std::pow(10.0, -decimals), std::abs(span) / 200.0));
+    box->setKeyboardTracking(false); // typed: once entered
+    box->setValue(value);
+    return box;
+}
+
+// A range's two ends side by side, as numbers (no slider: no bounds)
+struct RangeBoxes {
     QWidget *widget;
-    SliderField *minimum;
-    SliderField *maximum;
+    NumberBox *minimum;
+    NumberBox *maximum;
 };
 
-RangeSliders makeRangeSliders(double lo, double hi, double lowValue, double highValue, int decimals)
+RangeBoxes makeRangeBoxes(double span, double lowValue, double highValue, int decimals)
 {
     auto *root = new QWidget;
-    auto *column = new QVBoxLayout(root);
-    column->setContentsMargins(0, 0, 0, 0);
-    column->setSpacing(3);
-    const double upper = std::max(hi, lo + 1e-6);
+    auto *row = new QHBoxLayout(root);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(5);
     auto add = [&](const QString &caption, double value) {
-        auto *row = new QHBoxLayout;
-        row->setContentsMargins(0, 0, 0, 0);
-        row->setSpacing(5);
-        auto *label = new QLabel(caption);
-        label->setFixedWidth(30);
-        auto *field = new SliderField;
-        field->setRange(lo, upper);
-        field->setDecimals(decimals);
-        field->setSingleStep(std::max(std::pow(10.0, -decimals), (upper - lo) / 100.0));
-        field->setSnaps({lo, upper});
-        field->setValue(value);
-        row->addWidget(label);
+        row->addWidget(new QLabel(caption));
+        auto *field = chainNumber(value, span, decimals);
+        field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         row->addWidget(field, 1);
-        column->addLayout(row);
         return field;
     };
     auto *minimum = add(QStringLiteral("Min"), lowValue);
@@ -147,9 +164,7 @@ QJsonObject chainJson(const Interaction &it)
 
 void applyChain(Interaction &it, const QJsonObject &chain)
 {
-    QJsonObject o = it.toJson();
-    for (auto c = chain.begin(); c != chain.end(); ++c) o[c.key()] = c.value();
-    it = Interaction::fromJson(o);
+    it = Interaction::fromJson(Interaction::merged(it.toJson(), chain)); // a chain copied before: its filter and curve
 }
 
 } // namespace
@@ -224,7 +239,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_settingsTitle = new QLabel(QStringLiteral("Settings"));
     m_settingsTitle->setStyleSheet("font-weight:bold;");
     auto *copy = new QPushButton(QStringLiteral("Copy Settings"));
-    copy->setToolTip(QStringLiteral("Its chain (ranges, toggle, filter, curve, master, pick-up), not its source or target"));
+    copy->setToolTip(QStringLiteral("Its chain (ranges, toggle, filters, master, pick-up), not its source or target"));
     m_copy = copy;
     m_paste = new QPushButton(QStringLiteral("Paste Settings"));
     m_paste->setToolTip(QStringLiteral("The chain copied, onto the selected interactions (their sources and targets stay)"));
@@ -272,6 +287,9 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         if (!on) m_learnKind.reset(); // the next Learn: of any kind
     });
     connect(m_list, &QTreeWidget::itemSelectionChanged, this, [this] {
+        // The list made again (after each edit) empties then selects again: not a choice. Its settings stay, or a
+        // curve dragged would be replaced under the mouse (rebuildList shows another one's settings when it changed)
+        if (m_filling) return;
         m_remove->setEnabled(!m_list->selectedItems().isEmpty());
         if (selectedId() != m_shown) rebuildSettings();
     });
@@ -1158,7 +1176,7 @@ void InteractionPanel::rebuildSettings()
     m_inMeter = meter();
     m_outMeter = meter();
     m_inMeter->setToolTip(QStringLiteral("The source, after its range and the toggle"));
-    m_outMeter->setToolTip(QStringLiteral("The result, after the filter, the curve and the master level"));
+    m_outMeter->setToolTip(QStringLiteral("The result, after the filters and the master level"));
     auto *meters = new QVBoxLayout;
     meters->setSpacing(3);
     meters->addWidget(m_inMeter);
@@ -1207,17 +1225,11 @@ void InteractionPanel::rebuildSettings()
         edit(QStringLiteral("Change Toggle"), [on](Interaction &x) { x.toggle = on; });
     });
 
-    // Two sliders with editable number boxes; when one endpoint crosses the
-    // other, move the opposite endpoint too instead of silently swapping values.
-    // This keeps the displayed limits consistent with the interaction engine.
-    const double srcBarMin = std::min(srcLo, it.srcMin);
-    const double srcBarMax = std::max(srcHi, it.srcMax);
-    auto srcFields = makeRangeSliders(srcBarMin, srcBarMax,
-                                      std::min(it.srcMin, it.srcMax),
-                                      std::max(it.srcMin, it.srcMax),
-                                      srcHi - srcLo > 10 ? 0 : 2);
+    // Its two ends as numbers, any value; when one crosses the other, the other follows (never swapped silently)
+    auto srcFields = makeRangeBoxes(srcHi - srcLo, std::min(it.srcMin, it.srcMax), std::max(it.srcMin, it.srcMax), 3);
     srcFields.widget->setToolTip(QStringLiteral("The source input interval; Min maps to 0, Max to 1"));
     auto *srcLabel = new ResetLabel(QStringLiteral("Source range"), [edit, srcFields, srcLo, srcHi] {
+        const QSignalBlocker a(srcFields.minimum), b(srcFields.maximum);
         srcFields.minimum->setValue(srcLo);
         srcFields.maximum->setValue(srcHi);
         edit(QStringLiteral("Reset Source Range"), [srcLo, srcHi](Interaction &x) {
@@ -1234,6 +1246,7 @@ void InteractionPanel::rebuildSettings()
         double lo = srcFields.minimum->value();
         double hi = srcFields.maximum->value();
         if (lo > hi) {
+            const QSignalBlocker a(srcFields.minimum), b(srcFields.maximum);
             if (editingMinimum) srcFields.maximum->setValue(hi = lo);
             else srcFields.minimum->setValue(lo = hi);
         }
@@ -1242,172 +1255,229 @@ void InteractionPanel::rebuildSettings()
             x.srcMax = hi;
         }, editingMinimum ? QStringLiteral("srcmin") : QStringLiteral("srcmax"));
     };
-    connect(srcFields.minimum, &SliderField::valueEdited, this, [setSource](double) { setSource(true); });
-    connect(srcFields.maximum, &SliderField::valueEdited, this, [setSource](double) { setSource(false); });
+    connect(srcFields.minimum, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setSource](double) { setSource(true); });
+    connect(srcFields.maximum, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setSource](double) { setSource(false); });
 
-    // Target range: Min/Max are ordered endpoints, Invert exchanges where
-    // 0 and 1 land without changing the visual positions of those endpoints.
+    // Target range: where 0 and 1 land in the target's values (an inverted response is a filter: Math 1 − x, or a
+    // curve). One set upside down elsewhere (OSC) stays so when its ends are moved here
     ParamInfo tinfo;
     const bool numberTarget = m_engine->parameterInfo(it.layer, root.xyInputs.empty() ? it.param : it.param + (m_xyAxis ? "/y" : "/x"), &tinfo) && tinfo.isNumber();
-    const double tLo = numberTarget ? std::min({tinfo.min, it.dstMin, it.dstMax}) : 0;
-    const double tHi = numberTarget ? std::max({tinfo.max, it.dstMin, it.dstMax}) : 1;
-    auto dstFields = makeRangeSliders(tLo, tHi,
-                                      std::min(it.dstMin, it.dstMax),
-                                      std::max(it.dstMin, it.dstMax),
-                                      tHi - tLo > 10 ? 1 : 2);
-    dstFields.widget->setToolTip(QStringLiteral("The target interval; invert to map low input to high output"));
-    auto *invert = new FlagBox(QStringLiteral("Invert"));
-    invert->setChecked(it.dstMin > it.dstMax);
-    invert->setToolTip(QStringLiteral("0 lands on the high end, 1 on the low end"));
-    auto *dstRoot = new QWidget;
-    auto *dstLayout = new QVBoxLayout(dstRoot);
-    dstLayout->setContentsMargins(0, 0, 0, 0);
-    dstLayout->setSpacing(3);
-    dstLayout->addWidget(dstFields.widget);
-    dstLayout->addWidget(invert);
+    const double tSpan = numberTarget ? tinfo.max - tinfo.min : 1;
+    auto dstFields = makeRangeBoxes(tSpan, std::min(it.dstMin, it.dstMax), std::max(it.dstMin, it.dstMax), 3);
+    dstFields.widget->setToolTip(QStringLiteral("The target interval: Min receives 0, Max receives 1 (to invert, add the filter "
+                                                "Math › 1 − x)"));
     const double fullLo = numberTarget ? tinfo.min : 0;
     const double fullHi = numberTarget ? tinfo.max : 1;
-    auto *dstLabel = new ResetLabel(QStringLiteral("Target range"), [edit, dstFields, invert, fullLo, fullHi] {
+    const bool upsideDown = it.dstMin > it.dstMax;
+    auto *dstLabel = new ResetLabel(QStringLiteral("Target range"), [edit, dstFields, fullLo, fullHi] {
+        const QSignalBlocker a(dstFields.minimum), b(dstFields.maximum);
         dstFields.minimum->setValue(fullLo);
         dstFields.maximum->setValue(fullHi);
-        QSignalBlocker blocker(invert);
-        invert->setChecked(false);
         edit(QStringLiteral("Reset Target Range"), [fullLo, fullHi](Interaction &x) {
             x.dstMin = fullLo;
             x.dstMax = fullHi;
         });
     });
-    form->addRow(dstLabel, dstRoot);
+    form->addRow(dstLabel, dstFields.widget);
     attachPreset({dstLabel}, {QStringLiteral("target/min"), QStringLiteral("target/max")});
     attachPreset({dstFields.minimum}, {QStringLiteral("target/min")});
     attachPreset({dstFields.maximum}, {QStringLiteral("target/max")});
-    attachPreset({invert}, {QStringLiteral("target/min"), QStringLiteral("target/max")});
 
-    auto setTarget = [edit, dstFields, invert](bool editingMinimum, const QString &merge) {
+    auto setTarget = [edit, dstFields, upsideDown](bool editingMinimum, const QString &merge) {
         double lo = dstFields.minimum->value();
         double hi = dstFields.maximum->value();
         if (lo > hi) {
+            const QSignalBlocker a(dstFields.minimum), b(dstFields.maximum);
             if (editingMinimum) dstFields.maximum->setValue(hi = lo);
             else dstFields.minimum->setValue(lo = hi);
         }
-        const bool inv = invert->isChecked();
-        edit(QStringLiteral("Change Target Range"), [lo, hi, inv](Interaction &x) {
-            x.dstMin = inv ? hi : lo;
-            x.dstMax = inv ? lo : hi;
+        edit(QStringLiteral("Change Target Range"), [lo, hi, upsideDown](Interaction &x) {
+            x.dstMin = upsideDown ? hi : lo;
+            x.dstMax = upsideDown ? lo : hi;
         }, merge);
     };
-    connect(dstFields.minimum, &SliderField::valueEdited, this,
+    connect(dstFields.minimum, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
             [setTarget](double) { setTarget(true, QStringLiteral("dstmin")); });
-    connect(dstFields.maximum, &SliderField::valueEdited, this,
+    connect(dstFields.maximum, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
             [setTarget](double) { setTarget(false, QStringLiteral("dstmax")); });
-    connect(invert, &QCheckBox::toggled, this,
-            [setTarget](bool) { setTarget(false, QString()); });
 
-    // Filter
-    auto *filterRow = new QHBoxLayout;
-    auto *filterOn = new FlagBox(QStringLiteral("Filter"));
-    filterOn->setChecked(it.filterOn);
-    auto *filter = new QComboBox;
-    for (int k = 0; k < kInteractionFilterCount; ++k) filter->addItem(interactionFilterName(InteractionFilter(k)), k);
-    filter->setCurrentIndex(int(it.filter));
-    filter->setEnabled(it.filterOn);
-    filter->setToolTip(QStringLiteral("Average: of the last moments · Weighted Average: smoothed · Pulse Detection: a pulse on "
-                                      "each sudden rise · Attack Release: rises and falls at speeds of their own · Damper: "
-                                      "a spring that follows"));
-    filterRow->addWidget(filterOn);
-    filterRow->addWidget(filter, 1);
-    form->addRow(QString(), filterRow);
-    attachPreset({filterOn}, {QStringLiteral("filter/enable")});
-    attachPreset({filter}, {QStringLiteral("filter/type")});
-    connect(filterOn, &QCheckBox::toggled, this, [this, edit](bool on) {
-        edit(QStringLiteral("Change Filter"), [on](Interaction &x) { x.filterOn = on; });
-        rebuildSettings();
-    });
-    connect(filter, qOverload<int>(&QComboBox::activated), this, [this, edit](int k) {
-        edit(QStringLiteral("Change Filter"), [k](Interaction &x) {
-            x.filter = InteractionFilter(k);
-            x.filterA = interactionFilterSetting(x.filter, 0).def; // the new one's own settings
-            x.filterB = interactionFilterSetting(x.filter, 1).def;
+    // Filters, in a frame, as a layer's effects: + adds one (of the kind chosen), − removes the one selected, ▲ ▼ move
+    // it; each one on or off, its settings under its name, any value. A click on a filter selects it
+    const int count = int(it.filters.size());
+    m_selectedFilter = count ? std::clamp(m_selectedFilter, 0, count - 1) : -1;
+    auto *frame = new QFrame;
+    frame->setObjectName(QStringLiteral("filtersFrame"));
+    frame->setStyleSheet(QStringLiteral("QFrame#filtersFrame { border:1px solid #3c3c43; border-radius:4px; }"));
+    auto *fv = new QVBoxLayout(frame);
+    fv->setContentsMargins(6, 4, 6, 6);
+    fv->setSpacing(4);
+    auto *bar = new QHBoxLayout;
+    auto *filtersLabel = new QLabel(QStringLiteral("<b>Filters</b>"));
+    filtersLabel->setToolTip(QStringLiteral("Applied one after the other, from the top, between the source range and the master level"));
+    auto tool = [](const QString &text, const QString &tip, const char *name) {
+        auto *b = new QToolButton;
+        b->setObjectName(QString::fromLatin1(name));
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setMinimumWidth(26);
+        return b;
+    };
+    auto *addFilter = tool(QStringLiteral("+"), QStringLiteral("Add a filter (at the end)"), "addFilter");
+    auto *removeFilter = tool(QStringLiteral("−"), QStringLiteral("Remove the selected filter"), "removeFilter");
+    auto *upFilter = tool(QStringLiteral("▲"), QStringLiteral("Move the selected filter up (applied earlier)"), "filterUp");
+    auto *downFilter = tool(QStringLiteral("▼"), QStringLiteral("Move the selected filter down (applied later)"), "filterDown");
+    removeFilter->setEnabled(m_selectedFilter >= 0);
+    upFilter->setEnabled(m_selectedFilter > 0);
+    downFilter->setEnabled(m_selectedFilter >= 0 && m_selectedFilter + 1 < count);
+    addFilter->setPopupMode(QToolButton::InstantPopup);
+    addFilter->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0; }")); // a plain +
+    auto *addMenu = new QMenu(addFilter);
+    addFilter->setMenu(addMenu);
+    const InteractionFilter overTime[] = {InteractionFilter::Average, InteractionFilter::WeightedAverage, InteractionFilter::AttackRelease,
+                                          InteractionFilter::Damper, InteractionFilter::PulseDetection, InteractionFilter::Delay,
+                                          InteractionFilter::Speed};
+    const InteractionFilter onValue[] = {InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
+                                         InteractionFilter::Steps, InteractionFilter::Threshold};
+    auto offer = [this, edit, addMenu, count](InteractionFilter kind) {
+        addMenu->addAction(interactionFilterName(kind), this, [this, edit, kind, count] {
+            m_revealCurve = kind == InteractionFilter::Curve;
+            m_selectedFilter = count; // the new one
+            edit(QStringLiteral("Add Filter"), [kind](Interaction &x) { x.filters.push_back(InteractionStage::made(kind)); });
+            rebuildSettings();
+        });
+    };
+    addMenu->addSection(QStringLiteral("On the value"));
+    for (InteractionFilter k : onValue) offer(k);
+    addMenu->addSection(QStringLiteral("Over time"));
+    for (InteractionFilter k : overTime) offer(k);
+    bar->addWidget(filtersLabel);
+    bar->addStretch();
+    for (QToolButton *b : {addFilter, removeFilter, upFilter, downFilter}) bar->addWidget(b);
+    fv->addLayout(bar);
+    attachPreset({filtersLabel}, {QStringLiteral("filters")});
+    if (it.filters.empty()) fv->addWidget(note(QStringLiteral("None: the value goes straight to the master level.")));
+    connect(removeFilter, &QToolButton::clicked, this, [this, edit] {
+        const int k = m_selectedFilter;
+        edit(QStringLiteral("Remove Filter"), [k](Interaction &x) {
+            if (k >= 0 && k < int(x.filters.size())) x.filters.erase(x.filters.begin() + k);
         });
         rebuildSettings();
     });
-    if (it.filterOn)
+    auto move = [this, edit](int by) {
+        const int k = m_selectedFilter, to = k + by;
+        edit(QStringLiteral("Move Filter"), [k, to](Interaction &x) {
+            if (k >= 0 && to >= 0 && k < int(x.filters.size()) && to < int(x.filters.size())) std::swap(x.filters[size_t(k)], x.filters[size_t(to)]);
+        });
+        m_selectedFilter = to; // it stays selected
+        rebuildSettings();
+    };
+    connect(upFilter, &QToolButton::clicked, this, [move] { move(-1); });
+    connect(downFilter, &QToolButton::clicked, this, [move] { move(1); });
+
+    auto editStage = [edit](size_t k, const QString &text, const std::function<void(InteractionStage &)> &fn, const QString &merge = QString()) {
+        edit(text, [k, fn](Interaction &x) {
+            if (k < x.filters.size()) fn(x.filters[k]);
+        }, merge);
+    };
+    for (size_t k = 0; k < it.filters.size(); ++k) {
+        const InteractionStage &f = it.filters[k];
+        const QString base = QStringLiteral("filters/%1/").arg(k + 1);
+        const bool selected = int(k) == m_selectedFilter;
+        auto *block = new ClickFrame;
+        block->setObjectName(QStringLiteral("filterBlock%1").arg(k));
+        block->setStyleSheet(selected ? QStringLiteral("QFrame#filterBlock%1 { background:#2e2e35; border-left:2px solid %2; }").arg(k).arg(theme::css())
+                                      : QStringLiteral("QFrame#filterBlock%1 { border-left:2px solid transparent; }").arg(k));
+        block->pressed = [this, k] {
+            if (m_selectedFilter == int(k)) return;
+            m_selectedFilter = int(k);
+            QTimer::singleShot(0, this, [this] { rebuildSettings(); }); // after the click
+        };
+        auto *bf = new QFormLayout(block);
+        bf->setContentsMargins(6, 3, 2, 3);
+        bf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        bf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        auto *on = new FlagBox(QStringLiteral("%1 · %2").arg(k + 1).arg(interactionFilterName(f.kind)));
+        on->setObjectName(QStringLiteral("filterOn%1").arg(k));
+        on->setChecked(f.enabled);
+        on->setToolTip(QStringLiteral("On / off (off: the value goes through unchanged)"));
+        bf->addRow(on);
+        attachPreset({on}, {base + QStringLiteral("enable")});
+        connect(on, &QCheckBox::toggled, this, [editStage, k](bool v) {
+            editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) { s.enabled = v; });
+        });
+
+        if (f.kind == InteractionFilter::Math) {
+            auto *op = new QComboBox;
+            op->setObjectName(QStringLiteral("filterOp%1").arg(k));
+            for (int o = 0; o < kMathOpCount; ++o) op->addItem(mathOpName(MathOp(o)), o);
+            op->setCurrentIndex(int(f.op));
+            op->setToolTip(QStringLiteral("x: the value coming in (0..1 after the source range, any value after another filter); a: the value below"));
+            bf->addRow(QStringLiteral("Operation"), op);
+            attachPreset({op}, {QStringLiteral("filters")});
+            connect(op, qOverload<int>(&QComboBox::activated), this, [this, editStage, k](int o) {
+                editStage(k, QStringLiteral("Change Filter"), [o](InteractionStage &s) { s.op = MathOp(o); });
+                rebuildSettings();
+            });
+        }
         for (int which = 0; which < 2; ++which) {
-            const FilterSetting fs = interactionFilterSetting(it.filter, which);
-            if (fs.name.isEmpty()) continue;
-            auto *f = new SliderField;
-            f->setRange(fs.min, fs.max);
-            f->setDecimals(fs.min < 0.01 ? 3 : 2);
-            f->setSuffix(fs.suffix);
-            f->setSingleStep((fs.max - fs.min) / 100.0);
-            f->setTicks(10);
-            f->setSnaps({fs.def});
-            f->setValue(which == 0 ? it.filterA : it.filterB);
+            const FilterSetting fs = interactionFilterSetting(f.kind, which);
+            if (fs.name.isEmpty() || (f.kind == InteractionFilter::Math && !mathOpUsesValue(f.op))) continue;
+            auto *field = chainNumber(which ? f.b : f.a, fs.max - fs.min, f.kind == InteractionFilter::Steps ? 0 : 3);
+            field->setObjectName(QStringLiteral("filter%1%2").arg(k).arg(QChar(which ? 'b' : 'a')));
+            field->setSuffix(fs.suffix);
+            field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             const double def = fs.def;
-            auto *fl = new ResetLabel(fs.name, [edit, f, which, def] {
-                f->setValue(def);
-                edit(QStringLiteral("Reset Filter"), [which, def](Interaction &x) { (which == 0 ? x.filterA : x.filterB) = def; });
+            auto *label = new ResetLabel(fs.name, [editStage, field, k, which, def] {
+                const QSignalBlocker quiet(field);
+                field->setValue(def);
+                editStage(k, QStringLiteral("Reset Filter"), [which, def](InteractionStage &s) { (which ? s.b : s.a) = def; });
             });
-            form->addRow(fl, f);
-            attachPreset({fl, f}, {which == 0 ? QStringLiteral("filter/a") : QStringLiteral("filter/b")});
-            connect(f, &SliderField::valueEdited, this, [edit, which](double v) {
-                edit(QStringLiteral("Change Filter"), [which, v](Interaction &x) { (which == 0 ? x.filterA : x.filterB) = v; },
-                     QStringLiteral("filter%1").arg(which));
-            });
-        }
-
-    // Curve
-    auto *curveOn = new FlagBox(QStringLiteral("Curve"));
-    curveOn->setChecked(it.curveOn);
-    curveOn->setToolTip(QStringLiteral("The result shaped by a curve: click to add a key, drag it, double-click to remove it, "
-                                       "right-click for its easing"));
-    auto *resetCurve = new QPushButton(QStringLiteral("Straight"));
-    resetCurve->setToolTip(QStringLiteral("Back to a straight line"));
-    resetCurve->setEnabled(it.curveOn);
-    auto *curveRow = new QHBoxLayout;
-    curveRow->addWidget(curveOn);
-    curveRow->addStretch();
-    curveRow->addWidget(resetCurve);
-    form->addRow(QString(), curveRow);
-    if (!it.curveOn) attachPreset({curveOn}, {QStringLiteral("curve/enable")});
-    connect(curveOn, &QCheckBox::toggled, this, [this, edit](bool on) {
-        m_revealCurve = on;
-        edit(QStringLiteral("Change Curve"), [on](Interaction &x) { x.curveOn = on; });
-        rebuildSettings();
-    });
-    connect(resetCurve, &QPushButton::clicked, this, [this, edit] {
-        edit(QStringLiteral("Reset Curve"), [](Interaction &x) { x.curve = Interaction::straightCurve(); });
-        rebuildSettings();
-    });
-    if (it.curveOn) {
-        // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around), the playhead where
-        // the source is now
-        auto *lane = new CurveLane;
-        lane->setTrack(it.curve, 1.0, 0.0, 1.0);
-        lane->setView(-0.03, 1.03, -0.08, 1.08);
-        lane->setFixedHeight(220);
-        lane->setToolTip(QStringLiteral("Across: what comes in (after the filter) · up: what goes out. Click to add a key, drag "
-                                        "it, double-click to remove it; right-click: its curve (easing, Bézier, hold)"));
-        m_lane = lane;
-        m_settingsLayout->addWidget(lane);
-        // Its right-click is its keys' own (their easing): only Edit mode (a click on its title) puts it in a preset
-        if (PresetEditor *pe = PresetEditor::instance()) pe->track(lane, 0, {QStringLiteral("interaction/%1/curve").arg(it.id)});
-        attachPreset({curveOn}, {QStringLiteral("curve/enable"), QStringLiteral("curve")});
-        if (m_revealCurve) { // just turned on: shown
-            m_revealCurve = false;
-            QTimer::singleShot(60, this, [this] { // once laid out
-                if (!m_lane || !m_scroll) return;
-                m_settings->adjustSize();
-                m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum()); // it is last
+            bf->addRow(label, field);
+            attachPreset({label, field}, {base + QChar(which ? 'b' : 'a')});
+            connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [editStage, k, which](double v) {
+                editStage(k, QStringLiteral("Change Filter"), [which, v](InteractionStage &s) { (which ? s.b : s.a) = v; },
+                          QStringLiteral("filter%1/%2").arg(k).arg(which));
             });
         }
-        connect(lane, &CurveLane::edited, this, [edit](const AnimTrack &t, int gesture) {
-            edit(QStringLiteral("Edit Curve"), [t](Interaction &x) {
-                x.curve.keys = t.keys;
-                for (AnimKey &k : x.curve.keys) k.t = std::clamp(k.t, 0.0, 1.0);
-            }, gesture ? QStringLiteral("curve%1").arg(gesture) : QString());
-        });
+        if (f.kind == InteractionFilter::Curve) {
+            // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first
+            // curve's playhead where its input is now
+            auto *straight = new QPushButton(QStringLiteral("Straight"));
+            straight->setToolTip(QStringLiteral("Back to a straight line"));
+            bf->addRow(QString(), straight);
+            connect(straight, &QPushButton::clicked, this, [this, editStage, k] {
+                editStage(k, QStringLiteral("Reset Curve"), [](InteractionStage &s) { s.curve = Interaction::straightCurve(); });
+                rebuildSettings();
+            });
+            auto *lane = new CurveLane;
+            lane->setObjectName(QStringLiteral("filterCurve%1").arg(k));
+            lane->setTrack(f.curve, 1.0, 0.0, 1.0);
+            lane->setView(-0.03, 1.03, -0.08, 1.08);
+            lane->setFixedHeight(200);
+            lane->setToolTip(QStringLiteral("Across: what comes in · up: what goes out. Click to add a key, drag it, "
+                                            "double-click to remove it; right-click: its curve (easing, Bézier, hold)"));
+            bf->addRow(lane);
+            if (!m_lane) m_lane = lane;
+            // Its right-click is its keys' own (their easing): only Edit mode (a click on its title) puts it in a preset
+            if (PresetEditor *pe = PresetEditor::instance()) pe->track(lane, 0, {QStringLiteral("interaction/%1/filters").arg(it.id)});
+            if (m_revealCurve && k + 1 == it.filters.size()) { // just added: shown
+                m_revealCurve = false;
+                QTimer::singleShot(60, this, [this] { // once laid out
+                    if (!m_scroll) return;
+                    m_settings->adjustSize();
+                    m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum());
+                });
+            }
+            connect(lane, &CurveLane::edited, this, [editStage, k](const AnimTrack &t, int gesture) {
+                editStage(k, QStringLiteral("Edit Curve"), [t](InteractionStage &s) {
+                    s.curve.keys = t.keys;
+                    for (AnimKey &key : s.curve.keys) key.t = std::clamp(key.t, 0.0, 1.0);
+                }, gesture ? QStringLiteral("curve%1/%2").arg(k).arg(gesture) : QString());
+            });
+        }
+        fv->addWidget(block);
     }
+    form->addRow(frame);
     m_settingsLayout->addStretch();
 }
 
@@ -1434,15 +1504,7 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
     });
 
     // Each condition: the source's value, an operator, one value (two for a range), removed by −
-    auto number = [](double v) {
-        auto *box = new QDoubleSpinBox;
-        box->setRange(-1e9, 1e9);
-        box->setDecimals(3);
-        box->setSingleStep(0.1);
-        box->setValue(v);
-        box->setKeyboardTracking(false);
-        return box;
-    };
+    auto number = [](double v) { return chainNumber(v, 20, 3); }; // any value; sliding: 0.1 a pixel
     for (size_t i = 0; i < it.conditions.size(); ++i) {
         const InteractionCondition c = it.conditions[i];
         auto *row = new QWidget;

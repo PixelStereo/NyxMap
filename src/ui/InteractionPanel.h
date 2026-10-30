@@ -94,6 +94,7 @@ private:
     QLabel *m_actionState = nullptr; // an Action: whether its conditions hold now
     QPointer<class CurveLane> m_lane;
     bool m_revealCurve = false;
+    int m_selectedFilter = 0; // the filter − removes and ▲ ▼ move, in the one shown
     class QScrollArea *m_scroll = nullptr;
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;

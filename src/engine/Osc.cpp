@@ -131,9 +131,14 @@ QString OscNamespace::signature() const
         s += QStringLiteral("preset:%1:%2\n").arg(preset.id).arg(preset.name);
     }
     s += QStringLiteral("cues:%1\n").arg(m_e->sequencer().revision());
+    auto kinds = [](const Interaction &it) {
+        QStringList k;
+        for (const InteractionStage &f : it.filters) k << interactionFilterKey(f.kind);
+        return k.join(QLatin1Char(','));
+    };
     for (const Interaction &it : m_e->interactions()) // their names, and which filter settings they have
-        s += QStringLiteral("interaction:%1:%2:%3:%4\n").arg(it.id).arg(it.name).arg(int(it.filter))
-            .arg(it.xyInputs.empty() ? -1 : int(it.xyInputs.front().filter));
+        s += QStringLiteral("interaction:%1:%2:%3:%4\n").arg(it.id).arg(it.name).arg(kinds(it))
+            .arg(it.xyInputs.empty() ? QStringLiteral("-") : kinds(it.xyInputs.front()));
     std::vector<Engine::AnimationPlayback> timelines;
     m_e->sampleAnimations(&timelines);
     for (const auto &a : timelines) {
@@ -500,7 +505,7 @@ void OscNamespace::build()
         m_interactionPrefix[it.id] = P;
         m_nodes[P].description = it.name;
         const QString prefix = QStringLiteral("interaction/%1/").arg(it.id);
-        for (const QString &key : Engine::interactionKeys()) {
+        for (const QString &key : Engine::interactionKeys(it)) {
             ParamInfo info;
             if (!e->parameterInfo(0, prefix + key, &info)) continue;
             const QString type = info.type == ParamInfo::Type::Bool ? QStringLiteral("T")

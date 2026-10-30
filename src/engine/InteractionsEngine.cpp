@@ -35,7 +35,7 @@ static bool sameInputBinding(const Interaction &a, const Interaction &b)
            a.midiMessage == b.midiMessage && a.midiNumber == b.midiNumber && a.oscAddress == b.oscAddress &&
            a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
            a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
-           a.audioInput == b.audioInput && a.toggle == b.toggle && a.filterOn == b.filterOn && a.filter == b.filter &&
+           a.audioInput == b.audioInput && a.toggle == b.toggle &&
            a.layer == b.layer && a.param == b.param;
 }
 
@@ -128,8 +128,8 @@ bool Engine::setInteraction(const Interaction &it)
         Lock lk(&m_mutex);
         auto f = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const Interaction &x) { return x.id == it.id; });
         if (f == m_interactions.end()) return false;
-        const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->filterOn != it.filterOn ||
-                                   f->filter != it.filter || f->layer != it.layer || f->param != it.param ||
+        // (its filters: each one's state is kept, made again when it becomes another kind of filter)
+        const bool sourceChanged = f->source != it.source || f->toggle != it.toggle || f->layer != it.layer || f->param != it.param ||
                                    f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
                                    ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it)) ||
                                    f->mode != it.mode;
@@ -510,7 +510,7 @@ void Engine::stepInteractions(double dt)
         // Stateless trigger mappings retain every edge in a batch. Continuous
         // values and filters still advance once per frame with the full dt.
         const Parameter *target = findParameter(it.layer, it.param);
-        const bool eventTrigger = !it.filterOn && target && target->info().type == ParamInfo::Type::Trigger;
+        const bool eventTrigger = !it.movesOverTime() && target && target->info().type == ParamInfo::Type::Trigger;
         unsigned rises = 0;
         if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
@@ -769,35 +769,25 @@ void Engine::makeInteractionParams()
                           interactionValuesTouched();
                       }
                   });
-        flag(QStringLiteral("filter/enable"), QStringLiteral("Filter"), false, [](Interaction &x) -> bool & { return x.filterOn; });
-        {
-            QStringList keys;
-            for (int k = 0; k < kInteractionFilterCount; ++k)
-                keys << interactionFilterName(InteractionFilter(k)).toLower().replace(QLatin1Char(' '), QLatin1Char('_'));
-            add(QStringLiteral("filter/type"), QStringLiteral("Filter Type"), T::Choice)
-                .choices(keys)
-                .byDefault(keys.front())
-                .bind([find, keys] {
-                          Interaction *x = find();
-                          return x ? QVariant(keys[int(x->filter)]) : QVariant();
-                      },
-                      [this, find, keys](const QVariant &v) {
-                          const int k = int(keys.indexOf(v.toString()));
-                          if (Interaction *x = find(); x && k >= 0) {
-                              x->filter = InteractionFilter(k);
-                              m_interactionParamsDirty = true; // the new filter may expose a second setting
-                              interactionValuesTouched();
-                          }
-                      });
+        // Each filter in its order: on / off and its settings (a preset, a snapshot, OSC, a timeline reach them); what
+        // the filters are, all together, below ("filters")
+        for (size_t k = 0; k < it.filters.size(); ++k) {
+            const InteractionStage &f = it.filters[k];
+            const QString path = QStringLiteral("filters/%1/").arg(k + 1);
+            const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(interactionFilterName(f.kind));
+            flag(path + QStringLiteral("enable"), name + QStringLiteral("On"), true, [k](Interaction &x) -> bool & {
+                static bool gone = false; // the filters changed meanwhile (the list is made again)
+                return k < x.filters.size() ? x.filters[k].enabled : gone;
+            });
+            for (int which = 0; which < 2; ++which) {
+                const FilterSetting set = interactionFilterSetting(f.kind, which);
+                if (set.name.isEmpty()) continue;
+                number(path + QChar(which ? 'b' : 'a'), name + set.name, set.min, set.max, set.def, [k, which](Interaction &x) -> double & {
+                    static double gone = 0;
+                    return k < x.filters.size() ? (which ? x.filters[k].b : x.filters[k].a) : gone;
+                });
+            }
         }
-        const FilterSetting fa = interactionFilterSetting(it.filter, 0), fb = interactionFilterSetting(it.filter, 1);
-        if (!fa.name.isEmpty())
-            number(QStringLiteral("filter/a"), QStringLiteral("Filter ") + fa.name, fa.min, fa.max, fa.def,
-                   [](Interaction &x) -> double & { return x.filterA; });
-        if (!fb.name.isEmpty())
-            number(QStringLiteral("filter/b"), QStringLiteral("Filter ") + fb.name, fb.min, fb.max, fb.def,
-                   [](Interaction &x) -> double & { return x.filterB; });
-        flag(QStringLiteral("curve/enable"), QStringLiteral("Curve"), false, [](Interaction &x) -> bool & { return x.curveOn; });
 
         // What it is: its name, its source, its target, its curve — set at once (presets and snapshots hold them; a
         // snapshot holds them all, so that one removed since is made again as it was)
@@ -894,14 +884,12 @@ void Engine::makeInteractionParams()
                  parseRef(v, &layer, &path);
                  configureInteractionTarget(x, layer, path);
              });
-        text(QStringLiteral("curve"), QStringLiteral("Curve Keys"),
-             [](const Interaction &x) { return QString::fromUtf8(QJsonDocument(x.toJson().value("curve").toArray()).toJson(QJsonDocument::Compact)); },
+        // Its filters, all of them: their kinds, order, settings and curves, set at once (their settings then fade)
+        text(QStringLiteral("filters"), QStringLiteral("Filters"),
+             [](const Interaction &x) { return QString::fromUtf8(QJsonDocument(Interaction::filtersToJson(x.filters)).toJson(QJsonDocument::Compact)); },
              [](Interaction &x, const QString &v) {
                  const QJsonDocument d = QJsonDocument::fromJson(v.toUtf8());
-                 if (!d.isArray()) return;
-                 QJsonObject o = x.toJson();
-                 o["curve"] = d.array();
-                 x.curve = Interaction::fromJson(o).curve;
+                 if (d.isArray()) x.filters = Interaction::filtersFromJson(QJsonObject{{"filters", d.array()}});
              });
     }
 }
