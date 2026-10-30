@@ -444,7 +444,7 @@ void Engine::stepInteractions(double dt)
             }
             continue;
         }
-        if (!it.enabled || it.param.isEmpty() || (it.isAction() && it.xyInputs.empty())) continue;
+        if (!it.enabled || (it.isAction() && it.xyInputs.empty()) || (it.param.isEmpty() && !it.xyInputs.empty())) continue;
         InteractionRun &run = m_interactionRun[it.id];
         if (!it.xyInputs.empty()) {
             std::array<Parameter *, 2> params{};
@@ -572,6 +572,7 @@ void Engine::stepInteractions(double dt)
         const bool changed = fresh || colorMoved || !run.lastOut || std::abs(*run.lastOut - *out) > 1e-9;
         run.lastOut = out;
         if (!changed) continue; // nothing new: the target is left to whatever else moves it
+        if (it.param.isEmpty()) continue; // no target yet: its source and its filters still shown moving
         if (it.layer) {
             const int li = indexOfId(it.layer);
             if (li < 0 || m_layers[size_t(li)]->locked) continue; // a locked layer is left alone

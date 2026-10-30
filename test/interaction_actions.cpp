@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QJsonObject>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -58,6 +59,19 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
     e.renderFrame();
     check(visible(b), "pressed and let go in one frame: both, in order");
     e.removeInteraction(keyId);
+
+    // A mapping without a target yet: its source is shown moving all the same, and nothing is written
+    Interaction loose = Interaction::made(InteractionSource::Keyboard);
+    loose.key = QStringLiteral("L");
+    const quint64 looseId = e.addInteraction(loose);
+    press("L", 1);
+    e.renderFrame();
+    std::vector<Engine::InteractionLevel> levels;
+    check(e.sampleInteractionLevels(&levels) &&
+              std::any_of(levels.begin(), levels.end(), [&](const auto &l) { return l.id == looseId && near(l.input, 1); }),
+          "no target: the source is shown");
+    check(visible(b) && near(opacity(a), 1) && near(opacity(b), 1), "no target: nothing written");
+    e.removeInteraction(looseId);
 
     // No condition: each value the source gives does the actions if true (counted in the journal)
     Interaction each = key;
