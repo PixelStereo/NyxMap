@@ -165,6 +165,13 @@ double Animation::position(double c) const
     return backwardsAt(c) ? passDuration(duration) - within : within;
 }
 
+int Animation::pass() const
+{
+    double pass = 0, within = 0;
+    passAt(*this, clock, &pass, &within);
+    return int(std::min(1e9, pass)) + 1;
+}
+
 double Animation::clockAt(double pos) const
 {
     const double d = passDuration(duration);
@@ -1458,7 +1465,7 @@ Engine::AnimationPlayback playbackOf(const Animation &a, bool captures)
     out.position = a.position(); out.duration = a.duration; out.clock = a.clock;
     out.played = a.played(); out.backwards = a.backwardsAt(a.clock);
     out.speed = a.speed; out.length = a.length(); out.tracks = int(a.tracks.size());
-    out.pass = int(std::min(1e9, std::floor(std::min(a.clock, a.length()) / std::max(.05, a.duration)))) + 1;
+    out.pass = a.pass();
     if (captures) {
         out.captured.reserve(a.tracks.size());
         out.capturedRgb.reserve(a.tracks.size());

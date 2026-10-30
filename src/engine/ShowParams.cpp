@@ -95,7 +95,8 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                    if (i >= 0) recallPreset(i);
                });
 
-    // Each timeline: its transport, and whether it plays (for an Internal interaction to follow)
+    // Each timeline: its transport, and whether it plays, its pass and its position (for an Internal interaction
+    // to follow)
     for (const Animation &a : m_animations) {
         const QString base = QStringLiteral("timeline/%1/").arg(a.id);
         const QString cat = QStringLiteral("Timeline · %1 › ").arg(named(a.name, a.id));
@@ -108,11 +109,21 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             action(base + transport[k].first, cat + labels[k], QStringLiteral("timeline %1 %2").arg(id).arg(transport[k].first),
                    [this, id, act] { controlAnimation(id, act); });
         }
-        add(base + "playing", cat + "Playing", T::Bool).readOnly().bind([this, id] {
-            for (const Animation &x : m_animations)
-                if (x.id == id) return QVariant(x.state == AnimState::Playing);
-            return QVariant(false);
-        }, nullptr);
+        auto read = [this, id](std::function<QVariant(const Animation &)> f, QVariant none) {
+            return [this, id, f, none] {
+                for (const Animation &x : m_animations)
+                    if (x.id == id) return f(x);
+                return none;
+            };
+        };
+        add(base + "playing", cat + "Playing", T::Bool).readOnly().bind(
+            read([](const Animation &x) { return QVariant(x.state == AnimState::Playing); }, false), nullptr);
+        // The pass it is in (1, 2…, as its card shows it; 0 stopped) and where it is within it (0..1, backwards on
+        // a ping-pong's way back)
+        add(base + "pass", cat + "Pass", T::Int).range(0, 100).readOnly().bind(
+            read([](const Animation &x) { return QVariant(x.state == AnimState::Stopped ? 0 : x.pass()); }, 0), nullptr);
+        add(base + "position", cat + "Position", T::Float).range(0, 1).readOnly().bind(
+            read([](const Animation &x) { return QVariant(x.position() / std::max(1e-9, x.duration)); }, 0.0), nullptr);
     }
     return m_showParams;
 }

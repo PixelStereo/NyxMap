@@ -99,6 +99,7 @@ struct Animation {
     double length() const; // the time it plays from the start (infinity: endless)
     double position(double clock) const; // within the pass: 0..duration
     double position() const { return position(clock); }
+    int pass() const; // the pass it is in: 1, 2… (the last one once its passes are done)
     double played() const { return std::min(clock, length()) + oscillatorOffset; }
     bool backwardsAt(double clock) const; // the pass at that clock goes from the end to the start
     double clockAt(double position) const; // the clock giving `position` within the pass it is in now

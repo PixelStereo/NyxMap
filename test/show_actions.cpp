@@ -99,6 +99,28 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     settle();
     check(e.animation(e.indexOfAnimation(timelineId)).state == Engine::AnimState::Stopped, "the timeline stops");
 
+    // Its pass and its position, for an Internal interaction to follow: 0 stopped, then 1, 2… and 0..1 within it
+    const QString pass = QStringLiteral("timeline/%1/pass").arg(timelineId);
+    const QString where = QStringLiteral("timeline/%1/position").arg(timelineId);
+    check(has(e.parameters(0), pass) && has(e.parameters(0), where), "a timeline's pass and position listed");
+    double passValue = -1, whereValue = -1;
+    check(e.animParamValue(0, pass, &passValue) && passValue == 0, "a stopped timeline: pass 0");
+    {
+        Engine::Animation looped = e.animation(e.indexOfAnimation(timelineId));
+        looped.loop = Engine::AnimLoop::Loop;
+        looped.repeat = 3;
+        e.setAnimation(e.indexOfAnimation(timelineId), looped);
+    }
+    e.setParameter(0, play, true);
+    settle();
+    for (int i = 0; i < 250; ++i) e.advanceFades(0.01); // 2.5 s of 2 s passes
+    check(e.animParamValue(0, pass, &passValue) && passValue == 2, "in its second pass: pass 2");
+    check(e.animParamValue(0, where, &whereValue) && std::abs(whereValue - 0.25) < 0.02, "a quarter into it: position 0.25");
+    for (int i = 0; i < 500; ++i) e.advanceFades(0.01); // past its 3 passes: stopped
+    check(e.animParamValue(0, pass, &passValue) && passValue == 0, "its passes done, stopped: pass 0");
+    e.setParameter(0, QStringLiteral("timeline/%1/stop").arg(timelineId), true);
+    settle();
+
     // GO: the selected sequence's next step recalls its snapshot
     Sequencer::Sequence cues;
     cues.name = QStringLiteral("Main");
