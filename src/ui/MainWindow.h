@@ -119,7 +119,6 @@ private:
     void toggleAllOutputs(int mode); // ⌘F (fullscreen) / ⌘⇧F (window): every viewport, then back to how each was
     void setAllOutputs(const std::map<quint64, int> &modes, int otherwise);
     void addViewport();
-    void addIsfFolder();
     void rescanLibrary();
     void refreshLibrary();
 

@@ -56,6 +56,7 @@ public:
     // the path saved on this machine (Crossfade by default), found again by its file name in the library
     static QString defaultTransition(const IsfLibrary &library);
     void setTransitions(const QVector<IsfEntry> &transitions, const QString &current); // the library's
+    void refreshIsfFolders(); // the ISF tab's list: the folders the library scans now
     // Frame rate, antialiasing, mipmaps and color depth, for every project
     static Engine::RenderSettings renderDefaults();
 
@@ -66,8 +67,10 @@ signals:
     void feedbackChanged();
     void transitionChanged(const QString &path);
     void renderDefaultsChanged();
-
+    void isfLibraryChanged(bool rescan); // its folders (scanned again: rescan) or what it shows of the system's
 private:
+    QWidget *buildIsf();
+    class QListWidget *m_isfFolders = nullptr;
     QWidget *buildAudio();
     QWidget *buildFeedback();
     void fillAudioDevices();

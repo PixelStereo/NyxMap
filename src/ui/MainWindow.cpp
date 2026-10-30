@@ -233,6 +233,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_engine->setDefaultTransition(SettingsPanel::defaultTransition(m_engine->library()));
     m_settings->setTransitions(m_engine->library().transitions(), m_engine->defaultTransition());
     connect(m_settings, &SettingsPanel::transitionChanged, this, [this](const QString &p) { m_engine->setDefaultTransition(p); });
+    connect(m_settings, &SettingsPanel::isfLibraryChanged, this, [this](bool rescan) {
+        if (rescan) rescanLibrary();
+        else refreshLibrary();
+    });
     m_tabs->setMinimumWidth(390);
 
     // Left: Media Bin and Layers, two tabs (Shift+1 / Shift+2). Dragging a media over the Layers tab opens it.
@@ -956,53 +960,12 @@ void MainWindow::buildMenus()
     m_blackoutAction->setShortcutContext(Qt::ApplicationShortcut);
     connect(m_blackoutAction, &QAction::toggled, this, &MainWindow::setBlackout);
 
-    QMenu *lib = menuBar()->addMenu(QStringLiteral("ISF &Library"));
-    lib->addAction(QStringLiteral("Add ISF Folder…"), this, &MainWindow::addIsfFolder);
-    lib->addAction(QStringLiteral("Rescan"), QKeySequence::Refresh, this, &MainWindow::rescanLibrary);
-    lib->addAction(QStringLiteral("Forget Added Folders"), this, [this] {
-        m_engine->library().setUserFolders({});
-        QSettings().setValue("isf/folders", QStringList());
-        rescanLibrary();
-    });
-    auto *systemShaders = lib->addMenu(QStringLiteral("System Shaders"));
-    systemShaders->setToolTipsVisible(true);
-    struct SystemOption {
-        const char *label, *key, *objectName;
-        bool IsfLibrary::SystemVisibility::*field;
-    };
-    for (const SystemOption &option : {
-             SystemOption{"Show Generators", "isf/showSystemGenerators", "showSystemIsfGenerators", &IsfLibrary::SystemVisibility::generators},
-             SystemOption{"Show FX", "isf/showSystemFX", "showSystemIsfFX", &IsfLibrary::SystemVisibility::filters},
-             SystemOption{"Show Transitions", "isf/showSystemTransitions", "showSystemIsfTransitions", &IsfLibrary::SystemVisibility::transitions}}) {
-        auto *action = systemShaders->addAction(QString::fromLatin1(option.label));
-        action->setObjectName(QString::fromLatin1(option.objectName));
-        action->setMenuRole(QAction::NoRole);
-        action->setCheckable(true);
-        action->setChecked(m_engine->library().systemVisibility().*option.field);
-        action->setToolTip(QStringLiteral("Include shaders from the standard ISF folders on this computer. "
-                                         "Shaders already used by the project remain available."));
-        connect(action, &QAction::toggled, this, [this, option](bool on) {
-            auto visibility = m_engine->library().systemVisibility();
-            visibility.*option.field = on;
-            m_engine->library().setSystemVisibility(visibility);
-            QSettings().setValue(QString::fromLatin1(option.key), on);
-            refreshLibrary();
-        });
-    }
-    lib->addSeparator();
-    lib->addAction(QStringLiteral("Open Bundled Shaders Folder"), this, [] {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(IsfLibrary::bundledFolder()));
-    });
-    connect(lib, &QMenu::aboutToShow, this, [this, lib] {
-        // Informational list of scanned folders
-        for (QAction *a : lib->actions())
-            if (a->property("folderInfo").toBool()) lib->removeAction(a), a->deleteLater();
-        for (const QString &f : m_engine->library().allFolders()) {
-            QAction *a = lib->addAction(f);
-            a->setEnabled(false);
-            a->setProperty("folderInfo", true);
-        }
-    });
+    // The ISF library's settings are in Settings › ISF; its rescan keeps its shortcut
+    auto *rescanIsf = new QAction(QStringLiteral("Rescan ISF Library"), this);
+    rescanIsf->setShortcut(QKeySequence::Refresh);
+    rescanIsf->setShortcutContext(Qt::ApplicationShortcut);
+    connect(rescanIsf, &QAction::triggered, this, &MainWindow::rescanLibrary);
+    addAction(rescanIsf);
 
     // macOS: Qt gives application-menu roles from the action texts (an action starting with "Settings" became the
     // preferences item). Only the actions meant for that menu keep a role.
@@ -2193,17 +2156,6 @@ void MainWindow::statusTick()
 // ISF Library
 // ---------------------------------------------------------------------------
 
-void MainWindow::addIsfFolder()
-{
-    const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("ISF Shader Folder"));
-    if (d.isEmpty()) return;
-    QStringList f = m_engine->library().userFolders();
-    if (!f.contains(d)) f << d;
-    m_engine->library().setUserFolders(f);
-    QSettings().setValue("isf/folders", f);
-    rescanLibrary();
-}
-
 void MainWindow::rescanLibrary()
 {
     m_engine->library().scan();
@@ -2213,6 +2165,7 @@ void MainWindow::rescanLibrary()
 void MainWindow::refreshLibrary()
 {
     m_settings->setTransitions(m_engine->library().transitions(), m_engine->defaultTransition());
+    m_settings->refreshIsfFolders();
     m_bin->refresh();
     m_inspector->rebuild();
     m_viewportInspector->rebuild();

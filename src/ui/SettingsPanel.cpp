@@ -7,7 +7,11 @@
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QDesktopServices>
+#include <QDir>
 #include <QLabel>
+#include <QListWidget>
+#include <QUrl>
 #include <QNetworkInterface>
 #include <QProgressBar>
 #include <QPushButton>
@@ -149,6 +153,7 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
     QVBoxLayout *audioPage = page(QStringLiteral("Audio"));
     QVBoxLayout *interfacePage = page(QStringLiteral("Interface"));
     QVBoxLayout *oscPage = page(QStringLiteral("OSC"));
+    QVBoxLayout *isfPage = page(QStringLiteral("ISF"));
     tabs->setCurrentIndex(std::clamp(QSettings().value(QStringLiteral("ui/settingsTab"), 0).toInt(), 0, tabs->count() - 1));
     connect(tabs, &QTabWidget::currentChanged, this, [](int i) { QSettings().setValue(QStringLiteral("ui/settingsTab"), i); });
 
@@ -430,7 +435,8 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
     oscPage->addWidget(buildFeedback());
     audioPage->addWidget(buildAudio());
     audioPage->addWidget(buildAudioInput());
-    for (QVBoxLayout *l : {playbackPage, renderPage, audioPage, interfacePage, oscPage}) l->addStretch();
+    isfPage->addWidget(buildIsf());
+    for (QVBoxLayout *l : {playbackPage, renderPage, audioPage, interfacePage, oscPage, isfPage}) l->addStretch();
     auto apply = [this] {
         QSettings s;
         s.setValue(kOscKey, m_osc->isChecked());
@@ -698,3 +704,87 @@ void SettingsPanel::openAudioInput()
 }
 
 void SettingsPanel::setOscStatus(const QString &s) { m_oscStatus->setText(s.toHtmlEscaped()); }
+
+// ISF: the folders the library scans (bundled with the application, the system's, the ones added), and which of the
+// system's shaders it shows
+QWidget *SettingsPanel::buildIsf()
+{
+    auto *root = new QWidget;
+    auto *v = new QVBoxLayout(root);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(10);
+
+    auto *folders = new QGroupBox(QStringLiteral("Shader Folders"));
+    auto *fv = new QVBoxLayout(folders);
+    m_isfFolders = new QListWidget;
+    m_isfFolders->setObjectName(QStringLiteral("isfFolders"));
+    m_isfFolders->setSelectionMode(QAbstractItemView::NoSelection);
+    m_isfFolders->setMaximumHeight(140);
+    m_isfFolders->setToolTip(QStringLiteral("The folders scanned for ISF generators, FX and transitions"));
+    fv->addWidget(m_isfFolders);
+    auto *row = new QHBoxLayout;
+    auto button = [&](const QString &text, const char *name, const QString &tip) {
+        auto *b = new QPushButton(text);
+        b->setObjectName(QString::fromLatin1(name));
+        b->setToolTip(tip);
+        row->addWidget(b);
+        return b;
+    };
+    auto *add = button(QStringLiteral("Add Folder…"), "addIsfFolder", QStringLiteral("A folder of your own shaders, scanned with the others"));
+    auto *forget = button(QStringLiteral("Forget Added Folders"), "forgetIsfFolders", QStringLiteral("Only the bundled and the system's folders"));
+    auto *rescan = button(QStringLiteral("Rescan"), "rescanIsf", QStringLiteral("Read the folders again (shaders added in the Finder)"));
+    auto *bundled = button(QStringLiteral("Open Bundled Folder"), "openBundledIsf", QStringLiteral("The shaders that come with NyxMap"));
+    row->addStretch();
+    fv->addLayout(row);
+    v->addWidget(folders);
+    auto setFolders = [this](const QStringList &f) {
+        m_engine->library().setUserFolders(f);
+        QSettings().setValue(QStringLiteral("isf/folders"), f);
+        emit isfLibraryChanged(true);
+    };
+    connect(add, &QPushButton::clicked, this, [this, setFolders] {
+        const QString d = QFileDialog::getExistingDirectory(this, QStringLiteral("ISF Shader Folder"));
+        if (d.isEmpty()) return;
+        QStringList f = m_engine->library().userFolders();
+        if (!f.contains(d)) f << d;
+        setFolders(f);
+    });
+    connect(forget, &QPushButton::clicked, this, [setFolders] { setFolders({}); });
+    connect(rescan, &QPushButton::clicked, this, [this] { emit isfLibraryChanged(true); });
+    connect(bundled, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(IsfLibrary::bundledFolder())); });
+
+    auto *system = new QGroupBox(QStringLiteral("System Shaders"));
+    auto *sv = new QVBoxLayout(system);
+    struct SystemOption {
+        const char *label, *key, *objectName;
+        bool IsfLibrary::SystemVisibility::*field;
+    };
+    for (const SystemOption &option : {
+             SystemOption{"Show Generators", "isf/showSystemGenerators", "showSystemIsfGenerators", &IsfLibrary::SystemVisibility::generators},
+             SystemOption{"Show FX", "isf/showSystemFX", "showSystemIsfFX", &IsfLibrary::SystemVisibility::filters},
+             SystemOption{"Show Transitions", "isf/showSystemTransitions", "showSystemIsfTransitions", &IsfLibrary::SystemVisibility::transitions}}) {
+        auto *box = new FlagBox(QString::fromLatin1(option.label));
+        box->setObjectName(QString::fromLatin1(option.objectName));
+        box->setChecked(m_engine->library().systemVisibility().*option.field);
+        box->setToolTip(QStringLiteral("Include shaders from the standard ISF folders on this computer. "
+                                       "Shaders already used by the project remain available."));
+        sv->addWidget(box);
+        connect(box, &QCheckBox::toggled, this, [this, option](bool on) {
+            auto visibility = m_engine->library().systemVisibility();
+            visibility.*option.field = on;
+            m_engine->library().setSystemVisibility(visibility);
+            QSettings().setValue(QString::fromLatin1(option.key), on);
+            emit isfLibraryChanged(false);
+        });
+    }
+    v->addWidget(system);
+    refreshIsfFolders();
+    return root;
+}
+
+void SettingsPanel::refreshIsfFolders()
+{
+    if (!m_isfFolders) return;
+    m_isfFolders->clear();
+    for (const QString &f : m_engine->library().allFolders()) m_isfFolders->addItem(QDir::toNativeSeparators(f));
+}

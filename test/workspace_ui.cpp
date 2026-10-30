@@ -35,6 +35,8 @@
 #include <QTabWidget>
 #include <QPushButton>
 #include <QApplication>
+#include <QCheckBox>
+#include <QMenuBar>
 #include <QSettings>
 #include <QScreen>
 #include <QScrollArea>
@@ -225,9 +227,15 @@ static void systemIsfVisibilityTests(Engine &engine, const std::function<void(bo
             check(transition->currentData().toString() == current && transition->currentText() == "HiddenTransition",
                   "hiding a transition keeps the current selection accurately displayed");
         }
+        bool menu = false; // the ISF library's settings are in Settings › ISF, not in the menu bar
+        for (QAction *a : window.menuBar()->actions()) menu = menu || a->text().contains("ISF");
+        check(!menu, "no ISF Library menu in the menu bar");
+        check(settings && settings->findChild<QWidget *>("isfFolders") && settings->findChild<QWidget *>("addIsfFolder") &&
+                  settings->findChild<QWidget *>("rescanIsf") && settings->findChild<QWidget *>("forgetIsfFolders"),
+              "the ISF tab holds the folders, Add, Rescan and Forget");
         for (int i = 0; i < names.size(); ++i) {
-            auto *action = window.findChild<QAction *>(names[i]);
-            check(action && action->isCheckable() && action->isChecked(), "system shader categories default to visible");
+            auto *action = settings ? settings->findChild<QCheckBox *>(names[i]) : nullptr;
+            check(action && action->isChecked(), "system shader categories default to visible");
             if (action) action->setChecked(false);
             check(!QSettings().value(keys[i], true).toBool(), "system shader visibility is saved immediately");
         }
@@ -236,8 +244,9 @@ static void systemIsfVisibilityTests(Engine &engine, const std::function<void(bo
     }
     {
         MainWindow reopened(&engine); reopened.setQuiet(true); reopened.setAutosaveEnabled(false);
+        auto *reopenedSettings = reopened.findChild<SettingsPanel *>();
         for (const auto &name : names) {
-            auto *action = reopened.findChild<QAction *>(name);
+            auto *action = reopenedSettings ? reopenedSettings->findChild<QCheckBox *>(name) : nullptr;
             check(action && !action->isChecked(), "reopening restores hidden system shader categories");
             if (action) action->setChecked(true);
         }
