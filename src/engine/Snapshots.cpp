@@ -5,6 +5,7 @@
 #include <QBuffer>
 #include <QDir>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSet>
 #include <QThread>
 #include <QThreadPool>
