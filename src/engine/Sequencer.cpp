@@ -242,6 +242,57 @@ void Sequencer::setStartupSequence(int i)
     emit changed();
 }
 
+int Sequencer::startupStep() const
+{
+    QMutexLocker lk(&m_mutex);
+    return m_startupStep;
+}
+
+void Sequencer::setStartupStep(int step)
+{
+    {
+        QMutexLocker lk(&m_mutex);
+        step = std::max(0, step);
+        if (m_startupStep == step) return;
+        m_startupStep = step;
+    }
+    emit changed();
+}
+
+bool Sequencer::startupGo() const
+{
+    QMutexLocker lk(&m_mutex);
+    return m_startupGo;
+}
+
+void Sequencer::setStartupGo(bool go)
+{
+    {
+        QMutexLocker lk(&m_mutex);
+        if (m_startupGo == go) return;
+        m_startupGo = go;
+    }
+    emit changed();
+}
+
+void Sequencer::playStartup()
+{
+    int sequence = -1, step = 0;
+    bool play = true;
+    {
+        QMutexLocker lk(&m_mutex);
+        if (m_startupSequence < 0 || m_startupSequence >= int(m_sequences.size())) return;
+        const int n = int(m_sequences[size_t(m_startupSequence)].steps.size());
+        if (n == 0) return;
+        sequence = m_startupSequence;
+        step = std::clamp(m_startupStep, 0, n - 1); // its steps may have changed since it was chosen
+        play = m_startupGo;
+    }
+    setCurrent(sequence);
+    if (play) goTo(step);
+    else setPosition(step - 1); // GO plays it
+}
+
 int Sequencer::position() const
 {
     QMutexLocker lk(&m_mutex);
@@ -931,6 +982,8 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
     m_positions.assign(m_sequences.size(), -1);
     m_current = m_sequences.empty() ? -1 : std::clamp(current, 0, int(m_sequences.size()) - 1);
     m_startupSequence = -1; // chosen by the project after sequences are parsed
+    m_startupStep = 0;
+    m_startupGo = true;
     m_runs.clear();
 }
 
@@ -944,6 +997,8 @@ void Sequencer::clear()
     m_positions.clear();
     m_sequenceIds.clear();
     m_startupSequence = -1;
+    m_startupStep = 0;
+    m_startupGo = true;
     m_current = -1;
     m_runs.clear();
     m_pendingSnapshots.clear();

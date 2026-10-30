@@ -2489,6 +2489,21 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                   e.sequencer().sequence(0).steps.size() == 3 && e.sequencer().sequence(0).steps[0].text == "Act 1" &&
                   e.sequencer().sequence(0).steps[0].snapshot == e.snapshot(1).id);
             CHECK(e.sequencer().startupSequence() == 1);
+            CHECK(e.sequencer().startupStep() == 0 && e.sequencer().startupGo()); // older projects: GO on the first step
+            // Its step and whether it plays: saved, then only standing by (the next GO plays it)
+            e.sequencer().setStartupStep(2);
+            e.sequencer().setStartupGo(false);
+            CHECK(e.saveProject(tmp + "/sequences.nyxmap", {}, &err));
+            CHECK(e.loadProject(tmp + "/sequences.nyxmap", nullptr, &err));
+            CHECK(e.sequencer().startupStep() == 2 && !e.sequencer().startupGo());
+            e.sequencer().setCurrent(0);
+            e.sequencer().playStartup();
+            CHECK(e.sequencer().current() == 1 && e.sequencer().position() == 1 && e.sequencer().next() == 2);
+            e.sequencer().setStartupStep(9); // beyond its steps: its last
+            e.sequencer().setStartupGo(true);
+            e.sequencer().playStartup();
+            CHECK(e.sequencer().position() == 2);
+            e.sequencer().setStartupStep(0);
             CHECK(e.sequencer().add(copy, 0) == 0 && e.sequencer().startupSequence() == 2);
             e.sequencer().remove(0);
             CHECK(e.sequencer().startupSequence() == 1);

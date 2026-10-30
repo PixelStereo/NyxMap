@@ -513,6 +513,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["sequences"] = m_sequencer->toJson();
         root["current_sequence"] = m_sequencer->current();
         root["startup_sequence"] = m_sequencer->startupSequence();
+        root["startup_step"] = m_sequencer->startupStep();
+        root["startup_go"] = m_sequencer->startupGo();
         if (!m_fixtures.types.empty() || !m_fixtures.fixtures.empty() || !m_fixtures.outputs.empty())
             root["pixel_mapping"] = m_fixtures.toJson();
     }
@@ -783,6 +785,8 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         animationsFromJson(root.value("timelines").toArray());
         m_sequencer->fromJson(root.value("sequences").toArray(), root.value("current_sequence").toInt(0));
         m_sequencer->setStartupSequence(root.value("startup_sequence").toInt(-1));
+        m_sequencer->setStartupStep(root.value("startup_step").toInt(0));
+        m_sequencer->setStartupGo(root.value("startup_go").toBool(true));
     }
     emit snapshotsChanged();
     emit presetsChanged();

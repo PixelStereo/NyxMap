@@ -48,7 +48,8 @@ signals:
 
 private:
     QWidget *buildCompositionLevel();
-    QWidget *buildComposition();
+    QWidget *buildComposition(); // Dimensions: size and frame rate
+    QWidget *buildStartup();
     QWidget *buildAudio();
     void refreshMeters();
     void applyComposition();
@@ -76,6 +77,8 @@ private:
     QComboBox *m_rate = nullptr;
     QCheckBox *m_startupEnabled = nullptr;
     QComboBox *m_startupSequence = nullptr;
+    QComboBox *m_startupStep = nullptr;
+    QCheckBox *m_startupGo = nullptr;
     QProgressBar *m_meter[2] = {};
     QTimer m_meterTimer;
     bool m_syncing = false;

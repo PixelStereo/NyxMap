@@ -55,6 +55,7 @@ CompositionPanel::CompositionPanel(Engine *engine, QWidget *parent) : QWidget(pa
     v->addWidget(buildCompositionLevel());
     v->addWidget(buildAudio());
     v->addWidget(buildComposition());
+    v->addWidget(buildStartup());
     v->addWidget(buildTimecodePatch());
     v->addStretch();
     syncFromEngine();
@@ -254,12 +255,12 @@ void CompositionPanel::refreshMeters()
 }
 
 // ---------------------------------------------------------------------------
-// Composition
+// Dimensions: the composition's size and frame rate
 // ---------------------------------------------------------------------------
 
 QWidget *CompositionPanel::buildComposition()
 {
-    auto *g = new QGroupBox(QStringLiteral("Composition"));
+    auto *g = new QGroupBox(QStringLiteral("Dimensions"));
     auto *form = new QFormLayout(g);
     m_preset = new QComboBox;
     m_preset->addItem(QStringLiteral("Custom"));
@@ -297,26 +298,6 @@ QWidget *CompositionPanel::buildComposition()
     form->addRow(note(QStringLiteral("The pixel space every layer lives in. Each viewport shows a part of it, "
                                      "placed by its Spatial tab: three 1920 × 1080 projectors side by side "
                                      "make a 5760 × 1080 composition. The spatial placement is relative: it follows size changes.")));
-    m_startupEnabled = new QCheckBox(QStringLiteral("Play sequence on project open"));
-    m_startupEnabled->setToolTip(QStringLiteral("Automatically send GO to the first step after opening this project. "
-                                              "Disabled for a new project, or if its sequence is deleted."));
-    m_startupSequence = new QComboBox;
-    m_startupSequence->setToolTip(QStringLiteral("The sequence played at project open (not when recovering an autosave)"));
-    form->addRow(m_startupEnabled);
-    form->addRow(QStringLiteral("Startup sequence"), m_startupSequence);
-    form->addRow(note(QStringLiteral("Saved with the project. A manual New Project or an autosave recovery never starts a sequence.")));
-    connect(m_startupEnabled, &QCheckBox::toggled, this, [this](bool on) {
-        if (m_syncing) return;
-        m_engine->sequencer().setStartupSequence(on ? (m_startupSequence->count() > 0 ? m_startupSequence->currentData().toInt() : -1) : -1);
-        m_startupSequence->setEnabled(on && m_startupSequence->count() > 0);
-        emit compositionEdited();
-    });
-    connect(m_startupSequence, qOverload<int>(&QComboBox::activated), this, [this](int i) {
-        if (m_syncing || !m_startupEnabled->isChecked()) return;
-        m_engine->sequencer().setStartupSequence(m_startupSequence->itemData(i).toInt());
-        emit compositionEdited();
-    });
-    connect(&m_engine->sequencer(), &Sequencer::changed, this, &CompositionPanel::syncStartupSequence);
 
 
     connect(m_preset, qOverload<int>(&QComboBox::activated), this, [this](int i) {
@@ -340,6 +321,57 @@ QWidget *CompositionPanel::buildComposition()
     return g;
 }
 
+// ---------------------------------------------------------------------------
+// Startup Sequence: what the project does once it is open
+// ---------------------------------------------------------------------------
+
+QWidget *CompositionPanel::buildStartup()
+{
+    auto *g = new QGroupBox(QStringLiteral("Startup Sequence"));
+    auto *form = new QFormLayout(g);
+    m_startupEnabled = new QCheckBox(QStringLiteral("Use a sequence on project open"));
+    m_startupEnabled->setToolTip(QStringLiteral("After opening this project, select a sequence and its step. "
+                                              "Disabled for a new project, or if its sequence is deleted."));
+    m_startupSequence = new QComboBox;
+    m_startupSequence->setObjectName(QStringLiteral("startupSequence"));
+    m_startupSequence->setToolTip(QStringLiteral("The sequence selected at project open (not when recovering an autosave)"));
+    m_startupStep = new QComboBox;
+    m_startupStep->setObjectName(QStringLiteral("startupStep"));
+    m_startupStep->setToolTip(QStringLiteral("The step it starts from (the first by default)"));
+    m_startupGo = new QCheckBox(QStringLiteral("GO at once"));
+    m_startupGo->setObjectName(QStringLiteral("startupGo"));
+    m_startupGo->setToolTip(QStringLiteral("On: the step plays as the project opens · Off: it only stands by, "
+                                         "ready for the first GO"));
+    form->addRow(m_startupEnabled);
+    form->addRow(QStringLiteral("Sequence"), m_startupSequence);
+    form->addRow(QStringLiteral("Step"), m_startupStep);
+    form->addRow(m_startupGo);
+    form->addRow(note(QStringLiteral("Saved with the project. A manual New Project or an autosave recovery never starts a sequence.")));
+    connect(m_startupEnabled, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_syncing) return;
+        m_engine->sequencer().setStartupSequence(on ? (m_startupSequence->count() > 0 ? m_startupSequence->currentData().toInt() : -1) : -1);
+        emit compositionEdited();
+    });
+    connect(m_startupSequence, qOverload<int>(&QComboBox::activated), this, [this](int i) {
+        if (m_syncing || !m_startupEnabled->isChecked()) return;
+        m_engine->sequencer().setStartupStep(0); // another sequence: from its first step
+        m_engine->sequencer().setStartupSequence(m_startupSequence->itemData(i).toInt());
+        emit compositionEdited();
+    });
+    connect(m_startupStep, qOverload<int>(&QComboBox::activated), this, [this](int i) {
+        if (m_syncing) return;
+        m_engine->sequencer().setStartupStep(i);
+        emit compositionEdited();
+    });
+    connect(m_startupGo, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_syncing) return;
+        m_engine->sequencer().setStartupGo(on);
+        emit compositionEdited();
+    });
+    connect(&m_engine->sequencer(), &Sequencer::changed, this, &CompositionPanel::syncStartupSequence);
+    return g;
+}
+
 void CompositionPanel::applyComposition()
 {
     if (m_syncing) return;
@@ -352,18 +384,31 @@ void CompositionPanel::applyComposition()
 void CompositionPanel::syncStartupSequence()
 {
     if (!m_startupSequence || !m_startupEnabled) return;
-    const int chosen = m_engine->sequencer().startupSequence();
-    const int count = m_engine->sequencer().count();
-    QSignalBlocker blockCombo(m_startupSequence);
-    QSignalBlocker blockCheck(m_startupEnabled);
+    const Sequencer &seq = m_engine->sequencer();
+    const int chosen = seq.startupSequence();
+    const int count = seq.count();
+    QSignalBlocker blockCombo(m_startupSequence), blockStep(m_startupStep), blockCheck(m_startupEnabled), blockGo(m_startupGo);
     m_startupSequence->clear();
     for (int i = 0; i < count; ++i)
-        m_startupSequence->addItem(m_engine->sequencer().sequence(i).name, i);
+        m_startupSequence->addItem(seq.sequence(i).name, i);
     const bool selected = chosen >= 0 && chosen < count;
     m_startupEnabled->setChecked(selected);
     m_startupEnabled->setEnabled(count > 0);
     m_startupSequence->setCurrentIndex(selected ? chosen : (count > 0 ? 0 : -1));
     m_startupSequence->setEnabled(selected);
+    // The steps of the sequence shown, numbered as the sequence list numbers them
+    m_startupStep->clear();
+    const int shown = m_startupSequence->currentIndex();
+    if (shown >= 0) {
+        const auto steps = seq.sequence(shown).steps;
+        for (int i = 0; i < int(steps.size()); ++i)
+            m_startupStep->addItem(steps[size_t(i)].text.isEmpty() ? QStringLiteral("%1").arg(i + 1)
+                                                                  : QStringLiteral("%1 · %2").arg(i + 1).arg(steps[size_t(i)].text));
+    }
+    m_startupStep->setCurrentIndex(m_startupStep->count() ? std::clamp(seq.startupStep(), 0, m_startupStep->count() - 1) : -1);
+    m_startupStep->setEnabled(selected && m_startupStep->count() > 0);
+    m_startupGo->setChecked(seq.startupGo());
+    m_startupGo->setEnabled(selected);
 }
 
 void CompositionPanel::syncFromEngine()

@@ -136,6 +136,12 @@ public:
     // Index tracks sequence insertions/deletions and survives renaming.
     int startupSequence() const;
     void setStartupSequence(int i);
+    // Its step (0 = first) and whether it is played (GO) or only made the one GO plays next (standing by)
+    int startupStep() const;
+    void setStartupStep(int step);
+    bool startupGo() const;
+    void setStartupGo(bool go);
+    void playStartup(); // the project just opened: its startup sequence selected, its step played or standing by
     int position() const;          // step last played in the current sequence (-1: none yet)
     void setPosition(int step);    // without recalling (the interface recalls, undoable)
     int next() const;              // the step GO plays (-1: none — the end, without loop)
@@ -219,6 +225,8 @@ private:
     std::atomic<quint64> m_revision{0};
     std::map<quint64, std::shared_ptr<std::atomic<bool>>> m_commandTokens;
     int m_startupSequence = -1; // none by default; adjusted on insert/remove
+    int m_startupStep = 0;      // clamped to the sequence's steps when it is played
+    bool m_startupGo = true;
     std::map<quint64, qint64> m_stepStartedNs;
     struct RecordedRecall { quint64 snapshot = 0, generation = 0; RecallBefore before; };
     struct PendingSnapshot { quint64 id; std::shared_ptr<std::atomic<bool>> valid; };

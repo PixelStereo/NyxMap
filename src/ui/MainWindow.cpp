@@ -2274,10 +2274,7 @@ bool MainWindow::openProject(const QString &path, bool autoplay)
 
 void MainWindow::playStartupSequence()
 {
-    const int startup = m_engine->sequencer().startupSequence();
-    if (startup < 0) return;
-    m_engine->sequencer().setCurrent(startup);
-    m_engine->sequencer().goTo(0);
+    m_engine->sequencer().playStartup();
 }
 
 void MainWindow::openStartupProject()
