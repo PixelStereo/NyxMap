@@ -111,6 +111,12 @@ int main(int argc, char **argv)
 
     TimelineEditor editor(&engine, &undo);
     editor.resize(1100, 420); editor.setTimeline(aid); editor.show(); app.processEvents();
+    // A widget's picture at a point in its own coordinates (a Retina screen grabs it at twice its size)
+    auto colorAt = [](QWidget *w, int x, int y) {
+        const QImage image = w->grab().toImage();
+        const qreal ratio = image.devicePixelRatio();
+        return image.pixelColor(int(x * ratio), int(y * ratio));
+    };
     auto lanes = editor.findChildren<ColorLane *>();
     ColorLane *lane = nullptr;
     for (auto *candidate : lanes) if (candidate->isVisible()) lane = candidate;
@@ -120,8 +126,7 @@ int main(int argc, char **argv)
         if (action->text() == "Color (RGB)") menuHasColor = true;
     check(menuHasColor, "parameter picker offers the grouped text color");
     if (lane) {
-        const QImage pixels = lane->grab().toImage();
-        const QColor middle = pixels.pixelColor(pixels.width() / 2, 48);
+        const QColor middle = colorAt(lane, lane->width() / 2, 48);
         check(std::abs(middle.red() - 128) < 5 && middle.green() < 4 && std::abs(middle.blue() - 128) < 5,
               "gradient preview matches the engine's RGB midpoint");
         auto mouse = [&](QEvent::Type type, QPointF pos, Qt::MouseButton button, Qt::MouseButtons buttons) {
@@ -190,7 +195,7 @@ int main(int argc, char **argv)
     for (auto *menu : isolated.findChildren<QMenu *>()) for (auto *action : menu->actions())
         if (action->text() == "Hold (steps)") { action->trigger(); holdAction = true; }
     check(holdAction && edited.keys[0].curve == kAnimHold, "transition menu changes the complete RGB segment");
-    const QColor held = isolated.grab().toImage().pixelColor(250, 48);
+    const QColor held = colorAt(&isolated, 250, 48);
     check(held.red() > 250 && held.green() < 3 && held.blue() < 3, "hold preview remains at the first color");
     for (auto *menu : isolated.findChildren<QMenu *>()) menu->close();
     // A current-value color has the same playback preview and an unmistakable first-key marker.
@@ -207,13 +212,14 @@ int main(int argc, char **argv)
     check(edited.keys[0].isCurrentValue, "current-value color setting is emitted as one undoable edit");
     if (currentMenu) currentMenu->close();
     isolated.setLive({.2, .4, .6});
-    const QImage currentPreview = isolated.grab().toImage();
-    const QColor currentMiddle = currentPreview.pixelColor(250, 48);
+    const QColor currentMiddle = colorAt(&isolated, 250, 48);
     check(std::abs(currentMiddle.red() - 26) < 5 && std::abs(currentMiddle.green() - 51) < 5 &&
           std::abs(currentMiddle.blue() - 204) < 5, "RGB gradient previews the captured start rather than the placeholder");
     int amber = 0;
+    const QImage currentPreview = isolated.grab().toImage();
+    const qreal ratio = currentPreview.devicePixelRatio();
     for (int y = 7; y < 34; ++y) for (int x = 0; x < 25; ++x) {
-        const QColor pixel = currentPreview.pixelColor(x, y);
+        const QColor pixel = currentPreview.pixelColor(int(x * ratio), int(y * ratio));
         if (pixel.red() > 220 && pixel.green() > 150 && pixel.green() < 225 && pixel.blue() < 130) ++amber;
     }
     check(amber > 20, "current color key has a distinct amber diamond marker");

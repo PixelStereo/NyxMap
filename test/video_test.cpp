@@ -19,6 +19,7 @@ extern "C" {
 #include <QtEndian>
 #include <QJsonObject>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
 #include <QThread>
@@ -626,6 +627,14 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         }
     }
 
+    // A HAP file test/make_media.sh makes with an FFmpeg that has the HAP encoder (not Homebrew's): without it,
+    // the cases on it are skipped and said so — on the CI (CI set), where it is always made, missing is a failure
+    auto hapMissing = [&](const char *file) {
+        if (QFileInfo::exists(root + "/media/" + file) || qEnvironmentVariableIsSet("CI")) return false;
+        std::printf("      skipped: media/%s missing (sh test/make_media.sh with an FFmpeg that encodes HAP)\n", file);
+        return true;
+    };
+
     // --- HAP as FFmpeg encodes it, against FFmpeg's own decoding (on the CPU)
     struct HapCase {
         const char *file, *layout;
@@ -636,6 +645,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
                             {"hapy.mov", "Hap Q · YCoCg DXT5", false},
                             {"hapy_raw.mov", "Hap Q · YCoCg DXT5", false}};
     for (const HapCase &c : haps) {
+        if (hapMissing(c.file)) continue;
         const QString path = root + "/media/" + c.file;
         QString desc;
         quint64 staged = 0;
@@ -763,7 +773,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     }
 
     // --- A hidden layer is neither uploaded nor rendered; shown again, it shows its current frame
-    {
+    if (!hapMissing("hap.mov")) {
         e.newProject();
         e.setCompositionSize(QSize(640, 360));
         const int i = e.addLayer(QStringLiteral("v"));
@@ -838,7 +848,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     }
     // Corrupt every HAP frame payload while keeping a valid MOV container. In
     // Loop mode, legs without any valid frame (two in a row) must end playback instead of spinning forever.
-    {
+    if (!hapMissing("hap1.mov")) {
         QFile src(root + "/media/hap1.mov");
         VCHECK(src.open(QIODevice::ReadOnly));
         QByteArray bytes = src.readAll();

@@ -21,6 +21,7 @@
 #include <QSlider>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QUndoStack>
 #include <algorithm>
 #include <cmath>
@@ -71,7 +72,11 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
         if (!widget) return nullptr;
         QContextMenuEvent event(QContextMenuEvent::Mouse, {4, 4}, widget->mapToGlobal(QPoint(4, 4)));
         QApplication::sendEvent(widget, &event);
-        qApp->processEvents();
+        // A native window server can take a few event rounds to make the popup active
+        for (int round = 0; round < 50 && !QApplication::activePopupWidget(); ++round) {
+            qApp->processEvents();
+            QThread::msleep(10);
+        }
         return qobject_cast<QMenu *>(QApplication::activePopupWidget());
     };
     auto colorAction = [](QMenu *menu) -> QAction * {

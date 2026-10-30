@@ -465,6 +465,14 @@ void main(){
                 std::fflush(stdout);
                 CHECK(red(64) > 60 && red(4) < 5);
             }
+            // The particles move by the time between frames (TIMEDELTA, real time): frames paced as a display shows them
+            // (~60 a second), so that a fast GPU simulates as long as a slow software renderer does
+            auto paced = [&](int frames) {
+                for (int k = 0; k < frames; ++k) {
+                    e.renderFrame();
+                    QThread::msleep(16);
+                }
+            };
             // The shipped particle generator: a cloud appears, from every camera path
             CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
             inst = e.layer(g)->generator.get();
@@ -472,7 +480,7 @@ void main(){
             CHECK(path != nullptr && path->lValues.size() == 6);
             for (int p = 0; path && p < 6; ++p) {
                 path->lValue = p;
-                for (int k = 0; k < 8; ++k) e.renderFrame();
+                paced(8);
                 const QImage img = e.grabViewport(e.mainViewportId());
                 int lit = 0;
                 for (int y = 0; y < img.height(); ++y)
@@ -507,7 +515,7 @@ void main(){
             setP("attr1Pos", -.7, 0);
             setF("attr1Strength", .8);
             setF("attr1Swirl", 0);
-            for (int k = 0; k < 60; ++k) e.renderFrame();
+            paced(60);
             QImage pulled = e.grabViewport(e.mainViewportId());
             const int pl = litIn(pulled, 0, pulled.width() / 2), pr = litIn(pulled, pulled.width() / 2, pulled.width());
             std::printf("       attractor on the left: %d lit on the left, %d on the right\n", pl, pr);
@@ -567,7 +575,7 @@ void main(){
             const quint64 formId = hiddenImageLayer("Form", tmp + "/form.png");
             CHECK(e.setIsfImageLayer(inst, formIndex, formId, &err));
             if (IsfInput *shape = inst->input(QStringLiteral("emitShape"))) shape->lValue = 5; // Layer: the Form Layer
-            for (int k = 0; k < 40; ++k) e.renderFrame(); // its grains born on the bar, and settled there
+            paced(40); // its grains born on the bar, and settled there
             QImage formed = e.grabViewport(e.mainViewportId());
             const int left = litIn(formed, 0, formed.width() / 2), right = litIn(formed, formed.width() / 2, formed.width());
             CHECK(left > 50 && left > 3 * right);
@@ -575,7 +583,7 @@ void main(){
             star.fill(Qt::white);
             CHECK(star.save(tmp + "/grain.png"));
             CHECK(e.setIsfImageLayer(inst, spriteIndex, hiddenImageLayer("Grain", tmp + "/grain.png"), &err));
-            for (int k = 0; k < 4; ++k) e.renderFrame();
+            paced(4);
             formed = e.grabViewport(e.mainViewportId());
             CHECK(litIn(formed, 0, formed.width() / 2) > 50);
             e.newProject();
