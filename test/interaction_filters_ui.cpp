@@ -158,21 +158,13 @@ int main(int argc, char **argv)
         auto *lane = panel.findChild<CurveLane *>("filterCurve0");
         check(lane != nullptr, "its curve shown");
         if (lane) {
-            // Where a press takes the key at 0.999 (1.005), at the top right (a press beside it would draw a key)
+            // Where the key at 0.999 (1.005) is: hovering it names it (its time and value), nothing is edited
             QPointF at(-1, -1);
-            for (int y = 2; y < 50 && at.x() < 0; y += 2)
-                for (int x = lane->width() - 2; x > lane->width() - 60 && at.x() < 0; x -= 2) {
-                    const size_t n = filters()[0].curve.keys.size();
-                    mouse(lane, QEvent::MouseButtonPress, QPointF(x, y), Qt::LeftButton);
-                    mouse(lane, QEvent::MouseButtonRelease, QPointF(x, y), Qt::NoButton);
-                    settle();
-                    lane = panel.findChild<CurveLane *>("filterCurve0");
-                    if (filters()[0].curve.keys.size() == n) at = QPointF(x, y);
-                    else {
-                        undo.undo();
-                        settle();
-                        lane = panel.findChild<CurveLane *>("filterCurve0");
-                    }
+            for (int y = 1; y < lane->height() / 2 && at.x() < 0; ++y)
+                for (int x = lane->width() - 1; x > lane->width() / 2 && at.x() < 0; --x) {
+                    mouse(lane, QEvent::MouseMove, QPointF(x, y), Qt::NoButton);
+                    const QString tip = lane->toolTip();
+                    if (tip.contains(QStringLiteral("Drag: move")) && tip.contains(QStringLiteral("→ 1.0"))) at = QPointF(x, y);
                 }
             check(at.x() >= 0, "its key can be taken");
             const QPointer<CurveLane> held(lane);
