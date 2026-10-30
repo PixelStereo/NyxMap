@@ -318,7 +318,7 @@ void ColorPicker::setSwatchVisible(bool on) { m_swatch->setVisible(on); }
 void ColorPicker::setSettingsKey(const QString &key)
 {
     // Its own view, once the user chose one there; else the default one (Settings › Interface)
-    m_settingsKey = key.isEmpty() ? QString() : key + QStringLiteral("/view");
+    m_settingsKey = key.isEmpty() ? QString() : key + QStringLiteral("View"); // beside the key, not under it
     bool ok = false;
     const int value = m_settingsKey.isEmpty() ? -1 : QSettings().value(m_settingsKey).toInt(&ok);
     m_hasLocalView = !m_settingsKey.isEmpty() && ok && validView(value);
