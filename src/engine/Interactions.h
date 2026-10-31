@@ -76,12 +76,19 @@ struct InteractionCondition {
 };
 
 // What an Action does: sets a value of the show (a layer's id, 0: the composition) — fires an action, sets a switch
-// (0 / 1), a choice (its index) or a number
+// (0 / 1), a choice (its index) or a number. A number goes there over its time (seconds; 0: at once), from where it
+// is, eased by its curve (Engine::easingKeys) and the way its ramp says (an angle: the shortest way round); an action,
+// a switch, a choice are set at once.
 struct InteractionConsequence {
     quint64 layer = 0;
     QString param;
     double value = 1;
-    bool operator==(const InteractionConsequence &o) const { return layer == o.layer && param == o.param && value == o.value; }
+    double time = 0;
+    int curve = 3; // ease in-out
+    bool operator==(const InteractionConsequence &o) const
+    {
+        return layer == o.layer && param == o.param && value == o.value && time == o.time && curve == o.curve;
+    }
 };
 
 QString interactionSourceName(InteractionSource s); // "Keyboard", "MIDI", "OSC", "Internal"

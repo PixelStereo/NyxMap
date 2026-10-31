@@ -470,7 +470,8 @@ QJsonObject Interaction::toJson() const
         auto list = [](const std::vector<InteractionConsequence> &v) {
             QJsonArray a;
             for (const InteractionConsequence &c : v)
-                a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value}});
+                a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value},
+                                     {"time", c.time}, {"curve", c.curve}});
             return a;
         };
         o["if_true"] = list(onTrue);
@@ -535,6 +536,9 @@ Interaction Interaction::fromJson(const QJsonObject &o)
             q.param = c.value("param").toString();
             const double value = c.value("value").toDouble(1);
             q.value = std::isfinite(value) ? value : 1;
+            const double time = c.value("time").toDouble(0);
+            q.time = std::isfinite(time) ? std::clamp(time, 0.0, 600.0) : 0;
+            q.curve = std::clamp(c.value("curve").toInt(3), 0, 5);
             if (!q.param.isEmpty()) out.push_back(q);
         }
         return out;

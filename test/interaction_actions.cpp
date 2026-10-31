@@ -199,6 +199,59 @@ int runInteractionActionTests(Engine &e, const QString &tmp)
             found = true;
     check(found, "an Action saved with the project");
 
+    // A number over its time: from where it is, eased by its curve; the answer changing midway goes back from there;
+    // something else that moves it takes it over; a switch is set at once
+    e.newProject();
+    e.setFadesManual(true);
+    const quint64 c = layer("C");
+    e.setParameter(c, "opacity", 1.0);
+    Interaction fade = Interaction::made(InteractionSource::Keyboard);
+    fade.key = QStringLiteral("F");
+    fade.mode = InteractionMode::Action;
+    fade.conditions = {InteractionCondition{ConditionOp::GreaterOrEqual, 0.5, 1}};
+    fade.onTrue = {InteractionConsequence{c, QStringLiteral("opacity"), 0, 2, 0}}; // 2 s, linear
+    fade.onFalse = {InteractionConsequence{c, QStringLiteral("opacity"), 1, 1, 0}}; // 1 s
+    fade.id = e.addInteraction(fade);
+    e.renderFrame();
+    press("F", 1);
+    e.renderFrame();
+    check(near(opacity(c), 1), "a fade starts where the value is");
+    e.advanceFades(0.5);
+    check(near(opacity(c), 0.75), "a quarter of its time: a quarter of the way");
+    press("F", 0);
+    e.renderFrame();
+    e.advanceFades(0.5);
+    check(near(opacity(c), 0.875), "let go midway: back from where it was");
+    e.advanceFades(1);
+    check(near(opacity(c), 1), "there at the end of its time");
+    press("F", 1);
+    e.renderFrame();
+    e.advanceFades(0.5);
+    e.setParameter(c, "opacity", 0.2);
+    e.advanceFades(1);
+    check(near(opacity(c), 0.2), "moved by something else: the fade lets go");
+    press("F", 0);
+    e.renderFrame();
+    e.advanceFades(1);
+    fade.onTrue = {InteractionConsequence{c, QStringLiteral("opacity"), 0, 2, 1}}; // ease in
+    check(e.setInteraction(fade), "an eased fade");
+    press("F", 1);
+    e.renderFrame();
+    e.advanceFades(1);
+    check(near(opacity(c), 0.75), "eased in: slow at first");
+    e.advanceFades(1);
+    press("F", 0);
+    e.renderFrame();
+    e.advanceFades(1);
+    fade.onTrue = {InteractionConsequence{c, QStringLiteral("enable"), 0, 2, 0}};
+    check(e.setInteraction(fade), "a switch with a time");
+    press("F", 1);
+    e.renderFrame();
+    check(!visible(c), "a switch is set at once, whatever its time");
+    const Interaction timed = Interaction::fromJson(fade.toJson());
+    check(timed.onTrue == fade.onTrue && timed.onFalse == fade.onFalse && near(timed.onFalse.front().time, 1),
+          "an action's time and curve read back as written");
+
     e.setFadesManual(false);
     if (!failures) std::printf("interaction_actions: OK\n");
     return failures;

@@ -1194,6 +1194,19 @@ private:
     };
     std::vector<InteractionFade> m_interactionFades; // render thread (lock held)
     void stepInteractionFades(double dt);
+    // A number an Action takes to its value over a time (render thread, lock held). Another writer that moves it
+    // meanwhile (the interface, a snapshot, OSC, an animation, another action) takes it over: the fade lets go.
+    struct ActionFade {
+        quint64 layer = 0;
+        QString path;
+        ParamInfo::Ramp ramp = ParamInfo::Ramp::Linear;
+        double from = 0, to = 0, time = 0, elapsed = 0;
+        double last = 0; // what it set last: another value, someone else's
+        int curve = 3;
+    };
+    std::vector<ActionFade> m_actionFades;
+    void runConsequence(const InteractionConsequence &c); // at once, or a fade (lock held)
+    void stepActionFades(double dt);
     void updateMidiInputs();          // main thread
     void requestMidiInputUpdate();    // any thread; coalesced named Qt invocation
     Q_INVOKABLE void applyMidiInputUpdate();
