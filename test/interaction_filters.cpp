@@ -117,7 +117,7 @@ int runInteractionFilterTests(Engine &e)
         check(again.audioFeature == Interaction::AudioFeature::Hit && near(again.audioSensitivity, 0.8) && near(again.audioGap, 0.12) &&
                   near(again.audioLow, 30) && near(again.audioHigh, 200),
               "a Hit source is written and read back with its sensitivity and gap");
-        check(it.describe().contains("hits"), "and named for what it hears");
+        check(it.label().contains("hits"), "and named for what it hears");
         auto junk = it.toJson();
         junk["audio_sensitivity"] = 9.0;
         junk["audio_gap"] = -3.0;
@@ -152,7 +152,7 @@ int runInteractionFilterTests(Engine &e)
             it.filters = {envelope(0.05, 0.2, 0, 0.3)};
             InteractionProcessor p;
             check(near(run(it, p, 0.0, 0.1), 0.0), "an envelope is silent until triggered");
-            const double up = run(it, p, 1.0, 0.1);
+            const double up = run(it, p, 1.0, 0.04); // two frames into its 50 ms attack
             check(up > 0.45 && up <= 1.0, "attack rises on the press");
             check(run(it, p, 1.0, 0.5) < 0.02, "a pulse (sustain 0) ends by itself while the key is held");
             check(run(it, p, 1.0, 0.5) < 0.02, "and stays down until the next press");

@@ -4,13 +4,15 @@
 // http://<this machine>:<port>/ and enter the PIN.
 //
 // What it is, and is not: it reaches the *controls* and nothing else (not the layers, not the project, not OSC). It asks a
-// PIN, five or more digits, compared in constant time; a machine that gets it wrong eight times is refused for a minute.
+// code (the "PIN": 4 to 32 letters or digits, chosen by the operator, or none at all), compared in constant time; a machine that
+// gets it wrong eight times is refused for a minute. Without a code anyone on the network may move the controls.
 // A WebSocket is accepted only from the page this server served (same origin). The page's script and style are the only
 // ones its Content-Security-Policy allows. There is no encryption: the PIN and the values cross the network in clear, as OSC
 // does: use it on the show's network, not on a shared one.
 //
 // Protocol (text frames, JSON), for those who want their own client:
-//   GET /ws?pin=<PIN>  upgrade to a WebSocket
+//   GET /info          {"pin":true|false}: whether a code is asked
+//   GET /ws?pin=<PIN>  upgrade to a WebSocket (no pin= when none is asked)
 //   server -> {"t":"controls","title":..,"list":[{id,name,key,kind,min,max,step,unit,choices,value,rgb}]}   at connection, and
 //             when a control is added, removed or shaped
 //   server -> {"t":"values","v":{"<id>":<number>|[r,g,b]}}                                                  what changed
@@ -36,7 +38,8 @@ public:
     explicit RemoteServer(Engine *engine, QObject *parent = nullptr);
     ~RemoteServer() override;
 
-    // Port 0: chosen by the system (tests). `listen`: the interface's address ("": all). False with status() when it cannot
+    // Port 0: chosen by the system (tests). `pin` empty: no code asked. `listen`: the interface's address ("": all). False with
+    // status() when it cannot
     bool start(quint16 port, const QString &pin, const QString &listen = QString());
     void stop();
     bool isRunning() const;
@@ -47,7 +50,7 @@ public:
     QStringList urls() const;
     // A random PIN of `digits` digits
     static QString makePin(int digits = 6);
-    static bool pinValid(const QString &pin); // 5 to 12 digits
+    static bool pinValid(const QString &pin); // 4 to 32 letters or digits (an empty one is "no code": start() takes it)
 
     // The page, as served (tests)
     static QByteArray page();

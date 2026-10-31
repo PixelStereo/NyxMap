@@ -39,7 +39,8 @@ public:
     // The phone remote (RemoteServer.h): off until asked, a port, a PIN made on first use
     static bool remoteEnabled();
     static int remotePort();
-    static QString remotePin();
+    static bool remotePinRequired(); // false: no code is asked
+    static QString remotePin();     // empty when none is asked
     static int oscPort();      // UDP, OSC messages
     static int oscQueryPort(); // TCP, OSCQuery (HTTP + WebSocket)
     static QString oscListen(); // the address OSC and OSCQuery listen on ("": every network interface)
@@ -98,7 +99,7 @@ private:
     QTableWidget *m_feedbackTargets = nullptr;
     QSpinBox *m_oscPort = nullptr, *m_queryPort = nullptr;
     QLabel *m_oscStatus = nullptr, *m_remoteStatus = nullptr;
-    QCheckBox *m_remote = nullptr;
+    QCheckBox *m_remote = nullptr, *m_remotePinUsed = nullptr;
     QSpinBox *m_remotePort = nullptr;
     class QLineEdit *m_remotePin = nullptr;
     class QComboBox *m_oscListen = nullptr;

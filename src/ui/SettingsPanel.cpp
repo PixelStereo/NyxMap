@@ -39,7 +39,8 @@ static const char *kOscKey = "osc/enabled";
 static const char *kOscPortKey = "osc/udpPort";        // (osc/port, osc/queryPort: earlier defaults, ignored)
 static const char *kQueryPortKey = "osc/oscQueryPort";
 static const char *kOscListenKey = "osc/listen"; // the address listened on ("": every interface)
-static const char *kRemoteKey = "remote/enabled", *kRemotePortKey = "remote/port", *kRemotePinKey = "remote/pin";
+static const char *kRemoteKey = "remote/enabled", *kRemotePortKey = "remote/port", *kRemotePinKey = "remote/pin",
+                   *kRemotePinUsedKey = "remote/pinRequired";
 static constexpr int kDefaultRemotePort = 8765;
 static const char *kFeedbackKey = "osc/feedback/enabled";      // the sequence's state sent by OSC
 static const char *kFeedbackTargetsKey = "osc/feedback/targets"; // "host:port" each
@@ -97,9 +98,11 @@ QString SettingsPanel::startupProject()
 bool SettingsPanel::oscEnabled() { return QSettings().value(kOscKey, true).toBool(); }
 bool SettingsPanel::remoteEnabled() { return QSettings().value(kRemoteKey, false).toBool(); }
 int SettingsPanel::remotePort() { return std::clamp(QSettings().value(kRemotePortKey, kDefaultRemotePort).toInt(), 1024, 65535); }
+bool SettingsPanel::remotePinRequired() { return QSettings().value(kRemotePinUsedKey, true).toBool(); }
 QString SettingsPanel::remotePin()
 {
     QSettings s;
+    if (!s.value(kRemotePinUsedKey, true).toBool()) return QString(); // no code asked
     QString pin = s.value(kRemotePinKey).toString();
     if (!RemoteServer::pinValid(pin)) {
         pin = RemoteServer::makePin(6);
@@ -459,10 +462,23 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         m_remotePort->setRange(1024, 65535);
         m_remotePort->setKeyboardTracking(false);
         m_remotePort->setValue(remotePort());
-        m_remotePin = new QLineEdit(remotePin());
-        m_remotePin->setReadOnly(true);
+        m_remotePinUsed = new FlagBox(QStringLiteral("Ask a code (PIN) on the phone"));
+        m_remotePinUsed->setObjectName(QStringLiteral("remotePinRequired"));
+        m_remotePinUsed->setChecked(remotePinRequired());
+        {
+            QSettings s;
+            QString saved = s.value(kRemotePinKey).toString();
+            if (!RemoteServer::pinValid(saved)) {
+                saved = RemoteServer::makePin(6);
+                s.setValue(kRemotePinKey, saved);
+            }
+            m_remotePin = new QLineEdit(saved);
+        }
         m_remotePin->setObjectName(QStringLiteral("remotePin"));
-        auto *newPin = new QPushButton(QStringLiteral("New PIN"));
+        m_remotePin->setMaxLength(32);
+        m_remotePin->setPlaceholderText(QStringLiteral("4 to 32 letters or digits"));
+        m_remotePin->setToolTip(QStringLiteral("The code you type on the phone. Choose your own, or use Random."));
+        auto *newPin = new QPushButton(QStringLiteral("Random"));
         auto *pinRow = new QWidget;
         auto *pinLayout = new QHBoxLayout(pinRow);
         pinLayout->setContentsMargins(0, 0, 0, 0);
@@ -470,15 +486,16 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         pinLayout->addWidget(newPin);
         rf->addRow(m_remote);
         rf->addRow(new ResetLabel(QStringLiteral("Port"), [this] { m_remotePort->setValue(kDefaultRemotePort); }), m_remotePort);
-        rf->addRow(QStringLiteral("PIN"), pinRow);
+        rf->addRow(m_remotePinUsed);
+        rf->addRow(QStringLiteral("Code"), pinRow);
         m_remoteStatus = note(QString());
         m_remoteStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
         rf->addRow(m_remoteStatus);
         rf->addRow(note(QStringLiteral(
             "Open the address on the phone, enter the PIN: sliders, switches, selectors, hold buttons and color pickers for the "
             "controls made in the Controls tab, moving live both ways. It reaches the controls only, not the layers or the project. "
-            "Eight wrong PINs lock an address out for a minute. No encryption: use it on the show's network, not a shared one. "
-            "It listens where OSC does (Listen on, above).")));
+            "Eight wrong codes lock an address out for a minute. Without a code, anyone on the network can move the controls. "
+            "No encryption: use it on the show's network, not a shared one. It listens where OSC does (Listen on, above).")));
         oscPage->addWidget(box);
         auto apply = [this] {
             QSettings s;
@@ -488,12 +505,26 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         };
         connect(m_remote, &QCheckBox::toggled, this, apply);
         connect(m_remotePort, qOverload<int>(&QSpinBox::valueChanged), this, apply);
-        connect(newPin, &QPushButton::clicked, this, [this] {
-            const QString pin = RemoteServer::makePin(6);
-            QSettings().setValue(kRemotePinKey, pin);
-            m_remotePin->setText(pin);
-            emit remoteChanged(); // the phones connected are dropped: the server starts again with it
+        // The code typed: kept when it is valid (4 to 32 letters or digits), the phones connected are dropped (the server starts again)
+        auto commitPin = [this] {
+            const QString typed = m_remotePin->text().trimmed();
+            const bool ok = RemoteServer::pinValid(typed);
+            m_remotePin->setStyleSheet(ok ? QString() : QStringLiteral("QLineEdit { border:1px solid #e5564a; }"));
+            if (!ok) return;
+            QSettings().setValue(kRemotePinKey, typed);
+            emit remoteChanged();
+        };
+        connect(m_remotePin, &QLineEdit::editingFinished, this, commitPin);
+        connect(newPin, &QPushButton::clicked, this, [this, commitPin] {
+            m_remotePin->setText(RemoteServer::makePin(6));
+            commitPin();
         });
+        connect(m_remotePinUsed, &QCheckBox::toggled, this, [this](bool on) {
+            QSettings().setValue(kRemotePinUsedKey, on);
+            m_remotePin->setEnabled(on);
+            emit remoteChanged();
+        });
+        m_remotePin->setEnabled(m_remotePinUsed->isChecked());
     }
     oscPage->addWidget(buildFeedback());
     audioPage->addWidget(buildAudio());

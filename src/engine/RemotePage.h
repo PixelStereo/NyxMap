@@ -26,19 +26,20 @@ input[type=color] { width:100%; height:56px; border:1px solid var(--line); borde
 #login { max-width:340px; margin:18vh auto 0; padding:0 20px; text-align:center; }
 #login input { width:100%; padding:14px; font-size:22px; text-align:center; letter-spacing:.3em; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px; }
 #login p { color:var(--dim); }
+#login button { width:100%; margin-top:12px; min-height:56px; border-radius:10px; border:0; background:var(--accent); color:#1a1a1d; font:inherit; font-size:18px; font-weight:600; }
 #empty { color:var(--dim); text-align:center; padding:40px 16px; grid-column:1/-1; }
 )CSS";
 
 inline constexpr char kBody[] = R"HTML(
 <header><h1 id="title">NyxMap</h1><span id="state">…</span></header>
-<div id="login" hidden><h2>NyxMap remote</h2><p id="loginText">Enter the PIN shown in NyxMap (Settings › OSC › Phone remote).</p><input id="pin" inputmode="numeric" autocomplete="off" maxlength="12" autofocus></div>
+<div id="login" hidden><h2>NyxMap remote</h2><p id="loginText">Enter the code set in NyxMap (Settings › OSC › Phone remote).</p><input id="pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" enterkeyhint="go"><button id="go" type="button">Connect</button></div>
 <main id="list" hidden></main>
 )HTML";
 
 inline constexpr char kScript[] = R"JS(
 (() => {
   const $ = s => document.querySelector(s);
-  let pin = new URLSearchParams(location.search).get('pin') || sessionStorage.getItem('nyxmap-pin') || '';
+  let pin = new URLSearchParams(location.search).get('pin') || sessionStorage.getItem('nyxmap-pin') || '', needPin = true;
   let ws = null, opened = false, failures = 0, controls = [], values = {}, active = new Set(), sendAt = {};
   const state = (text, cls) => { const s = $('#state'); s.textContent = text; s.className = cls || ''; };
   const send = obj => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); };
@@ -51,13 +52,15 @@ inline constexpr char kScript[] = R"JS(
     $('#list').hidden = true; $('#login').hidden = false;
     if (message) $('#loginText').textContent = message;
     const input = $('#pin'); input.value = ''; input.focus();
-    input.onkeydown = e => { if (e.key === 'Enter' && input.value) { pin = input.value.trim(); failures = 0; $('#login').hidden = true; connect(); } };
+    const go = () => { if (!input.value) return; pin = input.value.trim(); failures = 0; $('#login').hidden = true; connect(); };
+    input.onkeydown = e => { if (e.key === 'Enter') go(); };
+    $('#go').onclick = go; // a phone's keypad may have no Enter key
   }
   function connect() {
-    if (!pin) return login();
+    if (needPin && !pin) return login();
     state('connecting…');
     opened = false;
-    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?pin=' + encodeURIComponent(pin));
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws' + (needPin ? '?pin=' + encodeURIComponent(pin) : ''));
     ws.onopen = () => { opened = true; failures = 0; sessionStorage.setItem('nyxmap-pin', pin); state('connected', 'ok'); };
     ws.onmessage = e => {
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
@@ -66,7 +69,7 @@ inline constexpr char kScript[] = R"JS(
     };
     ws.onclose = () => {
       state('offline', 'bad');
-      if (!opened && ++failures >= 2) { sessionStorage.removeItem('nyxmap-pin'); pin = ''; login('Wrong PIN, or NyxMap cannot be reached. Enter the PIN again.'); return; }
+      if (needPin && !opened && ++failures >= 2) { sessionStorage.removeItem('nyxmap-pin'); pin = ''; login('Wrong PIN, or NyxMap cannot be reached. Enter the PIN again.'); return; }
       setTimeout(connect, Math.min(4000, 400 + failures * 500));
     };
   }
@@ -118,7 +121,8 @@ inline constexpr char kScript[] = R"JS(
       else if (c.kind === 'color') { if (!active.has(c.id)) card.querySelector('input').value = hex(v); }
     }
   }
-  connect();
+  // Whether it asks a code: the server says (it says nothing else before the code)
+  fetch('/info').then(r => r.json()).then(i => { needPin = !!i.pin; }).catch(() => {}).then(connect);
 })();
 )JS";
 } // namespace remote_page

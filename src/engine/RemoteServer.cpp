@@ -82,17 +82,17 @@ QString RemoteServer::makePin(int digits)
 
 bool RemoteServer::pinValid(const QString &pin)
 {
-    if (pin.size() < 5 || pin.size() > 12) return false;
+    if (pin.size() < 4 || pin.size() > 32) return false;
     for (const QChar c : pin)
-        if (!c.isDigit() || c.unicode() > '9') return false;
+        if (c.unicode() > 127 || !c.isLetterOrNumber()) return false; // letters and digits: it travels in an address
     return true;
 }
 
 bool RemoteServer::start(quint16 port, const QString &pin, const QString &listen)
 {
     stop();
-    if (!pinValid(pin)) {
-        m_status = QStringLiteral("Phone remote: the PIN has to be 5 to 12 digits");
+    if (!pin.isEmpty() && !pinValid(pin)) {
+        m_status = QStringLiteral("Phone remote: the code has to be 4 to 32 letters or digits");
         return false;
     }
     m_pin = pin;
@@ -107,7 +107,7 @@ bool RemoteServer::start(quint16 port, const QString &pin, const QString &listen
     connect(m_server, &QTcpServer::newConnection, this, &RemoteServer::onConnection);
     m_timer.start();
     const QStringList list = urls();
-    m_status = QStringLiteral("Phone remote on port %1").arg(m_server->serverPort()) + (list.isEmpty() ? QString() : QStringLiteral(": ") + list.join(QStringLiteral("  ")));
+    m_status = QStringLiteral("Phone remote on port %1").arg(m_server->serverPort()) + (m_pin.isEmpty() ? QStringLiteral(" (no code)") : QString()) + (list.isEmpty() ? QString() : QStringLiteral(": ") + list.join(QStringLiteral("  ")));
     return true;
 }
 
@@ -153,7 +153,7 @@ QStringList RemoteServer::urls() const
     return out;
 }
 
-bool RemoteServer::authorized(const QByteArray &presented) const { return sameBytes(presented, m_pin.toUtf8()); }
+bool RemoteServer::authorized(const QByteArray &presented) const { return m_pin.isEmpty() || sameBytes(presented, m_pin.toUtf8()); }
 
 void RemoteServer::onConnection()
 {
@@ -272,6 +272,10 @@ void RemoteServer::onData(QTcpSocket *s)
             c.websocket = true;
             emit clientsChanged(clientCount());
             push(); // its first picture of the controls
+        } else if (path == QLatin1String("/info")) { // whether it asks a code: nothing else
+            send(s, response(200, m_pin.isEmpty() ? "{\"pin\":false}" : "{\"pin\":true}", "application/json"));
+            s->disconnectFromHost();
+            return;
         } else if (path == QLatin1String("/") || path == QLatin1String("/index.html")) {
             send(s, response(200, page(), "text/html; charset=utf-8", "Content-Security-Policy: " + m_csp + "\r\n"));
             s->disconnectFromHost();
