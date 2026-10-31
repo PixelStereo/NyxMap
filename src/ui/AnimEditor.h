@@ -295,6 +295,9 @@ private:
     QPushButton *m_showPath = nullptr;
     XyPathPreview *m_pointPreview = nullptr;
     void updateStartMode();
+    void rebuildFilters();
+    QWidget *m_filters = nullptr;
+    QVBoxLayout *m_outer = nullptr;
     class CurveLane *m_lane = nullptr;
     ColorLane *m_colorLane = nullptr;
     EventLane *m_eventLane = nullptr;
@@ -335,6 +338,8 @@ protected:
     virtual void store(const Animation &before, const Animation &after, const QString &text, const QString &mergeKey) = 0;
     virtual void control(AnimAction action, double time = 0) = 0;
     virtual TrackRow *makeRow(int index) { return new TrackRow(this, index); }
+    virtual void bindDriverWidget(QWidget *, int, const QString &) {}
+    virtual void syncDrivenValues() {}
     virtual void loaded() {} // after a reload (the subclass's own widgets)
     void commit(const QString &text, const QString &mergeKey = {});
     void rebuildRows();

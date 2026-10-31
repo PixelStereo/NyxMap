@@ -503,6 +503,7 @@ void Engine::removeLayer(int i)
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_layers.size())) return;
         if (m_layers[size_t(i)]->isViewport && viewportCountLocked() <= 1) return; // there is always one
+        clearAnimationFilterHistory(m_layers[size_t(i)]->id, 0);
         g->layer = std::move(m_layers[size_t(i)]);
         m_layers.erase(m_layers.begin() + i);
         // A source transition running on it ends with it (the id may come back, undo: not the transition)

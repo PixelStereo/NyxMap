@@ -1,8 +1,9 @@
 #include "ParamAnimPanel.h"
-#include "PresetEditor.h"
-#include "InteractionPanel.h"
-#include "TimelinePanel.h"
+#include "AnimationDrivers.h"
 #include "Commands.h"
+#include "InteractionPanel.h"
+#include "PresetEditor.h"
+#include "TimelinePanel.h"
 #include "Widgets.h"
 
 #include <QAction>
@@ -11,17 +12,18 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHash>
-#include <optional>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
+#include <optional>
 
 static const QColor kPlaying(76, 217, 100);
 
@@ -68,10 +70,51 @@ void ParamAnimEditor::store(const Animation &before, const Animation &after, con
     else m_engine->setLayerAnim(m_layer, m_param, &after);
 }
 
+void ParamAnimEditor::bindDriverWidget(QWidget *widget, int axis, const QString &suffix)
+{
+    const QString path = animationDriverPrefix(m_param, axis) + suffix;
+    if (widget->property("driverPath").toString() == path) return;
+    if (auto *old = widget->findChild<QObject *>("driverMenu", Qt::FindDirectChildrenOnly)) delete old;
+    widget->setProperty("driverPath", path);
+    auto *menu = new AnimateMenu(
+        m_engine, m_undo, m_layer,
+        [this, anchor = QPointer<QWidget>(widget)](const QString &target) {
+            if (anchor) paramanim::openWindow(m_engine, m_undo, m_layer, target, anchor);
+        },
+        widget);
+    menu->setObjectName("driverMenu");
+    menu->attach(widget, {path});
+}
+
+void ParamAnimEditor::syncDrivenValues()
+{
+    if (m_committing) return;
+    Animation live;
+    if (!fetch(&live) || live.tracks.size() != m_edit.tracks.size()) return;
+    m_edit.tracks = live.tracks;
+    m_edit.duration = live.duration;
+    m_edit.speed = live.speed;
+    for (auto *child : findChildren<QWidget *>()) {
+        auto *widget = dynamic_cast<NumberBox *>(child);
+        if (!widget) continue;
+        const auto path = widget->property("driverPath").toString();
+        if (path.isEmpty() || widget->hasFocus() || widget->isAncestorOf(QApplication::focusWidget())) continue;
+        double value = 0;
+        if (m_engine->animParamValue(m_layer, path, &value)) {
+            const QSignalBlocker block(widget);
+            widget->setValue(value);
+        }
+    }
+}
+
 void ParamAnimEditor::loaded()
 {
     // A locked layer: its animations are shown, not edited (they play on)
     setEditorEnabled(m_has && !m_engine->isLocked(m_engine->indexOfId(m_layer)));
+    if (m_has) {
+        bindDriverWidget(m_duration, -1, "duration");
+        bindDriverWidget(m_speed, -1, "speed");
+    }
 }
 
 void ParamAnimEditor::control(AnimAction action, double time) { m_engine->controlLayerAnim(m_layer, m_param, action, time); }
@@ -380,6 +423,17 @@ bool AnimateMenu::eventFilter(QObject *o, QEvent *e)
     auto *menu = new QMenu(w);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, m_layer, values);
+    for (const auto &a : m_e->layerAnims(m_layer)) {
+        if (a.tracks.empty()) continue;
+        const auto &t = a.tracks.front();
+        if (std::none_of(values.begin(), values.end(), [&](const auto &path) { return t.drives(path); })) continue;
+        menu->addAction(
+            QStringLiteral("Go to animation driver · %1%2")
+                .arg(paramanim::label(m_e, m_layer, t.param), t.enabled ? QString() : QStringLiteral(" (off)")),
+            menu, [engine = m_e, undo = m_undo, layer = m_layer, target = t.param, anchor = QPointer<QWidget>(w)] {
+                if (anchor) paramanim::openWindow(engine, undo, layer, target, anchor);
+            });
+    }
     auto *animate = (!paths.isEmpty() || !color.isEmpty()) ? menu->addMenu(QStringLiteral("Animate")) : nullptr;
     auto *local = animate ? animate->addMenu(QStringLiteral("Layer Animation")) : nullptr;
     if (!color.isEmpty()) {

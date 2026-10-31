@@ -37,6 +37,23 @@ void TimelineWindow::fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo
                                   const QStringList &paths, QWidget *anchor)
 {
     const QPointer<QWidget> widget = anchor;
+    for (int i = 0; i < engine->animationCount(); ++i) {
+        const auto a = engine->animation(i);
+        if (std::none_of(a.tracks.begin(), a.tracks.end(), [&](const auto &t) {
+                return t.layer == layer &&
+                       std::any_of(paths.begin(), paths.end(), [&](const auto &p) { return t.drives(p); });
+            }))
+            continue;
+        menu->addAction(QStringLiteral("Go to timeline driver · %1").arg(a.name), menu, [widget, id = a.id] {
+            QWidget *root = widget;
+            while (root && root->parentWidget())
+                root = root->parentWidget();
+            if (auto *window = root ? root->findChild<TimelineWindow *>() : nullptr) {
+                window->selectTimeline(id);
+                emit window->showRequested();
+            }
+        });
+    }
     auto add = [engine, undo, layer, paths, widget](quint64 id) {
         if (layer && engine->isLocked(engine->indexOfId(layer))) return;
         const int index = engine->indexOfAnimation(id);

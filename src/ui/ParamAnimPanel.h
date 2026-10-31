@@ -33,8 +33,10 @@ protected:
     void store(const Animation &before, const Animation &after, const QString &text, const QString &mergeKey) override;
     void control(AnimAction action, double time) override;
     void loaded() override;
+    void bindDriverWidget(QWidget *widget, int axis, const QString &suffix) override;
+    void syncDrivenValues() override;
 
-private:
+  private:
     quint64 m_layer;
     QString m_param;
 };
