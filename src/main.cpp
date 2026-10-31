@@ -7,6 +7,7 @@
 #include "WebPageQt.h"
 #include "Widgets.h"
 
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QApplication>
 #include <QIcon>
@@ -61,9 +62,18 @@ int main(int argc, char *argv[])
     QCommandLineOption shotOpt("screenshot", "Capture the main window, then quit (tests).", "capture.png");
     QCommandLineOption enduranceOpt("endurance-csv", "Write 1 Hz frame/resource metrics and deadline events to a CSV and JSONL pair.", "session.csv");
     QCommandLineOption strictOpt("strict", "With --render: a layer or effect in error fails the render (exit code 4).");
+    // A show played headless: its startup sequence, for a time, a numbered picture every so often (a preview to make a
+    // video of, with its soundtrack: the pictures' times are those of the show)
+    QCommandLineOption playOpt("play", "With --render: play the project's startup sequence, as when it is opened (its sound on a silent device).");
+    QCommandLineOption secondsOpt("seconds", "With --render: render for this many seconds instead of a number of frames.", "s");
+    QCommandLineOption everyOpt("every", "With --render: also save a picture every s seconds, numbered in place of the #### "
+                                         "of the output's name (out/frame-####.jpg).", "s");
     cli.addOption(renderOpt);
     cli.addOption(strictOpt);
     cli.addOption(framesOpt);
+    cli.addOption(playOpt);
+    cli.addOption(secondsOpt);
+    cli.addOption(everyOpt);
     cli.addOption(shotOpt);
     cli.addOption(enduranceOpt);
     QCommandLineOption libsOpt("check-libraries", "Load the NDI and OMT libraries as publishing does, print where they "
@@ -108,10 +118,29 @@ int main(int argc, char *argv[])
             }
             if (!perr.isEmpty()) qWarning("%s", qPrintable(perr)); // loaded, with warnings (missing media…)
         }
+        if (cli.isSet(playOpt)) {
+            // The sound goes through a silent device: heard by the analysis (audio interactions, ISF audio inputs) and
+            // played on its own clock, as in the app, without a sound card
+            QString aerr;
+            if (!engine.startAudio(QString(), &aerr, true)) qWarning("Audio not started: %s", qPrintable(aerr));
+            engine.sequencer().playStartup();
+        }
         const int frames = qMax(1, cli.value(framesOpt).toInt());
-        for (int i = 0; i < frames; ++i) {
+        const double seconds = cli.value(secondsOpt).toDouble(), every = cli.value(everyOpt).toDouble();
+        const QString pattern = cli.value(renderOpt);
+        QElapsedTimer run;
+        run.start();
+        int shots = 0;
+        for (int i = 0; seconds > 0 ? run.elapsed() < seconds * 1000 : i < frames; ++i) {
             engine.renderFrame();
-            QThread::msleep(16);
+            QCoreApplication::processEvents(); // what the show does on the engine's thread (GO, recalls): as the app
+            if (every > 0 && run.elapsed() >= shots * every * 1000) {
+                const QString name = QString(pattern).replace(QStringLiteral("####"), QStringLiteral("%1").arg(shots + 1, 4, 10, QLatin1Char('0')));
+                if (!engine.grabOutput().save(name)) qWarning("Picture not written: %s", qPrintable(name));
+                ++shots;
+                continue; // a picture takes its time: no wait
+            }
+            QThread::msleep(seconds > 0 ? 4 : 16);
         }
         bool layerErrors = false;
         for (int i = 0; i < engine.layerCount(); ++i) {
@@ -135,7 +164,7 @@ int main(int argc, char *argv[])
                           qPrintable(publishKindName(PublishKind(k))), qPrintable(st.text), st.receivers);
             }
         }
-        const bool ok = engine.grabOutput().save(cli.value(renderOpt));
+        const bool ok = engine.grabOutput().save(QString(pattern).replace(QStringLiteral("####"), QStringLiteral("last")));
         engine.shutdown();
         if (!ok) {
             qCritical("Output not written: %s", qPrintable(cli.value(renderOpt)));
