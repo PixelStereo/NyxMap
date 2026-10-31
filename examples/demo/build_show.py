@@ -592,27 +592,54 @@ def scene_state(base_layers, scene, interaction_ids):
     return states, interactions
 
 
-def scene_preset(pid, base_layers, scene):
-    """The same scene as a preset: every value its snapshot would set, each with the snapshot's time and easing (the
-    scene's fade, unless the value has a time or an easing of its own), the composition, and the interactions it
-    switches on or off (their "enable" value)."""
+def volatile_values():
+    """The values something other than the scenes moves between two steps: the interactions (their targets, their
+    actions' consequences), the timelines' tracks, the Flash and Cut to black presets. A scene's preset always holds
+    those it sets, changed or not, to put them back as its snapshot would."""
+    out = set()
+    for it in INTERACTIONS:
+        if it.get("param"):
+            out.add((it["layer"], it["param"]))
+        for c in it.get("if_true", []) + it.get("if_false", []):
+            out.add((c["layer"], c["param"]))
+    for tl in TIMELINES:
+        out.update((t["layer"], t["param"]) for t in tl["tracks"])
+    for p in PRESETS:
+        out.update((v["layer"], v["path"]) for v in p["values"])
+    return out
+
+
+def scene_values(base_layers, scene):
+    """Every value a scene's snapshot sets: (layer, path) → (value, its own time or None, its own easing or None),
+    with the interactions it switches on or off as the composition's interaction/<id>/enable."""
     states, interactions = scene_state(base_layers, scene, INTERACTIONS)
-    values = []
+    values = {}
     for state in states:
         if state["id"] == IDS["sound"] or not state.get("included", True):
             continue
         timing, easing = state.get("timing", {}), state.get("easing", {})
         for path, value in state["params"].items():
-            item = {"layer": state["id"], "path": path, "value": value}
-            if path in timing:
-                item["time"] = timing[path]
-            if path in easing:
-                item["easing"] = easing[path]
-            values.append(item)
-    values += [{"layer": "0", "path": path, "value": 1} for path in ("opacity", "volume")]
-    values += [{"layer": "0", "path": f"interaction/{i['id']}/enable", "value": i["enabled"]}
-               for i in interactions if i["included"]]
-    return {"id": pid, "name": scene.name, "fade": scene.fade, "values": values, "animations": [], "interactions": [],
+            values[(state["id"], path)] = (value, timing.get(path), easing.get(path))
+    for i in interactions:
+        if i["included"]:
+            values[("0", f"interaction/{i['id']}/enable")] = (i["enabled"], None, None)
+    return values
+
+
+def scene_preset(pid, scene, values, before, volatile):
+    """The scene as a preset: what differs from the scene before it, and the values something else may have moved
+    since (`volatile`), each with its snapshot's time and easing (the scene's fade unless it has its own)."""
+    items = []
+    for (layer_id, path), (value, time, easing) in values.items():
+        if (layer_id, path) in before and before[(layer_id, path)][0] == value and (layer_id, path) not in volatile:
+            continue
+        item = {"layer": layer_id, "path": path, "value": value}
+        if time is not None:
+            item["time"] = time
+        if easing is not None:
+            item["easing"] = easing
+        items.append(item)
+    return {"id": pid, "name": scene.name, "fade": scene.fade, "values": items, "animations": [], "interactions": [],
             "geometry": {}, "categories": {}}
 
 
@@ -633,11 +660,15 @@ def build(out, audio=None, autoplay=False):
         audio_path = f"audio/{audio.name}"
 
     layers = build_layers(audio_path)
-    # The first scene is the one snapshot: the whole show set, the soundtrack started. Every other scene is a preset
-    # holding the very values, times and easings its snapshot would have.
+    # The first scene is the one snapshot: the whole show set, the soundtrack started. Every other scene, in the order
+    # the sequence plays them, is a preset of what changes from the scene before it, plus the values the interactions,
+    # the timelines or the other presets may have moved meanwhile: the same values its snapshot would have left.
     snapshots, presets, scenes = [], list(PRESETS), {}
-    for n, (key, scene) in enumerate(SCENES.items()):
-        if n == 0:
+    volatile, before = volatile_values(), {}
+    for key in [what for kind, what, _, _ in STEPS if kind == "scene"]:
+        scene = SCENES[key]
+        values = scene_values(layers, scene)
+        if not snapshots:
             states, interactions = scene_state(layers, scene, INTERACTIONS)
             snapshots.append({"id": "1", "name": scene.name, "fade": scene.fade, "layers": states,
                               "composition": {"included": True, "opacity": 1, "volume": 1},
@@ -645,8 +676,9 @@ def build(out, audio=None, autoplay=False):
             scenes[key] = ("snapshot", "1")
         else:
             pid = str(len(presets) + 1)
-            presets.append(scene_preset(pid, layers, scene))
+            presets.append(scene_preset(pid, scene, values, before, volatile))
             scenes[key] = ("preset", pid)
+        before = values
 
     steps = []
     for i, (kind, what, at, comment) in enumerate(STEPS):
