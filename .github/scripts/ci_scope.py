@@ -9,7 +9,7 @@ def classify(paths, event="pull_request", ref_type="branch", full=False):
     release = ref_type == "tag"
     force = full or release or scheduled
     infrastructure = any(p.startswith((".github/", "cmake/")) or p in ("CMakeLists.txt", "VERSION") for p in paths)
-    code = infrastructure or any(p.startswith(("src/", "test/", "third_party/", "isf/", "assets/", "scripts/", "examples/", "packaging/", "licenses/")) or p in (".gitmodules", "THIRD-PARTY-NOTICES.md") for p in paths)
+    code = infrastructure or any(p.startswith(("src/", "test/", "third_party/", "isf/", "assets/", "scripts/", "packaging/", "licenses/")) or p in (".gitmodules", "THIRD-PARTY-NOTICES.md") for p in paths)
     engine = infrastructure or any(p.startswith(("src/engine/", "test/engine", "test/video", "test/cue_", "test/emergency", "test/recall_")) for p in paths)
     ui = infrastructure or engine or any(p.startswith(("src/ui/", "src/main", "test/")) for p in paths)
     fuzz = infrastructure or any(p.startswith(("src/engine/Hap", "src/engine/Snappy", "src/engine/OscCodec", "test/fuzz_")) for p in paths)
