@@ -988,6 +988,7 @@ private:
     };
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
+    RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
     std::atomic<int> m_published{0};
     int m_back = 1;
 

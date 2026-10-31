@@ -653,6 +653,7 @@ jobs:
           Copy-Item build\NyxMap.exe dist\NyxMap.exe -Force
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
+          Copy-Item -Recurse -Force build\audio dist\audio
           Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 

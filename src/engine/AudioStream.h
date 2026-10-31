@@ -8,6 +8,7 @@
 // adjusting its playback rate very slightly (at most 0.5 %, inaudible), and resynchronizes (short fade,
 // then seek) when the gap is too large: seek, speed change, render stall.
 
+#include "AudioGenerator.h"
 #include "Timeline.h"
 
 #include <QString>
@@ -44,6 +45,7 @@ public:
     // Opens the best audio track of the file. Returns false (with err) if there is none.
     bool open(const QString &path, int outputRate, QString *err);
     void close();
+    AudioGenerator *generator() const { return m_synth.get(); }
     const Info &info() const { return m_info; }
     double duration() const { return m_info.duration; }
 
@@ -66,13 +68,14 @@ public:
     int resyncCount() const { return m_resyncs.load(); }
 
 private:
-    // Decoded samples handed from the decode thread to the audio callback: a ring of slots, one writer (the decode
-    // thread) and one reader (the callback), no lock. A slot keeps its buffer: no allocation once warmed up.
-    struct Chunk {
-        double pts = 0;             // timeline clock of the first sample, seconds
-        uint64_t generation = 0;    // the seek it follows (older ones are dropped by the callback)
-        size_t frames = 0;
-        std::vector<float> samples; // stereo interleaved, capacity kept
+  std::unique_ptr<AudioGenerator> m_synth;
+  // Decoded samples handed from the decode thread to the audio callback: a ring of slots, one writer (the decode
+  // thread) and one reader (the callback), no lock. A slot keeps its buffer: no allocation once warmed up.
+  struct Chunk {
+      double pts = 0;          // timeline clock of the first sample, seconds
+      uint64_t generation = 0; // the seek it follows (older ones are dropped by the callback)
+      size_t frames = 0;
+      std::vector<float> samples; // stereo interleaved, capacity kept
     };
     static constexpr size_t kSlots = 128;
     // A seek asked by the callback, read by the decode thread (a sequence lock over atomics: never waits)

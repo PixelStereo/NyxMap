@@ -48,6 +48,18 @@ AudioStream::~AudioStream() { close(); }
 
 bool AudioStream::probe(const QString &path, Info *info, QString *err)
 {
+    if (AudioGenerator::isRecipe(path)) {
+        auto synth = AudioGenerator::load(path, err);
+        if (!synth)
+            return false;
+        if (info) {
+            *info = {};
+            info->sampleRate = 48000;
+            info->channels = 2;
+            info->codec = "Realtime synthesis";
+        }
+        return true;
+    }
     AVFormatContext *fmt = nullptr;
     const QByteArray p = QFileInfo(path).absoluteFilePath().toUtf8();
     int r = avformat_open_input(&fmt, p.constData(), nullptr, nullptr);
@@ -78,6 +90,18 @@ bool AudioStream::open(const QString &path, int outputRate, QString *err)
 {
     close();
     m_rate = outputRate > 0 ? outputRate : 48000;
+    if (AudioGenerator::isRecipe(path)) {
+        m_synth = AudioGenerator::load(path, err, m_rate);
+        if (!m_synth)
+            return false;
+        m_info = {};
+        m_info.sampleRate = m_rate;
+        m_info.channels = 2;
+        m_info.codec = "Realtime synthesis";
+        m_transport = {};
+        m_snapshot = {};
+        return true;
+    }
     const QByteArray p = QFileInfo(path).absoluteFilePath().toUtf8();
     int r = avformat_open_input(&m_fmt, p.constData(), nullptr, nullptr);
     if (r < 0) {
@@ -189,6 +213,7 @@ void AudioStream::close()
     if (m_packet) av_packet_free(&m_packet);
     if (m_codec) avcodec_free_context(&m_codec);
     if (m_fmt) avformat_close_input(&m_fmt);
+    m_synth.reset();
     m_stream = -1;
 }
 
@@ -570,6 +595,10 @@ void AudioStream::mix(float *out, int frames, double latency)
         m_transportMutex.unlock();
     }
     const Transport &t = m_snapshot;
+    if (m_synth) {
+        m_peak = m_synth->mix(out, frames, m_rate, t.playing, t.speed, t.gain);
+        return;
+    }
     const double d = m_info.duration;
     const bool running = t.playing && t.speed > 0;
 

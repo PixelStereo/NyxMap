@@ -125,7 +125,7 @@ QString Engine::streamName(const QString &url)
 
 QStringList Engine::audioExtensions()
 {
-    static const QStringList e = {"wav", "aif", "aiff", "aifc", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "caf", "w64"};
+    static const QStringList e = {"dsp", "nyxaudio", "wav", "aif", "aiff", "aifc", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "caf", "w64"};
     return e;
 }
 

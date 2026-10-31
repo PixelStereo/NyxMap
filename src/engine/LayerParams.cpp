@@ -25,12 +25,13 @@ quint64 keyOf(const Layer &l)
         h *= 1099511628211ULL;
     };
     const QSize c = l.compSize ? *l.compSize : QSize(1920, 1080);
-    for (quint64 v : {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
-                      quint64(l.isGroup), quint64(c.width()), quint64(c.height()), quint64(quintptr(l.generator.get())),
-                      quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
-                      quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
-                      // the played range: the playhead's (an Internal interaction takes its range from it)
-                      quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000))})
+    for (quint64 v :
+         {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
+          quint64(quintptr(l.audio.get())), quint64(l.isGroup), quint64(c.width()), quint64(c.height()),
+          quint64(quintptr(l.generator.get())), quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)),
+          quint64(l.hasPicture()), quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
+          // the played range: the playhead's (an Internal interaction takes its range from it)
+          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000))})
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
@@ -237,6 +238,14 @@ const std::vector<Parameter *> &Layer::parameters()
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME
     if (audio) {
+        if (auto *synth = audio->generator()) {
+            for (int i = 0; i < synth->parameterCount(); ++i) {
+                const auto &p = synth->parameter(i);
+                num(
+                    QStringLiteral("synth/") + p.key, QStringLiteral("Source › Synth › ") + p.label, p.low, p.high,
+                    p.initial, [synth, i] { return synth->value(i); }, [synth, i](double v) { synth->setValue(i, v); });
+            }
+        }
         num("volume", "Source › Volume", 0, 2, 1.0, [self] { return double(self->volume); },
             [self](double v) { self->volume = float(v); });
         flag("mute", "Source › Mute", false, &muted);

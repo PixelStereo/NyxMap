@@ -70,3 +70,16 @@ JavaScript dependencies in `integrations/open-stage-control/nyxmap-dependencies.
 Their versions and full license texts are preserved beside the bundle in
 `nyxmap-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
 GPL-3.0 application, installed by the user; it is not included in the remote ZIP.
+
+## Faust (GRAME)
+
+Built-in audio instruments are generated with Faust 2.79.3 and use its standard
+noise, envelope, oscillator and delay/pitch-shifting libraries. See
+`third_party/FAUST-NOTICE.md` and the generated DSP metadata for origins.
+The four unmodified Faust architecture headers retain LGPL-2.1-or-later notices
+and their larger-work exception. Faust's libraries permit distributing generated
+code under the enclosing work's terms through their compiled-code exception.
+Optional user `.dsp` compilation dynamically loads the installed libfaust
+(LGPL-2.1-or-later). It is not required for built-in presets. Redistributors must
+supply that library's license materials and honor its LGPL obligations when enabled.
+Upstream: https://github.com/grame-cncm/faust

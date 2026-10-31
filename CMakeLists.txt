@@ -76,6 +76,8 @@ add_library(nyxmap_engine STATIC
   src/engine/ToxTouchEngine.cpp
   src/engine/WebPage.cpp
   src/engine/Permissions.cpp
+  src/engine/FaustInterpreter.cpp
+  src/engine/AudioGenerator.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
   src/engine/AudioInput.cpp
@@ -112,6 +114,23 @@ add_library(nyxmap_engine STATIC
   src/engine/LayerParams.cpp
 )
 target_include_directories(nyxmap_engine PUBLIC src/engine)
+target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/faust/architecture")
+# Built-in Faust instruments use portable generated C++; the optional interpreter
+# enables arbitrary user .dsp files without any compilation in the audio callback.
+option(NYXMAP_FAUST_COMPILER "Compile user Faust .dsp generators with libfaust" ON)
+if(NYXMAP_FAUST_COMPILER)
+  find_path(FAUST_COMPILER_INCLUDE_DIR faust/dsp/interpreter-dsp.h)
+  find_library(FAUST_COMPILER_LIBRARY NAMES faust libfaust)
+  find_path(FAUST_LIBRARY_PATH stdfaust.lib PATH_SUFFIXES share/faust faust)
+  if(FAUST_COMPILER_INCLUDE_DIR AND FAUST_COMPILER_LIBRARY AND FAUST_LIBRARY_PATH)
+    target_include_directories(nyxmap_engine PRIVATE "${FAUST_COMPILER_INCLUDE_DIR}")
+    target_compile_definitions(nyxmap_engine PUBLIC NYXMAP_FAUST_COMPILER)
+    target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_FAUST_LIBRARY_PATH="${FAUST_LIBRARY_PATH}" NYXMAP_FAUST_LIBRARY_FILE="${FAUST_COMPILER_LIBRARY}")
+  else()
+    message(STATUS "libfaust compiler not found: built-in audio instruments available; user .dsp loading disabled")
+  endif()
+endif()
+
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)
@@ -146,6 +165,7 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Audio output: miniaudio (single header, public domain / MIT-0), compiled in src/engine/MiniaudioImpl.cpp
 # ---------------------------------------------------------------------------
+nyxmap_submodule(faust architecture/faust/dsp/dsp.h)
 nyxmap_submodule(miniaudio miniaudio.h)
 target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/miniaudio")
 target_compile_definitions(nyxmap_engine PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE
@@ -434,7 +454,8 @@ endif()
 # The folder is emptied first so renamed or deleted shaders do not linger in the build.
 add_custom_command(TARGET NyxMap POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}")
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/audio" "$<TARGET_FILE_DIR:NyxMap>/audio")
 
 # Windows: the FFmpeg DLLs must be next to NyxMap.exe
 if(WIN32 AND FFMPEG_ROOT)
@@ -561,6 +582,18 @@ if(NYXMAP_TESTS)
   # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(nyxmap_audio_generators_test test/audio_generators.cpp)
+  target_link_libraries(nyxmap_audio_generators_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_generators COMMAND nyxmap_audio_generators_test)
+  # Test the dependency-free generated backend even on hosts with libfaust installed.
+  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioStream.cpp)
+  target_include_directories(nyxmap_audio_generators_portable_test PRIVATE src/engine third_party/faust/architecture)
+  target_link_libraries(nyxmap_audio_generators_portable_test PRIVATE Qt6::Core ffmpeg)
+  add_test(NAME audio_generators_portable COMMAND nyxmap_audio_generators_portable_test)
+  add_executable(nyxmap_audio_generator_engine_test test/audio_generator_engine.cpp)
+  target_link_libraries(nyxmap_audio_generator_engine_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_generator_engine COMMAND nyxmap_audio_generator_engine_test)
+  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)
   add_test(NAME isf_library COMMAND nyxmap_isf_library_test)

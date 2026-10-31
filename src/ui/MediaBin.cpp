@@ -289,6 +289,15 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     for (ClockKind k : {ClockKind::Countdown, ClockKind::Stopwatch, ClockKind::Clock})
         m_clocks[int(k)] = generator(clockKindName(k), clockGeneratorPath(k));
     m_line = generator(QStringLiteral("Line"), kLineGeneratorPath);
+    const QDir audioGenerators(QCoreApplication::applicationDirPath() + QStringLiteral("/audio/generators"));
+    for (const QString &name : {QStringLiteral("FM"), QStringLiteral("Granular"), QStringLiteral("Video"),
+                                QStringLiteral("White Noise"), QStringLiteral("Pink Noise")}) {
+        const QString path = audioGenerators.filePath(name + QStringLiteral(".nyxaudio"));
+        if (QFileInfo::exists(path)) {
+            auto *item = generator(name + QStringLiteral(" Audio"), path);
+            item->setData(0, IsfRole, false);
+        }
+    }
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
     m_inputs = new BinItem(m_tree, m_generators);

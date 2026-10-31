@@ -1266,6 +1266,40 @@ void Engine::frame(double dt)
         renderPausedSources(rc);
     }
     composite();
+    // Only a tiny visual tap crosses to the audio engine. All GL work stays on
+    // this thread; the device callback only reads atomics and performs DSP.
+    bool sonify = false;
+    for (const auto &layer : m_layers)
+        if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification())
+            sonify = true;
+    if (sonify) {
+        auto *f = gl();
+        GLint read = 0, draw = 0, pack = 0;
+        f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+        f->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+        f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
+        m_audioVisual.ensure(16, 16);
+        float rgb[3] = {0, 0, 0};
+        const auto &picture = m_output[m_back];
+        if (m_audioVisual.ready(16, 16) && picture.fbo) {
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, picture.fbo);
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_audioVisual.fbo);
+            f->glBlitFramebuffer(0, 0, picture.w, picture.h, 0, 0, 16, 16, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, m_audioVisual.fbo);
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            std::array<unsigned char, 16 * 16 * 4> pixels{};
+            f->glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            for (size_t i = 0; i < pixels.size(); i += 4)
+                for (int c = 0; c < 3; ++c)
+                    rgb[c] += pixels[i + c] / (255.f * 16 * 16);
+        }
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack));
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(read));
+        f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(draw));
+        for (const auto &layer : m_layers)
+            if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification())
+                layer->audio->generator()->setColor(rgb[0], rgb[1], rgb[2]);
+    }
     stepPixelMapping(); // the fixtures read the composition as it goes out (opacity and blackout included)
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {

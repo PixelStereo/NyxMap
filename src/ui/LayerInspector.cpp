@@ -1,22 +1,23 @@
 #include "LayerInspector.h"
-#include "PresetEditor.h"
-#include "ColorPicker.h"
-#include <QTabBar>
 #include "AudioOutput.h"
-#include "DeckLink.h"
-#include "LiveInput.h"
-#include "Midi.h"
+#include "AudioStream.h"
+#include "ColorPicker.h"
 #include "Commands.h"
+#include "DeckLink.h"
 #include "Engine.h"
 #include "LayerTable.h"
+#include "LiveInput.h"
 #include "MaskPanel.h"
+#include "Midi.h"
 #include "ParamAnimPanel.h"
 #include "ParamPanel.h"
+#include "PresetEditor.h"
+#include "Psd.h"
 #include "SettingsPanel.h"
+#include "SourceColor.h"
 #include "ViewportOutput.h"
 #include "Widgets.h"
-#include "SourceColor.h"
-#include "Psd.h"
+#include <QTabBar>
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -869,9 +870,10 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
           << (s.hasAudio ? QStringLiteral("sound: ") + audioText(s.audio) : QStringLiteral("no sound"));
         break;
     case SourceType::Audio:
-        kind = QStringLiteral("Sound");
+        kind = AudioGenerator::isRecipe(s.sourcePath) ? QStringLiteral("Audio Generator") : QStringLiteral("Sound");
         name = QFileInfo(s.sourcePath).fileName();
-        d << fmtTime(s.duration) << audioText(s.audio);
+        d << (AudioGenerator::isRecipe(s.sourcePath) ? QStringLiteral("Continuous, real time") : fmtTime(s.duration))
+          << audioText(s.audio);
         break;
     case SourceType::Image:
         kind = QStringLiteral("Image");
@@ -2548,6 +2550,40 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         });
     }
 
+    m_synthFields.clear();
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const Layer *layer = m_engine->layer(m_layer);
+        if (layer && layer->audio && layer->audio->generator()) {
+            auto *synth = layer->audio->generator();
+            for (int i = 0; i < synth->parameterCount(); ++i) {
+                if (!synth->external() && synth->noise() && i < AudioGenerator::Attack && i != AudioGenerator::Gain)
+                    continue;
+                if (!synth->external() &&
+                    (synth->granular() ? (i == AudioGenerator::Ratio || i == AudioGenerator::Index)
+                                       : (i >= AudioGenerator::GrainMs && i <= AudioGenerator::Position)))
+                    continue;
+                const auto &p = synth->parameter(i);
+                const QString key = QStringLiteral("synth/") + p.key;
+                auto *row = new QHBoxLayout;
+                auto *label = new QLabel(QString::fromUtf8(p.label));
+                auto *field = new SliderField;
+                field->setRange(p.low, p.high);
+                field->setDecimals(3);
+                field->setValue(synth->value(i));
+                row->addWidget(label);
+                row->addWidget(field, 1);
+                v->addLayout(row);
+                m_synthFields.push_back({field, key});
+                m_animate->attach({label, field}, {key});
+                connect(field, &SliderField::valueEdited, this, [this, key](double value) {
+                    setValue(key, value, QStringLiteral("Change synthesis parameter"));
+                    emit layerChanged();
+                });
+            }
+        }
+    }
+
     if (media && s.hasAudio) {
         // Sound: layer volume (undoable), mute, level
         auto *row = new QHBoxLayout;
@@ -3657,6 +3693,12 @@ void LayerInspector::refreshClock()
 
 void LayerInspector::refreshDynamic()
 {
+    for (const auto &[field, key] : m_synthFields) {
+        if (field && !field->isDragging() && !field->hasFocus()) {
+            const QSignalBlocker block(field);
+            field->setValue(m_engine->parameterValue(m_layerId, key).toDouble());
+        }
+    }
     if (m_toxStatus) {
         {
             Engine::Lock lock(&m_engine->mutex());
