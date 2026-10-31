@@ -4128,11 +4128,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.advanceFades(0.3);
             CHECK(M().size() == 1 && std::abs(M()[0].nodes[0].p.x()) < 1e-9);
             e.advanceFades(1.0);
-            // A snapshot without masks takes them away; set by hand during a fade, they stay as set
+            // A snapshot without masks switches them off, they are not deleted; set by hand during a fade, they stay as set
             QJsonObject none = before;
             none.remove("masks");
-            e.applyLayers(QJsonArray{none}, 1.0);
-            CHECK(M().empty());
+            e.applyLayers(QJsonArray{none}, 1.0, true); // a whole snapshot (the others are hidden)
+            CHECK(M().size() == 1 && !M()[0].enabled);
+            // A partial snapshot (it holds only what it names) leaves them as they are
+            e.setLayerMasks(lid, {moved});
+            e.applyLayers(QJsonArray{none}, 0.0, false);
+            CHECK(M().size() == 1 && M()[0].enabled);
             e.setLayerMasks(lid, {moved});
             e.applyLayers(QJsonArray{before}, 1.0);
             e.advanceFades(0.3);

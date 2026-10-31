@@ -1234,6 +1234,16 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         const std::vector<Mask> masksTo = masks::fromJson(o.value("masks").toArray());
         if (o.contains("masks") && masksTo != l->masks)
             fadeMasks(*job, *l, l->masks, masksTo, timeOf(timing, QStringLiteral("masks"), fade), easingOf(easing, QStringLiteral("masks")));
+        // A whole snapshot that holds no masks switches the layer's masks off: they stay, ready to be switched on again, and
+        // do not cut the picture of a scene that has none. (A partial one, that holds only what it names, leaves them alone.)
+        else if (hideOthers && !o.contains("masks")) {
+            bool any = false;
+            for (Mask &mask : l->masks) {
+                any |= mask.enabled;
+                mask.enabled = false;
+            }
+            if (any) ++l->masksRevision;
+        }
         stepJob(*job, *l);
         if (!job->done()) jobs.push_back(job);
     }
