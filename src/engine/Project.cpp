@@ -252,6 +252,14 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     QJsonObject params = parametersToJson(l.parameters());
     for (auto it = l.extraParams.constBegin(); it != l.extraParams.constEnd(); ++it)
         if (!params.contains(it.key())) params.insert(it.key(), it.value());
+    // Animation definitions below are authoritative. Their virtual control addresses remain writable by
+    // presets/OSC, but capturing them twice would overwrite edited snapshot animation settings on recall.
+    for (auto it = params.begin(); it != params.end();) {
+        if (it.key().startsWith("animation/"))
+            it = params.erase(it);
+        else
+            ++it;
+    }
     o["params"] = params;
     if (l.audioEffects) {
         QJsonArray effects;
