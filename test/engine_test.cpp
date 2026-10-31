@@ -2523,6 +2523,54 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.sequencer().remove(0);
             CHECK(e.sequencer().count() == 0 && e.sequencer().current() == -1 && !e.sequencer().go());
         }
+        // A sequence that follows a clock (a soundtrack's playhead; here any number): each step its clock passes gets
+        // its GO, in order; a clock standing still does nothing; a jump back chases (only the last step at or before
+        // it); the clock and the timecodes saved with the project
+        {
+            const int ci = e.addLayer("clock");
+            e.layer(ci)->type = SourceType::Text;
+            const quint64 clockId = e.layerId(ci);
+            e.setParameter(clockId, "opacity", 0.0);
+            Sequencer::Sequence tape;
+            tape.name = "Tape";
+            tape.clockLayer = clockId;
+            tape.clockParam = "opacity";
+            for (double at : {0.2, 0.3, 0.6, -1.0, 0.9}) {
+                Sequencer::Step st;
+                st.snapshot = 987654; // gone: the position moves, nothing else
+                st.at = at;
+                tape.steps.push_back(st);
+            }
+            const int ti = e.sequencer().add(tape);
+            auto clockAt = [&](double t) {
+                e.setParameter(clockId, "opacity", t);
+                e.renderFrame();
+            };
+            e.renderFrame(); // its first reading: nothing
+            CHECK(e.sequencer().positionOf(ti) == -1);
+            clockAt(0.35);
+            CHECK(e.sequencer().positionOf(ti) == 1); // 0.2, then 0.3
+            e.renderFrame();
+            CHECK(e.sequencer().positionOf(ti) == 1); // standing still
+            clockAt(0.1); // back before the first: nothing to chase
+            CHECK(e.sequencer().positionOf(ti) == 1);
+            clockAt(0.7);
+            CHECK(e.sequencer().positionOf(ti) == 2);
+            clockAt(0.25); // a jump back: the last step at or before it
+            CHECK(e.sequencer().positionOf(ti) == 0);
+            clockAt(0.95);
+            CHECK(e.sequencer().positionOf(ti) == 4); // 0.3, 0.6, 0.9: the step without a timecode is not played
+            CHECK(e.saveProject(tmp + "/tape.nyxmap", {}, &err));
+            const QJsonObject saved = readJson(tmp + "/tape.nyxmap").value("sequences").toArray().at(ti).toObject();
+            CHECK(saved.value("timecode").toObject().value("param").toString() == "opacity" &&
+                  saved.value("steps").toArray().at(2).toObject().value("at").toDouble() == 0.6 &&
+                  !saved.value("steps").toArray().at(3).toObject().contains("at"));
+            CHECK(e.loadProject(tmp + "/tape.nyxmap", nullptr, &err));
+            const Sequencer::Sequence back = e.sequencer().sequence(ti);
+            CHECK(back.clockLayer == clockId && back.clockParam == "opacity" && back.steps[4].at == 0.9 && back.steps[3].at < 0);
+            e.sequencer().remove(ti);
+            e.removeLayer(e.indexOfId(clockId));
+        }
         // Independent sequences: editing/selecting B must not cancel A's pending
         // pre-wait or auto-follow. Each retains a separate playhead and Stop
         // only affects the currently selected sequence.

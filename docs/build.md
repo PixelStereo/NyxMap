@@ -167,6 +167,14 @@ Render a project from the command line:
 NyxMap --render out.png --frames 1 --strict project.nyxmap
 ```
 
+Play a show headless and keep a picture every 1/25 s, numbered in place of `####` (its startup sequence played, its
+sound on a silent device, heard by the audio interactions and the ISF audio inputs). Make a video of the pictures with the
+soundtrack:
+
+```bash
+NyxMap --render frames/f-####.jpg --play --seconds 30 --every 0.04 project.nyxmap
+```
+
 Benchmark multiple 4K streams:
 
 ```bash

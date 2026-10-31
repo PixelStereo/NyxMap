@@ -130,6 +130,44 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
     return m_showParams;
 }
 
+// Each sequence that follows a clock: the steps its clock passed since the last frame get their GO, in order. A jump
+// (backwards, or more than a second ahead: a seek, a rewind, a loop of the soundtrack) chases: only the last step at or
+// before where the clock landed. A clock that stands still does nothing.
+void Engine::followSequenceClocks()
+{
+    Sequencer &seq = *m_sequencer;
+    if (seq.revision() != m_sequenceClocksRevision) {
+        m_sequenceClocksRevision = seq.revision();
+        std::vector<SequenceClock> clocks;
+        for (int i = 0; i < seq.count(); ++i) {
+            const Sequencer::Sequence s = seq.sequence(i);
+            if (s.clockParam.isEmpty()) continue;
+            SequenceClock c{seq.sequenceId(i), s.clockLayer, s.clockParam, {}};
+            for (const Sequencer::Step &st : s.steps)
+                if (st.at >= 0) c.cues.emplace_back(st.at, st.runtimeId);
+            std::stable_sort(c.cues.begin(), c.cues.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+            for (const SequenceClock &old : m_sequenceClocks) // where its clock was, when it is the same clock
+                if (old.sequence == c.sequence && old.layer == c.layer && old.param == c.param) c.last = old.last;
+            if (!c.cues.empty()) clocks.push_back(std::move(c));
+        }
+        m_sequenceClocks = std::move(clocks);
+    }
+    for (SequenceClock &c : m_sequenceClocks) {
+        const Parameter *p = findParameter(c.layer, c.param);
+        const double t = p ? p->asNumber() : std::numeric_limits<double>::quiet_NaN();
+        if (!std::isfinite(t)) continue;
+        const double last = std::exchange(c.last, t);
+        if (!std::isfinite(last) || t == last) continue; // its first reading, or standing still
+        if (t > last && t - last <= 1.0) {
+            for (const auto &[at, step] : c.cues)
+                if (at > last && at <= t) seq.cueById(c.sequence, step);
+            continue;
+        }
+        const auto landed = std::upper_bound(c.cues.begin(), c.cues.end(), t, [](double v, const auto &q) { return v < q.first; });
+        if (landed != c.cues.begin()) seq.cueById(c.sequence, std::prev(landed)->second);
+    }
+}
+
 bool Engine::isShowParam(const QString &path)
 {
     for (const char *prefix : {"show/", "sequence/", "snapshot/", "preset/", "timeline/"})
