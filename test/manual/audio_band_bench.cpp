@@ -22,7 +22,7 @@ int main()
     std::mt19937 random(188);
     std::uniform_real_distribution<float> power(0.f, 1e-5f);
     for (auto &p : s.power) p = power(random);
-    // Five bands repeated on three layers, as in Champ de rupture.
+    // Five bands repeated on three layers, as a show commonly maps them.
     const std::array<std::array<float, 2>, 5> bands{{{20,20000},{28,120},{700,3200},{6000,16000},{20,20000}}};
     volatile float sink = 0;
     auto measure = [&](auto band) {
