@@ -11,8 +11,8 @@ From a single projector to a multi-output installation, design the image and run
 
 <p>
   <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
-  <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge">
-  <img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-MIT-24272C?style=for-the-badge">
+  <a href="#download"><img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge"></a>
+  <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-MIT-24272C?style=for-the-badge"></a>
 </p>
 
 <p><strong>
