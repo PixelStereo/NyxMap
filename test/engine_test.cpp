@@ -6913,10 +6913,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         fader.filters = {InteractionStage::remap(0, 1, 0, 1)};
         const quint64 f = e.addInteraction(fader);
         const QString master = QStringLiteral("interaction/%1/master").arg(f), on = QStringLiteral("interaction/%1/enable").arg(f);
-        bool inComposition = false; // not among the composition's values: reached by their address
-        for (const ParamInfo &p : e.parameters(0)) inComposition = inComposition || p.path.startsWith("interaction/");
+        // Available in the composition's target picker, while stored under Interactions in snapshots.
+        int masterTargets = 0;
+        for (const ParamInfo &p : e.parameters(0)) if (p.path == master) ++masterTargets;
         ParamInfo mi;
-        CHECK(!inComposition && e.parameterInfo(0, master, &mi) && mi.animatable && mi.label == "Interactions › Interaction 1 › Master Level");
+        CHECK(masterTargets == 1 && e.parameterInfo(0, master, &mi) && mi.animatable &&
+              mi.label == "Interactions › Interaction 1 › Master Level");
+        CHECK(!e.captureComposition().contains(master));
         CHECK(e.parameterValue(0, master).toDouble() == 1.0 && e.parameterValue(0, on).toBool());
         auto value = [&](quint64 id) {
             for (const Interaction &x : e.interactions())
