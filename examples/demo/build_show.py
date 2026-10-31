@@ -592,20 +592,25 @@ def scene_state(base_layers, scene, interaction_ids):
     return states, interactions
 
 
-def volatile_values():
-    """The values something other than the scenes moves between two steps: the interactions (their targets, their
-    actions' consequences), the timelines' tracks, the Flash and Cut to black presets. A scene's preset always holds
-    those it sets, changed or not, to put them back as its snapshot would."""
+def moved_since(presets, timelines, interactions):
+    """The values something other than the scenes moved between two scene steps: the presets played between them, the
+    timelines playing meanwhile, the interactions the scene before switched on (their targets, their actions'
+    consequences). The two always on, the soundtrack's progress and the lattice's roll, are left out: they write their
+    values again on every frame."""
     out = set()
+    for p in PRESETS:
+        if p["name"] in presets:
+            out.update((v["layer"], v["path"]) for v in p["values"])
+    for tl in TIMELINES:
+        if tl["name"] in timelines:
+            out.update((t["layer"], t["param"]) for t in tl["tracks"])
     for it in INTERACTIONS:
+        if it["id"] not in interactions:
+            continue
         if it.get("param"):
             out.add((it["layer"], it["param"]))
         for c in it.get("if_true", []) + it.get("if_false", []):
             out.add((c["layer"], c["param"]))
-    for tl in TIMELINES:
-        out.update((t["layer"], t["param"]) for t in tl["tracks"])
-    for p in PRESETS:
-        out.update((v["layer"], v["path"]) for v in p["values"])
     return out
 
 
@@ -661,25 +666,38 @@ def build(out, audio=None, autoplay=False):
 
     layers = build_layers(audio_path)
     # The first scene is the one snapshot: the whole show set, the soundtrack started. Every other scene, in the order
-    # the sequence plays them, is a preset of what changes from the scene before it, plus the values the interactions,
-    # the timelines or the other presets may have moved meanwhile: the same values its snapshot would have left.
+    # the sequence plays them, is a preset of what changes from the scene before it, plus the values something else
+    # moved since that scene (see moved_since): the same values its snapshot would have left.
     snapshots, presets, scenes = [], list(PRESETS), {}
-    volatile, before = volatile_values(), {}
-    for key in [what for kind, what, _, _ in STEPS if kind == "scene"]:
-        scene = SCENES[key]
+    before, playing = {}, set()          # the scene before's values; the timelines playing
+    since_presets, since_timelines, scene_on = set(), set(), set()
+    once = {t["name"] for t in TIMELINES if t["loop"] == "once"}
+    for kind, what, _, _ in STEPS:
+        if kind == "preset":
+            since_presets.add(what)
+        elif kind in ("play", "speed"):
+            playing.add(what)
+            since_timelines.add(what)
+        elif kind == "stop":
+            playing.discard(what)
+        if kind != "scene":
+            continue
+        scene = SCENES[what]
         values = scene_values(layers, scene)
         if not snapshots:
             states, interactions = scene_state(layers, scene, INTERACTIONS)
             snapshots.append({"id": "1", "name": scene.name, "fade": scene.fade, "layers": states,
                               "composition": {"included": True, "opacity": 1, "volume": 1},
                               "interactions": interactions})
-            scenes[key] = ("snapshot", "1")
+            scenes[what] = ("snapshot", "1")
         else:
+            moved = moved_since(since_presets, since_timelines | playing, scene_on)
             pid = str(len(presets) + 1)
-            presets.append(scene_preset(pid, scene, values, before, volatile))
-            scenes[key] = ("preset", pid)
-        before = values
-
+            presets.append(scene_preset(pid, scene, values, before, moved))
+            scenes[what] = ("preset", pid)
+        before, scene_on = values, set(scene.on)
+        since_presets, since_timelines = set(), set()
+        playing -= once  # a timeline played once is over before the next scene
     steps = []
     for i, (kind, what, at, comment) in enumerate(STEPS):
         nxt = STEPS[i + 1] if i + 1 < len(STEPS) else None
