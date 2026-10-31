@@ -413,13 +413,16 @@ if(APPLE)
     MACOSX_BUNDLE_LONG_VERSION_STRING "${NYXMAP_VERSION}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in") # with the camera's usage text
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/../Resources/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/../Resources/audio")
 elseif(WIN32)
   add_executable(NyxMap WIN32 ${APP_SOURCES} assets/NyxMap.rc)
   target_include_directories(NyxMap PRIVATE "${CMAKE_SOURCE_DIR}/assets")
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/audio")
 else()
   add_executable(NyxMap ${APP_SOURCES})
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/audio")
 endif()
 
 # The source revision, for endurance-session comparison: regenerated at every build (cmake/BuildSha.cmake), not
@@ -461,10 +464,16 @@ endif()
 
 # Copy the bundled ISF shaders next to the executable (or into the macOS bundle).
 # The folder is emptied first so renamed or deleted shaders do not linger in the build.
+if(APPLE)
+  # Remove legacy copies from incremental bundles: codesign treats .dsp files
+  # under Contents/MacOS as nested code rather than data.
+  add_custom_command(TARGET NyxMap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:NyxMap>/audio")
+endif()
 add_custom_command(TARGET NyxMap POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}"
+  COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}" "${AUDIO_DEST}"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/audio" "$<TARGET_FILE_DIR:NyxMap>/audio")
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/audio" "${AUDIO_DEST}")
 
 # Windows: the FFmpeg DLLs must be next to NyxMap.exe
 if(WIN32 AND FFMPEG_ROOT)
@@ -591,6 +600,10 @@ if(NYXMAP_TESTS)
   # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(nyxmap_audio_resources_test test/audio_resources.cpp)
+  target_include_directories(nyxmap_audio_resources_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_audio_resources_test PRIVATE Qt6::Core)
+  add_test(NAME audio_resources COMMAND nyxmap_audio_resources_test)
   add_executable(nyxmap_audio_generators_test test/audio_generators.cpp)
   target_link_libraries(nyxmap_audio_generators_test PRIVATE nyxmap_engine)
   add_test(NAME audio_generators COMMAND nyxmap_audio_generators_test)

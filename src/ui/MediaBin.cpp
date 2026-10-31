@@ -1,7 +1,8 @@
 #include "MediaBin.h"
-#include "LiveInput.h"
+#include "AudioResources.h"
 #include "Engine.h"
 #include "ImageFile.h"
+#include "LiveInput.h"
 #include "Psd.h"
 
 #include <QAction>
@@ -304,15 +305,18 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
 
     m_audios = new BinItem(m_audioRoot, {QStringLiteral("Sounds")});
     m_audioGenerators = new BinItem(m_audioRoot, {QStringLiteral("Generators")});
-    const QDir audioGenerators(QCoreApplication::applicationDirPath() + QStringLiteral("/audio/generators"));
-    for (const auto &[name, file] : {std::pair{QStringLiteral("FM"), QStringLiteral("FM")},
-                                     std::pair{QStringLiteral("Granular"), QStringLiteral("Granular")},
-                                     std::pair{QStringLiteral("White Noise"), QStringLiteral("White Noise")},
-                                     std::pair{QStringLiteral("Pink Noise"), QStringLiteral("Pink Noise")},
-                                     std::pair{QStringLiteral("Video Sonification"), QStringLiteral("Video")}}) {
-        const QString path = audioGenerators.filePath(file + QStringLiteral(".nyxaudio"));
-        if (QFileInfo::exists(path)) generator(m_audioGenerators, name, path);
-    }
+    const auto generatorFolder = AudioResources::generatorsFolder();
+    const QDir audioGenerators(generatorFolder);
+    if (!generatorFolder.isEmpty())
+        for (const auto &[name, file] : {std::pair{QStringLiteral("FM"), QStringLiteral("FM")},
+                                         std::pair{QStringLiteral("Granular"), QStringLiteral("Granular")},
+                                         std::pair{QStringLiteral("White Noise"), QStringLiteral("White Noise")},
+                                         std::pair{QStringLiteral("Pink Noise"), QStringLiteral("Pink Noise")},
+                                         std::pair{QStringLiteral("Video Sonification"), QStringLiteral("Video")}}) {
+            const QString path = audioGenerators.filePath(file + QStringLiteral(".nyxaudio"));
+            if (QFileInfo::exists(path))
+                generator(m_audioGenerators, name, path);
+        }
     m_audioInputs = new BinItem(m_audioRoot, {QStringLiteral("Inputs")});
 
     int groupOrder = 0;
@@ -716,9 +720,9 @@ void MediaBin::refreshAudioGenerators()
     QHash<QString, QTreeWidgetItem *> existing;
     for (int c = 0; c < m_audioGenerators->childCount(); ++c)
         existing.insert(m_audioGenerators->child(c)->data(0, PathRole).toString(), m_audioGenerators->child(c));
-    const QString shipped = QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/audio/generators"));
+    const QString shipped = AudioResources::generatorsFolder();
     for (const QString &p : wanted) {
-        const bool builtIn = QDir::cleanPath(QFileInfo(p).absolutePath()) == shipped;
+        const bool builtIn = !shipped.isEmpty() && QDir::cleanPath(QFileInfo(p).absolutePath()) == shipped;
         if (builtIn || existing.contains(p)) continue;
         auto *it = new BinItem(m_audioGenerators);
         it->setData(0, PathRole, p);
@@ -731,7 +735,7 @@ void MediaBin::refreshAudioGenerators()
     for (int c = m_audioGenerators->childCount() - 1; c >= 0; --c) {
         QTreeWidgetItem *it = m_audioGenerators->child(c);
         const QString p = it->data(0, PathRole).toString();
-        const bool builtIn = QDir::cleanPath(QFileInfo(p).absolutePath()) == shipped;
+        const bool builtIn = !shipped.isEmpty() && QDir::cleanPath(QFileInfo(p).absolutePath()) == shipped;
         if (!builtIn && !wanted.contains(p)) {
             delete m_audioGenerators->takeChild(c);
             continue;

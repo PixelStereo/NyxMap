@@ -461,6 +461,11 @@ jobs:
 
           test -d "$APP"
           test -f "$EXE"
+          # Faust programs/presets are data; code signing must never encounter
+          # .dsp resources in the bundle's executable directory.
+          test ! -e "$APP/Contents/MacOS/audio"
+          test -f "$APP/Contents/Resources/audio/generators/FM.nyxaudio"
+          test -f "$APP/Contents/Resources/audio/fx/Equalizer.dsp"
 
           # macdeployqt preserves Qt's framework layout and handles its plugin deployment.
           # Supply FFmpeg and every Homebrew runtime dependency as extra search paths,
