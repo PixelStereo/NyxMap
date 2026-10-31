@@ -410,6 +410,15 @@ target_link_libraries(NyxMap PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidge
 option(NYXMAP_WEB "Web Page generator (Qt WebEngine, when found)" ON)
 set(NYXMAP_WEB_LIBS)
 if(NYXMAP_WEB)
+  # Homebrew: the qt formula and qtwebengine can be at different versions, and Qt's prefix then lacks WebEngine's
+  # headers (its packages point there all the same); they are taken from qtwebengine's own prefix then
+  get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+  get_filename_component(_qt_web "${_qt_prefix}/../qtwebengine" ABSOLUTE)
+  if(NOT EXISTS "${_qt_prefix}/include/QtWebEngineWidgets" AND EXISTS "${_qt_web}/include/QtWebEngineWidgets")
+    foreach(_m WebEngineWidgets WebEngineCore WebEngineCoreTools)
+      set(Qt6${_m}_DIR "${_qt_web}/lib/cmake/Qt6${_m}" CACHE PATH "" FORCE)
+    endforeach()
+  endif()
   find_package(Qt6 QUIET COMPONENTS WebEngineWidgets Quick QuickWidgets)
 endif()
 if(NYXMAP_WEB AND Qt6WebEngineWidgets_FOUND AND Qt6QuickWidgets_FOUND)
