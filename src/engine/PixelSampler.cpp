@@ -17,13 +17,12 @@ constexpr int kRowPoints = 1024; // points per row of the target
 bool PixelSampler::initGl(QString *log)
 {
     // One texel per point: the composition read where the point says (its uv, origin bottom left)
-    m_program = compileProgram(
-        "#version 330 core\nlayout(location=0) in vec2 a_pos;\n"
-        "void main(){ gl_Position = vec4(a_pos,0.0,1.0); }\n",
-        "#version 330 core\nuniform sampler2D u_tex; uniform sampler2D u_points; out vec4 o;\n"
-        "void main(){ vec2 uv = texelFetch(u_points, ivec2(gl_FragCoord.xy), 0).xy;\n"
-        "  o = vec4(texture(u_tex, uv).rgb, 1.0); }\n",
-        log);
+    m_program = compileProgram("#version 330 core\nlayout(location=0) in vec2 a_pos;\n"
+                               "void main(){ gl_Position = vec4(a_pos,0.0,1.0); }\n",
+                               "#version 330 core\nuniform sampler2D u_tex; uniform sampler2D u_points; out vec4 o;\n"
+                               "void main(){ vec2 uv = texelFetch(u_points, ivec2(gl_FragCoord.xy), 0).xy;\n"
+                               "  o = texture(u_tex, uv); }\n",
+                               log);
     if (!m_program) return false;
     auto f = gl();
     m_texLoc = f->glGetUniformLocation(m_program, "u_tex");
@@ -48,7 +47,7 @@ void PixelSampler::release()
     m_pointsData.clear();
 }
 
-void PixelSampler::sample(GLuint picture, const std::vector<QPointF> &points, quint64 tag)
+void PixelSampler::sample(GLuint picture, const std::vector<QPointF> &points, quint64 tag, bool dropIfBusy)
 {
     if (!m_program || !picture || points.empty()) return;
     auto f = gl();
@@ -99,6 +98,8 @@ void PixelSampler::sample(GLuint picture, const std::vector<QPointF> &points, qu
     for (Pending &p : m_ring)
         if (!p.fence && (!slot || p.order < slot->order)) slot = &p;
     if (!slot) {
+        if (dropIfBusy)
+            return;
         for (Pending &p : m_ring)
             if (!slot || p.order < slot->order) slot = &p;
         read(*slot, nullptr, nullptr, true);
@@ -138,7 +139,8 @@ void PixelSampler::sample(GLuint picture, const std::vector<QPointF> &points, qu
     slot->order = ++m_order;
 }
 
-bool PixelSampler::read(Pending &p, std::vector<std::array<float, 3>> *colors, quint64 *tag, bool wait)
+bool PixelSampler::read(Pending &p, std::vector<std::array<float, 3>> *colors, quint64 *tag, bool wait,
+                        std::vector<std::array<float, 4>> *rgba)
 {
     if (!p.fence) return false;
     auto f = gl();
@@ -146,14 +148,24 @@ bool PixelSampler::read(Pending &p, std::vector<std::array<float, 3>> *colors, q
     if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED && !wait) return false;
     f->glDeleteSync(p.fence);
     p.fence = nullptr;
-    if (!colors) return false;
+    if (!colors && !rgba)
+        return false;
     f->glBindBuffer(GL_PIXEL_PACK_BUFFER, p.pbo);
     bool ok = false;
     if (const auto *px = static_cast<const quint16 *>(
             f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(p.capacity), GL_MAP_READ_BIT))) {
-        colors->resize(p.count);
-        for (size_t k = 0; k < p.count; ++k)
-            for (int c = 0; c < 3; ++c) (*colors)[k][size_t(c)] = px[k * 4 + size_t(c)] / 65535.0f;
+        if (colors) {
+            colors->resize(p.count);
+            for (size_t k = 0; k < p.count; ++k)
+                for (int c = 0; c < 3; ++c)
+                    (*colors)[k][size_t(c)] = px[k * 4 + size_t(c)] / 65535.f;
+        }
+        if (rgba) {
+            rgba->resize(p.count);
+            for (size_t k = 0; k < p.count; ++k)
+                for (int c = 0; c < 4; ++c)
+                    (*rgba)[k][size_t(c)] = px[k * 4 + size_t(c)] / 65535.f;
+        }
         f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         ok = true;
     }
@@ -168,4 +180,13 @@ bool PixelSampler::collect(std::vector<std::array<float, 3>> *colors, quint64 *t
     for (Pending &p : m_ring)
         if (p.fence && (!oldest || p.order < oldest->order)) oldest = &p;
     return oldest && read(*oldest, colors, tag, false);
+}
+
+bool PixelSampler::collectRgba(std::vector<std::array<float, 4>> *colors, quint64 *tag)
+{
+    Pending *oldest = nullptr;
+    for (Pending &p : m_ring)
+        if (p.fence && (!oldest || p.order < oldest->order))
+            oldest = &p;
+    return oldest && read(*oldest, nullptr, tag, false, colors);
 }

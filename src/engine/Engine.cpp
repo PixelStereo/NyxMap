@@ -2,10 +2,11 @@
 // the output window, the composition size, and the composition opacity / blackout fades.
 // The rest of its methods live in Layers.cpp, Render.cpp, Project.cpp, Media.cpp and Snapshots.cpp.
 #include "EngineInternal.h"
-#include "ProcessMemory.h"
 #include "Midi.h"
+#include "ProcessMemory.h"
 #include "VideoDecoder.h"
 #include "VideoTexture.h"
+#include "VisionRuntime.h"
 #include "WorkerPool.h"
 
 #include <QDebug>
@@ -552,6 +553,7 @@ void Engine::releaseAll()
     m_publishing.release();
     // Pixel mapping: the sACN streams terminated, the sampler's GPU objects deleted
     m_dmx.stop();
+    releaseVision();
     m_sampler.release();
     m_fixturesFollowed = 0;
     {
