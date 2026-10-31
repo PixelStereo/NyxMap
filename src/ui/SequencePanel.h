@@ -104,6 +104,7 @@ class SequenceWindow : public QWidget
 {
     Q_OBJECT
 public:
+    QString proposedTimecode(int row) const; // what an empty Timecode cell offers when edited
     explicit SequenceWindow(Engine *engine, QWidget *parent = nullptr);
     void refresh();
     void setModified(bool on); // something changed since the current step was played

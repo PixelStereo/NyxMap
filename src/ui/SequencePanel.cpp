@@ -14,6 +14,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
@@ -606,6 +607,12 @@ public:
             b->setSuffix(QStringLiteral(" s"));
             return b;
         }
+        if (idx.column() == ColAt) { // a time offered, selected: typed over, or kept
+            auto *e = new QLineEdit(parent);
+            e->setPlaceholderText(QStringLiteral("seconds, or m:ss.cc"));
+            e->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            return e;
+        }
         if (idx.column() == ColNext) {
             auto *c = new QComboBox(parent);
             for (auto k : {Sequencer::StepContinue::Wait, Sequencer::StepContinue::Follow, Sequencer::StepContinue::AutoFollow})
@@ -621,6 +628,12 @@ public:
     }
     void setEditorData(QWidget *e, const QModelIndex &idx) const override
     {
+        if (auto *line = qobject_cast<QLineEdit *>(e); line && idx.column() == ColAt) {
+            const QString now = idx.data(Qt::DisplayRole).toString();
+            line->setText(now.isEmpty() ? m_w->proposedTimecode(idx.row()) : now);
+            line->selectAll();
+            return;
+        }
         if (auto *b = qobject_cast<QDoubleSpinBox *>(e)) b->setValue(idx.data(Qt::EditRole).toDouble());
         else if (auto *c = qobject_cast<QComboBox *>(e)) {
             c->setCurrentIndex(std::max(0, c->findData(idx.data(Qt::EditRole).toInt())));
@@ -1098,6 +1111,19 @@ void SequenceWindow::fillActionMenu(QMenu *menu, int row)
 }
 
 // The steps on their way: their time columns are redrawn while they move (and once more when they are done)
+// An empty Timecode cell offers where the sequence's clock is now, else the timecode of the step before it, else 0
+QString SequenceWindow::proposedTimecode(int row) const
+{
+    const Sequencer::Sequence s = m_engine->sequencer().sequence(m_engine->sequencer().current());
+    if (!s.clockParam.isEmpty()) {
+        const double now = m_engine->parameterValue(s.clockLayer, s.clockParam).toDouble(-1);
+        if (now >= 0) return timecodeText(now);
+    }
+    for (int k = std::min(row, int(s.steps.size())) - 1; k >= 0; --k)
+        if (s.steps[size_t(k)].at >= 0) return timecodeText(s.steps[size_t(k)].at);
+    return timecodeText(0);
+}
+
 void SequenceWindow::pollRuns()
 {
     // A sequence can continue in the background while another is edited.
