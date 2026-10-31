@@ -32,17 +32,21 @@ From a single projector to a multi-output installation, design the image and run
 
 ## Why NYXMAP
 
-Most shows end up juggling a media server, a mapping tool, a cue list and a bridge for the lighting desk. **NYXMAP puts all of it in one window**: bring in your media, shape it to the room, build your cues, and drive everything from OSC, MIDI, a Stream Deck or a timecode — live, with the picture on screen the whole time.
+"This software is an instrument born from over 20 years of hands-on experience and reflection—using countless tools, yet always feeling something was missing. So, here it is!"
 
-- 🎯 **Made for the stage.** Big GO button, fades on every value, a STOP that never surprises you.
-- 🧩 **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
-- 🆓 **Free, open source, cross-platform.** macOS, Windows and Linux, MIT licensed.
+_Renaud Rubiano_
+
+---
+
+- **Built through practice, for practice.
+- **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
+- **Free, open source, cross-platform.** macOS, Windows and Linux, MIT licensed.
 
 ## What you can do
 
 ### 🗺️ Map — take the picture beyond the rectangle
 
-Fit your content to any surface: a building, a set piece, a floor, a dome.
+Fit your content to any surface
 
 - **Corner pin** to snap a picture onto a flat surface in seconds.
 - **Mesh warp** to bend it over curves and uneven walls, point by point.
@@ -51,9 +55,11 @@ Fit your content to any surface: a building, a set piece, a floor, a dome.
 
 ### 🎬 Play — all your media, together
 
-Video (including **HAP** for heavy playback), image sequences, images and SVG, audio, text, clocks and countdowns, network streams (RTSP, SRT, HLS…), live inputs (cameras, screens, **NDI**, **Syphon**, **Spout**, **DeckLink**), web pages and **ISF generative shaders**.
+From high-performance video (HAP, live inputs, NDI, Syphon/Spout, DeckLink) and generative ISF shaders to text, clocks, and web streams—it handles it all.
 
-Stack them in layers and groups, blend them, add effects and correct the colour. A layer can even reuse another layer's picture, before or after its effects, at no extra cost.
+Complete with a professional audio suite powered by Grame's Faust engine, it offers granular and FM synthesis, filters, and all the tools required for advanced sound design.
+
+Stack them in layers and groups, blend them, add effects and correct the colour, the sound, and make interaction between everything. A layer can even reuse another layer's picture, before or after its effects, at no extra cost, and can affect sound by motion, color or everything you can imagine !
 
 ### ⏱️ Cue — build the moment, then recall it
 
@@ -64,7 +70,7 @@ Stack them in layers and groups, blend them, add effects and correct the colour.
 - **Snapshots** capture the whole scene; **presets** recall only what you choose.
 - **Sequences** chain your cues with waits, fades and auto-follow. One GO, and the show runs — or put the steps on a **timecode**: a soundtrack's playhead, LTC, MTC or ATC plays them on time. With **tracking**, a jump to any step lands where the steps before it would have left the show.
 - **Timelines** animate any parameter with Bézier keys, waveforms and colour gradients.
-- Each value gets **its own fade and easing**, so transitions look exactly as intended.
+- Each value gets **its own fade, delay and easing**, so transitions look exactly as intended.
 
 ### 🎛️ Control — hands on, eyes up
 
@@ -89,7 +95,6 @@ Every button, parameter and cue in NYXMAP has an address.
 - **Stored looks and cue editing**: duplicate snapshots/presets, transfer stored elements, group cue actions and suspend timecode while editing. → [Editing guide](docs/show-editing.md)
 - **Camera motion and gestures**: reference/relative difference masks, independent pixel analysis, and optional local hand tracking. → [Vision interactions](docs/vision-interactions.md)
 - **OSC and OSCQuery**: browse the whole show from any OSC tool. → [OSC API](docs/osc.md)
-- **Open Stage Control**: a ready-made touch remote for tablets and phones. → [Setup guide](docs/openstagecontrol-help.md)
 - **Bitfocus Companion / Stream Deck**: GO, STOP and cues on physical buttons. → [Companion guide](docs/companion.md)
 - **MIDI controllers and the keyboard**, with Learn.
 
@@ -103,8 +108,6 @@ Latest published build: **[v0.5.1](https://github.com/PixelStereo/NyxMap/release
 | **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-macos-v0.5.1.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-windows-v0.5.1.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.AppImage)** |
 
 Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
-
-**[Download Open Stage Control remote](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-OpenStageControl.zip)** — dependencies included; [setup guide](docs/openstagecontrol-help.md).
 <!-- release-downloads:end -->
 
 Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/build.md) and the [known limitations](docs/README.md).
