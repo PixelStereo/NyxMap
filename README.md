@@ -56,7 +56,9 @@ From high-performance video (HAP, live inputs, NDI, Syphon/Spout, DeckLink) and 
 
 Complete with a professional audio suite powered by Grame's Faust engine, it offers granular and FM synthesis, filters, and all the tools required for advanced sound design.
 
-Stack them in layers and groups, blend them, add effects and correct the colour, the sound, and make interaction between everything. A layer can even reuse another layer's picture, before or after its effects, at no extra cost, and can affect sound by motion, color or everything you can imagine !
+Generate sound in real time with **FM**, **granular synthesis**, **white/pink noise**, **ADSR envelopes** and **live video sonification**, using Faust instruments and reusable `.nyxaudio` presets. → [Audio generators](docs/audio-generators.md) · [Layer audio FX](docs/audio-effects.md) · [Clock, quantized sequences and envelopes](docs/clock-and-envelopes.md) · [Controls and the phone remote](docs/controls-and-remote.md)
+
+Stack them in layers and groups, blend them, add effects and correct the colour, the sound, and make interaction between everything. A layer can even reuse another layer's picture, before or after its effects, at no extra cost, and can affect sound by motion analyz, color or everything you can imagine !
 
 ### ⏱️ Cue — build the moment, then recall it
 

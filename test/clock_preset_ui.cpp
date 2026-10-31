@@ -3,6 +3,7 @@
 #include "PresetEditor.h"
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
@@ -35,6 +36,8 @@ int runClockPresetUiTests(Engine &engine)
     presets.select(engine.preset(pi).id);
     presets.setEditing(true);
     LayerInspector inspector(&engine, &undo);
+    // The menu at the top is not what this test is about: without its row the fields sit where they do on a small CI screen
+    if (auto *pickerRow = inspector.findChild<QWidget *>("layerPickerRow")) pickerRow->hide();
     inspector.resize(700, 1600); inspector.setLayer(row); inspector.show();
     auto showSource = [&] {
         inspector.rebuild();
@@ -71,9 +74,16 @@ int runClockPresetUiTests(Engine &engine)
         check(!presets.inSelected(id, {path}), qPrintable(path + ": click removes the setting from the selected preset"));
         QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal(QPoint(3, 3)));
         QApplication::sendEvent(field, &event);
-        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        // The popup is shown by the event loop: on a slow runner it is not up the instant the event is delivered
+        QMenu *menu = nullptr;
         bool hasPreset = false;
-        if (menu) for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
+        QElapsedTimer waited;
+        waited.start();
+        do {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+            if (menu) for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
+        } while (!hasPreset && waited.elapsed() < 2000);
         check(hasPreset, qPrintable(path + ": the field exposes the standard Preset context menu"));
         if (menu) menu->close();
         pump();
