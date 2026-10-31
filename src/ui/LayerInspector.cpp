@@ -648,7 +648,7 @@ void LayerInspector::rebuild()
     lock->setIcon(padlockIcon(s.locked, s.lockedByGroup));
     lock->setIconSize(QSize(18, 18));
     lock->setToolTip(s.lockedByGroup ? QStringLiteral("Locked by its group") : QStringLiteral("Lock: no edit allowed on this layer (Ctrl+L)"));
-    lock->setStyleSheet("QToolButton:checked { background:#4a2422; }");
+    lock->setStyleSheet("QToolButton:checked { background:#c62828; border:1px solid #ff6f60; border-radius:3px; }");
     lock->setProperty("allowLocked", true);
     lock->setEnabled(!s.lockedByGroup);
     // Solo: only the soloed layers are drawn (a setup aid: not undone, not saved)

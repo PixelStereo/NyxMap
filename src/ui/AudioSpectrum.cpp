@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <cmath>
 AudioSpectrum::AudioSpectrum(std::function<AudioAnalysis::Spectrum()> source,QWidget *parent):QWidget(parent),m_source(std::move(source)){
-    setObjectName("audioSpectrum");setMinimumHeight(145);setFocusPolicy(Qt::StrongFocus);
+    setObjectName("audioSpectrum");setMinimumHeight(145);setFocusPolicy(Qt::StrongFocus);setMouseTracking(true);
     setAccessibleName("Audio spectrum frequency selection");
-    setToolTip("Drag either frequency boundary, or click to move the nearest one. Arrow keys adjust the last boundary; Shift makes a fine adjustment.");
+    setToolTip("Drag a boundary to resize the band, drag inside it to move it, or click outside it to move the nearest boundary there. Arrow keys move what was dragged last; Shift makes a fine adjustment.");
     auto *timer=new QTimer(this);timer->setInterval(40);
     connect(timer,&QTimer::timeout,this,[this]{
         if(!isVisible())return;
@@ -42,8 +42,26 @@ void AudioSpectrum::paintEvent(QPaintEvent *){
     p.setPen(QColor(205,231,232));p.drawText(QRectF(10,1,width()-20,19),Qt::AlignLeft,QStringLiteral("%1 – %2 Hz").arg(m_low,0,'f',0).arg(m_high,0,'f',0));
     if(width()>460)p.drawText(QRectF(10,1,width()-20,19),Qt::AlignRight,QStringLiteral("Program mix · −80…0 dB"));
 }
-void AudioSpectrum::drag(double x){const double f=frequency(x);if(m_handle==1)m_low=std::clamp(f,20.,m_high-1.);else m_high=std::clamp(f,m_low+1.,20000.);update();}
-void AudioSpectrum::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton)return;setFocus();m_handle=std::abs(e->position().x()-position(m_low))<std::abs(e->position().x()-position(m_high))?1:2;drag(e->position().x());}
-void AudioSpectrum::mouseMoveEvent(QMouseEvent *e){if(e->buttons()&Qt::LeftButton)drag(e->position().x());}
-void AudioSpectrum::mouseReleaseEvent(QMouseEvent *e){if(e->button()==Qt::LeftButton&&m_handle){drag(e->position().x());emit bandEdited(m_low,m_high);}}
-void AudioSpectrum::keyPressEvent(QKeyEvent *e){if(e->key()!=Qt::Key_Left&&e->key()!=Qt::Key_Right){QWidget::keyPressEvent(e);return;}if(!m_handle)m_handle=1;double f=m_handle==1?m_low:m_high;f*=std::pow(2.,(e->key()==Qt::Key_Right?1.:-1.)*(e->modifiers()&Qt::ShiftModifier?.01:.08));drag(position(f));emit bandEdited(m_low,m_high);}
+int AudioSpectrum::partAt(double x)const{
+    const double a=position(m_low),b=position(m_high),da=std::abs(x-a),db=std::abs(x-b);
+    if(std::min(da,db)<=6)return da<=db?1:2;
+    return x>a&&x<b?3:0;}
+// A boundary goes where the pointer is; the whole band moves with it, as wide (in octaves), held within 20 Hz – 20 kHz
+void AudioSpectrum::drag(double x){
+    if(m_handle==3){const double a=position(m_grabLow),b=position(m_grabHigh);const QRectF r=plot();
+        const double dx=std::clamp(x-m_grabX,r.left()-a,r.right()-b);
+        m_low=std::clamp(frequency(a+dx),20.,19999.);m_high=std::clamp(frequency(b+dx),m_low+1.,20000.);update();return;}
+    const double f=frequency(x);if(m_handle==1)m_low=std::clamp(f,20.,m_high-1.);else m_high=std::clamp(f,m_low+1.,20000.);update();}
+void AudioSpectrum::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton)return;setFocus();const double x=e->position().x();
+    const int part=partAt(x);
+    if(part==3){m_handle=3;m_grabX=x;m_grabLow=m_low;m_grabHigh=m_high;setCursor(Qt::ClosedHandCursor);return;}
+    m_handle=part?part:std::abs(x-position(m_low))<std::abs(x-position(m_high))?1:2;drag(x);}
+void AudioSpectrum::mouseMoveEvent(QMouseEvent *e){
+    if(e->buttons()&Qt::LeftButton){drag(e->position().x());return;}
+    const int part=partAt(e->position().x());setCursor(part==3?Qt::OpenHandCursor:part?Qt::SizeHorCursor:Qt::ArrowCursor);}
+void AudioSpectrum::mouseReleaseEvent(QMouseEvent *e){if(e->button()==Qt::LeftButton&&m_handle){drag(e->position().x());emit bandEdited(m_low,m_high);
+    const int part=partAt(e->position().x());setCursor(part==3?Qt::OpenHandCursor:part?Qt::SizeHorCursor:Qt::ArrowCursor);}}
+void AudioSpectrum::keyPressEvent(QKeyEvent *e){if(e->key()!=Qt::Key_Left&&e->key()!=Qt::Key_Right){QWidget::keyPressEvent(e);return;}if(!m_handle)m_handle=1;
+    double k=std::pow(2.,(e->key()==Qt::Key_Right?1.:-1.)*(e->modifiers()&Qt::ShiftModifier?.01:.08));
+    if(m_handle==3){k=std::clamp(k,20./m_low,20000./m_high);m_low=std::clamp(m_low*k,20.,19999.);m_high=std::clamp(m_high*k,m_low+1.,20000.);update();emit bandEdited(m_low,m_high);return;}
+    double f=m_handle==1?m_low:m_high;f*=k;drag(position(f));emit bandEdited(m_low,m_high);}

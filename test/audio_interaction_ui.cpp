@@ -10,6 +10,8 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QUndoStack>
+#include <QToolButton>
+#include <cmath>
 #include <cstdio>
 int main(int argc,char **argv){
     QApplication app(argc,argv);theme::applyToApplication(app);Engine engine;QUndoStack undo;int failures=0;
@@ -41,6 +43,29 @@ int main(int argc,char **argv){
     check(engine.interactions().size()==beforeMapping+1&&engine.interactions().back().source==InteractionSource::Audio&&
           engine.interactions().back().param=="opacity","nested Audio action maps the clicked parameter");
     undo.undo();check(engine.interactions().size()==beforeMapping,"mapping created through the nested menu is undoable");
+    // Learn says when it listens
+    if(auto *learn=panel.findChild<QToolButton*>("interactionLearn")){
+        learn->setChecked(true);check(learn->text()==QStringLiteral("● Learning…"),"Learn on says it is listening");
+        learn->setChecked(false);check(learn->text()==QStringLiteral("Learn"),"Learn off says Learn");
+    }else check(false,"the Learn button");
+    // The band: dragged by its middle it moves, as wide (in octaves), held within 20 Hz – 20 kHz; by a boundary, that one
+    {
+        AudioSpectrum s([]{return AudioAnalysis::Spectrum{};});s.resize(420,160);s.show();app.processEvents();
+        double lo=0,hi=0;QObject::connect(&s,&AudioSpectrum::bandEdited,[&](double a,double b){lo=a;hi=b;});
+        auto x=[](double hz){return 10+std::log(hz/20.)/std::log(1000.)*400;}; // the plot: 10 px in, 400 px wide
+        auto mouse=[&](QEvent::Type t,double px){
+            QMouseEvent e(t,QPointF(px,60),QPointF(px,60),t==QEvent::MouseMove?Qt::NoButton:Qt::LeftButton,
+                          t==QEvent::MouseButtonRelease?Qt::NoButton:Qt::LeftButton,Qt::NoModifier);
+            QApplication::sendEvent(&s,&e);};
+        auto dragFrom=[&](double from,double to){mouse(QEvent::MouseButtonPress,from);mouse(QEvent::MouseMove,to);mouse(QEvent::MouseButtonRelease,to);};
+        s.setBand(200,2000);const double mid=x(std::sqrt(200.*2000.));
+        dragFrom(mid,mid+40);
+        check(lo>250&&std::abs(hi/lo-10)<0.01,"dragged by its middle, the band moves, as wide");
+        s.setBand(200,2000);dragFrom(mid,mid+1000);
+        check(std::abs(hi-20000)<0.5&&std::abs(hi/lo-10)<0.01,"moved to the top, it stops at 20 kHz, as wide");
+        s.setBand(200,2000);dragFrom(x(2000),x(4000));
+        check(std::abs(lo-200)<0.5&&std::abs(hi-4000)<5,"dragged by a boundary, that one alone moves");
+    }
     QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);app.processEvents();
     if(argc>1)panel.grab().save(QString::fromLocal8Bit(argv[1]));
     std::printf("audio_interaction_ui: %d failures\n",failures);return failures?1:0;

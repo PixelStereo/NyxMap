@@ -21,9 +21,11 @@ private:
     QRectF plot() const;
     double frequency(double x) const;
     double position(double hz) const;
+    int partAt(double x) const; // 1: the low boundary, 2: the high one (within a few pixels), 3: the band between, 0: outside
     void drag(double x);
     std::function<AudioAnalysis::Spectrum()> m_source;
     AudioAnalysis::Spectrum m_spectrum;
     double m_low=20,m_high=20000;
-    int m_handle=0;
+    int m_handle=0;                              // what is dragged: a boundary (1, 2), the whole band (3)
+    double m_grabX=0,m_grabLow=20,m_grabHigh=20000; // the band as it was where it was grabbed
 };
