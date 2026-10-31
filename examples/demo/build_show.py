@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build Trame: a 30-second audiovisual piece played by its soundtrack's timecode.
+"""Build Demo: a 30-second audiovisual piece played by its soundtrack's timecode.
 
 The soundtrack is not in the repository: give its file with --audio (any 30 s track works; the cues are placed on the
 beat of the one it was written for, 78 BPM). The show folder gets the project, its shaders (copied from NyxMap's ISF
 library) and the soundtrack.
 
-    python3 examples/trame/build_show.py --audio track.mp3 --out ~/Shows/Trame
+    python3 examples/demo/build_show.py --audio track.mp3 --out ~/Shows/Demo
 
-Open Trame.nyxmap: the sequence stands by on its first step; GO starts the soundtrack, and from there the
+Open Demo.nyxmap: the sequence stands by on its first step; GO starts the soundtrack, and from there the
 soundtrack's playhead plays every other step at its timecode.
 """
 import argparse
@@ -124,7 +124,7 @@ REST = {
     "wash": {"opacity": 0, "blend_mode": "multiply", "param/offset": 0.5, "param/frequency": 1, "param/curve": 0,
              "param/vertical": True, **color("param/startColor", WHITE), **color("param/endColor", WHITE)},
     # The title: huge letters, a picture inside them (the layer under the matte), another around them
-    "title": {**text_params(0, 0, W, H, 520, "center", "middle", "TRAME"), "text/font": "Helvetica Neue",
+    "title": {**text_params(0, 0, W, H, 440, "center", "middle", "NyxMap"), "text/font": "Helvetica Neue",
               "text/bold": True, "text/letter_spacing": -12, **color("text/color", DEEP_BLUE), **{c: 0 for c in CORNERS}},
     "inside": {"opacity": 0, "blend_mode": "screen"},
 }
@@ -398,9 +398,9 @@ def merge(*parts):
 
 TC = {("timecode", "opacity"): 0.75}
 SCENES = {
-    "ready": Scene("00 · Ready", 0, merge(text("TRAME\n— stand by"), {("timecode", "opacity"): 0.4}),
+    "ready": Scene("00 · Ready", 0, merge(text("NyxMap\n— stand by"), {("timecode", "opacity"): 0.4}),
                    audio_start=True),
-    "signal": Scene("01 · Signal", 0, merge(text("TRAME\nSIGNAL 01 · 78 BPM"), TC, v("bars", opacity=1)), on={"1"}),
+    "signal": Scene("01 · Signal", 0, merge(text("NyxMap\nSIGNAL 01 · 78 BPM"), TC, v("bars", opacity=1)), on={"1"}),
     "split": Scene("02 · Split", 0.9, merge(text("SIGNAL 02 · SPLIT"), TC,
                                             v("bars", opacity=1, count=3, width=0.006, spread=0.22)),
                    on={"1"}, easing={("bars", "param/spread"): "ease_out"}),
@@ -434,7 +434,7 @@ SCENES = {
                                           v("data", opacity=1, mode=2, band=0.06, center=0.06, rows=5,
                                             blend_mode="normal")),
                   on={"12", "4", "7", "3", "5"}, timing={("lattice", "param/invert"): 0.0}),
-    "title": Scene("09 · Title", 0.6, merge(text("TRAME\nINSIDE · AROUND"), TC,
+    "title": Scene("09 · Title", 0.6, merge(text("NyxMap\nINSIDE · AROUND"), TC,
                                             v("lattice", opacity=1, speed=0.3, glow=0.9, tint=AMBER),
                                             v("title", opacity=1), v("inside", opacity=1),
                                             v("waves", opacity=0, tint=(0.75, 0.95, 1.0), lines=64, depth=0.85, amplitude=1.4,
@@ -495,7 +495,7 @@ SCENES = {
                                             fxv("lattice", "trails", enable=True),
                                             fxv("data", "zoom", enable=True)),
                      on={"12", "1", "2", "4", "5"}),
-    "last": Scene("18 · Last signal", 0.9, merge(text("TRAME\nEND OF SIGNAL"), TC, v("bars", opacity=1, width=0.003)),
+    "last": Scene("18 · Last signal", 0.9, merge(text("NyxMap\nEND OF SIGNAL"), TC, v("bars", opacity=1, width=0.003)),
                   timing={("bars", "opacity"): 0.0}),
     "black": Scene("19 · Black", 1.4, merge(text(""), {("timecode", "opacity"): 0})),
 }
@@ -643,12 +643,12 @@ def build(out, audio=None, autoplay=False):
         "composition": {"width": W, "height": H, "fps": 60, "speed": 1}, "audio": {"volume": 1},
         "layers": layers, "interactions": INTERACTIONS, "timelines": TIMELINES, "presets": PRESETS,
         "snapshots": snapshots, "snapshot_tree": [s["id"] for s in snapshots],
-        "sequences": [{"id": "1", "name": "Trame · on the soundtrack's timecode", "loop": False, "steps": steps,
+        "sequences": [{"id": "1", "name": "Demo · on the soundtrack's timecode", "loop": False, "steps": steps,
                        "timecode": {"layer": IDS["sound"], "param": "playhead"}}],
         "current_sequence": 0, "startup_sequence": 0, "startup_step": 0, "startup_go": autoplay,
         "ui": {"selected_layer": 0},
     }
-    (out / "Trame.nyxmap").write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (out / "Demo.nyxmap").write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return project
 
 
@@ -660,5 +660,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     p = build(args.out, args.audio, args.autoplay)
     timed = sum(1 for s in p["sequences"][0]["steps"] if "at" in s)
-    print(f"Show ready: {args.out.resolve() / 'Trame.nyxmap'} — {len(p['snapshots'])} scenes, {len(p['presets'])} presets, "
+    print(f"Show ready: {args.out.resolve() / 'Demo.nyxmap'} — {len(p['snapshots'])} scenes, {len(p['presets'])} presets, "
           f"{len(p['timelines'])} timelines, {len(p['interactions'])} interactions, {timed} steps on the timecode")

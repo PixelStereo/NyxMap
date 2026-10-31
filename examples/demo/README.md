@@ -1,14 +1,14 @@
-# Trame
+# Demo
 
 A 30-second audiovisual piece played by its soundtrack: a cue list on the soundtrack's timecode, scenes, presets,
 timelines and interactions that listen to the music, in black and white with colour breaking in.
 
 ```bash
-python3 examples/trame/build_show.py --audio track.mp3 --out ~/Shows/Trame
+python3 examples/demo/build_show.py --audio track.mp3 --out ~/Shows/Demo
 ```
 
 The soundtrack is not in the repository. The cues are written for a 30-second trip-hop edit at 78 BPM (a beat every
-0.769 s); any track plays them, on that beat. The show folder gets `Trame.nyxmap`, its shaders (copied from NyxMap's ISF
+0.769 s); any track plays them, on that beat. The show folder gets `Demo.nyxmap`, its shaders (copied from NyxMap's ISF
 library) and the soundtrack.
 
 Open the project: the sequence stands by on its first step. **GO** starts the soundtrack, and from there the
@@ -18,8 +18,8 @@ before the playhead plays. `--autoplay` makes the project GO by itself when it o
 To watch it without the interface, as a video with its sound:
 
 ```bash
-NyxMap --render frames/f-####.jpg --play --seconds 30.5 --every 0.04 ~/Shows/Trame/Trame.nyxmap
-ffmpeg -framerate 25 -i frames/f-%04d.jpg -i track.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest trame.mp4
+NyxMap --render frames/f-####.jpg --play --seconds 30.5 --every 0.04 ~/Shows/Demo/Demo.nyxmap
+ffmpeg -framerate 25 -i frames/f-%04d.jpg -i track.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest demo.mp4
 ```
 
 ## What it uses
