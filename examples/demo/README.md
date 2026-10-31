@@ -27,8 +27,11 @@ ffmpeg -framerate 25 -i frames/f-%04d.jpg -i track.mp3 -c:v libx264 -pix_fmt yuv
 - **A sequence on a timecode.** The sequence follows the Soundtrack layer's Playhead. Twenty-two steps have a timecode,
   placed on the beat. The other steps follow them at once: a timeline played or stopped with its scene, the scene after
   a flash.
-- **Scenes (snapshots)** that set every layer each time. A jump in the soundtrack lands on a complete picture. Some
-  values have their own time and easing: the readout's text is typed in, a flash fades out while the rest cuts.
+- **One snapshot, then presets.** The first step is the show's only snapshot: every layer set, the soundtrack
+  started. Every other scene is a preset of what changes from the scene before it, plus the values something else moved
+  since that scene (the presets played in between, the timelines playing, the interactions it had switched on), so that
+  it leaves exactly what a full snapshot would. Some values have their own time and easing: the readout's text is
+  typed in, a flash fades out while the rest cuts. The interactions are switched on and off by their `enable` value.
 - **Presets** for the fastest moves:
   - **Flash** turns one bar full width and full white, for 0.1 s before the next scene;
   - **Cut to black** makes a hole in the music.

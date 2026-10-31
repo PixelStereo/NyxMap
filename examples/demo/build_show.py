@@ -592,6 +592,62 @@ def scene_state(base_layers, scene, interaction_ids):
     return states, interactions
 
 
+def moved_since(presets, timelines, interactions):
+    """The values something other than the scenes moved between two scene steps: the presets played between them, the
+    timelines playing meanwhile, the interactions the scene before switched on (their targets, their actions'
+    consequences). The two always on, the soundtrack's progress and the lattice's roll, are left out: they write their
+    values again on every frame."""
+    out = set()
+    for p in PRESETS:
+        if p["name"] in presets:
+            out.update((v["layer"], v["path"]) for v in p["values"])
+    for tl in TIMELINES:
+        if tl["name"] in timelines:
+            out.update((t["layer"], t["param"]) for t in tl["tracks"])
+    for it in INTERACTIONS:
+        if it["id"] not in interactions:
+            continue
+        if it.get("param"):
+            out.add((it["layer"], it["param"]))
+        for c in it.get("if_true", []) + it.get("if_false", []):
+            out.add((c["layer"], c["param"]))
+    return out
+
+
+def scene_values(base_layers, scene):
+    """Every value a scene's snapshot sets: (layer, path) → (value, its own time or None, its own easing or None),
+    with the interactions it switches on or off as the composition's interaction/<id>/enable."""
+    states, interactions = scene_state(base_layers, scene, INTERACTIONS)
+    values = {}
+    for state in states:
+        if state["id"] == IDS["sound"] or not state.get("included", True):
+            continue
+        timing, easing = state.get("timing", {}), state.get("easing", {})
+        for path, value in state["params"].items():
+            values[(state["id"], path)] = (value, timing.get(path), easing.get(path))
+    for i in interactions:
+        if i["included"]:
+            values[("0", f"interaction/{i['id']}/enable")] = (i["enabled"], None, None)
+    return values
+
+
+def scene_preset(pid, scene, values, before, volatile):
+    """The scene as a preset: what differs from the scene before it, and the values something else may have moved
+    since (`volatile`), each with its snapshot's time and easing (the scene's fade unless it has its own)."""
+    items = []
+    for (layer_id, path), (value, time, easing) in values.items():
+        if (layer_id, path) in before and before[(layer_id, path)][0] == value and (layer_id, path) not in volatile:
+            continue
+        item = {"layer": layer_id, "path": path, "value": value}
+        if time is not None:
+            item["time"] = time
+        if easing is not None:
+            item["easing"] = easing
+        items.append(item)
+    return {"id": pid, "name": scene.name, "fade": scene.fade, "values": items, "animations": [], "interactions": [],
+            "geometry": {}, "categories": {}}
+
+
 def build(out, audio=None, autoplay=False):
     out = Path(out).resolve()
     (out / "shaders").mkdir(parents=True, exist_ok=True)
@@ -609,20 +665,47 @@ def build(out, audio=None, autoplay=False):
         audio_path = f"audio/{audio.name}"
 
     layers = build_layers(audio_path)
-    snapshots, ids = [], {}
-    for n, (key, scene) in enumerate(SCENES.items(), 1):
-        states, interactions = scene_state(layers, scene, INTERACTIONS)
-        ids[key] = str(n)
-        snapshots.append({"id": str(n), "name": scene.name, "fade": scene.fade, "layers": states,
-                          "composition": {"included": True, "opacity": 1, "volume": 1}, "interactions": interactions})
-
+    # The first scene is the one snapshot: the whole show set, the soundtrack started. Every other scene, in the order
+    # the sequence plays them, is a preset of what changes from the scene before it, plus the values something else
+    # moved since that scene (see moved_since): the same values its snapshot would have left.
+    snapshots, presets, scenes = [], list(PRESETS), {}
+    before, playing = {}, set()          # the scene before's values; the timelines playing
+    since_presets, since_timelines, scene_on = set(), set(), set()
+    once = {t["name"] for t in TIMELINES if t["loop"] == "once"}
+    for kind, what, _, _ in STEPS:
+        if kind == "preset":
+            since_presets.add(what)
+        elif kind in ("play", "speed"):
+            playing.add(what)
+            since_timelines.add(what)
+        elif kind == "stop":
+            playing.discard(what)
+        if kind != "scene":
+            continue
+        scene = SCENES[what]
+        values = scene_values(layers, scene)
+        if not snapshots:
+            states, interactions = scene_state(layers, scene, INTERACTIONS)
+            snapshots.append({"id": "1", "name": scene.name, "fade": scene.fade, "layers": states,
+                              "composition": {"included": True, "opacity": 1, "volume": 1},
+                              "interactions": interactions})
+            scenes[what] = ("snapshot", "1")
+        else:
+            moved = moved_since(since_presets, since_timelines | playing, scene_on)
+            pid = str(len(presets) + 1)
+            presets.append(scene_preset(pid, scene, values, before, moved))
+            scenes[what] = ("preset", pid)
+        before, scene_on = values, set(scene.on)
+        since_presets, since_timelines = set(), set()
+        playing -= once  # a timeline played once is over before the next scene
     steps = []
     for i, (kind, what, at, comment) in enumerate(STEPS):
         nxt = STEPS[i + 1] if i + 1 < len(STEPS) else None
         follows = nxt is not None and nxt[2] is None
         step = {"text": comment} if comment else {}
         if kind == "scene":
-            step.update({"snapshot": ids[what], "text": SCENES[what].name,
+            kind_of, sid = scenes[what]
+            step.update({kind_of: sid, "text": SCENES[what].name,
                          **({"description": comment} if comment else {})})
         elif kind == "preset":
             step["preset"] = PR[what]
@@ -641,7 +724,7 @@ def build(out, audio=None, autoplay=False):
     project = {
         "app": "NyxMap", "format_version": 1,
         "composition": {"width": W, "height": H, "fps": 60, "speed": 1}, "audio": {"volume": 1},
-        "layers": layers, "interactions": INTERACTIONS, "timelines": TIMELINES, "presets": PRESETS,
+        "layers": layers, "interactions": INTERACTIONS, "timelines": TIMELINES, "presets": presets,
         "snapshots": snapshots, "snapshot_tree": [s["id"] for s in snapshots],
         "sequences": [{"id": "1", "name": "Demo · on the soundtrack's timecode", "loop": False, "steps": steps,
                        "timecode": {"layer": IDS["sound"], "param": "playhead"}}],
@@ -660,5 +743,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     p = build(args.out, args.audio, args.autoplay)
     timed = sum(1 for s in p["sequences"][0]["steps"] if "at" in s)
-    print(f"Show ready: {args.out.resolve() / 'Demo.nyxmap'} — {len(p['snapshots'])} scenes, {len(p['presets'])} presets, "
+    print(f"Show ready: {args.out.resolve() / 'Demo.nyxmap'} — {len(p['snapshots'])} snapshot, {len(p['presets'])} presets, "
           f"{len(p['timelines'])} timelines, {len(p['interactions'])} interactions, {timed} steps on the timecode")
