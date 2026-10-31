@@ -158,6 +158,10 @@ void Engine::followSequenceClocks()
         if (!std::isfinite(t)) continue;
         const double last = std::exchange(c.last, t);
         if (!std::isfinite(last) || t == last) continue; // its first reading, or standing still
+        // Stopped (Stop all, the emergency Escape): its clock is read, so that it goes on from where it is, but no step is
+        // fired. A step's action takes the show out of the stop (resumeAfterStop): one fired by a clock that jumped as it was
+        // stopped (a soundtrack that rewinds, a loop) would start everything again
+        if (m_emergencyHeld) continue;
         if (t > last && t - last <= 1.0) {
             for (const auto &[at, step] : c.cues)
                 if (at > last && at <= t) seq.cueById(c.sequence, step);
