@@ -80,9 +80,8 @@ void BeatClock::resume()
     m_running = true;
 }
 
-void BeatClock::tap()
+void BeatClock::tapAt(int64_t now)
 {
-    const int64_t now = nowNs();
     std::lock_guard<std::mutex> lk(m_mutex);
     const double gap = double(now - m_lastTapNs) * 1e-9;
     m_lastTapNs = now;

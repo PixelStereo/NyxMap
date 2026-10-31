@@ -31,7 +31,7 @@ struct Client {
         socket.connectToHost(QHostAddress::LocalHost, port);
         return socket.waitForConnected(2000);
     }
-    void pump(int ms = 150)
+    void pump(int ms = 400)
     {
         QElapsedTimer t;
         t.start();
@@ -46,7 +46,7 @@ struct Client {
         socket.write(text);
         socket.flush();
         in.clear();
-        pump(300);
+        pump(800);
         return in;
     }
     QByteArray upgrade(const QByteArray &path, const QByteArray &origin = {}, const QByteArray &host = "127.0.0.1")
@@ -202,7 +202,7 @@ int main(int argc, char **argv)
         const QByteArray origin = "http://127.0.0.1:" + QByteArray::number(port);
         const QByteArray host = "127.0.0.1:" + QByteArray::number(port);
         require(phone.upgrade("/ws?pin=482913", origin, host).startsWith("HTTP/1.1 101"), "the right PIN, from the page's own origin: accepted");
-        phone.pump(250);
+        phone.pump(700);
         auto first = phone.messages();
         require(!first.isEmpty() && first[0].value("t").toString() == "controls", "it gets the list at once");
         const QJsonArray list = first[0].value("list").toArray();
@@ -215,13 +215,13 @@ int main(int argc, char **argv)
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(a)}, {"v", 7.5}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(b)}, {"v", 1}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "color"}, {"id", QString::number(c)}, {"rgb", QJsonArray{0.1, 0.2, 0.3}}}).toJson(QJsonDocument::Compact));
-        phone.pump(250);
+        phone.pump(700);
         require(near(engine.control(a)->value, 7.5) && engine.control(b)->value == 1.0 && near(engine.control(c)->rgb[2], 0.3), "a slider, a held button and a color set from the phone");
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(a)}, {"v", 99}}).toJson(QJsonDocument::Compact));
         phone.sendText("not json");
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", "999999"}, {"v", 1}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "layer"}, {"id", QString::number(a)}, {"v", 1}}).toJson(QJsonDocument::Compact));
-        phone.pump(250);
+        phone.pump(700);
         require(near(engine.control(a)->value, 10), "a value beyond the range is kept in it");
         require(server.isRunning(), "junk is ignored, nothing falls");
 
@@ -229,7 +229,7 @@ int main(int argc, char **argv)
         phone.in.clear();
         engine.setControlValue(a, 2.5);
         engine.setControlColor(c, 1, 0, 0);
-        phone.pump(300);
+        phone.pump(800);
         QJsonObject values;
         for (const QJsonObject &m : phone.messages()) {
             if (m.value("t").toString() != "values") continue;
@@ -241,14 +241,14 @@ int main(int argc, char **argv)
         require(!values.contains(QString::number(b)) || values.value(QString::number(b)).toDouble() == 1.0, "only what changed");
         // Nothing changes: nothing is sent
         phone.in.clear();
-        phone.pump(250);
+        phone.pump(700);
         require(phone.messages().isEmpty(), "a still show sends nothing");
         // The list changes: the phone gets the new list
         phone.in.clear();
         ShowControl extra;
         extra.name = "Extra";
         engine.addControl(extra);
-        phone.pump(300);
+        phone.pump(800);
         bool refreshed = false;
         for (const QJsonObject &m : phone.messages()) refreshed |= m.value("t").toString() == "controls" && m.value("list").toArray().size() == 4;
         require(refreshed, "a control added in NyxMap appears on the phone");
@@ -268,7 +268,7 @@ int main(int argc, char **argv)
             huge.append(QByteArray(10000, 'x'));
             big.socket.write(huge);
             big.socket.flush();
-            big.pump(300);
+            big.pump(800);
             require(big.socket.state() != QAbstractSocket::ConnectedState, "an oversize frame drops the connection");
         }
         // The lockout: eight wrong PINs, then even the right one is refused for a while
@@ -295,7 +295,7 @@ int main(int argc, char **argv)
             Client w;
             require(w.connectTo(p), "connect");
             require(w.upgrade("/ws", o, hh).startsWith("HTTP/1.1 101"), "no code: it connects without one");
-            w.pump(250);
+            w.pump(700);
             require(!w.messages().isEmpty() && w.messages()[0].value("t").toString() == "controls", "and gets the controls");
             Client x;
             require(x.connectTo(p), "connect");

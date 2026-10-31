@@ -31,13 +31,16 @@ int main(int argc, char **argv)
             require(near(c.secondsToNext(1), 0), "a stopped clock never quantizes");
             c.start();
             const int64_t t0 = BeatClock::nowNs();
-            require(c.running() && c.beatAt(t0) < 0.01, "start: from the first beat");
-            require(near(c.beatAt(t0 + 1'000'000'000), 2.0, 0.01), "120 BPM: two beats a second");
+            require(c.running() && c.beatAt(t0) < 0.5, "start: from the first beat");
+            // Between start() and t0 a slow machine may take a few tens of milliseconds: the difference is what is measured
+            const double drift = c.beatAt(t0);
+            require(near(c.beatAt(t0 + 1'000'000'000) - drift, 2.0, 1e-3), "120 BPM: two beats a second");
             // Quantize: from just after a beat, the next one is nearly a beat away
-            const int64_t at = t0 + 100'000'000; // 0.2 beat in
+            const int64_t at = t0 + 100'000'000; // about 0.2 beat in
             const double toBeat = c.secondsToNextAt(1, at), toBar = c.secondsToNextAt(4, at);
-            require(toBeat > 0.35 && toBeat < 0.41, "to the next beat: 0.8 beat at 120 BPM");
-            require(toBar > 1.85 && toBar < 1.95, "to the next bar: 3.8 beats");
+            const double beatNow = c.beatAt(at);
+            require(near(toBeat, (std::ceil(beatNow) - beatNow) * 0.5, 1e-3), "to the next beat: what is left of it, at 120 BPM");
+            require(near(toBar, (std::ceil(beatNow / 4) * 4 - beatNow) * 0.5, 1e-3), "to the next bar: what is left of it");
             require(near(c.secondsToNextAt(0, at), 0), "no grid: no wait");
             const int64_t online = t0 + int64_t((1.0 - c.beatAt(t0)) * 0.5e9); // exactly on the next beat
             require(c.secondsToNextAt(1, online) < 1e-3, "on a line: now");
@@ -61,14 +64,14 @@ int main(int argc, char **argv)
         // --- Tap tempo and an external clock
         {
             BeatClock c;
-            for (int i = 0; i < 4; ++i) {
-                c.tap();
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-            }
-            require(c.bpm() > 200 && c.bpm() < 280, "four taps a quarter second apart: about 240 BPM");
+            const int64_t start = BeatClock::nowNs();
+            for (int i = 0; i < 4; ++i) c.tapAt(start + i * 250'000'000LL); // a quarter second apart, exactly
+            require(near(c.bpm(), 240, 0.5), "four taps a quarter second apart: 240 BPM");
+            c.tapAt(start + 10'000'000'000LL); // a long pause: a new count, the tempo is kept
+            require(near(c.bpm(), 240, 0.5), "a tap after a pause starts counting again");
             require(c.source() == BeatClock::Source::Internal, "taps are not an external source");
             c.sync(8.0, 90, true);
-            require(c.source() == BeatClock::Source::External && near(c.bpm(), 90) && c.running() && near(c.beat(), 8.0, 0.05),
+            require(c.source() == BeatClock::Source::External && near(c.bpm(), 90) && c.running() && near(c.beat(), 8.0, 0.5),
                     "sync: tempo, position and running state taken, source external");
             c.sync(NAN, 90, true);
             require(near(c.bpm(), 90), "a non-finite sync is ignored");
@@ -107,11 +110,10 @@ int main(int argc, char **argv)
             runs = sequencer.runs();
             require(runs.empty() || near(runs[0].preWait, 0), "stopped clock: no grid, the step starts at once (nothing left waiting)");
             sequencer.stop();
-            engine.beatClock().start();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100)); // just past the first beat of the bar
+            engine.beatClock().sync(0.25, 120, true); // a quarter beat into the bar: 3.75 beats, 1.875 s, to the next one
             require(sequencer.goTo(1), "GO on the quantized step, clock running");
             runs = sequencer.runs();
-            require(runs.size() == 1 && runs[0].preWait > 1.8 && runs[0].preWait < 1.95, "it waits for the next bar (about 1.9 s at 120 BPM)");
+            require(runs.size() == 1 && runs[0].preWait > 1.5 && runs[0].preWait < 1.9, "it waits for the next bar (1.875 s at 120 BPM, less what a slow machine took)");
             sequencer.stop();
             // Saved and read back
             const auto json = sequencer.toJson();

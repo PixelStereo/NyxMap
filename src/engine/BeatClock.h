@@ -30,7 +30,8 @@ public:
     void stop();  // the position is kept
     void resume(); // from where it stopped
     // A tap: the tempo of the last taps (the intervals of the last two seconds; a longer pause starts a new count)
-    void tap();
+    void tap() { tapAt(nowNs()); }
+    void tapAt(int64_t ns); // a tap at a given time (steady clock): the tests
     // The position in beats (0 at the first beat of the bar 1), now or at `ns` (steady clock)
     double beat() const { return beatAt(nowNs()); }
     double beatAt(int64_t ns) const;
