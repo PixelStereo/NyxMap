@@ -244,8 +244,11 @@ void applyToApplication(QApplication &app)
                                      "QSplitter::handle:hover { background:%1; }"
                                      "QHeaderView::section { background:#35353e; color:#e1e1e8;"
                                      " border:0; border-right:1px solid #555561; border-bottom:1px solid #747480; padding:4px 6px; }"
-                                     "QMenu::separator { height:1px; background:#62626e; margin:5px 8px; }")
-                          .arg(css()));
+                                     "QMenu::separator { height:1px; background:#62626e; margin:5px 8px; }"
+                                     // A button that is on shows it: the accent, not Fusion's barely darker shade
+                                     "QPushButton:checked, QToolButton:checked { background:%1; color:%2; "
+                                     "border:1px solid %1; border-radius:3px; }")
+                          .arg(css(), onAccent().name()));
 }
 } // namespace theme
 
@@ -956,7 +959,7 @@ ZoomBar::ZoomBar(QWidget *view, const QString &fitTip) : QWidget(view)
 {
     setStyleSheet("QWidget { background:rgba(20,20,22,200); border-radius:4px; }"
                   "QToolButton { color:#ddd; min-width:24px; padding:2px 6px; }"
-                  "QToolButton:hover { background:#3a3a3e; } QToolButton:checked { background:#2f2f33; }"
+                  "QToolButton:hover { background:#3a3a3e; } QToolButton:checked { background:" + theme::css() + "; color:" + theme::onAccent().name() + "; }"
                   "QLabel { color:#aaa; padding:0 4px; }");
     m_row = new QHBoxLayout(this);
     m_row->setContentsMargins(3, 2, 3, 2);

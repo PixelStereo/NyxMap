@@ -173,8 +173,13 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_remove->setFixedWidth(32);
     m_remove->setToolTip(QStringLiteral("Remove the selected interactions"));
     m_learn = new QToolButton;
+    m_learn->setObjectName(QStringLiteral("interactionLearn"));
     m_learn->setText(QStringLiteral("Learn"));
     m_learn->setCheckable(true);
+    // Listening shows: red, as a recording, and says so
+    m_learn->setStyleSheet(QStringLiteral("QToolButton { padding:2px 8px; } "
+                                          "QToolButton:checked { background:#c62828; color:white; font-weight:bold; "
+                                          "border:1px solid #ff6f60; border-radius:3px; }"));
     m_learn->setToolTip(QStringLiteral("Move a controller, press a key or send an OSC message: the selected interaction "
                                        "takes it as its source (none selected: a new one is made)"));
     m_search = new QLineEdit;
@@ -257,6 +262,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     });
     connect(m_remove, &QPushButton::clicked, this, &InteractionPanel::removeSelected);
     connect(m_learn, &QToolButton::toggled, this, [this](bool on) {
+        m_learn->setText(on ? QStringLiteral("● Learning…") : QStringLiteral("Learn"));
         m_engine->setInteractionLearn(on, on ? m_learnKind : std::nullopt);
         if (!on) m_learnKind.reset(); // the next Learn: of any kind
     });
