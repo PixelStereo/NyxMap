@@ -1,9 +1,10 @@
 #pragma once
+#include "Tox.h"
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPointer>
 #include <QVariant>
-#include <QJsonObject>
 #include <QWidget>
-#include "Tox.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -80,6 +81,9 @@ private:
     QString layoutKey() const;
     QString m_layoutKey;
     QWidget *buildSource(const LayerValues &s);    // above the tabs: the drop zone, the transition, the speed
+    QWidget *buildAudioEffects();
+    void editAudioEffects(const QJsonArray &after, const QString &text);
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFXFields;
     QWidget *buildSourceTab(const LayerValues &s); // the Source tab
     QWidget *buildViewports(const LayerValues &s); // the Viewports tab: how much of it each one shows
     void useLayer(int row, const std::vector<std::pair<quint64, QString>> &candidates); // a layer dropped on the source

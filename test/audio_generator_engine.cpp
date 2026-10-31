@@ -107,6 +107,23 @@ int main(int argc, char **argv)
         require(mix(engine, sound) > 0, "custom DSP runs beside live OpenGL");
         require(engine.setParameter(engine.layerId(sound), "synth/p0", .3), "custom widget parameter exposed");
 #endif
+        require(engine.setAudioEffectsJson(sound,
+                                           {QJsonObject{{"id", "filter"}, {"kind", "lowpass"}},
+                                            QJsonObject{{"id", "echo"}, {"kind", "delay"}}},
+                                           &error),
+                "attach layer audio FX");
+        require(engine.setParameter(engine.layerId(sound), "audio_fx/filter/p0", 777),
+                "FX controls exposed to interactions");
+        require(engine.setParameter(engine.layerId(sound), "audio_fx/echo/wet", .2), "FX wet control");
+        require(engine.saveProject(project, {}, &error), "save audio FX project");
+        require(engine.loadProject(project, nullptr, &error), "restore audio FX project");
+        require(engine.audioEffectsJson(sound).size() == 2, "audio FX order restored");
+        require(engine.parameterValue(engine.layerId(sound), "audio_fx/filter/p0").toDouble() == 777,
+                "FX parameter survives save/load");
+        require(engine.setLayerAudio(sound, recipe, &error), "replace source with FX attached");
+        require(engine.audioEffectsJson(sound).size() == 2, "FX survive source replacement");
+        engine.renderFrame();
+        require(std::isfinite(mix(engine, sound)), "FX run in the engine mixer");
         std::cerr << "stage: shutdown\n";
         engine.shutdown();
         std::cout << "Live GPU sonification, synth parameters and project restore passed\n";

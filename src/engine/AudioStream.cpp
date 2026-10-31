@@ -214,6 +214,7 @@ void AudioStream::close()
     if (m_codec) avcodec_free_context(&m_codec);
     if (m_fmt) avformat_close_input(&m_fmt);
     m_synth.reset();
+    m_postInitialized = false;
     m_stream = -1;
 }
 
@@ -588,13 +589,14 @@ void AudioStream::requestSeek(double t)
     ++m_resyncs;
 }
 
-void AudioStream::mix(float *out, int frames, double latency)
+void AudioStream::mixSource(float *out, int frames, double latency)
 {
     if (m_transportMutex.try_lock()) { // never wait in the audio callback: keep the previous state if busy
         m_snapshot = m_transport;
         m_transportMutex.unlock();
     }
-    const Transport &t = m_snapshot;
+    Transport t = m_snapshot;
+    t.gain = 1; // The layer fader is applied after its effect chain.
     if (m_synth) {
         m_peak = m_synth->mix(out, frames, m_rate, t.playing, t.speed, t.gain);
         return;
@@ -726,4 +728,36 @@ void AudioStream::mix(float *out, int frames, double latency)
         m_bufPts += double(consumed) / m_rate;
     }
     m_peak = std::max(pk, m_peak.load() * 0.8f);
+}
+
+void AudioStream::mix(float *out, int frames, double latency)
+{
+    if (!out || frames <= 0)
+        return;
+    constexpr int block = 1024;
+    std::array<float, block * 2> source{};
+    float peak = 0;
+    const float previousPeak = m_peak.load();
+    for (int offset = 0; offset < frames; offset += block) {
+        const int n = std::min(block, frames - offset);
+        std::fill_n(source.data(), n * 2, 0.f);
+        mixSource(source.data(), n, latency + double(offset) / m_rate);
+        if (m_effects)
+            m_effects->process(source.data(), n, m_rate);
+        const float target = std::isfinite(m_snapshot.gain) ? std::clamp(m_snapshot.gain, 0.f, 2.f) : 0.f;
+        if (!m_postInitialized) {
+            m_postGain = target;
+            m_postInitialized = true;
+        }
+        const float step = float(1. / (.008 * m_rate));
+        for (int i = 0; i < n; ++i) {
+            m_postGain += std::clamp(target - m_postGain, -step, step);
+            for (int c = 0; c < 2; ++c) {
+                const float value = std::isfinite(source[i * 2 + c]) ? source[i * 2 + c] * m_postGain : 0.f;
+                out[(offset + i) * 2 + c] += value;
+                peak = std::max(peak, std::abs(value));
+            }
+        }
+    }
+    m_peak = std::max(peak, previousPeak * .8f);
 }

@@ -17,6 +17,8 @@
 #include "SourceColor.h"
 #include "ViewportOutput.h"
 #include "Widgets.h"
+#include <QFileDialog>
+#include <QGroupBox>
 #include <QTabBar>
 
 #include <QApplication>
@@ -2551,6 +2553,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     }
 
     m_synthFields.clear();
+    m_audioFXFields.clear();
     {
         Engine::Lock lock(&m_engine->mutex());
         const Layer *layer = m_engine->layer(m_layer);
@@ -2624,6 +2627,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             emit layerChanged();
         });
     }
+
+    if (s.hasAudio)
+        v->addWidget(buildAudioEffects());
 
     if (s.type == SourceType::Isf && s.hasGenerator) {
         // Its inputs back to their defaults, at the top
@@ -3699,6 +3705,17 @@ void LayerInspector::refreshDynamic()
             field->setValue(m_engine->parameterValue(m_layerId, key).toDouble());
         }
     }
+    for (const auto &[field, key] : m_audioFXFields) {
+        if (!field || field->hasFocus())
+            continue;
+        const auto value = m_engine->parameterValue(m_layerId, key);
+        const QSignalBlocker blocker(field);
+        if (auto *slider = qobject_cast<SliderField *>(field.data())) {
+            if (!slider->isDragging())
+                slider->setValue(value.toDouble());
+        } else if (auto *flag = qobject_cast<QCheckBox *>(field.data()))
+            flag->setChecked(value.toBool());
+    }
     if (m_toxStatus) {
         {
             Engine::Lock lock(&m_engine->mutex());
@@ -3906,6 +3923,8 @@ QString LayerInspector::layoutKey() const
         QString::number(layer->videoSource.rtspTcp)};
     if (layer->timecode) key << QString::fromUtf8(QJsonDocument(layer->timecode->toJson()).toJson(QJsonDocument::Compact));
     if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
+    if (layer->audioEffects)
+        key << QString::number(layer->audioEffects->revision());
     for (const auto &effect : layer->effects) key << effect->path();
     if (layer->clockGen) { // a Countdown, Stopwatch or Clock: its fields show its settings (changed by a recall: made again)
         const ClockSettings c = layer->clockGen->settings();
@@ -3921,4 +3940,177 @@ void LayerInspector::refreshAfterRecall()
 {
     if (m_layoutKey != layoutKey()) rebuild();
     else refreshDynamic();
+}
+
+namespace {
+class SetAudioEffectsCommand final : public QUndoCommand {
+    Engine *engine;
+    quint64 layer;
+    QJsonArray before, after;
+    bool first = true;
+    void apply(const QJsonArray &state)
+    {
+        const int index = engine->indexOfId(layer);
+        QString error;
+        if (index >= 0 && !engine->setAudioEffectsJson(index, state, &error, true))
+            qWarning("Audio FX undo: %s", qPrintable(error));
+    }
+
+public:
+    SetAudioEffectsCommand(Engine *e, quint64 id, QJsonArray old, QJsonArray next, const QString &text)
+        : QUndoCommand(text), engine(e), layer(id), before(std::move(old)), after(std::move(next))
+    {
+    }
+    void undo() override { apply(before); }
+    void redo() override
+    {
+        if (first) {
+            first = false;
+            return;
+        }
+        apply(after);
+    }
+};
+} // namespace
+void LayerInspector::editAudioEffects(const QJsonArray &after, const QString &text)
+{
+    const int index = m_engine->indexOfId(m_layerId);
+    if (index < 0)
+        return;
+    const auto before = m_engine->audioEffectsJson(index);
+    QString error;
+    if (!m_engine->setAudioEffectsJson(index, after, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Audio FX"), error);
+        return;
+    }
+    m_undo->push(new SetAudioEffectsCommand(m_engine, m_layerId, before, m_engine->audioEffectsJson(index), text));
+    QTimer::singleShot(0, this, [this] {
+        rebuild();
+        emit layerChanged();
+    });
+}
+QWidget *LayerInspector::buildAudioEffects()
+{
+    auto *group = new QGroupBox(QStringLiteral("Audio FX"));
+    group->setObjectName(QStringLiteral("audioFXPanel"));
+    auto *layout = new QVBoxLayout(group);
+    std::vector<std::shared_ptr<AudioEffect>> effects;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *layer = m_engine->layer(m_engine->indexOfId(m_layerId));
+        if (layer && layer->audioEffects)
+            effects = layer->audioEffects->effects();
+    }
+    for (size_t index = 0; index < effects.size(); ++index) {
+        const auto &effect = effects[index];
+        const QString id = effect->id();
+        const QString prefix = QStringLiteral("audio_fx/") + id + QStringLiteral("/");
+        auto *box = new QGroupBox(QStringLiteral("%1. %2").arg(index + 1).arg(effect->name()));
+        auto *body = new QVBoxLayout(box);
+        auto *row = new QHBoxLayout;
+        auto *enabled = new FlagBox(QStringLiteral("Enabled"));
+        enabled->setChecked(effect->enabled());
+        m_audioFXFields.push_back({enabled, prefix + QStringLiteral("enabled")});
+        m_animate->attach(enabled, {prefix + QStringLiteral("enabled")});
+        connect(enabled, &QCheckBox::toggled, this, [this, prefix](bool value) {
+            setValue(prefix + QStringLiteral("enabled"), value, QStringLiteral("Bypass Audio FX"));
+        });
+        row->addWidget(enabled);
+        row->addStretch();
+        auto move = [this, id](int direction) {
+            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
+            for (int i = 0; i < state.size(); ++i)
+                if (state[i].toObject().value("id").toString() == id) {
+                    const int next = i + direction;
+                    if (next < 0 || next >= state.size())
+                        return;
+                    const auto entry = state.takeAt(i);
+                    state.insert(next, entry);
+                    editAudioEffects(state, QStringLiteral("Reorder Audio FX"));
+                    return;
+                }
+        };
+        auto *up = new QPushButton(QStringLiteral("↑"));
+        up->setToolTip(QStringLiteral("Move earlier in the audio chain"));
+        up->setEnabled(index > 0);
+        auto *down = new QPushButton(QStringLiteral("↓"));
+        down->setToolTip(QStringLiteral("Move later in the audio chain"));
+        down->setEnabled(index + 1 < effects.size());
+        auto *remove = new QPushButton(QStringLiteral("Remove"));
+        row->addWidget(up);
+        row->addWidget(down);
+        row->addWidget(remove);
+        body->addLayout(row);
+        connect(up, &QPushButton::clicked, this, [move] { move(-1); });
+        connect(down, &QPushButton::clicked, this, [move] { move(1); });
+        connect(remove, &QPushButton::clicked, this, [this, id] {
+            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
+            for (int i = 0; i < state.size(); ++i)
+                if (state[i].toObject().value("id").toString() == id) {
+                    state.removeAt(i);
+                    break;
+                }
+            editAudioEffects(state, QStringLiteral("Remove Audio FX"));
+        });
+        auto number = [this, body](const QString &label, const QString &key, double low, double high, double value) {
+            auto *row = new QHBoxLayout;
+            auto *name = new QLabel(label);
+            auto *field = new SliderField;
+            field->setRange(low, high);
+            field->setDecimals(3);
+            field->setValue(value);
+            row->addWidget(name);
+            row->addWidget(field, 1);
+            body->addLayout(row);
+            m_audioFXFields.push_back({field, key});
+            m_animate->attach({name, field}, {key});
+            connect(field, &SliderField::valueEdited, this, [this, key](double value) {
+                setValue(key, value, QStringLiteral("Change Audio FX parameter"));
+                emit layerChanged();
+            });
+        };
+        number(QStringLiteral("Dry / Wet"), prefix + QStringLiteral("wet"), 0, 1, effect->wet());
+        if (!effect->error().isEmpty()) {
+            auto *warning = new QLabel(effect->error());
+            warning->setWordWrap(true);
+            body->addWidget(warning);
+        } else {
+            const auto &controls = effect->parameters();
+            for (size_t i = 0; i < controls.size(); ++i) {
+                const auto &p = controls[i];
+                number(p.label, prefix + p.key, p.low, p.high, effect->value(int(i)));
+            }
+        }
+        layout->addWidget(box);
+    }
+    auto *add = new QToolButton;
+    add->setText(QStringLiteral("Add Audio FX…"));
+    add->setObjectName(QStringLiteral("audioFXAdd"));
+    add->setPopupMode(QToolButton::InstantPopup);
+    auto *menu = new QMenu(add);
+    for (const auto &preset : AudioEffect::presets) {
+        auto *action = menu->addAction(QString::fromUtf8(preset.label));
+        action->setObjectName(QStringLiteral("audioFXAdd_") + preset.key);
+        const QString kind = QString::fromUtf8(preset.key);
+        connect(action, &QAction::triggered, this, [this, kind] {
+            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
+            state.append(QJsonObject{{"kind", kind}});
+            editAudioEffects(state, QStringLiteral("Add Audio FX"));
+        });
+    }
+    menu->addSeparator();
+    auto *custom = menu->addAction(QStringLiteral("Load Faust stereo FX (.dsp)…"));
+    connect(custom, &QAction::triggered, this, [this] {
+        const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Faust Audio FX"), {},
+                                                       QStringLiteral("Faust programs (*.dsp)"));
+        if (path.isEmpty())
+            return;
+        auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
+        state.append(QJsonObject{{"kind", "faust"}, {"path", path}});
+        editAudioEffects(state, QStringLiteral("Load Faust Audio FX"));
+    });
+    add->setMenu(menu);
+    add->setEnabled(effects.size() < 16);
+    layout->addWidget(add);
+    return group;
 }

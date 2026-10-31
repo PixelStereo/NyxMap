@@ -149,6 +149,8 @@ public:
     QJsonObject layerJson(int i) const;
     int insertLayerJson(int at, const QJsonObject &o);
     void replaceLayerJson(int i, const QJsonObject &o);
+    QJsonArray audioEffectsJson(int i) const;
+    bool setAudioEffectsJson(int i, const QJsonArray &state, QString *error = nullptr, bool keepUnavailable = false);
     QJsonArray effectsJson(int i) const;
     void setEffectsJson(int i, const QJsonArray &a);
 

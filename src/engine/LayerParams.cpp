@@ -36,6 +36,8 @@ quint64 keyOf(const Layer &l)
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
     if (l.clockGen) mix(quint64(l.clockGen->kind()));
+    if (l.audioEffects)
+        mix(l.audioEffects->revision());
     auto inputs = [&mix](const IsfInstance *i) {
         if (!i) return;
         mix(quint64(i->isValid()));
@@ -238,6 +240,26 @@ const std::vector<Parameter *> &Layer::parameters()
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME
     if (audio) {
+        if (audioEffects)
+            for (const auto &effect : audioEffects->effects()) {
+                const QString prefix = QStringLiteral("audio_fx/") + effect->id() + QStringLiteral("/");
+                const QString label = QStringLiteral("Audio FX › ") + effect->name() + QStringLiteral(" › ");
+                add(prefix + QStringLiteral("enabled"), label + QStringLiteral("Enabled"), T::Bool)
+                    .byDefault(true)
+                    .bind([effect] { return QVariant(effect->enabled()); },
+                          [effect](const QVariant &v) { effect->setEnabled(v.toBool()); });
+                num(
+                    prefix + QStringLiteral("wet"), label + QStringLiteral("Dry/Wet"), 0, 1, 1,
+                    [effect] { return effect->wet(); }, [effect](double v) { effect->setWet(v); });
+                const auto &controls = effect->parameters();
+                for (size_t i = 0; i < controls.size(); ++i) {
+                    const auto &p = controls[i];
+                    num(
+                        prefix + p.key, label + p.label, p.low, p.high, p.initial,
+                        [effect, i] { return effect->value(int(i)); },
+                        [effect, i](double v) { effect->setValue(int(i), v); });
+                }
+            }
         if (auto *synth = audio->generator()) {
             for (int i = 0; i < synth->parameterCount(); ++i) {
                 const auto &p = synth->parameter(i);

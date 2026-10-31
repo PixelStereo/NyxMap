@@ -8,6 +8,7 @@
 // adjusting its playback rate very slightly (at most 0.5 %, inaudible), and resynchronizes (short fade,
 // then seek) when the gap is too large: seek, speed change, render stall.
 
+#include "AudioEffects.h"
 #include "AudioGenerator.h"
 #include "Timeline.h"
 
@@ -60,6 +61,8 @@ public:
     // Audio callback: adds `frames` stereo interleaved samples into `out`.
     // `latency` = time between this call and the moment the samples are heard (seconds).
     void mix(float *out, int frames, double latency);
+    // Attach before registering with AudioOutput; the chain itself supports live edits.
+    void setEffects(std::shared_ptr<AudioEffectChain> effects) { m_effects = std::move(effects); }
 
     // Meters and diagnostics (any thread)
     float peak() const { return m_peak.load(); }
@@ -68,14 +71,18 @@ public:
     int resyncCount() const { return m_resyncs.load(); }
 
 private:
-  std::unique_ptr<AudioGenerator> m_synth;
-  // Decoded samples handed from the decode thread to the audio callback: a ring of slots, one writer (the decode
-  // thread) and one reader (the callback), no lock. A slot keeps its buffer: no allocation once warmed up.
-  struct Chunk {
-      double pts = 0;          // timeline clock of the first sample, seconds
-      uint64_t generation = 0; // the seek it follows (older ones are dropped by the callback)
-      size_t frames = 0;
-      std::vector<float> samples; // stereo interleaved, capacity kept
+    void mixSource(float *out, int frames, double latency);
+    std::shared_ptr<AudioEffectChain> m_effects;
+    float m_postGain = 1;
+    bool m_postInitialized = false;
+    std::unique_ptr<AudioGenerator> m_synth;
+    // Decoded samples handed from the decode thread to the audio callback: a ring of slots, one writer (the decode
+    // thread) and one reader (the callback), no lock. A slot keeps its buffer: no allocation once warmed up.
+    struct Chunk {
+        double pts = 0;          // timeline clock of the first sample, seconds
+        uint64_t generation = 0; // the seek it follows (older ones are dropped by the callback)
+        size_t frames = 0;
+        std::vector<float> samples; // stereo interleaved, capacity kept
     };
     static constexpr size_t kSlots = 128;
     // A seek asked by the callback, read by the decode thread (a sequence lock over atomics: never waits)

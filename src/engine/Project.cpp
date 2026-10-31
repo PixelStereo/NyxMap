@@ -247,6 +247,17 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     for (auto it = l.extraParams.constBegin(); it != l.extraParams.constEnd(); ++it)
         if (!params.contains(it.key())) params.insert(it.key(), it.value());
     o["params"] = params;
+    if (l.audioEffects) {
+        QJsonArray effects;
+        for (const auto &value : l.audioEffects->toJson()) {
+            auto entry = value.toObject();
+            if (!projectDir.isEmpty() && !entry.value("path").toString().isEmpty())
+                entry["relative_path"] = QDir(projectDir).relativeFilePath(entry.value("path").toString());
+            effects.append(entry);
+        }
+        if (!effects.isEmpty())
+            o["audio_fx"] = effects;
+    }
     if (!l.anims.empty()) {
         QJsonArray anims;
         for (const Animation &a : l.anims) anims.append(layerAnimToJson(a));
@@ -414,6 +425,25 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         }
     }
 
+    if (o.contains("audio_fx")) {
+        QJsonArray effects;
+        for (const auto &value : o.value("audio_fx").toArray()) {
+            auto entry = value.toObject();
+            if (entry.contains("path"))
+                entry["path"] = resolvePath(entry, projectDir);
+            effects.append(entry);
+        }
+        QString why;
+        if (!setAudioEffectsJson(index, effects, &why, true) && warnings)
+            *warnings << name + QStringLiteral(" / Audio FX: ") + why;
+        if (warnings) {
+            Lock lock(&m_mutex);
+            if (auto *l = layer(index); l && l->audioEffects)
+                for (const auto &effect : l->audioEffects->effects())
+                    if (!effect->error().isEmpty())
+                        *warnings << name + QStringLiteral(" / Audio FX: ") + effect->error();
+        }
+    }
     for (const QJsonValue &v : o.value("fx").toArray()) {
         const QJsonObject e = v.toObject();
         const QString p = resolvePath(e, projectDir);
@@ -629,8 +659,8 @@ static QString projectPreflightError(const QJsonObject &root)
             const QString error = optionalObject(l, key, where);
             if (!error.isEmpty()) return error;
         }
-        for (const QString &key : {QStringLiteral("fx"), QStringLiteral("masks"),
-                                   QStringLiteral("anims")}) {
+        for (const QString &key :
+             {QStringLiteral("audio_fx"), QStringLiteral("fx"), QStringLiteral("masks"), QStringLiteral("anims")}) {
             const QString error = optionalArray(l, key, where);
             if (!error.isEmpty()) return error;
             const QJsonArray list = l.value(key).toArray();

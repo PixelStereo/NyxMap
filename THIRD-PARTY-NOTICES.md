@@ -83,3 +83,9 @@ Optional user `.dsp` compilation dynamically loads the installed libfaust
 (LGPL-2.1-or-later). It is not required for built-in presets. Redistributors must
 supply that library's license materials and honor its LGPL obligations when enabled.
 Upstream: https://github.com/grame-cncm/faust
+
+The layer audio FX additionally use Faust's resonant filters, EQ, delay, Freeverb,
+compressor, gate, distortion and modulation functions. The upstream STK-style
+notice applicable to the relevant library sections is included in
+`licenses/faust-stk-4.3.0.md`. Instrument/effect source and generated metadata
+retain the upstream provenance; no new audio DSP backend is introduced.

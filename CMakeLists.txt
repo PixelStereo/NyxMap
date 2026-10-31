@@ -77,6 +77,8 @@ add_library(nyxmap_engine STATIC
   src/engine/WebPage.cpp
   src/engine/Permissions.cpp
   src/engine/FaustInterpreter.cpp
+  src/engine/AudioEffects.cpp
+  src/engine/AudioEffectEngine.cpp
   src/engine/AudioGenerator.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
@@ -586,13 +588,17 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_generators_test PRIVATE nyxmap_engine)
   add_test(NAME audio_generators COMMAND nyxmap_audio_generators_test)
   # Test the dependency-free generated backend even on hosts with libfaust installed.
-  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioStream.cpp)
+  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioEffects.cpp src/engine/AudioStream.cpp)
   target_include_directories(nyxmap_audio_generators_portable_test PRIVATE src/engine third_party/faust/architecture)
   target_link_libraries(nyxmap_audio_generators_portable_test PRIVATE Qt6::Core ffmpeg)
   add_test(NAME audio_generators_portable COMMAND nyxmap_audio_generators_portable_test)
   add_executable(nyxmap_audio_generator_engine_test test/audio_generator_engine.cpp)
   target_link_libraries(nyxmap_audio_generator_engine_test PRIVATE nyxmap_engine)
   add_test(NAME audio_generator_engine COMMAND nyxmap_audio_generator_engine_test)
+  add_executable(nyxmap_audio_effects_test test/audio_effects.cpp)
+  target_link_libraries(nyxmap_audio_effects_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_effects COMMAND nyxmap_audio_effects_test)
+  set_tests_properties(audio_effects PROPERTIES TIMEOUT 60)
   set_tests_properties(audio_generators audio_generators_portable audio_generator_engine PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)

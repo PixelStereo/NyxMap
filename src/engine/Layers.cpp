@@ -97,6 +97,9 @@ void Engine::attachAudio(Layer &l, std::shared_ptr<AudioStream> s)
     releaseAudio(*m_audio, l.audio);
     l.audio = std::move(s);
     if (!l.audio) return;
+    if (!l.audioEffects)
+        l.audioEffects = std::make_shared<AudioEffectChain>();
+    l.audio->setEffects(l.audioEffects);
     l.audio->setTransport(l.clock, l.playing, std::abs(l.speed) * timeScale(), l.timeline(), l.timelineId, l.audioGain());
     m_audio->addStream(l.audio);
 }

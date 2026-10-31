@@ -19,3 +19,16 @@ from pathlib import Path
 p = Path('src/engine/generated/NyxFaustSynth.h')
 p.write_text('\n'.join(line.rstrip() for line in p.read_text().splitlines()) + '\n')
 PY
+for program in audio/fx/*.dsp; do
+  effect=$(basename "$program" .dsp)
+  if [ -n "${FAUST_LIB_PATH:-}" ]; then
+    faust -I "$FAUST_LIB_PATH" -lang cpp -cn "NyxFx$effect" "$program" -o "src/engine/generated/NyxFx$effect.h"
+  else
+    faust -lang cpp -cn "NyxFx$effect" "$program" -o "src/engine/generated/NyxFx$effect.h"
+  fi
+done
+python3 - <<'PY'
+from pathlib import Path
+for p in Path('src/engine/generated').glob('NyxFx*.h'):
+    p.write_text('\n'.join(line.rstrip() for line in p.read_text().splitlines()) + '\n')
+PY

@@ -243,6 +243,7 @@ inline QString imageSourceDepth(QImage::Format f)
 }
 
 class Engine;
+class AudioEffectChain;
 
 struct Layer {
     // Identity and structure. A group is a layer without source whose picture is the composite of its members;
@@ -326,6 +327,7 @@ struct Layer {
 
     // Sound: audio layer, or audio track of a video layer (null if the file has none)
     std::shared_ptr<AudioStream> audio;
+    std::shared_ptr<AudioEffectChain> audioEffects;
     float volume = 1.0f; // linear gain, 0..2
     bool muted = false;
 
