@@ -1,7 +1,4 @@
 <div align="center">
-
-<img src="assets/nyxmap.png" alt="NYXMAP" width="160">
-
 # NYXMAP
 
 ### Projection mapping, live visuals and show control — in one app.
