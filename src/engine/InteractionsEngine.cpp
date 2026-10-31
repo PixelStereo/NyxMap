@@ -370,6 +370,22 @@ void Engine::updateMidiInputs()
 // ---------------------------------------------------------------------------
 // The chains, each frame
 // ---------------------------------------------------------------------------
+// An Action's value: a number with a time goes there from where it is, a step each frame (stepActionFades); the rest,
+// at once. Either way, what was moving it (a snapshot's fade, another action's) lets go.
+void Engine::runConsequence(const InteractionConsequence &c)
+{
+    releaseFromFades(c.layer, c.param);
+    Parameter *p = c.time > 0 ? findParameter(c.layer, c.param) : nullptr;
+    const ParamInfo info = p ? p->info() : ParamInfo{};
+    const bool locked = c.layer && std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &l) { return l->id == c.layer && l->locked; });
+    if (!p || locked || !info.isNumber() || !(info.access & ParamInfo::Write) || info.ramp == ParamInfo::Ramp::Cut) {
+        setEventValue(c.layer, c.param, c.value, true);
+        return;
+    }
+    const double from = p->asNumber();
+    m_actionFades.push_back(ActionFade{c.layer, c.param, info.ramp, from, c.value, c.time, 0, from, c.curve});
+}
+
 void Engine::stepInteractions(double dt)
 {
     std::vector<InteractionEvent> events;
@@ -430,7 +446,7 @@ void Engine::stepInteractions(double dt)
                 run.proc.input(it, x); // shown (In)
                 if (it.conditions.empty()) { // no test: each value the source gives does the "if true" actions
                     run.actionMet = true;
-                    for (const InteractionConsequence &c : it.onTrue) setEventValue(c.layer, c.param, c.value, true);
+                    for (const InteractionConsequence &c : it.onTrue) runConsequence(c);
                     journal(QStringLiteral("interaction"), QStringLiteral("%1 true").arg(it.id));
                     continue;
                 }
@@ -439,8 +455,7 @@ void Engine::stepInteractions(double dt)
                 if (!first && *run.actionMet == met) continue; // only when the answer changes
                 run.actionMet = met;
                 if (first && !met) continue; // nothing was true before: nothing to undo
-                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse)
-                    setEventValue(c.layer, c.param, c.value, true);
+                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse) runConsequence(c);
                 journal(QStringLiteral("interaction"), QStringLiteral("%1 %2").arg(it.id).arg(met ? QStringLiteral("true") : QStringLiteral("false")));
             }
             continue;

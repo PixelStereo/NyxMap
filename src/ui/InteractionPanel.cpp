@@ -1515,7 +1515,10 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
                             else if (p.isNumber()) v = m_engine->parameterValue(layer, p.path).toDouble(p.defaultValue.toDouble());
                             edit(QStringLiteral("Change Action Target"), [listOf, i, layer, p, v](Interaction &x) {
                                 auto &l = listOf(x);
-                                if (i < l.size()) l[i] = InteractionConsequence{layer, p.path, v};
+                                if (i >= l.size()) return;
+                                l[i].layer = layer; // its time and curve kept
+                                l[i].param = p.path;
+                                l[i].value = v;
                             }, QString());
                             rebuildSettings();
                         });
@@ -1558,6 +1561,41 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             remove->setToolTip(QStringLiteral("Remove this action"));
             h->addWidget(remove);
             form->addRow(QString(), row);
+            // A number that goes through its values: in how long, and how (eased)
+            if (known && info.isNumber() && info.ramp != ParamInfo::Ramp::Cut) {
+                const QString side = whenTrue ? QStringLiteral("true") : QStringLiteral("false");
+                auto *timing = new QWidget;
+                auto *t = new QHBoxLayout(timing);
+                t->setContentsMargins(0, 0, 0, 0);
+                auto *time = chainNumber(c.time, 20, 3);
+                time->setObjectName(QStringLiteral("%1Time%2").arg(side).arg(i));
+                time->setRange(0, 600);
+                time->setSuffix(QStringLiteral(" s"));
+                time->setValue(c.time);
+                time->setToolTip(QStringLiteral("How long it takes to get there, from where it is (0: at once)"));
+                auto *curve = new QComboBox;
+                curve->setObjectName(QStringLiteral("%1Curve%2").arg(side).arg(i));
+                curve->addItems(Engine::easingNames());
+                curve->setCurrentIndex(std::clamp(c.curve, 0, int(curve->count()) - 1));
+                curve->setEnabled(c.time > 0);
+                t->addWidget(new QLabel(QStringLiteral("over")));
+                t->addWidget(time, 1);
+                t->addWidget(curve, 1);
+                form->addRow(QString(), timing);
+                connect(time, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, listOf, i, curve, side](double v) {
+                    curve->setEnabled(v > 0);
+                    edit(QStringLiteral("Change Action Time"), [listOf, i, v](Interaction &x) {
+                        auto &l = listOf(x);
+                        if (i < l.size()) l[i].time = v;
+                    }, QStringLiteral("%1time%2").arg(side).arg(i));
+                });
+                connect(curve, qOverload<int>(&QComboBox::activated), this, [edit, listOf, i](int k) {
+                    edit(QStringLiteral("Change Action Curve"), [listOf, i, k](Interaction &x) {
+                        auto &l = listOf(x);
+                        if (i < l.size()) l[i].curve = k;
+                    }, QString());
+                });
+            }
             connect(remove, &QToolButton::clicked, this, [this, edit, listOf, i] {
                 edit(QStringLiteral("Remove Action"), [listOf, i](Interaction &x) {
                     auto &l = listOf(x);

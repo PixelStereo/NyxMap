@@ -1231,6 +1231,7 @@ void Engine::stopShowPlayback()
     m_deferredRecall.clear();
     m_deferredRecallIndex.clear();
     m_interactionFades.clear();
+    m_actionFades.clear();
     m_compFade.opacity = false;
     m_compFade.volume = false;
     m_fadeElapsed = m_recallTotal;
@@ -1308,6 +1309,9 @@ void Engine::releaseFromFades(quint64 layer, const QString &path)
         t.erase(std::remove_if(t.begin(), t.end(), [&](const FadeTrack &x) { return x.path == path; }), t.end());
         if (path == QLatin1String("opacity")) job->opacityReleased = true;
     }
+    m_actionFades.erase(std::remove_if(m_actionFades.begin(), m_actionFades.end(),
+                                       [&](const ActionFade &f) { return f.layer == layer && f.path == path; }),
+                        m_actionFades.end());
 }
 
 // Split a coarse tick at each execution deadline. A delayed fade receives only the
@@ -1320,6 +1324,7 @@ void Engine::stepShowRecalls(double dt)
     auto advance = [&](double delta) {
         stepFade(delta);
         stepInteractionFades(delta);
+        stepActionFades(delta);
         stepTransitions(delta);
         stepTypewriters(delta);
         stepCompositionFade(delta);
@@ -1789,6 +1794,24 @@ void Engine::stepInteractionFades(double dt)
         it = it->elapsed >= it->time ? m_interactionFades.erase(it) : it + 1;
     }
     interactionValuesTouched();
+}
+
+// The numbers Actions take to their values, each on its own time; one that something else moved since the last step
+// (it no longer holds what was set here), or that is gone, is let go
+void Engine::stepActionFades(double dt)
+{
+    for (auto f = m_actionFades.begin(); f != m_actionFades.end();) {
+        Parameter *p = findParameter(f->layer, f->path);
+        if (!p || p->asNumber() != f->last) {
+            f = m_actionFades.erase(f);
+            continue;
+        }
+        f->elapsed += std::max(0.0, dt);
+        const FadeTrack track{f->path, f->ramp, f->from, f->to, f->time, EasingCurve(std::clamp(f->curve, 0, 5))};
+        p->setNumber(trackValue(track, f->elapsed));
+        f->last = p->asNumber();
+        f = f->elapsed >= f->time ? m_actionFades.erase(f) : f + 1;
+    }
 }
 
 QString Engine::transitionShader(quint64 layer) const

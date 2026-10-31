@@ -106,6 +106,7 @@ void Engine::clearProject()
         m_interactions.clear();
         m_interactionRun.clear();
         m_interactionFades.clear();
+        m_actionFades.clear();
         m_interactionParamsDirty = true;
         m_nextInteractionId = 1;
         m_nextPatchId = 1;
