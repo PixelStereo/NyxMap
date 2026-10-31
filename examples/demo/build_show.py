@@ -592,6 +592,30 @@ def scene_state(base_layers, scene, interaction_ids):
     return states, interactions
 
 
+def scene_preset(pid, base_layers, scene):
+    """The same scene as a preset: every value its snapshot would set, each with the snapshot's time and easing (the
+    scene's fade, unless the value has a time or an easing of its own), the composition, and the interactions it
+    switches on or off (their "enable" value)."""
+    states, interactions = scene_state(base_layers, scene, INTERACTIONS)
+    values = []
+    for state in states:
+        if state["id"] == IDS["sound"] or not state.get("included", True):
+            continue
+        timing, easing = state.get("timing", {}), state.get("easing", {})
+        for path, value in state["params"].items():
+            item = {"layer": state["id"], "path": path, "value": value}
+            if path in timing:
+                item["time"] = timing[path]
+            if path in easing:
+                item["easing"] = easing[path]
+            values.append(item)
+    values += [{"layer": "0", "path": path, "value": 1} for path in ("opacity", "volume")]
+    values += [{"layer": "0", "path": f"interaction/{i['id']}/enable", "value": i["enabled"]}
+               for i in interactions if i["included"]]
+    return {"id": pid, "name": scene.name, "fade": scene.fade, "values": values, "animations": [], "interactions": [],
+            "geometry": {}, "categories": {}}
+
+
 def build(out, audio=None, autoplay=False):
     out = Path(out).resolve()
     (out / "shaders").mkdir(parents=True, exist_ok=True)
@@ -609,12 +633,20 @@ def build(out, audio=None, autoplay=False):
         audio_path = f"audio/{audio.name}"
 
     layers = build_layers(audio_path)
-    snapshots, ids = [], {}
-    for n, (key, scene) in enumerate(SCENES.items(), 1):
-        states, interactions = scene_state(layers, scene, INTERACTIONS)
-        ids[key] = str(n)
-        snapshots.append({"id": str(n), "name": scene.name, "fade": scene.fade, "layers": states,
-                          "composition": {"included": True, "opacity": 1, "volume": 1}, "interactions": interactions})
+    # The first scene is the one snapshot: the whole show set, the soundtrack started. Every other scene is a preset
+    # holding the very values, times and easings its snapshot would have.
+    snapshots, presets, scenes = [], list(PRESETS), {}
+    for n, (key, scene) in enumerate(SCENES.items()):
+        if n == 0:
+            states, interactions = scene_state(layers, scene, INTERACTIONS)
+            snapshots.append({"id": "1", "name": scene.name, "fade": scene.fade, "layers": states,
+                              "composition": {"included": True, "opacity": 1, "volume": 1},
+                              "interactions": interactions})
+            scenes[key] = ("snapshot", "1")
+        else:
+            pid = str(len(presets) + 1)
+            presets.append(scene_preset(pid, layers, scene))
+            scenes[key] = ("preset", pid)
 
     steps = []
     for i, (kind, what, at, comment) in enumerate(STEPS):
@@ -622,7 +654,8 @@ def build(out, audio=None, autoplay=False):
         follows = nxt is not None and nxt[2] is None
         step = {"text": comment} if comment else {}
         if kind == "scene":
-            step.update({"snapshot": ids[what], "text": SCENES[what].name,
+            kind_of, sid = scenes[what]
+            step.update({kind_of: sid, "text": SCENES[what].name,
                          **({"description": comment} if comment else {})})
         elif kind == "preset":
             step["preset"] = PR[what]
@@ -641,7 +674,7 @@ def build(out, audio=None, autoplay=False):
     project = {
         "app": "NyxMap", "format_version": 1,
         "composition": {"width": W, "height": H, "fps": 60, "speed": 1}, "audio": {"volume": 1},
-        "layers": layers, "interactions": INTERACTIONS, "timelines": TIMELINES, "presets": PRESETS,
+        "layers": layers, "interactions": INTERACTIONS, "timelines": TIMELINES, "presets": presets,
         "snapshots": snapshots, "snapshot_tree": [s["id"] for s in snapshots],
         "sequences": [{"id": "1", "name": "Demo · on the soundtrack's timecode", "loop": False, "steps": steps,
                        "timecode": {"layer": IDS["sound"], "param": "playhead"}}],
@@ -660,5 +693,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     p = build(args.out, args.audio, args.autoplay)
     timed = sum(1 for s in p["sequences"][0]["steps"] if "at" in s)
-    print(f"Show ready: {args.out.resolve() / 'Demo.nyxmap'} — {len(p['snapshots'])} scenes, {len(p['presets'])} presets, "
+    print(f"Show ready: {args.out.resolve() / 'Demo.nyxmap'} — {len(p['snapshots'])} snapshot, {len(p['presets'])} presets, "
           f"{len(p['timelines'])} timelines, {len(p['interactions'])} interactions, {timed} steps on the timecode")
