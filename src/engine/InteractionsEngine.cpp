@@ -35,7 +35,8 @@ static bool sameInputBinding(const Interaction &a, const Interaction &b)
            a.midiMessage == b.midiMessage && a.midiNumber == b.midiNumber && a.oscAddress == b.oscAddress &&
            a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
            a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
-           a.audioInput == b.audioInput &&
+           a.audioInput == b.audioInput && a.pixels == b.pixels && a.pixelFeature == b.pixelFeature &&
+           a.handFeature == b.handFeature && a.handIndex == b.handIndex && a.handConfidence == b.handConfidence &&
            a.layer == b.layer && a.param == b.param;
 }
 
@@ -122,10 +123,12 @@ bool Engine::setInteraction(const Interaction &it)
         auto f = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const Interaction &x) { return x.id == it.id; });
         if (f == m_interactions.end()) return false;
         // (its filters: each one's state is kept, made again when it becomes another kind of filter)
-        const bool sourceChanged = f->source != it.source || f->layer != it.layer || f->param != it.param ||
-                                   f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
-                                   ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it)) ||
-                                   f->mode != it.mode;
+        const bool sourceChanged =
+            f->source != it.source || f->layer != it.layer || f->param != it.param ||
+            f->sourceLayer != it.sourceLayer || f->sourceParam != it.sourceParam || !sameXyInput(*f, it) ||
+            ((!f->xyInputs.empty() || !it.xyInputs.empty()) && !sameInputBinding(*f, it)) || f->mode != it.mode ||
+            ((it.source == InteractionSource::Pixels || it.source == InteractionSource::Hands) &&
+             !sameInputBinding(*f, it));
         // An Action's test changed: tried again on the source's current value, from the answer it had (so that the
         // change itself can make it true, or false)
         const bool testChanged = f->conditions != it.conditions || f->conditionsAll != it.conditionsAll;
@@ -434,7 +437,9 @@ void Engine::stepInteractions(double dt)
             InteractionRun &run = m_interactionRun[it.id];
             // Each value the source gives, in order (a key pressed then let go in one frame: both), in its own units
             values.clear();
-            if (it.source == InteractionSource::Audio) {
+            if (it.source == InteractionSource::Pixels || it.source == InteractionSource::Hands) {
+                values.push_back(visionValue(it));
+            } else if (it.source == InteractionSource::Audio) {
                 const AudioAnalysis::Values &audio = audios[it.audioInput];
                 values.push_back(it.audioFeature == Interaction::AudioFeature::Band
                                      ? bandValue(it.audioInput, float(it.audioLow), float(it.audioHigh))
@@ -487,7 +492,10 @@ void Engine::stepInteractions(double dt)
                                 std::optional<double> &lastOut, double &lastInternal, Parameter *targetParam) -> std::optional<double> {
                 if (!input.enabled) return std::nullopt;
                 bool freshInput = false;
-                if (input.source == InteractionSource::Audio) {
+                if (input.source == InteractionSource::Pixels || input.source == InteractionSource::Hands) {
+                    proc.input(input, visionValue(input));
+                    freshInput = true;
+                } else if (input.source == InteractionSource::Audio) {
                     const auto &audio = audios[input.audioInput];
                     const double raw = input.audioFeature == Interaction::AudioFeature::Band
                         ? bandValue(input.audioInput, float(input.audioLow), float(input.audioHigh))
@@ -505,10 +513,12 @@ void Engine::stepInteractions(double dt)
                             freshInput = true;
                         }
                     }
-                } else for (const auto &event : events) if (input.matches(event) && event.colorComponents == 0) {
-                    proc.input(input, event.value); // preserve raw XY units; never apply RGB byte conversion
-                    freshInput = true;
-                }
+                } else
+                    for (const auto &event : events)
+                        if (input.matches(event) && event.colorComponents == 0) {
+                            proc.input(input, event.value); // preserve raw XY units; never apply RGB byte conversion
+                            freshInput = true;
+                        }
                 const auto output = proc.step(input, dt);
                 if (!output) return std::nullopt;
                 const bool changed = freshInput || !lastOut || std::abs(*lastOut - *output) > 1e-9;
@@ -549,7 +559,10 @@ void Engine::stepInteractions(double dt)
             return chain;
         };
         unsigned rises = 0;
-        if (it.source == InteractionSource::Audio) {
+        if (it.source == InteractionSource::Pixels || it.source == InteractionSource::Hands) {
+            run.proc.input(it, visionValue(it));
+            fresh = true;
+        } else if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
             const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
                 it.audioFeature==Interaction::AudioFeature::Level?audio.level:
@@ -857,8 +870,11 @@ void Engine::makeInteractionParams()
                     }
                 });
         };
-        auto choice = [&](const QString &path, const QString &name, const QStringList &keys, std::function<int(const Interaction &)> get,
-                          std::function<void(Interaction &, int)> set) {
+        auto choice = [&](const QString &path, const QString &name, const QStringList &choiceKeys,
+                          std::function<int(const Interaction &)> get, std::function<void(Interaction &, int)> set) {
+            QStringList keys;
+            for (const auto &key : choiceKeys)
+                keys << key.toLower();
             add(path, name, T::Choice).choices(keys).byDefault(keys.front()).ramp(Parameter::Ramp::Cut).bind(
                 [find, get, keys] {
                     Interaction *x = find();
@@ -883,10 +899,12 @@ void Engine::makeInteractionParams()
              [](Interaction &x, const QString &v) {
                  if (!v.trimmed().isEmpty()) x.name = v.trimmed();
              });
-        choice(QStringLiteral("source/kind"), QStringLiteral("Source"),
-               {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"), QStringLiteral("audio")},
-               [](const Interaction &x) { return int(x.source); },
-               [](Interaction &x, int k) { x.source = InteractionSource(k); });
+        choice(
+            QStringLiteral("source/kind"), QStringLiteral("Source"),
+            {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"),
+             QStringLiteral("audio"), QStringLiteral("pixels"), QStringLiteral("hands")},
+            [](const Interaction &x) { return int(x.source); },
+            [](Interaction &x, int k) { x.source = InteractionSource(k); });
         text(QStringLiteral("source/key"), QStringLiteral("Key"), [](const Interaction &x) { return x.key; },
              [](Interaction &x, const QString &v) { x.key = v; });
         text(QStringLiteral("source/midi/input"), QStringLiteral("MIDI Input"), [](const Interaction &x) { return x.midiPort; },
@@ -911,6 +929,61 @@ void Engine::makeInteractionParams()
             [](const Interaction &x){return int(x.audioFeature);},[](Interaction &x,int k){x.audioFeature=Interaction::AudioFeature(k);});
         choice(QStringLiteral("source/audio/input"),QStringLiteral("Audio Source"),{QStringLiteral("program"),QStringLiteral("input")},
             [](const Interaction &x){return x.audioInput?1:0;},[](Interaction &x,int k){x.audioInput=k==1;});
+        text(
+            QStringLiteral("source/vision/layer"), QStringLiteral("Image layer"),
+            [](const Interaction &x) { return QString::number(x.pixels.layer); },
+            [](Interaction &x, const QString &v) { x.pixels.layer = v.toULongLong(); });
+        choice(
+            QStringLiteral("source/vision/tap"), QStringLiteral("Image tap"), {"source", "prefx", "postfx"},
+            [](const Interaction &x) { return x.pixels.tap; }, [](Interaction &x, int n) { x.pixels.tap = n; });
+        choice(
+            QStringLiteral("source/pixels/channel"), QStringLiteral("Pixel channel"), PixelAnalysis::channelNames(),
+            [](const Interaction &x) { return int(x.pixels.channel); },
+            [](Interaction &x, int n) { x.pixels.channel = PixelAnalysis::Channel(n); });
+        choice(
+            QStringLiteral("source/pixels/feature"), QStringLiteral("Pixel measure"), PixelAnalysis::featureNames(),
+            [](const Interaction &x) { return int(x.pixelFeature); },
+            [](Interaction &x, int n) { x.pixelFeature = PixelAnalysis::Feature(n); });
+        number(QStringLiteral("source/pixels/threshold"), QStringLiteral("Pixel active threshold"), 0, 1, .05,
+               [](Interaction &x) -> double & { return x.pixels.threshold; })
+            .limits(0, 1);
+        for (int component = 0; component < 4; ++component) {
+            const char *keys[] = {"x", "y", "width", "height"};
+            add(QStringLiteral("source/pixels/roi/") + keys[component], QStringLiteral("Pixel ROI ") + keys[component],
+                T::Float)
+                .range(0, 1)
+                .limits(0, 1)
+                .byDefault(component < 2 ? 0. : 1.)
+                .bind(
+                    [find, component] {
+                        auto *x = find();
+                        if (!x)
+                            return QVariant();
+                        const auto r = x->pixels.roi;
+                        return QVariant(component == 0   ? r.x()
+                                        : component == 1 ? r.y()
+                                        : component == 2 ? r.width()
+                                                         : r.height());
+                    },
+                    [find, changed, component](const QVariant &value) {
+                        if (auto *x = find()) {
+                            auto r = x->pixels.roi;
+                            const double v = value.toDouble();
+                            x->pixels.roi = QRectF(component == 0 ? v : r.x(), component == 1 ? v : r.y(),
+                                                   component == 2 ? v : r.width(), component == 3 ? v : r.height());
+                            changed();
+                        }
+                    });
+        }
+        choice(
+            QStringLiteral("source/hands/feature"), QStringLiteral("Hand measure"), HandTracking::featureNames(),
+            [](const Interaction &x) { return int(x.handFeature); },
+            [](Interaction &x, int n) { x.handFeature = HandTracking::Feature(n); });
+        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 1, 0,
+              [](Interaction &x) -> int & { return x.handIndex; });
+        number(QStringLiteral("source/hands/confidence"), QStringLiteral("Hand confidence"), .5, .99, .7,
+               [](Interaction &x) -> double & { return x.handConfidence; })
+            .limits(.5, .99);
         text(QStringLiteral("target"), QStringLiteral("Target"), [valueRef](const Interaction &x) { return valueRef(x.layer, x.param); },
              [this, parseRef, axis](Interaction &x, const QString &v) {
                  if (axis) return; // the Y chain shares the root target

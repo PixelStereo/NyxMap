@@ -73,6 +73,7 @@ void Engine::clearProject()
     {
         Lock lk(&m_mutex);
         old.swap(m_layers);
+        m_visionReset = true;
         m_projectPath.clear();
         m_binItems.clear();
         m_binStreamsUdp.clear();

@@ -19,9 +19,10 @@ public:
     void release();
 
     // Colours of `picture` at `points` (normalized, origin top left); `tag` comes back with them
-    void sample(GLuint picture, const std::vector<QPointF> &points, quint64 tag);
+    void sample(GLuint picture, const std::vector<QPointF> &points, quint64 tag, bool dropIfBusy = false);
     // The oldest sample the GPU finished, if any (RGB 0..1 by point): true once per sample
     bool collect(std::vector<std::array<float, 3>> *colors, quint64 *tag);
+    bool collectRgba(std::vector<std::array<float, 4>> *colors, quint64 *tag);
 
 private:
     struct Pending {
@@ -32,7 +33,8 @@ private:
         quint64 tag = 0;
         quint64 order = 0; // when asked (the oldest is collected first)
     };
-    bool read(Pending &p, std::vector<std::array<float, 3>> *colors, quint64 *tag, bool wait);
+    bool read(Pending &p, std::vector<std::array<float, 3>> *colors, quint64 *tag, bool wait,
+              std::vector<std::array<float, 4>> *rgba = nullptr);
 
     std::function<void()> m_drawQuad;
     GLuint m_program = 0;

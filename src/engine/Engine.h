@@ -66,6 +66,8 @@ namespace midi {
 class Input;
 }
 
+class VisionRuntime;
+
 class Engine : public QObject
 {
     Q_OBJECT
@@ -758,6 +760,11 @@ public:
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
     void waitForFrame(QOpenGLExtraFunctions *f) const;
+    QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
+    QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
+    static bool handTrackingAvailable();
+    QString handModelsDirectory() const;
+    void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }
     // Frame timing (FrameTiming.h): intervals, missed deadlines, compute and present times, OSC / cue to frame
     FrameTiming::Stats frameTiming() const { return m_frameTiming.stats(); }
@@ -1285,6 +1292,11 @@ private:
     quint64 m_fixturesFollowed = 0;          // render thread: the version the points and the sender follow
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread
+    void stepVision();
+    double visionValue(const Interaction &input);
+    void releaseVision();
+    std::unique_ptr<VisionRuntime> m_vision;
+    bool m_visionReset = false;
     PixelSampler m_sampler{[this] { drawQuad(); }};
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;
