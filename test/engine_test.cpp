@@ -1526,6 +1526,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
               !SequenceFeedback::parseTarget("a:70000", nullptr, nullptr) && !SequenceFeedback::parseTarget(":9000", nullptr, nullptr));
         CHECK(SequenceFeedback::defaultTargets() == QStringList{"127.0.0.1:11111"});
 
+        // UDP delivery pumps the event loop; an automatic cue clock would keep
+        // advancing while this test asserts exact synthetic cue positions.
+        const bool wasManual = e.fadesManual();
+        e.setFadesManual(true);
         QUdpSocket rx;
         CHECK(rx.bind(QHostAddress::LocalHost, 0));
         const int seq = e.sequencer().add([] {
@@ -1582,14 +1586,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.sequencer().advance(1);
         fb.sendNow(false);
         receive();
-        // (the cue clock also counts the wall time the test takes)
+        // Only the explicit one-second step advances this cue.
         const int half = got["/sequence/cue/current/phase_percent"].toInt();
-        CHECK(half >= 50 && half <= 60 && got["/sequence/cue/current/percent"].toInt() == half &&
-              got["/sequence/cue/current/remaining"].toDouble() <= 1.0 && got["/sequence/cue/current/remaining"].toDouble() > 0.7);
+        CHECK(half == 50 && got["/sequence/cue/current/percent"].toInt() == half &&
+              std::abs(got["/sequence/cue/current/remaining"].toDouble() - 1.0) < 1e-6);
         CHECK(!got.count("/sequence/name") && !got.count("/sequence/cue/next/text"));
         e.sequencer().stopAll();
         fb.setEnabled(false);
         e.sequencer().remove(seq);
+        e.setFadesManual(wasManual);
     }
     // 4c. The Logs panel's events (audit P1): bounded in lines and in cost, whatever the traffic
     {
