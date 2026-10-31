@@ -6,6 +6,7 @@ library).
 
 | Component | Use in NyxMap | Licence | Licence text | Source |
 |---|---|---|---|---|
+| OpenCV / OpenCV Zoo MediaPipe Hands | Optional CPU hand detection; adapted model pre/postprocessing and separately downloaded ONNX models | Apache-2.0 | `licenses/opencv-zoo-hands.txt` | https://github.com/opencv/opencv_zoo ; https://opencv.org/ |
 | Qt 6 | User interface, OpenGL, multimedia, SVG images | GNU LGPL v3 (dynamically linked) | `licenses/LGPL-3.0.txt`, `licenses/GPL-3.0.txt` | https://www.qt.io/download-open-source (Linux package: Ubuntu's Qt, see below) |
 | Qt WebEngine (with Chromium) | Web Page generator (when the package is built with it) | GNU LGPL v3 (dynamically linked; also offered under GPL v2/v3); Chromium BSD 3-clause, its bundled components under their own licences | `licenses/LGPL-3.0.txt`, `licenses/chromium.txt` (Chromium's licence, and where the list of its components' licences is) | https://download.qt.io/official_releases/qt/ (Linux package: Ubuntu's `qt6-webengine`) |
 | FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample…) | Video and audio decoding | GNU LGPL v2.1 or later (dynamically linked; built without GPL components). The Windows package's FFmpeg may be built with `--enable-version3`, which makes it LGPL v3 or later; its `DEPENDENCIES.txt` states which | `licenses/LGPL-2.1.txt`; `licenses/LGPL-3.0.txt` for an LGPL v3 build | https://ffmpeg.org/download.html (Windows: https://github.com/BtbN/FFmpeg-Builds) |

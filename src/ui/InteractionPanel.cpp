@@ -11,11 +11,11 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
-#include <QListWidget>
 #include <QContextMenuEvent>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -24,9 +24,12 @@
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -76,8 +79,9 @@ private:
 };
 
 constexpr char kMime[] = "application/x-nyxmap-interaction-settings";
-const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi, InteractionSource::Osc,
-                                    InteractionSource::Internal, InteractionSource::Audio};
+const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi,  InteractionSource::Osc,
+                                    InteractionSource::Internal, InteractionSource::Audio, InteractionSource::Pixels,
+                                    InteractionSource::Hands};
 
 // A frame that tells when it is clicked (where no child takes the click): a filter selected
 class ClickFrame : public QFrame
@@ -245,8 +249,10 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     v->addWidget(split, 1);
 
     connect(m_kinds, &QTabBar::currentChanged, this, [this] {
-        const bool audio=shownKind()==InteractionSource::Audio;
-        if(audio)m_learn->setChecked(false);
+        const bool audio = shownKind() == InteractionSource::Audio || shownKind() == InteractionSource::Pixels ||
+                           shownKind() == InteractionSource::Hands;
+        if (audio)
+            m_learn->setChecked(false);
         m_learn->setEnabled(!audio);
         rebuildList();
     });
@@ -429,6 +435,8 @@ QString InteractionPanel::describe(const Interaction &it) const
         return it.oscAddress.isEmpty() ? QStringLiteral("OSC (no address)")
                                        : QStringLiteral("OSC %1").arg(it.oscAddress) + (it.oscArgument ? QStringLiteral(" [%1]").arg(it.oscArgument) : QString());
     case InteractionSource::Internal: return targetLabel(it.sourceLayer, it.sourceParam);
+    case InteractionSource::Pixels:
+    case InteractionSource::Hands:
     case InteractionSource::Audio: {Interaction named=it;named.name.clear();return named.label();}
     }
     return QString();
@@ -605,6 +613,8 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
         input.oscAddress = e->address;
         input.oscArgument = e->argument;
         break;
+    case InteractionSource::Pixels:
+    case InteractionSource::Hands:
     case InteractionSource::Audio:
     case InteractionSource::Internal: break;
     }
@@ -658,7 +668,8 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
     rebuildList();
     select(id);
     rebuildSettings();
-    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio) {
+    if (kind != InteractionSource::Internal && kind != InteractionSource::Audio && kind != InteractionSource::Pixels &&
+        kind != InteractionSource::Hands) {
         m_learnKind = kind;
         m_learn->setChecked(true); // the next source of that kind becomes its
     }
@@ -1032,6 +1043,187 @@ void InteractionPanel::rebuildSettings()
             form->addRow(QStringLiteral("Regions"),regions);
             connect(regions,qOverload<int>(&QComboBox::activated),this,[setBand](int k){const double bands[][2]={{20,20000},{20,80},{80,250},{250,2000},{2000,6000},{6000,20000},{20,20000}};if(k>=0&&k<7)setBand(bands[k][0],bands[k][1]);});
         }
+        break;
+    }
+    case InteractionSource::Pixels:
+    case InteractionSource::Hands: {
+        const bool hands = it.source == InteractionSource::Hands;
+        form->addRow(note(QStringLiteral("1 · Choose an image layer (camera, video, mask or composition), then 2 · Map "
+                                         "its analysis below. Masks are separate Motion Difference FX.")));
+        auto *source = new QComboBox;
+        source->setObjectName(QStringLiteral("visionSource"));
+        source->addItem(QStringLiteral("Composition"), QStringLiteral("0"));
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            for (int i = 0; i < m_engine->layerCount(); ++i) {
+                const auto *l = m_engine->layer(i);
+                if (l)
+                    source->addItem(l->name, QString::number(l->id));
+            }
+        }
+        int selected = source->findData(QString::number(it.pixels.layer));
+        if (selected < 0) {
+            source->addItem(QStringLiteral("Missing layer %1").arg(it.pixels.layer), QString::number(it.pixels.layer));
+            selected = source->count() - 1;
+        }
+        source->setCurrentIndex(selected);
+        form->addRow(QStringLiteral("Image source"), source);
+        connect(source, qOverload<int>(&QComboBox::activated), this, [this, edit, source](int index) {
+            const auto id = source->itemData(index).toString().toULongLong();
+            edit(QStringLiteral("Change Image Analysis Source"), [id](Interaction &x) { x.pixels.layer = id; });
+            rebuildSettings();
+        });
+        attachPreset({source}, {QStringLiteral("source/vision/layer")});
+        auto *tap = new QComboBox;
+        tap->setObjectName(QStringLiteral("visionTap"));
+        tap->addItems({QStringLiteral("Source"), QStringLiteral("Before FX"), QStringLiteral("After FX (mask)")});
+        tap->setCurrentIndex(it.pixels.tap);
+        form->addRow(QStringLiteral("Image tap"), tap);
+        tap->setEnabled(it.pixels.layer != 0);
+        connect(tap, qOverload<int>(&QComboBox::activated), this, [this, edit](int value) {
+            edit(QStringLiteral("Change Analysis Tap"), [value](Interaction &x) { x.pixels.tap = value; });
+            rebuildSettings();
+        });
+        attachPreset({tap}, {QStringLiteral("source/vision/tap")});
+        if (!hands) {
+            auto *channel = new QComboBox;
+            channel->setObjectName(QStringLiteral("pixelChannel"));
+            channel->addItems(PixelAnalysis::channelNames());
+            channel->setCurrentIndex(int(it.pixels.channel));
+            form->addRow(QStringLiteral("Channel"), channel);
+            connect(channel, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
+                edit(QStringLiteral("Change Pixel Channel"),
+                     [value](Interaction &x) { x.pixels.channel = PixelAnalysis::Channel(value); });
+            });
+            attachPreset({channel}, {QStringLiteral("source/pixels/channel")});
+            auto *feature = new QComboBox;
+            feature->setObjectName(QStringLiteral("pixelFeature"));
+            feature->addItems(PixelAnalysis::featureNames());
+            feature->setCurrentIndex(int(it.pixelFeature));
+            form->addRow(QStringLiteral("Measure"), feature);
+            connect(feature, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
+                edit(QStringLiteral("Change Pixel Measure"),
+                     [value](Interaction &x) { x.pixelFeature = PixelAnalysis::Feature(value); });
+            });
+            attachPreset({feature}, {QStringLiteral("source/pixels/feature")});
+            auto *threshold = new QDoubleSpinBox;
+            threshold->setRange(0, 1);
+            threshold->setDecimals(3);
+            threshold->setSingleStep(.01);
+            threshold->setValue(it.pixels.threshold);
+            threshold->setKeyboardTracking(false);
+            form->addRow(QStringLiteral("Active threshold"), threshold);
+            connect(threshold, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit](double value) {
+                edit(
+                    QStringLiteral("Change Pixel Threshold"), [value](Interaction &x) { x.pixels.threshold = value; },
+                    QStringLiteral("pixel_threshold"));
+            });
+            attachPreset({threshold}, {QStringLiteral("source/pixels/threshold")});
+            const char *labels[] = {"x", "y", "width", "height"};
+            const double values[] = {it.pixels.roi.x(), it.pixels.roi.y(), it.pixels.roi.width(),
+                                     it.pixels.roi.height()};
+            for (int c = 0; c < 4; ++c) {
+                auto *number = new QDoubleSpinBox;
+                number->setObjectName(QStringLiteral("pixelROI_") + labels[c]);
+                number->setRange(0, 1);
+                number->setDecimals(3);
+                number->setSingleStep(.01);
+                number->setValue(values[c]);
+                number->setKeyboardTracking(false);
+                form->addRow(QStringLiteral("ROI ") + labels[c], number);
+                connect(number, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, c](double value) {
+                    edit(
+                        QStringLiteral("Change Pixel ROI"),
+                        [value, c](Interaction &x) {
+                            const auto r = x.pixels.roi;
+                            x.pixels.roi = QRectF(c == 0 ? value : r.x(), c == 1 ? value : r.y(),
+                                                  c == 2 ? value : r.width(), c == 3 ? value : r.height())
+                                               .intersected(QRectF(0, 0, 1, 1));
+                        },
+                        QStringLiteral("pixel_roi"));
+                });
+                attachPreset({number}, {QStringLiteral("source/pixels/roi/") + labels[c]});
+            }
+        } else {
+            auto *hand = new QComboBox;
+            hand->setObjectName(QStringLiteral("trackedHand"));
+            hand->addItems({QStringLiteral("Tracked hand 1"), QStringLiteral("Tracked hand 2")});
+            hand->setCurrentIndex(it.handIndex);
+            form->addRow(QStringLiteral("Hand"), hand);
+            connect(hand, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
+                edit(QStringLiteral("Change Tracked Hand"), [value](Interaction &x) { x.handIndex = value; });
+            });
+            attachPreset({hand}, {QStringLiteral("source/hands/index")});
+            auto *feature = new QComboBox;
+            feature->setObjectName(QStringLiteral("handFeature"));
+            feature->addItems(HandTracking::featureNames());
+            feature->setCurrentIndex(int(it.handFeature));
+            form->addRow(QStringLiteral("Measure"), feature);
+            connect(feature, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
+                edit(QStringLiteral("Change Hand Measure"),
+                     [value](Interaction &x) { x.handFeature = HandTracking::Feature(value); });
+            });
+            attachPreset({feature}, {QStringLiteral("source/hands/feature")});
+            auto *confidence = new QDoubleSpinBox;
+            confidence->setRange(.5, .99);
+            confidence->setDecimals(2);
+            confidence->setSingleStep(.05);
+            confidence->setValue(it.handConfidence);
+            confidence->setKeyboardTracking(false);
+            form->addRow(QStringLiteral("Min confidence"), confidence);
+            connect(confidence, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit](double value) {
+                edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
+            });
+            attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
+            auto *models = new QPushButton(QStringLiteral("Choose hand models folder…"));
+            form->addRow(models);
+            connect(models, &QPushButton::clicked, this, [this] {
+                const auto directory = QFileDialog::getExistingDirectory(
+                    this, QStringLiteral("OpenCV Zoo hand model directory"), m_engine->handModelsDirectory());
+                if (!directory.isEmpty()) {
+                    m_engine->setHandModelsDirectory(directory);
+                    rebuildSettings();
+                }
+            });
+            form->addRow(note(QStringLiteral("Local OpenCV DNN / MediaPipe: two verified ONNX models. Download with "
+                                             "scripts/download_hand_models.py; no images leave this computer.")));
+        }
+        auto *status = new QLabel;
+        status->setWordWrap(true);
+        status->setObjectName(QStringLiteral("visionStatus"));
+        form->addRow(status);
+        auto *preview = new QLabel;
+        preview->setObjectName(QStringLiteral("visionPreview"));
+        preview->setMinimumHeight(80);
+        preview->setMaximumHeight(200);
+        preview->setAlignment(Qt::AlignCenter);
+        form->addRow(preview);
+        auto *timer = new QTimer(status);
+        const auto settings = it.pixels;
+        auto refresh = [this, status, preview, settings, hands] {
+            auto current = settings;
+            if (const auto root = this->selected()) {
+                const auto &input = m_xyAxis == 1 && !root->xyInputs.empty() ? root->xyInputs.front() : *root;
+                current = input.pixels;
+            }
+            status->setText(m_engine->visionStatus(current, hands));
+            auto image = m_engine->visionPreview(current, hands);
+            if (!image.isNull()) {
+                if (!hands && current.roi != QRectF(0, 0, 1, 1)) {
+                    QPainter painter(&image);
+                    painter.setPen(QPen(Qt::yellow, 1));
+                    const auto r = current.roi;
+                    painter.drawRect(QRectF(r.x() * image.width(), r.y() * image.height(), r.width() * image.width(),
+                                            r.height() * image.height()));
+                }
+                preview->setPixmap(
+                    QPixmap::fromImage(image).scaled(280, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            } else
+                preview->clear();
+        };
+        connect(timer, &QTimer::timeout, status, refresh);
+        timer->start(150);
+        refresh();
         break;
     }
     case InteractionSource::Internal: {

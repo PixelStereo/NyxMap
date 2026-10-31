@@ -105,6 +105,10 @@ add_library(nyxmap_engine STATIC
   src/engine/TimecodeOutputs.cpp
   src/engine/ClockGenerator.cpp
   src/engine/Interactions.cpp
+  src/engine/PixelAnalysis.cpp
+  src/engine/HandTracking.cpp
+  src/engine/VisionRuntime.cpp
+  src/engine/VisionEngine.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
   src/engine/Animations.cpp
@@ -113,6 +117,29 @@ add_library(nyxmap_engine STATIC
   src/engine/LayerParams.cpp
 )
 target_include_directories(nyxmap_engine PUBLIC src/engine)
+option(NYXMAP_HAND_TRACKING "OpenCV DNN / MediaPipe hand landmark tracking" ON)
+if(NYXMAP_HAND_TRACKING)
+  find_package(OpenCV QUIET COMPONENTS core imgproc dnn)
+  if(OpenCV_FOUND)
+    target_include_directories(nyxmap_engine PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(nyxmap_engine PRIVATE ${OpenCV_LIBS})
+    target_compile_definitions(nyxmap_engine PUBLIC NYXMAP_OPENCV_HANDS)
+  else()
+    # Component development packages on Debian need not install the umbrella config.
+    find_path(NYXMAP_OPENCV_INCLUDE opencv2/core.hpp PATH_SUFFIXES opencv4)
+    find_library(NYXMAP_OPENCV_CORE NAMES opencv_core)
+    find_library(NYXMAP_OPENCV_IMGPROC NAMES opencv_imgproc)
+    find_library(NYXMAP_OPENCV_DNN NAMES opencv_dnn)
+    if(NYXMAP_OPENCV_INCLUDE AND NYXMAP_OPENCV_CORE AND NYXMAP_OPENCV_IMGPROC AND NYXMAP_OPENCV_DNN)
+      target_include_directories(nyxmap_engine PRIVATE "${NYXMAP_OPENCV_INCLUDE}")
+      target_link_libraries(nyxmap_engine PRIVATE "${NYXMAP_OPENCV_CORE}" "${NYXMAP_OPENCV_IMGPROC}" "${NYXMAP_OPENCV_DNN}")
+      target_compile_definitions(nyxmap_engine PUBLIC NYXMAP_OPENCV_HANDS)
+    else()
+      message(STATUS "OpenCV DNN not found: pixel analysis and motion masks available; hand tracking disabled")
+    endif()
+  endif()
+endif()
+
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)
@@ -566,6 +593,17 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_show_editing_test PRIVATE nyxmap_engine)
   add_test(NAME show_editing COMMAND nyxmap_show_editing_test)
   set_tests_properties(show_editing PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_vision_analysis_test test/vision_analysis.cpp)
+  target_link_libraries(nyxmap_vision_analysis_test PRIVATE nyxmap_engine)
+  add_test(NAME vision_analysis COMMAND nyxmap_vision_analysis_test)
+  add_executable(nyxmap_vision_engine_test test/vision_engine.cpp)
+  target_link_libraries(nyxmap_vision_engine_test PRIVATE nyxmap_engine)
+  add_test(NAME vision_engine COMMAND nyxmap_vision_engine_test)
+  set_tests_properties(vision_analysis vision_engine PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_hand_inference_test test/hand_inference.cpp)
+  target_link_libraries(nyxmap_hand_inference_test PRIVATE nyxmap_engine)
+  add_test(NAME vision_hand_inference COMMAND nyxmap_hand_inference_test)
+  set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)
   add_test(NAME isf_library COMMAND nyxmap_isf_library_test)
@@ -640,6 +678,7 @@ if(NYXMAP_TESTS)
     add_test(NAME demo_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/demo-fixture/preview.png --frames 3 --strict ${CMAKE_BINARY_DIR}/demo-fixture/Demo.nyxmap)
     set_tests_properties(demo_render PROPERTIES FIXTURES_REQUIRED demo TIMEOUT 120)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
+    add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
   endif()
   add_executable(nyxmap_mask_geometry_test test/mask_geometry.cpp src/engine/Masks.cpp)
@@ -666,6 +705,11 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_analysis_concurrency_test PRIVATE Threads::Threads)
   add_test(NAME audio_analysis_concurrency COMMAND nyxmap_audio_analysis_concurrency_test)
   set_tests_properties(audio_analysis_concurrency PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_vision_interaction_ui_test test/vision_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  target_include_directories(nyxmap_vision_interaction_ui_test PRIVATE src/ui)
+  target_link_libraries(nyxmap_vision_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
+  add_test(NAME vision_interaction_ui COMMAND nyxmap_vision_interaction_ui_test)
+  set_tests_properties(vision_interaction_ui PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
   target_include_directories(nyxmap_audio_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_audio_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)

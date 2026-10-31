@@ -291,6 +291,19 @@ void Engine::markNeeded()
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
     };
+    auto visionReference = [this](const Interaction &input) {
+        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
+            return;
+        const int index = indexOfId(input.pixels.layer);
+        if (index >= 0)
+            m_layers[size_t(index)]->referenced = true;
+    };
+    for (const auto &input : m_interactions)
+        if (input.enabled) {
+            visionReference(input);
+            for (const auto &axis : input.xyInputs)
+                visionReference(axis);
+        }
     for (auto &l : m_layers) refer(*l);
     for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
     const std::vector<bool> leftOut = soloLeftOut();
@@ -1267,6 +1280,7 @@ void Engine::frame(double dt)
         renderPausedSources(rc);
     }
     composite();
+    stepVision();
     stepPixelMapping(); // the fixtures read the composition as it goes out (opacity and blackout included)
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {
