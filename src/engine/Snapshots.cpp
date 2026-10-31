@@ -1340,6 +1340,28 @@ void Engine::stepShowRecalls(double dt)
     advance(remaining);
 }
 
+// The snapshots and presets on their way, at their end now: their fades, their values still to come after a delay, the
+// texts typed, the transitions. The timelines keep their own time (a sequence catching up a jump: Sequencer tracking)
+void Engine::finishRecalls()
+{
+    Lock lk(&m_mutex);
+    constexpr double kAll = 1e7;
+    auto finish = [&] {
+        stepFade(kAll);
+        stepInteractionFades(kAll);
+        stepActionFades(kAll);
+        stepTransitions(kAll);
+        stepTypewriters(kAll);
+        stepCompositionFade(kAll);
+    };
+    while (!m_deferredRecall.empty()) {
+        m_recallClock = std::max(m_recallClock, m_deferredRecall.begin()->first);
+        finish();
+        stepScheduledRecall(0);
+    }
+    finish();
+}
+
 void Engine::advanceFades(double dt)
 {
     Lock lk(&m_mutex);
