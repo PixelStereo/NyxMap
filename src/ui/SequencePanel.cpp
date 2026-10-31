@@ -761,6 +761,12 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     left->addLayout(sb);
     m_loop = new FlagBox(QStringLiteral("Loop: GO on the last step plays the first"));
     left->addWidget(m_loop);
+    m_tracking = new FlagBox(QStringLiteral("Tracking: a jump plays first what the steps before it leave"));
+    m_tracking->setObjectName(QStringLiteral("sequenceTracking"));
+    m_tracking->setToolTip(QStringLiteral("A step played out of order (double-click, OSC, GO BACK, the timecode jumping) "
+                                          "first gets the show where the steps before it would have left it: the last "
+                                          "snapshot before it, then each preset and timeline action after it, at once"));
+    left->addWidget(m_tracking);
     // The clock it follows: its steps with a timecode get their GO when it gets there
     m_clock = new QToolButton;
     m_clock->setObjectName(QStringLiteral("sequenceClock"));
@@ -914,6 +920,13 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
                     menu->addAction(QStringLiteral("%1 › %2").arg(name, info.label.section(QStringLiteral(" › "), -1)), this,
                                     [choose, id, path] { choose(id, QString::fromLatin1(path)); });
             }
+    });
+    connect(m_tracking, &QCheckBox::toggled, this, [this, current](bool on) {
+        if (m_filling || current() < 0) return;
+        Sequencer::Sequence s = m_engine->sequencer().sequence(current());
+        s.tracking = on;
+        m_engine->sequencer().setSequence(current(), s);
+        emit edited();
     });
     connect(m_loop, &QCheckBox::toggled, this, [this, current](bool on) {
         if (m_filling || current() < 0) return;
@@ -1173,6 +1186,7 @@ void SequenceWindow::refresh()
     m_sequences->setCurrentRow(cur);
     const Sequencer::Sequence s = m_engine->sequencer().sequence(cur);
     m_loop->setChecked(s.loop);
+    m_tracking->setChecked(s.tracking);
     QString clock = QStringLiteral("none");
     if (!s.clockParam.isEmpty()) {
         ParamInfo info;
@@ -1187,7 +1201,7 @@ void SequenceWindow::refresh()
                     : QStringLiteral("%1 (gone)").arg(s.clockParam);
     }
     m_clock->setText(QStringLiteral("Timecode: %1").arg(clock));
-    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_clock, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
+    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_tracking, m_clock, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
         w->setEnabled(cur >= 0);
     const int keep = m_steps->currentRow();
     m_steps->setRowCount(int(s.steps.size()));

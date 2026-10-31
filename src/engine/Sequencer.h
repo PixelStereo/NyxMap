@@ -17,6 +17,10 @@
 // generator's Position: internal, LTC, MTC, ATC). A step with a timecode gets its GO when that clock gets there, as a
 // tape plays the show (Engine::followSequenceClocks): each step passed on the way, in order; after a jump (a seek, a
 // rewind, a loop), only the last step at or before where it landed (it chases). The other steps wait for GO, or follow.
+// Tracking (a sequence's mode, on by default): a jump to a step that is not the next one (a step played from the list, OSC,
+// GO BACK, the timecode chasing) first plays at once what the steps before it would have left — from the last snapshot
+// before it, each preset at its end and each timeline told what to do, in order, as if each had had its GO one after the
+// other — then plays the step as usual. A step that starts another sequence is not played again then.
 // A snapshot recalled does not stop the ones still running: only the values it holds itself are taken over.
 //
 // The waits run on a clock thread of their own (the cue clock): a pre-wait or a follow ends on time even while the
@@ -95,6 +99,7 @@ public:
     struct Sequence {
         QString name;
         bool loop = false; // GO on the last step goes to the first
+        bool tracking = true; // a jump plays first what the steps before it leave
         std::vector<Step> steps;
         quint64 clockLayer = 0; // the clock its steps' timecodes are on: a value of the show (a layer's id, 0: the
         QString clockParam;     // composition) in seconds, as "playhead" or "tc/position" (empty: none)
@@ -215,6 +220,7 @@ private:
     void runClock(); // clock thread
     void tick();     // clock thread
     void fireSnapshot(quint64 snapshotId); // by its id: on the cue clock, an index may change meanwhile
+    void playAtOnce(const std::vector<Step> &steps); // tracking: steps played to their end now, in order
     void noteFired(double late); // lock held
 
     Engine &m_engine;

@@ -593,6 +593,7 @@ public:
     void stepCompositionFade(double dt); // a snapshot's fade of the level and the volume (lock held)
     void stepTypewriters(double dt); // the texts snapshots gave are typed on (lock held)
     void advanceFades(double dt); // tests: moves the fades on by dt seconds, as a rendered frame does
+    void finishRecalls(); // every recall on its way at its end now (fades, delayed values, typing), not the timelines
     void setFadesManual(bool on) { m_fadesManual = on; }
     bool fadesManual() const { return m_fadesManual; } // tests: only advanceFades moves them, not the frames
     // A snapshot gives a value of a layer its time ("timing": key → seconds, 0 at once) and its easing ("easing": key →

@@ -132,6 +132,7 @@ private:
     Engine *m_engine;
     QListWidget *m_sequences;
     QCheckBox *m_loop;
+    QCheckBox *m_tracking; // a jump plays first what the steps before it leave
     QToolButton *m_clock; // the clock its steps' timecodes are on
     QTableWidget *m_steps;
     QLabel *m_status; // the step played, and whether something changed since
