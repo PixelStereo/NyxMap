@@ -428,6 +428,23 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
         }, Qt::QueuedConnection);
         return ok;
     }
+    // Tracking: a jump (not the step GO plays next) first plays at once the steps from the last snapshot before it
+    std::vector<Step> before;
+    {
+        QMutexLocker lk(&m_mutex);
+        const int index = sequenceIndexLocked(owner);
+        if (index >= 0 && (!expected || expected->load())) {
+            const Sequence &s = m_sequences[size_t(index)];
+            const int target = resolve(s, step);
+            if (s.tracking && target >= 0 && target < int(s.steps.size()) && target != nextOfLocked(index) &&
+                !s.steps[size_t(target)].snapshot) {
+                int from = target - 1;
+                while (from > 0 && !s.steps[size_t(from)].snapshot) --from;
+                for (int k = std::max(0, from); k < target; ++k) before.push_back(s.steps[size_t(k)]);
+            }
+        }
+    }
+    if (!before.empty()) playAtOnce(before);
     {
         QMutexLocker lk(&m_mutex);
         if (expected && !expected->load()) return false;
@@ -453,6 +470,24 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
     emit positionChanged();
     startTimer();
     return true;
+}
+
+// The steps a jump passes over, each played to its end at once, in order: its snapshot or its preset (their fades and
+// delays over now), its timeline told what to do (the timeline then plays on its own time from now)
+void Sequencer::playAtOnce(const std::vector<Step> &steps)
+{
+    for (const Step &st : steps) {
+        if (st.sequence) continue; // a jump does not start other sequences
+        if (st.timeline) {
+            m_engine.controlAnimation(st.timeline, st.action, st.action == AnimAction::Speed ? st.speed : st.seekTime, st.loop, st.repeat);
+            continue;
+        }
+        const int index = st.preset ? m_engine.indexOfPreset(st.preset) : m_engine.indexOfSnapshot(st.snapshot);
+        if (index < 0) continue;
+        if (st.preset) m_engine.recallPreset(index);
+        else m_engine.recallSnapshot(index);
+        m_engine.finishRecalls();
+    }
 }
 
 bool Sequencer::go()
@@ -928,10 +963,13 @@ QJsonArray Sequencer::toJson() const
             if (st.postWait > 0) o["post_wait"] = st.postWait;
             if (st.quantize > 0) o["quantize"] = st.quantize;
             if (st.next != StepContinue::Wait) o["continue"] = st.next == StepContinue::Follow ? "follow" : "auto_follow";
+            if (st.at >= 0) o["at"] = st.at;
             steps.append(o);
         }
-        out.append(QJsonObject{{"id", QString::number(m_sequenceIds[size_t(out.size())])},
-                               {"name", s.name}, {"loop", s.loop}, {"beats", s.beats}, {"steps", steps}});
+        QJsonObject so{{"id", QString::number(m_sequenceIds[size_t(out.size())])}, {"name", s.name}, {"loop", s.loop}, {"beats", s.beats},
+                       {"tracking", s.tracking}, {"steps", steps}};
+        if (!s.clockParam.isEmpty()) so["timecode"] = QJsonObject{{"layer", QString::number(s.clockLayer)}, {"param", s.clockParam}};
+        out.append(so);
     }
     return out;
 }
@@ -958,6 +996,10 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
         s.name = o.value("name").toString();
         s.loop = o.value("loop").toBool(false);
         s.beats = o.value("beats").toBool(false);
+        s.tracking = o.value("tracking").toBool(true);
+        const QJsonObject clock = o.value("timecode").toObject();
+        s.clockLayer = clock.value("layer").toString().toULongLong();
+        s.clockParam = clock.value("param").toString();
         for (const QJsonValue &sv : o.value("steps").toArray()) {
             const QJsonObject so = sv.toObject();
             Step st;
@@ -985,6 +1027,8 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
             st.quantize = std::clamp(so.value("quantize").toDouble(0), 0.0, 64.0);
             const QString c = so.value("continue").toString();
             st.next = c == "follow" ? StepContinue::Follow : c == "auto_follow" ? StepContinue::AutoFollow : StepContinue::Wait;
+            const double at = so.value("at").toDouble(-1);
+            st.at = std::isfinite(at) && at >= 0 ? at : -1;
             s.steps.push_back(st);
         }
         m_sequences.push_back(s);

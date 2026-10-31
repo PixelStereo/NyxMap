@@ -97,6 +97,12 @@ private:
     void selectPreset(quint64 id);
     int selectedPreset() const;
     void recallPreset(int i);
+    void clearDetail();                              // the right pane emptied
+    void showPresetDetail(QTreeWidgetItem *it);      // a preset's value on the right: its value, delay, transition, easing
+    void editPresetValue(quint64 layer, const QString &path, const QString &text, const QString &merge,
+                         const std::function<void(Engine::PresetValue &)> &fn);
+    QPair<quint64, QString> m_presetCurrent{0, QString()}; // the preset value shown on the right, kept across rebuilds
+    bool m_presetDetailEditing = false;                     // an edit from the right pane: it is not rebuilt meanwhile
 
     Engine *m_engine;
     QUndoStack *m_undo;

@@ -733,6 +733,17 @@ MainWindow::~MainWindow()
 
 bool MainWindow::eventFilter(QObject *o, QEvent *e)
 {
+    // A project opened from the Finder (a double-click on a .nyxmap, a file dropped on the app's icon): macOS sends it
+    // to the application, also when it launches the app for it
+    if (o == qApp && e->type() == QEvent::FileOpen) {
+        const QString path = static_cast<QFileOpenEvent *>(e)->file();
+        if (path.isEmpty()) return false;
+        const QString open = QFileInfo(m_engine->projectPath()).canonicalFilePath();
+        if (open.isEmpty() || open != QFileInfo(path).canonicalFilePath()) { // the one open already: nothing to do
+            if (maybeSave()) openProject(path);
+        }
+        return true;
+    }
     // Shift+1 / Shift+2 / Shift+3 switch the left tabs (Media Bin / Layers / Interactions), whatever the keyboard: the digit with Shift
     // (AZERTY) or the symbol it gives (QWERTY "!" "@", UK "\""). Not while typing in a text field.
     // Keys are sources of the interactions (not while a text is typed, nor a key chosen)
@@ -2459,25 +2470,6 @@ bool MainWindow::offerRecovery()
         statusBar()->showMessage(QStringLiteral("Session restored"), 6000);
     }
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// File opening (macOS: double-click .nyxmap file or drag to app icon)
-// ---------------------------------------------------------------------------
-
-bool MainWindow::event(QEvent *e)
-{
-    if (e->type() == QEvent::FileOpen) {
-        auto *fe = static_cast<QFileOpenEvent *>(e);
-        const QString path = fe->file();
-        if (!path.isEmpty()) {
-            // If unsaved changes, ask before opening the new project
-            if (!maybeSave()) return false;
-            openProject(path);
-            return true;
-        }
-    }
-    return QMainWindow::event(e);
 }
 
 void MainWindow::closeEvent(QCloseEvent *e)

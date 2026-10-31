@@ -621,6 +621,7 @@ public:
     void stepCompositionFade(double dt); // a snapshot's fade of the level and the volume (lock held)
     void stepTypewriters(double dt); // the texts snapshots gave are typed on (lock held)
     void advanceFades(double dt); // tests: moves the fades on by dt seconds, as a rendered frame does
+    void finishRecalls(); // every recall on its way at its end now (fades, delayed values, typing), not the timelines
     void setFadesManual(bool on) { m_fadesManual = on; }
     bool fadesManual() const { return m_fadesManual; } // tests: only advanceFades moves them, not the frames
     // A snapshot gives a value of a layer its time ("timing": key → seconds, 0 at once) and its easing ("easing": key →
@@ -1220,6 +1221,18 @@ private:
     static bool isShowParam(const QString &path);
     std::vector<std::unique_ptr<Parameter>> m_showParams;
     QHash<QString, Parameter *> m_showParamIndex; // by path: an Internal interaction looks one up each frame
+    // The sequences that follow a clock (Sequencer: a step's timecode): each frame, their clock read, the steps it
+    // passed given their GO (render thread, lock held). Made again when the sequences change, each one keeping where
+    // its clock was.
+    struct SequenceClock {
+        quint64 sequence = 0, layer = 0;
+        QString param;
+        std::vector<std::pair<double, quint64>> cues; // (timecode, step's runtime id), by timecode
+        double last = std::numeric_limits<double>::quiet_NaN(); // the clock at the last frame (none yet)
+    };
+    std::vector<SequenceClock> m_sequenceClocks;
+    quint64 m_sequenceClocksRevision = ~0ULL;
+    void followSequenceClocks();
     quint64 m_showParamsKey = 0;
     void later(std::function<void()> f); // runs f on the engine's thread once the caller is done (any thread)
     struct InteractionFade {

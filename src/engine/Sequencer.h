@@ -13,6 +13,14 @@
 //  - Follow: the next step gets its GO once this one was triggered (pre-wait over), after the post-wait, without
 //    waiting for the action to end;
 //  - AutoFollow: the next step gets its GO once the action is over, after the post-wait.
+// A sequence can follow a clock: a value of the show in seconds (an audio or video layer's Playhead, a Timecode
+// generator's Position: internal, LTC, MTC, ATC). A step with a timecode gets its GO when that clock gets there, as a
+// tape plays the show (Engine::followSequenceClocks): each step passed on the way, in order; after a jump (a seek, a
+// rewind, a loop), only the last step at or before where it landed (it chases). The other steps wait for GO, or follow.
+// Tracking (a sequence's mode, on by default): a jump to a step that is not the next one (a step played from the list, OSC,
+// GO BACK, the timecode chasing) first plays at once what the steps before it would have left — from the last snapshot
+// before it, each preset at its end and each timeline told what to do, in order, as if each had had its GO one after the
+// other — then plays the step as usual. A step that starts another sequence is not played again then.
 // A snapshot recalled does not stop the ones still running: only the values it holds itself are taken over.
 //
 // The waits run on a clock thread of their own (the cue clock): a pre-wait or a follow ends on time even while the
@@ -65,6 +73,7 @@ public:
         quint64 runtimeId = 0; // stable across edits; assigned by Sequencer, not serialized
         quint64 preset = 0;
         quint64 sequence = 0; // starts this sequence from its first step; stable identity across edits/save/load
+        double at = -1;       // its timecode on the sequence's clock, in seconds (< 0: none)
     };
     // A step on its way: since its GO, through its pre-wait, its action, and until the next step's GO
     struct Run {
@@ -96,7 +105,10 @@ public:
         // Its steps' pre- and post-waits are in beats, at the tempo of the clock when the step is started (a tempo changed
         // during a wait is taken at the next step)
         bool beats = false;
+        bool tracking = true; // a jump plays first what the steps before it leave
         std::vector<Step> steps;
+        quint64 clockLayer = 0; // the clock its steps' timecodes are on: a value of the show (a layer's id, 0: the
+        QString clockParam;     // composition) in seconds, as "playhead" or "tc/position" (empty: none)
     };
 
     // What a recall replaced: given with a recall the cue clock made, for the interface's undo
@@ -214,6 +226,7 @@ private:
     void runClock(); // clock thread
     void tick();     // clock thread
     void fireSnapshot(quint64 snapshotId); // by its id: on the cue clock, an index may change meanwhile
+    void playAtOnce(const std::vector<Step> &steps); // tracking: steps played to their end now, in order
     void noteFired(double late); // lock held
 
     Engine &m_engine;

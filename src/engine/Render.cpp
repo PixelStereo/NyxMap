@@ -1252,6 +1252,7 @@ void Engine::frame(double dt)
         stepShowRecalls(m_realDt * k);
     }
     stepInteractions(m_realDt); // after the animations: a controller moved wins (its own time: it follows the hand)
+    followSequenceClocks();     // the steps a clock (a soundtrack's playhead, a timecode) got to: their GO
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on

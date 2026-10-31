@@ -49,7 +49,6 @@ public:
     void setQuiet(bool on) { m_quiet = on; } // tests: warnings in the status bar, no dialog
 
 protected:
-    bool event(QEvent *e) override;
     void showEvent(QShowEvent *e) override;
     void closeEvent(QCloseEvent *e) override;
     void dragEnterEvent(QDragEnterEvent *e) override;

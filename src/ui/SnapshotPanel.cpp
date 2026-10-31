@@ -392,6 +392,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     pbar->addWidget(m_presetGo);
     pv->addLayout(pbar);
     m_presets = new QTreeWidget;
+    m_presets->setObjectName(QStringLiteral("presetList"));
     m_presets->setColumnCount(3);
     m_presets->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_presets->setRootIsDecorated(false);
@@ -783,11 +784,11 @@ void SnapshotPanel::setMode(int mode)
     if (m_modeListStack->currentIndex() == mode && m_middle->currentIndex() == mode) return;
     m_modeListStack->setCurrentIndex(mode);
     m_middle->setCurrentIndex(mode);
-    m_detail->setVisible(mode == 0); // preset values are edited in their own middle pane
     if (mode == 0) {
         showInspector(selected());
     } else {
         showPreset();
+        showPresetDetail(m_presetValues->currentItem());
     }
     emit modeChanged(mode);
 }
@@ -979,7 +980,7 @@ void SnapshotPanel::refreshRows()
 }
 
 // The selected value: what the snapshot holds (editable), and how it gets there at the recall
-void SnapshotPanel::showDetail(QTreeWidgetItem *it)
+void SnapshotPanel::clearDetail()
 {
     while (QLayoutItem *item = m_detailLayout->takeAt(0)) {
         if (QWidget *w = item->widget()) w->deleteLater();
@@ -991,6 +992,11 @@ void SnapshotPanel::showDetail(QTreeWidgetItem *it)
         }
         delete item;
     }
+}
+
+void SnapshotPanel::showDetail(QTreeWidgetItem *it)
+{
+    clearDetail();
     auto hint = [this](const QString &t) {
         auto *l = new QLabel(t);
         l->setWordWrap(true);
@@ -1906,6 +1912,7 @@ QWidget *SnapshotPanel::buildPresetView()
     buttons->addWidget(m_presetDelete);
     v->addLayout(buttons);
     m_presetValues = new QTreeWidget;
+    m_presetValues->setObjectName(QStringLiteral("presetValues"));
     m_presetValues->setColumnCount(4);
     m_presetValues->setHeaderLabels({QStringLiteral("Layer / value"), QStringLiteral("Value"), QStringLiteral("Time"), QStringLiteral("Delay")});
     m_presetValues->setRootIsDecorated(true);
@@ -1963,6 +1970,12 @@ void SnapshotPanel::connectPresets()
         connect(del, &QShortcut::activated, this, removePreset);
     }
     connect(m_presetDelete, &QPushButton::clicked, this, removePreset);
+    connect(m_presetValues, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *it) {
+        if (m_filling) return;
+        m_presetCurrent = it ? qMakePair(it->data(0, IdRole).toULongLong(), it->data(0, KeyRole).toString())
+                             : qMakePair(quint64(0), QString());
+        showPresetDetail(it);
+    });
     connect(m_presets, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *it) {
         if (m_filling) return;
         const quint64 id = it ? it->data(0, PresetRole).toULongLong() : 0;
@@ -2273,7 +2286,204 @@ void SnapshotPanel::showPreset()
     }
     for (const auto &interaction : p.interactions)
         extra(0, QStringLiteral("@interaction/%1").arg(interaction.id), QStringLiteral("Interaction › ") + interaction.name, QStringLiteral("Complete definition"));
+    // The value shown on the right, selected again (its pane rebuilt, unless the edit came from it)
+    QTreeWidgetItem *current = nullptr;
+    for (QTreeWidgetItemIterator x(m_presetValues); *x && !m_presetCurrent.second.isEmpty(); ++x)
+        if ((*x)->data(0, IdRole).toULongLong() == m_presetCurrent.first && (*x)->data(0, KeyRole).toString() == m_presetCurrent.second)
+            current = *x;
+    if (current) m_presetValues->setCurrentItem(current);
     m_filling = false;
+    if (!m_presetDetailEditing && m_middle->currentIndex() == 1) showPresetDetail(current);
+}
+
+void SnapshotPanel::editPresetValue(quint64 layer, const QString &path, const QString &text, const QString &merge,
+                                    const std::function<void(Engine::PresetValue &)> &fn)
+{
+    const int i = selectedPreset();
+    if (i < 0) return;
+    const quint64 id = m_engine->preset(i).id;
+    m_presetDetailEditing = true;
+    cmd::editPresets(
+        m_undo, m_engine, text,
+        [&](std::vector<Engine::Preset> &all) {
+            for (Engine::Preset &p : all) {
+                if (p.id != id) continue;
+                const int k = p.indexOf(layer, path);
+                if (k >= 0) fn(p.values[size_t(k)]);
+            }
+        },
+        merge);
+    m_presetDetailEditing = false;
+    emit edited();
+}
+
+// A preset's value on the right, as a snapshot's: what it is set to (by the kind of value), its delay, how it gets
+// there (CUT, FOLLOW the preset's fade, or a TIME of its own) and its easing
+void SnapshotPanel::showPresetDetail(QTreeWidgetItem *it)
+{
+    clearDetail();
+    auto hint = [this](const QString &t) {
+        auto *l = new QLabel(t);
+        l->setWordWrap(true);
+        l->setStyleSheet("color:#888; font-size:11px;");
+        m_detailLayout->addWidget(l);
+    };
+    const int pi = selectedPreset();
+    const QString path = it ? it->data(0, KeyRole).toString() : QString();
+    if (pi < 0 || path.isEmpty() || path.startsWith(QLatin1Char('@'))) {
+        hint(QStringLiteral("Click a value of the preset to see it, change it, and choose how it gets there when the "
+                            "preset is recalled: CUT (at once), FOLLOW (the preset's fade) or a time of its own."));
+        m_detailLayout->addStretch();
+        return;
+    }
+    const quint64 layer = it->data(0, IdRole).toULongLong();
+    const Engine::Preset p = m_engine->preset(pi);
+    const int k = p.indexOf(layer, path);
+    if (k < 0) {
+        m_detailLayout->addStretch();
+        return;
+    }
+    const Engine::PresetValue v = p.values[size_t(k)];
+    ParamInfo info;
+    const bool known = m_engine->parameterInfo(layer, path, &info);
+    QStringList where{it->text(0)};
+    if (it->parent()) where.prepend(it->parent()->text(0));
+    auto *title = new QLabel(QStringLiteral("<b>%1</b>").arg(where.join(QStringLiteral(" › ")).toHtmlEscaped()));
+    title->setWordWrap(true);
+    m_detailLayout->addWidget(title);
+    const QString merge = QStringLiteral("presetDetail:%1:%2:").arg(layer).arg(path);
+    auto setValue = [this, layer, path, merge](const QJsonValue &value) {
+        editPresetValue(layer, path, QStringLiteral("Preset Value"), merge + QStringLiteral("value"),
+                        [&](Engine::PresetValue &x) { x.value = value; });
+    };
+
+    // The value
+    if (known && info.isNumber()) {
+        if (info.max - info.min < 1e5) {
+            auto *s = new SliderField;
+            s->setRange(info.min, info.max);
+            s->setDecimals(info.type == ParamInfo::Type::Int ? 0 : 3);
+            s->setSingleStep(info.step);
+            s->setValue(v.value.toDouble());
+            m_detailLayout->addWidget(s);
+            connect(s, &SliderField::editingFinished, this, [setValue](double x) { setValue(QJsonValue(x)); });
+        } else {
+            auto *b = new NumberBox;
+            b->setRange(info.lo, info.hi);
+            b->setDecimals(info.type == ParamInfo::Type::Int ? 0 : 3);
+            b->setSingleStep(info.step);
+            b->setKeyboardTracking(false);
+            b->setValue(v.value.toDouble());
+            m_detailLayout->addWidget(b);
+            connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setValue](double x) { setValue(QJsonValue(x)); });
+        }
+    } else if (known && info.type == ParamInfo::Type::Bool) {
+        auto *c = new FlagBox(info.name());
+        c->setChecked(v.value.toBool());
+        m_detailLayout->addWidget(c);
+        connect(c, &QCheckBox::toggled, this, [setValue](bool on) { setValue(QJsonValue(on)); });
+    } else if (known && info.type == ParamInfo::Type::Choice) {
+        auto *c = new QComboBox;
+        c->addItems(info.choices);
+        c->setCurrentIndex(std::max(0, int(info.choices.indexOf(v.value.toString()))));
+        m_detailLayout->addWidget(c);
+        connect(c, &QComboBox::textActivated, this, [setValue](const QString &key) { setValue(QJsonValue(key)); });
+    } else if (known && info.type == ParamInfo::Type::Text) {
+        auto *e = new QLineEdit(v.value.toString());
+        m_detailLayout->addWidget(e);
+        connect(e, &QLineEdit::editingFinished, this, [setValue, e] { setValue(QJsonValue(e->text())); });
+    } else {
+        auto *l = new QLabel(it->text(1));
+        l->setWordWrap(true);
+        m_detailLayout->addWidget(l);
+    }
+    hint(QStringLiteral("The preset changes, the composition does not, until the preset is recalled."));
+
+    // Its delay
+    auto *delay = new NumberBox;
+    delay->setObjectName(QStringLiteral("presetParameterDelay"));
+    delay->setRange(0.0, 600.0);
+    delay->setDecimals(2);
+    delay->setSingleStep(0.1);
+    delay->setSuffix(QStringLiteral(" s"));
+    delay->setKeyboardTracking(false);
+    delay->setToolTip(QStringLiteral("0: with the preset; otherwise it begins after this delay."));
+    delay->setValue(v.delay);
+    auto *delayRow = new QHBoxLayout;
+    delayRow->addWidget(new QLabel(QStringLiteral("Delay before execution")));
+    delayRow->addWidget(delay);
+    m_detailLayout->addLayout(delayRow);
+    connect(delay, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, layer, path, merge](double d) {
+        editPresetValue(layer, path, QStringLiteral("Preset Value Delay"), merge + QStringLiteral("delay"),
+                        [&](Engine::PresetValue &x) { x.delay = d; });
+    });
+
+    // How it gets there: a number through its values, a text typed in; a switch, a choice, at once
+    const bool fades = known && ((info.isNumber() && info.ramp != ParamInfo::Ramp::Cut) || info.ramp == ParamInfo::Ramp::Typed);
+    if (fades) {
+        auto *box = new QWidget;
+        auto *bv = new QVBoxLayout(box);
+        bv->setContentsMargins(0, 10, 0, 0);
+        bv->addWidget(new QLabel(info.ramp == ParamInfo::Ramp::Typed ? QStringLiteral("<b>Typing (typewriter)</b>")
+                                                                     : QStringLiteral("<b>Transition</b>")));
+        auto *row = new QHBoxLayout;
+        auto *group = new QButtonGroup(box);
+        const char *names[] = {"CUT", "FOLLOW", "TIME"};
+        const int mode = v.time < 0 ? 1 : v.time <= 0 ? 0 : 2;
+        for (int b = 0; b < 3; ++b) {
+            auto *button = new QPushButton(QString::fromLatin1(names[b]));
+            button->setCheckable(true);
+            button->setChecked(b == mode);
+            button->setStyleSheet(QStringLiteral("QPushButton:checked { background:%1; color:%2; font-weight:bold; }")
+                                      .arg(theme::css(), theme::onAccent().name()));
+            group->addButton(button, b);
+            row->addWidget(button);
+        }
+        auto *secs = new NumberBox;
+        secs->setRange(0.1, 600);
+        secs->setDecimals(1);
+        secs->setSingleStep(0.5);
+        secs->setSuffix(QStringLiteral(" s"));
+        secs->setKeyboardTracking(false);
+        secs->setValue(mode == 2 ? v.time : std::max(0.1, p.fade > 0 ? p.fade : 1.0));
+        secs->setEnabled(mode == 2);
+        row->addWidget(secs);
+        bv->addLayout(row);
+        auto *note = new QLabel(QStringLiteral("CUT: at once · FOLLOW: the preset's fade (%1 s) · TIME: its own time")
+                                    .arg(p.fade, 0, 'f', 1));
+        note->setWordWrap(true);
+        note->setStyleSheet("color:#888; font-size:11px;");
+        bv->addWidget(note);
+        auto setTime = [this, layer, path, merge](double t) {
+            editPresetValue(layer, path, QStringLiteral("Preset Value Time"), merge + QStringLiteral("time"),
+                            [&](Engine::PresetValue &x) { x.time = t; });
+        };
+        connect(group, &QButtonGroup::idClicked, this, [setTime, secs](int id) {
+            secs->setEnabled(id == 2);
+            setTime(id == 0 ? 0.0 : id == 1 ? -1.0 : secs->value());
+        });
+        connect(secs, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setTime](double t) { setTime(t); });
+
+        // Its easing: its own, or the default one
+        auto *curveRow = new QHBoxLayout;
+        auto *curve = new QComboBox;
+        curve->setObjectName(QStringLiteral("presetParameterEasing"));
+        const QStringList keys = Engine::easingKeys(), names2 = Engine::easingNames();
+        for (int c = 0; c < keys.size(); ++c) curve->addItem(names2[c], keys[c]);
+        const QString shown = keys.contains(v.easing) ? v.easing : Engine::defaultEasing(path);
+        curve->setCurrentIndex(std::max(0, int(keys.indexOf(shown))));
+        auto setEasing = [this, layer, path](const QString &key) {
+            editPresetValue(layer, path, QStringLiteral("Preset Easing"), QString(),
+                            [&](Engine::PresetValue &x) { x.easing = key; });
+        };
+        curveRow->addWidget(new ResetLabel(QStringLiteral("Easing"), [setEasing] { setEasing(QString()); }));
+        curveRow->addWidget(curve);
+        curveRow->addStretch();
+        bv->addLayout(curveRow);
+        connect(curve, qOverload<int>(&QComboBox::activated), this, [setEasing, curve] { setEasing(curve->currentData().toString()); });
+        m_detailLayout->addWidget(box);
+    }
+    m_detailLayout->addStretch();
 }
 
 void SnapshotPanel::recallPreset(int i)

@@ -9,6 +9,7 @@ class QListWidget;
 class QPushButton;
 class QTableWidget;
 class QCheckBox;
+class QToolButton;
 class QTimer;
 class QMenu;
 
@@ -103,6 +104,7 @@ class SequenceWindow : public QWidget
 {
     Q_OBJECT
 public:
+    QString proposedTimecode(int row) const; // what an empty Timecode cell offers when edited
     explicit SequenceWindow(Engine *engine, QWidget *parent = nullptr);
     void refresh();
     void setModified(bool on); // something changed since the current step was played
@@ -130,6 +132,8 @@ private:
     Engine *m_engine;
     QListWidget *m_sequences;
     QCheckBox *m_loop, *m_beats;
+    QCheckBox *m_tracking; // a jump plays first what the steps before it leave
+    QToolButton *m_clock;  // the clock its steps' timecodes are on
     class NumberBox *m_bpm;
     QPushButton *m_tap, *m_clockRun;
     QLabel *m_beatLabel;

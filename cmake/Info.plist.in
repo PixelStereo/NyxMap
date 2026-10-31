@@ -45,5 +45,46 @@
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Its projects: a double-click on a .nyxmap opens it in NyxMap -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NyxMap Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>${MACOSX_BUNDLE_ICON_FILE}</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>fr.nyxmap.project</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>fr.nyxmap.project</string>
+			<key>UTTypeDescription</key>
+			<string>NyxMap Project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>${MACOSX_BUNDLE_ICON_FILE}</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>nyxmap</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
