@@ -407,6 +407,7 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
 {
     m_layout = new QVBoxLayout(this);
     m_layout->setContentsMargins(8, 8, 8, 8);
+    buildPicker();
     m_multiNote = new QLabel;
     m_multiNote->setObjectName(QStringLiteral("multiSelectionNote"));
     m_multiNote->setWordWrap(true);
@@ -422,6 +423,103 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
         if (now != m_animated) QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
     });
     rebuild();
+}
+
+// The menu at the top of the inspector: every layer, group and viewport of the composition, in the order of the Layers list, a group's
+// members indented under it; picking one inspects it (the Layers list and the preview follow). ◀ ▶ step to the one before / after.
+void LayerInspector::buildPicker()
+{
+    auto *row = new QWidget;
+    row->setObjectName(QStringLiteral("layerPickerRow"));
+    auto *h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(4);
+    m_pickerPrev = toolButton(QStringLiteral("◀"), QStringLiteral("The layer before"));
+    m_pickerNext = toolButton(QStringLiteral("▶"), QStringLiteral("The layer after"));
+    m_pickerPrev->setObjectName(QStringLiteral("layerPickerPrev"));
+    m_pickerNext->setObjectName(QStringLiteral("layerPickerNext"));
+    m_picker = new QComboBox;
+    m_picker->setObjectName(QStringLiteral("layerPicker"));
+    m_picker->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_picker->setMinimumContentsLength(12);
+    m_picker->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_picker->setMaxVisibleItems(24);
+    m_picker->setToolTip(QStringLiteral("The layer, group or viewport inspected: pick another (the Layers list follows)"));
+    m_picker->setProperty("allowLocked", true);
+    h->addWidget(m_pickerPrev);
+    h->addWidget(m_picker, 1);
+    h->addWidget(m_pickerNext);
+    m_layout->addWidget(row);
+    connect(m_picker, qOverload<int>(&QComboBox::activated), this, [this](int k) {
+        const quint64 id = m_picker->itemData(k).toULongLong();
+        if (id && id != m_layerId) emit layerPickRequested(id);
+    });
+    auto step = [this](int delta) {
+        const int k = m_picker->currentIndex() + delta;
+        if (k < 0 || k >= m_picker->count()) return;
+        const quint64 id = m_picker->itemData(k).toULongLong();
+        if (id) emit layerPickRequested(id);
+    };
+    connect(m_pickerPrev, &QToolButton::clicked, this, [step] { step(-1); });
+    connect(m_pickerNext, &QToolButton::clicked, this, [step] { step(1); });
+    connect(m_engine, &Engine::layersChanged, this, [this] { QMetaObject::invokeMethod(this, &LayerInspector::refreshPicker, Qt::QueuedConnection); });
+    refreshPicker();
+}
+
+void LayerInspector::refreshPicker()
+{
+    if (!m_picker) return;
+    struct Entry {
+        quint64 id;
+        QString text;
+    };
+    std::vector<Entry> entries, viewports;
+    QString key = QString::number(m_layerId) + QLatin1Char('|');
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        std::map<quint64, const Layer *> byId;
+        for (int i = 0; i < m_engine->layerCount(); ++i)
+            if (const Layer *l = m_engine->layer(i)) byId[l->id] = l;
+        auto glyph = [](const Layer &l) -> QString {
+            if (l.isGroup) return QStringLiteral("▾ ");
+            switch (l.type) {
+            case SourceType::Video: return QStringLiteral("▶ ");
+            case SourceType::Image: return QStringLiteral("▣ ");
+            case SourceType::Audio: return QStringLiteral("♪ ");
+            case SourceType::Isf: return QStringLiteral("◇ ");
+            case SourceType::Text: return QStringLiteral("T ");
+            case SourceType::Input: return QStringLiteral("◉ ");
+            case SourceType::Layer: return QStringLiteral("↳ ");
+            default: return QStringLiteral("· ");
+            }
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *l = m_engine->layer(i);
+            if (!l) continue;
+            int depth = 0;
+            for (quint64 p = l->parent; p && depth < 8; ++depth) {
+                const auto up = byId.find(p);
+                p = up == byId.end() ? 0 : up->second->parent;
+            }
+            const QString indent = QString(depth * 2, QChar(0x2003)); // em spaces: a menu does not trim them
+            const Entry e{l->id, indent + (l->isViewport ? QStringLiteral("◫ ") : glyph(*l)) + (l->name.isEmpty() ? QStringLiteral("Untitled") : l->name)};
+            (l->isViewport ? viewports : entries).push_back(e);
+            key += QStringLiteral("%1:%2:%3;").arg(l->id).arg(depth).arg(e.text);
+        }
+    }
+    entries.insert(entries.end(), viewports.begin(), viewports.end()); // the viewports last
+    if (key == m_pickerKey) return;
+    m_pickerKey = key;
+    const QSignalBlocker block(m_picker);
+    m_picker->clear();
+    int current = -1;
+    for (const Entry &e : entries) {
+        if (e.id == m_layerId) current = m_picker->count();
+        m_picker->addItem(e.text, QVariant::fromValue<qulonglong>(e.id));
+    }
+    m_picker->setCurrentIndex(current);
+    m_pickerPrev->setEnabled(current > 0);
+    m_pickerNext->setEnabled(current >= 0 && current + 1 < m_picker->count());
 }
 
 std::pair<double, double> LayerInspector::limitsOf(const QString &path, double lo, double hi) const
@@ -455,6 +553,8 @@ void LayerInspector::setLayer(int index)
     }
     m_layer = index;
     rebuild();
+    m_pickerKey.clear(); // its current one is the layer shown now
+    refreshPicker();
 }
 
 void LayerInspector::setCoTargets(const QList<quint64> &ids)
@@ -3688,6 +3788,7 @@ void LayerInspector::refreshClock()
 
 void LayerInspector::refreshDynamic()
 {
+    refreshPicker(); // a layer renamed or moved by something else
     for (const auto &[field, key] : m_synthFields) {
         if (field && !field->isDragging() && !field->hasFocus()) {
             const QSignalBlocker block(field);

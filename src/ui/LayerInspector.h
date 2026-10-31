@@ -28,6 +28,7 @@ class QLineEdit;
 class RoiEditor;
 class ColorEditor;
 class QComboBox;
+class QToolButton;
 class QGroupBox;
 class ParamPanel;
 class ParamAnimPanel;
@@ -74,12 +75,18 @@ signals:
     void projectEdited();                  // saved interface state of the layer changed (not undoable)
     void kindChanged(const QString &kind); // "Layer", "Group" or "Viewport": the title of the tab
     void maskSelected(int index);          // the mask the preview edits (-1: none)
+    void layerPickRequested(quint64 id);   // the menu at the top: inspect this layer, group or viewport
     void maskDrawRequested();              // the preview draws a new mask point by point
     void lineDrawRequested();              // a Line generator: the preview draws a new line point by point
     // A Line generator: a pixel mapping fixture of that type on each of its lines, its pixels along it
     void lineFixturesRequested(const QString &typeId, int pixels);
 
 private:
+    void buildPicker();   // the menu at the top (made once)
+    void refreshPicker(); // its items follow the layers (added, renamed, moved), its current one the layer shown
+    QString m_pickerKey;
+    QPointer<QComboBox> m_picker;
+    QPointer<QToolButton> m_pickerPrev, m_pickerNext;
     QString layoutKey() const;
     QString m_layoutKey;
     QWidget *buildSource(const LayerValues &s);    // above the tabs: the drop zone, the transition, the speed

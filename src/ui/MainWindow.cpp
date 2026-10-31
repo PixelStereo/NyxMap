@@ -268,6 +268,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_controls = new ControlsPanel(m_engine, m_undo);
     m_leftTabs->addTab(m_controls, QStringLiteral("Controls"));
     connect(m_controls, &ControlsPanel::edited, this, &MainWindow::markDirty);
+    // The menu at the top of the inspector: the layer, group or viewport picked there is selected, as a click in the list does
+    connect(m_inspector, &LayerInspector::layerPickRequested, this, [this](quint64 id) {
+        const int index = m_engine->indexOfId(id);
+        if (index >= 0) selectLayer(index);
+    });
     m_logs = new LogPanel;
     m_leftTabs->addTab(m_logs, QStringLiteral("Logs"));
     // The Logs panel reads the events' ring (EventLog) a few times a second: no signal per message

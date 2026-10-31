@@ -191,6 +191,77 @@ int runAudioFxUiTests(Engine &engine)
         pump();
     }
 
+    // The menu at the top of the inspector: every layer, group and viewport; picking one asks for it, ◀ ▶ step
+    {
+        const int grouped = engine.addLayer("In the group");
+        const quint64 member = engine.layerId(grouped);
+        const int g = engine.addGroup("The Group");
+        const quint64 groupId = engine.layerId(g);
+        LayerTree tree = engine.structure();
+        for (TreeNode &n : tree)
+            if (n.id == member) n.parent = groupId;
+        engine.setStructure(tree);
+        inspector.setLayer(engine.indexOfId(id));
+        inspector.rebuild();
+        pump();
+        QComboBox *picker = nullptr;
+        for (auto *c : inspector.findChildren<QComboBox *>("layerPicker")) picker = c;
+        check(picker != nullptr, "the inspector has a menu at its top");
+        if (picker) {
+            check(picker->count() == engine.layerCount(), "it lists every layer, group and viewport");
+            check(picker->itemText(picker->currentIndex()).contains("Instrument") && picker->itemData(picker->currentIndex()).toULongLong() == id,
+                  "its current item is the layer inspected");
+            bool viewportsLast = true, seenViewport = false;
+            for (int k = 0; k < picker->count(); ++k) {
+                const bool isViewport = picker->itemText(k).contains("◫");
+                if (seenViewport && !isViewport) viewportsLast = false;
+                seenViewport |= isViewport;
+            }
+            check(viewportsLast, "the viewports come last");
+            bool indented = false;
+            for (int k = 0; k < picker->count(); ++k)
+                if (picker->itemText(k).contains("In the group")) indented = picker->itemText(k).startsWith(QChar(0x2003));
+            check(indented, "a group's member is indented under it");
+            quint64 asked = 0;
+            QObject::connect(&inspector, &LayerInspector::layerPickRequested, &inspector, [&](quint64 picked) { asked = picked; });
+            int other = picker->currentIndex() == 0 ? 1 : 0;
+            emit picker->activated(other);
+            check(asked == picker->itemData(other).toULongLong(), "picking an item asks for that layer");
+            asked = 0;
+            emit picker->activated(picker->currentIndex());
+            check(asked == 0, "picking the one already shown asks for nothing");
+            auto *next = inspector.findChild<QToolButton *>("layerPickerNext");
+            auto *prev = inspector.findChild<QToolButton *>("layerPickerPrev");
+            check(next && prev, "arrows to step");
+            if (next && prev) {
+                const int here = picker->currentIndex();
+                if (next->isEnabled()) {
+                    next->click();
+                    check(asked == picker->itemData(here + 1).toULongLong(), "▶ asks for the one after");
+                }
+                if (prev->isEnabled()) {
+                    prev->click();
+                    check(asked == picker->itemData(here - 1).toULongLong(), "◀ asks for the one before");
+                }
+            }
+            // A layer renamed by something else shows its new name
+            {
+                Engine::Lock lk(&engine.mutex());
+                engine.layer(engine.indexOfId(id))->name = "Renamed elsewhere";
+            }
+            inspector.refreshDynamic();
+            check(picker->itemText(picker->currentIndex()).contains("Renamed elsewhere"), "a rename elsewhere reaches the menu");
+            {
+                Engine::Lock lk(&engine.mutex());
+                engine.layer(engine.indexOfId(id))->name = "Instrument";
+            }
+            inspector.refreshDynamic();
+            if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty()) inspector.grab().save(QString::fromLocal8Bit(shots) + "/inspector-picker.png");
+        }
+        engine.removeLayer(engine.indexOfId(groupId));
+        engine.removeLayer(engine.indexOfId(member));
+    }
+
     // Media Bin: Video and Audio roots
     {
         MediaBin bin(&engine);
