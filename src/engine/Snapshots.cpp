@@ -1638,12 +1638,37 @@ double Engine::snapshotDuration(quint64 id) const
 QStringList Engine::interactionKeys()
 {
     // What it is first (its source, its target: a recall that makes it again sets them before its values)
-    QStringList keys{QStringLiteral("name"),          QStringLiteral("source/kind"),        QStringLiteral("source/key"),
-            QStringLiteral("source/midi/input"), QStringLiteral("source/midi/channel"), QStringLiteral("source/midi/message"),
-            QStringLiteral("source/midi/number"), QStringLiteral("source/osc/address"), QStringLiteral("source/osc/argument"),
-            QStringLiteral("source/internal"), QStringLiteral("source/audio/input"), QStringLiteral("source/audio/feature"),
-            QStringLiteral("source/audio/low"), QStringLiteral("source/audio/high"), QStringLiteral("target"), QStringLiteral("enable"),
-            QStringLiteral("master"),        QStringLiteral("takeover"),           QStringLiteral("filters")};
+    QStringList keys{QStringLiteral("name"),
+                     QStringLiteral("source/kind"),
+                     QStringLiteral("source/key"),
+                     QStringLiteral("source/midi/input"),
+                     QStringLiteral("source/midi/channel"),
+                     QStringLiteral("source/midi/message"),
+                     QStringLiteral("source/midi/number"),
+                     QStringLiteral("source/osc/address"),
+                     QStringLiteral("source/osc/argument"),
+                     QStringLiteral("source/internal"),
+                     QStringLiteral("source/audio/input"),
+                     QStringLiteral("source/audio/feature"),
+                     QStringLiteral("source/audio/low"),
+                     QStringLiteral("source/audio/high"),
+                     QStringLiteral("source/vision/layer"),
+                     QStringLiteral("source/vision/tap"),
+                     QStringLiteral("source/pixels/channel"),
+                     QStringLiteral("source/pixels/feature"),
+                     QStringLiteral("source/pixels/threshold"),
+                     QStringLiteral("source/pixels/roi/x"),
+                     QStringLiteral("source/pixels/roi/y"),
+                     QStringLiteral("source/pixels/roi/width"),
+                     QStringLiteral("source/pixels/roi/height"),
+                     QStringLiteral("source/hands/feature"),
+                     QStringLiteral("source/hands/index"),
+                     QStringLiteral("source/hands/confidence"),
+                     QStringLiteral("target"),
+                     QStringLiteral("enable"),
+                     QStringLiteral("master"),
+                     QStringLiteral("takeover"),
+                     QStringLiteral("filters")};
     const auto scalar = keys;
     for (const auto &key : scalar) if (key != QLatin1String("name") && key != QLatin1String("target"))
         keys << QStringLiteral("xy/y/") + key;

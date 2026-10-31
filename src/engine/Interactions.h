@@ -37,6 +37,8 @@
 // (its lock held) and sets the targets, as an animation does (the snapshots' fades let them go).
 
 #include "Anim.h"
+#include "HandTracking.h"
+#include "PixelAnalysis.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -45,8 +47,8 @@
 #include <deque>
 #include <optional>
 
-enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio };
-inline constexpr int kInteractionSourceCount = 5;
+enum class InteractionSource { Keyboard = 0, Midi, Osc, Internal, Audio, Pixels, Hands };
+inline constexpr int kInteractionSourceCount = 7;
 enum class InteractionFilter {
     Average = 0, WeightedAverage, PulseDetection, AttackRelease, Damper, // over time (as before: saved by these keys)
     Curve, Math, Clamp, Steps, Threshold, Delay, Speed, Remap, Toggle
@@ -157,6 +159,11 @@ struct Interaction {
     enum class AudioFeature { Band = 0, Level, Onset };
     AudioFeature audioFeature = AudioFeature::Band;
     bool audioInput = false;
+    PixelAnalysis::Settings pixels;
+    PixelAnalysis::Feature pixelFeature = PixelAnalysis::Feature::Mean;
+    HandTracking::Feature handFeature = HandTracking::Feature::Pinch;
+    int handIndex = 0;
+    double handConfidence = .7;
 
     // The target: a value of the show (a layer's id, 0: the composition) and its address
     quint64 layer = 0;
