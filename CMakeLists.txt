@@ -797,6 +797,13 @@ if(NYXMAP_TESTS)
   target_include_directories(nyxmap_interaction_actions_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_actions_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME interaction_actions_ui COMMAND nyxmap_interaction_actions_ui_test)
+  add_executable(nyxmap_animation_drivers_test test/animation_drivers.cpp src/ui/ParamAnimPanel.cpp
+    src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp
+    src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  target_include_directories(nyxmap_animation_drivers_test PRIVATE src/ui)
+  target_link_libraries(nyxmap_animation_drivers_test PRIVATE nyxmap_engine Qt6::Widgets)
+  add_test(NAME animation_drivers COMMAND nyxmap_animation_drivers_test)
+  set_tests_properties(animation_drivers PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_interaction_filters_ui_test test/interaction_filters_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
   target_include_directories(nyxmap_interaction_filters_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_filters_ui_test PRIVATE nyxmap_engine Qt6::Widgets)

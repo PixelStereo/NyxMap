@@ -2,6 +2,7 @@
 // clock; the sequences drive their transport.
 #include "EngineInternal.h"
 #include "Osc.h"
+#include <QUrl>
 
 #include <QJsonArray>
 #include <QRandomGenerator>
@@ -274,6 +275,7 @@ void Engine::setAnimation(int i, const Animation &a)
     {
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_animations.size())) return;
+        clearAnimationFilterHistory(0, m_animations[size_t(i)].id);
         Animation &x = m_animations[size_t(i)];
         const Animation old = x;
         x = a;
@@ -308,6 +310,7 @@ void Engine::removeAnimation(int i)
     {
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_animations.size())) return;
+        clearAnimationFilterHistory(0, m_animations[size_t(i)].id);
         m_animations.erase(m_animations.begin() + i);
     }
     emit animationsChanged();
@@ -335,6 +338,9 @@ void Engine::controlAnimation(quint64 id, AnimAction action, double time, AnimLo
 void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoop loop, int repeat, Layer *owner)
 {
     if (action == AnimAction::Play) resumeAfterStop();
+    if (action == AnimAction::Rewind || action == AnimAction::Stop || action == AnimAction::Seek ||
+        (action == AnimAction::Play && a->state == AnimState::Stopped))
+        clearAnimationFilterHistory(owner ? owner->id : 0, owner ? 0 : a->id);
     auto apply = [this, a, owner] {
         if (owner) applyLayerAnim(*owner, *a);
         else applyAnimation(*a);
@@ -401,20 +407,51 @@ void Engine::controlLocked(Animation *a, AnimAction action, double time, AnimLoo
     }
 }
 
-void Engine::applyAnimation(Animation &a)
+void Engine::clearAnimationFilterHistory(quint64 layer, quint64 animation)
+{
+    const QString prefix = QString::number(layer) + ":" + QString::number(animation) + ":";
+    for (auto it = m_animationFilters.begin(); it != m_animationFilters.end();) {
+        if (animation ? it.key().section(':', 1, 1).toULongLong() == animation : it.key().startsWith(prefix))
+            it = m_animationFilters.erase(it);
+        else
+            ++it;
+    }
+}
+
+double Engine::filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
+                                    double raw, double dt, double played)
+{
+    if (track.dataFilters.isEmpty() || !std::isfinite(raw)) return raw;
+    const QString key = QString::number(layer) + ":" + QString::number(animation) + ":" + path;
+    auto &state = m_animationFilters[key];
+    if (played < state.played) state.processor.reset();
+    state.played = played;
+    if (state.definition != track.dataFilters) {
+        state.config.filters = Interaction::filtersFromJson(QJsonObject{{"filters", track.dataFilters}});
+        state.definition = track.dataFilters;
+    }
+    state.processor.input(state.config, raw);
+    return state.processor.step(state.config, dt).value_or(raw);
+}
+
+void Engine::applyAnimation(Animation &a, double dt)
 {
     const double pos = a.position(), played = a.played();
     for (const AnimTrack &t : a.tracks) {
         if (!t.enabled || t.param.isEmpty() || t.event) continue;
         if (t.isPoint()) {
-            setAnimPoint(t, pos, played);
+            setAnimPoint(t, pos, played, a.id, dt);
             continue;
         }
         if (t.color) {
-            setAnimColor(t.layer, t.param, t.colorAt(pos));
+            auto rgb = t.colorAt(pos);
+            for (int c = 0; c < 3; ++c)
+                rgb[size_t(c)] = filterAnimationValue(t.layer, a.id, t.param + QString("/rgb%1").arg(c), t,
+                                                      rgb[size_t(c)], dt, played);
+            setAnimColor(t.layer, t.param, rgb);
             continue;
         }
-        const double v = t.valueAt(pos, played);
+        const double v = filterAnimationValue(t.layer, a.id, t.param, t, t.valueAt(pos, played), dt, played);
         if (std::isfinite(v) && setAnimParam(t.layer, t.param, v) && t.layer) releaseFromFades(t.layer, t.param);
     }
 }
@@ -425,10 +462,27 @@ void Engine::stepAnimations(double dt)
     // The layers' own numbers first: a timeline playing the same number wins
     for (auto &lp : m_layers) {
         Layer &l = *lp;
-        for (Animation &a : l.anims) {
+        // Modulators run before the animations they control, including nested amplitudes.
+        if (l.anims.empty()) continue;
+        std::vector<Animation *> ordered;
+        ordered.reserve(l.anims.size());
+        for (auto &a : l.anims)
+            ordered.push_back(&a);
+        auto depth = [](const Animation *a) {
+            QString path = a->tracks.empty() ? QString() : a->tracks.front().param;
+            int n = 0;
+            while (path.startsWith("animation/") && n < 32) {
+                path = QUrl::fromPercentEncoding(path.section('/', 1, 1).toLatin1());
+                ++n;
+            }
+            return n;
+        };
+        std::stable_sort(ordered.begin(), ordered.end(), [&](auto *a, auto *b) { return depth(a) > depth(b); });
+        for (Animation *entry : ordered) {
+            Animation &a = *entry;
             if (a.state != AnimState::Playing || a.tracks.empty() || !a.tracks.front().enabled) continue;
             const bool going = a.advance(dt);
-            applyLayerAnim(l, a);
+            applyLayerAnim(l, a, dt);
             if (!going) { // over: its last values stay
                 a.state = AnimState::Stopped;
                 a.clock = 0;
@@ -441,7 +495,7 @@ void Engine::stepAnimations(double dt)
         if (a.state != AnimState::Playing) continue;
         const double from = a.clock;
         const bool going = a.advance(dt);
-        applyAnimation(a);
+        applyAnimation(a, dt);
         fireAnimationEvents(a, from, a.clock, false);
         if (!going) { // over: its last values stay
             a.state = AnimState::Stopped;
@@ -577,8 +631,13 @@ std::vector<ParamInfo> Engine::parameters(quint64 layer) const
         if (l->id == layer) list = &l->parameters();
     if (list)
         for (const Parameter *p : *list) out.push_back(p->info());
-    if (!layer)
+    if (!layer) {
         for (const auto &p : self->showParams()) out.push_back(p->info());
+        for (const auto &p : self->interactionParams())
+            out.push_back(p->info());
+        for (const auto &p : self->fixtureParams())
+            out.push_back(p->info());
+    }
     return out;
 }
 
@@ -588,16 +647,6 @@ std::vector<Engine::AnimParam> Engine::animatableParams(quint64 layer) const
     std::vector<AnimParam> out;
     for (const ParamInfo &i : parameters(layer))
         if (i.animatable) out.push_back(i);
-    // Interactions are addressed alongside composition values, but remain a separate stored category.
-    if (!layer) for (const auto &p : const_cast<Engine *>(this)->interactionParams()) {
-        const auto info = p->info();
-        if (info.animatable) out.push_back(info);
-    }
-    // So are the fixtures' intensities (the pixel mapping)
-    if (!layer) for (const auto &p : const_cast<Engine *>(this)->fixtureParams()) {
-        const auto info = p->info();
-        if (info.animatable) out.push_back(info);
-    }
     return out;
 }
 
@@ -691,7 +740,7 @@ std::vector<Engine::AnimParam> Engine::animatablePoints(quint64 layer) const
     return out;
 }
 
-bool Engine::setAnimPoint(const AnimTrack &track, double position, double played)
+bool Engine::setAnimPoint(const AnimTrack &track, double position, double played, quint64 animation, double dt)
 {
     if (!track.isPoint()) return false;
     for (const auto &l : m_layers) if (l->id == track.layer && l->locked) return false;
@@ -699,7 +748,10 @@ bool Engine::setAnimPoint(const AnimTrack &track, double position, double played
     std::array<double, 2> values{};
     for (int c = 0; c < 2; ++c) {
         params[size_t(c)] = findParameter(track.layer, track.param + (c ? "/y" : "/x"));
-        values[size_t(c)] = track.axes[size_t(c)].enabled ? track.axes[size_t(c)].valueAt(position, played) : 0;
+        const auto &axis = track.axes[size_t(c)];
+        values[size_t(c)] = axis.enabled ? filterAnimationValue(track.layer, animation, track.param + (c ? "/y" : "/x"),
+                                                                axis, axis.valueAt(position, played), dt, played)
+                                         : 0;
         const auto *p = params[size_t(c)];
         if (!p || !p->animatable() || p->info().pointComponent != c || !std::isfinite(values[size_t(c)])) return false;
     }
@@ -865,20 +917,24 @@ QString Engine::shaderPrefix(quint64 layer, int slot) const
 // ---------------------------------------------------------------------------
 // The animations of a layer's numbers
 
-void Engine::applyLayerAnim(Layer &l, Animation &a)
+void Engine::applyLayerAnim(Layer &l, Animation &a, double dt)
 {
     if (a.tracks.empty()) return;
     const AnimTrack &t = a.tracks.front();
     if (!t.enabled || t.param.isEmpty()) return;
     if (t.isPoint()) {
-        setAnimPoint(t, a.position(), a.played());
+        setAnimPoint(t, a.position(), a.played(), 0, dt);
         return;
     }
     if (t.color) {
-        setAnimColor(l.id, t.param, t.colorAt(a.position()));
+        auto rgb = t.colorAt(a.position());
+        for (int c = 0; c < 3; ++c)
+            rgb[size_t(c)] =
+                filterAnimationValue(l.id, 0, t.param + QString("/rgb%1").arg(c), t, rgb[size_t(c)], dt, a.played());
+        setAnimColor(l.id, t.param, rgb);
         return;
     }
-    const double v = t.valueAt(a.position(), a.played());
+    const double v = filterAnimationValue(l.id, 0, t.param, t, t.valueAt(a.position(), a.played()), dt, a.played());
     Parameter *p = l.parameter(t.param);
     if (std::isfinite(v) && p && p->setNumber(v)) releaseFromFades(l.id, t.param);
 }
@@ -922,6 +978,7 @@ bool Engine::layerAnim(quint64 layer, const QString &param, Animation *a) const
 
 void Engine::assignLayerAnims(Layer &l, const std::vector<Animation> &anims)
 {
+    clearAnimationFilterHistory(l.id, 0);
     std::vector<Animation> old = std::move(l.anims);
     l.anims.clear();
     for (const Animation &in : anims) {
@@ -986,6 +1043,7 @@ void Engine::restoreLayerAnims(quint64 layer, std::vector<Animation> anims)
                 restored.folded = shown->folded;
             }
         }
+        clearAnimationFilterHistory(layer, 0);
         current = std::move(anims);
     }
     emit layerAnimsChanged(layer);
@@ -1192,6 +1250,7 @@ Engine::AnimLoop animLoopFromKey(const QString &k) { return Engine::AnimLoop(key
 // [t, v, curve, "current", {"in": [dt, dv], "out": [dt, dv]}] (all but t and v when they matter) and its oscillator
 static void trackToJson(const AnimTrack &t, QJsonObject &o)
 {
+    if (!t.dataFilters.isEmpty()) o["data_filters"] = t.dataFilters;
     if (t.isPoint()) {
         o["type"] = QStringLiteral("point2d");
         if (!t.enabled) o["enable"] = false;
@@ -1249,6 +1308,7 @@ static void trackToJson(const AnimTrack &t, QJsonObject &o)
 
 static void trackFromJson(AnimTrack &t, const QJsonObject &o, double duration)
 {
+    t.dataFilters = o.value("data_filters").toArray();
     t.axes.clear();
     if (o.value("type").toString() == QLatin1String("point2d")) {
         t.color = false;

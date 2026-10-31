@@ -1,7 +1,8 @@
 // The parameters a layer instantiates (Layer::parameters)
+#include "AnimationDrivers.h"
+#include "ColorInfo.h"
 #include "EngineInternal.h"
 #include "Osc.h"
-#include "ColorInfo.h"
 
 #include <QHash>
 #include <cmath>
@@ -51,6 +52,20 @@ quint64 keyOf(const Layer &l)
         mix(qHash(fx->name()));
         inputs(fx.get());
     }
+    for (const auto &a : l.anims)
+        if (!a.tracks.empty()) {
+            const auto &t = a.tracks.front();
+            mix(qHash(t.param));
+            mix(t.axes.size());
+            auto filters = [&](const AnimTrack &track) {
+                mix(track.dataFilters.size());
+                for (const auto &v : track.dataFilters)
+                    mix(qHash(v.toObject().value("type").toString()));
+            };
+            filters(t);
+            for (const auto &axis : t.axes)
+                filters(axis);
+        }
     return h;
 }
 
@@ -726,6 +741,123 @@ const std::vector<Parameter *> &Layer::parameters()
     const QStringList segs = osc::uniqueSegments(names);
     for (size_t k = 0; k < effects.size(); ++k)
         shader(*effects[k], QStringLiteral("fx/%1/").arg(segs[int(k)]), QStringLiteral("FX › %1").arg(effects[k]->name()), true);
+
+    // Look up the owner each time: editing a card can reallocate the animation vector.
+    for (const auto &animation : anims)
+        if (!animation.tracks.empty()) {
+            const auto &root = animation.tracks.front();
+            const QString target = root.param;
+            auto findAnimation = [self, target]() -> Animation * {
+                for (auto &a : self->anims)
+                    if (!a.tracks.empty() && a.tracks.front().param == target) return &a;
+                return nullptr;
+            };
+            const QString transport = animationDriverPrefix(target);
+            for (bool speed : {false, true}) {
+                num(
+                    transport + (speed ? "speed" : "duration"),
+                    QStringLiteral("Animation › %1 › %2").arg(target, speed ? "Speed" : "Duration (s)"),
+                    speed ? 0 : .05, speed ? 10 : 60, speed ? 1 : 4,
+                    [findAnimation, speed] {
+                        auto *a = findAnimation();
+                        return a ? (speed ? a->speed : a->duration) : 0;
+                    },
+                    [findAnimation, speed](double v) {
+                        if (auto *a = findAnimation()) (speed ? a->speed : a->duration) = v;
+                    })
+                    .limits(speed ? 0 : .05, speed ? 10 : 3600)
+                    .animatable();
+            }
+            for (int axis = -1; axis < int(root.axes.size()); ++axis) {
+                if (root.isPoint() && axis < 0) continue;
+                const auto &track = axis < 0 ? root : root.axes[size_t(axis)];
+                if (track.event) continue;
+                const QString prefix = animationDriverPrefix(target, axis);
+                const QString title =
+                    QStringLiteral("Animation › %1%2 › ").arg(target, axis < 0 ? QString() : (axis ? " Y" : " X"));
+                auto find = [self, target, axis] { return animationDriverTrack(self->anims, target, axis); };
+                double lo = 0, hi = 1;
+                const QString driven = axis < 0 ? target : target + (axis ? "/y" : "/x");
+                for (const auto &p : paramStore)
+                    if (p->path() == driven) {
+                        lo = p->info().min;
+                        hi = p->info().max;
+                        break;
+                    }
+                const double span = std::max(1e-6, hi - lo);
+                struct Field {
+                    const char *key;
+                    const char *label;
+                    double AnimTrack::*member;
+                    double lo, hi, def;
+                };
+                const Field fields[] = {{"period", "Period (s)", &AnimTrack::period, .01, 10, 1},
+                                        {"center", "Center", &AnimTrack::center, lo, hi, (lo + hi) / 2},
+                                        {"amplitude", "Amplitude", &AnimTrack::amplitude, 0, span, span / 2},
+                                        {"phase", "Phase", &AnimTrack::phase, 0, 1, 0}};
+                for (const auto &field : fields)
+                    num(
+                        prefix + "wave/" + field.key, title + field.label, field.lo, field.hi, field.def,
+                        [find, field] {
+                            auto *t = find();
+                            return t ? t->*(field.member) : field.def;
+                        },
+                        [find, field](double v) {
+                            if (auto *t = find()) t->*(field.member) = v;
+                        })
+                        .limits(field.member == &AnimTrack::period ? .001 : -1e9, 1e9)
+                        .animatable();
+                for (int k = 0; k < track.dataFilters.size(); ++k) {
+                    const auto stage = InteractionStage::fromJson(track.dataFilters[k].toObject());
+                    const QString fp = prefix + QStringLiteral("filters/%1/").arg(k + 1);
+                    const QString label =
+                        title + QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(interactionFilterName(stage.kind));
+                    auto get = [find, k] {
+                        auto *t = find();
+                        return t && k < t->dataFilters.size() ? t->dataFilters[k].toObject() : QJsonObject();
+                    };
+                    auto set = [find, k](const QString &key, const QJsonValue &value) {
+                        if (auto *t = find(); t && k < t->dataFilters.size()) {
+                            auto o = t->dataFilters[k].toObject();
+                            o[key] = value;
+                            t->dataFilters[k] = o;
+                        }
+                    };
+                    add(fp + "enable", label + "On", T::Bool)
+                        .byDefault(true)
+                        .bind([get] { return QVariant(get().value("enabled").toBool(true)); },
+                              [set](const QVariant &v) { set("enabled", v.toBool()); });
+                    if (stage.kind == InteractionFilter::Math) {
+                        QStringList ops;
+                        for (int n = 0; n < kMathOpCount; ++n)
+                            ops << mathOpName(MathOp(n));
+                        add(fp + "operation", label + "Operation", T::Choice)
+                            .choices(ops)
+                            .byDefault(ops[int(MathOp::Multiply)])
+                            .bind([get, ops] { return QVariant(ops[int(InteractionStage::fromJson(get()).op)]); },
+                                  [find, k, ops](const QVariant &value) {
+                                      auto *t = find();
+                                      const int op = ops.indexOf(value.toString());
+                                      if (!t || k >= t->dataFilters.size() || op < 0) return;
+                                      auto f = InteractionStage::fromJson(t->dataFilters[k].toObject());
+                                      f.op = MathOp(op);
+                                      t->dataFilters[k] = f.toJson();
+                                  });
+                    }
+                    for (int w = 0; w < kFilterSettingCount; ++w) {
+                        const auto setting = interactionFilterSetting(stage.kind, w);
+                        if (setting.name.isEmpty()) continue;
+                        const QString key(QChar('a' + w));
+                        num(
+                            fp + key, label + setting.name, setting.min, setting.max, setting.def,
+                            [get, key, setting] { return get().value(key).toDouble(setting.def); },
+                            [set, key](double v) { set(key, v); })
+                            .limits(-1e9, 1e9)
+                            .animatable();
+                    }
+                }
+            }
+        }
 
     paramIndex.clear();
     for (auto &p : paramStore) {

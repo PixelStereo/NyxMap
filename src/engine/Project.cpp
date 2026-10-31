@@ -93,6 +93,7 @@ void Engine::clearProject()
         m_nextControlId = 1;
         ++m_controlsRevision;
         m_animations.clear();
+        m_animationFilters.clear();
         m_nextAnimationId = 1;
         m_fades.clear();
         m_deferredRecall.clear();
