@@ -62,7 +62,7 @@ Stack them in layers and groups, blend them, add effects and correct the colour.
 </p>
 
 - **Snapshots** capture the whole scene; **presets** recall only what you choose.
-- **Sequences** chain your cues with waits, fades and auto-follow. One GO, and the show runs.
+- **Sequences** chain your cues with waits, fades and auto-follow. One GO, and the show runs — or put the steps on a **timecode**: a soundtrack's playhead, LTC, MTC or ATC plays them on time.
 - **Timelines** animate any parameter with Bézier keys, waveforms and colour gradients.
 - Each value gets **its own fade and easing**, so transitions look exactly as intended.
 

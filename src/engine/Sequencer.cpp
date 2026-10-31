@@ -925,10 +925,12 @@ QJsonArray Sequencer::toJson() const
             if (st.preWait > 0) o["pre_wait"] = st.preWait;
             if (st.postWait > 0) o["post_wait"] = st.postWait;
             if (st.next != StepContinue::Wait) o["continue"] = st.next == StepContinue::Follow ? "follow" : "auto_follow";
+            if (st.at >= 0) o["at"] = st.at;
             steps.append(o);
         }
-        out.append(QJsonObject{{"id", QString::number(m_sequenceIds[size_t(out.size())])},
-                               {"name", s.name}, {"loop", s.loop}, {"steps", steps}});
+        QJsonObject so{{"id", QString::number(m_sequenceIds[size_t(out.size())])}, {"name", s.name}, {"loop", s.loop}, {"steps", steps}};
+        if (!s.clockParam.isEmpty()) so["timecode"] = QJsonObject{{"layer", QString::number(s.clockLayer)}, {"param", s.clockParam}};
+        out.append(so);
     }
     return out;
 }
@@ -954,6 +956,9 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
         Sequence s;
         s.name = o.value("name").toString();
         s.loop = o.value("loop").toBool(false);
+        const QJsonObject clock = o.value("timecode").toObject();
+        s.clockLayer = clock.value("layer").toString().toULongLong();
+        s.clockParam = clock.value("param").toString();
         for (const QJsonValue &sv : o.value("steps").toArray()) {
             const QJsonObject so = sv.toObject();
             Step st;
@@ -980,6 +985,8 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
             st.postWait = std::clamp(so.value("post_wait").toDouble(0), 0.0, 3600.0);
             const QString c = so.value("continue").toString();
             st.next = c == "follow" ? StepContinue::Follow : c == "auto_follow" ? StepContinue::AutoFollow : StepContinue::Wait;
+            const double at = so.value("at").toDouble(-1);
+            st.at = std::isfinite(at) && at >= 0 ? at : -1;
             s.steps.push_back(st);
         }
         m_sequences.push_back(s);

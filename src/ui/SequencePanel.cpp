@@ -95,6 +95,29 @@ static const QColor kPreWait(224, 180, 58);  // waiting before the snapshot
 static const QColor kPostWait(86, 156, 230); // waiting before the next step's GO
 
 // Seconds as the cue list shows them: 2.5 · 1:05.0
+// A step's timecode as shown: minutes, seconds and hundredths ("1:02.35"); none: empty
+static QString timecodeText(double t)
+{
+    if (t < 0) return QString();
+    const int m = int(t / 60);
+    return QStringLiteral("%1:%2").arg(m).arg(t - m * 60, 5, 'f', 2, QLatin1Char('0'));
+}
+
+// A timecode as typed: seconds ("12.35"), minutes:seconds ("1:02.35"), hours:minutes:seconds; empty: none (-1)
+static double parseTimecode(const QString &text)
+{
+    const QStringList parts = text.trimmed().split(QLatin1Char(':'));
+    if (text.trimmed().isEmpty() || parts.size() > 3) return -1;
+    double t = 0;
+    for (const QString &part : parts) {
+        bool ok = false;
+        const double v = QString(part).replace(QLatin1Char(','), QLatin1Char('.')).toDouble(&ok);
+        if (!ok || v < 0) return -1;
+        t = t * 60 + v;
+    }
+    return t;
+}
+
 static QString seconds(double t)
 {
     if (!std::isfinite(t)) return QStringLiteral("∞");
@@ -564,7 +587,7 @@ void SequenceBar::refresh()
 // SequenceWindow
 // ---------------------------------------------------------------------------
 
-enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColNext, ColText, ColDescription, ColCount };
+enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColNext, ColText, ColDescription, ColAt, ColCount };
 
 // The time columns (pre-wait, action, post-wait) filling as their time goes by, the continuation as a word;
 // the waits are edited with the app's number field, the continuation with a menu
@@ -725,6 +748,17 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     left->addLayout(sb);
     m_loop = new FlagBox(QStringLiteral("Loop: GO on the last step plays the first"));
     left->addWidget(m_loop);
+    // The clock it follows: its steps with a timecode get their GO when it gets there
+    m_clock = new QToolButton;
+    m_clock->setObjectName(QStringLiteral("sequenceClock"));
+    m_clock->setPopupMode(QToolButton::InstantPopup);
+    m_clock->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_clock->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_clock->setToolTip(QStringLiteral("The clock the steps' timecodes are read on: a soundtrack's or a video's playhead, "
+                                       "a Timecode generator (internal, LTC, MTC, ATC). A step with a timecode gets its "
+                                       "GO when the clock gets there; after a jump, the last step before it plays."));
+    m_clock->setMenu(new QMenu(m_clock));
+    left->addWidget(m_clock);
     h->addLayout(left, 1);
 
     // Steps
@@ -737,7 +771,10 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     m_steps = new QTableWidget(0, ColCount);
     m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre-wait"),
                                         QStringLiteral("Action"), QStringLiteral("Post-wait"), QStringLiteral("Continue"),
-                                        QStringLiteral("Comment"), QStringLiteral("Description")});
+                                        QStringLiteral("Comment"), QStringLiteral("Description"), QStringLiteral("Timecode")});
+    m_steps->horizontalHeaderItem(ColAt)->setToolTip(
+        QStringLiteral("When the sequence's clock (below the sequences) gets there, the step gets its GO\n"
+                       "Seconds, or minutes:seconds (1:02.35); empty: none, the step waits for GO or follows"));
     m_steps->horizontalHeaderItem(ColPre)->setToolTip(QStringLiteral("Seconds between the step's GO and its snapshot"));
     m_steps->horizontalHeaderItem(ColAction)->setToolTip(QStringLiteral("The snapshot's time: its fade, or the longest time of its own values\n"
                                                                          "A timeline played: the time it plays, when it ends (endless: 0)"));
@@ -754,6 +791,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     for (int c : {ColPre, ColAction, ColPost}) m_steps->setColumnWidth(c, 70);
     m_steps->setColumnWidth(ColNext, 138);
     m_steps->horizontalHeader()->moveSection(ColNext, 2); // beside the target, visible before timing/comment columns
+    m_steps->horizontalHeader()->moveSection(m_steps->horizontalHeader()->visualIndex(ColAt), 1); // first: when it plays
+    m_steps->setColumnWidth(ColAt, 76);
     m_steps->verticalHeader()->setDefaultSectionSize(32);
     m_steps->verticalHeader()->setVisible(false);
     m_steps->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -835,6 +874,34 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         m_engine->sequencer().remove(current());
         emit edited();
     });
+    connect(m_clock->menu(), &QMenu::aboutToShow, this, [this, current] {
+        QMenu *menu = m_clock->menu();
+        menu->clear();
+        if (current() < 0) return;
+        auto choose = [this, current](quint64 layer, const QString &param) {
+            Sequencer::Sequence s = m_engine->sequencer().sequence(current());
+            s.clockLayer = layer;
+            s.clockParam = param;
+            m_engine->sequencer().setSequence(current(), s);
+            emit edited();
+        };
+        menu->addAction(QStringLiteral("None"), this, [choose] { choose(0, QString()); });
+        menu->addSeparator();
+        // The values that tell a time: a media's playhead, a Timecode generator's position
+        std::vector<std::pair<quint64, QString>> layers;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            for (int i = 0; i < m_engine->layerCount(); ++i)
+                if (const Layer *l = m_engine->layer(i); l && !l->isGroup) layers.emplace_back(l->id, l->name);
+        }
+        for (const auto &[id, name] : layers)
+            for (const char *path : {"playhead", "tc/position"}) {
+                ParamInfo info;
+                if (m_engine->parameterInfo(id, QString::fromLatin1(path), &info))
+                    menu->addAction(QStringLiteral("%1 › %2").arg(name, info.label.section(QStringLiteral(" › "), -1)), this,
+                                    [choose, id, path] { choose(id, QString::fromLatin1(path)); });
+            }
+    });
     connect(m_loop, &QCheckBox::toggled, this, [this, current](bool on) {
         if (m_filling || current() < 0) return;
         Sequencer::Sequence s = m_engine->sequencer().sequence(current());
@@ -850,6 +917,12 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         switch (it->column()) {
         case ColText: st.text = it->text(); break;
         case ColDescription: st.description = it->text(); break;
+        case ColAt: {
+            st.at = parseTimecode(it->text());
+            const QSignalBlocker blocker(m_steps);
+            it->setText(timecodeText(st.at)); // as it is read
+            break;
+        }
         case ColPre: st.preWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
         case ColPost: st.postWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
         case ColNext: {
@@ -1074,7 +1147,21 @@ void SequenceWindow::refresh()
     m_sequences->setCurrentRow(cur);
     const Sequencer::Sequence s = m_engine->sequencer().sequence(cur);
     m_loop->setChecked(s.loop);
-    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
+    QString clock = QStringLiteral("none");
+    if (!s.clockParam.isEmpty()) {
+        ParamInfo info;
+        QString owner = QStringLiteral("Composition");
+        if (s.clockLayer) {
+            Engine::Lock lk(&m_engine->mutex());
+            const Layer *l = m_engine->layer(m_engine->indexOfId(s.clockLayer));
+            owner = l ? l->name : QStringLiteral("?");
+        }
+        clock = m_engine->parameterInfo(s.clockLayer, s.clockParam, &info)
+                    ? QStringLiteral("%1 › %2").arg(owner, info.label.section(QStringLiteral(" › "), -1))
+                    : QStringLiteral("%1 (gone)").arg(s.clockParam);
+    }
+    m_clock->setText(QStringLiteral("Timecode: %1").arg(clock));
+    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_clock, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
         w->setEnabled(cur >= 0);
     const int keep = m_steps->currentRow();
     m_steps->setRowCount(int(s.steps.size()));
@@ -1114,6 +1201,9 @@ void SequenceWindow::refresh()
         m_steps->setItem(k, ColNext, next);
         m_steps->setItem(k, ColText, text);
         m_steps->setItem(k, ColDescription, new QTableWidgetItem(st.description));
+        auto *at = new QTableWidgetItem(timecodeText(st.at));
+        at->setTextAlignment(Qt::AlignVCenter | Qt::AlignRight);
+        m_steps->setItem(k, ColAt, at);
         if (k == pos) { // the step played: green, orange once something changed since
             const QColor c = m_modified ? QColor(QString::fromLatin1(kChanged)) : kLive;
             num->setText(QStringLiteral("▶ %1").arg(k + 1));

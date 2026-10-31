@@ -9,6 +9,7 @@ class QListWidget;
 class QPushButton;
 class QTableWidget;
 class QCheckBox;
+class QToolButton;
 class QTimer;
 class QMenu;
 
@@ -130,6 +131,7 @@ private:
     Engine *m_engine;
     QListWidget *m_sequences;
     QCheckBox *m_loop;
+    QToolButton *m_clock; // the clock its steps' timecodes are on
     QTableWidget *m_steps;
     QLabel *m_status; // the step played, and whether something changed since
     bool m_modified = false;

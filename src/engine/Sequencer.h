@@ -13,6 +13,10 @@
 //  - Follow: the next step gets its GO once this one was triggered (pre-wait over), after the post-wait, without
 //    waiting for the action to end;
 //  - AutoFollow: the next step gets its GO once the action is over, after the post-wait.
+// A sequence can follow a clock: a value of the show in seconds (an audio or video layer's Playhead, a Timecode
+// generator's Position: internal, LTC, MTC, ATC). A step with a timecode gets its GO when that clock gets there, as a
+// tape plays the show (Engine::followSequenceClocks): each step passed on the way, in order; after a jump (a seek, a
+// rewind, a loop), only the last step at or before where it landed (it chases). The other steps wait for GO, or follow.
 // A snapshot recalled does not stop the ones still running: only the values it holds itself are taken over.
 //
 // The waits run on a clock thread of their own (the cue clock): a pre-wait or a follow ends on time even while the
@@ -62,6 +66,7 @@ public:
         quint64 runtimeId = 0; // stable across edits; assigned by Sequencer, not serialized
         quint64 preset = 0;
         quint64 sequence = 0; // starts this sequence from its first step; stable identity across edits/save/load
+        double at = -1;       // its timecode on the sequence's clock, in seconds (< 0: none)
     };
     // A step on its way: since its GO, through its pre-wait, its action, and until the next step's GO
     struct Run {
@@ -91,6 +96,8 @@ public:
         QString name;
         bool loop = false; // GO on the last step goes to the first
         std::vector<Step> steps;
+        quint64 clockLayer = 0; // the clock its steps' timecodes are on: a value of the show (a layer's id, 0: the
+        QString clockParam;     // composition) in seconds, as "playhead" or "tc/position" (empty: none)
     };
 
     // What a recall replaced: given with a recall the cue clock made, for the interface's undo
