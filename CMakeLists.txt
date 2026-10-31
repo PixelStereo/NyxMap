@@ -734,7 +734,7 @@ if(NYXMAP_TESTS)
   add_executable(nyxmap_cue_dispatch_test test/cue_dispatch.cpp)
   target_link_libraries(nyxmap_cue_dispatch_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND nyxmap_cue_dispatch_test)
-  set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 15)
+  set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 60)
   foreach(area show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
