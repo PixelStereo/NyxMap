@@ -33,6 +33,8 @@ class ParamPanel;
 class ParamAnimPanel;
 class AnimateMenu;
 class QTabWidget;
+class FxChainPanel;
+class LevelMeter;
 class ViewportOutputPanel;
 
 // Inspector for the selected layer, group or viewport: at the top, always shown, its source (drop zone, transport,
@@ -81,9 +83,16 @@ private:
     QString layoutKey() const;
     QString m_layoutKey;
     QWidget *buildSource(const LayerValues &s);    // above the tabs: the drop zone, the transition, the speed
-    QWidget *buildAudioEffects();
+    QWidget *buildAudioEffects();   // the Audio FX tab (the FX tab's mechanism, for the sound)
+    void showAudioEffectParams();  // the parameters of the selected audio FX, swapped without rebuilding the list
     void editAudioEffects(const QJsonArray &after, const QString &text);
-    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFXFields;
+    void refreshAudioMeters();
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFXFields; // the chain's (master switch)
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFxDetail; // the selected FX's parameters
+    QPointer<FxChainPanel> m_audioChain;
+    int m_selectedAudioFx = 0;
+    QPointer<QLabel> m_sonificationSwatch; // the color a Video Sonification instrument sees
+    QPointer<LevelMeter> m_audioSourceMeter, m_audioOutputMeter, m_audioFxMeter;
     QWidget *buildSourceTab(const LayerValues &s); // the Source tab
     QWidget *buildViewports(const LayerValues &s); // the Viewports tab: how much of it each one shows
     void useLayer(int row, const std::vector<std::pair<quint64, QString>> &candidates); // a layer dropped on the source
@@ -149,7 +158,7 @@ private:
     };
     std::vector<RouteField> m_routeFields;
     bool m_previewing = false;
-    QPointer<QProgressBar> m_meter;
+    QPointer<LevelMeter> m_meter; // the layer's output level, in the Source tab
     QPointer<QLabel> m_pictureFact; // known once frames are decoded: kept up to date
     QPointer<QLabel> m_streamState; // a live stream: connecting, live, reconnecting (and why)
     QPointer<QLabel> m_timecodeStatus; // a Timecode generator: where its timecode comes from, kept up to date

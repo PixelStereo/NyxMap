@@ -129,7 +129,10 @@ private:
     void moveStep(int delta);
     Engine *m_engine;
     QListWidget *m_sequences;
-    QCheckBox *m_loop;
+    QCheckBox *m_loop, *m_beats;
+    class NumberBox *m_bpm;
+    QPushButton *m_tap, *m_clockRun;
+    QLabel *m_beatLabel;
     QTableWidget *m_steps;
     QLabel *m_status; // the step played, and whether something changed since
     bool m_modified = false;
@@ -138,6 +141,7 @@ private:
     std::vector<Sequencer::Run> m_runs; // the steps on their way, drawn in their time columns
     int m_position = -1, m_upcoming = -1; // the step played (green frame) and the one GO plays (red frame)
     void pollRuns();
+    void pollClock();
     void refreshTransport();
     friend class StepDelegate;
 };

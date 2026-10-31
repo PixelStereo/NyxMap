@@ -64,7 +64,7 @@ int main(int argc, char **argv)
         image.fill(Qt::white);
         require(image.save(white), "white image");
         require(engine.setLayerImage(picture, black, &error), "load visual source");
-        const int sound = engine.addLayer("Sonification");
+        int sound = engine.addLayer("Sonification");
         const auto soundId = engine.layerId(sound);
         require(engine.setLayerAudio(sound, recipe, &error), "load live sonification");
         std::cerr << "stage: render frame\n";
@@ -76,6 +76,33 @@ int main(int argc, char **argv)
         engine.renderFrame();
         std::cerr << "stage: white energy\n";
         require(mix(engine, sound) > 0, "live rendered white composition drives audio");
+        // The analysis is per viewport: a second viewport that does not show the picture sees black
+        {
+            const quint64 main = engine.mainViewportId();
+            const int second = engine.addViewport("Second", QSize(32, 32));
+            const quint64 secondId = engine.layerId(second);
+            engine.setOpacityIn(engine.indexOfId(pictureId), secondId, 0);
+            require(!engine.setLayerSonificationViewport(engine.indexOfId(soundId), pictureId), "a layer is not a viewport");
+            require(engine.layerSonificationViewport(engine.indexOfId(soundId)) == 0, "the first viewport by default");
+            require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), secondId), "choose the second viewport");
+            engine.renderFrame();
+            engine.renderFrame();
+            require(mix(engine, engine.indexOfId(soundId)) < 1e-9, "the viewport that shows black is silent (the smoothing of the color has died away)");
+            require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), main), "choose the first viewport by id");
+            engine.renderFrame();
+            engine.renderFrame();
+            require(mix(engine, engine.indexOfId(soundId)) > 0, "the viewport that shows white sounds");
+            require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), secondId), "second again");
+            const auto saved = engine.layerJson(engine.indexOfId(soundId));
+            require(saved.value("sonification_viewport").toString().toULongLong() == secondId, "the choice is in the layer state");
+            engine.setLayerSonificationViewport(engine.indexOfId(soundId), 0);
+            engine.replaceLayerJson(engine.indexOfId(soundId), saved);
+            require(engine.layerSonificationViewport(engine.indexOfId(soundId)) == secondId, "and restored with it");
+            require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), 0), "back to the first viewport");
+            engine.renderFrame();
+            engine.renderFrame();
+            sound = engine.indexOfId(soundId); // a viewport was added above the layers
+        }
         require(engine.setParameter(soundId, "synth/frequency", 800), "synthesis parameter address exposed");
         require(engine.setParameter(soundId, "synth/release", .25), "ADSR parameter exposed");
         std::cerr << "stage: capture parameters\n";
@@ -105,20 +132,20 @@ int main(int argc, char **argv)
         require(engine.setLayerAudio(sound, program, &error), "load libfaust with OpenGL active");
         engine.renderFrame();
         require(mix(engine, sound) > 0, "custom DSP runs beside live OpenGL");
-        require(engine.setParameter(engine.layerId(sound), "synth/p0", .3), "custom widget parameter exposed");
+        require(engine.setParameter(engine.layerId(sound), "synth/level", .3), "custom widget parameter exposed");
 #endif
         require(engine.setAudioEffectsJson(sound,
                                            {QJsonObject{{"id", "filter"}, {"kind", "lowpass"}},
                                             QJsonObject{{"id", "echo"}, {"kind", "delay"}}},
                                            &error),
                 "attach layer audio FX");
-        require(engine.setParameter(engine.layerId(sound), "audio_fx/filter/p0", 777),
+        require(engine.setParameter(engine.layerId(sound), "audio_fx/filter/cutoff", 777),
                 "FX controls exposed to interactions");
         require(engine.setParameter(engine.layerId(sound), "audio_fx/echo/wet", .2), "FX wet control");
         require(engine.saveProject(project, {}, &error), "save audio FX project");
         require(engine.loadProject(project, nullptr, &error), "restore audio FX project");
         require(engine.audioEffectsJson(sound).size() == 2, "audio FX order restored");
-        require(engine.parameterValue(engine.layerId(sound), "audio_fx/filter/p0").toDouble() == 777,
+        require(engine.parameterValue(engine.layerId(sound), "audio_fx/filter/cutoff").toDouble() == 777,
                 "FX parameter survives save/load");
         require(engine.setLayerAudio(sound, recipe, &error), "replace source with FX attached");
         require(engine.audioEffectsJson(sound).size() == 2, "FX survive source replacement");

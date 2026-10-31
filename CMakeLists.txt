@@ -80,6 +80,11 @@ add_library(nyxmap_engine STATIC
   src/engine/AudioEffects.cpp
   src/engine/AudioEffectEngine.cpp
   src/engine/AudioGenerator.cpp
+  src/engine/BeatClock.cpp
+  src/engine/Controls.cpp
+  src/engine/RemoteServer.cpp
+  src/engine/AudioCapture.cpp
+  src/engine/AudioCaptureDevice.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
   src/engine/AudioInput.cpp
@@ -343,6 +348,8 @@ set(APP_SOURCES
   src/ui/MainWindow.cpp
   src/ui/LogPanel.cpp
   src/ui/LogModel.cpp
+  src/ui/ControlsPanel.cpp
+  src/ui/FxChainPanel.cpp
   src/ui/LayerInspector.cpp
   src/ui/ParamPanel.cpp
   src/ui/PresetEditor.cpp
@@ -588,13 +595,33 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_generators_test PRIVATE nyxmap_engine)
   add_test(NAME audio_generators COMMAND nyxmap_audio_generators_test)
   # Test the dependency-free generated backend even on hosts with libfaust installed.
-  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioEffects.cpp src/engine/AudioStream.cpp)
+  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioEffects.cpp src/engine/AudioStream.cpp src/engine/AudioCapture.cpp test/portable_audio_capture.cpp)
   target_include_directories(nyxmap_audio_generators_portable_test PRIVATE src/engine third_party/faust/architecture)
   target_link_libraries(nyxmap_audio_generators_portable_test PRIVATE Qt6::Core ffmpeg)
   add_test(NAME audio_generators_portable COMMAND nyxmap_audio_generators_portable_test)
   add_executable(nyxmap_audio_generator_engine_test test/audio_generator_engine.cpp)
   target_link_libraries(nyxmap_audio_generator_engine_test PRIVATE nyxmap_engine)
   add_test(NAME audio_generator_engine COMMAND nyxmap_audio_generator_engine_test)
+  add_executable(nyxmap_remote_server_test test/remote_server.cpp)
+  target_link_libraries(nyxmap_remote_server_test PRIVATE nyxmap_engine)
+  add_test(NAME remote_server COMMAND nyxmap_remote_server_test)
+  set_tests_properties(remote_server PROPERTIES TIMEOUT 120)
+  add_executable(nyxmap_show_controls_test test/show_controls.cpp)
+  target_link_libraries(nyxmap_show_controls_test PRIVATE nyxmap_engine)
+  add_test(NAME show_controls COMMAND nyxmap_show_controls_test)
+  set_tests_properties(show_controls PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_beat_clock_test test/beat_clock.cpp)
+  target_link_libraries(nyxmap_beat_clock_test PRIVATE nyxmap_engine)
+  add_test(NAME beat_clock COMMAND nyxmap_beat_clock_test)
+  set_tests_properties(beat_clock PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_audio_hits_test test/audio_hits.cpp)
+  target_include_directories(nyxmap_audio_hits_test PRIVATE src/engine)
+  add_test(NAME audio_hits COMMAND nyxmap_audio_hits_test)
+  set_tests_properties(audio_hits PROPERTIES TIMEOUT 120)
+  add_executable(nyxmap_audio_levels_test test/audio_levels.cpp)
+  target_link_libraries(nyxmap_audio_levels_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_levels COMMAND nyxmap_audio_levels_test)
+  set_tests_properties(audio_levels PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_audio_effects_test test/audio_effects.cpp)
   target_link_libraries(nyxmap_audio_effects_test PRIVATE nyxmap_engine)
   add_test(NAME audio_effects COMMAND nyxmap_audio_effects_test)
@@ -762,7 +789,7 @@ if(NYXMAP_TESTS)
   add_test(NAME line_ui COMMAND nyxmap_line_ui_test)
   set(WORKSPACE_TEST_SOURCES ${APP_SOURCES})
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
-  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp ${WORKSPACE_TEST_SOURCES})
+  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/audio_fx_ui.cpp test/controls_ui.cpp ${WORKSPACE_TEST_SOURCES})
   target_include_directories(nyxmap_workspace_ui_test PRIVATE src src/ui "${CMAKE_BINARY_DIR}/generated")
   # Without Qt WebEngine (WebPageQt.cpp compiled empty): the Media Bin then does not offer the Web Page generator
   target_link_libraries(nyxmap_workspace_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -773,6 +800,10 @@ if(NYXMAP_TESTS)
   add_test(NAME workspace_ui COMMAND nyxmap_workspace_ui_test)
   add_test(NAME clock_preset_ui COMMAND nyxmap_workspace_ui_test --clock-presets)
   add_test(NAME layer_source_ui COMMAND nyxmap_workspace_ui_test --layer-source)
+  add_test(NAME controls_ui COMMAND nyxmap_workspace_ui_test --controls)
+  set_tests_properties(controls_ui PROPERTIES TIMEOUT 60)
+  add_test(NAME audio_fx_ui COMMAND nyxmap_workspace_ui_test --audio-fx)
+  set_tests_properties(audio_fx_ui PROPERTIES TIMEOUT 60)
   add_test(NAME system_isf_ui COMMAND nyxmap_workspace_ui_test --system-isf)
   set_tests_properties(clock_preset_ui PROPERTIES TIMEOUT 60)
   add_test(NAME xy_parameter_ui COMMAND nyxmap_workspace_ui_test --xy)

@@ -1,5 +1,6 @@
 #include "AudioEffects.h"
 #include "FaustInterpreter.h"
+#include "ParameterKey.h"
 #include "faust/dsp/dsp.h"
 #include "faust/gui/UI.h"
 #include "faust/gui/meta.h"
@@ -54,7 +55,9 @@ struct AudioEffect::Backend : UI {
         for (size_t j = 0; j < i; ++j)
             if (zones[j] == zone)
                 return;
-        owner.m_parameters.push_back({QStringLiteral("p%1").arg(i), QString::fromUtf8(label), low, high, initial});
+        QStringList taken;
+        for (const auto &p : owner.m_parameters) taken << p.key;
+        owner.m_parameters.push_back({faustControlKey(QString::fromUtf8(label), taken, int(i)), QString::fromUtf8(label), low, high, initial});
         owner.m_values[i] = std::clamp(double(initial), double(low), double(high));
         zones[i] = zone;
     }
@@ -203,8 +206,10 @@ std::shared_ptr<AudioEffect> AudioEffect::load(const QJsonObject &state, int rat
 }
 void AudioEffect::process(float *stereo, int frames)
 {
-    if (!m_backend || !m_backend->processor)
+    if (!m_backend || !m_backend->processor) {
+        m_meter.update(stereo, frames, m_rate); // an unavailable FX lets the signal through
         return;
+    }
     auto &b = *m_backend;
     for (size_t i = 0; i < m_parameters.size(); ++i)
         *b.zones[i] = float(value(int(i)));
@@ -229,6 +234,7 @@ void AudioEffect::process(float *stereo, int frames)
             stereo[2 * (offset + i) + 1] = float(std::clamp(right[i] + m_blend * (r - right[i]), -16., 16.));
         }
     }
+    m_meter.update(stereo, frames, m_rate);
 }
 AudioEffectChain::List AudioEffectChain::effects() const
 {
@@ -298,7 +304,10 @@ void AudioEffectChain::process(float *stereo, int frames, int rate)
         return;
     m_epoch.fetch_add(1);
     const List *chain = m_chain.load();
-    for (const auto &effect : *chain)
-        effect->process(stereo, frames);
+    const bool on = enabled();
+    for (const auto &effect : *chain) {
+        if (on) effect->process(stereo, frames);
+        else effect->idle(frames, m_rate);
+    }
     m_epoch.fetch_add(1);
 }

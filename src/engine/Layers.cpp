@@ -1327,6 +1327,8 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
     if (isToxFile(path)) return setLayerTox(i, path, {}, err);
     if (isImageFile(path)) return setLayerImage(i, path, err);
     if (isAudioFile(path)) return setLayerAudio(i, path, err);
+    if (const QString uri = liveInputUriOfPath(path); isAudioInputUri(uri)) return setLayerAudio(i, uri, err); // a sound card's input
+    if (isAudioInputUri(path)) return setLayerAudio(i, path, err);
     QString e;
     if (setLayerVideo(i, path, &e)) return true; // video and unknown extensions: FFmpeg decides
     if (AudioStream::probe(path, nullptr) && setLayerAudio(i, path, err)) return true; // sound only
@@ -1350,7 +1352,7 @@ bool Engine::setLayerAudio(int i, const QString &path, QString *err)
         if (!l) return false;
         g = detachSource(*l);
         l->type = SourceType::Audio;
-        l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->sourcePath = isAudioInputUri(path) ? path : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         l->mode = m_defaultPlayMode;
         l->ended = false;
         l->playing = true;

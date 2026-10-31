@@ -1,4 +1,5 @@
 #pragma once
+#include "AudioMeter.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -38,6 +39,9 @@ public:
     QJsonObject toJson() const;
     // Exactly one audio reader. The effect is fully prepared at load time.
     void process(float *stereo, int frames);
+    // What leaves this effect (after its dry/wet), for the interface
+    const AudioMeter &meter() const { return m_meter; }
+    void idle(int frames, int rate) { m_meter.silence(frames, rate); } // audio thread: not run, its meter falls
 
 private:
     AudioEffect();
@@ -51,6 +55,7 @@ private:
     int m_rate = 48000;
     struct Backend;
     std::unique_ptr<Backend> m_backend;
+    AudioMeter m_meter;
 };
 
 // Immutable chain publication. Writers prepare/compile outside the callback and
@@ -63,6 +68,9 @@ public:
     List effects() const;
     QJsonArray toJson() const;
     uint64_t revision() const { return m_revision.load(); }
+    // The master switch of the chain (each FX keeps its own): off, the signal goes through untouched
+    bool enabled() const { return m_enabled.load(std::memory_order_relaxed); }
+    void setEnabled(bool on) { m_enabled.store(on, std::memory_order_relaxed); }
     void process(float *stereo, int frames, int rate);
 
 private:
@@ -71,4 +79,5 @@ private:
     std::shared_ptr<const List> m_owned = std::make_shared<List>();
     std::atomic<const List *> m_chain{m_owned.get()};
     std::atomic<uint64_t> m_epoch{0}, m_revision{1};
+    std::atomic<bool> m_enabled{true};
 };

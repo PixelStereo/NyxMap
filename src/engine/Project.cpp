@@ -88,6 +88,9 @@ void Engine::clearProject()
         m_compositionSpeed = 1.0;
         updateTimeScale();
         m_sequencer->clear();
+        m_controls.clear();
+        m_nextControlId = 1;
+        ++m_controlsRevision;
         m_animations.clear();
         m_nextAnimationId = 1;
         m_fades.clear();
@@ -224,7 +227,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["rtsp_tcp"] = l.videoSource.rtspTcp;
     } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox) {
         src["path"] = l.sourcePath;
-        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
+        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty() && !isAudioInputUri(l.sourcePath))
+            src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
     if (type == SourceType::Video && l.videoSource.isSequence()) // an image sequence: the folder is the path
         src["sequence"] = QJsonObject{{"pattern", l.videoSource.pattern}, {"start", l.videoSource.start},
@@ -258,6 +262,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         if (!effects.isEmpty())
             o["audio_fx"] = effects;
     }
+    if (l.sonificationViewport) o["sonification_viewport"] = QString::number(l.sonificationViewport);
     if (!l.anims.empty()) {
         QJsonArray anims;
         for (const Animation &a : l.anims) anims.append(layerAnimToJson(a));
@@ -317,7 +322,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     const QString type = src.value("type").toString();
     const VideoSource videoSource = videoSourceFromJson(src);
     // A stream's URL is used as it is (no file to look for)
-    const QString path = videoSource.live ? src.value("path").toString().trimmed()
+    const QString path = videoSource.live || isAudioInputUri(src.value("path").toString()) ? src.value("path").toString().trimmed()
                          : type != "none"  ? resolvePath(src, projectDir)
                                            : QString();
     QString err;
@@ -425,6 +430,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         }
     }
 
+    if (o.contains("sonification_viewport")) { // kept as saved: a viewport not (yet) there falls back to the first one
+        Lock lk(&m_mutex);
+        if (Layer *l = layer(index)) l->sonificationViewport = o.value("sonification_viewport").toString().toULongLong();
+    }
     if (o.contains("audio_fx")) {
         QJsonArray effects;
         for (const auto &value : o.value("audio_fx").toArray()) {
@@ -542,6 +551,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         for (const Interaction &it : m_interactions) interactions.append(it.toJson());
         root["interactions"] = interactions;
         root["sequences"] = m_sequencer->toJson();
+        root["clock"] = m_beatClock.toJson();
+        if (!m_controls.empty()) root["controls"] = controlsJson();
         root["current_sequence"] = m_sequencer->current();
         root["startup_sequence"] = m_sequencer->startupSequence();
         root["startup_step"] = m_sequencer->startupStep();
@@ -815,10 +826,12 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             if (!p.id) p.id = m_nextPresetId++;
         animationsFromJson(root.value("timelines").toArray());
         m_sequencer->fromJson(root.value("sequences").toArray(), root.value("current_sequence").toInt(0));
+        m_beatClock.fromJson(root.value("clock").toObject());
         m_sequencer->setStartupSequence(root.value("startup_sequence").toInt(-1));
         m_sequencer->setStartupStep(root.value("startup_step").toInt(0));
         m_sequencer->setStartupGo(root.value("startup_go").toBool(true));
     }
+    setControlsJson(root.value("controls").toArray()); // before the interactions below: they follow and drive its parameters
     emit snapshotsChanged();
     emit presetsChanged();
     emit animationsChanged();

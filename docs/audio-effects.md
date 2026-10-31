@@ -1,10 +1,18 @@
 # Layer audio FX
 
-Select a sound layer, generated audio layer, or video layer with an audio track.
-In **Source → Audio FX**, choose **Add Audio FX…**. The chain runs from top to
-bottom, before the layer's volume, mute and visibility fader. Each effect has
-**Enabled**, **Dry/Wet**, reorder arrows, Remove and live controls. Structural
-edits and parameter changes support undo/redo.
+Select a sound layer, generated audio layer, live audio input, or video layer with
+an audio track, and open its **Audio FX** tab. It works like the **FX** tab of the
+pictures: an **Audio FX Enable** switch for the whole chain, **Add Audio FX…** (a
+searchable list), **− ▲ ▼** to remove or reorder the selected effect, and the chain as a
+list with a check box on each row (the effect's own bypass). Select a row to see its
+**Dry/Wet** and its controls below. The chain runs from top to bottom, before the
+layer's volume, mute and visibility fader. Structural edits and parameter changes
+support undo/redo.
+
+Three level meters (stereo, −60 to +6 dBFS, peak hold) follow the signal: **Source**
+(what enters the chain), **Level** (what leaves the selected effect) and **Output**
+(what leaves the layer, after the chain and the fader). The Source tab has the output
+meter too. A bypassed effect, or a chain that is off, lets its meter fall to silence.
 
 Available effects use GRAME Faust's standard DSP libraries:
 
@@ -35,8 +43,9 @@ are saved in project/layer state. Missing custom FX are preserved with their sav
 values, shown with an error and passed through dry until restored.
 
 Controls use the normal parameter registry: `audio_fx/<effect-id>/enabled`,
-`audio_fx/<effect-id>/wet` and `audio_fx/<effect-id>/p0`, `p1`, etc. Their labels
-identify the actual Faust controls. They are available to OSC, interactions,
+`audio_fx/<effect-id>/wet` and one `audio_fx/<effect-id>/<label>` per Faust control, the
+label in lower case (`cutoff`, `time_ms`, `feedback`; `p0`, `p1`… for a control without a usable
+label, `_2` after a repeated one). The chain has `audio_fx/enable`. They are available to OSC, interactions,
 timelines and snapshots while the corresponding effect exists. Snapshot values do
 not recreate a removed effect; restore the chain through project/layer state or undo.
 

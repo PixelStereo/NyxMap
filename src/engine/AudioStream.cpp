@@ -48,6 +48,15 @@ AudioStream::~AudioStream() { close(); }
 
 bool AudioStream::probe(const QString &path, Info *info, QString *err)
 {
+    if (isAudioInputUri(path)) { // a live input: nothing to read before it is opened
+        if (info) {
+            *info = {};
+            info->sampleRate = 48000;
+            info->channels = 2;
+            info->codec = "Live input";
+        }
+        return true;
+    }
     if (AudioGenerator::isRecipe(path)) {
         auto synth = AudioGenerator::load(path, err);
         if (!synth)
@@ -90,6 +99,19 @@ bool AudioStream::open(const QString &path, int outputRate, QString *err)
 {
     close();
     m_rate = outputRate > 0 ? outputRate : 48000;
+    if (isAudioInputUri(path)) {
+        auto input = std::make_unique<AudioCapture>();
+        if (!input->open(audioInputDevice(path), m_rate, err))
+            return false;
+        m_capture = std::move(input);
+        m_info = {};
+        m_info.sampleRate = m_rate;
+        m_info.channels = 2;
+        m_info.codec = "Live input";
+        m_transport = {};
+        m_snapshot = {};
+        return true;
+    }
     if (AudioGenerator::isRecipe(path)) {
         m_synth = AudioGenerator::load(path, err, m_rate);
         if (!m_synth)
@@ -214,6 +236,9 @@ void AudioStream::close()
     if (m_codec) avcodec_free_context(&m_codec);
     if (m_fmt) avformat_close_input(&m_fmt);
     m_synth.reset();
+    m_capture.reset();
+    m_sourceMeter.reset();
+    m_outMeter.reset();
     m_postInitialized = false;
     m_stream = -1;
 }
@@ -601,6 +626,21 @@ void AudioStream::mixSource(float *out, int frames, double latency)
         m_peak = m_synth->mix(out, frames, m_rate, t.playing, t.speed, t.gain);
         return;
     }
+    if (m_capture) {
+        // Always drained, so that the delay does not grow while the layer is stopped; heard only when it plays
+        if (t.playing) {
+            m_capture->read(out, frames);
+        } else {
+            constexpr int block = 512;
+            float scratch[2 * block];
+            for (int done = 0; done < frames; done += block) {
+                const int n = std::min(block, frames - done);
+                std::fill_n(scratch, 2 * n, 0.f);
+                m_capture->read(scratch, n);
+            }
+        }
+        return;
+    }
     const double d = m_info.duration;
     const bool running = t.playing && t.speed > 0;
 
@@ -742,6 +782,7 @@ void AudioStream::mix(float *out, int frames, double latency)
         const int n = std::min(block, frames - offset);
         std::fill_n(source.data(), n * 2, 0.f);
         mixSource(source.data(), n, latency + double(offset) / m_rate);
+        m_sourceMeter.update(source.data(), n, m_rate);
         if (m_effects)
             m_effects->process(source.data(), n, m_rate);
         const float target = std::isfinite(m_snapshot.gain) ? std::clamp(m_snapshot.gain, 0.f, 2.f) : 0.f;
@@ -753,11 +794,13 @@ void AudioStream::mix(float *out, int frames, double latency)
         for (int i = 0; i < n; ++i) {
             m_postGain += std::clamp(target - m_postGain, -step, step);
             for (int c = 0; c < 2; ++c) {
-                const float value = std::isfinite(source[i * 2 + c]) ? source[i * 2 + c] * m_postGain : 0.f;
+                float &value = source[size_t(i) * 2 + size_t(c)];
+                value = std::isfinite(value) ? value * m_postGain : 0.f;
                 out[(offset + i) * 2 + c] += value;
                 peak = std::max(peak, std::abs(value));
             }
         }
+        m_outMeter.update(source.data(), n, m_rate);
     }
     m_peak = std::max(peak, previousPeak * .8f);
 }

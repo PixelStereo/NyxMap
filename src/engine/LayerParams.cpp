@@ -260,6 +260,11 @@ const std::vector<Parameter *> &Layer::parameters()
                         [effect, i](double v) { effect->setValue(int(i), v); });
                 }
             }
+        if (audioEffects)
+            add(QStringLiteral("audio_fx/enable"), QStringLiteral("Audio FX › Enable"), T::Bool)
+                .byDefault(true)
+                .bind([chain = audioEffects] { return QVariant(chain->enabled()); },
+                      [chain = audioEffects](const QVariant &v) { chain->setEnabled(v.toBool()); });
         if (auto *synth = audio->generator()) {
             for (int i = 0; i < synth->parameterCount(); ++i) {
                 const auto &p = synth->parameter(i);

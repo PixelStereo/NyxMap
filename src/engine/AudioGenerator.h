@@ -44,6 +44,7 @@ public:
     int parameterCount() const { return int(m_parameters.size()); }
     const Parameter &parameter(int i) const { return m_parameters[size_t(i)]; }
     void setColor(float r, float g, float b);
+    std::array<float, 3> color() const { return {m_color[0].load(), m_color[1].load(), m_color[2].load()}; } // what it last saw
     float mix(float *stereo, int frames, int rate, bool playing, double speed, float gain);
 
 private:

@@ -564,7 +564,7 @@ void SequenceBar::refresh()
 // SequenceWindow
 // ---------------------------------------------------------------------------
 
-enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColNext, ColText, ColDescription, ColCount };
+enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColQuantize, ColNext, ColText, ColDescription, ColCount };
 
 // The time columns (pre-wait, action, post-wait) filling as their time goes by, the continuation as a word;
 // the waits are edited with the app's number field, the continuation with a menu
@@ -573,6 +573,15 @@ class StepDelegate : public QStyledItemDelegate
 public:
     StepDelegate(SequenceWindow *w) : QStyledItemDelegate(w), m_w(w) {}
 
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &idx) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, idx);
+        if (idx.column() == ColQuantize) { // a grid in beats, or none
+            const double beats = idx.data(Qt::EditRole).toDouble();
+            option->text = beats > 0 ? QStringLiteral("%1 beat%2").arg(beats, 0, 'g', 4).arg(beats == 1 ? "" : "s") : QStringLiteral("off");
+        }
+    }
+
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
     {
         if (idx.column() == ColPre || idx.column() == ColPost) {
@@ -580,7 +589,16 @@ public:
             b->setRange(0, 3600);
             b->setDecimals(2);
             b->setSingleStep(0.1);
-            b->setSuffix(QStringLiteral(" s"));
+            b->setSuffix(m_w->m_beats && m_w->m_beats->isChecked() ? QStringLiteral(" beats") : QStringLiteral(" s"));
+            return b;
+        }
+        if (idx.column() == ColQuantize) {
+            auto *b = new NumberBox(parent);
+            b->setRange(0, 64);
+            b->setDecimals(2);
+            b->setSingleStep(1);
+            b->setSpecialValueText(QStringLiteral("off"));
+            b->setSuffix(QStringLiteral(" beats"));
             return b;
         }
         if (idx.column() == ColNext) {
@@ -725,6 +743,51 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     left->addLayout(sb);
     m_loop = new FlagBox(QStringLiteral("Loop: GO on the last step plays the first"));
     left->addWidget(m_loop);
+    m_beats = new FlagBox(QStringLiteral("Waits in beats (at the clock's tempo)"));
+    m_beats->setObjectName(QStringLiteral("sequenceBeats"));
+    m_beats->setToolTip(QStringLiteral("The pre-wait and post-wait of this sequence's steps are counted in beats of the show's clock, "
+                                       "taken at its tempo when each step starts"));
+    left->addWidget(m_beats);
+    // The show's musical clock: tempo, tap, start / stop, and where it is
+    auto *clock = new QHBoxLayout;
+    clock->setSpacing(4);
+    clock->addWidget(new QLabel(QStringLiteral("Clock")));
+    m_bpm = new NumberBox;
+    m_bpm->setObjectName(QStringLiteral("clockBpm"));
+    m_bpm->setRange(BeatClock::kMinBpm, BeatClock::kMaxBpm);
+    m_bpm->setDecimals(1);
+    m_bpm->setSingleStep(1);
+    m_bpm->setSuffix(QStringLiteral(" BPM"));
+    m_bpm->setToolTip(QStringLiteral("Tempo of the show's clock (OSC /clock/bpm). A tempo measured elsewhere (Ableton Link through a helper, "
+                                     "a DAW: OSC /clock/sync) is followed while it comes in"));
+    m_tap = new QPushButton(QStringLiteral("Tap"));
+    m_tap->setObjectName(QStringLiteral("clockTap"));
+    m_tap->setToolTip(QStringLiteral("Tap the tempo (the last taps of the last two seconds)"));
+    m_clockRun = new QPushButton(QStringLiteral("▶"));
+    m_clockRun->setObjectName(QStringLiteral("clockRun"));
+    m_clockRun->setCheckable(true);
+    m_clockRun->setToolTip(QStringLiteral("Start the clock from the first beat of a bar / stop it. A stopped clock holds no quantize"));
+    m_beatLabel = new QLabel;
+    m_beatLabel->setObjectName(QStringLiteral("clockBeat"));
+    m_beatLabel->setMinimumWidth(70);
+    clock->addWidget(m_bpm);
+    clock->addWidget(m_tap);
+    clock->addWidget(m_clockRun);
+    clock->addWidget(m_beatLabel, 1);
+    left->addLayout(clock);
+    connect(m_bpm, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        if (!m_filling && m_bpm->hasFocus()) m_engine->beatClock().setBpm(v);
+    });
+    connect(m_tap, &QPushButton::clicked, this, [this] { m_engine->beatClock().tap(); });
+    connect(m_clockRun, &QPushButton::clicked, this, [this](bool on) {
+        if (on) m_engine->beatClock().start();
+        else m_engine->beatClock().stop();
+    });
+    auto *clockTimer = new QTimer(this);
+    clockTimer->setInterval(80);
+    connect(clockTimer, &QTimer::timeout, this, &SequenceWindow::pollClock);
+    clockTimer->start();
+    m_bpm->setValue(m_engine->beatClock().bpm());
     h->addLayout(left, 1);
 
     // Steps
@@ -736,7 +799,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
     right->addWidget(new RecallProgressBar(m_engine));
     m_steps = new QTableWidget(0, ColCount);
     m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre-wait"),
-                                        QStringLiteral("Action"), QStringLiteral("Post-wait"), QStringLiteral("Continue"),
+                                        QStringLiteral("Action"), QStringLiteral("Post-wait"), QStringLiteral("Quantize"),
+                                        QStringLiteral("Continue"),
                                         QStringLiteral("Comment"), QStringLiteral("Description")});
     m_steps->horizontalHeaderItem(ColPre)->setToolTip(QStringLiteral("Seconds between the step's GO and its snapshot"));
     m_steps->horizontalHeaderItem(ColAction)->setToolTip(QStringLiteral("The snapshot's time: its fade, or the longest time of its own values\n"
@@ -745,6 +809,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         QStringLiteral("Follow: seconds after the snapshot starts before the next step's GO\n"
                        "Auto-follow: seconds after the snapshot ends before the next step's GO\n"
                        "Wait: not used"));
+    m_steps->horizontalHeaderItem(ColQuantize)->setToolTip(
+        QStringLiteral("A GO waits for the next multiple of this many beats of the show's clock (1: the beat, 4: a 4/4 bar), then "
+                       "the pre-wait runs. off: no grid. A stopped clock never gets there: the step goes at once"));
     m_steps->horizontalHeaderItem(ColNext)->setToolTip(
         QStringLiteral("Wait: the next step waits for GO (button, Space, OSC)\n"
                        "Follow: the next step goes once this one is triggered (plus the post-wait), without waiting "
@@ -752,6 +819,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
                        "Auto-follow: the next step goes once this one's snapshot is over (plus the post-wait)"));
     m_steps->setItemDelegate(new StepDelegate(this));
     for (int c : {ColPre, ColAction, ColPost}) m_steps->setColumnWidth(c, 70);
+    m_steps->setColumnWidth(ColQuantize, 84);
     m_steps->setColumnWidth(ColNext, 138);
     m_steps->horizontalHeader()->moveSection(ColNext, 2); // beside the target, visible before timing/comment columns
     m_steps->verticalHeader()->setDefaultSectionSize(32);
@@ -835,6 +903,14 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         m_engine->sequencer().remove(current());
         emit edited();
     });
+    connect(m_beats, &QCheckBox::toggled, this, [this, current](bool on) {
+        if (m_filling || current() < 0) return;
+        Sequencer::Sequence s = m_engine->sequencer().sequence(current());
+        s.beats = on;
+        m_engine->sequencer().setSequence(current(), s);
+        emit edited();
+        refresh(); // the headers say the unit
+    });
     connect(m_loop, &QCheckBox::toggled, this, [this, current](bool on) {
         if (m_filling || current() < 0) return;
         Sequencer::Sequence s = m_engine->sequencer().sequence(current());
@@ -852,6 +928,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent)
         case ColDescription: st.description = it->text(); break;
         case ColPre: st.preWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
         case ColPost: st.postWait = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 3600.0); break;
+        case ColQuantize: st.quantize = std::clamp(it->data(Qt::EditRole).toDouble(), 0.0, 64.0); break;
         case ColNext: {
             st.next = Sequencer::StepContinue(std::clamp(it->data(Qt::EditRole).toInt(), 0, 2));
             const QSignalBlocker blocker(m_steps);
@@ -1062,6 +1139,29 @@ void SequenceWindow::setModified(bool on)
     refreshTransport();
 }
 
+// The clock as it is: its tempo (unless being typed), whether it runs, the beat in the bar, where the tempo comes from
+void SequenceWindow::pollClock()
+{
+    if (!isVisible()) return;
+    const BeatClock &clock = m_engine->beatClock();
+    const bool running = clock.running();
+    if (!m_bpm->hasFocus() && std::abs(m_bpm->value() - clock.bpm()) > 0.049) {
+        const QSignalBlocker blocker(m_bpm);
+        m_bpm->setValue(clock.bpm());
+    }
+    if (m_clockRun->isChecked() != running) {
+        const QSignalBlocker blocker(m_clockRun);
+        m_clockRun->setChecked(running);
+    }
+    m_clockRun->setText(running ? QStringLiteral("■") : QStringLiteral("▶"));
+    QString dots;
+    if (running) {
+        const int inBar = clock.beatInBar();
+        for (int b = 0; b < clock.beatsPerBar(); ++b) dots += b == inBar ? QStringLiteral("● ") : QStringLiteral("○ ");
+    }
+    m_beatLabel->setText(clock.source() == BeatClock::Source::External ? QStringLiteral("ext ") + dots : dots);
+}
+
 void SequenceWindow::refresh()
 {
     m_filling = true;
@@ -1074,7 +1174,10 @@ void SequenceWindow::refresh()
     m_sequences->setCurrentRow(cur);
     const Sequencer::Sequence s = m_engine->sequencer().sequence(cur);
     m_loop->setChecked(s.loop);
-    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
+    m_beats->setChecked(s.beats);
+    const QString unit = s.beats ? QStringLiteral("beats") : QStringLiteral("seconds");
+    m_steps->horizontalHeaderItem(ColPre)->setToolTip(QStringLiteral("In %1, between the step's GO (and its quantize) and its snapshot").arg(unit));
+    for (QWidget *w : std::initializer_list<QWidget *>{m_dup, m_del, m_loop, m_beats, m_stepDel, m_up, m_down}) // steps: a first one makes a sequence
         w->setEnabled(cur >= 0);
     const int keep = m_steps->currentRow();
     m_steps->setRowCount(int(s.steps.size()));
@@ -1111,6 +1214,10 @@ void SequenceWindow::refresh()
         m_steps->setItem(k, ColPre, pre);
         m_steps->setItem(k, ColAction, action);
         m_steps->setItem(k, ColPost, post);
+        auto *quantize = new QTableWidgetItem;
+        quantize->setData(Qt::EditRole, st.quantize);
+        quantize->setTextAlignment(Qt::AlignCenter);
+        m_steps->setItem(k, ColQuantize, quantize);
         m_steps->setItem(k, ColNext, next);
         m_steps->setItem(k, ColText, text);
         m_steps->setItem(k, ColDescription, new QTableWidgetItem(st.description));

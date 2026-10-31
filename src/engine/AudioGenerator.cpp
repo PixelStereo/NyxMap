@@ -1,5 +1,6 @@
 #include "AudioGenerator.h"
 #include "FaustInterpreter.h"
+#include "ParameterKey.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -116,7 +117,9 @@ struct AudioGenerator::Backend : UI {
             return;
         }
         const int i = int(owner->m_parameters.size());
-        owner->m_names.push_back("p" + std::to_string(i));
+        QStringList taken;
+        for (int j = 0; j < i; ++j) taken << QString::fromUtf8(owner->m_parameters[size_t(j)].key);
+        owner->m_names.push_back(faustControlKey(QString::fromUtf8(label), taken, i).toStdString());
         const char *key = owner->m_names.back().c_str();
         owner->m_names.push_back(label);
         owner->m_parameters.push_back({key, owner->m_names.back().c_str(), low, high, initial});

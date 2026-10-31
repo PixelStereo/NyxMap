@@ -36,6 +36,7 @@
 #include <QPlainTextEdit>
 #include <QStandardItemModel>
 #include <QTabWidget>
+#include "FxChainPanel.h"
 #include <QUrl>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
@@ -752,6 +753,10 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("Shapes that keep or cut its picture (drawn and edited in the preview)"));
     }
     tabs->addTab(page(buildEffects(s)), QStringLiteral("FX"));
+    if (s.hasAudio) { // the sound's own chain, the same mechanism
+        const int t = tabs->addTab(page(buildAudioEffects()), QStringLiteral("Audio FX"));
+        tabs->setTabToolTip(t, QStringLiteral("Real-time Faust effects on the sound of this layer, before its volume"));
+    }
     if (!s.isViewport) tabs->addTab(page(buildViewports(s)), QStringLiteral("Viewports"));
     m_anims = new ParamAnimPanel(m_engine, m_undo, s.id);
     connect(m_anims, &ParamAnimPanel::projectEdited, this, &LayerInspector::projectEdited);
@@ -776,7 +781,7 @@ void LayerInspector::rebuild()
     if (s.type == SourceType::Audio) { // a sound has no picture: no ROI, color, mapping, masks, effects or routing
         for (int t = 0; t < tabs->count(); ++t) {
             const QString name = tabs->tabText(t).section(' ', 0, 0);
-            if (name == QLatin1String("Source") || name == QLatin1String("Anim")) continue; // transport, volume, speed
+            if (name == QLatin1String("Source") || name == QLatin1String("Audio") || name == QLatin1String("Anim")) continue; // transport, volume, speed, the sound's FX
             tabs->setTabEnabled(t, false);
             tabs->setTabVisible(t, false); // not shown at all (kept built: the inspector's fields stay valid)
         }
@@ -2553,7 +2558,6 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     }
 
     m_synthFields.clear();
-    m_audioFXFields.clear();
     {
         Engine::Lock lock(&m_engine->mutex());
         const Layer *layer = m_engine->layer(m_layer);
@@ -2581,6 +2585,40 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                 m_animate->attach({label, field}, {key});
                 connect(field, &SliderField::valueEdited, this, [this, key](double value) {
                     setValue(key, value, QStringLiteral("Change synthesis parameter"));
+                    emit layerChanged();
+                });
+            }
+            if (synth->sonification()) { // it listens to a picture: which viewport's, and the color it sees
+                std::vector<std::pair<quint64, QString>> viewports;
+                for (int vi : m_engine->viewports())
+                    if (const Layer *vl = m_engine->layer(vi)) viewports.push_back({vl->id, vl->name});
+                auto *row = new QHBoxLayout;
+                auto *label = new QLabel(QStringLiteral("Watches"));
+                auto *pick = new QComboBox;
+                pick->setObjectName(QStringLiteral("sonificationViewport"));
+                pick->addItem(viewports.empty() ? QStringLiteral("The composition (no viewport)")
+                                                : QStringLiteral("First viewport (%1)").arg(viewports.front().second),
+                              QVariant::fromValue<qulonglong>(0));
+                for (const auto &[id, name] : viewports) pick->addItem(name, QVariant::fromValue<qulonglong>(id));
+                if (layer->sonificationViewport && pick->findData(QVariant::fromValue<qulonglong>(layer->sonificationViewport)) < 0)
+                    pick->addItem(QStringLiteral("(viewport gone: the first one)"), QVariant::fromValue<qulonglong>(layer->sonificationViewport));
+                pick->setCurrentIndex(std::max(0, pick->findData(QVariant::fromValue<qulonglong>(layer->sonificationViewport))));
+                pick->setEnabled(!m_locked);
+                pick->setToolTip(QStringLiteral("The viewport whose picture this instrument listens to: its average color, as the "
+                                                "viewport outputs it (its own size, opacity and color space)."));
+                auto *swatch = new QLabel;
+                swatch->setObjectName(QStringLiteral("sonificationColor"));
+                swatch->setFixedSize(28, 18);
+                swatch->setToolTip(QStringLiteral("The average color of that viewport, as the instrument hears it"));
+                m_sonificationSwatch = swatch;
+                row->addWidget(label);
+                row->addWidget(pick, 1);
+                row->addWidget(swatch);
+                v->addLayout(row);
+                connect(pick, &QComboBox::activated, this, [this, pick](int k) {
+                    const quint64 id = pick->itemData(k).toULongLong();
+                    editSource(QStringLiteral("Change Sonification Viewport"),
+                               [this, id] { m_engine->setLayerSonificationViewport(m_layer, id); });
                     emit layerChanged();
                 });
             }
@@ -2612,11 +2650,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         row->addWidget(mute);
         m_animate->attach({icon, vol}, {QStringLiteral("volume")});
         v->addLayout(row);
-        m_meter = new QProgressBar;
-        m_meter->setRange(0, 600);
-        m_meter->setTextVisible(false);
-        m_meter->setFixedHeight(5);
-        m_meter->setStyleSheet("QProgressBar { background:#1b1b1d; border:none; } QProgressBar::chunk { background:#3fae5a; }");
+        m_meter = new LevelMeter(QStringLiteral("Layer output"));
         v->addWidget(m_meter);
         connect(vol, &SliderField::valueEdited, this, [this](double pct) {
             setValue(QStringLiteral("volume"), pct / 100.0, QStringLiteral("Change Volume"));
@@ -2627,9 +2661,6 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             emit layerChanged();
         });
     }
-
-    if (s.hasAudio)
-        v->addWidget(buildAudioEffects());
 
     if (s.type == SourceType::Isf && s.hasGenerator) {
         // Its inputs back to their defaults, at the top
@@ -3360,25 +3391,19 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
 
 QWidget *LayerInspector::buildEffects(const LayerValues &s)
 {
-    auto *g = new QWidget; // titled by its sub-tab
-    auto *v = new QVBoxLayout(g);
+    auto *panel = new FxChainPanel(QStringLiteral("FX")); // titled by its sub-tab
 
     // General switch of the chain
-    auto *all = new FlagBox(QStringLiteral("FX Enable"));
+    auto *all = panel->masterSwitch();
     m_animate->attach(all, {QStringLiteral("fx/enable")});
     all->setChecked(s.effectsEnabled);
-    all->setToolTip(QStringLiteral("Turns the whole FX chain on or off (each FX keeps its own switch)"));
-    all->setStyleSheet("QCheckBox { font-weight:bold; }");
-    v->addWidget(all);
     connect(all, &QCheckBox::toggled, this, [this](bool on) {
         setValue(QStringLiteral("fx/enable"), on, QStringLiteral("Enable / Disable FX"));
         emit layerChanged();
     });
 
-    auto *bar = new QHBoxLayout;
-    auto *add = new QPushButton(QStringLiteral("Add FX…"));
-    add->setToolTip(QStringLiteral("Search the ISF library and add an FX to the chain"));
-    connect(add, &QPushButton::clicked, this, [this, add] {
+    panel->addButton()->setToolTip(QStringLiteral("Search the ISF library and add an FX to the chain"));
+    connect(panel, &FxChainPanel::addRequested, this, [this](QWidget *anchor) {
         QList<SearchPicker::Item> items;
         for (const IsfEntry &e : m_engine->library().filters())
             items.append({e.name, e.categories.value(0), e.description, e.path});
@@ -3399,82 +3424,50 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
                                              QStringLiteral("Add FX %1").arg(QFileInfo(p).completeBaseName()), beforeAnimations));
             QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
         });
-        picker->popup(add->mapToGlobal(QPoint(0, add->height())));
+        picker->popup(anchor->mapToGlobal(QPoint(0, anchor->height())));
     });
     auto *rescan = toolButton(QStringLiteral("↻"), QStringLiteral("Rescan ISF Library (shaders added in the Finder)"));
     connect(rescan, &QToolButton::clicked, this, &LayerInspector::rescanLibraryRequested);
-    auto *remove = toolButton(QStringLiteral("−"), QStringLiteral("Remove FX"));
-    auto *up = toolButton(QStringLiteral("▲"), QStringLiteral("Move Up (applied earlier)"));
-    auto *down = toolButton(QStringLiteral("▼"), QStringLiteral("Move Down (applied later)"));
+    panel->addLeading(rescan);
     auto *reload = toolButton(QStringLiteral("⟳"), QStringLiteral("Reload shader from disk"));
-    bar->addWidget(add, 1);
-    bar->addWidget(rescan);
-    bar->addWidget(remove);
-    bar->addWidget(up);
-    bar->addWidget(down);
-    bar->addWidget(reload);
-    v->addLayout(bar);
+    panel->addTrailing(reload);
 
-    if (s.effects.empty()) {
-        auto *none = new QLabel(QStringLiteral("No FX. FX are applied in list order."));
-        none->setWordWrap(true);
-        none->setStyleSheet("color:#888;");
-        v->addWidget(none);
-        for (auto *b : {remove, up, down, reload}) b->setEnabled(false);
-        return g;
-    }
-
-    const int count = int(s.effects.size());
-    m_selectedEffect = std::clamp(m_selectedEffect, 0, count - 1);
-    auto *list = new QListWidget;
+    std::vector<FxChainPanel::Row> rows;
     for (const auto &fx : s.effects) {
-        auto *it = new QListWidgetItem(fx.name + (fx.masked ? QStringLiteral("  ◐") : QString()) +
-                                       (fx.valid ? QString() : QStringLiteral("  ⚠")));
-        if (fx.masked) it->setToolTip(QStringLiteral("Through a mask"));
-        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-        it->setCheckState(fx.enabled ? Qt::Checked : Qt::Unchecked);
-        list->addItem(it);
+        FxChainPanel::Row row;
+        row.label = fx.name;
+        row.suffix = fx.masked ? QStringLiteral("  ◐") : QString();
+        row.tooltip = fx.masked ? QStringLiteral("Through a mask") : QString();
+        row.enabled = fx.enabled;
+        row.warning = !fx.valid;
+        rows.push_back(row);
     }
-    list->setCurrentRow(m_selectedEffect);
-    list->setMaximumHeight(qMin(160, 26 * count + 8));
-    if (!s.effectsEnabled) list->setStyleSheet("QListWidget { color:#777; }");
-    list->setProperty("allowLocked", true); // selecting an effect to see its parameters is not an edit
-    v->addWidget(list);
+    const int count = int(rows.size());
+    m_selectedEffect = count ? std::clamp(m_selectedEffect, 0, count - 1) : 0;
+    panel->setRows(rows, m_selectedEffect, s.effectsEnabled);
+    reload->setEnabled(count > 0);
+    if (!count) return panel;
 
-    connect(list, &QListWidget::itemChanged, this, [this, list](QListWidgetItem *it) {
-        const int r = list->row(it);
-        const bool on = it->checkState() == Qt::Checked;
+    connect(panel, &FxChainPanel::toggled, this, [this](int r, bool on) {
         editEffects(on ? QStringLiteral("Enable FX") : QStringLiteral("Disable FX"), [this, r, on] {
             Engine::Lock lk(&m_engine->mutex());
             Layer *ly = m_engine->layer(m_layer);
             if (ly && r >= 0 && r < int(ly->effects.size())) ly->effects[size_t(r)]->enabled = on;
         });
     });
-    connect(list, &QListWidget::currentRowChanged, this, [this](int r) {
-        // Only the parameters below are swapped. Rebuilding the whole tab here would destroy the list
-        // between the press and the release, and the click that picked the row would never reach its
-        // check box — which is why enabling an effect used to take two clicks.
-        if (r >= 0 && r != m_selectedEffect) {
+    connect(panel, &FxChainPanel::currentChanged, this, [this](int r) {
+        if (r != m_selectedEffect) {
             m_selectedEffect = r;
             showEffectParams();
         }
     });
-    connect(remove, &QToolButton::clicked, this, [this] {
+    connect(panel, &FxChainPanel::removeRequested, this, [this](int) {
         editEffects(QStringLiteral("Remove FX"), [this] { m_engine->removeEffect(m_layer, m_selectedEffect); });
         rebuild();
     });
-    connect(up, &QToolButton::clicked, this, [this] {
-        if (m_selectedEffect <= 0) return;
-        editEffects(QStringLiteral("Reorder FX"),
-                    [this] { m_engine->moveEffect(m_layer, m_selectedEffect, m_selectedEffect - 1); });
-        --m_selectedEffect;
-        rebuild();
-    });
-    connect(down, &QToolButton::clicked, this, [this, count] {
-        if (m_selectedEffect >= count - 1) return;
-        editEffects(QStringLiteral("Reorder FX"),
-                    [this] { m_engine->moveEffect(m_layer, m_selectedEffect, m_selectedEffect + 1); });
-        ++m_selectedEffect;
+    connect(panel, &FxChainPanel::moveRequested, this, [this](int from, int to) {
+        editEffects(QStringLiteral("Reorder FX"), [this, from, to] { m_engine->moveEffect(m_layer, from, to); });
+        m_selectedEffect = to;
         rebuild();
     });
     connect(reload, &QToolButton::clicked, this, [this] {
@@ -3488,15 +3481,11 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
     });
 
     // Parameters of the selected effect: their own container, refilled in place
-    m_fxDetail = new QWidget;
-    auto *detail = new QVBoxLayout(m_fxDetail);
-    detail->setContentsMargins(0, 0, 0, 0);
-    v->addWidget(m_fxDetail);
+    m_fxDetail = panel->detail();
     showEffectParams();
-    return g;
+    return panel;
 }
 
-// Name, error and parameters of the selected effect, replaced without touching the list above
 void LayerInspector::showEffectParams()
 {
     if (!m_fxDetail) return;
@@ -3705,17 +3694,19 @@ void LayerInspector::refreshDynamic()
             field->setValue(m_engine->parameterValue(m_layerId, key).toDouble());
         }
     }
-    for (const auto &[field, key] : m_audioFXFields) {
-        if (!field || field->hasFocus())
-            continue;
-        const auto value = m_engine->parameterValue(m_layerId, key);
-        const QSignalBlocker blocker(field);
-        if (auto *slider = qobject_cast<SliderField *>(field.data())) {
-            if (!slider->isDragging())
-                slider->setValue(value.toDouble());
-        } else if (auto *flag = qobject_cast<QCheckBox *>(field.data()))
-            flag->setChecked(value.toBool());
-    }
+    for (const auto *fields : {&m_audioFXFields, &m_audioFxDetail})
+        for (const auto &[field, key] : *fields) {
+            if (!field || field->hasFocus())
+                continue;
+            const auto value = m_engine->parameterValue(m_layerId, key);
+            const QSignalBlocker blocker(field);
+            if (auto *slider = qobject_cast<SliderField *>(field.data())) {
+                if (!slider->isDragging())
+                    slider->setValue(value.toDouble());
+            } else if (auto *flag = qobject_cast<QCheckBox *>(field.data()))
+                flag->setChecked(value.toBool());
+        }
+    refreshAudioMeters();
     if (m_toxStatus) {
         {
             Engine::Lock lock(&m_engine->mutex());
@@ -3880,11 +3871,6 @@ void LayerInspector::refreshDynamic()
         if (!l || (l->type != SourceType::Video && l->type != SourceType::Audio)) return;
         in = l->inPoint;
         out = l->outPoint;
-        if (m_meter) {
-            const float pk = l->audio ? l->audio->peak() : 0.0f;
-            const double db = pk > 1e-6f ? 20.0 * std::log10(pk) : -60.0;
-            m_meter->setValue(int(std::clamp(db + 60.0, 0.0, 60.0) * 10));
-        }
         playing = l->playing;
         speed = l->speed;
         d = l->duration();
@@ -3934,6 +3920,39 @@ QString LayerInspector::layoutKey() const
             << QString::number(c.seconds) << QString::number(c.date) << c.zone;
     }
     return key.join(QChar(0x1f));
+}
+
+// The levels of the sound, where it is watched: the Source tab (the layer's output), the Audio FX tab (the source, the
+// selected FX, the output). Read from the audio thread's atomics, a few times a second.
+void LayerInspector::refreshAudioMeters()
+{
+    if (!m_meter && !m_audioSourceMeter && !m_audioOutputMeter && !m_audioFxMeter && !m_sonificationSwatch)
+        return;
+    std::shared_ptr<AudioStream> stream;
+    std::shared_ptr<AudioEffect> effect;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId));
+        if (l) {
+            stream = l->audio;
+            if (l->audioEffects) {
+                const auto effects = l->audioEffects->effects();
+                if (m_selectedAudioFx >= 0 && m_selectedAudioFx < int(effects.size())) effect = effects[size_t(m_selectedAudioFx)];
+            }
+        }
+    }
+    auto show = [](LevelMeter *meter, const AudioMeter *level) {
+        if (meter) meter->setLevels(level ? level->peak(0) : 0.f, level ? level->peak(1) : 0.f);
+    };
+    show(m_meter, stream ? &stream->outputMeter() : nullptr);
+    show(m_audioSourceMeter, stream ? &stream->sourceMeter() : nullptr);
+    show(m_audioOutputMeter, stream ? &stream->outputMeter() : nullptr);
+    show(m_audioFxMeter, effect ? &effect->meter() : nullptr);
+    if (m_sonificationSwatch && stream && stream->generator()) {
+        const auto rgb = stream->generator()->color();
+        const QColor c = QColor::fromRgbF(std::clamp(rgb[0], 0.f, 1.f), std::clamp(rgb[1], 0.f, 1.f), std::clamp(rgb[2], 0.f, 1.f));
+        m_sonificationSwatch->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(c.name()));
+    }
 }
 
 void LayerInspector::refreshAfterRecall()
@@ -3989,128 +4008,184 @@ void LayerInspector::editAudioEffects(const QJsonArray &after, const QString &te
         emit layerChanged();
     });
 }
+// The Audio FX tab: the same mechanism as the FX tab of the pictures (a list with a switch on each row, Add…, − ▲ ▼, the
+// parameters of the selected FX below), with the level of the sound where it is worth watching: what comes in (the
+// source), what leaves the selected FX, what leaves the layer (after the chain and its fader).
 QWidget *LayerInspector::buildAudioEffects()
 {
-    auto *group = new QGroupBox(QStringLiteral("Audio FX"));
-    group->setObjectName(QStringLiteral("audioFXPanel"));
-    auto *layout = new QVBoxLayout(group);
+    auto *panel = new FxChainPanel(QStringLiteral("Audio FX"));
+    panel->setObjectName(QStringLiteral("audioFXPanel"));
+    m_audioChain = panel;
+    m_audioFXFields.clear();
+    m_audioFxDetail.clear();
+    panel->setMaximum(16);
+    panel->setEmptyText(QStringLiteral("No Audio FX. They are applied in list order, before the layer's volume."));
+
+    bool chainOn = true;
     std::vector<std::shared_ptr<AudioEffect>> effects;
     {
         Engine::Lock lock(&m_engine->mutex());
         const auto *layer = m_engine->layer(m_engine->indexOfId(m_layerId));
-        if (layer && layer->audioEffects)
+        if (layer && layer->audioEffects) {
             effects = layer->audioEffects->effects();
-    }
-    for (size_t index = 0; index < effects.size(); ++index) {
-        const auto &effect = effects[index];
-        const QString id = effect->id();
-        const QString prefix = QStringLiteral("audio_fx/") + id + QStringLiteral("/");
-        auto *box = new QGroupBox(QStringLiteral("%1. %2").arg(index + 1).arg(effect->name()));
-        auto *body = new QVBoxLayout(box);
-        auto *row = new QHBoxLayout;
-        auto *enabled = new FlagBox(QStringLiteral("Enabled"));
-        enabled->setChecked(effect->enabled());
-        m_audioFXFields.push_back({enabled, prefix + QStringLiteral("enabled")});
-        m_animate->attach(enabled, {prefix + QStringLiteral("enabled")});
-        connect(enabled, &QCheckBox::toggled, this, [this, prefix](bool value) {
-            setValue(prefix + QStringLiteral("enabled"), value, QStringLiteral("Bypass Audio FX"));
-        });
-        row->addWidget(enabled);
-        row->addStretch();
-        auto move = [this, id](int direction) {
-            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
-            for (int i = 0; i < state.size(); ++i)
-                if (state[i].toObject().value("id").toString() == id) {
-                    const int next = i + direction;
-                    if (next < 0 || next >= state.size())
-                        return;
-                    const auto entry = state.takeAt(i);
-                    state.insert(next, entry);
-                    editAudioEffects(state, QStringLiteral("Reorder Audio FX"));
-                    return;
-                }
-        };
-        auto *up = new QPushButton(QStringLiteral("↑"));
-        up->setToolTip(QStringLiteral("Move earlier in the audio chain"));
-        up->setEnabled(index > 0);
-        auto *down = new QPushButton(QStringLiteral("↓"));
-        down->setToolTip(QStringLiteral("Move later in the audio chain"));
-        down->setEnabled(index + 1 < effects.size());
-        auto *remove = new QPushButton(QStringLiteral("Remove"));
-        row->addWidget(up);
-        row->addWidget(down);
-        row->addWidget(remove);
-        body->addLayout(row);
-        connect(up, &QPushButton::clicked, this, [move] { move(-1); });
-        connect(down, &QPushButton::clicked, this, [move] { move(1); });
-        connect(remove, &QPushButton::clicked, this, [this, id] {
-            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
-            for (int i = 0; i < state.size(); ++i)
-                if (state[i].toObject().value("id").toString() == id) {
-                    state.removeAt(i);
-                    break;
-                }
-            editAudioEffects(state, QStringLiteral("Remove Audio FX"));
-        });
-        auto number = [this, body](const QString &label, const QString &key, double low, double high, double value) {
-            auto *row = new QHBoxLayout;
-            auto *name = new QLabel(label);
-            auto *field = new SliderField;
-            field->setRange(low, high);
-            field->setDecimals(3);
-            field->setValue(value);
-            row->addWidget(name);
-            row->addWidget(field, 1);
-            body->addLayout(row);
-            m_audioFXFields.push_back({field, key});
-            m_animate->attach({name, field}, {key});
-            connect(field, &SliderField::valueEdited, this, [this, key](double value) {
-                setValue(key, value, QStringLiteral("Change Audio FX parameter"));
-                emit layerChanged();
-            });
-        };
-        number(QStringLiteral("Dry / Wet"), prefix + QStringLiteral("wet"), 0, 1, effect->wet());
-        if (!effect->error().isEmpty()) {
-            auto *warning = new QLabel(effect->error());
-            warning->setWordWrap(true);
-            body->addWidget(warning);
-        } else {
-            const auto &controls = effect->parameters();
-            for (size_t i = 0; i < controls.size(); ++i) {
-                const auto &p = controls[i];
-                number(p.label, prefix + p.key, p.low, p.high, effect->value(int(i)));
-            }
+            chainOn = layer->audioEffects->enabled();
         }
-        layout->addWidget(box);
     }
-    auto *add = new QToolButton;
-    add->setText(QStringLiteral("Add Audio FX…"));
-    add->setObjectName(QStringLiteral("audioFXAdd"));
-    add->setPopupMode(QToolButton::InstantPopup);
-    auto *menu = new QMenu(add);
-    for (const auto &preset : AudioEffect::presets) {
-        auto *action = menu->addAction(QString::fromUtf8(preset.label));
-        action->setObjectName(QStringLiteral("audioFXAdd_") + preset.key);
-        const QString kind = QString::fromUtf8(preset.key);
-        connect(action, &QAction::triggered, this, [this, kind] {
-            auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
-            state.append(QJsonObject{{"kind", kind}});
-            editAudioEffects(state, QStringLiteral("Add Audio FX"));
-        });
-    }
-    menu->addSeparator();
-    auto *custom = menu->addAction(QStringLiteral("Load Faust stereo FX (.dsp)…"));
-    connect(custom, &QAction::triggered, this, [this] {
-        const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Faust Audio FX"), {},
-                                                       QStringLiteral("Faust programs (*.dsp)"));
-        if (path.isEmpty())
-            return;
-        auto state = m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId));
-        state.append(QJsonObject{{"kind", "faust"}, {"path", path}});
-        editAudioEffects(state, QStringLiteral("Load Faust Audio FX"));
+
+    auto *master = panel->masterSwitch();
+    master->setChecked(chainOn);
+    m_animate->attach(master, {QStringLiteral("audio_fx/enable")});
+    m_audioFXFields.push_back({master, QStringLiteral("audio_fx/enable")});
+    connect(master, &QCheckBox::toggled, this, [this](bool on) {
+        setValue(QStringLiteral("audio_fx/enable"), on, QStringLiteral("Enable / Disable Audio FX"));
+        emit layerChanged();
     });
-    add->setMenu(menu);
-    add->setEnabled(effects.size() < 16);
-    layout->addWidget(add);
-    return group;
+
+    auto addMeter = [this](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(name);
+        label->setStyleSheet("color:#8a8a8e;");
+        label->setMinimumWidth(40);
+        auto *meter = new LevelMeter(name);
+        *keep = meter;
+        row->addWidget(label);
+        row->addWidget(meter, 1);
+        into->addLayout(row);
+    };
+    addMeter(panel->headerLayout(), QStringLiteral("Source"), &m_audioSourceMeter);
+    addMeter(panel->footerLayout(), QStringLiteral("Output"), &m_audioOutputMeter);
+    panel->addButton()->setText(QStringLiteral("Add Audio FX…"));
+    panel->addButton()->setToolTip(QStringLiteral("Search the audio FX (Faust) and add one to the chain"));
+
+    std::vector<FxChainPanel::Row> rows;
+    for (const auto &effect : effects) {
+        FxChainPanel::Row row;
+        row.label = effect->name();
+        row.enabled = effect->enabled();
+        row.warning = !effect->error().isEmpty();
+        row.tooltip = effect->error();
+        rows.push_back(row);
+    }
+    m_selectedAudioFx = rows.empty() ? 0 : std::clamp(m_selectedAudioFx, 0, int(rows.size()) - 1);
+    panel->setRows(rows, m_selectedAudioFx, chainOn);
+
+    // The chain as it is saved, to edit: each request builds the next state and goes through one undo step
+    auto state = [this] { return m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId)); };
+    connect(panel, &FxChainPanel::addRequested, this, [this, state](QWidget *anchor) {
+        QList<SearchPicker::Item> items;
+        for (const auto &preset : AudioEffect::presets)
+            items.append({QString::fromUtf8(preset.label), QStringLiteral("Faust"),
+                          QStringLiteral("Real-time stereo effect, written in Faust"), QStringLiteral("preset:") + QString::fromUtf8(preset.key)});
+        items.append({QStringLiteral("Load Faust stereo FX (.dsp)…"), QStringLiteral("File"),
+                      QStringLiteral("Your own Faust program: two inputs, two outputs; its sliders become parameters"),
+                      QStringLiteral("file:")});
+        auto *picker = new SearchPicker(items, this);
+        connect(picker, &SearchPicker::picked, this, [this, state](const QString &what) {
+            if (m_engine->isLocked(m_layer)) return;
+            auto next = state();
+            if (what == QLatin1String("file:")) {
+                const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Faust Audio FX"), {},
+                                                               QStringLiteral("Faust programs (*.dsp)"));
+                if (path.isEmpty()) return;
+                next.append(QJsonObject{{"kind", "faust"}, {"path", path}});
+                m_selectedAudioFx = next.size() - 1;
+                editAudioEffects(next, QStringLiteral("Load Faust Audio FX"));
+                return;
+            }
+            next.append(QJsonObject{{"kind", what.mid(int(strlen("preset:")))}});
+            m_selectedAudioFx = next.size() - 1;
+            editAudioEffects(next, QStringLiteral("Add Audio FX"));
+        });
+        picker->popup(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
+    connect(panel, &FxChainPanel::removeRequested, this, [this, state](int row) {
+        auto next = state();
+        if (row < 0 || row >= next.size()) return;
+        next.removeAt(row);
+        m_selectedAudioFx = std::max(0, std::min(row, int(next.size()) - 1));
+        editAudioEffects(next, QStringLiteral("Remove Audio FX"));
+    });
+    connect(panel, &FxChainPanel::moveRequested, this, [this, state](int from, int to) {
+        auto next = state();
+        if (from < 0 || from >= next.size() || to < 0 || to >= next.size()) return;
+        const auto entry = next.takeAt(from);
+        next.insert(to, entry);
+        m_selectedAudioFx = to;
+        editAudioEffects(next, QStringLiteral("Reorder Audio FX"));
+    });
+    connect(panel, &FxChainPanel::toggled, this, [this](int row, bool on) {
+        const auto effects = m_engine->audioEffects(m_layerId);
+        if (row < 0 || row >= int(effects.size())) return;
+        setValue(QStringLiteral("audio_fx/") + effects[size_t(row)]->id() + QStringLiteral("/enabled"), on,
+                 on ? QStringLiteral("Enable Audio FX") : QStringLiteral("Bypass Audio FX"));
+    });
+    connect(panel, &FxChainPanel::currentChanged, this, [this](int row) {
+        m_selectedAudioFx = row;
+        showAudioEffectParams();
+    });
+    showAudioEffectParams();
+    return panel;
+}
+
+// The parameters of the selected audio FX: swapped in place, the list is left alone (see FxChainPanel)
+void LayerInspector::showAudioEffectParams()
+{
+    if (!m_audioChain)
+        return;
+    auto *lay = m_audioChain->detailLayout();
+    clearLayout(lay);
+    m_audioFxDetail.clear();
+    m_audioFxMeter = nullptr;
+    const auto effects = m_engine->audioEffects(m_layerId);
+    if (effects.empty())
+        return;
+    m_selectedAudioFx = std::clamp(m_selectedAudioFx, 0, int(effects.size()) - 1);
+    const auto &effect = effects[size_t(m_selectedAudioFx)];
+    const QString prefix = QStringLiteral("audio_fx/") + effect->id() + QStringLiteral("/");
+
+    lay->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(effect->name().toHtmlEscaped())));
+    {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(QStringLiteral("Level"));
+        label->setStyleSheet("color:#8a8a8e;");
+        label->setMinimumWidth(40);
+        auto *meter = new LevelMeter(effect->name());
+        m_audioFxMeter = meter;
+        row->addWidget(label);
+        row->addWidget(meter, 1);
+        lay->addLayout(row);
+    }
+    if (!effect->error().isEmpty())
+        lay->addWidget(errorLabel(effect->error()));
+    lay->addWidget(accentSeparator());
+
+    auto number = [this, lay](const QString &label, const QString &key, double low, double high, double value,
+                              double initial) {
+        auto *row = new QHBoxLayout;
+        auto *field = new SliderField;
+        auto *name = new ResetLabel(label, [this, field, key, initial] {
+            field->setValue(initial);
+            setValue(key, initial, QStringLiteral("Reset Audio FX parameter"));
+        });
+        field->setRange(low, high);
+        field->setDecimals(3);
+        field->setValue(value);
+        row->addWidget(name);
+        row->addWidget(field, 1);
+        lay->addLayout(row);
+        m_audioFxDetail.push_back({field, key});
+        m_animate->attach({name, field}, {key});
+        connect(field, &SliderField::valueEdited, this, [this, key](double v) {
+            setValue(key, v, QStringLiteral("Change Audio FX parameter"));
+            emit layerChanged();
+        });
+    };
+    number(QStringLiteral("Dry / Wet"), prefix + QStringLiteral("wet"), 0, 1, effect->wet(), 1);
+    if (effect->error().isEmpty()) {
+        const auto &controls = effect->parameters();
+        for (size_t i = 0; i < controls.size(); ++i)
+            number(controls[i].label, prefix + controls[i].key, controls[i].low, controls[i].high, effect->value(int(i)),
+                   controls[i].initial);
+    }
+    lockInputs(m_audioChain->detail(), m_locked);
 }

@@ -3,8 +3,12 @@
 NyxMap's audio instruments run **in the audio device callback**, independent of the
 video frame rate. They are not rendered to a WAV or a fixed-length clip.
 
-In **Media Bin → Generators**, drag **FM Audio**, **Granular Audio**, **White Noise
-Audio**, **Pink Noise Audio**, or **Video Audio** onto a layer. Select that layer
+In **Media Bin → Audio → Generators**, drag **FM**, **Granular**, **White Noise**,
+**Pink Noise**, or **Video Sonification** onto a layer. **Audio → Sounds** lists the sound
+files, **Audio → Inputs** the sound inputs of the machine (microphones, sound card
+inputs; a dragged input is a live sound with its volume, its Audio FX and its levels).
+The bin has two roots, **Video** and **Audio**; the media filter (Video + Audio, Video,
+Audio) and the kind filter (Files, Generators, Inputs, ISF) narrow it. Select that layer
 and adjust its Source controls while it plays. Each instrument has **attack,
 decay, sustain, release and gate** controls. A gate rising from 0 to 1 retriggers
 its ADSR; lowering it releases the sound. Pause releases the built-in envelope;
@@ -69,16 +73,23 @@ manually when moving projects. Invalid values and unavailable sources fail visib
 {"version":1,"type":"video","frequency":220,"ratio":2,"index":3,"gain":0.2}
 ```
 
-Put the video on a visual layer and add Video Audio on another layer. The instrument
-uses the **current rendered composition**, including effects, mixing and live
-inputs. A 16×16 GPU tap is averaged every render tick: brightness controls amplitude,
-red versus blue shifts pitch, green controls FM depth. The audio thread smooths
-this input and continuously synthesizes sound. A video does not need an audio track.
+Put the video on a visual layer and add a Video Sonification instrument on another layer.
+The instrument listens to **one viewport**: in its Source tab, **Watches** chooses which
+(the first viewport by default; the composition itself only when the project has no
+viewport). It analyses that viewport's output as it goes out, with its own size, opacity
+and color space, effects, mixing and live inputs included, so each instrument can follow
+a different picture (a screen for the room, another for the stage). The small swatch
+next to **Watches** shows the color it sees. A 16×16 GPU tap is averaged every render
+tick: brightness controls amplitude, red versus blue shifts pitch, green controls FM
+depth. The audio thread smooths this input and continuously synthesizes sound. A video
+does not need an audio track. The choice is saved with the layer (`sonification_viewport`);
+if that viewport is deleted, the instrument falls back to the first one.
 
-The tap reads the whole composition, not an individual video layer. It performs a
-small synchronous GPU readback on the rendering thread; graphics stalls can delay
-new visual controls, but do not stop audio callbacks. This is sampled color
-sonification, not per-pixel spectral conversion. Black images produce silence.
+The tap reads each watched viewport once per frame (instruments that watch the same
+viewport share the read), not an individual video layer. It performs a small synchronous
+GPU readback on the rendering thread; graphics stalls can delay new visual controls, but
+do not stop audio callbacks. This is sampled color sonification, not per-pixel spectral
+conversion. Black images produce silence.
 
 ## User Faust programs: audio equivalent of programmable visual generators
 
@@ -94,7 +105,7 @@ built-in instruments still work on every platform.
 
 libfaust is loaded locally through its C ABI, with deep symbol binding where supported, to isolate its compiler symbols from graphics drivers. It is not linked into NyxMap at startup. Compilation and DSP initialization happen only when loading. UI widgets are
 discovered automatically, exposed in the inspector, and saved at stable numeric
-addresses `synth/p0`, `synth/p1`, etc. A program may have 0 inputs (generator), or
+addresses `synth/<label>` (the control's label in lower case: `level`, `cutoff`; `p0`, `p1`… when it has none; `_2` after a repeated one). A program may have 0 inputs (generator), or
 4 inputs (sample input, red, green, blue; sample input currently supplies zeros),
 and 1 or 2 outputs. Up to 128 scalar controls are supported; soundfile widgets are
 rejected. Widget order must stay consistent to restore saved numeric addresses.
