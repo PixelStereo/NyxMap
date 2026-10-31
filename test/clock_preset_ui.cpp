@@ -36,6 +36,8 @@ int runClockPresetUiTests(Engine &engine)
     presets.select(engine.preset(pi).id);
     presets.setEditing(true);
     LayerInspector inspector(&engine, &undo);
+    // The menu at the top is not what this test is about: without its row the fields sit where they do on a small CI screen
+    if (auto *pickerRow = inspector.findChild<QWidget *>("layerPickerRow")) pickerRow->hide();
     inspector.resize(700, 1600); inspector.setLayer(row); inspector.show();
     auto showSource = [&] {
         inspector.rebuild();
