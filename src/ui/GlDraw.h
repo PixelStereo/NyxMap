@@ -12,7 +12,7 @@ public:
     void init();    // requires a current context
     void destroy(); // requires a current context
 
-    void drawTexture(GLuint tex);                                   // fills the current viewport
+    void drawTexture(GLuint tex, bool over = false); // fills the current viewport; over: premultiplied, over what is there
     void drawLines(const std::vector<float> &ndc, const QColor &c); // pairs of (x,y) points in NDC
     void drawTriangles(const std::vector<float> &ndc, const QColor &c);
 
@@ -20,6 +20,6 @@ private:
     void drawColor(const std::vector<float> &ndc, const QColor &c, GLenum mode);
     GLuint m_texProg = 0, m_colorProg = 0;
     GLuint m_quadVao = 0, m_quadVbo = 0, m_dynVao = 0, m_dynVbo = 0;
-    GLint m_texLoc = -1, m_colorLoc = -1;
+    GLint m_texLoc = -1, m_colorLoc = -1, m_opaqueLoc = -1;
     bool m_ok = false;
 };

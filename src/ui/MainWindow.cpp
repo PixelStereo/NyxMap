@@ -309,6 +309,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
     connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
+    previews->setUndoStack(m_undo);
+    connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     cv->addWidget(m_seqBar);
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
@@ -395,6 +397,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // --- Layers
     connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
         m_view->setLayer(r);
+        m_previews->setCurrentLayer(m_engine->layerId(r));
         m_inspector->setLayer(r);
         updateCoTargets();
         if (r >= 0 && r != m_lastSelected) m_tabs->setCurrentIndex(0);

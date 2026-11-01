@@ -53,6 +53,12 @@
   screen), and has its points pushed along their normals by a layer's luminance
   (Surface › Displace; `model/displace/amount`, `model/displace/mid`). A primitive's
   mesh is cut finer with `model/detail` (1–8).
+  A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
+  its own camera (drag: turn; Shift or middle button: pan; wheel: distance), the
+  ground grid, the scene's lights and camera drawn; a click picks a model or a
+  light; its handles move, turn or scale it along X, Y, Z (W, E, R; one undo step
+  each). "View from Camera" and "Camera = View" exchange the view's and the scene's
+  cameras. Not yet: moving a mesh's points by hand in that view.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

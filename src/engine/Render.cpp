@@ -962,7 +962,16 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     if (!g.sceneRenderer) g.sceneRenderer = std::make_shared<Scene3D>();
     std::vector<Scene3D::Item> items;
     std::vector<Scene3D::Lamp> lamps;
-    for (const Layer *m : members) {
+    collectScene(members, items, lamps);
+    const int w = m_compSize.width(), h = m_compSize.height();
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h);
+    if (!tex) return;
+    processLayer(g, tex, w, h, true, rc);
+}
+
+void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps)
+{
+    for (Layer *m : members) {
         if (!m->enabled || m->soloHidden) continue;
         if (m->type == SourceType::Model && m->model) {
             m->model->setDetail(m->modelPlacement.detail);
@@ -970,13 +979,10 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
             const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
             items.push_back({m->model, m->modelPlacement, pic ? pic->finalTex : 0, disp ? disp->finalTex : 0,
                              m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid});
+        } else if (m->type == SourceType::Light) {
+            lamps.push_back({m->light, m->opacity});
         }
-        else if (m->type == SourceType::Light) lamps.push_back({m->light, m->opacity});
     }
-    const int w = m_compSize.width(), h = m_compSize.height();
-    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h);
-    if (!tex) return;
-    processLayer(g, tex, w, h, true, rc);
 }
 
 // A viewport's picture: the part of the composition its Spatial places it on, drawn at its own size, then
@@ -1445,6 +1451,25 @@ void Engine::frame(double dt)
         const int index = indexOfId(slot.id);
         if (index < 0) { slot.target[m_back].destroy(); continue; }
         const Layer &layer = *m_layers[size_t(index)];
+        if (slot.sceneView && layer.scene3d) { // a 3D view: the scene from the view's own camera
+            std::vector<Layer *> members;
+            for (auto &m : m_layers)
+                if (m->parent == layer.id) members.push_back(m.get());
+            std::vector<Scene3D::Item> items;
+            std::vector<Scene3D::Lamp> lamps;
+            collectScene(members, items, lamps);
+            if (!slot.editor[m_back]) slot.editor[m_back] = std::make_shared<Scene3D>();
+            SceneSettings view = layer.scene; // its light and exposure; the view's camera and background
+            for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
+            view.distance = slot.camera.distance;
+            view.yaw = slot.camera.yaw;
+            view.pitch = slot.camera.pitch;
+            view.fov = slot.camera.fov;
+            view.background = slot.camera.background;
+            slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height());
+            if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
+            continue;
+        }
         const RenderTarget *vp = layer.isViewport ? &layer.vpOut[layer.vpBack] : nullptr;
         const GLuint texture = vp ? vp->tex : layer.finalTex;
         QSize size = vp ? QSize(vp->w, vp->h) : QSize(layer.finalW, layer.finalH);
