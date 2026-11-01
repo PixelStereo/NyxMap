@@ -6,7 +6,7 @@
 #include <cmath>
 
 namespace {
-constexpr int header = 48, rowHeight = 34;
+constexpr int header = 28, rowHeight = 34; // the LIVE line, then one row per timeline
 QColor ink(Engine::AnimState state) {
     return state == Engine::AnimState::Playing ? QColor("#6fe3bc") : state == Engine::AnimState::Paused ? QColor("#efc374") : QColor("#8c91a0");
 }
@@ -66,15 +66,6 @@ void TimelineActivity::paintEvent(QPaintEvent *) {
     p.drawText(QRect(10,3,w-85,20),Qt::AlignVCenter,QStringLiteral("LIVE   %1 playing   ·   %2 paused").arg(m_playing).arg(m_paused));
     p.setFont(font()); p.setPen(QColor("#a1b3ca"));
     p.drawText(QRect(w-82,3,72,20),Qt::AlignRight|Qt::AlignVCenter,m_showStopped?QStringLiteral("ALL ▾"):QStringLiteral("ACTIVE ▾"));
-    if (!m_rows.empty()) {
-        const double cell=double(w-20)/m_rows.size();
-        for (size_t i=0;i<m_rows.size();++i) {
-            const auto &a=m_rows[i]; const QRectF tile(10+i*cell,28,std::max(1.,cell-3),12);
-            p.fillRect(tile,QColor("#2b3442"));
-            p.fillRect(QRectF(tile.left(),tile.top(),tile.width()*std::clamp(a.position/std::max(.001,a.duration),0.,1.),tile.height()),ink(a.state));
-            if (a.id==m_selected) { p.setPen(QColor("#ffffff")); p.drawRect(tile); }
-        }
-    }
     p.save(); p.setClipRect(QRect(0,header,w,viewport()->height()-header));
     if (m_rows.empty()) { p.setPen(QColor("#8e9bae")); p.drawText(QRect(10,header,w-20,48),Qt::AlignVCenter|Qt::TextWordWrap,QStringLiteral("No active timeline. Start one from a cue or the timeline editor. Choose ALL to inspect stopped timelines.")); }
     for (int i=0;i<int(m_rows.size());++i) {
@@ -108,9 +99,6 @@ void TimelineActivity::mousePressEvent(QMouseEvent *event) {
     if (event->button()!=Qt::LeftButton) return;
     const auto point=event->pos();
     if (point.y()<25 && point.x()>viewport()->width()-85) { setShowStopped(!m_showStopped); return; }
-    if (point.y()>=26 && point.y()<header && !m_rows.empty()) {
-        select(std::clamp(int(double(point.x()-10)/std::max(1,viewport()->width()-20)*m_rows.size()),0,int(m_rows.size())-1)); return;
-    }
     const int row=rowAt(point); if (row<0 || row>=int(m_rows.size())) return;
     select(row); const auto a=m_rows[size_t(row)];
     if (point.x()>viewport()->width()-30) m_engine->controlAnimation(a.id,Engine::AnimAction::Stop);
