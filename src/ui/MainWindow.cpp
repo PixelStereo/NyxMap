@@ -545,6 +545,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_viewportInspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary, Qt::QueuedConnection);
     connect(m_inspector, &LayerInspector::layerChanged, this, &MainWindow::refreshLayerList);
     connect(m_inspector, &LayerInspector::projectEdited, this, &MainWindow::markDirty);
+    connect(m_inspector, &LayerInspector::timelineRequested, this, [this](quint64 id) {
+        openTimelines();
+        m_timelineWindow->selectTimeline(id);
+    });
     connect(m_inspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary,
             Qt::QueuedConnection); // the rebuild destroys the button that emitted it
     connect(m_inspector, &LayerInspector::kindChanged, this, [this](const QString &k) { m_tabs->setTabText(0, k); });

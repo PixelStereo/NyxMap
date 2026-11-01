@@ -52,6 +52,10 @@ public:
     QToolButton *removeButton() const { return m_remove; }
     QToolButton *upButton() const { return m_up; }
     QToolButton *downButton() const { return m_down; }
+    // Controls placed at the right end of a row (after setRows): its name is cut short before them. A click between
+    // them still picks the row
+    void setRowWidget(int row, QWidget *w);
+    void setRowMaskOnly(int row, bool maskOnly); // its outline: dashed (mask only) or a thin line
 
 signals:
     void addRequested(QWidget *anchor); // pop the picker below this widget
@@ -59,6 +63,9 @@ signals:
     void moveRequested(int from, int to);
     void toggled(int row, bool on);
     void currentChanged(int row); // another FX picked: show its parameters (the list is not rebuilt)
+
+protected:
+    bool eventFilter(QObject *o, QEvent *e) override;
 
 private:
     void updateButtons();
