@@ -4224,6 +4224,18 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // The mask layer gone: the effect applies everywhere again
         e.removeLayer(e.indexOfId(maskId));
         CHECK(at(0.25).red() < 5 && at(0.75).red() < 5);
+        // Its channels: the ones it changes; a channel off keeps the input (red inverted is cyan)
+        const QString channels = e.shaderPrefix(lid, 0) + "channel/";
+        CHECK(e.setParameter(lid, channels + "r", false));
+        QColor c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() > 250); // red kept, green and blue inverted
+        CHECK(e.setParameter(lid, channels + "b", false));
+        c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() < 5); // only green inverted
+        CHECK(!e.layerJson(e.indexOfId(lid)).value("params").toObject().value(channels + "b").toBool(true)); // saved
+        CHECK(e.setParameter(lid, channels + "r", true) && e.setParameter(lid, channels + "b", true));
+        c = at(0.5);
+        CHECK(c.red() < 5 && c.green() > 250 && c.blue() > 250); // all of them again
         e.removeLayer(e.indexOfId(lid));
     }
     // 4f bis. The color section through a mask: red with all its red removed, only where the mask is white

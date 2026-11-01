@@ -377,6 +377,12 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });
     out.emplace_back(QStringLiteral("mask/invert"), cat + QStringLiteral("Invert Mask"), T::Bool);
     out.back().byDefault(false).bind([self] { return self->maskInvert; }, [self](const QVariant &v) { self->maskInvert = v.toBool(); });
+    // The channels an effect changes: each one on or off (off: it keeps the picture the effect was given)
+    for (int c = 0; c < 4; ++c) {
+        out.emplace_back(QStringLiteral("channel/") + QChar("rgba"[c]), cat + QStringLiteral("Channel ") + QChar("RGBA"[c]), T::Bool);
+        out.back().byDefault(true).ramp(Parameter::Ramp::Cut).bind(
+            [self, c] { return self->channels[size_t(c)]; }, [self, c](const QVariant &v) { self->channels[size_t(c)] = v.toBool(); });
+    }
     for (const IsfInput &in : m_inputs) {
         if (in.isInputImage) continue;
         const QString name = in.name;

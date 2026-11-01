@@ -1318,6 +1318,7 @@ private:
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
+    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
     GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
     GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)
