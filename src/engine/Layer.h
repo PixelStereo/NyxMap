@@ -1,4 +1,5 @@
 #pragma once
+#include <set>
 #include "Anim.h"
 #include "AudioStream.h"
 #include "ClockGenerator.h"
@@ -427,6 +428,11 @@ struct Layer {
     float transitionGain = 1.0f; // sound during such a transition: the incoming source rises, the outgoing one falls
 
     RenderTarget maskTarget[2]; // an effect's result through its mask
+    // Its pictures along its effects that a mask takes (stage k: after its effect k), kept: the effects after them
+    // write their targets again. stageTex[k]: this frame's (0: its source), valid for the stages wanted only
+    std::set<int> stagesWanted;          // made each frame (Engine::markNeeded)
+    std::map<int, RenderTarget> stageTargets;
+    std::vector<GLuint> stageTex;
 
     // Frame render result
     GLuint finalTex = 0;

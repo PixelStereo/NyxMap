@@ -18,6 +18,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QProxyStyle>
+#include <QStyleOption>
 #include <QRegularExpression>
 #include <QPixmap>
 #include <QWheelEvent>
@@ -36,6 +38,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+
+QStyle *checkStyle(QStyle *base); // Fusion with the application's check boxes (below)
 
 // ---------------------------------------------------------------------------
 // Accent color
@@ -215,7 +219,7 @@ namespace theme {
 // Dark interface, with the accent wherever a selection or an active control is shown
 void applyToApplication(QApplication &app)
 {
-    app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     QPalette p;
     const QColor base(30, 30, 33), window(40, 40, 44), text(225, 225, 228), a = accent();
     p.setColor(QPalette::Window, window);
@@ -715,6 +719,48 @@ QColor flagEdge(bool hover, bool enabled)
 }
 } // namespace
 
+// A check box as a square: its edge, and when it is on, a square of the accent inside it (no tick)
+void theme::paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled)
+{
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    QColor accent = theme::accent();
+    if (!enabled) accent.setAlphaF(0.45f);
+    p.setPen(QPen(on || partial ? accent : flagEdge(hover, enabled), 1.2));
+    p.setBrush(QColor(24, 24, 27));
+    p.drawRoundedRect(box.adjusted(0.6, 0.6, -0.6, -0.6), 3, 3);
+    if (on || partial) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(accent);
+        const QRectF inner = box.adjusted(3.2, 3.2, -3.2, -3.2);
+        p.drawRoundedRect(partial && !on ? QRectF(inner.left(), inner.center().y() - 1.5, inner.width(), 3) : inner, 1.5, 1.5);
+    }
+    p.restore();
+}
+
+namespace {
+// The application's style: Fusion, its check boxes drawn as theme::paintCheck (the ones of the lists and the trees too)
+class CheckStyle : public QProxyStyle
+{
+public:
+    using QProxyStyle::QProxyStyle;
+    void drawPrimitive(PrimitiveElement pe, const QStyleOption *o, QPainter *p, const QWidget *w = nullptr) const override
+    {
+        if (pe == PE_IndicatorCheckBox || pe == PE_IndicatorItemViewItemCheck) {
+            const QRectF r(o->rect);
+            const double side = std::min(r.width(), r.height());
+            const QRectF box(r.center().x() - side / 2, r.center().y() - side / 2, side, side);
+            theme::paintCheck(*p, box, o->state & State_On, o->state & State_NoChange, o->state & State_MouseOver,
+                              o->state & State_Enabled);
+            return;
+        }
+        QProxyStyle::drawPrimitive(pe, o, p, w);
+    }
+};
+} // namespace
+
+QStyle *checkStyle(QStyle *base) { return new CheckStyle(base); }
+
 FlagBox::FlagBox(QWidget *parent) : FlagBox(QString(), parent) {}
 FlagBox::FlagBox(const QString &text, QWidget *parent) : QCheckBox(text, parent)
 {
@@ -749,26 +795,7 @@ void FlagBox::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const bool on = isChecked(), en = isEnabled();
     const QRectF box(1.5, (height() - 14) / 2.0, 14, 14);
-    if (on) {
-        QColor a = theme::accent();
-        if (!en) a.setAlphaF(0.4f);
-        p.setPen(Qt::NoPen);
-        p.setBrush(a);
-        p.drawRoundedRect(box, 3, 3);
-        QColor tick = theme::onAccent();
-        if (!en) tick.setAlphaF(0.6f);
-        p.setPen(QPen(tick, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.setBrush(Qt::NoBrush);
-        QPainterPath path;
-        path.moveTo(box.left() + 3.2, box.center().y() + 0.3);
-        path.lineTo(box.left() + 5.8, box.bottom() - 3.6);
-        path.lineTo(box.right() - 3, box.top() + 3.6);
-        p.drawPath(path);
-    } else {
-        p.setPen(QPen(flagEdge(m_hover, en), 1.2));
-        p.setBrush(QColor(24, 24, 27));
-        p.drawRoundedRect(box, 3, 3);
-    }
+    theme::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en);
     if (!text().isEmpty()) {
         p.setPen(palette().color(en ? QPalette::Active : QPalette::Disabled, QPalette::WindowText));
         p.setFont(font());

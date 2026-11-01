@@ -23,6 +23,7 @@ public:
         QString label;
         bool enabled = true;
         bool warning = false;  // the FX could not be loaded: a ⚠ after its name
+        bool maskOnly = false; // computed for the masks only: outlined dashed (on: a thin line; off: none)
         QString suffix;        // e.g. "  ◐" (through a mask)
         QString tooltip;
     };

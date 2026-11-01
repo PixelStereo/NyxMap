@@ -175,7 +175,10 @@ public:
     // black (or transparent), in proportion in between; the layer's picture is stretched over this one's.
     quint64 maskLayer = 0; // 0: everywhere
     bool maskInvert = false;
-    bool maskPreFx = false; // the mask is the layer's picture before its own effects (false: after them)
+    // The mask layer's picture it takes: -1 its final picture, 0 its source (before its effects), k its picture after its
+    // effect k (1 = the first). Its own layer can mask it, from a stage above it (its source, an effect before it)
+    int maskStage = -1;
+    bool maskOnly = false; // computed (a mask can take its picture), but the layer's picture goes on without it
     std::array<bool, 4> channels{{true, true, true, true}}; // an effect: the channels it changes (R G B A); the others
                                                             // keep the picture it was given
 

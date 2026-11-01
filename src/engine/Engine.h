@@ -257,7 +257,8 @@ public:
     // A layer's matte (Layer.h): another layer's picture that sets where it shows (layer 0: none). Refused: a
     // viewport (either side), the layer itself, or a layer that already uses it (the picture would feed back).
     bool setLayerMatte(int layer, const LayerMatte &matte, QString *err = nullptr);
-    bool setEffectMaskTap(int layer, int effect, bool preFx); // the mask's picture: before or after its own effects
+    // The mask's picture: -1 its final one, 0 its source, k after its effect k (its own layer: a stage above the effect)
+    bool setEffectMaskStage(int layer, int effect, int stage);
     // Where the color section applies: another layer's picture (0: everywhere). Same rules as an effect's mask.
     bool setColorMask(int layer, quint64 maskLayer, bool invert, QString *err = nullptr);
     PlayMode defaultPlayMode() const { return m_defaultPlayMode; }
