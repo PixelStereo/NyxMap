@@ -430,7 +430,20 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         if (!m_updating && row != prev) emit currentRowChanged(row);
     });
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
-        if (!m_updating) emit selectionChanged();
+        if (m_updating) return;
+        // The current row deselected (Cmd / Ctrl + click): another selected row becomes the current one, or none —
+        // the inspector and the mapping view follow, not a row left highlighted nowhere
+        const int current = m_table->currentRow();
+        if (current >= 0 && !m_table->selectionModel()->isRowSelected(current, QModelIndex())) {
+            const QModelIndexList selected = m_table->selectionModel()->selectedRows();
+            const int next = selected.isEmpty() ? -1 : selected.front().row();
+            m_updating = true;
+            m_table->selectionModel()->setCurrentIndex(next < 0 ? QModelIndex() : m_table->model()->index(next, ColName),
+                                                       QItemSelectionModel::NoUpdate);
+            m_updating = false;
+            emit currentRowChanged(next);
+        }
+        emit selectionChanged();
     });
     connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
         if (m_updating || it->column() != ColVisible) return;

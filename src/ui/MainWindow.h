@@ -172,6 +172,7 @@ private:
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
             *m_blackoutAction = nullptr;
+    int m_listedRows = 0; // rows the layer list had (0: empty, a layer chosen as it fills)
     int m_lastSelected = -1;
     QJsonObject m_paramClipboard;       // layer parameters copied with the right-click menu
     QString m_paramClipboardName;       // the layer they come from (shown in the menu)
