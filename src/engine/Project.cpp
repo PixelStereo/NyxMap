@@ -220,6 +220,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
+        if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
         break;
     case SourceType::Light:
         src["type"] = "light";
@@ -382,6 +384,13 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     } else if (type == "light") {
         setLayerLight(index);
     } else if (type == "model") {
+        {
+            Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
+            if (Layer *l = layer(index)) {
+                l->modelPicture = src.value("picture").toString().toULongLong();
+                l->modelDisplace = src.value("displace").toString().toULongLong();
+            }
+        }
         const bool ok = setLayerModel(index, path, &err);
         if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
         if (!ok) {

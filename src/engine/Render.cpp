@@ -309,6 +309,9 @@ void Engine::markNeeded()
             const int si = indexOfId(id);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
+        if (l.type == SourceType::Model) // the pictures laid on a 3D model, pushing its points
+            for (quint64 id : {l.modelPicture, l.modelDisplace})
+                if (const int si = indexOfId(id); id && si >= 0) m_layers[size_t(si)]->referenced = true;
     };
     auto visionReference = [this](const Interaction &input) {
         if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
@@ -368,6 +371,9 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                 const int si = indexOfId(d.sourceLayer);
                 if (si >= 0) render(size_t(si));
             }
+            if (d.type == SourceType::Model) // the pictures on a 3D model, pushing its points
+                for (quint64 id : {d.modelPicture, d.modelDisplace})
+                    if (const int si = indexOfId(id); id && si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
             for (const auto &fx : d.effects) // the masks of its effects
                 if (fx->enabled && fx->maskLayer) {
                     const int mi = indexOfId(fx->maskLayer);
@@ -958,7 +964,13 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     std::vector<Scene3D::Lamp> lamps;
     for (const Layer *m : members) {
         if (!m->enabled || m->soloHidden) continue;
-        if (m->type == SourceType::Model && m->model) items.push_back({m->model, m->modelPlacement});
+        if (m->type == SourceType::Model && m->model) {
+            m->model->setDetail(m->modelPlacement.detail);
+            const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
+            const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
+            items.push_back({m->model, m->modelPlacement, pic ? pic->finalTex : 0, disp ? disp->finalTex : 0,
+                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid});
+        }
         else if (m->type == SourceType::Light) lamps.push_back({m->light, m->opacity});
     }
     const int w = m_compSize.width(), h = m_compSize.height();

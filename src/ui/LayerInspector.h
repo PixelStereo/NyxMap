@@ -169,6 +169,7 @@ private:
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
     QWidget *build3d(const QStringList &prefixes);
+    QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     std::vector<std::pair<QPointer<QWidget>, QString>> m_3dFields;
     std::vector<std::pair<QPointer<QWidget>, QStringList>> m_3dColors;
     QPointer<ParamPanel> m_generatorParams, m_effectParams;

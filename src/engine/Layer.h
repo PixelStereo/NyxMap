@@ -364,6 +364,8 @@ struct Layer {
     std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
     ModelPlacement modelPlacement;
+    quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
+    quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
     LightSettings light;
     bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light; }
 

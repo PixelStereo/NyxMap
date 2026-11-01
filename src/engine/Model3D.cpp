@@ -61,7 +61,8 @@ bool Model3D::load(const QString &path, QString *err)
     m_materials.clear();
     m_images.clear();
     const QString ext = QFileInfo(path).suffix().toLower();
-    const bool ok = isPrimitivePath(path)                                          ? loadPrimitive(path.section('/', -1), err)
+    m_primitive = isPrimitivePath(path);
+    const bool ok = m_primitive                                                    ? loadPrimitive(path.section('/', -1), err)
                     : ext == QLatin1String("gltf") || ext == QLatin1String("glb") ? loadGltf(path, err)
                                                                                   : loadUfbx(path, err);
     if (!ok) return false;
@@ -86,6 +87,7 @@ void Model3D::computeBounds()
         }
     m_center = (lo + hi) / 2;
     m_radius = std::max(1e-6f, (hi - lo).length() / 2);
+    m_width = std::max(1e-6f, hi.x() - lo.x());
 }
 
 // --- Built-in primitives -------------------------------------------------------------------------------------------
@@ -103,10 +105,22 @@ struct Builder {
     }
     void quad(quint32 a, quint32 b, quint32 c, quint32 d) { indices.insert(indices.end(), {a, b, c, a, c, d}); }
     // A flat rectangle: corner `o`, sides `du` and `dv`, its normal
-    void face(QVector3D o, QVector3D du, QVector3D dv)
+    // A flat rectangle: corner `o`, sides `du` and `dv`, its normal; cut in a grid (a bend curves it smoothly)
+    void face(QVector3D o, QVector3D du, QVector3D dv, int nu = 16, int nv = 16)
     {
         const QVector3D n = QVector3D::crossProduct(du, dv);
-        quad(vertex(o, n, 0, 1), vertex(o + du, n, 1, 1), vertex(o + du + dv, n, 1, 0), vertex(o + dv, n, 0, 0));
+        const quint32 first = quint32(data.size() / 8);
+        for (int j = 0; j <= nv; ++j)
+            for (int i = 0; i <= nu; ++i) {
+                const float u = float(i) / nu, v = float(j) / nv;
+                vertex(o + du * u + dv * v, n, u, 1 - v);
+            }
+        const quint32 row = quint32(nu + 1);
+        for (quint32 j = 0; j < quint32(nv); ++j)
+            for (quint32 i = 0; i < quint32(nu); ++i) {
+                const quint32 a = first + j * row + i;
+                quad(a, a + 1, a + row + 1, a + row);
+            }
     }
     // A surface of revolution around Y: its profile (radius, height, the normal's radial and vertical parts, v), turned
     struct P {
@@ -157,27 +171,35 @@ struct Builder {
 bool Model3D::loadPrimitive(const QString &name, QString *err)
 {
     Builder b;
-    constexpr int S = 64; // segments around
+    const int S = 64 * m_detail, F = 16 * m_detail; // segments around; cuts of a flat face
     const float h = 0.5f;
     if (name == QLatin1String("Cube") || name == QLatin1String("Open Cube")) {
-        b.face({-h, -h, h}, {1, 0, 0}, {0, 1, 0});   // front
-        b.face({h, -h, -h}, {-1, 0, 0}, {0, 1, 0});  // back
-        b.face({-h, -h, -h}, {0, 0, 1}, {0, 1, 0});  // left
-        b.face({h, -h, h}, {0, 0, -1}, {0, 1, 0});   // right
+        b.face({-h, -h, h}, {1, 0, 0}, {0, 1, 0}, F, F);   // front
+        b.face({h, -h, -h}, {-1, 0, 0}, {0, 1, 0}, F, F);  // back
+        b.face({-h, -h, -h}, {0, 0, 1}, {0, 1, 0}, F, F);  // left
+        b.face({h, -h, h}, {0, 0, -1}, {0, 1, 0}, F, F);   // right
         if (name == QLatin1String("Cube")) {         // open: no top, no bottom (a box seen through)
-            b.face({-h, h, h}, {1, 0, 0}, {0, 0, -1});   // top
-            b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1});  // bottom
+            b.face({-h, h, h}, {1, 0, 0}, {0, 0, -1}, F, F);   // top
+            b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1}, F, F);  // bottom
         }
     } else if (name == QLatin1String("Plane")) { // upright, facing +Z: a screen
-        b.face({-h, -h, 0}, {1, 0, 0}, {0, 1, 0});
-    } else if (name == QLatin1String("Disc")) { // upright, facing +Z
+        b.face({-h, -h, 0}, {1, 0, 0}, {0, 1, 0}, S, S);
+    } else if (name == QLatin1String("Disc")) { // upright, facing +Z, in rings (a bend curves it smoothly)
+        const int rings = 16 * m_detail;
         const quint32 centre = b.vertex({0, 0, 0}, {0, 0, 1}, 0.5f, 0.5f);
         const quint32 first = quint32(b.data.size() / 8);
-        for (int i = 0; i <= S; ++i) {
-            const float a = float(2 * M_PI * i / S);
-            b.vertex({h * std::cos(a), h * std::sin(a), 0}, {0, 0, 1}, 0.5f + 0.5f * std::cos(a), 0.5f - 0.5f * std::sin(a));
-        }
+        for (int r = 1; r <= rings; ++r)
+            for (int i = 0; i <= S; ++i) {
+                const float a = float(2 * M_PI * i / S), k = h * r / rings;
+                b.vertex({k * std::cos(a), k * std::sin(a), 0}, {0, 0, 1}, 0.5f + k * std::cos(a), 0.5f - k * std::sin(a));
+            }
+        const quint32 row = quint32(S + 1);
         for (int i = 0; i < S; ++i) b.indices.insert(b.indices.end(), {centre, first + quint32(i), first + quint32(i) + 1});
+        for (quint32 r = 0; r + 1 < quint32(rings); ++r)
+            for (quint32 i = 0; i < quint32(S); ++i) {
+                const quint32 a = first + r * row + i;
+                b.quad(a, a + row, a + row + 1, a + 1);
+            }
     } else if (name == QLatin1String("Cylinder") || name == QLatin1String("Open Cylinder")) {
         b.lathe({{h, h, 1, 0, 0}, {h, -h, 1, 0, 1}}, S);
         if (name == QLatin1String("Cylinder")) { // open: a tube
@@ -194,7 +216,7 @@ bool Model3D::loadPrimitive(const QString &name, QString *err)
             const QVector3D a = c[k], d = c[(k + 1) % 4], n = QVector3D::crossProduct(d - a, apex - a);
             b.indices.insert(b.indices.end(), {b.vertex(a, n, 0, 1), b.vertex(d, n, 1, 1), b.vertex(apex, n, 0.5f, 0)});
         }
-        b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1});
+        b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1}, F, F);
     } else if (name == QLatin1String("Sphere")) {
         b.sphere(h, 0, 0, float(M_PI), 0, 1, S / 2, S);
     } else if (name == QLatin1String("Dome")) { // a half sphere, open below (seen from inside too: a planetarium)
@@ -437,10 +459,23 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
 static const char *kVertex = R"(#version 330 core
 layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(location=2) in vec2 a_uv;
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
+uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
+uniform int u_hasDisp; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
 void main() {
-    vec4 w = u_model * vec4(a_pos, 1.0);
-    v_pos = w.xyz; v_n = u_normal * a_n; v_uv = a_uv;
+    vec3 p = a_pos, n = a_n;
+    if (u_hasDisp != 0) {
+        vec4 d = textureLod(u_disp, vec2(a_uv.x, 1.0 - a_uv.y), 0.0); // a layer's picture: its first row at the bottom
+        float l = dot(d.rgb, vec3(0.2126, 0.7152, 0.0722)) * d.a; // its luminance
+        p += normalize(n) * (l - u_dispMid) * u_dispAmount;
+    }
+    if (abs(u_bend) > 1e-4) {
+        float R = u_bendW / u_bend, t = (p.x - u_bendCx) / R, s = sin(t), c = cos(t);
+        p = vec3(u_bendCx + (R - p.z) * s, p.y, R - (R - p.z) * c);
+        n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
+    }
+    vec4 w = u_model * vec4(p, 1.0);
+    v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv;
     gl_Position = u_proj * u_view * w;
 }
 )";
@@ -450,13 +485,18 @@ void main() {
 static const char *kFragment = R"(#version 330 core
 in vec3 v_pos; in vec3 v_n; in vec2 v_uv; out vec4 o;
 uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
-uniform int u_hasTex; uniform sampler2D u_tex;
+uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_hasDisp; uniform int u_layerTex;
 uniform vec3 u_eye, u_ambient; uniform float u_exposure;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8];
 void main() {
     vec4 base = u_base;
-    if (u_hasTex != 0) { vec4 t = texture(u_tex, v_uv); base *= vec4(pow(t.rgb, vec3(2.2)), t.a); }
-    vec3 N = normalize(v_n), V = normalize(u_eye - v_pos);
+    if (u_hasTex != 0) {
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        if (u_unlit != 0) { o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a); return; } // as it is: a screen
+        base *= vec4(pow(t.rgb, vec3(2.2)), t.a);
+    } else if (u_unlit != 0) { o = vec4(u_base.rgb * u_base.a, u_base.a); return; }
+    vec3 N = u_hasDisp != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced: its own surface
+    vec3 V = normalize(u_eye - v_pos);
     if (dot(N, V) < 0.0) N = -N; // both faces lit
     float r = clamp(u_rough, 0.04, 1.0), a = r * r;
     vec3 F0 = mix(vec3(0.04), base.rgb, u_metal);
@@ -542,7 +582,7 @@ QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
     return m;
 }
 
-void Model3D::drawMeshes(GLuint program)
+void Model3D::drawMeshes(GLuint program, GLuint picture)
 {
     auto f = gl();
     if (!m_uploaded) {
@@ -552,19 +592,51 @@ void Model3D::drawMeshes(GLuint program)
     auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
     for (const Mesh &m : m_meshes) {
         if (!m.vao) continue;
-        const Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
+        Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
+        if (picture) { // a layer's picture instead of its colours (a white material under it)
+            mat.baseColor = {{1, 1, 1, 1}};
+            mat.emissive = {{0, 0, 0}};
+        }
         f->glUniform4f(loc("u_base"), mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
         f->glUniform1f(loc("u_metal"), mat.metallic);
         f->glUniform1f(loc("u_rough"), mat.roughness);
         f->glUniform3f(loc("u_emissive"), mat.emissive[0], mat.emissive[1], mat.emissive[2]);
-        const bool textured = mat.texture >= 0 && size_t(mat.texture) < m_textures.size();
+        const bool textured = picture || (mat.texture >= 0 && size_t(mat.texture) < m_textures.size());
         f->glUniform1i(loc("u_hasTex"), textured ? 1 : 0);
-        f->glBindTexture(GL_TEXTURE_2D, textured ? m_textures[size_t(mat.texture)] : 0);
+        f->glUniform1i(loc("u_layerTex"), picture ? 1 : 0);
+        f->glBindTexture(GL_TEXTURE_2D, picture ? picture : textured ? m_textures[size_t(mat.texture)] : 0);
         f->glBindVertexArray(m.vao);
         f->glDrawElements(GL_TRIANGLES, GLsizei(m.indices.size()), GL_UNSIGNED_INT, nullptr);
     }
     f->glBindVertexArray(0);
     f->glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Model3D::setDetail(int detail)
+{
+    detail = std::clamp(detail, 1, 8);
+    if (!m_primitive || detail == m_detail) return;
+    m_detail = detail;
+    releaseMeshes(); // render thread: made again, uploaded when next drawn
+    m_meshes.clear();
+    QString err;
+    loadPrimitive(m_path.section('/', -1), &err);
+    computeBounds();
+}
+
+void Model3D::releaseMeshes()
+{
+    if (!QOpenGLContext::currentContext()) return;
+    auto f = gl();
+    for (Mesh &m : m_meshes) {
+        if (m.vao) f->glDeleteVertexArrays(1, &m.vao);
+        if (m.vbo) f->glDeleteBuffers(1, &m.vbo);
+        if (m.ibo) f->glDeleteBuffers(1, &m.ibo);
+        m.vao = m.vbo = m.ibo = 0;
+    }
+    for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
+    m_textures.clear();
+    m_uploaded = false;
 }
 
 void Model3D::releaseGl()
@@ -668,14 +740,29 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform3fv(loc("u_ldir"), kMaxLights, directions);
     f->glUniform1fv(loc("u_cos"), kMaxLights, cones);
     f->glUniform1i(loc("u_tex"), 0);
+    f->glUniform1i(loc("u_disp"), 1);
     f->glActiveTexture(GL_TEXTURE0);
     for (const Item &item : items) {
         if (!item.model) continue;
         const QMatrix4x4 model = item.model->matrix(item.placement);
         f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
         f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
-        item.model->drawMeshes(m_program);
+        const float bend = qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f));
+        f->glUniform1f(loc("u_bend"), bend);
+        f->glUniform1f(loc("u_bendCx"), item.model->centerX());
+        f->glUniform1f(loc("u_bendW"), item.model->width());
+        f->glUniform1i(loc("u_unlit"), item.placement.unlit ? 1 : 0);
+        f->glUniform1i(loc("u_hasDisp"), item.displace ? 1 : 0);
+        f->glUniform1f(loc("u_dispAmount"), item.displaceAmount);
+        f->glUniform1f(loc("u_dispMid"), item.displaceMid);
+        f->glActiveTexture(GL_TEXTURE1);
+        f->glBindTexture(GL_TEXTURE_2D, item.displace);
+        f->glActiveTexture(GL_TEXTURE0);
+        item.model->drawMeshes(m_program, item.picture);
     }
+    f->glActiveTexture(GL_TEXTURE1);
+    f->glBindTexture(GL_TEXTURE_2D, 0);
+    f->glActiveTexture(GL_TEXTURE0);
     f->glDisable(GL_DEPTH_TEST);
     return m_color;
 }

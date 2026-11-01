@@ -858,8 +858,16 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
     if (object3d) {
-        const int t = tabs->addTab(page(build3d({s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")})),
-                                   QStringLiteral("3D"));
+        QWidget *values = build3d({s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")});
+        if (s.type == SourceType::Model) {
+            auto *both = new QWidget;
+            auto *bv = new QVBoxLayout(both);
+            bv->setContentsMargins(0, 0, 0, 0);
+            bv->addWidget(buildModelLayers());
+            bv->addWidget(values, 1);
+            values = both;
+        }
+        const int t = tabs->addTab(page(values), QStringLiteral("3D"));
         tabs->setTabToolTip(t, s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
                                                           : QStringLiteral("The light: its kind, color, level and where it is"));
     }
@@ -3977,6 +3985,63 @@ void LayerInspector::refreshClock()
         }
     }
     if (u->status) u->status->setText(c->status());
+}
+
+// A model's layers: the picture laid on it (over its UVs, after that layer's FX) and the one whose luminance pushes its
+// points along their normals. Any layer, group or other scene but its own scene (and what is made from it)
+QWidget *LayerInspector::buildModelLayers()
+{
+    auto *box = new QGroupBox(QStringLiteral("Surface"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    quint64 picture = 0, displace = 0;
+    std::vector<quint64> ancestors;
+    std::vector<std::pair<quint64, QString>> candidates;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        picture = l->modelPicture;
+        displace = l->modelDisplace;
+        for (quint64 up = l->parent; up;) {
+            ancestors.push_back(up);
+            const Layer *g = m_engine->layer(m_engine->indexOfId(up));
+            up = g ? g->parent : 0;
+        }
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (!o || o->isViewport || o->is3dObject() || std::count(ancestors.begin(), ancestors.end(), o->id)) continue;
+            if (std::any_of(ancestors.begin(), ancestors.end(), [&](quint64 a) { return m_engine->layerDependsOn(o->id, a); })) continue;
+            candidates.push_back({o->id, o->scene3d ? o->name + QStringLiteral(" (3D scene)") : o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
+        }
+    }
+    auto picker = [&](const QString &name, const QString &none, quint64 current, bool forDisplace, const QString &tip) {
+        auto *pick = new QComboBox;
+        pick->setObjectName(forDisplace ? QStringLiteral("modelDisplaceLayer") : QStringLiteral("modelPictureLayer"));
+        pick->addItem(none, QVariant(qulonglong(0)));
+        for (const auto &[id, n] : candidates) pick->addItem(n, QVariant(qulonglong(id)));
+        if (current && pick->findData(QVariant(qulonglong(current))) < 0) pick->addItem(QStringLiteral("(gone)"), QVariant(qulonglong(current)));
+        pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+        pick->setToolTip(tip);
+        form->addRow(name, pick);
+        connect(pick, &QComboBox::activated, this, [this, pick, forDisplace](int i) {
+            const quint64 id = pick->itemData(i).toULongLong();
+            QString err;
+            bool ok = true;
+            editSource(forDisplace ? QStringLiteral("Displace Model") : QStringLiteral("Show Layer on Model"),
+                       [&] { ok = m_engine->setModelLayer(m_layer, id, forDisplace, &err); });
+            if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Model"), err);
+            emit layerChanged();
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+        });
+    };
+    picker(QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, false,
+           QStringLiteral("A layer's picture (after its FX) laid on the model, over its UVs: a video on a screen, a dome. "
+                          "The layer can stay hidden. Unlit (below): shown as it is."));
+    picker(QStringLiteral("Displace"), QStringLiteral("None"), displace, true,
+           QStringLiteral("A layer whose luminance pushes the model's points along their normals (Displace › Amount): "
+                          "white the most, its neutral level not at all. Mesh Detail cuts a primitive finer."));
+    return box;
 }
 
 // The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors

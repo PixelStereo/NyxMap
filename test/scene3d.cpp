@@ -169,5 +169,133 @@ int runScene3dTests(Engine &engine)
     }
     check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - 60) < 1e-6, "the camera's values come back");
     check(center().lightness() > 40, "the opened scene draws again");
+
+    // Surfaces: a layer's picture on a plane (the right way up), unlit; bent; its points pushed by a luminance
+    engine.newProject();
+    engine.setCompositionSize({64, 64});
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {64, 64});
+    const QString halves = dir.path() + "/Halves.fs", white = dir.path() + "/White.fs";
+    {
+        QFile f(halves);
+        check(f.open(QIODevice::WriteOnly), "write the halves shader");
+        f.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { gl_FragColor = isf_FragNormCoord.y > 0.5 ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 1.0, 1.0); }\n");
+        QFile w(white);
+        check(w.open(QIODevice::WriteOnly), "write the white shader");
+        w.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+    }
+    const int pi2 = engine.addLayer("Picture");
+    const quint64 picture = engine.layerId(pi2);
+    check(engine.setLayerIsf(pi2, halves, &error), "a picture layer: red above, blue below");
+    engine.setParameter(picture, "enable", false); // hidden: still drawn for the model that shows it
+    const int wi = engine.addLayer("Bump");
+    const quint64 bump = engine.layerId(wi);
+    check(engine.setLayerIsf(wi, white, &error), "a white layer");
+    engine.setParameter(bump, "enable", false);
+    const int s2 = engine.addScene();
+    const quint64 stage = engine.layerId(s2);
+    const int pl = engine.addLayer("Screen", s2 + 1);
+    const quint64 screen = engine.layerId(pl);
+    check(engine.setLayerModel(pl, Model3D::primitivePath("Plane"), &error), "a plane");
+    engine.setStructure(tree::intoGroup(engine.structure(), {screen}, stage));
+    engine.setParameter(stage, "camera/yaw", 0.0); // straight in front of it
+    engine.setParameter(stage, "camera/pitch", 0.0);
+    engine.setParameter(screen, "model/unlit", true);
+    check(engine.setModelPicture(engine.indexOfId(screen), picture, &error), "a layer shown on the plane");
+    check(!engine.setModelPicture(engine.indexOfId(screen), stage, &error), "its own scene is refused (a loop)");
+    auto at = [&](int x, int y) {
+        engine.renderFrame();
+        return engine.grabOutput().pixelColor(x, y);
+    };
+    const QColor top = at(32, 26), bottom = at(32, 38);
+    check(top.red() > 200 && top.blue() < 40 && bottom.blue() > 200 && bottom.red() < 40,
+          "the picture lies the right way up, as it is (unlit)");
+    // The plane is about 40 px wide here: its edge, then bent toward the camera (its sides come forward, larger)
+    int edge = 0;
+    for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) edge = x;
+    engine.setParameter(screen, "model/bend", 120.0);
+    int bentEdge = 0;
+    for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) bentEdge = x;
+    check(bentEdge != edge, "a bend curves the plane");
+    engine.setParameter(screen, "model/bend", 0.0);
+    // White everywhere pushes it toward the camera: it looks larger
+    int before = 0;
+    for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) before = x;
+    check(engine.setModelDisplace(engine.indexOfId(screen), bump, &error), "a layer's luminance displaces the plane");
+    engine.setParameter(screen, "model/displace/amount", 1.0);
+    int pushed = 0;
+    for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) pushed = x;
+    check(pushed > before, "pushed toward the camera, it looks larger");
+    int coarse = 0, fine = 0;
+    {
+        Engine::Lock lk(&engine.mutex());
+        coarse = engine.layer(engine.indexOfId(screen))->model->triangleCount();
+    }
+    engine.setParameter(screen, "model/detail", 4);
+    engine.renderFrame();
+    {
+        Engine::Lock lk(&engine.mutex());
+        fine = engine.layer(engine.indexOfId(screen))->model->triangleCount();
+    }
+    check(fine > coarse * 4, "Mesh Detail cuts the primitive finer");
+    // A sheet when asked (NYXMAP_UI_CAPTURE_DIR): a bent screen, a dome, a plane pushed by a luminance, lit
+    if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+        const QString checker = dir.path() + "/Checker.fs", bumps = dir.path() + "/Bumps.fs";
+        QFile c(checker), b(bumps);
+        if (c.open(QIODevice::WriteOnly) && b.open(QIODevice::WriteOnly)) {
+            c.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { vec2 u = isf_FragNormCoord * 8.0; float k = mod(floor(u.x) + floor(u.y), 2.0);"
+                    " gl_FragColor = vec4(mix(vec3(0.1, 0.2, 0.8), vec3(1.0, 0.8, 0.2), k) * (0.4 + 0.6 * isf_FragNormCoord.y), 1.0); }\n");
+            b.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { vec2 u = isf_FragNormCoord - 0.5; float r = length(u);"
+                    " gl_FragColor = vec4(vec3(0.5 + 0.5 * cos(r * 40.0) * exp(-r * 4.0)), 1.0); }\n");
+            c.close();
+            b.close();
+        }
+        engine.setLayerIsf(engine.indexOfId(picture), checker, &error);
+        engine.setLayerIsf(engine.indexOfId(bump), bumps, &error);
+        engine.setCompositionSize({320, 240});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {320, 240});
+        QImage sheet(960, 240, QImage::Format_RGB32);
+        QPainter painter(&sheet);
+        auto shot = [&](int k, const QString &title) {
+            engine.renderFrame();
+            painter.drawImage(320 * k, 0, engine.grabOutput());
+            painter.setPen(Qt::white);
+            painter.drawText(320 * k + 6, 16, title);
+        };
+        engine.setModelDisplace(engine.indexOfId(screen), 0, &error);
+        engine.setParameter(stage, "camera/yaw", 25.0);
+        engine.setParameter(stage, "camera/pitch", 10.0);
+        engine.setParameter(screen, "model/bend", 140.0);
+        engine.setParameter(screen, "model/scale/x", 1.8);
+        shot(0, "Plane · picture · bend 140° · unlit");
+        engine.setLayerModel(engine.indexOfId(screen), Model3D::primitivePath("Dome"), &error);
+        engine.setParameter(screen, "model/bend", 0.0);
+        engine.setParameter(screen, "model/scale/x", 1.0);
+        engine.setParameter(screen, "model/unlit", false);
+        engine.setParameter(stage, "camera/pitch", 35.0);
+        shot(1, "Dome · picture · lit");
+        engine.setLayerModel(engine.indexOfId(screen), Model3D::primitivePath("Plane"), &error);
+        engine.setModelPicture(engine.indexOfId(screen), 0, &error);
+        engine.setModelDisplace(engine.indexOfId(screen), bump, &error);
+        engine.setParameter(screen, "model/rotation/x", -60.0);
+        engine.setParameter(screen, "model/displace/amount", 0.25);
+        engine.setParameter(screen, "model/displace/mid", 0.5);
+        const int key = engine.addLayer("Key", engine.indexOfId(screen) + 1);
+        engine.setLayerLight(key);
+        engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(key)}, stage));
+        shot(2, "Plane · displaced by a luminance · detail 4");
+        painter.end();
+        sheet.save(captures + "/surfaces.png");
+        engine.setModelPicture(engine.indexOfId(screen), picture, &error);
+        engine.setCompositionSize({64, 64});
+    }
+    const QString surfaces = dir.path() + "/surfaces.nyxmap";
+    check(engine.saveProject(surfaces, {}, &error), "save the surfaces");
+    engine.newProject();
+    check(engine.loadProject(surfaces, &ui, &error), "open the surfaces");
+    {
+        Engine::Lock lk(&engine.mutex());
+        const Layer *p = engine.layer(engine.indexOfId(screen));
+        check(p && p->modelPicture == picture && p->modelDisplace == bump, "its picture and displacement layers come back");
+    }
     return failures;
 }

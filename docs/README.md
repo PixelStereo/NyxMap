@@ -47,7 +47,12 @@
   parameters (`model/…`, `light/…`; the scene's `camera/…`, `scene/…`). Materials:
   base color and its texture, metal, roughness, emission (no normal maps). Not yet:
   shadows, the file's animations (skeletons, keyframes) and cameras, sorting of
-  transparent surfaces, layers shown on 3D surfaces.
+  transparent surfaces, editing a mesh's points by hand.
+  A model shows another layer's picture over its UVs (its 3D tab › Surface ›
+  Picture; lit, or unlit: as it is), bends across its width (`model/bend`: a curved
+  screen), and has its points pushed along their normals by a layer's luminance
+  (Surface › Displace; `model/displace/amount`, `model/displace/mid`). A primitive's
+  mesh is cut finer with `model/detail` (1–8).
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

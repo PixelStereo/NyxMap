@@ -683,6 +683,15 @@ const std::vector<Parameter *> &Layer::parameters()
                 .step(0.1)
                 .ramp(Parameter::Ramp::Angle);
         f3("model/scale/all", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
+        f3("model/bend", "Model › Bend (°)", -360, 360, 0, &mp->bend).step(0.1);
+        flag("model/unlit", "Model › Unlit (its picture as it is)", false, &mp->unlit).ramp(Parameter::Ramp::Cut);
+        add("model/detail", "Model › Mesh Detail", T::Int)
+            .range(1, 8)
+            .byDefault(1)
+            .ramp(Parameter::Ramp::Cut)
+            .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
+        f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
+        f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)
             f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
     }
