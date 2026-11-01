@@ -216,6 +216,9 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src = l.tox.toJson();
         src["type"] = "tox";
         break;
+    case SourceType::Model:
+        src["type"] = "model";
+        break;
     case SourceType::Web:
         src = l.web.toJson();
         src["type"] = "web";
@@ -227,7 +230,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["path"] = l.sourcePath;
         src["live"] = true;
         src["rtsp_tcp"] = l.videoSource.rtspTcp;
-    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox) {
+    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox ||
+               type == SourceType::Model) {
         src["path"] = l.sourcePath;
         if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty() && !isAudioInputUri(l.sourcePath))
             src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
@@ -367,6 +371,13 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->type = SourceType::Layer;
         l->sourceLayer = src.value("layer").toString().toULongLong();
         l->sourceTap = layerTapFromKey(src.value("tap").toString());
+    } else if (type == "model") {
+        const bool ok = setLayerModel(index, path, &err);
+        if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
+        if (!ok) {
+            Lock lk(&m_mutex);
+            markMissing(*layer(index), SourceType::Model, path, err);
+        }
     } else if (type == "isf") {
         {
             Lock lk(&m_mutex);

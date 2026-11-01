@@ -649,6 +649,59 @@ const std::vector<Parameter *> &Layer::parameters()
             }
     }
 
+    // A 3D model: where it is, the camera that sees it, the light everywhere, its lights (Model3D.h)
+    if (type == SourceType::Model && model) {
+        ModelSettings *ms = &modelSettings;
+        auto f = [&](const QString &path, const QString &label, double lo, double hi, double def, float *field) -> Parameter & {
+            return num(path, label, lo, hi, def, [field] { return double(*field); }, [field](double v) { *field = float(v); });
+        };
+        flag("model/fit", "Model › Fit (centered, unit size)", true, &ms->fit);
+        for (int a = 0; a < 3; ++a) {
+            const QString axis = QString(QChar("xyz"[a])), name = QString(QChar("XYZ"[a]));
+            f("model/position/" + axis, "Model › Position " + name, -10, 10, 0, &ms->position[size_t(a)]).step(0.01);
+            f("model/rotation/" + axis, "Model › Rotation " + name + " (°)", -180, 180, 0, &ms->rotation[size_t(a)]).step(0.1);
+        }
+        f("model/scale", "Model › Scale", 0.01, 10, 1, &ms->scale).step(0.01);
+        f("camera/distance", "Camera › Distance", 0.1, 50, 3, &ms->distance).step(0.01);
+        f("camera/yaw", "Camera › Yaw (°)", -180, 180, 30, &ms->yaw).step(0.1);
+        f("camera/pitch", "Camera › Pitch (°)", -89, 89, 15, &ms->pitch).step(0.1);
+        f("camera/fov", "Camera › Field of View (°)", 5, 150, 45, &ms->fov).step(0.1);
+        for (int a = 0; a < 3; ++a)
+            f(QStringLiteral("camera/target/") + QChar("xyz"[a]), QStringLiteral("Camera › Target ") + QChar("XYZ"[a]), -10, 10, 0,
+              &ms->target[size_t(a)]).step(0.01);
+        for (int c = 0; c < 3; ++c)
+            f(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
+              &ms->ambient[size_t(c)]).colorComponent(c);
+        f("scene/ambient_intensity", "Scene › Ambient Intensity", 0, 5, 0.15, &ms->ambientIntensity).step(0.01);
+        f("scene/exposure", "Scene › Exposure", 0, 10, 1, &ms->exposure).step(0.01);
+        for (int c = 0; c < 4; ++c)
+            f(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
+              &ms->background[size_t(c)]).colorComponent(c);
+        const ModelSettings defaults;
+        for (int k = 0; k < ModelSettings::kLights; ++k) {
+            ModelSettings::Light *lt = &ms->lights[size_t(k)];
+            const ModelSettings::Light &d = defaults.lights[size_t(k)];
+            const QString p = QStringLiteral("light/%1/").arg(k + 1), cat = QStringLiteral("Light %1 › ").arg(k + 1);
+            flag(p + "enable", cat + "Enable", d.enabled, &lt->enabled);
+            add(p + "type", cat + "Type", T::Choice)
+                .choices({QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot")})
+                .byDefault(QStringList{"directional", "point", "spot"}.value(d.type))
+                .ramp(Parameter::Ramp::Cut)
+                .bind([lt] { return QVariant(QStringList{"directional", "point", "spot"}.value(lt->type)); },
+                      [lt](const QVariant &v) { lt->type = std::max(0, int(QStringList{"directional", "point", "spot"}.indexOf(v.toString()))); });
+            for (int c = 0; c < 3; ++c)
+                f(p + "color/" + QChar("rgb"[c]), cat + "Color " + QChar("RGB"[c]), 0, 1, d.color[size_t(c)], &lt->color[size_t(c)])
+                    .colorComponent(c);
+            f(p + "intensity", cat + "Intensity", 0, 200, d.intensity, &lt->intensity).step(0.1);
+            for (int a = 0; a < 3; ++a)
+                f(p + "position/" + QChar("xyz"[a]), cat + "Position " + QChar("XYZ"[a]), -20, 20, d.position[size_t(a)],
+                  &lt->position[size_t(a)]).step(0.01);
+            f(p + "yaw", cat + "Yaw (°)", -180, 180, d.yaw, &lt->yaw).step(0.1);
+            f(p + "pitch", cat + "Pitch (°)", -90, 90, d.pitch, &lt->pitch).step(0.1);
+            f(p + "angle", cat + "Spot Angle (°)", 1, 89, d.angle, &lt->angle).step(0.1);
+        }
+    }
+
     if (type == SourceType::Tox && toxPlayer) {
         flag("tox/play", "TouchDesigner › Play", true, &tox.playing)
             .bind([self] { return QVariant(self->tox.playing); }, [self](const QVariant &v) { self->tox.playing = v.toBool(); self->applyTox(); });

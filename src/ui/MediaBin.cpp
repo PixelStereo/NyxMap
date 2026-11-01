@@ -1,4 +1,5 @@
 #include "MediaBin.h"
+#include "Model3D.h"
 #include "AudioResources.h"
 #include "Engine.h"
 #include "ImageFile.h"
@@ -950,7 +951,7 @@ void MediaBin::updateButtons()
                          !Engine::isStreamUrl(m_tree->selectedItems().first()->data(0, PathRole).toString()));
 }
 
-static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
+static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Model3D::isModelFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
 
 void MediaBin::importFiles(const QStringList &paths)
 {

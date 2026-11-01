@@ -53,6 +53,7 @@ struct Engine::Garbage {
     std::unique_ptr<LiveInput> input;
     std::unique_ptr<WebPage> webPage;
     std::unique_ptr<ToxPlayer> toxPlayer;
+    std::shared_ptr<Model3D> model;
     std::shared_ptr<TimecodeClock> timecode;
     std::unique_ptr<Layer> layer;
 };

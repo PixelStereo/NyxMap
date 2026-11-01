@@ -666,6 +666,7 @@ public:
     static bool isVideoFile(const QString &path);
     static bool isToxFile(const QString &path);
     bool setLayerTox(int index, const QString &path, const ToxSettings &settings = {}, QString *error = nullptr);
+    bool setLayerModel(int index, const QString &path, QString *error = nullptr); // a 3D model (FBX, glTF, GLB, OBJ)
     bool setLayerToxInput(int index, const QString &input, quint64 layerId, QString *error = nullptr);
     static bool isImageFile(const QString &path);
     static bool isAudioFile(const QString &path);

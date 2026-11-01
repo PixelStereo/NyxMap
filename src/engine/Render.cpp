@@ -499,6 +499,15 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         w = l.sourceTex.w;
         h = l.sourceTex.h;
         break;
+    case SourceType::Model: // drawn each frame with its values, the composition's size
+        if (l.model) {
+            w = m_compSize.width();
+            h = m_compSize.height();
+            tex = l.model->draw(l.modelSettings, w, h);
+            l.srcWidth = w;
+            l.srcHeight = h;
+        }
+        break;
     case SourceType::Tox:
         if (l.toxPlayer) {
             for (const auto &top : l.toxPlayer->inputs()) {

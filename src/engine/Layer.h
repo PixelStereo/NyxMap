@@ -1,5 +1,6 @@
 #pragma once
 #include <set>
+#include "Model3D.h"
 #include "Anim.h"
 #include "AudioStream.h"
 #include "ClockGenerator.h"
@@ -36,7 +37,7 @@
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
 // `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox };
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
@@ -354,6 +355,10 @@ struct Layer {
     TextSource text;
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
+
+    // 3D model (type Model): its file, read (its meshes reach the GPU on the render thread), and its values
+    std::shared_ptr<Model3D> model;
+    ModelSettings modelSettings;
 
     // TouchDesigner component: native SDK access stays on the render thread.
     ToxSettings tox;
