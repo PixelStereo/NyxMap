@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonObject>
+#include <QPainter>
 #include <QTemporaryDir>
 #include <cstdio>
 
@@ -43,6 +44,16 @@ int runScene3dTests(Engine &engine)
     Model3D gltf;
     QString error;
     check(gltf.load(triangle, &error) && gltf.meshCount() == 1 && gltf.triangleCount() == 1, "a glTF is read (inline buffer, no normals)");
+
+    // The built-in primitives: each one read, unwrapped, about a unit in size
+    for (const QString &name : Model3D::primitives()) {
+        Model3D shape;
+        const QString path = Model3D::primitivePath(name);
+        const bool ok = Model3D::isModelFile(path) && Model3D::isPrimitivePath(path) && shape.load(path, &error) &&
+                        shape.meshCount() == 1 && shape.triangleCount() >= 2;
+        if (!ok) std::printf("FAIL scene3d: built-in primitive %s\n", qPrintable(name)), ++failures;
+    }
+    check(!Model3D::isPrimitivePath("/NyxMap/3D/Teapot"), "an unknown primitive is not one");
 
     engine.newProject();
     engine.setCompositionSize({64, 64});
@@ -95,6 +106,39 @@ int runScene3dTests(Engine &engine)
     check(bg.blue() > 200 && bg.red() < 30, "the scene's background color");
     engine.setParameter(scene, "camera/yaw", 60.0);
 
+    // A primitive in the scene: drawn, saved as built in (no file)
+    const int pi = engine.addLayer("Torus", engine.indexOfId(light) + 1);
+    const quint64 torus = engine.layerId(pi);
+    check(engine.setLayerModel(pi, Model3D::primitivePath("Torus"), &error), "a primitive becomes a model");
+    engine.setStructure(tree::intoGroup(engine.structure(), {torus}, scene));
+    bool listed = false;
+    for (const auto &r : engine.mediaUsage()) listed |= Model3D::isPrimitivePath(r.path);
+    check(!listed, "a primitive is not a media file");
+
+    // A contact sheet of the primitives, lit, when asked (NYXMAP_UI_CAPTURE_DIR)
+    if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+        engine.setCompositionSize({240, 240});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {240, 240});
+        engine.setParameter(scene, "scene/background/a", 0.0);
+        engine.setParameter(model, "enable", false);
+        const QStringList names = Model3D::primitives();
+        QImage sheet(240 * 4, 240 * ((int(names.size()) + 3) / 4), QImage::Format_RGB32);
+        sheet.fill(Qt::black);
+        QPainter painter(&sheet);
+        for (int k = 0; k < names.size(); ++k) {
+            engine.setLayerModel(engine.indexOfId(torus), Model3D::primitivePath(names[k]), &error);
+            engine.renderFrame();
+            painter.drawImage(240 * (k % 4), 240 * (k / 4), engine.grabOutput());
+            painter.setPen(Qt::white);
+            painter.drawText(240 * (k % 4) + 6, 240 * (k / 4) + 16, names[k]);
+        }
+        painter.end();
+        sheet.save(captures + "/primitives.png");
+        engine.setLayerModel(engine.indexOfId(torus), Model3D::primitivePath("Torus"), &error);
+        engine.setParameter(model, "enable", true);
+        engine.setCompositionSize({64, 64});
+    }
+
     // Saved and opened again: the scene, its objects and their values
     const QString project = dir.path() + "/scene.nyxmap";
     check(engine.saveProject(project, {}, &error), "save the scene");
@@ -110,6 +154,12 @@ int runScene3dTests(Engine &engine)
                engine.layer(li2)->type == SourceType::Light && engine.layer(mi2)->parent == scene;
     }
     check(kept, "the scene, its model and its light come back");
+    {
+        Engine::Lock lk(&engine.mutex());
+        const Layer *t2 = engine.layer(engine.indexOfId(torus));
+        check(t2 && t2->type == SourceType::Model && t2->model && t2->sourcePath == Model3D::primitivePath("Torus"),
+              "the primitive comes back");
+    }
     check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - 60) < 1e-6, "the camera's values come back");
     check(center().lightness() > 40, "the opened scene draws again");
     return failures;

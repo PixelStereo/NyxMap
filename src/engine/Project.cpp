@@ -140,7 +140,8 @@ void Engine::clearProject()
 QString Engine::resolvePath(const QJsonObject &o, const QString &projectDir) const
 {
     const QString abs = o.value("path").toString();
-    if (!abs.isEmpty() && (QFile::exists(abs) || !builtInIsfSource(abs).isEmpty())) return abs; // a file, or built in
+    if (!abs.isEmpty() && (QFile::exists(abs) || !builtInIsfSource(abs).isEmpty() || Model3D::isPrimitivePath(abs)))
+        return abs; // a file, or built in
     if (!projectDir.isEmpty()) {
         const QString rel = o.value("relative_path").toString();
         if (!rel.isEmpty()) {
@@ -237,7 +238,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox ||
                type == SourceType::Model) {
         src["path"] = l.sourcePath;
-        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty() && !isAudioInputUri(l.sourcePath))
+        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty() && !isAudioInputUri(l.sourcePath) &&
+            !Model3D::isPrimitivePath(l.sourcePath))
             src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
     if (type == SourceType::Video && l.videoSource.isSequence()) // an image sequence: the folder is the path

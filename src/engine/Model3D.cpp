@@ -12,6 +12,7 @@
 #include <QtMath>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 Model3D::Model3D() = default;
@@ -19,7 +20,25 @@ Model3D::~Model3D() = default; // its GL objects go with releaseGl, on the rende
 
 QStringList Model3D::extensions() { return {QStringLiteral("fbx"), QStringLiteral("gltf"), QStringLiteral("glb"), QStringLiteral("obj")}; }
 
-bool Model3D::isModelFile(const QString &path) { return extensions().contains(QFileInfo(path).suffix().toLower()); }
+bool Model3D::isModelFile(const QString &path) { return isPrimitivePath(path) || extensions().contains(QFileInfo(path).suffix().toLower()); }
+
+static const QString kPrimitiveFolder = QStringLiteral("/NyxMap/3D/");
+
+QStringList Model3D::primitives()
+{
+    return {QStringLiteral("Cube"),     QStringLiteral("Open Cube"), QStringLiteral("Plane"),         QStringLiteral("Disc"),
+            QStringLiteral("Cylinder"), QStringLiteral("Open Cylinder"), QStringLiteral("Cone"),      QStringLiteral("Pyramid"),
+            QStringLiteral("Sphere"),   QStringLiteral("Dome"),      QStringLiteral("Torus"),         QStringLiteral("Capsule")};
+}
+
+QString Model3D::primitivePath(const QString &name) { return kPrimitiveFolder + name; }
+
+bool Model3D::isPrimitivePath(const QString &path)
+{
+    const QString p = QString(path).replace('\\', '/');
+    const int at = p.lastIndexOf(kPrimitiveFolder);
+    return at >= 0 && primitives().contains(p.mid(at + kPrimitiveFolder.size()));
+}
 
 int Model3D::triangleCount() const
 {
@@ -42,7 +61,9 @@ bool Model3D::load(const QString &path, QString *err)
     m_materials.clear();
     m_images.clear();
     const QString ext = QFileInfo(path).suffix().toLower();
-    const bool ok = ext == QLatin1String("gltf") || ext == QLatin1String("glb") ? loadGltf(path, err) : loadUfbx(path, err);
+    const bool ok = isPrimitivePath(path)                                          ? loadPrimitive(path.section('/', -1), err)
+                    : ext == QLatin1String("gltf") || ext == QLatin1String("glb") ? loadGltf(path, err)
+                                                                                  : loadUfbx(path, err);
     if (!ok) return false;
     if (m_meshes.empty()) {
         if (err) *err = QStringLiteral("No mesh in this file.");
@@ -65,6 +86,150 @@ void Model3D::computeBounds()
         }
     m_center = (lo + hi) / 2;
     m_radius = std::max(1e-6f, (hi - lo).length() / 2);
+}
+
+// --- Built-in primitives -------------------------------------------------------------------------------------------
+// One mesh each, about a unit in size (Y up), with smooth normals where the surface is round and UVs that unwrap it
+
+namespace {
+struct Builder {
+    std::vector<float> data; // p, n, uv
+    std::vector<quint32> indices;
+    quint32 vertex(QVector3D p, QVector3D n, float u, float v)
+    {
+        n.normalize();
+        data.insert(data.end(), {p.x(), p.y(), p.z(), n.x(), n.y(), n.z(), u, v});
+        return quint32(data.size() / 8 - 1);
+    }
+    void quad(quint32 a, quint32 b, quint32 c, quint32 d) { indices.insert(indices.end(), {a, b, c, a, c, d}); }
+    // A flat rectangle: corner `o`, sides `du` and `dv`, its normal
+    void face(QVector3D o, QVector3D du, QVector3D dv)
+    {
+        const QVector3D n = QVector3D::crossProduct(du, dv);
+        quad(vertex(o, n, 0, 1), vertex(o + du, n, 1, 1), vertex(o + du + dv, n, 1, 0), vertex(o + dv, n, 0, 0));
+    }
+    // A surface of revolution around Y: its profile (radius, height, the normal's radial and vertical parts, v), turned
+    struct P {
+        float r, y, nr, ny, v;
+    };
+    void lathe(const std::vector<P> &profile, int segments)
+    {
+        const quint32 first = quint32(data.size() / 8);
+        for (const P &p : profile)
+            for (int i = 0; i <= segments; ++i) {
+                const float a = float(2 * M_PI * i / segments), s = std::sin(a), c = std::cos(a);
+                vertex({p.r * s, p.y, p.r * c}, {p.nr * s, p.ny, p.nr * c}, float(i) / segments, p.v);
+            }
+        const quint32 row = quint32(segments + 1);
+        for (quint32 j = 0; j + 1 < profile.size(); ++j)
+            for (quint32 i = 0; i < quint32(segments); ++i) {
+                const quint32 a = first + j * row + i;
+                quad(a, a + row, a + row + 1, a + 1);
+            }
+    }
+    // A flat disc facing up (+1) or down (-1) at height y
+    void disc(float y, float radius, float facing, int segments)
+    {
+        const quint32 centre = vertex({0, y, 0}, {0, facing, 0}, 0.5f, 0.5f);
+        const quint32 first = quint32(data.size() / 8);
+        for (int i = 0; i <= segments; ++i) {
+            const float a = float(2 * M_PI * i / segments), s = std::sin(a), c = std::cos(a);
+            vertex({radius * s, y, radius * c}, {0, facing, 0}, 0.5f + 0.5f * s, 0.5f - 0.5f * c * facing);
+        }
+        for (int i = 0; i < segments; ++i) {
+            const quint32 a = first + quint32(i), b = a + 1;
+            if (facing > 0) indices.insert(indices.end(), {centre, a, b});
+            else indices.insert(indices.end(), {centre, b, a});
+        }
+    }
+    void sphere(float radius, float y, float from, float to, float v0, float v1, int rings, int segments) // polar angles
+    {
+        std::vector<P> profile;
+        for (int j = 0; j <= rings; ++j) {
+            const float t = from + (to - from) * j / rings, s = std::sin(t), c = std::cos(t);
+            profile.push_back({radius * s, y + radius * c, s, c, v0 + (v1 - v0) * j / rings});
+        }
+        lathe(profile, segments);
+    }
+};
+} // namespace
+
+bool Model3D::loadPrimitive(const QString &name, QString *err)
+{
+    Builder b;
+    constexpr int S = 64; // segments around
+    const float h = 0.5f;
+    if (name == QLatin1String("Cube") || name == QLatin1String("Open Cube")) {
+        b.face({-h, -h, h}, {1, 0, 0}, {0, 1, 0});   // front
+        b.face({h, -h, -h}, {-1, 0, 0}, {0, 1, 0});  // back
+        b.face({-h, -h, -h}, {0, 0, 1}, {0, 1, 0});  // left
+        b.face({h, -h, h}, {0, 0, -1}, {0, 1, 0});   // right
+        if (name == QLatin1String("Cube")) {         // open: no top, no bottom (a box seen through)
+            b.face({-h, h, h}, {1, 0, 0}, {0, 0, -1});   // top
+            b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1});  // bottom
+        }
+    } else if (name == QLatin1String("Plane")) { // upright, facing +Z: a screen
+        b.face({-h, -h, 0}, {1, 0, 0}, {0, 1, 0});
+    } else if (name == QLatin1String("Disc")) { // upright, facing +Z
+        const quint32 centre = b.vertex({0, 0, 0}, {0, 0, 1}, 0.5f, 0.5f);
+        const quint32 first = quint32(b.data.size() / 8);
+        for (int i = 0; i <= S; ++i) {
+            const float a = float(2 * M_PI * i / S);
+            b.vertex({h * std::cos(a), h * std::sin(a), 0}, {0, 0, 1}, 0.5f + 0.5f * std::cos(a), 0.5f - 0.5f * std::sin(a));
+        }
+        for (int i = 0; i < S; ++i) b.indices.insert(b.indices.end(), {centre, first + quint32(i), first + quint32(i) + 1});
+    } else if (name == QLatin1String("Cylinder") || name == QLatin1String("Open Cylinder")) {
+        b.lathe({{h, h, 1, 0, 0}, {h, -h, 1, 0, 1}}, S);
+        if (name == QLatin1String("Cylinder")) { // open: a tube
+            b.disc(h, h, 1, S);
+            b.disc(-h, h, -1, S);
+        }
+    } else if (name == QLatin1String("Cone")) {
+        const float nr = 1, ny = 0.5f; // its slope: a unit high, half a unit in radius
+        b.lathe({{0, h, nr, ny, 0}, {h, -h, nr, ny, 1}}, S);
+        b.disc(-h, h, -1, S);
+    } else if (name == QLatin1String("Pyramid")) { // a square base, four triangles to its apex
+        const QVector3D apex(0, h, 0), c[4] = {{-h, -h, h}, {h, -h, h}, {h, -h, -h}, {-h, -h, -h}};
+        for (int k = 0; k < 4; ++k) {
+            const QVector3D a = c[k], d = c[(k + 1) % 4], n = QVector3D::crossProduct(d - a, apex - a);
+            b.indices.insert(b.indices.end(), {b.vertex(a, n, 0, 1), b.vertex(d, n, 1, 1), b.vertex(apex, n, 0.5f, 0)});
+        }
+        b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1});
+    } else if (name == QLatin1String("Sphere")) {
+        b.sphere(h, 0, 0, float(M_PI), 0, 1, S / 2, S);
+    } else if (name == QLatin1String("Dome")) { // a half sphere, open below (seen from inside too: a planetarium)
+        b.sphere(h, 0, 0, float(M_PI / 2), 0, 1, S / 4, S);
+    } else if (name == QLatin1String("Torus")) {
+        const float R = 0.35f, r = 0.15f;
+        const quint32 first = 0;
+        for (int j = 0; j <= S / 2; ++j)
+            for (int i = 0; i <= S; ++i) {
+                const float u = float(2 * M_PI * i / S), v = float(2 * M_PI * j / (S / 2));
+                const QVector3D n(std::cos(v) * std::sin(u), std::sin(v), std::cos(v) * std::cos(u));
+                const QVector3D p = QVector3D(R * std::sin(u), 0, R * std::cos(u)) + r * n;
+                b.vertex(p, n, float(i) / S, float(j) / (S / 2));
+            }
+        const quint32 row = quint32(S + 1);
+        for (quint32 j = 0; j < quint32(S / 2); ++j)
+            for (quint32 i = 0; i < quint32(S); ++i) {
+                const quint32 a = first + j * row + i;
+                b.quad(a, a + 1, a + row + 1, a + row);
+            }
+    } else if (name == QLatin1String("Capsule")) { // two half spheres and a cylinder between them
+        const float r = 0.25f;
+        b.sphere(r, h - r, 0, float(M_PI / 2), 0, 0.25f, S / 4, S);
+        b.lathe({{r, h - r, 1, 0, 0.25f}, {r, -h + r, 1, 0, 0.75f}}, S);
+        b.sphere(r, -h + r, float(M_PI / 2), float(M_PI), 0.75f, 1, S / 4, S);
+    } else {
+        if (err) *err = QStringLiteral("No built-in 3D primitive called %1.").arg(name);
+        return false;
+    }
+    Mesh mesh;
+    mesh.vertices.resize(b.data.size() / 8);
+    std::memcpy(mesh.vertices.data(), b.data.data(), b.data.size() * sizeof(float));
+    mesh.indices = std::move(b.indices);
+    m_meshes.push_back(std::move(mesh));
+    return true;
 }
 
 // --- glTF / GLB (cgltf) --------------------------------------------------------------------------------------------

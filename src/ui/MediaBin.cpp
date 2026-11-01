@@ -303,6 +303,16 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_line = generator(m_generators, QStringLiteral("Line"), kLineGeneratorPath);
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(m_generators, QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
+    // 3D primitives, built in: onto a layer, into a new 3D scene; onto a scene, one of its objects
+    m_primitives = new BinItem(m_videoRoot, {QStringLiteral("3D Primitives")});
+    for (const QString &name : Model3D::primitives()) {
+        auto *it = generator(m_primitives, name, Model3D::primitivePath(name));
+        it->setText(1, QStringLiteral("3D primitive"));
+        it->setText(3, QStringLiteral("Not applicable"));
+        it->setToolTip(0, QStringLiteral("Built-in 3D shape, unwrapped (UV). Onto a layer: into a new 3D scene, with a light; "
+                                         "onto a 3D scene: one of its objects"));
+    }
+    m_primitives->setText(0, QStringLiteral("3D Primitives (%1)").arg(m_primitives->childCount()));
     m_inputs = new BinItem(m_videoRoot, {QStringLiteral("Inputs")});
     m_isf = new BinItem(m_videoRoot, {QStringLiteral("ISF")});
     m_isfGenerators = new BinItem(m_isf, {QStringLiteral("Generators")});
@@ -324,7 +334,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_audioInputs = new BinItem(m_audioRoot, {QStringLiteral("Inputs")});
 
     int groupOrder = 0;
-    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_videos, m_images, m_models, m_generators, m_inputs, m_isf,
+    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_videos, m_images, m_models, m_primitives, m_generators, m_inputs, m_isf,
                                           m_isfGenerators, m_audios, m_audioGenerators, m_audioInputs};
     for (QTreeWidgetItem *group : groups) {
         group->setData(0, GroupOrderRole, groupOrder++);
@@ -983,6 +993,7 @@ void MediaBin::importFiles(const QStringList &paths)
     QStringList ok, refused;
     for (const QString &p : paths) {
         QFileInfo fi(p);
+        if (Model3D::isPrimitivePath(p)) continue; // built in: always in 3D Primitives
         if (const QString url = Engine::streamUrlOfPath(p); !url.isEmpty()) { // a stream (its transport kept)
             if (!m_engine->binItems().contains(url)) m_engine->addBinStream(url, true);
             ok << url;
@@ -1204,7 +1215,8 @@ void MediaBin::applyFilter()
         if (filtering && any) it->setExpanded(true);
         return any || !filtering;
     };
-    const QList<QTreeWidgetItem *> files{m_videos, m_images, m_models, m_audios}, generators{m_generators, m_audioGenerators},
+    const QList<QTreeWidgetItem *> files{m_videos, m_images, m_models, m_audios},
+        generators{m_generators, m_primitives, m_audioGenerators},
         inputs{m_inputs, m_audioInputs};
     auto kindMatches = [&](const QTreeWidgetItem *group) {
         return kind == 0 || (kind == 1 && files.contains(group)) || (kind == 2 && generators.contains(group)) ||

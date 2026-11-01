@@ -57,7 +57,12 @@ public:
     Model3D &operator=(const Model3D &) = delete;
 
     static QStringList extensions(); // fbx, gltf, glb, obj
-    static bool isModelFile(const QString &path);
+    static bool isModelFile(const QString &path); // a file of those, or a built-in primitive
+    // Built-in primitives (no file): their virtual paths, /NyxMap/3D/<name>; centered, about a unit in size, unwrapped
+    // (UV) for a picture to be laid on them
+    static QStringList primitives(); // Cube, Open Cube, Plane, Disc, Cylinder, Open Cylinder, Cone, Pyramid, Sphere, Dome…
+    static QString primitivePath(const QString &name);
+    static bool isPrimitivePath(const QString &path);
 
     bool load(const QString &path, QString *err); // reads the file (no GL): its meshes, materials and textures
     QString path() const { return m_path; }
@@ -85,6 +90,7 @@ private:
         int material = 0;
         GLuint vao = 0, vbo = 0, ibo = 0;
     };
+    bool loadPrimitive(const QString &name, QString *err);
     bool loadGltf(const QString &path, QString *err);
     bool loadUfbx(const QString &path, QString *err);
     int addImage(const QImage &image);

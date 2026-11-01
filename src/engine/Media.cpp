@@ -185,8 +185,9 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
         for (const auto &l : m_layers) {
             const SourceType t = l->type != SourceType::None ? l->type : l->missingType;
             const bool listed = t != SourceType::Audio || (!isAudioInputUri(l->sourcePath) && !AudioGenerator::isRecipe(l->sourcePath));
-            if (listed && (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox ||
-                           t == SourceType::Model))
+            if (listed && !Model3D::isPrimitivePath(l->sourcePath) && // a built-in primitive: no file
+                (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox ||
+                 t == SourceType::Model))
                 add(l->sourcePath,
                     t == SourceType::Model                                ? ModelKind
                     : (t == SourceType::Video || t == SourceType::Tox) ? VideoKind

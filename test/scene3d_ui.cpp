@@ -5,6 +5,7 @@
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "MediaBin.h"
+#include "Model3D.h"
 #include <QThread>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -149,6 +150,13 @@ int runScene3dUiTests(Engine &engine)
     check(objectTabs.contains("3D") && !objectTabs.contains("Spatial") && !objectTabs.contains("FX"),
           "a model's inspector shows its 3D values, not a picture's tabs");
     check(inspector && inspector->findChild<SliderField *>("param3d:model/scale"), "the model's scale is a bar");
+    // A primitive from the Media Bin dropped onto a plain layer: into a new scene
+    select(engine.indexOfId(plain));
+    emit list->filesDropped(engine.indexOfId(plain), {Model3D::primitivePath("Sphere")});
+    pump();
+    check(roleOf(plain) == TreeNode::Object3d && roleOf(parentOf(plain)) == TreeNode::Scene3d, "a primitive goes into a new scene");
+    check(engine.binItems().filter("/NyxMap/3D/").isEmpty(), "a primitive is never imported as a file");
+
     // The Media Bin files a model under 3D Models, read (not "unreadable"); the list has a 3D button
     check(window.findChild<QToolButton *>("layer3dButton") != nullptr, "the layer list has its 3D button");
     if (auto *bin = window.findChild<MediaBin *>()) {
@@ -163,6 +171,11 @@ int runScene3dUiTests(Engine &engine)
         }
         check(models && models->text(0) == "3D Models (1)", "the Media Bin has a 3D Models category holding the cube");
         check(item && item->text(1).contains("12 triangles"), "the Media Bin reads the model");
+        int primitives = 0;
+        for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>())
+            for (QTreeWidgetItem *found : tree->findItems("3D Primitives", Qt::MatchStartsWith | Qt::MatchRecursive))
+                primitives = found->childCount();
+        check(primitives == int(Model3D::primitives().size()), "the Media Bin offers the 3D primitives");
     } else {
         check(false, "the Media Bin");
     }
