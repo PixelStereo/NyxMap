@@ -44,6 +44,8 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(nyxmap_engine STATIC
   src/engine/Gl.cpp
+  src/engine/Model3D.cpp
+  third_party/ufbx/ufbx.c
   src/engine/Isf.cpp
   src/engine/LineGenerator.cpp
   src/engine/ImageFile.cpp
@@ -202,6 +204,10 @@ endfunction()
 # ---------------------------------------------------------------------------
 nyxmap_submodule(faust architecture/faust/dsp/dsp.h)
 nyxmap_submodule(miniaudio miniaudio.h)
+# 3D models: ufbx (FBX, OBJ; MIT / public domain) and cgltf (glTF, GLB; MIT), single files (src/engine/Model3D.cpp)
+nyxmap_submodule(ufbx ufbx.c)
+nyxmap_submodule(cgltf cgltf.h)
+target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/ufbx" "${CMAKE_SOURCE_DIR}/third_party/cgltf")
 target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/miniaudio")
 target_compile_definitions(nyxmap_engine PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE
   MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH)

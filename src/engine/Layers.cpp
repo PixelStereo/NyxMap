@@ -480,6 +480,7 @@ void Engine::releaseLayer(Layer &l)
     l.fxTarget[1].destroy();
     l.maskTarget[0].destroy();
     l.maskTarget[1].destroy();
+    if (l.model) l.model->releaseGl();
     l.groupTarget.destroy();
     l.prepTarget.destroy();
     l.matteTarget.destroy();
@@ -895,6 +896,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->webPage = std::move(l.webPage);
     g->toxPlayer = std::move(l.toxPlayer);
     l.tox = ToxSettings();
+    g->model = std::move(l.model);
+    l.modelSettings = ModelSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();
@@ -922,6 +925,7 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
     releaseAudio(*m_audio, g->audio);
     runGl([g] {
         g->toxPlayer.reset();
+        if (g->model) g->model->releaseGl();
         g->tex.destroy();
         g->imageAutoTex.destroy();
         g->textTex.destroy();
@@ -1326,6 +1330,7 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
     if (const QString url = streamUrlOfPath(path); !url.isEmpty()) return setLayerStream(i, url, binStreamTcp(url), err);
     if (QFileInfo(path).isDir()) return setLayerVideo(i, path, err); // an image sequence
     if (isToxFile(path)) return setLayerTox(i, path, {}, err);
+    if (Model3D::isModelFile(path)) return setLayerModel(i, path, err);
     if (isImageFile(path)) return setLayerImage(i, path, err);
     if (isAudioFile(path)) return setLayerAudio(i, path, err);
     if (const QString uri = liveInputUriOfPath(path); isAudioInputUri(uri)) return setLayerAudio(i, uri, err); // a sound card's input
@@ -1335,6 +1340,29 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
     if (AudioStream::probe(path, nullptr) && setLayerAudio(i, path, err)) return true; // sound only
     if (err) *err = e;
     return false;
+}
+
+// A 3D model: its file read here (its meshes reach the GPU when it is first drawn); the layer the composition's size
+bool Engine::setLayerModel(int i, const QString &path, QString *err)
+{
+    if (!layer(i)) return false;
+    auto model = std::make_shared<Model3D>();
+    if (!model->load(path, err)) return false;
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Model;
+        l->model = std::move(model);
+        l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->srcWidth = m_compSize.width();
+        l->srcHeight = m_compSize.height();
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
 }
 
 bool Engine::setLayerAudio(int i, const QString &path, QString *err)
