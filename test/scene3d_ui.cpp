@@ -12,6 +12,7 @@
 #include "MainWindow.h"
 #include "Widgets.h"
 #include <QApplication>
+#include <QComboBox>
 #include <QFile>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -152,6 +153,13 @@ int runScene3dUiTests(Engine &engine)
     check(inspector && inspector->findChild<SliderField *>("param3d:model/scale/all") &&
               inspector->findChild<SliderField *>("param3d:model/scale/x") && inspector->findChild<SliderField *>("param3d:model/scale/z"),
           "the model's scale, overall and along each axis, are bars");
+    check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer") && inspector->findChild<QComboBox *>("modelDisplaceLayer"),
+          "a model's 3D tab chooses the layer shown on it and the one that displaces it");
+    if (auto *pick = inspector ? inspector->findChild<QComboBox *>("modelPictureLayer") : nullptr) {
+        bool offersScene = false;
+        for (int k = 0; k < pick->count(); ++k) offersScene |= pick->itemData(k).toULongLong() == scene;
+        check(!offersScene, "its own scene is not offered (a loop)");
+    }
     // A primitive from the Media Bin dropped onto a plain layer: into a new scene
     select(engine.indexOfId(plain));
     emit list->filesDropped(engine.indexOfId(plain), {Model3D::primitivePath("Sphere")});

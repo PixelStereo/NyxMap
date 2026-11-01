@@ -113,6 +113,9 @@ public:
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
+    bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
+    bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
+    bool setModelLayer(int index, quint64 layer, bool displace, QString *err);
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     void moveLayer(int from, int to);

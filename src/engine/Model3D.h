@@ -27,6 +27,12 @@ struct ModelPlacement {
     std::array<float, 3> rotation{{0, 0, 0}}; // degrees, around X, Y then Z
     float scale = 1;                          // all of it, times its scale along each axis
     std::array<float, 3> axisScale{{1, 1, 1}};
+    float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
+    bool unlit = false;  // its picture as it is (a screen), not lit as a material
+    int detail = 1;      // a primitive's mesh: how finely it is cut (1 to 8)
+    // Displacement: its points pushed along their normals by a layer's luminance (Layer::modelDisplace), times this,
+    // a luminance of `displaceMid` staying in place
+    float displaceAmount = 0.2f, displaceMid = 0;
 };
 
 // A light of a scene
@@ -72,7 +78,14 @@ public:
 
     // Its model matrix: fitted (if asked), then placed. Its meshes drawn with the scene's program bound (render thread)
     QMatrix4x4 matrix(const ModelPlacement &p) const;
-    void drawMeshes(GLuint program);
+    // Its meshes drawn with the scene's program bound (render thread); `picture`: a layer's picture over its UVs instead
+    // of its materials' colours
+    void drawMeshes(GLuint program, GLuint picture = 0);
+    float width() const { return m_width; }     // across X, as read: what a bend curves
+    bool isPrimitive() const { return m_primitive; }
+    int detail() const { return m_detail; }
+    void setDetail(int detail); // a primitive made again, finer or coarser (render thread)
+    float centerX() const { return m_center.x(); }
     void releaseGl();
 
 private:
@@ -104,7 +117,10 @@ private:
     std::vector<QImage> m_images;
     std::vector<GLuint> m_textures;
     QVector3D m_center;
-    float m_radius = 1;
+    float m_radius = 1, m_width = 1;
+    bool m_primitive = false;
+    int m_detail = 1;
+    void releaseMeshes();
     bool m_uploaded = false;
 };
 
@@ -116,6 +132,9 @@ public:
     struct Item {
         std::shared_ptr<Model3D> model;
         ModelPlacement placement;
+        GLuint picture = 0; // a layer's picture laid on it (straight alpha), 0: its materials
+        GLuint displace = 0; // a layer's picture whose luminance pushes its points (0: none)
+        float displaceAmount = 0, displaceMid = 0;
     };
     struct Lamp {
         LightSettings light;

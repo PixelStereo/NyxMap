@@ -322,6 +322,35 @@ int Engine::addScene(const QString &name, int at)
     return indexOfId(layerId(i));
 }
 
+// The picture laid on a 3D model: another layer's, after its FX (0: its materials). Refused when that layer is made from
+// the model's scene (a scene shown on itself)
+bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, false, err); }
+bool Engine::setModelDisplace(int i, quint64 layerId, QString *err) { return setModelLayer(i, layerId, true, err); }
+
+bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Model) return false;
+        if (picture) {
+            const Layer *p = layer(indexOfId(picture));
+            if (!p || p->isViewport || p->is3dObject()) {
+                if (err) *err = QStringLiteral("A layer, a group or a 3D scene can be shown on a model.");
+                return false;
+            }
+            for (quint64 up = l->id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
+                if (up == picture || layerDependsOn(picture, up)) {
+                    if (err) *err = QStringLiteral("\"%1\" is made from this model's scene: it cannot be shown on it.").arg(p->name);
+                    return false;
+                }
+        }
+        (displace ? l->modelDisplace : l->modelPicture) = picture;
+    }
+    emit layersChanged();
+    return true;
+}
+
 // A light of a 3D scene (the layer goes into its scene with setStructure)
 bool Engine::setLayerLight(int i)
 {
@@ -1011,6 +1040,8 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
         for (const auto &l : m_layers) {
             if (l->id != cur) continue;
             if (l->type == SourceType::Layer && l->sourceLayer && visit(l->sourceLayer)) return true;
+            if (l->type == SourceType::Model && ((l->modelPicture && visit(l->modelPicture)) || (l->modelDisplace && visit(l->modelDisplace))))
+                return true; // its pictures
             if (l->type == SourceType::Tox)
                 for (quint64 input : l->tox.inputs) if (input && visit(input)) return true;
             for (const auto &fx : l->effects) // the masks of its effects
