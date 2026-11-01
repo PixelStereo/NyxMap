@@ -174,6 +174,8 @@ int runScene3dUiTests(Engine &engine)
           "the model's scale, overall and along each axis, are bars");
     check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer") && inspector->findChild<QComboBox *>("modelDisplaceLayer"),
           "a model's 3D tab chooses the layer shown on it and the one that displaces it");
+    check(inspector && inspector->findChild<QComboBox *>("modelPictureStage") && inspector->findChild<QComboBox *>("modelDisplaceStage"),
+          "and the stage each one is taken at");
     if (auto *pick = inspector ? inspector->findChild<QComboBox *>("modelPictureLayer") : nullptr) {
         bool offersScene = false;
         for (int k = 0; k < pick->count(); ++k) offersScene |= pick->itemData(k).toULongLong() == scene;

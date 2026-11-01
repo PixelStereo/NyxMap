@@ -115,7 +115,9 @@ public:
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
-    bool setModelLayer(int index, quint64 layer, bool displace, QString *err);
+    bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
+    // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k (render thread, lock held)
+    GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     void moveLayer(int from, int to);

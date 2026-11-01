@@ -3995,14 +3995,18 @@ QWidget *LayerInspector::buildModelLayers()
     auto *form = new QFormLayout(box);
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     quint64 picture = 0, displace = 0;
+    int pictureStage = -1, displaceStage = -1;
     std::vector<quint64> ancestors;
     std::vector<std::pair<quint64, QString>> candidates;
+    QHash<quint64, QStringList> effectsOf; // each candidate's FX, by name: the stages its picture can be taken at
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
         if (!l) return box;
         picture = l->modelPicture;
         displace = l->modelDisplace;
+        pictureStage = l->modelPictureStage;
+        displaceStage = l->modelDisplaceStage;
         for (quint64 up = l->parent; up;) {
             ancestors.push_back(up);
             const Layer *g = m_engine->layer(m_engine->indexOfId(up));
@@ -4013,9 +4017,10 @@ QWidget *LayerInspector::buildModelLayers()
             if (!o || o->isViewport || o->is3dObject() || std::count(ancestors.begin(), ancestors.end(), o->id)) continue;
             if (std::any_of(ancestors.begin(), ancestors.end(), [&](quint64 a) { return m_engine->layerDependsOn(o->id, a); })) continue;
             candidates.push_back({o->id, o->scene3d ? o->name + QStringLiteral(" (3D scene)") : o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
+            for (const auto &e : o->effects) effectsOf[o->id] << e->name();
         }
     }
-    auto picker = [&](const QString &name, const QString &none, quint64 current, bool forDisplace, const QString &tip) {
+    auto picker = [&](const QString &name, const QString &none, quint64 current, int stage, bool forDisplace, const QString &tip) {
         auto *pick = new QComboBox;
         pick->setObjectName(forDisplace ? QStringLiteral("modelDisplaceLayer") : QStringLiteral("modelPictureLayer"));
         pick->addItem(none, QVariant(qulonglong(0)));
@@ -4032,13 +4037,31 @@ QWidget *LayerInspector::buildModelLayers()
                        [&] { ok = m_engine->setModelLayer(m_layer, id, forDisplace, &err); });
             if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Model"), err);
             emit layerChanged();
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages
+        });
+        // Where that layer's picture is taken: its final picture, its source (before its FX), after one of its FX
+        auto *at = new QComboBox;
+        at->setObjectName(forDisplace ? QStringLiteral("modelDisplaceStage") : QStringLiteral("modelPictureStage"));
+        at->addItem(QStringLiteral("Final (after its FX)"), -1);
+        at->addItem(QStringLiteral("Source (before its FX)"), 0);
+        const QStringList effects = effectsOf.value(current);
+        for (int e = 0; e < effects.size(); ++e) at->addItem(QStringLiteral("After %1 · %2").arg(e + 1).arg(effects[e]), e + 1);
+        at->setCurrentIndex(std::max(0, at->findData(stage)));
+        at->setEnabled(current != 0);
+        at->setToolTip(QStringLiteral("Where the layer's picture is taken: its final picture, its source before its FX, "
+                                      "or after one of its FX"));
+        form->addRow(QStringLiteral("Taken at"), at);
+        connect(at, &QComboBox::activated, this, [this, at, pick, forDisplace](int i) {
+            const quint64 id = pick->currentData().toULongLong();
+            const int stage = at->itemData(i).toInt();
+            QString err;
+            editSource(QStringLiteral("Model Layer Stage"), [&] { m_engine->setModelLayer(m_layer, id, forDisplace, &err, stage); });
         });
     };
-    picker(QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, false,
+    picker(QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, pictureStage, false,
            QStringLiteral("A layer's picture (after its FX) laid on the model, over its UVs: a video on a screen, a dome. "
                           "The layer can stay hidden. Unlit (below): shown as it is."));
-    picker(QStringLiteral("Displace"), QStringLiteral("None"), displace, true,
+    picker(QStringLiteral("Displace"), QStringLiteral("None"), displace, displaceStage, true,
            QStringLiteral("A layer whose luminance pushes the model's points along their normals (Displace › Amount): "
                           "white the most, its neutral level not at all. Mesh Detail cuts a primitive finer."));
     return box;

@@ -327,7 +327,7 @@ int Engine::addScene(const QString &name, int at)
 bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, false, err); }
 bool Engine::setModelDisplace(int i, quint64 layerId, QString *err) { return setModelLayer(i, layerId, true, err); }
 
-bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err)
+bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, int stage)
 {
     {
         Lock lk(&m_mutex);
@@ -346,6 +346,7 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err)
                 }
         }
         (displace ? l->modelDisplace : l->modelPicture) = picture;
+        (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
     }
     emit layersChanged();
     return true;

@@ -309,9 +309,12 @@ void Engine::markNeeded()
             const int si = indexOfId(id);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
-        if (l.type == SourceType::Model) // the pictures laid on a 3D model, pushing its points
-            for (quint64 id : {l.modelPicture, l.modelDisplace})
-                if (const int si = indexOfId(id); id && si >= 0) m_layers[size_t(si)]->referenced = true;
+        if (l.type == SourceType::Model) // the pictures laid on a 3D model, pushing its points, at their stages
+            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage}})
+                if (const int si = indexOfId(id); id && si >= 0) {
+                    m_layers[size_t(si)]->referenced = true;
+                    if (stage > 0) m_layers[size_t(si)]->stagesWanted.insert(stage);
+                }
     };
     auto visionReference = [this](const Interaction &input) {
         if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
@@ -969,6 +972,14 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     processLayer(g, tex, w, h, true, rc);
 }
 
+GLuint Engine::stagePicture(const Layer &l, int stage) const
+{
+    if (stage == 0 && l.preFxTex) return l.preFxTex; // its source, before its FX
+    if (stage > 0 && size_t(stage) < l.stageTex.size() && l.stagesWanted.count(stage) && l.stageTex[size_t(stage)])
+        return l.stageTex[size_t(stage)]; // after its FX `stage`, kept for this
+    return l.finalTex;
+}
+
 void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps)
 {
     for (Layer *m : members) {
@@ -977,7 +988,8 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             m->model->setDetail(m->modelPlacement.detail);
             const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
             const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
-            items.push_back({m->model, m->modelPlacement, pic ? pic->finalTex : 0, disp ? disp->finalTex : 0,
+            items.push_back({m->model, m->modelPlacement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
+                             disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
                              m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid});
         } else if (m->type == SourceType::Light) {
             lamps.push_back({m->light, m->opacity});

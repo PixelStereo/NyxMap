@@ -209,6 +209,25 @@ int runScene3dTests(Engine &engine)
     const QColor top = at(32, 26), bottom = at(32, 38);
     check(top.red() > 200 && top.blue() < 40 && bottom.blue() > 200 && bottom.red() < 40,
           "the picture lies the right way up, as it is (unlit)");
+    // Any stage of that layer: two FX that invert it, its final picture as it was, after its first FX inverted
+    const QString invert = dir.path() + "/Invert.fs";
+    {
+        QFile f(invert);
+        check(f.open(QIODevice::WriteOnly), "write the invert FX");
+        f.write("/*{\"ISFVSN\":\"2\",\"INPUTS\":[{\"NAME\":\"inputImage\",\"TYPE\":\"image\"}]}*/\n"
+                "void main() { vec4 c = IMG_THIS_NORM_PIXEL(inputImage); gl_FragColor = vec4(1.0 - c.rgb, c.a); }\n");
+    }
+    check(engine.addEffect(engine.indexOfId(picture), invert, &error) >= 0 && engine.addEffect(engine.indexOfId(picture), invert, &error) >= 0,
+          "two inverting FX on the picture layer");
+    const QColor final = at(32, 26);
+    check(final.red() > 200 && final.blue() < 40, "its final picture: inverted twice, as it was");
+    check(engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1), "taken after its first FX");
+    const QColor afterFirst = at(32, 26);
+    check(afterFirst.red() < 40 && afterFirst.green() > 200 && afterFirst.blue() > 200, "after its first FX: inverted (cyan)");
+    check(engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 0), "taken at its source");
+    const QColor source = at(32, 26);
+    check(source.red() > 200 && source.blue() < 40, "its source, before its FX");
+    engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1);
     // The plane is about 40 px wide here: its edge, then bent toward the camera (its sides come forward, larger)
     int edge = 0;
     for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) edge = x;
@@ -285,7 +304,7 @@ int runScene3dTests(Engine &engine)
         shot(2, "Plane · displaced by a luminance · detail 4");
         painter.end();
         sheet.save(captures + "/surfaces.png");
-        engine.setModelPicture(engine.indexOfId(screen), picture, &error);
+        engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1);
         engine.setCompositionSize({64, 64});
     }
     const QString surfaces = dir.path() + "/surfaces.nyxmap";
@@ -296,6 +315,7 @@ int runScene3dTests(Engine &engine)
         Engine::Lock lk(&engine.mutex());
         const Layer *p = engine.layer(engine.indexOfId(screen));
         check(p && p->modelPicture == picture && p->modelDisplace == bump, "its picture and displacement layers come back");
+        check(p && p->modelPictureStage == 1 && p->modelDisplaceStage == -1, "and the stages they are taken at");
     }
     return failures;
 }
