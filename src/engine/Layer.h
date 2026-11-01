@@ -369,6 +369,9 @@ struct Layer {
     // Where those layers' pictures are taken (as an FX mask's): -1 their final picture, 0 their source (before their
     // FX), k after their FX k
     int modelPictureStage = -1, modelDisplaceStage = -1;
+    // A 3D scene: the layer whose picture (equirectangular: an HDRI, a video…) surrounds it and lights it, at a stage
+    quint64 sceneEnvironment = 0;
+    int sceneEnvironmentStage = -1;
     LightSettings light;
     bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light; }
 

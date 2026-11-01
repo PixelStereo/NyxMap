@@ -141,6 +141,8 @@ int runScene3dUiTests(Engine &engine)
     };
     select(engine.indexOfId(scene));
     check(tabNames().contains("Scene"), "a scene's inspector has its Scene tab");
+    check(inspector && inspector->findChild<QComboBox *>("sceneEnvironmentLayer") && inspector->findChild<QComboBox *>("sceneEnvironmentStage"),
+          "its Scene tab chooses its environment (an HDRI's layer) and its stage");
     auto *yaw = inspector ? inspector->findChild<SliderField *>("param3d:camera/yaw") : nullptr;
     check(yaw != nullptr, "the camera's yaw is a bar");
     if (yaw && undo) {

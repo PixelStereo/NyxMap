@@ -309,8 +309,9 @@ void Engine::markNeeded()
             const int si = indexOfId(id);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
-        if (l.type == SourceType::Model) // the pictures laid on a 3D model, pushing its points, at their stages
-            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage}})
+        if (l.type == SourceType::Model || l.scene3d) // a 3D model's pictures, a scene's environment, at their stages
+            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage},
+                                            std::pair{l.sceneEnvironment, l.sceneEnvironmentStage}})
                 if (const int si = indexOfId(id); id && si >= 0) {
                     m_layers[size_t(si)]->referenced = true;
                     if (stage > 0) m_layers[size_t(si)]->stagesWanted.insert(stage);
@@ -374,8 +375,8 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                 const int si = indexOfId(d.sourceLayer);
                 if (si >= 0) render(size_t(si));
             }
-            if (d.type == SourceType::Model) // the pictures on a 3D model, pushing its points
-                for (quint64 id : {d.modelPicture, d.modelDisplace})
+            if (d.type == SourceType::Model || d.scene3d) // a 3D model's pictures, a scene's environment
+                for (quint64 id : {d.modelPicture, d.modelDisplace, d.sceneEnvironment})
                     if (const int si = indexOfId(id); id && si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
             for (const auto &fx : d.effects) // the masks of its effects
                 if (fx->enabled && fx->maskLayer) {
@@ -967,7 +968,8 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     std::vector<Scene3D::Lamp> lamps;
     collectScene(members, items, lamps);
     const int w = m_compSize.width(), h = m_compSize.height();
-    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h);
+    const Layer *env = g.sceneEnvironment ? layer(indexOfId(g.sceneEnvironment)) : nullptr;
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0);
     if (!tex) return;
     processLayer(g, tex, w, h, true, rc);
 }
@@ -1478,7 +1480,9 @@ void Engine::frame(double dt)
             view.pitch = slot.camera.pitch;
             view.fov = slot.camera.fov;
             view.background = slot.camera.background;
-            slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height());
+            const Layer *env = layer.sceneEnvironment ? this->layer(indexOfId(layer.sceneEnvironment)) : nullptr;
+            slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height(),
+                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0);
             if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
             continue;
         }

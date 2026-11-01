@@ -59,6 +59,17 @@
   light; its handles move, turn or scale it along X, Y, Z (W, E, R; one undo step
   each). "View from Camera" and "Camera = View" exchange the view's and the scene's
   cameras. Not yet: moving a mesh's points by hand in that view.
+  Lighting is physically based in linear light with ACES tone mapping. A scene's
+  environment is a layer's picture (an HDRI, .hdr or .exr, loaded in an image layer
+  that can stay hidden; or a video, a generator), equirectangular, taken at any
+  stage of its FX (Scene tab › Environment): it lights the models (diffuse, and
+  reflections as sharp as the surfaces are smooth) and can be shown behind them
+  (`scene/environment/intensity`, `rotation`, `show`, `blur`). Approximation: its
+  levels are blurred copies, not convolved; an 8-bit layer clips the HDRI's
+  highlights (raise the intensity). glTF and FBX materials use their metal,
+  roughness, normal, occlusion and emission maps, alpha cut-out and blending
+  (blended surfaces are not sorted). A primitive's material is set by
+  `model/material/color`, `metal`, `rough`. Not yet: shadows.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

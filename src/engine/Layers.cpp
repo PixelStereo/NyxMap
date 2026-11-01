@@ -298,6 +298,7 @@ int Engine::addGroup(const QString &name, int at)
 int Engine::addScene(const QString &name, int at)
 {
     const int i = addGroup(name, at);
+    const quint64 id = layerId(i);
     {
         Lock lk(&m_mutex);
         int scenes = 0;
@@ -319,7 +320,7 @@ int Engine::addScene(const QString &name, int at)
         normalizeLocked();
     }
     emit layersChanged();
-    return indexOfId(layerId(i));
+    return indexOfId(id); // where it is now
 }
 
 // The picture laid on a 3D model: another layer's, after its FX (0: its materials). Refused when that layer is made from
@@ -347,6 +348,33 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, 
         }
         (displace ? l->modelDisplace : l->modelPicture) = picture;
         (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
+    }
+    emit layersChanged();
+    return true;
+}
+
+// A 3D scene's environment: a layer's picture (an HDRI, a video…), equirectangular, at a stage (0: none). Refused when
+// that layer is made from the scene itself
+bool Engine::setSceneEnvironment(int i, quint64 env, QString *err, int stage)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !l->scene3d) return false;
+        if (env) {
+            const Layer *p = layer(indexOfId(env));
+            if (!p || p->isViewport || p->is3dObject()) {
+                if (err) *err = QStringLiteral("A layer or a group lights a 3D scene.");
+                return false;
+            }
+            for (quint64 up = l->id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
+                if (up == env || layerDependsOn(env, up)) {
+                    if (err) *err = QStringLiteral("\"%1\" is made from this scene: it cannot light it.").arg(p->name);
+                    return false;
+                }
+        }
+        l->sceneEnvironment = env;
+        l->sceneEnvironmentStage = env ? stage : -1;
     }
     emit layersChanged();
     return true;
@@ -1043,6 +1071,7 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
             if (l->type == SourceType::Layer && l->sourceLayer && visit(l->sourceLayer)) return true;
             if (l->type == SourceType::Model && ((l->modelPicture && visit(l->modelPicture)) || (l->modelDisplace && visit(l->modelDisplace))))
                 return true; // its pictures
+            if (l->scene3d && l->sceneEnvironment && visit(l->sceneEnvironment)) return true; // its environment
             if (l->type == SourceType::Tox)
                 for (quint64 input : l->tox.inputs) if (input && visit(input)) return true;
             for (const auto &fx : l->effects) // the masks of its effects
