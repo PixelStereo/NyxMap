@@ -1,4 +1,5 @@
 #pragma once
+class QPainter;
 // Small interface building blocks shared by the inspector and the parameter panels.
 
 #include <QBrush>
@@ -25,6 +26,8 @@ class ColorPicker;
 // Accent color of the interface: the selection, the bars, the buttons that are on, the links.
 // A very light grey by default, changed in the Settings tab and kept for this machine.
 namespace theme {
+// A check box, as the application draws them all: a square edge, the accent's square inside it when on
+void paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled);
 class Notifier : public QObject
 {
     Q_OBJECT
