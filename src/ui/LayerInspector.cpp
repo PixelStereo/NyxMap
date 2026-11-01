@@ -3755,7 +3755,8 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
     mask->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at all "
                                     "where it is black or transparent. Click to choose it"));
     h->addWidget(mask);
-    connect(mask, &QToolButton::clicked, this, [=, this] {
+    connect(mask, &QToolButton::clicked, this, [this, mask, label, masks, stagesOf, ownEffects, selfId, maskId, maskStage,
+                                                 invert, maskOnly, valid, prefix, panel, k] {
         auto *pop = new QFrame(mask, Qt::Popup);
         pop->setAttribute(Qt::WA_DeleteOnClose);
         pop->setObjectName(QStringLiteral("fxMaskPopup"));
