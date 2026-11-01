@@ -14,24 +14,6 @@
 #include <cmath>
 #include <limits>
 
-ModelSettings::ModelSettings()
-{
-    // A key light above, in front, to the right, and a soft one from the other side: the model is seen at once
-    lights[0].enabled = true;
-    lights[0].type = 1;
-    lights[0].intensity = 25;
-    lights[1].enabled = true;
-    lights[1].type = 0;
-    lights[1].intensity = 0.6f;
-    lights[1].yaw = -140;
-    lights[1].pitch = -25;
-    lights[1].color = {{0.75f, 0.82f, 1.0f}};
-    lights[2].position = {{-3, 2, -2}};
-    lights[3].position = {{0, 4, 0}};
-    lights[3].type = 2;
-    lights[3].pitch = -90;
-}
-
 Model3D::Model3D() = default;
 Model3D::~Model3D() = default; // its GL objects go with releaseGl, on the render thread
 
@@ -299,13 +281,13 @@ void main() {
 )";
 
 // Physically based (GGX, Smith, Schlick): its base colour (times its texture's), metal, roughness, emission, under the
-// ambient light and up to four lights; tone mapped, sRGB out
+// ambient light and up to eight lights; tone mapped, sRGB out
 static const char *kFragment = R"(#version 330 core
 in vec3 v_pos; in vec3 v_n; in vec2 v_uv; out vec4 o;
 uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
 uniform int u_hasTex; uniform sampler2D u_tex;
 uniform vec3 u_eye, u_ambient; uniform float u_exposure;
-uniform int u_type[4]; uniform vec3 u_color[4], u_lpos[4], u_ldir[4]; uniform float u_cos[4];
+uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8];
 void main() {
     vec4 base = u_base;
     if (u_hasTex != 0) { vec4 t = texture(u_tex, v_uv); base *= vec4(pow(t.rgb, vec3(2.2)), t.a); }
@@ -314,8 +296,8 @@ void main() {
     float r = clamp(u_rough, 0.04, 1.0), a = r * r;
     vec3 F0 = mix(vec3(0.04), base.rgb, u_metal);
     vec3 c = u_ambient * base.rgb * (1.0 - 0.7 * u_metal);
-    for (int i = 0; i < 4; ++i) {
-        if (u_type[i] < 0) continue;
+    for (int i = 0; i < 8; ++i) {
+        if (i >= u_count) break;
         vec3 L; float att = 1.0;
         if (u_type[i] == 0) L = normalize(-u_ldir[i]);
         else {
@@ -340,16 +322,13 @@ void main() {
     }
     c = (c + u_emissive) * u_exposure;
     c = c / (1.0 + c);
-    o = vec4(pow(c, vec3(1.0 / 2.2)), base.a);
+    o = vec4(pow(c, vec3(1.0 / 2.2)) * base.a, base.a); // premultiplied, as a group's picture
 }
 )";
 
 bool Model3D::uploadGl()
 {
     auto f = gl();
-    QString log;
-    m_program = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kFragment), &log);
-    if (!m_program) return false;
     for (Mesh &m : m_meshes) {
         f->glGenVertexArrays(1, &m.vao);
         f->glBindVertexArray(m.vao);
@@ -383,98 +362,32 @@ bool Model3D::uploadGl()
     return true;
 }
 
-static QVector3D aim(float yawDeg, float pitchDeg) // where a light or the camera looks from its angles
+QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
 {
-    const float y = qDegreesToRadians(yawDeg), p = qDegreesToRadians(pitchDeg);
-    return QVector3D(std::cos(p) * std::sin(y), std::sin(p), std::cos(p) * std::cos(y));
+    QMatrix4x4 m;
+    m.translate(p.position[0], p.position[1], p.position[2]);
+    m.rotate(p.rotation[2], 0, 0, 1);
+    m.rotate(p.rotation[1], 0, 1, 0);
+    m.rotate(p.rotation[0], 1, 0, 0);
+    m.scale(p.scale);
+    if (p.fit) {
+        m.scale(1.0f / m_radius);
+        m.translate(-m_center);
+    }
+    return m;
 }
 
-GLuint Model3D::draw(const ModelSettings &s, int w, int h)
+void Model3D::drawMeshes(GLuint program)
 {
-    if (w <= 0 || h <= 0) return 0;
     auto f = gl();
     if (!m_uploaded) {
         m_uploaded = true;
-        if (!uploadGl()) return 0;
+        uploadGl();
     }
-    if (!m_program) return 0;
-    if (!m_fbo || w != m_w || h != m_h) { // its target: colour and depth, the layer's size
-        if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo), f->glDeleteTextures(1, &m_color), f->glDeleteRenderbuffers(1, &m_depth);
-        m_w = w;
-        m_h = h;
-        f->glGenTextures(1, &m_color);
-        f->glBindTexture(GL_TEXTURE_2D, m_color);
-        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        f->glGenRenderbuffers(1, &m_depth);
-        f->glBindRenderbuffer(GL_RENDERBUFFER, m_depth);
-        f->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
-        f->glGenFramebuffers(1, &m_fbo);
-        f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_color, 0);
-        f->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depth);
-    }
-    f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    f->glViewport(0, 0, w, h);
-    f->glClearColor(s.background[0], s.background[1], s.background[2], s.background[3]);
-    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    f->glEnable(GL_DEPTH_TEST);
-    f->glDepthFunc(GL_LEQUAL);
-    f->glDisable(GL_BLEND);
-    f->glDisable(GL_CULL_FACE);
-
-    // Where it is: fitted to a unit size, then placed; the camera around its target
-    QMatrix4x4 model;
-    model.translate(s.position[0], s.position[1], s.position[2]);
-    model.rotate(s.rotation[2], 0, 0, 1);
-    model.rotate(s.rotation[1], 0, 1, 0);
-    model.rotate(s.rotation[0], 1, 0, 0);
-    model.scale(s.scale);
-    if (s.fit) {
-        model.scale(1.0f / m_radius);
-        model.translate(-m_center);
-    }
-    const QVector3D target(s.target[0], s.target[1], s.target[2]);
-    const float distance = std::max(0.01f, s.distance);
-    const QVector3D eye = target + aim(s.yaw, s.pitch) * distance;
-    QMatrix4x4 view, proj;
-    view.lookAt(eye, target, QVector3D(0, 1, 0));
-    proj.perspective(std::clamp(s.fov, 1.0f, 170.0f), float(w) / float(h), distance * 0.01f, distance * 50.0f + 100.0f);
-
-    f->glUseProgram(m_program);
-    auto loc = [&](const char *name) { return f->glGetUniformLocation(m_program, name); };
-    f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
-    f->glUniformMatrix4fv(loc("u_view"), 1, GL_FALSE, view.constData());
-    f->glUniformMatrix4fv(loc("u_proj"), 1, GL_FALSE, proj.constData());
-    f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
-    f->glUniform3f(loc("u_eye"), eye.x(), eye.y(), eye.z());
-    f->glUniform3f(loc("u_ambient"), s.ambient[0] * s.ambientIntensity, s.ambient[1] * s.ambientIntensity, s.ambient[2] * s.ambientIntensity);
-    f->glUniform1f(loc("u_exposure"), s.exposure);
-    GLint types[4];
-    GLfloat colors[12], positions[12], directions[12], cones[4];
-    for (int k = 0; k < 4; ++k) {
-        const ModelSettings::Light &l = s.lights[size_t(k)];
-        types[k] = l.enabled && l.intensity > 0 ? std::clamp(l.type, 0, 2) : -1;
-        const QVector3D d = aim(l.yaw, l.pitch);
-        for (int c = 0; c < 3; ++c) {
-            colors[3 * k + c] = l.color[size_t(c)] * l.intensity;
-            positions[3 * k + c] = l.position[size_t(c)];
-            directions[3 * k + c] = d[c];
-        }
-        cones[k] = std::cos(qDegreesToRadians(std::clamp(l.angle, 1.0f, 89.0f)));
-    }
-    f->glUniform1iv(loc("u_type"), 4, types);
-    f->glUniform3fv(loc("u_color"), 4, colors);
-    f->glUniform3fv(loc("u_lpos"), 4, positions);
-    f->glUniform3fv(loc("u_ldir"), 4, directions);
-    f->glUniform1fv(loc("u_cos"), 4, cones);
-    f->glUniform1i(loc("u_tex"), 0);
-    f->glActiveTexture(GL_TEXTURE0);
+    auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
     for (const Mesh &m : m_meshes) {
-        const Material &mat = m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
+        if (!m.vao) continue;
+        const Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
         f->glUniform4f(loc("u_base"), mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
         f->glUniform1f(loc("u_metal"), mat.metallic);
         f->glUniform1f(loc("u_rough"), mat.roughness);
@@ -487,8 +400,6 @@ GLuint Model3D::draw(const ModelSettings &s, int w, int h)
     }
     f->glBindVertexArray(0);
     f->glBindTexture(GL_TEXTURE_2D, 0);
-    f->glDisable(GL_DEPTH_TEST);
-    return m_color;
 }
 
 void Model3D::releaseGl()
@@ -503,11 +414,116 @@ void Model3D::releaseGl()
     }
     for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
     m_textures.clear();
+    m_uploaded = false;
+}
+
+static QVector3D aim(float yawDeg, float pitchDeg) // where a light or the camera looks from its angles
+{
+    const float y = qDegreesToRadians(yawDeg), p = qDegreesToRadians(pitchDeg);
+    return QVector3D(std::cos(p) * std::sin(y), std::sin(p), std::cos(p) * std::cos(y));
+}
+
+GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h)
+{
+    if (w <= 0 || h <= 0) return 0;
+    auto f = gl();
+    if (!m_compiled) {
+        m_compiled = true;
+        QString log;
+        m_program = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kFragment), &log);
+        if (!m_program) qWarning("3D scene shader: %s", qPrintable(log));
+    }
+    if (!m_program) return 0;
+    if (!m_fbo || w != m_w || h != m_h) { // its target: colour and depth, the composition's size
+        if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo), f->glDeleteTextures(1, &m_color), f->glDeleteRenderbuffers(1, &m_depth);
+        m_w = w;
+        m_h = h;
+        f->glGenTextures(1, &m_color);
+        f->glBindTexture(GL_TEXTURE_2D, m_color);
+        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        f->glBindTexture(GL_TEXTURE_2D, 0);
+        f->glGenRenderbuffers(1, &m_depth);
+        f->glBindRenderbuffer(GL_RENDERBUFFER, m_depth);
+        f->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        f->glGenFramebuffers(1, &m_fbo);
+        f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_color, 0);
+        f->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depth);
+    }
+    f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    f->glViewport(0, 0, w, h);
+    const float a = s.background[3];
+    f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
+    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    f->glEnable(GL_DEPTH_TEST);
+    f->glDepthFunc(GL_LEQUAL);
+    f->glDisable(GL_BLEND);
+    f->glDisable(GL_CULL_FACE);
+
+    // The camera around its target
+    const QVector3D target(s.target[0], s.target[1], s.target[2]);
+    const float distance = std::max(0.01f, s.distance);
+    const QVector3D eye = target + aim(s.yaw, s.pitch) * distance;
+    QMatrix4x4 view, proj;
+    view.lookAt(eye, target, QVector3D(0, 1, 0));
+    proj.perspective(std::clamp(s.fov, 1.0f, 170.0f), float(w) / float(h), distance * 0.01f, distance * 50.0f + 100.0f);
+
+    f->glUseProgram(m_program);
+    auto loc = [&](const char *name) { return f->glGetUniformLocation(m_program, name); };
+    f->glUniformMatrix4fv(loc("u_view"), 1, GL_FALSE, view.constData());
+    f->glUniformMatrix4fv(loc("u_proj"), 1, GL_FALSE, proj.constData());
+    f->glUniform3f(loc("u_eye"), eye.x(), eye.y(), eye.z());
+    f->glUniform3f(loc("u_ambient"), s.ambient[0] * s.ambientIntensity, s.ambient[1] * s.ambientIntensity, s.ambient[2] * s.ambientIntensity);
+    f->glUniform1f(loc("u_exposure"), s.exposure);
+    GLint types[kMaxLights] = {};
+    GLfloat colors[3 * kMaxLights] = {}, positions[3 * kMaxLights] = {}, directions[3 * kMaxLights] = {}, cones[kMaxLights] = {};
+    int count = 0;
+    for (const Lamp &lamp : lamps) {
+        const LightSettings &l = lamp.light;
+        const float power = l.intensity * lamp.gain;
+        if (power <= 0 || count >= kMaxLights) continue;
+        const int k = count++;
+        types[k] = std::clamp(l.type, 0, 2);
+        const QVector3D d = aim(l.yaw, l.pitch);
+        for (int c = 0; c < 3; ++c) {
+            colors[3 * k + c] = l.color[size_t(c)] * power;
+            positions[3 * k + c] = l.position[size_t(c)];
+            directions[3 * k + c] = d[c];
+        }
+        cones[k] = std::cos(qDegreesToRadians(std::clamp(l.angle, 1.0f, 89.0f)));
+    }
+    f->glUniform1i(loc("u_count"), count);
+    f->glUniform1iv(loc("u_type"), kMaxLights, types);
+    f->glUniform3fv(loc("u_color"), kMaxLights, colors);
+    f->glUniform3fv(loc("u_lpos"), kMaxLights, positions);
+    f->glUniform3fv(loc("u_ldir"), kMaxLights, directions);
+    f->glUniform1fv(loc("u_cos"), kMaxLights, cones);
+    f->glUniform1i(loc("u_tex"), 0);
+    f->glActiveTexture(GL_TEXTURE0);
+    for (const Item &item : items) {
+        if (!item.model) continue;
+        const QMatrix4x4 model = item.model->matrix(item.placement);
+        f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
+        f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
+        item.model->drawMeshes(m_program);
+    }
+    f->glDisable(GL_DEPTH_TEST);
+    return m_color;
+}
+
+void Scene3D::releaseGl()
+{
+    if (!QOpenGLContext::currentContext()) return;
+    auto f = gl();
     if (m_program) f->glDeleteProgram(m_program);
     if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo);
     if (m_color) f->glDeleteTextures(1, &m_color);
     if (m_depth) f->glDeleteRenderbuffers(1, &m_depth);
     m_program = m_fbo = m_color = m_depth = 0;
+    m_compiled = false;
     m_w = m_h = 0;
-    m_uploaded = false;
 }

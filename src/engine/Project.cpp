@@ -167,6 +167,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
+        if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
     }
     if (l.isViewport) {
         o["viewport"] = true;
@@ -218,6 +219,9 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        break;
+    case SourceType::Light:
+        src["type"] = "light";
         break;
     case SourceType::Web:
         src = l.web.toJson();
@@ -299,6 +303,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         ++l->masksRevision;
         l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         l->isGroup = o.value("group").toBool(false);
+        l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
+        if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         l->collapsed = o.value("collapsed").toBool(false);
         l->isViewport = o.value("viewport").toBool(false);
         if (l->isViewport) {
@@ -371,6 +377,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->type = SourceType::Layer;
         l->sourceLayer = src.value("layer").toString().toULongLong();
         l->sourceTap = layerTapFromKey(src.value("tap").toString());
+    } else if (type == "light") {
+        setLayerLight(index);
     } else if (type == "model") {
         const bool ok = setLayerModel(index, path, &err);
         if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
@@ -708,7 +716,8 @@ static QString projectPreflightError(const QJsonObject &root)
                 (type != QLatin1String("none") && type != QLatin1String("video") &&
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
-                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox")))
+                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox") &&
+                 type != QLatin1String("model") && type != QLatin1String("light")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {

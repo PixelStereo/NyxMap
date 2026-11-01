@@ -1,48 +1,51 @@
 #pragma once
-// A 3D model as a layer's source: an FBX, glTF / GLB or OBJ file read (ufbx, cgltf), drawn into the layer's picture with
-// physically based materials (base colour, metal, roughness, emission, the base colour's texture) under up to four
-// lights, seen by a camera turning around a target. Everything that moves is a value of the layer (Model3D settings,
-// LayerParams: model/…, camera/…, light/<n>/…), animated, recalled and driven as any other.
+// 3D in NyxMap: a 3D Scene is a group whose picture is rendered, not composited. Its members are 3D objects — models
+// (an FBX, glTF / GLB or OBJ file read with ufbx, cgltf) and lights — seen by the scene's camera turning around a
+// target, under its ambient light. Each object is a layer of the list (enabled, soloed, animated, recalled and driven
+// as any other); its values here are its parameters (LayerParams: model/…, light/…; the scene's camera/…, scene/…).
 //
-// The file is read once (Model3D::load, any thread); its meshes reach the GPU the first time it is drawn, on the
-// render thread (draw). The meshes are drawn as the file places them (its nodes' transforms), centered and brought to
-// a unit size when "fit" is on, then moved, turned and scaled as the settings say.
+// A model's file is read once (Model3D::load, any thread); its meshes reach the GPU the first time it is drawn, on the
+// render thread. Its meshes are drawn as the file places them (its nodes' transforms), centered and brought to a unit
+// size when "fit" is on, then moved, turned and scaled as its placement says. The scene draws all its models in one
+// pass with physically based materials (base colour, metal, roughness, emission, the base colour's texture) under its
+// lights.
 
 #include "Gl.h"
 
 #include <QImage>
+#include <QMatrix4x4>
 #include <QString>
 #include <QVector3D>
 #include <array>
 #include <memory>
 #include <vector>
 
-struct ModelSettings {
-    static constexpr int kLights = 4;
-    // The model: centered and brought to a unit size (fit), then placed
-    bool fit = true;
+// Where a model is in its scene
+struct ModelPlacement {
+    bool fit = true; // centered and brought to a unit size first
     std::array<float, 3> position{{0, 0, 0}};
     std::array<float, 3> rotation{{0, 0, 0}}; // degrees, around X, Y then Z
     float scale = 1;
-    // The camera: around its target, at a distance, turned (yaw) and raised (pitch), its field of view
+};
+
+// A light of a scene
+struct LightSettings {
+    int type = 1; // 0 directional, 1 point, 2 spot
+    std::array<float, 3> color{{1, 1, 1}};
+    float intensity = 25;
+    std::array<float, 3> position{{2, 3, 3}};
+    float yaw = 0, pitch = -45; // where a directional light or a spot points (degrees)
+    float angle = 30;           // a spot's half angle (degrees)
+};
+
+// A scene's camera, ambient light, background (transparent by default: the layers under it show) and exposure
+struct SceneSettings {
     std::array<float, 3> target{{0, 0, 0}};
     float distance = 3, yaw = 30, pitch = 15, fov = 45;
-    // The light that is everywhere, the background (transparent by default: the layers under it show), the exposure
     std::array<float, 3> ambient{{1, 1, 1}};
     float ambientIntensity = 0.15f;
     std::array<float, 4> background{{0, 0, 0, 0}};
     float exposure = 1;
-    struct Light {
-        bool enabled = false;
-        int type = 1; // 0 directional, 1 point, 2 spot
-        std::array<float, 3> color{{1, 1, 1}};
-        float intensity = 10;
-        std::array<float, 3> position{{2, 3, 3}};
-        float yaw = 0, pitch = -45; // where a directional light or a spot points (degrees)
-        float angle = 30;           // a spot's half angle (degrees)
-    };
-    std::array<Light, kLights> lights;
-    ModelSettings();
 };
 
 class Model3D
@@ -61,9 +64,9 @@ public:
     int meshCount() const { return int(m_meshes.size()); }
     int triangleCount() const;
 
-    // Draws it with these settings into its own target (w × h, with a depth buffer); its colour texture. Render
-    // thread, a GL context current
-    GLuint draw(const ModelSettings &s, int w, int h);
+    // Its model matrix: fitted (if asked), then placed. Its meshes drawn with the scene's program bound (render thread)
+    QMatrix4x4 matrix(const ModelPlacement &p) const;
+    void drawMeshes(GLuint program);
     void releaseGl();
 
 private:
@@ -96,7 +99,31 @@ private:
     QVector3D m_center;
     float m_radius = 1;
     bool m_uploaded = false;
+};
+
+// Draws a scene: its models in one pass, with depth, under its lights, into its own target
+class Scene3D
+{
+public:
+    static constexpr int kMaxLights = 8;
+    struct Item {
+        std::shared_ptr<Model3D> model;
+        ModelPlacement placement;
+    };
+    struct Lamp {
+        LightSettings light;
+        float gain = 1; // its layer's opacity
+    };
+    Scene3D() = default;
+    Scene3D(const Scene3D &) = delete;
+    Scene3D &operator=(const Scene3D &) = delete;
+    // Its picture (premultiplied), w × h; render thread, a GL context current
+    GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h);
+    void releaseGl();
+
+private:
     GLuint m_program = 0;
+    bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0, m_depth = 0;
     int m_w = 0, m_h = 0;
 };

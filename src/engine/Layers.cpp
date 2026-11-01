@@ -294,6 +294,51 @@ int Engine::addGroup(const QString &name, int at)
     return at;
 }
 
+// A 3D Scene: a group whose picture its 3D objects make (never inside another scene)
+int Engine::addScene(const QString &name, int at)
+{
+    const int i = addGroup(name, at);
+    {
+        Lock lk(&m_mutex);
+        int scenes = 0;
+        for (const auto &l : m_layers) scenes += l->scene3d;
+        Layer &g = *m_layers[size_t(i)];
+        g.scene3d = true;
+        g.sceneRenderer = std::make_shared<Scene3D>();
+        if (name.isEmpty()) g.name = QStringLiteral("3D Scene %1").arg(scenes + 1);
+        for (quint64 up = g.parent; up;) { // out of any scene it would land in
+            const int pi = indexOfId(up);
+            if (pi < 0) break;
+            if (m_layers[size_t(pi)]->scene3d) {
+                g.parent = m_layers[size_t(pi)]->parent;
+                up = g.parent;
+                continue;
+            }
+            up = m_layers[size_t(pi)]->parent;
+        }
+        normalizeLocked();
+    }
+    emit layersChanged();
+    return indexOfId(layerId(i));
+}
+
+// A light of a 3D scene (the layer goes into its scene with setStructure)
+bool Engine::setLayerLight(int i)
+{
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Light;
+        l->light = LightSettings();
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
+}
+
 quint64 Engine::newIdLocked()
 {
     for (const auto &l : m_layers) m_nextId = std::max(m_nextId, l->id + 1);
@@ -322,6 +367,7 @@ static TreeNode nodeOf(const Layer &l)
     n.id = l.id;
     n.parent = l.parent;
     n.kind = l.isViewport ? TreeNode::Viewport : l.isGroup ? TreeNode::Group : TreeNode::Item;
+    n.role = l.scene3d ? TreeNode::Scene3d : l.is3dObject() ? TreeNode::Object3d : TreeNode::Plain;
     return n;
 }
 
@@ -483,6 +529,7 @@ void Engine::releaseLayer(Layer &l)
     l.stageTargets.clear();
     l.maskTarget[1].destroy();
     if (l.model) l.model->releaseGl();
+    if (l.sceneRenderer) l.sceneRenderer->releaseGl();
     l.groupTarget.destroy();
     l.prepTarget.destroy();
     l.matteTarget.destroy();
@@ -899,7 +946,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->toxPlayer = std::move(l.toxPlayer);
     l.tox = ToxSettings();
     g->model = std::move(l.model);
-    l.modelSettings = ModelSettings();
+    l.modelPlacement = ModelPlacement();
+    l.light = LightSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();

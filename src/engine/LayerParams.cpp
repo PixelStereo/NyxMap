@@ -32,7 +32,8 @@ quint64 keyOf(const Layer &l)
           quint64(quintptr(l.generator.get())), quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)),
           quint64(l.hasPicture()), quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
           // the played range: the playhead's (an Internal interaction takes its range from it)
-          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000))})
+          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000)), quint64(l.scene3d),
+          quint64(bool(l.model))})
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
@@ -649,57 +650,62 @@ const std::vector<Parameter *> &Layer::parameters()
             }
     }
 
-    // A 3D model: where it is, the camera that sees it, the light everywhere, its lights (Model3D.h)
-    if (type == SourceType::Model && model) {
-        ModelSettings *ms = &modelSettings;
-        auto f = [&](const QString &path, const QString &label, double lo, double hi, double def, float *field) -> Parameter & {
-            return num(path, label, lo, hi, def, [field] { return double(*field); }, [field](double v) { *field = float(v); });
-        };
-        flag("model/fit", "Model › Fit (centered, unit size)", true, &ms->fit);
-        for (int a = 0; a < 3; ++a) {
-            const QString axis = QString(QChar("xyz"[a])), name = QString(QChar("XYZ"[a]));
-            f("model/position/" + axis, "Model › Position " + name, -10, 10, 0, &ms->position[size_t(a)]).step(0.01);
-            f("model/rotation/" + axis, "Model › Rotation " + name + " (°)", -180, 180, 0, &ms->rotation[size_t(a)]).step(0.1);
-        }
-        f("model/scale", "Model › Scale", 0.01, 10, 1, &ms->scale).step(0.01);
-        f("camera/distance", "Camera › Distance", 0.1, 50, 3, &ms->distance).step(0.01);
-        f("camera/yaw", "Camera › Yaw (°)", -180, 180, 30, &ms->yaw).step(0.1);
-        f("camera/pitch", "Camera › Pitch (°)", -89, 89, 15, &ms->pitch).step(0.1);
-        f("camera/fov", "Camera › Field of View (°)", 5, 150, 45, &ms->fov).step(0.1);
+    // 3D (Model3D.h): a scene's camera, ambient light, background and exposure; a model's place; a light
+    auto f3 = [&](const QString &path, const QString &label, double lo, double hi, double def, float *field) -> Parameter & {
+        return num(path, label, lo, hi, def, [field] { return double(*field); }, [field](double v) { *field = float(v); });
+    };
+    const QStringList xyz{QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")}, XYZ{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+    if (scene3d) {
+        SceneSettings *sc = &scene;
+        const SceneSettings d;
+        f3("camera/distance", "Camera › Distance", 0.1, 50, d.distance, &sc->distance).step(0.01);
+        f3("camera/yaw", "Camera › Yaw (°)", -180, 180, d.yaw, &sc->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("camera/pitch", "Camera › Pitch (°)", -89, 89, d.pitch, &sc->pitch).step(0.1);
+        f3("camera/fov", "Camera › Field of View (°)", 5, 150, d.fov, &sc->fov).step(0.1);
         for (int a = 0; a < 3; ++a)
-            f(QStringLiteral("camera/target/") + QChar("xyz"[a]), QStringLiteral("Camera › Target ") + QChar("XYZ"[a]), -10, 10, 0,
-              &ms->target[size_t(a)]).step(0.01);
+            f3("camera/target/" + xyz[a], "Camera › Target " + XYZ[a], -10, 10, 0, &sc->target[size_t(a)]).step(0.01);
         for (int c = 0; c < 3; ++c)
-            f(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
-              &ms->ambient[size_t(c)]).colorComponent(c);
-        f("scene/ambient_intensity", "Scene › Ambient Intensity", 0, 5, 0.15, &ms->ambientIntensity).step(0.01);
-        f("scene/exposure", "Scene › Exposure", 0, 10, 1, &ms->exposure).step(0.01);
+            f3(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
+               &sc->ambient[size_t(c)]).colorComponent(c);
+        f3("scene/ambient_intensity", "Scene › Ambient Intensity", 0, 5, d.ambientIntensity, &sc->ambientIntensity).step(0.01);
+        f3("scene/exposure", "Scene › Exposure", 0, 10, d.exposure, &sc->exposure).step(0.01);
         for (int c = 0; c < 4; ++c)
-            f(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
-              &ms->background[size_t(c)]).colorComponent(c);
-        const ModelSettings defaults;
-        for (int k = 0; k < ModelSettings::kLights; ++k) {
-            ModelSettings::Light *lt = &ms->lights[size_t(k)];
-            const ModelSettings::Light &d = defaults.lights[size_t(k)];
-            const QString p = QStringLiteral("light/%1/").arg(k + 1), cat = QStringLiteral("Light %1 › ").arg(k + 1);
-            flag(p + "enable", cat + "Enable", d.enabled, &lt->enabled);
-            add(p + "type", cat + "Type", T::Choice)
-                .choices({QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot")})
-                .byDefault(QStringList{"directional", "point", "spot"}.value(d.type))
-                .ramp(Parameter::Ramp::Cut)
-                .bind([lt] { return QVariant(QStringList{"directional", "point", "spot"}.value(lt->type)); },
-                      [lt](const QVariant &v) { lt->type = std::max(0, int(QStringList{"directional", "point", "spot"}.indexOf(v.toString()))); });
-            for (int c = 0; c < 3; ++c)
-                f(p + "color/" + QChar("rgb"[c]), cat + "Color " + QChar("RGB"[c]), 0, 1, d.color[size_t(c)], &lt->color[size_t(c)])
-                    .colorComponent(c);
-            f(p + "intensity", cat + "Intensity", 0, 200, d.intensity, &lt->intensity).step(0.1);
-            for (int a = 0; a < 3; ++a)
-                f(p + "position/" + QChar("xyz"[a]), cat + "Position " + QChar("XYZ"[a]), -20, 20, d.position[size_t(a)],
-                  &lt->position[size_t(a)]).step(0.01);
-            f(p + "yaw", cat + "Yaw (°)", -180, 180, d.yaw, &lt->yaw).step(0.1);
-            f(p + "pitch", cat + "Pitch (°)", -90, 90, d.pitch, &lt->pitch).step(0.1);
-            f(p + "angle", cat + "Spot Angle (°)", 1, 89, d.angle, &lt->angle).step(0.1);
-        }
+            f3(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
+               &sc->background[size_t(c)]).colorComponent(c);
+    }
+    if (type == SourceType::Model) {
+        ModelPlacement *mp = &modelPlacement;
+        flag("model/fit", "Model › Fit (centered, unit size)", true, &mp->fit).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("model/position/" + xyz[a], "Model › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("model/rotation/" + xyz[a], "Model › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)])
+                .step(0.1)
+                .ramp(Parameter::Ramp::Angle);
+        f3("model/scale", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
+    }
+    if (type == SourceType::Light) {
+        LightSettings *lt = &light;
+        const LightSettings d;
+        static const QStringList kinds{QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot")};
+        add("light/type", "Light › Type", T::Choice)
+            .choices(kinds)
+            .byDefault(kinds.value(d.type))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([lt] { return QVariant(kinds.value(lt->type)); },
+                  [lt](const QVariant &v) { lt->type = std::max(0, int(kinds.indexOf(v.toString()))); });
+        for (int c = 0; c < 3; ++c)
+            f3(QStringLiteral("light/color/") + QChar("rgb"[c]), QStringLiteral("Light › Color ") + QChar("RGB"[c]), 0, 1,
+               d.color[size_t(c)], &lt->color[size_t(c)]).colorComponent(c);
+        f3("light/intensity", "Light › Intensity", 0, 200, d.intensity, &lt->intensity).step(0.1);
+        for (int a = 0; a < 3; ++a)
+            f3("light/position/" + xyz[a], "Light › Position " + XYZ[a], -20, 20, d.position[size_t(a)], &lt->position[size_t(a)])
+                .step(0.01);
+        f3("light/yaw", "Light › Yaw (°)", -180, 180, d.yaw, &lt->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("light/pitch", "Light › Pitch (°)", -90, 90, d.pitch, &lt->pitch).step(0.1);
+        f3("light/angle", "Light › Spot Angle (°)", 1, 89, d.angle, &lt->angle).step(0.1);
+        num("light/level", "Light › Level", 0, 1, 1.0, [self] { return double(self->opacity); },
+            [self](double v) { self->opacity = float(v); });
     }
 
     if (type == SourceType::Tox && toxPlayer) {

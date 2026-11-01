@@ -37,7 +37,7 @@
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
 // `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model };
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
@@ -356,9 +356,16 @@ struct Layer {
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
 
-    // 3D model (type Model): its file, read (its meshes reach the GPU on the render thread), and its values
+    // 3D (Model3D.h). A 3D Scene is a group (isGroup) whose picture is its objects rendered by its camera; its members
+    // are 3D objects only: models (type Model: its file, read; its meshes reach the GPU on the render thread) and lights
+    // (type Light)
+    bool scene3d = false;
+    SceneSettings scene;
+    std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
-    ModelSettings modelSettings;
+    ModelPlacement modelPlacement;
+    LightSettings light;
+    bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light; }
 
     // TouchDesigner component: native SDK access stays on the render thread.
     ToxSettings tox;
@@ -491,7 +498,11 @@ struct Layer {
     {
         return type == SourceType::Isf ? genHeight : type == SourceType::Text ? text.height : type == SourceType::Web ? web.height : srcHeight;
     }
-    bool hasPicture() const { return isGroup || isViewport || (type != SourceType::Audio && !(type == SourceType::None && missingType == SourceType::Audio)); }
+    bool hasPicture() const
+    {
+        return isGroup || isViewport ||
+               (type != SourceType::Audio && !is3dObject() && !(type == SourceType::None && missingType == SourceType::Audio));
+    }
     bool isText() const { return type == SourceType::Text; }
     QSize viewportSize() const { return QSize(std::max(1, vpWidth), std::max(1, vpHeight)); }
     float opacityIn(quint64 viewport) const

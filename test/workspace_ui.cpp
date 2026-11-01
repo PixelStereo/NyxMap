@@ -54,6 +54,7 @@ int runColorParameterUiTests(Engine &engine, const QString &root);
 int runXyParameterUiTests(Engine &engine, const QString &root);
 int runClockPresetUiTests(Engine &engine);
 int runLayerSourceUiTests(Engine &engine); // layer_source_ui.cpp
+int runScene3dUiTests(Engine &engine);     // scene3d_ui.cpp
 int runAudioFxUiTests(Engine &engine);     // audio_fx_ui.cpp
 int runControlsUiTests(Engine &engine);    // controls_ui.cpp
 
@@ -275,7 +276,7 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false;
+    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
@@ -284,6 +285,7 @@ int main(int argc, char **argv)
         else if (arg == QLatin1String("--color-animation")) colorAnimation = true;
         else if (arg == QLatin1String("--clock-presets")) clockPresets = true;
         else if (arg == QLatin1String("--layer-source")) layerSource = true;
+        else if (arg == QLatin1String("--scene3d")) scene3dUi = true;
         else if (arg == QLatin1String("--audio-fx")) audioFx = true;
         else if (arg == QLatin1String("--controls")) controlsUi = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
@@ -301,6 +303,11 @@ int main(int argc, char **argv)
     }
     if (audioFx) {
         const int failures = runAudioFxUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (scene3dUi) {
+        const int failures = runScene3dUiTests(engine);
         engine.shutdown();
         return failures ? 1 : 0;
     }

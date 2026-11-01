@@ -96,6 +96,7 @@ static QString sourceTypeKey(const Layer &l)
     case SourceType::Input: return QStringLiteral("input");
     case SourceType::Tox: return QStringLiteral("tox");
     case SourceType::Model: return QStringLiteral("model");
+    case SourceType::Light: return QStringLiteral("light");
     case SourceType::Web: return QStringLiteral("web");
     default: return QStringLiteral("none");
     }
