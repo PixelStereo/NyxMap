@@ -14,13 +14,6 @@ From a single screen to a multi-output installation, design the image and run th
   <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-MIT-24272C?style=for-the-badge"></a>
 </p>
 
-<p><strong>
-<a href="#what-you-can-do">Features</a> &nbsp;·&nbsp;
-<a href="#download">Download</a> &nbsp;·&nbsp;
-<a href="#control-it-from-anything">Remote control</a> &nbsp;·&nbsp;
-<a href="docs/build.md">Build from source</a>
-</strong></p>
-
 </div>
 
 <p align="center">
