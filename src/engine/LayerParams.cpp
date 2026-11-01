@@ -730,7 +730,8 @@ const std::vector<Parameter *> &Layer::parameters()
     // The shaders: the generator's at the layer's top (its speed: the pace of its TIME), each effect under fx/<fx>/
     auto shader = [&](const IsfInstance &inst, const QString &prefix, const QString &title, bool effect) {
         for (Parameter p : inst.parameters(title)) {
-            if (!effect && (p.path() == "enable" || p.path() == "mask/invert")) continue; // an effect's
+            if (!effect && (p.path() == "enable" || p.path() == "mask/invert" || p.path().startsWith("channel/")))
+                continue; // an effect's
             if (!effect && p.path() == "speed" && hasTransport()) continue;              // the media's speed instead
             paramStore.push_back(std::make_unique<Parameter>(p.prefixed(prefix)));
         }

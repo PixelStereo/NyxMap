@@ -3702,6 +3702,37 @@ void LayerInspector::showEffectParams()
             editEffects(QStringLiteral("Invert FX Mask"), [&] { m_engine->setEffectMask(m_layer, k, id, on); });
         });
     }
+
+    // Channels: the ones it changes (all by default); a channel off keeps the picture the effect was given
+    if (valid) {
+        const QString prefix = m_engine->shaderPrefix(m_layerId, m_selectedEffect);
+        auto *row = new QHBoxLayout;
+        auto *label = new ResetLabel(QStringLiteral("Channels"), [this, prefix] {
+            for (QChar c : QStringLiteral("rgba")) setValue(prefix + QStringLiteral("channel/") + c, true, QStringLiteral("FX Channels"));
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+        });
+        row->addWidget(label);
+        static const QColor kTints[] = {QColor(230, 70, 70), QColor(80, 200, 90), QColor(80, 140, 240), QColor(200, 200, 205)};
+        for (int c = 0; c < 4; ++c) {
+            const QString path = prefix + QStringLiteral("channel/") + QChar("rgba"[c]);
+            auto *b = new QToolButton;
+            b->setObjectName(QStringLiteral("fxChannel") + QChar("RGBA"[c]));
+            b->setText(QString(QChar("RGBA"[c])));
+            b->setCheckable(true);
+            b->setChecked(m_engine->parameterValue(m_layerId, path).toBool(true));
+            b->setMinimumWidth(30);
+            b->setToolTip(QStringLiteral("%1: changed by this FX (off: it keeps the picture the FX was given)")
+                              .arg(QStringLiteral("Red,Green,Blue,Alpha").split(',')[c]));
+            b->setStyleSheet(QStringLiteral("QToolButton { font-weight:bold; color:#777; } "
+                                            "QToolButton:checked { background:%1; color:white; border-radius:3px; }")
+                                 .arg(kTints[c].name()));
+            connect(b, &QToolButton::toggled, this, [this, path](bool on) { setValue(path, on, QStringLiteral("FX Channel")); });
+            m_animate->attach(b, {path});
+            row->addWidget(b);
+        }
+        row->addStretch();
+        lay->addLayout(row);
+    }
     if (valid) {
         lay->addWidget(accentSeparator());
         auto *params = new ParamPanel(m_engine, m_undo, m_layer, m_selectedEffect, ParamPanel::NoSpeed);

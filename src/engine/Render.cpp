@@ -705,10 +705,13 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                 l.finalTex = 0;
                 return;
             }
-            // Through its mask: the effect where the mask is white, the input where it is black
+            // Through its mask: the effect where the mask is white, the input where it is black; on the channels it
+            // changes only
             const Layer *mask = fx->maskLayer ? layer(indexOfId(fx->maskLayer)) : nullptr;
             const GLuint maskTex = !mask ? 0 : fx->maskPreFx && mask->preFxTex ? mask->preFxTex : mask->finalTex;
-            if (mask && maskTex && mask != &l) {
+            const bool masked = mask && maskTex && mask != &l;
+            const bool someChannels = !std::all_of(fx->channels.begin(), fx->channels.end(), [](bool on) { return on; });
+            if (masked || someChannels) {
                 RenderTarget &mixed = l.maskTarget[ping];
                 mixed.ensure(w, h);
                 if (!mixed.ready(w, h)) {
@@ -720,7 +723,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                 auto f = gl();
                 f->glDisable(GL_BLEND);
                 f->glUseProgram(m_maskProgram);
-                const GLuint texs[3] = {tex, dst.tex, maskTex};
+                const GLuint texs[3] = {tex, dst.tex, masked ? maskTex : dst.tex};
                 const GLint locs[3] = {m_maskInLoc, m_maskFxLoc, m_maskMaskLoc};
                 for (int k = 0; k < 3; ++k) {
                     f->glActiveTexture(GL_TEXTURE0 + k);
@@ -728,6 +731,9 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                     f->glUniform1i(locs[k], k);
                 }
                 f->glUniform1i(m_maskInvertLoc, fx->maskInvert ? 1 : 0);
+                f->glUniform1i(m_maskHasLoc, masked ? 1 : 0);
+                f->glUniform4f(m_maskChannelsLoc, fx->channels[0] ? 1.f : 0.f, fx->channels[1] ? 1.f : 0.f,
+                               fx->channels[2] ? 1.f : 0.f, fx->channels[3] ? 1.f : 0.f);
                 drawQuad();
                 f->glActiveTexture(GL_TEXTURE0);
                 tex = mixed.tex;

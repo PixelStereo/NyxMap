@@ -4224,6 +4224,18 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // The mask layer gone: the effect applies everywhere again
         e.removeLayer(e.indexOfId(maskId));
         CHECK(at(0.25).red() < 5 && at(0.75).red() < 5);
+        // Its channels: the ones it changes; a channel off keeps the input (red inverted is cyan)
+        const QString channels = e.shaderPrefix(lid, 0) + "channel/";
+        CHECK(e.setParameter(lid, channels + "r", false));
+        QColor c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() > 250); // red kept, green and blue inverted
+        CHECK(e.setParameter(lid, channels + "b", false));
+        c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() < 5); // only green inverted
+        CHECK(!e.layerJson(e.indexOfId(lid)).value("params").toObject().value(channels + "b").toBool(true)); // saved
+        CHECK(e.setParameter(lid, channels + "r", true) && e.setParameter(lid, channels + "b", true));
+        c = at(0.5);
+        CHECK(c.red() < 5 && c.green() > 250 && c.blue() > 250); // all of them again
         e.removeLayer(e.indexOfId(lid));
     }
     // 4f bis. The color section through a mask: red with all its red removed, only where the mask is white
@@ -4545,11 +4557,21 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.setViewportWindow(vp2, &w2);
             e.setViewportExposed(vp1, true, w1.size() * w1.devicePixelRatio());
             e.setViewportExposed(vp2, true, w2.size() * w2.devicePixelRatio());
-            for (int k = 0; k < 3; ++k) {
+            // The windows show their frames when the system presents them, a little after: rendered and grabbed again
+            // until both show their picture (3 s at most), then checked
+            QImage g1, g2;
+            auto shown = [&] {
+                if (g1.isNull() || g2.isNull()) return false;
+                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
+                return c1.red() > 200 && c1.blue() < 50 && c2.blue() > 200 && c2.red() < 50;
+            };
+            t.restart();
+            do {
                 e.renderFrame();
-                QCoreApplication::processEvents();
-            }
-            const QImage g1 = w1.screen()->grabWindow(w1.winId()).toImage(), g2 = w2.screen()->grabWindow(w2.winId()).toImage();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                g1 = w1.screen()->grabWindow(w1.winId()).toImage();
+                g2 = w2.screen()->grabWindow(w2.winId()).toImage();
+            } while (!shown() && t.elapsed() < 3000);
             CHECK(!g1.isNull() && !g2.isNull());
             if (!g1.isNull() && !g2.isNull()) {
                 const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);

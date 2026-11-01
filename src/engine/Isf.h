@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 // Implementation of the ISF format (Interactive Shader Format, Vidvox v2 spec):
 // JSON header parsing, translation to GLSL 330 core, multi-pass rendering,
 // persistent and float buffers, imported images.
@@ -175,6 +176,8 @@ public:
     quint64 maskLayer = 0; // 0: everywhere
     bool maskInvert = false;
     bool maskPreFx = false; // the mask is the layer's picture before its own effects (false: after them)
+    std::array<bool, 4> channels{{true, true, true, true}}; // an effect: the channels it changes (R G B A); the others
+                                                            // keep the picture it was given
 
     std::vector<IsfInput> &inputs() { return m_inputs; }
     const std::vector<IsfInput> &inputs() const { return m_inputs; }
