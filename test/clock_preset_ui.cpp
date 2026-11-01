@@ -3,16 +3,33 @@
 #include "PresetEditor.h"
 #include <QApplication>
 #include <QContextMenuEvent>
-#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
+#include <functional>
+#include <QTimer>
 #include <QMouseEvent>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <cmath>
 #include <cstdio>
+
+// Sees each menu as it is shown
+class MenuWatch : public QObject
+{
+public:
+    explicit MenuWatch(std::function<void(QMenu *)> seen) : m_seen(std::move(seen)) {}
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() == QEvent::Show)
+            if (auto *menu = qobject_cast<QMenu *>(o)) m_seen(menu);
+        return false;
+    }
+
+private:
+    std::function<void(QMenu *)> m_seen;
+};
 
 int runClockPresetUiTests(Engine &engine)
 {
@@ -72,20 +89,20 @@ int runClockPresetUiTests(Engine &engine)
         undo.redo(); check(presets.inSelected(id, {path}), qPrintable(path + ": Redo restores the setting"));
         click(label ? label : field, label ? Qt::NoModifier : Qt::AltModifier);
         check(!presets.inSelected(id, {path}), qPrintable(path + ": click removes the setting from the selected preset"));
+        // The menu caught as it is shown (whether it is popped up or run in a loop of its own), then closed: what it
+        // offers is read there, whatever the focus and the speed of the machine
+        bool hasPreset = false, shown = false;
+        MenuWatch watch([&](QMenu *menu) {
+            shown = true;
+            for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
+            QTimer::singleShot(0, menu, &QMenu::close);
+        });
+        qApp->installEventFilter(&watch);
         QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal(QPoint(3, 3)));
         QApplication::sendEvent(field, &event);
-        // The popup is shown by the event loop: on a slow runner it is not up the instant the event is delivered
-        QMenu *menu = nullptr;
-        bool hasPreset = false;
-        QElapsedTimer waited;
-        waited.start();
-        do {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-            if (menu) for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
-        } while (!hasPreset && waited.elapsed() < 2000);
+        for (int k = 0; k < 50 && !shown; ++k) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        qApp->removeEventFilter(&watch);
         check(hasPreset, qPrintable(path + ": the field exposes the standard Preset context menu"));
-        if (menu) menu->close();
         pump();
     };
     check(clockKindName(ClockKind::Stopwatch) == "Chronometer", "the public generator name is Chronometer");

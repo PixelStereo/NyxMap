@@ -4,6 +4,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <QPushButton>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -18,6 +20,31 @@ QToolButton *button(const QString &text, const QString &tip)
     b->setMinimumWidth(28);
     return b;
 }
+} // namespace
+
+namespace {
+constexpr int kOutlineRole = Qt::UserRole + 40; // 0: off, 1: on, 2: on, for the masks only
+
+// An FX's row outlined by what it does: none when off, a thin line when on, dashes when only a mask takes it
+class OutlineDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
+    {
+        QStyledItemDelegate::paint(p, opt, idx);
+        const int state = idx.data(kOutlineRole).toInt();
+        if (!state) return;
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        QPen pen(theme::accent(), 1);
+        if (state == 2) pen.setStyle(Qt::DashLine);
+        p->setPen(pen);
+        p->setBrush(Qt::NoBrush);
+        p->drawRoundedRect(QRectF(opt.rect).adjusted(1.5, 1.5, -1.5, -1.5), 3, 3);
+        p->restore();
+    }
+};
 } // namespace
 
 FxChainPanel::FxChainPanel(const QString &chain, QWidget *parent) : QWidget(parent), m_chain(chain)
@@ -60,6 +87,7 @@ FxChainPanel::FxChainPanel(const QString &chain, QWidget *parent) : QWidget(pare
     m_list = new QListWidget;
     m_list->setObjectName(QStringLiteral("fxChainList"));
     m_list->setProperty("allowLocked", true); // selecting an FX to see its parameters is not an edit
+    m_list->setItemDelegate(new OutlineDelegate(m_list));
     v->addWidget(m_list);
 
     m_detail = new QWidget;
@@ -137,6 +165,8 @@ void FxChainPanel::setRows(const std::vector<Row> &rows, int selected, bool chai
         if (!r.tooltip.isEmpty()) item->setToolTip(r.tooltip);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
+        item->setData(kOutlineRole, !r.enabled ? 0 : r.maskOnly ? 2 : 1);
+        if (r.maskOnly && r.tooltip.isEmpty()) item->setToolTip(QStringLiteral("Mask only: computed for the masks, not in the picture"));
         m_list->addItem(item);
     }
     m_count = int(rows.size());

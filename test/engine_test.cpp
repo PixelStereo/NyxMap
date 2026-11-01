@@ -4234,18 +4234,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask").toString() ==
               QString::number(maskId));
         // Mask picture before or after the mask layer's effects (no effect on the mask here: same picture)
-        CHECK(e.setEffectMaskTap(e.indexOfId(lid), 0, true));
-        CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask_tap").toString() == "prefx");
+        CHECK(e.setEffectMaskStage(e.indexOfId(lid), 0, 0));
+        CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask_stage").toInt(-1) == 0);
         l = at(0.25);
         CHECK(l.red() > 250 && at(0.75).red() < 5);
-        CHECK(e.setEffectMaskTap(e.indexOfId(lid), 0, false));
+        CHECK(e.setEffectMaskStage(e.indexOfId(lid), 0, -1));
         // Grey: in proportion
         CHECK(e.setLayerImage(e.indexOfId(maskId), tmp + "/mgrey.png", &err));
         CHECK(e.setEffectMask(e.indexOfId(lid), 0, maskId, false, &err));
         l = at(0.5);
         CHECK(l.red() > 100 && l.red() < 160 && l.green() > 100 && l.green() < 160);
-        // Refused: itself, a viewport, a layer that already depends on this one
-        CHECK(!e.setEffectMask(e.indexOfId(lid), 0, lid, false));
+        // Refused: a viewport, a layer that already depends on this one (itself: from a stage above the effect)
+        CHECK(e.setEffectMask(e.indexOfId(lid), 0, lid, false) && e.layer(e.indexOfId(lid))->effects[0]->maskStage == 0); // itself: from its source
+        CHECK(e.setEffectMask(e.indexOfId(lid), 0, maskId, false, &err));
         CHECK(!e.setEffectMask(e.indexOfId(lid), 0, e.mainViewportId(), false));
         CHECK(e.layerDependsOn(lid, maskId)); // a mask is a dependency: the mask layer cannot take this one as source
         CHECK(!e.setLayerSourceLayer(e.indexOfId(maskId), lid, LayerTap::PostFx, &err));
@@ -4256,6 +4257,30 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // The mask layer gone: the effect applies everywhere again
         e.removeLayer(e.indexOfId(maskId));
         CHECK(at(0.25).red() < 5 && at(0.75).red() < 5);
+        // A mask from this very layer, at a stage above the effect; an effect for the masks only (left white, right
+        // black): Invert, mask only (the picture goes on as it was), then Invert through this layer after the first
+        // (white on the right): only the right half is inverted, all white
+        {
+            const int hi = e.addLayer("Stages", V);
+            CHECK(e.setLayerImage(hi, tmp + "/mhalf.png", &err));
+            e.layer(hi)->mapping.resetCorners();
+            const quint64 hid = e.layerId(hi);
+            CHECK(e.addEffect(e.indexOfId(hid), tmp + "/Invert.fs") == 0 && e.addEffect(e.indexOfId(hid), tmp + "/Invert.fs") == 1);
+            CHECK(e.setParameter(hid, e.shaderPrefix(hid, 0) + "mask_only", true));
+            CHECK(e.setEffectMask(e.indexOfId(hid), 1, hid, false, &err)); // its own layer: allowed, above the effect
+            CHECK(e.layer(e.indexOfId(hid))->effects[1]->maskStage == 1);
+            CHECK(!e.setEffectMaskStage(e.indexOfId(hid), 1, 2) && !e.setEffectMaskStage(e.indexOfId(hid), 1, -1)); // not below
+            QColor left = at(0.25), right = at(0.75);
+            CHECK(left.red() > 250 && right.red() > 250);
+            CHECK(e.setParameter(hid, e.shaderPrefix(hid, 0) + "mask_only", false)); // in the picture: all black
+            left = at(0.25), right = at(0.75);
+            CHECK(left.red() < 5 && right.red() < 5);
+            CHECK(e.setEffectMaskStage(e.indexOfId(hid), 1, 0)); // its source (white on the left): the left inverted again
+            left = at(0.25), right = at(0.75);
+            CHECK(left.red() > 250 && right.red() > 250);
+            CHECK(e.layerJson(e.indexOfId(hid)).value("fx").toArray().at(1).toObject().value("mask_stage").toInt(-1) == 0);
+            e.removeLayer(e.indexOfId(hid));
+        }
         // Its channels: the ones it changes; a channel off keeps the input (red inverted is cyan)
         const QString channels = e.shaderPrefix(lid, 0) + "channel/";
         CHECK(e.setParameter(lid, channels + "r", false));

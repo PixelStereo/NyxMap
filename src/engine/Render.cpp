@@ -267,7 +267,26 @@ std::vector<bool> Engine::soloLeftOut() const
 // only another layer that uses it keeps it rendered.
 void Engine::markNeeded()
 {
-    for (auto &l : m_layers) l->referenced = false;
+    for (auto &l : m_layers) {
+        l->referenced = false;
+        l->stagesWanted.clear();
+    }
+    // The stages of the layers' effects their masks take (after an effect: kept as it is made)
+    for (auto &l : m_layers)
+        for (const auto &fx : l->effects)
+            if (fx->enabled && fx->maskLayer && fx->maskStage > 0) {
+                const int mi = indexOfId(fx->maskLayer);
+                if (mi >= 0) m_layers[size_t(mi)]->stagesWanted.insert(fx->maskStage);
+            }
+    for (auto &l : m_layers) // the stages no mask takes any more: their targets go
+        for (auto it = l->stageTargets.begin(); it != l->stageTargets.end();) {
+            if (l->stagesWanted.count(it->first)) {
+                ++it;
+                continue;
+            }
+            it->second.destroy();
+            it = l->stageTargets.erase(it);
+        }
     auto refer = [this](const Layer &l) { // the layers its picture is made from
         if (l.type == SourceType::Layer && l.sourceLayer) {
             const int si = indexOfId(l.sourceLayer);
@@ -694,8 +713,15 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
 
     if (l.effectsEnabled) {
         int ping = 0;
-        for (auto &fx : l.effects) {
-            if (!fx->enabled) continue;
+        l.stageTex.assign(l.effects.size() + 1, 0);
+        l.stageTex[0] = tex;
+        for (size_t k = 0; k < l.effects.size(); ++k) {
+            auto &fx = l.effects[k];
+            if (!fx->enabled) {
+                l.stageTex[k + 1] = tex;
+                continue;
+            }
+            const GLuint input = tex;
             RenderTarget &dst = l.fxTarget[ping];
             bindLayerImages(*fx);
             feedAudio(*fx);
@@ -707,9 +733,19 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
             }
             // Through its mask: the effect where the mask is white, the input where it is black; on the channels it
             // changes only
+            // The mask's picture at its stage: its own layer's from above this effect, another's as chosen
             const Layer *mask = fx->maskLayer ? layer(indexOfId(fx->maskLayer)) : nullptr;
-            const GLuint maskTex = !mask ? 0 : fx->maskPreFx && mask->preFxTex ? mask->preFxTex : mask->finalTex;
-            const bool masked = mask && maskTex && mask != &l;
+            GLuint maskTex = 0;
+            if (mask == &l) {
+                if (fx->maskStage >= 0 && size_t(fx->maskStage) <= k) maskTex = l.stageTex[size_t(fx->maskStage)];
+            } else if (mask) {
+                const int s = fx->maskStage;
+                maskTex = s == 0 && mask->preFxTex ? mask->preFxTex
+                        : s > 0 && size_t(s) < mask->stageTex.size() && mask->stagesWanted.count(s) && mask->stageTex[size_t(s)]
+                            ? mask->stageTex[size_t(s)]
+                            : mask->finalTex;
+            }
+            const bool masked = mask && maskTex;
             const bool someChannels = !std::all_of(fx->channels.begin(), fx->channels.end(), [](bool on) { return on; });
             if (masked || someChannels) {
                 RenderTarget &mixed = l.maskTarget[ping];
@@ -740,7 +776,21 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
             } else {
                 tex = dst.tex;
             }
-            ping = 1 - ping;
+            // A stage a mask takes: kept as it is now
+            if (l.stagesWanted.count(int(k) + 1)) {
+                RenderTarget &kept = l.stageTargets[int(k) + 1];
+                kept.ensure(w, h);
+                if (kept.ready(w, h)) {
+                    blit(tex, kept);
+                    l.stageTex[k + 1] = kept.tex;
+                }
+            } else {
+                l.stageTex[k + 1] = tex;
+            }
+            // Mask only: its picture is for the masks; the layer's goes on from what it was given (its targets free
+            // again for the next effect)
+            if (fx->maskOnly) tex = input;
+            else ping = 1 - ping;
         }
     }
     applySurfaceMasks(l, tex, w, h);

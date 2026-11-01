@@ -377,6 +377,9 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });
     out.emplace_back(QStringLiteral("mask/invert"), cat + QStringLiteral("Invert Mask"), T::Bool);
     out.back().byDefault(false).bind([self] { return self->maskInvert; }, [self](const QVariant &v) { self->maskInvert = v.toBool(); });
+    out.emplace_back(QStringLiteral("mask_only"), cat + QStringLiteral("Mask Only"), T::Bool);
+    out.back().byDefault(false).ramp(Parameter::Ramp::Cut).bind([self] { return self->maskOnly; },
+                                                                [self](const QVariant &v) { self->maskOnly = v.toBool(); });
     // The channels an effect changes: each one on or off (off: it keeps the picture the effect was given)
     for (int c = 0; c < 4; ++c) {
         out.emplace_back(QStringLiteral("channel/") + QChar("rgba"[c]), cat + QStringLiteral("Channel ") + QChar("RGBA"[c]), T::Bool);
@@ -1028,7 +1031,7 @@ QJsonObject IsfInstance::save(const QString &projectDir, bool withParams) const
     if (!projectDir.isEmpty() && builtInIsfSource(m_path).isEmpty()) o["relative_path"] = QDir(projectDir).relativeFilePath(m_path);
     if (maskLayer) {
         o["mask"] = QString::number(maskLayer); // ids are strings: JSON numbers are doubles
-        o["mask_tap"] = maskPreFx ? "prefx" : "postfx";
+        o["mask_stage"] = maskStage;
     }
     QJsonObject images;
     for (const IsfInput &in : m_inputs)
@@ -1056,7 +1059,7 @@ QJsonObject IsfInstance::save(const QString &projectDir, bool withParams) const
 void IsfInstance::restore(const QJsonObject &o, const QString &projectDir)
 {
     maskLayer = o.value("mask").toString().toULongLong();
-    maskPreFx = o.value("mask_tap").toString() == "prefx";
+    maskStage = o.value("mask_stage").toInt(-1);
     const QJsonObject images = o.value("images").toObject();
     for (int idx = 0; idx < int(m_inputs.size()); ++idx) {
         IsfInput &in = m_inputs[size_t(idx)];

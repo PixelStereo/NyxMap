@@ -479,6 +479,8 @@ void Engine::releaseLayer(Layer &l)
     l.fxTarget[0].destroy();
     l.fxTarget[1].destroy();
     l.maskTarget[0].destroy();
+    for (auto &[stage, target] : l.stageTargets) target.destroy();
+    l.stageTargets.clear();
     l.maskTarget[1].destroy();
     l.groupTarget.destroy();
     l.prepTarget.destroy();
@@ -1136,13 +1138,20 @@ bool Engine::setColorMask(int layerIndex, quint64 maskId, bool invert, QString *
     return true;
 }
 
-bool Engine::setEffectMaskTap(int layerIndex, int effect, bool preFx)
+bool Engine::setEffectMaskStage(int layerIndex, int effect, int stage)
 {
     {
         Lock lk(&m_mutex);
         Layer *l = layer(layerIndex);
         if (!l || effect < 0 || effect >= int(l->effects.size())) return false;
-        l->effects[size_t(effect)]->maskPreFx = preFx;
+        IsfInstance &fx = *l->effects[size_t(effect)];
+        if (fx.maskLayer == l->id) {
+            if (stage < 0 || stage > effect) return false; // its own layer: its source, or an effect before it
+        } else {
+            const Layer *mask = layer(indexOfId(fx.maskLayer));
+            if (stage < -1 || (mask && stage > int(mask->effects.size()))) return false;
+        }
+        fx.maskStage = stage;
     }
     emit layersChanged();
     return true;
@@ -1162,12 +1171,15 @@ bool Engine::setEffectMask(int layerIndex, int effect, quint64 maskId, bool inve
             const int mi = indexOfId(maskId);
             if (mi < 0) return fail(QStringLiteral("That layer no longer exists."));
             if (m_layers[size_t(mi)]->isViewport) return fail(QStringLiteral("A viewport cannot be a mask."));
-            if (maskId == l->id) return fail(QStringLiteral("A layer cannot mask its own FX."));
-            if (layerDependsOn(maskId, l->id))
+            // Its own layer: from a stage above the effect, never what comes out of it (no feedback)
+            if (maskId != l->id && layerDependsOn(maskId, l->id))
                 return fail(QStringLiteral("\"%1\" already uses this layer: the picture would feed back on itself.")
                                 .arg(m_layers[size_t(mi)]->name));
         }
         IsfInstance &fx = *l->effects[size_t(effect)];
+        // Its own layer: by default the picture the effect is given; another layer: its final picture
+        if (maskId == l->id && (fx.maskLayer != maskId || fx.maskStage < 0 || fx.maskStage > effect)) fx.maskStage = effect;
+        if (maskId != l->id && fx.maskLayer != maskId) fx.maskStage = -1;
         fx.maskLayer = maskId;
         fx.maskInvert = invert;
     }
