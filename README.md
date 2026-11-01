@@ -1,11 +1,13 @@
 <div align="center">
+
 # NYXMAP
 
-### Projection mapping, live visuals and show control — in one app.
+### *Real-Time Projection Mapping & Show Composition Instrument*
+  
+From a single screen to a multi-output installation, design the image and run the show without switching tools.
 
-**Map it. Cue it. Play it live.**<br>
-From a single projector to a multi-output installation, design the image and run the show without switching tools.
-
+> **NyxMap is more than a media server.** It is a live composition instrument designed to write, shape, and perform hybrid visual & audio shows.
+> 
 <p>
   <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
   <a href="#download"><img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge"></a>
@@ -29,73 +31,49 @@ From a single projector to a multi-output installation, design the image and run
 
 ## Why NYXMAP
 
-"This software is an instrument born from over 20 years of hands-on experience and reflection—using countless tools, yet always feeling something was missing. So, here it is!"
-
-_Renaud Rubiano_
+> "This software is an instrument born from over 20 years of hands-on experience and reflection—using countless tools, yet always feeling something was missing. So, here it is!"
 
 ---
 
-- **Built through practice, for practice.
-- **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
 - **Free, open source, cross-platform.** macOS, Windows and Linux, MIT licensed.
 
-## What you can do
+---
 
-### 🗺️ Map — take the picture beyond the rectangle
+## 🎨 1. Compose & Play — Visual Engine
 
-Fit your content to any surface
+Mix, layer, and manipulate your media score with performance-grade speed.
 
-- **Corner pin** to snap a picture onto a flat surface in seconds.
-- **Mesh warp** to bend it over curves and uneven walls, point by point.
-- **Position, scale, rotate, crop (ROI) and masks** to shape every layer.
-- **Viewports** to split the composition across projectors and screens.
+* **Unified Media Streams:** High-performance video (HAP, live capture, NDI, Syphon/Spout, DeckLink), generative ISF shaders, web streams, and dynamic text.
+* **Non-Destructive Routing:** Stack and blend layers, apply color correction, and reuse layer textures (pre- or post-effects) at **zero GPU performance cost**.
+* **Precise Spatial Mapping:** Corner pin onto flat surfaces or mesh warp over complex curves and architectural structures.
 
-### 🎬 Play — all your media, together
+---
 
-From high-performance video (HAP, live inputs, NDI, Syphon/Spout, DeckLink) and generative ISF shaders to text, clocks, and web streams—it handles it all.
+## 🎵 2. Synthesize & Sonify — Built-in Audio Engine
 
-Complete with a professional audio suite powered by Grame's Faust engine, it offers granular and FM synthesis, filters, and all the tools required for advanced sound design.
+Write sound directly into your performance, or let your visuals write the soundtrack.
 
-Generate sound in real time with **FM**, **granular synthesis**, **white/pink noise**, **ADSR envelopes** and **live video sonification**, using Faust instruments and reusable `.nyxaudio` presets. → [Audio generators](docs/audio-generators.md) · [Layer audio FX](docs/audio-effects.md) · [Clock, quantized sequences and envelopes](docs/clock-and-envelopes.md) · [Controls and the phone remote](docs/controls-and-remote.md)
+| Sound Generation | Processing & Interaction |
+| :--- | :--- |
+| **Generators:** FM synthesis, granular engines, white/pink noise. | **FX & Envelopes:** Modular Faust instruments, custom audio FX, and ADSR envelopes via `.nyxaudio` presets. |
+| **Live Sonification:** Translate pixel motion, camera tracking, and visual color shifts into live audio parameters. | **Cross-Modulation:** Route audio levels to drive visual structures, or drive synthesis engines directly from video playheads. |
 
-Stack them in layers and groups, blend them, add effects and correct the colour, the sound, and make interaction between everything. A layer can even reuse another layer's picture, before or after its effects, at no extra cost, and can affect sound by motion analyz, color or everything you can imagine !
+---
 
-### ⏱️ Cue — build the moment, then recall it
+## ⚡ 3. Express & Animate — 1-Click Modulation
 
-<p align="center">
-  <img src="docs/assets/readme-show.png" alt="A sequence of cues with GO, snapshots and timelines in NYXMAP" width="100%">
-</p>
+Turn any setting into a dynamic, living parameter in a fraction of a second.
 
-- **Snapshots** capture the whole scene; **presets** recall only what you choose.
-- **Sequences** chain your cues with waits, fades and auto-follow. One GO, and the show runs — or put the steps on a **timecode**: a soundtrack's playhead, LTC, MTC or ATC plays them on time. With **tracking**, a jump to any step lands where the steps before it would have left the show.
-- **Timelines** animate any parameter with Bézier keys, waveforms and colour gradients.
-- Each value gets **its own fade, delay and easing**, so transitions look exactly as intended.
+* **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
+* 🪄 **1-Click Modulation:** Right-click or hover **any** parameter to instantly link an LFO, envelope, video tracker, or audio amplitude follower.
+* 🔗 **Internal Linkages:** Seamlessly drive any spatial or visual property using audio, video playheads, or custom mathematical formulas.
+* 🎚️ **Smooth Takeovers:** Smart pick-up and jump takeover modes guarantee faders never cause abrupt parameter leaps live.
 
-### 🎛️ Control — hands on, eyes up
+---
 
-- **Learn** a fader, a knob, a key or an OSC address: move it, it is mapped.
-- Shape the response with **filters** (remap, curves, math, smoothing, toggle…) and watch the value at every stage.
-- **Action mode**: when a value crosses a threshold, fire a cue, start a timeline or flip a switch.
-- **Internal links**: let the audio level, a video's playhead or another parameter drive anything.
-- **Pick-up or jump takeover**, so a fader never makes the picture leap.
+## ⏱️ 4. Write & Sequence — Cues & Timecode
 
-### 🕰️ Sync — keep the show on time
-
-Time-of-day and transport clocks, **LTC, MTC and ATC** timecode, and routing to MIDI, audio and supported video destinations.
-
-### 📽️ Output — from preview to projection
-
-Fullscreen windows on every display, plus **Syphon, Spout, NDI, OMT and Blackmagic DeckLink / UltraStudio** (depending on your platform).
-
-## Control it from anything
-
-Every button, parameter and cue in NYXMAP has an address.
-
-- **Stored looks and cue editing**: duplicate snapshots/presets, transfer stored elements, group cue actions and suspend timecode while editing. → [Editing guide](docs/show-editing.md)
-- **Camera motion and gestures**: reference/relative difference masks, independent pixel analysis, and optional local hand tracking. → [Vision interactions](docs/vision-interactions.md)
-- **OSC and OSCQuery**: browse the whole show from any OSC tool. → [OSC API](docs/osc.md)
-- **Bitfocus Companion / Stream Deck**: GO, STOP and cues on physical buttons. → [Companion guide](docs/companion.md)
-- **MIDI controllers and the keyboard**, with Learn.
+Structure your artistic intent into flexible cues, timelines, and synchronized moments.
 
 ## Download
 
