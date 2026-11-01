@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QFile>
+#include <QFormLayout>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -149,6 +150,20 @@ int runScene3dUiTests(Engine &engine)
               "turning the camera is one undo step");
         undo->undo();
         check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6, "undo turns it back");
+        // A click on its name puts its default back, one undo step
+        emit yaw->valueEdited(120);
+        auto *form = qobject_cast<QFormLayout *>(yaw->parentWidget()->layout());
+        auto *name = form ? qobject_cast<ResetLabel *>(form->labelForField(yaw)) : nullptr;
+        check(name != nullptr, "the yaw's name is a reset label");
+        if (name) {
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 2), name->mapToGlobal(QPointF(2, 2)), Qt::LeftButton, Qt::LeftButton, {});
+            QApplication::sendEvent(name, &press);
+            pump();
+            check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6,
+                  "clicking the yaw's name resets it");
+            undo->undo(); // the edit and its reset, merged: one step back to before them
+            check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6, "undo of the reset");
+        }
     }
     select(engine.indexOfId(layer));
     const QStringList objectTabs = tabNames();

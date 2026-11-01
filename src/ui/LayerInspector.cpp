@@ -4008,11 +4008,18 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes)
             if (colorsDone.contains(base)) continue;
             colorsDone.insert(base);
             QStringList paths;
+            QJsonObject defaults; // a click on its name puts them back
             for (const ParamInfo &q : params)
-                if (q.colorComponent >= 0 && q.path.section('/', 0, -2) == base) paths << q.path;
+                if (q.colorComponent >= 0 && q.path.section('/', 0, -2) == base) {
+                    paths << q.path;
+                    defaults[q.path] = QJsonValue::fromVariant(q.defaultValue);
+                }
             auto *picker = new ColorPicker(paths.size() == 4);
             picker->setSettingsKey(QStringLiteral("ui/colorPickerMode/layer/%1/%2").arg(m_layerId).arg(base));
-            auto *label = new QLabel(name.section(' ', 0, 0));
+            auto *label = new ResetLabel(name.section(' ', 0, 0), [this, defaults, name] {
+                setValues(defaults, QStringLiteral("Reset ") + name.section(' ', 0, 0));
+                refreshDynamic();
+            });
             form->addRow(label, picker);
             m_animate->attach({label, picker}, paths);
             connect(picker, &ColorPicker::colorEdited, this, [this, paths, name](const QColor &c) {
@@ -4024,10 +4031,15 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes)
             m_3dColors.push_back({picker, paths});
             continue;
         }
-        auto *label = new QLabel(name);
+        const QString path = p.path, text = QStringLiteral("Change ") + name;
+        // A click on its name: its default back (one undo step)
+        auto *label = new ResetLabel(name, [this, path, name, def = QJsonValue::fromVariant(p.defaultValue)] {
+            setValue(path, def, QStringLiteral("Reset ") + name);
+            refreshDynamic();
+            emit layerChanged(); // a light's kind in the list
+        });
         QWidget *field = nullptr;
         const QJsonValue value = m_engine->parameterValue(m_layerId, p.path);
-        const QString path = p.path, text = QStringLiteral("Change ") + name;
         if (p.type == ParamInfo::Type::Bool) {
             auto *flag = new FlagBox;
             flag->setChecked(value.toBool());
