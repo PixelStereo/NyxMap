@@ -712,7 +712,7 @@ int main(int argc, char **argv)
         if (table && undo && inspector) {
             const int a = engine.indexOfId(ids[0]), b = engine.indexOfId(ids[1]), c = engine.indexOfId(ids[2]);
             table->clearSelection();
-            table->setCurrentCell(a, 3);
+            table->setCurrentCell(a, 4);
             table->selectionModel()->select(table->model()->index(c, 0),
                                             QItemSelectionModel::Select | QItemSelectionModel::Rows);
             app.processEvents();
@@ -750,7 +750,7 @@ int main(int argc, char **argv)
                       "undo restores every selected layer");
             }
             // The list's own opacity bar on a selected row
-            if (auto *cell = table->cellWidget(c, 5); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
+            if (auto *cell = table->cellWidget(c, 6); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
                 emit bar->valueEdited(25);
                 check(std::abs(opacityOf(ids[0]) - .25) < 1e-6 && std::abs(opacityOf(ids[2]) - .25) < 1e-6,
                       "list opacity bar of a selected row sets the whole selection");
@@ -768,10 +768,10 @@ int main(int argc, char **argv)
             check(copy && pasteAll, "Copy / Paste All Attributes actions present");
             if (copy && pasteAll) {
                 table->clearSelection();
-                table->setCurrentCell(b, 3); app.processEvents();
+                table->setCurrentCell(b, 4); app.processEvents();
                 copy->trigger();
                 table->clearSelection();
-                table->setCurrentCell(a, 3);
+                table->setCurrentCell(a, 4);
                 table->selectionModel()->select(table->model()->index(c, 0),
                                                 QItemSelectionModel::Select | QItemSelectionModel::Rows);
                 app.processEvents();
