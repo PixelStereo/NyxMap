@@ -5,6 +5,10 @@
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "MediaBin.h"
+#include "PreviewWorkspace.h"
+#include "Scene3DView.h"
+#include <QJsonArray>
+#include <QMouseEvent>
 #include "Model3D.h"
 #include <QThread>
 #include <QToolButton>
@@ -14,6 +18,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QFile>
+#include <QFormLayout>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -145,6 +150,20 @@ int runScene3dUiTests(Engine &engine)
               "turning the camera is one undo step");
         undo->undo();
         check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6, "undo turns it back");
+        // A click on its name puts its default back, one undo step
+        emit yaw->valueEdited(120);
+        auto *form = qobject_cast<QFormLayout *>(yaw->parentWidget()->layout());
+        auto *name = form ? qobject_cast<ResetLabel *>(form->labelForField(yaw)) : nullptr;
+        check(name != nullptr, "the yaw's name is a reset label");
+        if (name) {
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(2, 2), name->mapToGlobal(QPointF(2, 2)), Qt::LeftButton, Qt::LeftButton, {});
+            QApplication::sendEvent(name, &press);
+            pump();
+            check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6,
+                  "clicking the yaw's name resets it");
+            undo->undo(); // the edit and its reset, merged: one step back to before them
+            check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - SceneSettings().yaw) < 1e-6, "undo of the reset");
+        }
     }
     select(engine.indexOfId(layer));
     const QStringList objectTabs = tabNames();
@@ -155,6 +174,8 @@ int runScene3dUiTests(Engine &engine)
           "the model's scale, overall and along each axis, are bars");
     check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer") && inspector->findChild<QComboBox *>("modelDisplaceLayer"),
           "a model's 3D tab chooses the layer shown on it and the one that displaces it");
+    check(inspector && inspector->findChild<QComboBox *>("modelPictureStage") && inspector->findChild<QComboBox *>("modelDisplaceStage"),
+          "and the stage each one is taken at");
     if (auto *pick = inspector ? inspector->findChild<QComboBox *>("modelPictureLayer") : nullptr) {
         bool offersScene = false;
         for (int k = 0; k < pick->count(); ++k) offersScene |= pick->itemData(k).toULongLong() == scene;
@@ -188,6 +209,74 @@ int runScene3dUiTests(Engine &engine)
         check(primitives == int(Model3D::primitives().size()), "the Media Bin offers the 3D primitives");
     } else {
         check(false, "the Media Bin");
+    }
+    // A 3D view: the scene chosen in a preview cell is seen from the view's own camera; the cube is picked and moved
+    auto *previews = window.findChild<PreviewWorkspace *>();
+    check(previews != nullptr, "the preview workspace");
+    if (previews) {
+        previews->setState(QJsonObject{{"count", 1}, {"cells", QJsonArray{QJsonObject{{"source", QString::number(scene)}}}}});
+        pump();
+        auto *view = window.findChild<Scene3DView *>("scene3dView0");
+        check(view && view->isVisible() && view->scene() == scene, "a 3D scene in a view shows its 3D view");
+        if (view) {
+            view->resize(480, 320);
+            SceneSettings cam;
+            cam.distance = 4;
+            cam.yaw = 30;
+            cam.pitch = 20;
+            view->setCamera(cam);
+            for (int k = 0; k < 6; ++k) {
+                engine.renderFrame();
+                pump();
+            }
+            const QImage shot = view->grabFramebuffer();
+            const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+            check(middle.lightness() > 60, "the 3D view draws the scene's model");
+            // Click the cube: selected; drag its X handle: it moves along X, one undo step
+            const QPointF at = view->project({0, 0, 0});
+            auto mouse = [&](QEvent::Type type, QPointF p, Qt::MouseButtons buttons) {
+                QMouseEvent ev(type, p, view->mapToGlobal(p), Qt::LeftButton, buttons, {});
+                QApplication::sendEvent(view, &ev);
+                pump();
+            };
+            mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, at, Qt::NoButton);
+            check(current() == engine.indexOfId(layer), "a click picks the cube (selected in the list)");
+            view->setMode(Scene3DView::Mode::Move);
+            const QPointF handle = view->project({view->handleLength() * 0.8f, 0, 0});
+            const QPointF along = view->project({view->handleLength() * 1.8f, 0, 0});
+            const int n = undo ? undo->count() : 0;
+            const double x0 = engine.parameterValue(layer, "model/position/x").toDouble();
+            mouse(QEvent::MouseButtonPress, handle, Qt::LeftButton);
+            mouse(QEvent::MouseMove, along, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, along, Qt::NoButton);
+            const double x1 = engine.parameterValue(layer, "model/position/x").toDouble();
+            check(x1 > x0 + view->handleLength() * 0.5, "dragging the X handle moves the cube along X");
+            check(engine.parameterValue(layer, "model/position/y").toDouble() == 0, "only along X");
+            check(undo && undo->count() == n + 1 && undo->text(undo->count() - 1) == "Move in 3D", "the move is one undo step");
+            if (undo) {
+                undo->undo();
+                check(std::abs(engine.parameterValue(layer, "model/position/x").toDouble() - x0) < 1e-9, "undo puts it back");
+            }
+            // The scene's camera takes the view's
+            view->sceneCameraFromView();
+            check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - 30) < 1e-6 &&
+                      std::abs(engine.parameterValue(scene, "camera/pitch").toDouble() - 20) < 1e-6,
+                  "Camera = View gives the scene the view's camera");
+            if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+                view->setSelected(layer);
+                view->setMode(Scene3DView::Mode::Move);
+                engine.setParameter(scene, "camera/yaw", -55.0); // the scene's camera elsewhere: seen in the view
+                SceneSettings wide = view->camera();
+                wide.distance = 9;
+                view->setCamera(wide);
+                for (int k = 0; k < 3; ++k) {
+                    engine.renderFrame();
+                    pump();
+                }
+                view->grabFramebuffer().save(captures + "/scene3d-view.png");
+            }
+        }
     }
     if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
         for (int k = 0; k < 5; ++k) {

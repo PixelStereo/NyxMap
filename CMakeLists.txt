@@ -389,6 +389,7 @@ set(APP_SOURCES
   src/ui/PresetEditor.cpp
   src/ui/MappingView.cpp src/ui/MappingViewLines.cpp
   src/ui/PreviewWorkspace.cpp
+  src/ui/Scene3DView.cpp
   src/ui/FixtureOverlay.cpp
   src/ui/FixturePanel.cpp
   src/ui/FixtureInspector.cpp
@@ -892,14 +893,14 @@ if(NYXMAP_TESTS)
   add_test(NAME color_parameter_ui COMMAND nyxmap_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)
   add_test(NAME selection_ui COMMAND nyxmap_workspace_ui_test --selection) # not in the Valgrind job: see the test
-  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
+  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
                  src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_preview_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_preview_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND nyxmap_preview_ui_test)
   add_executable(nyxmap_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
-                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
+                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
                  src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_fixture_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_fixture_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)

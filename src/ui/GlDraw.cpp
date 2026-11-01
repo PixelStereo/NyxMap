@@ -8,8 +8,8 @@ void GlDraw::init()
     m_texProg = compileProgram(
         "#version 330 core\nlayout(location=0) in vec2 a_pos; out vec2 v_uv;\n"
         "void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }\n",
-        "#version 330 core\nuniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
-        "void main(){ o = vec4(texture(u_tex, v_uv).rgb, 1.0); }\n",
+        "#version 330 core\nuniform sampler2D u_tex; uniform float u_opaque; in vec2 v_uv; out vec4 o;\n"
+        "void main(){ vec4 t = texture(u_tex, v_uv); o = vec4(t.rgb, mix(t.a, 1.0, u_opaque)); }\n",
         &log);
     m_colorProg = compileProgram(
         "#version 330 core\nlayout(location=0) in vec2 a_pos;\n"
@@ -17,6 +17,7 @@ void GlDraw::init()
         "#version 330 core\nuniform vec4 u_color; out vec4 o;\nvoid main(){ o = u_color; }\n", &log);
     if (!log.isEmpty()) qWarning("GlDraw: %s", qPrintable(log));
     m_texLoc = glGetUniformLocation(m_texProg, "u_tex");
+    m_opaqueLoc = glGetUniformLocation(m_texProg, "u_opaque");
     m_colorLoc = glGetUniformLocation(m_colorProg, "u_color");
 
     const float quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
@@ -50,10 +51,15 @@ void GlDraw::destroy()
     m_ok = false;
 }
 
-void GlDraw::drawTexture(GLuint tex)
+void GlDraw::drawTexture(GLuint tex, bool over)
 {
     if (!m_ok || !tex) return;
-    glDisable(GL_BLEND);
+    if (over) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    } else {
+        glDisable(GL_BLEND);
+    }
     glUseProgram(m_texProg);
     glActiveTexture(GL_TEXTURE0);
     // The texture is rendered by the render thread's context: rebind it explicitly so that
@@ -61,9 +67,11 @@ void GlDraw::drawTexture(GLuint tex)
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindTexture(GL_TEXTURE_2D, tex);
     glUniform1i(m_texLoc, 0);
+    glUniform1f(m_opaqueLoc, over ? 0.0f : 1.0f); // over: its own alpha, blended
     glBindVertexArray(m_quadVao);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
+    glDisable(GL_BLEND);
 }
 
 void GlDraw::drawColor(const std::vector<float> &ndc, const QColor &c, GLenum mode)

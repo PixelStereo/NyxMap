@@ -115,7 +115,9 @@ public:
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
-    bool setModelLayer(int index, quint64 layer, bool displace, QString *err);
+    bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
+    // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k (render thread, lock held)
+    GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     void moveLayer(int from, int to);
@@ -768,6 +770,9 @@ public:
     // --- Rendering
     void renderFrame();                  // manual mode only
     void setPreviewSource(int slot, quint64 id); // 0: composition; four bounded GPU-only preview slots
+    // The slot's source, a 3D scene, drawn from this camera (its framing, its distance) at this size: a 3D view. Off:
+    // the slot shows the source's picture again
+    void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {});
     GLuint previewTexture(int slot, QSize *size, int *buffer = nullptr) const; // caller holds mutex(), shared GL context current
     void finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f); // mutex held
     GLuint outputTexture() const;        // last published frame (readable from a shared context)
@@ -1043,7 +1048,15 @@ private:
         quint64 renderedId[2] = {0, 0};
         RenderTarget target[2];
         GLsync reader[2] = {nullptr, nullptr};
+        // A 3D scene seen from the view's own camera (its 3D view), not its picture
+        bool sceneView = false;
+        SceneSettings camera;
+        QSize sceneSize;
+        std::shared_ptr<Scene3D> editor[2];
+        GLuint editorTex[2] = {0, 0};
     };
+    // A scene's objects as its renderer takes them (shown ones only; render thread, lock held)
+    void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps);
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only

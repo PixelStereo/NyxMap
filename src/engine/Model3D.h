@@ -86,6 +86,8 @@ public:
     int detail() const { return m_detail; }
     void setDetail(int detail); // a primitive made again, finer or coarser (render thread)
     float centerX() const { return m_center.x(); }
+    QVector3D center() const { return m_center; } // of its bounds, as read
+    float radius() const { return m_radius; }     // half its bounds' diagonal, as read
     void releaseGl();
 
 private:
@@ -122,6 +124,14 @@ private:
     int m_detail = 1;
     void releaseMeshes();
     bool m_uploaded = false;
+};
+
+// Where a camera is and what it sees (aspect: width / height): the scene's renderer and the 3D view's overlays agree
+struct Camera3D {
+    QMatrix4x4 view, proj;
+    QVector3D eye;
+    static Camera3D of(const SceneSettings &s, float aspect);
+    static QVector3D aim(float yawDeg, float pitchDeg); // the direction from these angles (a light, the camera's eye)
 };
 
 // Draws a scene: its models in one pass, with depth, under its lights, into its own target

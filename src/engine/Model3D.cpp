@@ -654,10 +654,21 @@ void Model3D::releaseGl()
     m_uploaded = false;
 }
 
-static QVector3D aim(float yawDeg, float pitchDeg) // where a light or the camera looks from its angles
+QVector3D Camera3D::aim(float yawDeg, float pitchDeg)
 {
     const float y = qDegreesToRadians(yawDeg), p = qDegreesToRadians(pitchDeg);
     return QVector3D(std::cos(p) * std::sin(y), std::sin(p), std::cos(p) * std::cos(y));
+}
+
+Camera3D Camera3D::of(const SceneSettings &s, float aspect)
+{
+    Camera3D c;
+    const QVector3D target(s.target[0], s.target[1], s.target[2]);
+    const float distance = std::max(0.01f, s.distance);
+    c.eye = target + aim(s.yaw, s.pitch) * distance;
+    c.view.lookAt(c.eye, target, QVector3D(0, 1, 0));
+    c.proj.perspective(std::clamp(s.fov, 1.0f, 170.0f), aspect, distance * 0.01f, distance * 50.0f + 100.0f);
+    return c;
 }
 
 GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h)
@@ -702,12 +713,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glDisable(GL_CULL_FACE);
 
     // The camera around its target
-    const QVector3D target(s.target[0], s.target[1], s.target[2]);
-    const float distance = std::max(0.01f, s.distance);
-    const QVector3D eye = target + aim(s.yaw, s.pitch) * distance;
-    QMatrix4x4 view, proj;
-    view.lookAt(eye, target, QVector3D(0, 1, 0));
-    proj.perspective(std::clamp(s.fov, 1.0f, 170.0f), float(w) / float(h), distance * 0.01f, distance * 50.0f + 100.0f);
+    const Camera3D cam = Camera3D::of(s, float(w) / float(h));
+    const QMatrix4x4 &view = cam.view, &proj = cam.proj;
+    const QVector3D eye = cam.eye;
 
     f->glUseProgram(m_program);
     auto loc = [&](const char *name) { return f->glGetUniformLocation(m_program, name); };
@@ -725,7 +733,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         if (power <= 0 || count >= kMaxLights) continue;
         const int k = count++;
         types[k] = std::clamp(l.type, 0, 2);
-        const QVector3D d = aim(l.yaw, l.pitch);
+        const QVector3D d = Camera3D::aim(l.yaw, l.pitch);
         for (int c = 0; c < 3; ++c) {
             colors[3 * k + c] = l.color[size_t(c)] * power;
             positions[3 * k + c] = l.position[size_t(c)];

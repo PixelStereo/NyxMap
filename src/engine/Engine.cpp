@@ -573,6 +573,7 @@ void Engine::releaseAll()
     m_previewTarget.destroy();
     for (auto &slot : m_previewSlots) {
         for (auto &target : slot.target) target.destroy();
+        for (auto &editor : slot.editor) if (editor) editor->releaseGl();
         for (auto &reader : slot.reader) if (reader) { gl()->glDeleteSync(reader); reader = nullptr; }
     }
     if (m_previewPbo) f->glDeleteBuffers(1, &m_previewPbo);
@@ -793,12 +794,27 @@ void Engine::setPreviewSource(int slot, quint64 id)
     if (slot >= 0 && slot < int(m_previewSlots.size())) m_previewSlots[size_t(slot)].id = id;
 }
 
+void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSize size)
+{
+    Lock lk(&m_mutex);
+    if (slot < 0 || slot >= int(m_previewSlots.size())) return;
+    auto &p = m_previewSlots[size_t(slot)];
+    p.sceneView = on;
+    p.camera = camera;
+    p.sceneSize = size.boundedTo(QSize(2048, 2048)).expandedTo(QSize(1, 1));
+}
+
 GLuint Engine::previewTexture(int slot, QSize *size, int *buffer) const
 {
     if (slot < 0 || slot >= int(m_previewSlots.size())) return 0;
     const auto &preview = m_previewSlots[size_t(slot)];
     const int front = m_published.load();
     if (buffer) *buffer = front;
+    if (preview.sceneView && preview.id) { // its 3D view
+        if (preview.renderedId[front] != preview.id) return 0;
+        if (size) *size = preview.sceneSize;
+        return preview.editorTex[front];
+    }
     if (!preview.id) {
         if (size) *size = QSize(m_output[front].w, m_output[front].h);
         return m_output[front].tex;

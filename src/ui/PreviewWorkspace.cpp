@@ -1,5 +1,6 @@
 #include "PreviewWorkspace.h"
 #include "MappingView.h"
+#include "Scene3DView.h"
 #include "Engine.h"
 #include "GlDraw.h"
 #include "FixtureOverlay.h"
@@ -238,7 +239,7 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
                 const auto *layer = m_engine->layer(i);
                 if (!layer) continue;
                 const quint64 id = layer->id;
-                const QString label = layer->name;
+                const QString label = layer->scene3d ? layer->name + QStringLiteral(" (3D view)") : layer->name;
                 auto *action = (layer->isViewport ? viewports : layers)->addAction(label);
                 connect(action, &QAction::triggered, this, [this, slot, id, label] { selectSource(slot, id, label); });
             }
@@ -247,6 +248,9 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
         cell.pages = new QStackedWidget;
         cell.picture = new PreviewPicture(engine, slot);
         cell.pages->addWidget(cell.picture);
+        cell.scene3d = new Scene3DView(engine, slot);
+        cell.pages->addWidget(cell.scene3d);
+        connect(cell.scene3d, &Scene3DView::layerPicked, this, &PreviewWorkspace::layerPicked);
         if (slot == 0) cell.pages->addWidget(mapping);
         column->addWidget(cell.pages, 1);
     }
@@ -265,9 +269,18 @@ void PreviewWorkspace::selectSource(int slot, quint64 id, const QString &label)
     auto &cell = m_cells[size_t(slot)];
     cell.id = id;
     cell.source->setText(label);
-    cell.pages->setCurrentWidget(slot == 0 && !id ? static_cast<QWidget *>(m_mapping) : cell.picture);
+    bool scene = false;
+    if (id) {
+        Engine::Lock lock(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_engine->indexOfId(id));
+        scene = l && l->scene3d;
+    }
+    cell.pages->setCurrentWidget(scene                 ? static_cast<QWidget *>(cell.scene3d)
+                                 : slot == 0 && !id ? static_cast<QWidget *>(m_mapping)
+                                                    : cell.picture);
     m_engine->setPreviewSource(slot, id);
     cell.picture->setSource(id);
+    cell.scene3d->setScene(scene ? id : 0); // a 3D scene: seen from the view's own camera
 }
 
 void PreviewWorkspace::setCount(int count)
@@ -284,14 +297,27 @@ void PreviewWorkspace::setCount(int count)
 
 void PreviewWorkspace::refreshFrames()
 {
-    for (int slot = 0; slot < m_count; ++slot) m_cells[size_t(slot)].picture->update();
+    for (int slot = 0; slot < m_count; ++slot) {
+        m_cells[size_t(slot)].picture->update();
+        if (m_cells[size_t(slot)].scene3d->scene()) m_cells[size_t(slot)].scene3d->update();
+    }
+}
+
+void PreviewWorkspace::setUndoStack(QUndoStack *undo)
+{
+    for (Cell &c : m_cells) c.scene3d->setUndoStack(undo);
+}
+
+void PreviewWorkspace::setCurrentLayer(quint64 id)
+{
+    for (Cell &c : m_cells) c.scene3d->setSelected(id);
 }
 
 QJsonObject PreviewWorkspace::state() const
 {
     QJsonArray cells;
     for (const Cell &c : m_cells)
-        cells.append(QJsonObject{{"source", QString::number(c.id)}, {"view", c.picture->viewState()}});
+        cells.append(QJsonObject{{"source", QString::number(c.id)}, {"view", c.picture->viewState()}, {"view3d", c.scene3d->viewState()}});
     return {{"count", m_count}, {"cells", cells}, {"mapping", m_mapping->viewState()}};
 }
 
@@ -310,6 +336,7 @@ void PreviewWorkspace::setState(const QJsonObject &o)
         }
         selectSource(slot, id, label);
         m_cells[size_t(slot)].picture->setViewState(c.value("view").toObject());
+        m_cells[size_t(slot)].scene3d->setViewState(c.value("view3d").toObject());
     }
     if (o.contains("mapping")) m_mapping->setViewState(o.value("mapping").toObject());
     if (o.contains("count")) m_countBox->setCurrentIndex(std::clamp(o.value("count").toInt(1), 1, 4) - 1);
