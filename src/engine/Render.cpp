@@ -207,6 +207,11 @@ void Engine::updateSource(Layer &l, double dt)
             l.imageAutoTex.uploadImage(l.pendingAutoImage);
             l.pendingAutoImage = QImage();
         }
+        if (!l.pendingHdr.empty()) { // an HDR file's unclipped pixels
+            l.hdrTex.uploadFloat(l.pendingHdr.data(), l.pendingHdrSize.width(), l.pendingHdrSize.height());
+            l.pendingHdr.clear();
+            l.pendingHdr.shrink_to_fit();
+        }
     }
     if (l.toxPlayer && l.tox.playing) l.toxPlayer->advance(m_realDt * timeScale());
     (void)dt;
@@ -969,13 +974,15 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     collectScene(members, items, lamps);
     const int w = m_compSize.width(), h = m_compSize.height();
     const Layer *env = g.sceneEnvironment ? layer(indexOfId(g.sceneEnvironment)) : nullptr;
-    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0);
+    const bool linear = env && g.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex; // an HDR file as read
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear);
     if (!tex) return;
     processLayer(g, tex, w, h, true, rc);
 }
 
 GLuint Engine::stagePicture(const Layer &l, int stage) const
 {
+    if (stage == kStageHdrFile) return l.hdrTex.tex ? l.hdrTex.tex : l.finalTex; // the HDR file as read
     if (stage == 0 && l.preFxTex) return l.preFxTex; // its source, before its FX
     if (stage > 0 && size_t(stage) < l.stageTex.size() && l.stagesWanted.count(stage) && l.stageTex[size_t(stage)])
         return l.stageTex[size_t(stage)]; // after its FX `stage`, kept for this
@@ -1481,8 +1488,9 @@ void Engine::frame(double dt)
             view.fov = slot.camera.fov;
             view.background = slot.camera.background;
             const Layer *env = layer.sceneEnvironment ? this->layer(indexOfId(layer.sceneEnvironment)) : nullptr;
+            const bool linear = env && layer.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex;
             slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height(),
-                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0);
+                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0, linear);
             if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
             continue;
         }

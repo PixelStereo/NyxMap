@@ -64,9 +64,12 @@
   that can stay hidden; or a video, a generator), equirectangular, taken at any
   stage of its FX (Scene tab › Environment): it lights the models (diffuse, and
   reflections as sharp as the surfaces are smooth) and can be shown behind them
-  (`scene/environment/intensity`, `rotation`, `show`, `blur`). Approximation: its
-  levels are blurred copies, not convolved; an 8-bit layer clips the HDRI's
-  highlights (raise the intensity). glTF and FBX materials use their metal,
+  (`scene/environment/intensity`, `rotation`, `show`, `blur`). An HDR image layer
+  (.hdr, .exr, half or float) also keeps its file as read, linear and unclipped:
+  its "HDR file" stage (chosen by default) lights the scene with its full range (a
+  sun far above 1), while its own picture in the composition stays clipped to 0–1
+  like any layer's (8 or 16-bit normalized). Approximation: the environment's
+  levels are blurred copies, not convolved. glTF and FBX materials use their metal,
   roughness, normal, occlusion and emission maps, alpha cut-out and blending
   (blended surfaces are not sorted). A primitive's material is set by
   `model/material/color`, `metal`, `rough`. Not yet: shadows.

@@ -20,7 +20,7 @@ QStringList Engine::videoExtensions()
 
 QStringList Engine::imageExtensions()
 {
-    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"
+    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "hdr", "psd", "psb"
 #ifdef NYXMAP_HAS_SVG
                                   , "svg", "svgz"
 #endif

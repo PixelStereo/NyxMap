@@ -522,14 +522,15 @@ uniform vec4 u_roughCh, u_metalCh; uniform float u_normalScale, u_aoStrength;
 uniform int u_alphaMode; uniform float u_alphaCutoff; // 0 opaque, 1 mask, 2 blend
 uniform vec3 u_eye, u_ambient; uniform float u_exposure;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8];
-uniform int u_hasEnv; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_envMaxLod;
+uniform int u_hasEnv; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_envMaxLod; uniform int u_envLinear;
 const float PI = 3.14159265;
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 env(vec3 d, float lod) {
     float c = cos(u_envRot), s = sin(u_envRot);
     d = vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
     vec2 uv = vec2(0.5 + atan(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
-    return pow(textureLod(u_env, vec2(uv.x, 1.0 - uv.y), lod).rgb, vec3(2.2)) * u_envIntensity; // a layer's: bottom up
+    vec3 e = textureLod(u_env, vec2(uv.x, 1.0 - uv.y), lod).rgb; // bottom up, as a layer's picture
+    return (u_envLinear != 0 ? e : pow(e, vec3(2.2))) * u_envIntensity; // an HDR file: linear already
 }
 vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' approximation of the BRDF table)
     vec4 k = r * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
@@ -609,6 +610,7 @@ void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0
 static const char *kSkyFragment = R"(#version 330 core
 in vec2 v_ndc; out vec4 o;
 uniform mat4 u_inv; uniform vec3 u_eye; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_lod, u_exposure;
+uniform int u_envLinear;
 const float PI = 3.14159265;
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 void main() {
@@ -617,7 +619,8 @@ void main() {
     float c = cos(u_envRot), s = sin(u_envRot);
     d = vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
     vec2 uv = vec2(0.5 + atan(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
-    vec3 e = pow(textureLod(u_env, vec2(uv.x, 1.0 - uv.y), u_lod).rgb, vec3(2.2)) * u_envIntensity;
+    vec3 e = textureLod(u_env, vec2(uv.x, 1.0 - uv.y), u_lod).rgb;
+    e = (u_envLinear != 0 ? e : pow(e, vec3(2.2))) * u_envIntensity;
     o = vec4(pow(aces(e * u_exposure), vec3(1.0 / 2.2)), 1.0);
 }
 )";
@@ -836,7 +839,7 @@ bool Scene3D::copyEnvironment(GLuint source)
 }
 
 GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
-                     GLuint environment)
+                     GLuint environment, bool environmentLinear)
 {
     if (w <= 0 || h <= 0) return 0;
     auto f = gl();
@@ -897,6 +900,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1f(f->glGetUniformLocation(m_sky, "u_envRot"), envRot);
         f->glUniform1f(f->glGetUniformLocation(m_sky, "u_lod"), std::clamp(s.envBlur, 0.0f, 1.0f) * (envMaxLod - 2));
         f->glUniform1f(f->glGetUniformLocation(m_sky, "u_exposure"), s.exposure);
+        f->glUniform1i(f->glGetUniformLocation(m_sky, "u_envLinear"), environmentLinear ? 1 : 0);
         f->glUniform1i(f->glGetUniformLocation(m_sky, "u_env"), 2);
         f->glActiveTexture(GL_TEXTURE2);
         f->glBindTexture(GL_TEXTURE_2D, m_env);
@@ -944,6 +948,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform1f(loc("u_envIntensity"), s.envIntensity);
     f->glUniform1f(loc("u_envRot"), envRot);
     f->glUniform1f(loc("u_envMaxLod"), envMaxLod);
+    f->glUniform1i(loc("u_envLinear"), environmentLinear ? 1 : 0);
     f->glActiveTexture(GL_TEXTURE2);
     f->glBindTexture(GL_TEXTURE_2D, hasEnv ? m_env : 0);
     f->glActiveTexture(GL_TEXTURE0);

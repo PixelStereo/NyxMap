@@ -573,6 +573,7 @@ void Engine::releaseLayer(Layer &l)
     l.toxPlayer.reset();
     l.sourceTex.destroy();
     l.imageAutoTex.destroy();
+    l.hdrTex.destroy();
     l.sourceColorTarget.destroy();
     l.textTex.destroy();
     if (l.generator) l.generator->releaseGl();
@@ -989,6 +990,9 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.sourceTex = Texture2D{};
     g->imageAutoTex = l.imageAutoTex;
     l.imageAutoTex = Texture2D{};
+    g->hdrTex = l.hdrTex;
+    l.hdrTex = Texture2D{};
+    l.pendingHdr.clear();
     l.imageProfile = QColorSpace();
     l.imageColorInfo.clear();
     l.sourceColorSpace = QStringLiteral("auto");
@@ -1036,6 +1040,7 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
         if (g->model) g->model->releaseGl();
         g->tex.destroy();
         g->imageAutoTex.destroy();
+        g->hdrTex.destroy();
         g->textTex.destroy();
         if (g->videoTex) g->videoTex->destroy();
         if (g->generator) g->generator->releaseGl();
@@ -1578,6 +1583,9 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLaye
     if (psdLayer >= 0 && !decodeImage(path, psdLayer, img, &warning)) psdLayer = -1; // all of them, said so
     const QSize comp = compositionSize();
     if (psdLayer < 0 && !decodeImage(path, -1, img, err, std::max(comp.width(), comp.height()))) return false;
+    std::vector<float> hdr; // an HDR file: also its pixels unclipped (a 3D scene's environment takes them)
+    QSize hdrSize;
+    if (isHdrImageFile(path)) readHdrPixels(path, &hdr, &hdrSize);
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
@@ -1585,6 +1593,8 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLaye
         if (!l) return false;
         g = detachSource(*l);
         l->pendingImage = img.image; // uploaded to the GPU by the render thread
+        l->pendingHdr = std::move(hdr);
+        l->pendingHdrSize = hdrSize;
         l->imageColorInfo = img.colorInfo;
         l->imageProfile = img.profile;
         l->pendingAutoImage = img.autoImage;

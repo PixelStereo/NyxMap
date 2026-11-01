@@ -173,7 +173,7 @@ private:
     QWidget *buildSceneEnvironment(); // a scene: the layer (an HDRI) around it, lighting it
     void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
                         const QString &objectName, const QString &tip, const QString &undoText,
-                        const std::function<bool(quint64, int, QString *)> &set);
+                        const std::function<bool(quint64, int, QString *)> &set, bool hdr = false);
     std::vector<std::pair<QPointer<QWidget>, QString>> m_3dFields;
     std::vector<std::pair<QPointer<QWidget>, QStringList>> m_3dColors;
     QPointer<ParamPanel> m_generatorParams, m_effectParams;

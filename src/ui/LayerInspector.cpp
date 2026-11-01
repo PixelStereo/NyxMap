@@ -37,6 +37,7 @@
 #include <QStandardItemModel>
 #include <QTabWidget>
 #include "FxChainPanel.h"
+#include "ImageFile.h"
 #include <QUrl>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
@@ -3997,8 +3998,9 @@ void LayerInspector::refreshClock()
 // but the one this layer is in (and what is made from it): no loop
 void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
                                     const QString &objectName, const QString &tip, const QString &undoText,
-                                    const std::function<bool(quint64, int, QString *)> &set)
+                                    const std::function<bool(quint64, int, QString *)> &set, bool hdr)
 {
+    QSet<quint64> hdrFiles; // HDR images (.hdr, .exr): their file as read, unclipped, offered (and chosen at first)
     std::vector<quint64> ancestors;
     std::vector<std::pair<quint64, QString>> candidates;
     QHash<quint64, QStringList> effectsOf; // each candidate's FX, by name: the stages its picture can be taken at
@@ -4017,6 +4019,7 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
             if (std::any_of(ancestors.begin(), ancestors.end(), [&](quint64 a) { return m_engine->layerDependsOn(o->id, a); })) continue;
             candidates.push_back({o->id, o->scene3d ? o->name + QStringLiteral(" (3D scene)") : o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
             for (const auto &e : o->effects) effectsOf[o->id] << e->name();
+            if (hdr && o->type == SourceType::Image && isHdrImageFile(o->sourcePath)) hdrFiles.insert(o->id);
         }
     }
     auto *pick = new QComboBox;
@@ -4029,6 +4032,7 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
     form->addRow(name, pick);
     auto *at = new QComboBox;
     at->setObjectName(objectName + QStringLiteral("Stage"));
+    if (hdrFiles.contains(current)) at->addItem(QStringLiteral("HDR file (linear, unclipped)"), Engine::kStageHdrFile);
     at->addItem(QStringLiteral("Final (after its FX)"), -1);
     at->addItem(QStringLiteral("Source (before its FX)"), 0);
     const QStringList effects = effectsOf.value(current);
@@ -4038,11 +4042,11 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
     at->setToolTip(QStringLiteral("Where the layer's picture is taken: its final picture, its source before its FX, or after "
                                   "one of its FX"));
     form->addRow(QStringLiteral("Taken at"), at);
-    connect(pick, &QComboBox::activated, this, [this, pick, set, undoText](int i) {
+    connect(pick, &QComboBox::activated, this, [this, pick, set, undoText, hdrFiles](int i) {
         const quint64 id = pick->itemData(i).toULongLong();
         QString err;
         bool ok = true;
-        editSource(undoText, [&] { ok = set(id, -1, &err); });
+        editSource(undoText, [&] { ok = set(id, hdrFiles.contains(id) ? Engine::kStageHdrFile : -1, &err); });
         if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("3D"), err);
         emit layerChanged();
         QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages
@@ -4108,7 +4112,7 @@ QWidget *LayerInspector::buildSceneEnvironment()
                                   "a video, a generator) around the scene: it lights the models, its reflections in them as "
                                   "sharp as they are smooth. Shown behind them if asked."),
                    QStringLiteral("Scene Environment"),
-                   [this](quint64 id, int st, QString *err) { return m_engine->setSceneEnvironment(m_layer, id, err, st); });
+                   [this](quint64 id, int st, QString *err) { return m_engine->setSceneEnvironment(m_layer, id, err, st); }, true);
     return box;
 }
 

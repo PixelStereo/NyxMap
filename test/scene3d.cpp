@@ -1,10 +1,12 @@
 #include "Engine.h"
+#include "ImageFile.h"
 #include "Model3D.h"
 #include <QColor>
 #include <QFile>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <cstdio>
 #include <tuple>
@@ -393,6 +395,38 @@ int runScene3dTests(Engine &engine)
             engine.renderFrame();
             engine.grabOutput().save(captures + "/environment.png");
             engine.setCompositionSize({64, 64});
+        }
+        // An HDR file (Radiance .hdr, a red of 8.0): its values above 1 kept, read linear; brighter than its clipped picture
+        {
+            const QString hdrPath = dir.path() + "/red8.hdr";
+            QFile f(hdrPath);
+            check(f.open(QIODevice::WriteOnly), "write an HDR file");
+            f.write("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 4\n");
+            for (int k = 0; k < 8; ++k) f.write(QByteArray::fromHex("80101084")); // 8.0, 1.0, 1.0 (RGBE)
+            f.close();
+            std::vector<float> px;
+            QSize size;
+            check(readHdrPixels(hdrPath, &px, &size) && size == QSize(4, 2) && px.size() == 32 && px[0] > 7.5 && px[0] < 8.5,
+                  "an HDR file is read as floats, not clipped (8.0 stays 8.0)");
+            // The same as an EXR in half floats (its usual), when FFmpeg can write one here
+            const QString exrPath = dir.path() + "/red8h.exr";
+            if (QProcess::execute("ffmpeg", {"-hide_banner", "-loglevel", "error", "-y", "-i", hdrPath, "-c:v", "exr", "-format", "half", exrPath}) == 0) {
+                std::vector<float> ex;
+                QSize exSize;
+                check(readHdrPixels(exrPath, &ex, &exSize) && ex.size() == 32 && ex[0] > 7.5 && ex[0] < 8.5,
+                      "a half-float EXR is read unclipped too");
+            }
+            const int hi = engine.addLayer("HDRI");
+            const quint64 hdri = engine.layerId(hi);
+            check(engine.setLayerFile(hi, hdrPath, &error), "an image layer loads the HDR file");
+            engine.setParameter(hdri, "enable", false);
+            engine.setParameter(lit, "scene/environment/show", false);
+            check(engine.setSceneEnvironment(engine.indexOfId(lit), hdri, &error, -1), "the HDR layer, clipped");
+            const QColor clipped = at(32, 32);
+            check(engine.setSceneEnvironment(engine.indexOfId(lit), hdri, &error, Engine::kStageHdrFile), "the HDR file as read");
+            const QColor full = at(32, 32);
+            check(full.lightness() > clipped.lightness() + 10, "the unclipped HDR lights more than its clipped picture");
+            engine.setSceneEnvironment(engine.indexOfId(lit), sky, &error);
         }
         const QString envProject = dir.path() + "/environment.nyxmap";
         check(engine.saveProject(envProject, {}, &error), "save the environment");

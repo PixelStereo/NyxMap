@@ -170,8 +170,9 @@ public:
     Scene3D &operator=(const Scene3D &) = delete;
     // Its picture (premultiplied), w × h; render thread, a GL context current
     // environment: a layer's picture (equirectangular, its first row at the bottom), 0 none
+    // environmentLinear: its values linear light (an HDR file as read), else display encoded (a layer's picture)
     GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
-                GLuint environment = 0);
+                GLuint environment = 0, bool environmentLinear = false);
     void releaseGl();
 
 private:
