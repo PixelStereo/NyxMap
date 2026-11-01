@@ -695,6 +695,19 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             params.insert(params.begin(), point);
     if (params.empty()) return;
     if (auto *panel = instance()) {
+        for (const auto &it : e->interactions()) {
+            if (it.isAction() || it.layer != layer ||
+                std::none_of(paths.begin(), paths.end(), [&](const auto &p) { return it.drives(p); }))
+                continue;
+            menu->addAction(QStringLiteral("Go to interaction driver · %1%2")
+                                .arg(it.label(), it.enabled ? QString() : QStringLiteral(" (off)")),
+                            panel, [panel, id = it.id] {
+                                panel->m_kinds->setCurrentIndex(panel->m_kinds->count() - 1);
+                                panel->rebuildList();
+                                panel->select(id);
+                                emit panel->showRequested();
+                            });
+        }
         QMenu *animate = nullptr;
         for (auto *action : menu->actions()) if (action->text() == QLatin1String("Animate")) animate = action->menu();
         QMenu *interaction = nullptr;

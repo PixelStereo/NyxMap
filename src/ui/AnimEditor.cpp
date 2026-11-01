@@ -3,25 +3,26 @@
 #include "ColorPicker.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
-#include <QFontDatabase>
 #include <QContextMenuEvent>
+#include <QFontDatabase>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QKeyEvent>
-#include <QPointer>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QScrollArea>
 #include <QScrollBar>
-#include <QSlider>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QStyle>
 #include <QTimer>
 #include <QToolTip>
@@ -144,9 +145,11 @@ static bool sameKeys(const std::vector<AnimKey> &a, const std::vector<AnimKey> &
 
 static bool sameTrack(const AnimTrack &a, const AnimTrack &b)
 {
-    if (a.layer != b.layer || a.param != b.param || a.enabled != b.enabled || a.oscillator != b.oscillator || a.color != b.color ||
-        a.event != b.event || a.wave != b.wave || a.period != b.period || a.center != b.center || a.amplitude != b.amplitude ||
-        a.phase != b.phase || a.seed != b.seed || !sameKeys(a.keys, b.keys) || a.axes.size() != b.axes.size()) return false;
+    if (a.layer != b.layer || a.param != b.param || a.enabled != b.enabled || a.oscillator != b.oscillator ||
+        a.color != b.color || a.event != b.event || a.wave != b.wave || a.period != b.period || a.center != b.center ||
+        a.amplitude != b.amplitude || a.phase != b.phase || a.seed != b.seed || !sameKeys(a.keys, b.keys) ||
+        a.axes.size() != b.axes.size() || a.dataFilters != b.dataFilters)
+        return false;
     for (size_t i = 0; i < a.axes.size(); ++i) if (!sameTrack(a.axes[i], b.axes[i])) return false;
     return true;
 }
@@ -1501,7 +1504,10 @@ const AnimTrack &TrackRow::editedTrack() const { return track().isPoint() ? trac
 void TrackRow::build()
 {
     const bool side = m_ed->layout() == AnimEditor::Layout::Side;
-    QBoxLayout *box = side ? static_cast<QBoxLayout *>(new QHBoxLayout(this)) : new QVBoxLayout(this);
+    m_outer = new QVBoxLayout(this);
+    m_outer->setContentsMargins(0, 0, 0, 0);
+    QBoxLayout *box = side ? static_cast<QBoxLayout *>(new QHBoxLayout) : new QVBoxLayout;
+    m_outer->addLayout(box);
     box->setContentsMargins(0, 2, 0, 2);
     box->setSpacing(side ? 0 : 3);
     auto *head = new QWidget;
@@ -1713,6 +1719,133 @@ void TrackRow::build()
     fill();
 }
 
+void TrackRow::rebuildFilters()
+{
+    if (m_filters) {
+        m_outer->removeWidget(m_filters);
+        m_filters->hide();
+        m_filters->deleteLater();
+    }
+    m_filters = new QWidget;
+    m_filters->setObjectName("animationDataFilters");
+    m_outer->addWidget(m_filters);
+    auto *layout = new QVBoxLayout(m_filters);
+    layout->setContentsMargins(4, 2, 4, 2);
+    const int axis = track().isPoint() ? m_axisIndex : -1;
+    if (editedTrack().event) {
+        m_filters->hide();
+        return;
+    }
+    auto *add = new QPushButton(QStringLiteral("Add Data Filter…"));
+    add->setObjectName("addAnimationDataFilter");
+    layout->addWidget(add);
+    connect(add, &QPushButton::clicked, this, [this, add] {
+        auto *menu = new QMenu(add);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        for (int k = 0; k < kInteractionFilterCount; ++k) {
+            const auto kind = InteractionFilter(k);
+            menu->addAction(interactionFilterName(kind), this, [this, kind] {
+                auto stage = InteractionStage::made(kind);
+                const auto [lo, hi] = range();
+                if (kind == InteractionFilter::Remap) stage = InteractionStage::remap(lo, hi, lo, hi);
+                if (kind == InteractionFilter::Clamp) {
+                    stage.a = lo;
+                    stage.b = hi;
+                }
+                editedTrack().dataFilters.append(stage.toJson());
+                changed(false);
+                rebuildFilters();
+            });
+        }
+        menu->popup(add->mapToGlobal(QPoint(0, add->height())));
+    });
+    const auto filters = editedTrack().dataFilters;
+    for (int k = 0; k < filters.size(); ++k) {
+        const auto stage = InteractionStage::fromJson(filters[k].toObject());
+        auto *group = new QWidget;
+        auto *column = new QVBoxLayout(group);
+        column->setContentsMargins(0, 0, 0, 0);
+        auto *row = new QHBoxLayout;
+        column->addLayout(row);
+        layout->insertWidget(layout->count() - 1, group);
+        auto write = [this, k](const std::function<void(InteractionStage &)> &fn, const QString &merge = QString()) {
+            auto &array = editedTrack().dataFilters;
+            if (k >= array.size()) return;
+            auto value = InteractionStage::fromJson(array[k].toObject());
+            fn(value);
+            array[k] = value.toJson();
+            changed(false, merge);
+        };
+        auto *enabled = new QCheckBox(QStringLiteral("%1 · %2").arg(k + 1).arg(interactionFilterName(stage.kind)));
+        enabled->setChecked(stage.enabled);
+        row->addWidget(enabled, 1);
+        auto *settings = new QGridLayout;
+        column->addLayout(settings);
+        connect(enabled, &QCheckBox::toggled, this, [write](bool on) { write([on](auto &f) { f.enabled = on; }); });
+        m_ed->bindDriverWidget(enabled, axis, QStringLiteral("filters/%1/enable").arg(k + 1));
+        if (stage.kind == InteractionFilter::Math) {
+            auto *op = new QComboBox;
+            for (int n = 0; n < kMathOpCount; ++n)
+                op->addItem(mathOpName(MathOp(n)));
+            op->setCurrentIndex(int(stage.op));
+            settings->addWidget(op, 0, 0, 1, 2);
+            m_ed->bindDriverWidget(op, axis, QStringLiteral("filters/%1/operation").arg(k + 1));
+            connect(op, qOverload<int>(&QComboBox::activated), this, [this, write](int n) {
+                write([n](auto &f) { f.op = MathOp(n); });
+                rebuildFilters();
+            });
+        }
+        for (int w = 0; w < kFilterSettingCount; ++w) {
+            const auto setting = interactionFilterSetting(stage.kind, w);
+            if (setting.name.isEmpty() || (stage.kind == InteractionFilter::Math && !mathOpUsesValue(stage.op)))
+                continue;
+            settings->addWidget(new QLabel(setting.name), w + 1, 0);
+            auto *value = numberBox(-1e9, 1e9, stage.kind == InteractionFilter::Steps ? 0 : 4,
+                                    (setting.max - setting.min) / 100, setting.suffix);
+            value->setValue(stage.setting(w));
+            settings->addWidget(value, w + 1, 1);
+            m_ed->bindDriverWidget(value, axis, QStringLiteral("filters/%1/%2").arg(k + 1).arg(QChar('a' + w)));
+            connect(value, qOverload<double>(&NumberBox::valueChanged), this, [write, w, k](double v) {
+                write([w, v](auto &f) { f.setting(w) = v; }, QStringLiteral("filter%1/%2").arg(k).arg(w));
+            });
+        }
+        row->addStretch();
+        for (int direction : {-1, 1, 0}) {
+            auto *button = new QPushButton(direction < 0   ? QStringLiteral("↑")
+                                           : direction > 0 ? QStringLiteral("↓")
+                                                           : QStringLiteral("×"));
+            button->setFixedWidth(26);
+            button->setToolTip(direction ? QStringLiteral("Move filter") : QStringLiteral("Remove filter"));
+            button->setEnabled(!direction || (k + direction >= 0 && k + direction < filters.size()));
+            row->addWidget(button);
+            connect(button, &QPushButton::clicked, this, [this, k, direction] {
+                auto &array = editedTrack().dataFilters;
+                if (k >= array.size()) return;
+                if (!direction)
+                    array.removeAt(k);
+                else if (k + direction >= 0 && k + direction < array.size()) {
+                    const auto v = array[k];
+                    array[k] = array[k + direction];
+                    array[k + direction] = v;
+                }
+                changed(false);
+                rebuildFilters();
+            });
+        }
+        if (stage.kind == InteractionFilter::Curve) {
+            auto *curve = new CurveLane;
+            curve->setTrack(stage.curve, 1, 0, 1);
+            curve->setView(-.03, 1.03, -.08, 1.08);
+            curve->setFixedHeight(160);
+            column->addWidget(curve);
+            connect(curve, &CurveLane::edited, this, [write, k](const AnimTrack &t, int gesture) {
+                write([t](auto &f) { f.curve = t; },
+                      gesture ? QStringLiteral("filterCurve%1/%2").arg(k).arg(gesture) : QString());
+            });
+        }
+    }
+}
+
 void TrackRow::fill()
 {
     m_filling = true;
@@ -1738,6 +1871,12 @@ void TrackRow::fill()
     m_phase->setValue(t.phase);
     m_center->setValue(t.center);
     m_amp->setValue(t.amplitude);
+    const int driverAxis = track().isPoint() ? m_axisIndex : -1;
+    m_ed->bindDriverWidget(m_period, driverAxis, "wave/period");
+    m_ed->bindDriverWidget(m_center, driverAxis, "wave/center");
+    m_ed->bindDriverWidget(m_amp, driverAxis, "wave/amplitude");
+    m_ed->bindDriverWidget(m_phase, driverAxis, "wave/phase");
+    rebuildFilters();
     m_filling = false;
     updateStartMode();
     updateLane();
@@ -2173,6 +2312,7 @@ void AnimEditor::commit(const QString &text, const QString &mergeKey)
 void AnimEditor::poll()
 {
     if (!isVisible()) return;
+    syncDrivenValues();
     Engine::AnimationPlayback a;
     if (!fetchPlayback(&a)) return;
     const bool shown = a.state != AnimState::Stopped;

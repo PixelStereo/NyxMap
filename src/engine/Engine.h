@@ -1122,17 +1122,28 @@ private:
     double m_screenHz = 60;
     std::vector<Animation> m_animations;
     quint64 m_nextAnimationId = 1;
-    void applyAnimation(Animation &a); // sets its values where it is (lock held)
+    struct AnimationFilterRuntime {
+        QJsonArray definition;
+        Interaction config;
+        InteractionProcessor processor;
+        double played = -1;
+    };
+    QHash<QString, AnimationFilterRuntime> m_animationFilters;
+    void clearAnimationFilterHistory(quint64 layer, quint64 animation);
+    double filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
+                                double raw, double dt, double played);
+    void applyAnimation(Animation &a, double dt = 0); // sets its values where it is (lock held)
     // Fires the event keys its clock crosses in (from, to] — and those at `from` too when `fromIncluded` (lock held)
     void fireAnimationEvents(const Animation &a, double from, double to, bool fromIncluded);
     // owner: the layer of one of its own animations (its values are set on it even when it is locked)
     void controlLocked(Animation *a, AnimAction action, double time, AnimLoop loop, int repeat, Layer *owner = nullptr);
-    void applyLayerAnim(Layer &l, Animation &a); // sets its value where it is (lock held)
+    void applyLayerAnim(Layer &l, Animation &a, double dt = 0); // sets its value where it is (lock held)
     // A number of a layer an animation sets: the snapshots' fades running leave it to it from now on (lock held)
     void releaseFromFades(quint64 layer, const QString &path);
     bool setAnimParam(quint64 layer, const QString &path, double v); // lock held
     bool setAnimColor(quint64 layer, const QString &path, const std::array<double, 3> &value); // lock held
-    bool setAnimPoint(const AnimTrack &track, double position, double played); // lock held; validate both axes first
+    bool setAnimPoint(const AnimTrack &track, double position, double played, quint64 animation = 0,
+                      double dt = 0); // lock held; validate both axes first
     void remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes); // empty replacement removes
     void removeSourceAnimations(Layer &layer); // lock held, before detaching the source
     const std::vector<Parameter *> &compositionParameters(); // its opacity, volume, speed (lock held)

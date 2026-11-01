@@ -744,20 +744,22 @@ void Engine::makeInteractionParams()
         auto number = [&](const QString &path, const QString &name, double lo, double hi, double def,
                           std::function<double &(Interaction &)> field) -> Parameter & {
             return add(path, name, T::Float)
+                .animatable()
                 .range(lo, hi)
                 .limits(-1e9, 1e9)
                 .step((hi - lo) / 100.0)
                 .byDefault(def)
-                .bind([find, field] {
-                          Interaction *x = find();
-                          return x ? QVariant(field(*x)) : QVariant();
-                      },
-                      [this, find, field](const QVariant &v) {
-                          if (Interaction *x = find()) {
-                              field(*x) = v.toDouble();
-                              interactionValuesTouched();
-                          }
-                      });
+                .bind(
+                    [find, field] {
+                        Interaction *x = find();
+                        return x ? QVariant(field(*x)) : QVariant();
+                    },
+                    [this, find, field](const QVariant &v) {
+                        if (Interaction *x = find()) {
+                            field(*x) = v.toDouble();
+                            interactionValuesTouched();
+                        }
+                    });
         };
         auto flag = [&](const QString &path, const QString &name, bool def, std::function<bool &(Interaction &)> field) {
             add(path, name, T::Bool).byDefault(def).ramp(Parameter::Ramp::Cut).bind(
@@ -822,6 +824,26 @@ void Engine::makeInteractionParams()
                 static bool gone = false; // the filters changed meanwhile (the list is made again)
                 return k < x.filters.size() ? x.filters[k].enabled : gone;
             });
+            if (f.kind == InteractionFilter::Math) {
+                QStringList ops;
+                for (int n = 0; n < kMathOpCount; ++n)
+                    ops << mathOpName(MathOp(n));
+                add(path + "operation", name + "Operation", T::Choice)
+                    .choices(ops)
+                    .byDefault(ops[int(MathOp::Multiply)])
+                    .bind(
+                        [find, k, ops] {
+                            auto *x = find();
+                            return x && k < x->filters.size() ? QVariant(ops[int(x->filters[k].op)]) : QVariant();
+                        },
+                        [this, find, k, ops](const QVariant &value) {
+                            const int op = ops.indexOf(value.toString());
+                            if (auto *x = find(); x && k < x->filters.size() && op >= 0) {
+                                x->filters[k].op = MathOp(op);
+                                interactionValuesTouched();
+                            }
+                        });
+            }
             for (int which = 0; which < kFilterSettingCount; ++which) {
                 const FilterSetting set = interactionFilterSetting(f.kind, which);
                 if (set.name.isEmpty()) continue;
