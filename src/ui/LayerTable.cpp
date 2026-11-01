@@ -360,13 +360,16 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     auto *group = barButton(QStringLiteral("⊞"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
     auto *vp = barButton(QStringLiteral("▭"), QStringLiteral("New Viewport: another window onto the composition, "
                                                              "with its own size, screen and publishing"));
+    auto *scene = barButton(QStringLiteral("3D"), QStringLiteral("3D: a new 3D scene (with a light), or a light in the selected "
+                                                                 "scene. Models: drop an FBX, glTF or OBJ onto a layer or a scene"));
+    scene->setObjectName(QStringLiteral("layer3dButton"));
     auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected layers (Del)"));
     auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
     auto *up = barButton(QStringLiteral("▲"), QStringLiteral("Move Up (Ctrl+])"));
     auto *down = barButton(QStringLiteral("▼"), QStringLiteral("Move Down (Ctrl+[)"));
     (void)title;
     bar->setSpacing(2);
-    for (auto *b : {add, group, vp, remove, dup, up, down}) bar->addWidget(b);
+    for (auto *b : {add, group, vp, scene, remove, dup, up, down}) bar->addWidget(b);
     bar->addStretch();
     v->addLayout(bar);
 
@@ -468,6 +471,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     connect(add, &QToolButton::clicked, this, &LayerTable::addClicked);
     connect(group, &QToolButton::clicked, this, &LayerTable::groupClicked);
     connect(vp, &QToolButton::clicked, this, &LayerTable::viewportClicked);
+    connect(scene, &QToolButton::clicked, this, [this, scene] { emit scene3dClicked(scene); });
     connect(remove, &QToolButton::clicked, this, &LayerTable::removeClicked);
     connect(dup, &QToolButton::clicked, this, &LayerTable::duplicateClicked);
     connect(up, &QToolButton::clicked, this, [this] { emit moveClicked(-1); });

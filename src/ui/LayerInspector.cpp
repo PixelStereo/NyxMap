@@ -721,6 +721,8 @@ void LayerInspector::rebuild()
     }
     m_content = new QWidget;
     m_textColors.clear();
+    m_3dFields.clear();
+    m_3dColors.clear();
     m_toxFields.clear();
     m_toxColors.clear();
     m_toxStatus = nullptr;
@@ -819,7 +821,8 @@ void LayerInspector::rebuild()
         tv->setContentsMargins(0, 0, 0, 0);
         tv->setSpacing(8);
         tv->addWidget(buildSource(s));
-        if (s.type != SourceType::Audio) { // a sound has no picture to composite
+        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light) { // a sound, a 3D
+                                                                                                           // object: no picture
             tv->addWidget(separator());
             tv->addWidget(buildCompositing(s));
         }
@@ -844,7 +847,23 @@ void LayerInspector::rebuild()
     });
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
     tabs->setStyleSheet(theme::tabStyle());
-    const bool hasSource = !s.isGroup && !s.isViewport;
+    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light;
+    bool scene3d = false;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d;
+    }
+    if (scene3d) {
+        const int t = tabs->addTab(page(build3d({QStringLiteral("camera/"), QStringLiteral("scene/")})), QStringLiteral("Scene"));
+        tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
+    }
+    if (object3d) {
+        const int t = tabs->addTab(page(build3d({s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")})),
+                                   QStringLiteral("3D"));
+        tabs->setTabToolTip(t, s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
+                                                          : QStringLiteral("The light: its kind, color, level and where it is"));
+    }
+    const bool hasSource = !s.isGroup && !s.isViewport && !object3d;
     if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
     tabs->addTab(page(buildColor(s)), QStringLiteral("Color"));
@@ -893,10 +912,12 @@ void LayerInspector::rebuild()
     }
     lockInputs(tabs, m_locked);
     name->setEnabled(!m_locked);
-    if (s.type == SourceType::Audio) { // a sound has no picture: no ROI, color, mapping, masks, effects or routing
+    if (s.type == SourceType::Audio || object3d) { // a sound, a 3D object: no picture of its own (ROI, color, mapping, masks…)
         for (int t = 0; t < tabs->count(); ++t) {
             const QString name = tabs->tabText(t).section(' ', 0, 0);
-            if (name == QLatin1String("Source") || name == QLatin1String("Audio") || name == QLatin1String("Anim")) continue; // transport, volume, speed, the sound's FX
+            if (name == QLatin1String("Source") || name == QLatin1String("Audio") || name == QLatin1String("Anim") ||
+                name == QLatin1String("3D"))
+                continue; // transport, volume, speed, the sound's FX; a 3D object's values
             tabs->setTabEnabled(t, false);
             tabs->setTabVisible(t, false); // not shown at all (kept built: the inspector's fields stay valid)
         }
@@ -964,9 +985,19 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         return g;
     }
     if (s.isGroup) {
-        auto *info = new QLabel(QStringLiteral("<b>Group</b> of %1 layer(s)<br><span style='font-size:11px; color:#999'>"
-                                               "Its picture is the composite of its layers. Drag layers onto it in the "
-                                               "layer list to add them.</span>")
+        bool scene = false;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_layer)) scene = l->scene3d;
+        }
+        auto *info = new QLabel(
+            scene ? QStringLiteral("<b>3D Scene</b> of %1 object(s)<br><span style='font-size:11px; color:#999'>"
+                                   "Its picture is its models seen by its camera (Scene tab), under its lights. Drop an "
+                                   "FBX, glTF or OBJ onto it to add a model; Layer › Add Light to 3D Scene.</span>")
+                                    .arg(s.members)
+                  : QStringLiteral("<b>Group</b> of %1 layer(s)<br><span style='font-size:11px; color:#999'>"
+                                   "Its picture is the composite of its layers. Drag layers onto it in the "
+                                   "layer list to add them.</span>")
                                     .arg(s.members));
         info->setWordWrap(true);
         v->addWidget(info);
@@ -1035,6 +1066,22 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         name = s.web.url.isEmpty() ? QStringLiteral("(blank page)") : s.web.url;
         d << QStringLiteral("%1 × %2 · %3 fps").arg(s.web.width).arg(s.web.height).arg(s.web.fps);
         break;
+    case SourceType::Model: {
+        kind = QStringLiteral("3D Model");
+        name = QFileInfo(s.sourcePath).fileName();
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer); l && l->model)
+            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(l->model->meshCount()).arg(l->model->triangleCount());
+        d << QStringLiteral("drawn by its 3D scene");
+        break;
+    }
+    case SourceType::Light: {
+        kind = QStringLiteral("Light");
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) name = QStringList{"Directional", "Point", "Spot"}.value(l->light.type);
+        d << QStringLiteral("lights the models of its 3D scene");
+        break;
+    }
     case SourceType::Layer: {
         d << QStringLiteral("Color space: Inherited (not tagged)");
         kind = QStringLiteral("Layer");
@@ -1115,8 +1162,9 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         });
     }
 
-    // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose)
-    if (s.type != SourceType::Audio) {
+    // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose; a 3D
+    // object has no picture of its own)
+    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light) {
         auto *row = new QHBoxLayout;
         auto *label = new ResetLabel(QStringLiteral("Transition"), [this] {
             setProp(cmd::SetLayerProp::Transition, QString());
@@ -3931,9 +3979,112 @@ void LayerInspector::refreshClock()
     if (u->status) u->status->setText(c->status());
 }
 
+// The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors
+// as pickers, switches, choices; each one undoable, animatable (right-click) and refreshed while it moves
+QWidget *LayerInspector::build3d(const QStringList &prefixes)
+{
+    auto *w = new QWidget;
+    auto *v = new QVBoxLayout(w);
+    v->setContentsMargins(0, 6, 0, 0);
+    std::vector<ParamInfo> params;
+    for (const ParamInfo &p : m_engine->parameters(m_layerId))
+        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &x) { return p.path.startsWith(x); })) params.push_back(p);
+    QString section;
+    QFormLayout *form = nullptr;
+    QSet<QString> colorsDone;
+    for (const ParamInfo &p : params) {
+        const QString category = p.label.section(QStringLiteral(" › "), 0, 0), name = p.label.section(QStringLiteral(" › "), 1);
+        if (!form || category != section) {
+            section = category;
+            auto *box = new QGroupBox(category);
+            form = new QFormLayout(box);
+            form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            v->addWidget(box);
+        }
+        if (p.colorComponent >= 0) { // its members together: one picker
+            const QString base = p.path.section('/', 0, -2);
+            if (colorsDone.contains(base)) continue;
+            colorsDone.insert(base);
+            QStringList paths;
+            for (const ParamInfo &q : params)
+                if (q.colorComponent >= 0 && q.path.section('/', 0, -2) == base) paths << q.path;
+            auto *picker = new ColorPicker(paths.size() == 4);
+            picker->setSettingsKey(QStringLiteral("ui/colorPickerMode/layer/%1/%2").arg(m_layerId).arg(base));
+            auto *label = new QLabel(name.section(' ', 0, 0));
+            form->addRow(label, picker);
+            m_animate->attach({label, picker}, paths);
+            connect(picker, &ColorPicker::colorEdited, this, [this, paths, name](const QColor &c) {
+                QJsonObject values;
+                const double comps[4] = {c.redF(), c.greenF(), c.blueF(), c.alphaF()};
+                for (int k = 0; k < paths.size(); ++k) values[paths[k]] = comps[k];
+                setValues(values, QStringLiteral("Change ") + name.section(' ', 0, 0));
+            });
+            m_3dColors.push_back({picker, paths});
+            continue;
+        }
+        auto *label = new QLabel(name);
+        QWidget *field = nullptr;
+        const QJsonValue value = m_engine->parameterValue(m_layerId, p.path);
+        const QString path = p.path, text = QStringLiteral("Change ") + name;
+        if (p.type == ParamInfo::Type::Bool) {
+            auto *flag = new FlagBox;
+            flag->setChecked(value.toBool());
+            connect(flag, &QCheckBox::toggled, this, [this, path, text](bool on) { setValue(path, on, text); });
+            field = flag;
+        } else if (p.type == ParamInfo::Type::Choice) {
+            auto *pick = new QComboBox;
+            for (const QString &c : p.choices) pick->addItem(c, c);
+            pick->setCurrentIndex(std::max(0, pick->findData(value.toString())));
+            connect(pick, &QComboBox::activated, this, [this, pick, path, text](int i) {
+                setValue(path, pick->itemData(i).toString(), text);
+                emit layerChanged(); // the list says its kind
+            });
+            field = pick;
+        } else {
+            auto *bar = new SliderField;
+            bar->setRange(p.min, p.max);
+            bar->setTypedRange(p.lo, p.hi);
+            bar->setDecimals(p.step >= 1 ? 0 : p.step >= 0.1 ? 1 : 2);
+            bar->setSingleStep(p.step);
+            bar->setValue(value.toDouble());
+            connect(bar, &SliderField::valueEdited, this, [this, path, text](double x) { setValue(path, x, text); });
+            field = bar;
+        }
+        field->setObjectName(QStringLiteral("param3d:") + path);
+        form->addRow(label, field);
+        m_animate->attach({label, field}, {path});
+        m_3dFields.push_back({field, path});
+    }
+    v->addStretch();
+    return w;
+}
+
 void LayerInspector::refreshDynamic()
 {
     refreshPicker(); // a layer renamed or moved by something else
+    for (const auto &[field, path] : m_3dFields) { // animated, recalled, driven
+        if (!field || field->hasFocus() || field->isAncestorOf(QApplication::focusWidget())) continue;
+        const QJsonValue value = m_engine->parameterValue(m_layerId, path);
+        const QSignalBlocker block(field);
+        if (auto *bar = qobject_cast<SliderField *>(field.data())) {
+            if (!bar->isDragging() && std::abs(bar->value() - value.toDouble()) > 1e-6) bar->setValue(value.toDouble());
+        } else if (auto *flag = qobject_cast<QCheckBox *>(field.data())) {
+            flag->setChecked(value.toBool());
+        } else if (auto *pick = qobject_cast<QComboBox *>(field.data()); pick && !pick->view()->isVisible()) {
+            pick->setCurrentIndex(std::max(0, pick->findData(value.toString())));
+        }
+    }
+    for (const auto &[field, paths] : m_3dColors) {
+        auto *picker = qobject_cast<ColorPicker *>(field.data());
+        if (!picker || picker->isAncestorOf(QApplication::focusWidget())) continue;
+        float c[4] = {0, 0, 0, 1};
+        for (int k = 0; k < paths.size() && k < 4; ++k) c[k] = float(std::clamp(m_engine->parameterValue(m_layerId, paths[k]).toDouble(), 0.0, 1.0));
+        const QColor now = QColor::fromRgbF(c[0], c[1], c[2], c[3]);
+        if (picker->property("shown").value<QColor>() != now) {
+            picker->setProperty("shown", now);
+            picker->setColor(now);
+        }
+    }
     for (const auto &[field, key] : m_synthFields) {
         if (field && !field->isDragging() && !field->hasFocus()) {
             const QSignalBlocker block(field);

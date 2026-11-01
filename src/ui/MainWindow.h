@@ -1,4 +1,5 @@
 #pragma once
+#include "LayerTree.h"
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QTimer>
@@ -93,12 +94,18 @@ private:
     void addEmptyLayer();
     void removeCurrentLayer(); // the selected layers (a group with its layers)
     void createGroup();         // the selected layers go into it
+    void createScene();         // a new 3D Scene with a light
+    void fill3dMenu(QMenu *menu); // the 3D button's and the list's context menu entries
+    void addLightToScene();     // a light in the selected 3D scene (or the scene of the selected object)
+    int addLightLayer(int scene); // its index (undoable steps, in the caller's macro)
+    void wrapInScene(int layer);  // a model outside any scene goes into a new one, with a light
     void ungroupCurrent();
     void toggleLockCurrent();
     void moveRows(const QList<int> &rows, int beforeRow, int parentRow);
     void startOsc();
     void startRemote();
     bool refuseLocked(int layer); // status message if locked
+    bool refuse3d(const LayerTree &after); // status message if a 3D object would leave its scene, or a scene take a 2D layer
     void duplicateCurrentLayer();
     void moveCurrentLayer(int delta);
     void useLayerAsSource(int target, int sourceRow);

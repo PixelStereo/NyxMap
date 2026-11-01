@@ -37,6 +37,17 @@
   has TLS (Secure Transport) but no SRT; Linux has TLS (OpenSSL) and SRT (libsrt);
   Windows (BtbN builds) has TLS and SRT.
 - **TouchDesigner:** `.tox` playback needs an installed, paid TouchDesigner/TouchPlayer on Windows/macOS. Licensed GPU playback remains to be verified on hardware. CHOP/DAT/audio are not connected; Collect Files cannot discover external component resources.
+- **3D scenes:** a 3D Scene (Layer › New 3D Scene, or a model dropped onto a layer)
+  is a group whose picture is its models seen by its camera, under its lights. It
+  holds only 3D objects, and they stay in it: models (FBX, glTF/GLB, OBJ; read with
+  ufbx and cgltf; or a built-in primitive from Media Bin › 3D Primitives: cube, open
+  cube, plane, disc, cylinder, open cylinder, cone, pyramid, sphere, dome, torus,
+  capsule, all unwrapped) and up to 8 lights (directional, point, spot). Each object is a
+  layer: shown, soloed, animated and recalled like any other; its values are
+  parameters (`model/…`, `light/…`; the scene's `camera/…`, `scene/…`). Materials:
+  base color and its texture, metal, roughness, emission (no normal maps). Not yet:
+  shadows, the file's animations (skeletons, keyframes) and cameras, sorting of
+  transparent surfaces, layers shown on 3D surfaces.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

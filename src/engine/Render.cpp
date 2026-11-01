@@ -407,7 +407,8 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                     render(k);
                     members.push_back(m_layers[k].get());
                 }
-            if (l.needed) renderGroup(l, members, rc);
+            if (l.needed && l.scene3d) renderScene(l, members, rc);
+            else if (l.needed) renderGroup(l, members, rc);
             else l.finalTex = l.rawTex = l.preFxTex = 0;
         } else {
             renderLayer(l, rc);
@@ -447,6 +448,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     l.rawTex = 0;
     l.preFxTex = 0;
     if (l.isGroup) return;  // rendered from its members (renderGroup)
+    if (l.is3dObject()) return; // drawn by its 3D scene (renderScene)
     if (l.ended) return; // Stop mode, after the end: nothing
     if (!l.needed) return; // hidden, and used by no other layer
     GLuint tex = 0;
@@ -943,6 +945,26 @@ void Engine::renderGroup(Layer &g, const std::vector<Layer *> &members, const Is
     if (!g.groupTarget.ready(m_compSize.width(), m_compSize.height())) return;
     compositeLayers(g.groupTarget, members);
     processLayer(g, g.groupTarget.tex, g.groupTarget.w, g.groupTarget.h, true, rc);
+}
+
+// A 3D Scene's picture: its models drawn by its camera under its lights (its members shown, Model3D.h), the composition's
+// size, then its own ROI, color and effects as a group's
+void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc)
+{
+    g.finalTex = 0;
+    g.rawTex = 0;
+    if (!g.sceneRenderer) g.sceneRenderer = std::make_shared<Scene3D>();
+    std::vector<Scene3D::Item> items;
+    std::vector<Scene3D::Lamp> lamps;
+    for (const Layer *m : members) {
+        if (!m->enabled || m->soloHidden) continue;
+        if (m->type == SourceType::Model && m->model) items.push_back({m->model, m->modelPlacement});
+        else if (m->type == SourceType::Light) lamps.push_back({m->light, m->opacity});
+    }
+    const int w = m_compSize.width(), h = m_compSize.height();
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h);
+    if (!tex) return;
+    processLayer(g, tex, w, h, true, rc);
 }
 
 // A viewport's picture: the part of the composition its Spatial places it on, drawn at its own size, then

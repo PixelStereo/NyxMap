@@ -1,4 +1,5 @@
 #include "MediaBin.h"
+#include "Model3D.h"
 #include "AudioResources.h"
 #include "Engine.h"
 #include "ImageFile.h"
@@ -279,6 +280,9 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_audioRoot = new BinItem(m_tree, {QStringLiteral("Audio")});
     m_videos = new BinItem(m_videoRoot, {QStringLiteral("Videos")});
     m_images = new BinItem(m_videoRoot, {QStringLiteral("Images")});
+    m_models = new BinItem(m_videoRoot, {QStringLiteral("3D Models")});
+    m_models->setToolTip(0, QStringLiteral("FBX, glTF, GLB, OBJ: dropped onto a layer, it goes into a 3D scene (one is made "
+                                           "around it); dropped onto a 3D scene, it becomes one of its objects"));
     // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock, Line
     m_generators = new BinItem(m_videoRoot, {QStringLiteral("Generators")});
     auto generator = [](QTreeWidgetItem *group, const QString &name, const QString &path) {
@@ -299,6 +303,16 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_line = generator(m_generators, QStringLiteral("Line"), kLineGeneratorPath);
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(m_generators, QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
+    // 3D primitives, built in: onto a layer, into a new 3D scene; onto a scene, one of its objects
+    m_primitives = new BinItem(m_videoRoot, {QStringLiteral("3D Primitives")});
+    for (const QString &name : Model3D::primitives()) {
+        auto *it = generator(m_primitives, name, Model3D::primitivePath(name));
+        it->setText(1, QStringLiteral("3D primitive"));
+        it->setText(3, QStringLiteral("Not applicable"));
+        it->setToolTip(0, QStringLiteral("Built-in 3D shape, unwrapped (UV). Onto a layer: into a new 3D scene, with a light; "
+                                         "onto a 3D scene: one of its objects"));
+    }
+    m_primitives->setText(0, QStringLiteral("3D Primitives (%1)").arg(m_primitives->childCount()));
     m_inputs = new BinItem(m_videoRoot, {QStringLiteral("Inputs")});
     m_isf = new BinItem(m_videoRoot, {QStringLiteral("ISF")});
     m_isfGenerators = new BinItem(m_isf, {QStringLiteral("Generators")});
@@ -320,7 +334,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_audioInputs = new BinItem(m_audioRoot, {QStringLiteral("Inputs")});
 
     int groupOrder = 0;
-    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_videos, m_images, m_generators, m_inputs, m_isf,
+    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_videos, m_images, m_models, m_primitives, m_generators, m_inputs, m_isf,
                                           m_isfGenerators, m_audios, m_audioGenerators, m_audioInputs};
     for (QTreeWidgetItem *group : groups) {
         group->setData(0, GroupOrderRole, groupOrder++);
@@ -394,15 +408,15 @@ void MediaBin::refresh()
     const auto usage = m_engine->mediaUsage();
     const QString selected = selectedPath();
 
-    int nv = 0, ni = 0, na = 0, missing = 0;
+    int nv = 0, ni = 0, na = 0, nm = 0, missing = 0;
     // Update in place: keep selection and scroll position.
     QHash<QString, QTreeWidgetItem *> existing;
-    for (QTreeWidgetItem *cat : {m_videos, m_images, m_audios})
+    for (QTreeWidgetItem *cat : {m_videos, m_images, m_models, m_audios})
         for (int i = 0; i < cat->childCount(); ++i) existing.insert(cat->child(i)->data(0, PathRole).toString(), cat->child(i));
     QSet<QString> seen;
     for (const auto &r : usage) {
         if (r.audio && AudioGenerator::isRecipe(r.path)) continue; // an instrument: Audio > Generators (refreshAudioGenerators)
-        QTreeWidgetItem *cat = r.video ? m_videos : r.audio ? m_audios : m_images;
+        QTreeWidgetItem *cat = r.model ? m_models : r.video ? m_videos : r.audio ? m_audios : m_images;
         QTreeWidgetItem *it = existing.value(r.path);
         if (it && it->parent() != cat) {
             delete it;
@@ -414,7 +428,7 @@ void MediaBin::refresh()
             it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         }
         seen.insert(r.path);
-        (r.video ? nv : r.audio ? na : ni)++;
+        (r.model ? nm : r.video ? nv : r.audio ? na : ni)++;
         if (r.missing) ++missing;
         it->setData(0, MissingRole, r.missing);
         it->setData(0, UsedRole, !r.users.isEmpty());
@@ -454,6 +468,7 @@ void MediaBin::refresh()
         if (!seen.contains(e.key())) delete e.value();
     m_videos->setText(0, QStringLiteral("Videos (%1)").arg(nv));
     m_images->setText(0, QStringLiteral("Images (%1)").arg(ni));
+    m_models->setText(0, QStringLiteral("3D Models (%1)").arg(nm));
     m_audios->setText(0, QStringLiteral("Sounds (%1)").arg(na));
     m_summary->setText(missing ? QStringLiteral("<span style='color:#ff6e5f'>%1 missing file(s): "
                                                 "select them, then \"Replace…\"</span>").arg(missing)
@@ -827,6 +842,27 @@ void MediaBin::probe(const QString &path)
     if (m_probing.value(path)) return;
     m_probing[path] = true;
     QPointer<MediaBin> self(this);
+    if (Model3D::isModelFile(path)) { // read off the UI thread: its meshes and triangles
+        QThreadPool::globalInstance()->start([self, path] {
+            Model3D model;
+            QString error;
+            const QString info =
+                model.load(path, &error)
+                    ? QStringLiteral("3D model · %1 triangles\t%2 mesh(es), %3 · onto a layer: into a new 3D scene; onto a scene: "
+                                     "one of its objects\tNot applicable")
+                          .arg(model.triangleCount())
+                          .arg(model.meshCount())
+                          .arg(QFileInfo(path).suffix().toUpper())
+                    : QStringLiteral("unreadable\t%1\tNot applicable").arg(error);
+            QMetaObject::invokeMethod(qApp, [self, path, info] {
+                if (!self) return;
+                self->m_probing.remove(path);
+                self->m_info[path] = info;
+                self->refresh();
+            });
+        });
+        return;
+    }
     const bool image = Engine::isImageFile(path);
     // Read metadata off the UI thread (files on network drives, etc.)
     QThreadPool::globalInstance()->start([self, path, image] {
@@ -950,13 +986,14 @@ void MediaBin::updateButtons()
                          !Engine::isStreamUrl(m_tree->selectedItems().first()->data(0, PathRole).toString()));
 }
 
-static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
+static bool isMedia(const QString &p) { return Engine::isToxFile(p) || Model3D::isModelFile(p) || Engine::isVideoFile(p) || Engine::isImageFile(p) || Engine::isAudioFile(p); }
 
 void MediaBin::importFiles(const QStringList &paths)
 {
     QStringList ok, refused;
     for (const QString &p : paths) {
         QFileInfo fi(p);
+        if (Model3D::isPrimitivePath(p)) continue; // built in: always in 3D Primitives
         if (const QString url = Engine::streamUrlOfPath(p); !url.isEmpty()) { // a stream (its transport kept)
             if (!m_engine->binItems().contains(url)) m_engine->addBinStream(url, true);
             ok << url;
@@ -992,11 +1029,12 @@ void MediaBin::importDialog()
 {
     QSettings s;
     QStringList ext;
-    for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions()) ext << "*." + e;
+    for (const QString &e : Engine::videoExtensions() + Engine::imageExtensions() + Engine::audioExtensions() + Model3D::extensions())
+        ext << "*." + e;
     ext << "*.fs" << "*.tox";
     const QStringList files = QFileDialog::getOpenFileNames(this, QStringLiteral("Import to Media Bin"),
                                                             s.value("dirs/video").toString(),
-                                                            QStringLiteral("Videos, Images, Audio, ISF and TouchDesigner components (%1);;All Files (*)").arg(ext.join(' ')));
+                                                            QStringLiteral("Videos, Images, Audio, 3D Models, ISF and TouchDesigner components (%1);;All Files (*)").arg(ext.join(' ')));
     if (files.isEmpty()) return;
     s.setValue("dirs/video", QFileInfo(files.first()).absolutePath());
     importFiles(files);
@@ -1147,7 +1185,7 @@ void MediaBin::rebuild()
     m_inputsSignature.clear();
     m_audioInputsSignature.clear();
     m_audioScanned = 0;
-    for (QTreeWidgetItem *cat : {m_videos, m_images, m_audios})
+    for (QTreeWidgetItem *cat : {m_videos, m_images, m_models, m_audios})
         for (int i = 0; i < cat->childCount(); ++i) cat->child(i)->setText(1, QStringLiteral("…"));
     emit rebuildRequested(); // the owner scans the ISF library again, then refreshes the bin
     refresh();
@@ -1177,7 +1215,8 @@ void MediaBin::applyFilter()
         if (filtering && any) it->setExpanded(true);
         return any || !filtering;
     };
-    const QList<QTreeWidgetItem *> files{m_videos, m_images, m_audios}, generators{m_generators, m_audioGenerators},
+    const QList<QTreeWidgetItem *> files{m_videos, m_images, m_models, m_audios},
+        generators{m_generators, m_primitives, m_audioGenerators},
         inputs{m_inputs, m_audioInputs};
     auto kindMatches = [&](const QTreeWidgetItem *group) {
         return kind == 0 || (kind == 1 && files.contains(group)) || (kind == 2 && generators.contains(group)) ||

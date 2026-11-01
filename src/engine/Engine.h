@@ -111,6 +111,8 @@ public:
 
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
+    int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
+    bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     void moveLayer(int from, int to);
@@ -650,6 +652,7 @@ public:
         QString path;
         bool video = false;      // video file
         bool audio = false;      // audio file (neither: image)
+        bool model = false;      // 3D model (FBX, glTF, GLB, OBJ)
         bool missing = false;
         bool imported = false;   // added to the media bin by the user
         QStringList users;       // "Layer" or "Layer › FX"
@@ -666,6 +669,7 @@ public:
     static bool isVideoFile(const QString &path);
     static bool isToxFile(const QString &path);
     bool setLayerTox(int index, const QString &path, const ToxSettings &settings = {}, QString *error = nullptr);
+    bool setLayerModel(int index, const QString &path, QString *error = nullptr); // a 3D model (FBX, glTF, GLB, OBJ)
     bool setLayerToxInput(int index, const QString &input, quint64 layerId, QString *error = nullptr);
     static bool isImageFile(const QString &path);
     static bool isAudioFile(const QString &path);
@@ -893,6 +897,7 @@ private:
     void renderLayer(Layer &l, const IsfRenderContext &rc);
     void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
     void renderGroup(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
+    void renderScene(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
     // `view`: the part of the composition the target shows (normalized, origin top left)
     // The target is cleared to `clear` first (through a multisampled buffer when antialiasing is on)
     void compositeLayers(const RenderTarget &target, const std::vector<Layer *> &topToBottom,

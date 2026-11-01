@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "PresetEditor.h"
 #include "Commands.h"
+#include "Model3D.h"
 #ifdef Q_OS_MACOS
 #include "MacPresentation.h"
 #endif
@@ -421,6 +422,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_layerTable, &LayerTable::removeClicked, this, &MainWindow::removeCurrentLayer);
     connect(m_layerTable, &LayerTable::groupClicked, this, &MainWindow::createGroup);
+    connect(m_layerTable, &LayerTable::scene3dClicked, this, [this](QWidget *anchor) {
+        QMenu menu(this);
+        fill3dMenu(&menu);
+        menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
     connect(m_layerTable, &LayerTable::viewportClicked, this, &MainWindow::addViewport);
     connect(m_layerTable, &LayerTable::lockToggled, this, [this](int row) {
         if (m_engine->groupIndexOf(row) >= 0 && m_engine->isLocked(m_engine->groupIndexOf(row))) { // any group above
@@ -952,6 +958,9 @@ void MainWindow::buildMenus()
                      &MainWindow::createGroup);
     layer->addAction(QStringLiteral("Ungroup"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G), this,
                      &MainWindow::ungroupCurrent);
+    // 3D: a scene renders its models (FBX, glTF, OBJ: dropped onto a layer) under its lights, seen by its camera
+    layer->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    layer->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1161,6 +1170,8 @@ static QString layerTag(SourceType t)
     case SourceType::Input: return QStringLiteral("◉");
     case SourceType::Tox: return QStringLiteral("◈");
     case SourceType::Web: return QStringLiteral("◍");
+    case SourceType::Model: return QStringLiteral("⬢");
+    case SourceType::Light: return QStringLiteral("✦");
     default: return QStringLiteral("○");
     }
 }
@@ -1197,6 +1208,7 @@ void MainWindow::refreshLayerList()
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
             r.tag = l->isViewport ? QStringLiteral("▭")
+                    : l->scene3d  ? QStringLiteral("⬡")
                     : l->isGroup  ? QStringLiteral("▤")
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
@@ -1218,7 +1230,7 @@ void MainWindow::refreshLayerList()
             r.opacity = l->opacity;
             r.blend = blendModeName(l->blend);
             r.error = !l->error.isEmpty();
-            r.noPicture = l->type == SourceType::Audio || (l->type == SourceType::None && l->missingType == SourceType::Audio);
+            r.noPicture = !l->hasPicture(); // a sound, a 3D object (drawn by its scene): no opacity or blend
             if (l->isViewport) {
                 static const QString kShown[] = {QStringLiteral("hidden"), QStringLiteral("window"), QStringLiteral("fullscreen")};
                 const QSize vs = l->viewportSize();
@@ -1231,8 +1243,9 @@ void MainWindow::refreshLayerList()
             case SourceType::Video:
             case SourceType::Audio:
             case SourceType::Image:
-                r.source = l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
-                                      : QFileInfo(l->sourcePath).fileName();
+                r.source = l->scene3d  ? QStringLiteral("3D scene of %1 object(s)").arg(m_engine->groupMembers(i).size())
+                           : l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
+                                        : QFileInfo(l->sourcePath).fileName();
                 break;
             case SourceType::Isf: r.source = QStringLiteral("generator ") + QFileInfo(l->sourcePath).completeBaseName(); break;
             case SourceType::Text: r.source = QStringLiteral("text ") + l->text.content.left(40).replace('\n', ' '); break;
@@ -1242,6 +1255,13 @@ void MainWindow::refreshLayerList()
                 break;
             case SourceType::Tox:
                 r.source = QStringLiteral("TouchDesigner ") + QFileInfo(l->sourcePath).fileName();
+                break;
+            case SourceType::Model:
+                r.source = QStringLiteral("3D model ") + QFileInfo(l->sourcePath).fileName() +
+                           (l->model ? QStringLiteral(" · %1 triangles").arg(l->model->triangleCount()) : QString());
+                break;
+            case SourceType::Light:
+                r.source = QStringLiteral("light · ") + QStringList{"directional", "point", "spot"}.value(l->light.type);
                 break;
             case SourceType::Web:
                 r.source = QStringLiteral("web ") + (l->web.url.isEmpty() ? QStringLiteral("(blank)") : l->web.url.left(60));
@@ -1599,6 +1619,31 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     }
     {
         Engine::Lock lk(&m_engine->mutex());
+        if (m_engine->layer(i)->isGroup && m_engine->layer(i)->scene3d && Model3D::isModelFile(path)) {
+            lk.unlock(); // a model dropped onto a 3D scene: a new object of it
+            const quint64 sid = m_engine->layerId(i);
+            m_undo->beginMacro(QStringLiteral("Add \"%1\" to 3D Scene").arg(fi.fileName()));
+            const int li = m_engine->addLayer(fi.completeBaseName(), i + 1);
+            m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("Add Model")));
+            const quint64 id = m_engine->layerId(li);
+            const QJsonObject before = m_engine->layerJson(li);
+            QString err;
+            const bool ok = m_engine->setLayerModel(li, path, &err);
+            if (ok) {
+                m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("Load \"%1\"").arg(fi.fileName())));
+                const LayerTree t = m_engine->structure();
+                const LayerTree after = tree::intoGroup(t, {id}, sid);
+                if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Into 3D Scene")));
+            }
+            m_undo->endMacro();
+            if (!ok) {
+                m_undo->undo();
+                return fail(err);
+            }
+            selectLayer(m_engine->indexOfId(id));
+            refreshAll();
+            return true;
+        }
         if (m_engine->layer(i)->isGroup) {
             lk.unlock();
             statusBar()->showMessage(QStringLiteral("A group has no source: drop the media onto one of its layers."), 6000);
@@ -1610,6 +1655,19 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
                                                     "Drop the media onto a layer."), 6000);
             return false;
         }
+    }
+    // 3D: a model goes into a 3D scene (one is made around it); a scene's objects take models only
+    const bool modelFile = Model3D::isModelFile(path);
+    bool inScene = false;
+    {
+        const LayerTree t = m_engine->structure();
+        const int g = t[size_t(i)].parent ? tree::indexOf(t, t[size_t(i)].parent) : -1;
+        inScene = g >= 0 && t[size_t(g)].role == TreeNode::Scene3d;
+    }
+    if (inScene && !modelFile) {
+        statusBar()->showMessage(QStringLiteral("A 3D scene holds models (FBX, glTF, OBJ) and lights: drop this onto a layer "
+                                                "outside it."), 6000);
+        return false;
     }
     const QJsonObject before = m_engine->layerJson(i);
     const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
@@ -1626,8 +1684,16 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         Layer *l = m_engine->layer(i);
         if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = shown;
     }
+    const bool wrap = modelFile && !inScene;
+    if (wrap) m_undo->beginMacro(QStringLiteral("Load \"%1\" into a 3D Scene").arg(fi.fileName()));
     m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(streamUrl.isEmpty() ? fi.fileName() : shown),
                                        beforeAnimations));
+    if (wrap) {
+        const quint64 id = m_engine->layerId(i);
+        wrapInScene(i);
+        m_undo->endMacro();
+        i = m_engine->indexOfId(id);
+    }
     selectLayer(i);
     refreshAll();
     if (!err.isEmpty()) statusBar()->showMessage(fi.fileName() + QStringLiteral(": ") + err.section('\n', 0, 0), 8000);
@@ -1644,6 +1710,7 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
         if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
+            Model3D::isPrimitivePath(p) ||
             !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
@@ -1710,6 +1777,12 @@ void MainWindow::addEmptyLayer()
     const int cur = currentLayer();
     if (cur >= 0 && m_engine->groupIndexOf(cur) >= 0) at = cur;
     if (cur >= 0 && m_engine->groupIndexOf(cur) >= 0 && m_engine->isLocked(m_engine->groupIndexOf(cur))) at = 0;
+    { // a 3D scene holds no 2D layer: above the scene instead
+        const LayerTree t = m_engine->structure();
+        for (int g = at < int(t.size()) && t[size_t(at)].parent ? tree::indexOf(t, t[size_t(at)].parent) : -1; g >= 0;
+             g = t[size_t(g)].parent ? tree::indexOf(t, t[size_t(g)].parent) : -1)
+            if (t[size_t(g)].role == TreeNode::Scene3d) at = g;
+    }
     int i = m_engine->addLayer(QString(), at);
     m_undo->push(new cmd::AddLayer(m_engine, i, QStringLiteral("Add Layer")));
     selectLayer(i);
@@ -1951,6 +2024,8 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
     addPasteMenu(&menu, onLayer && !locked, group);
     menu.addSeparator();
     menu.addAction(QStringLiteral("New Layer"), this, &MainWindow::addEmptyLayer);
+    menu.addSeparator();
+    fill3dMenu(&menu);
     menu.exec(globalPos);
 }
 
@@ -1983,7 +2058,7 @@ void MainWindow::moveCurrentLayer(int delta)
         }
     }
     const LayerTree after = tree::moved(t, {cur.id}, before, cur.parent);
-    if (after == t) return;
+    if (after == t || refuse3d(after)) return;
     m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Reorder Layers")));
     selectLayer(m_engine->indexOfId(cur.id));
 }
@@ -2010,7 +2085,7 @@ void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
     const quint64 before = beforeRow >= 0 && beforeRow < int(t.size()) ? t[size_t(beforeRow)].id : 0;
     const quint64 parent = parentRow >= 0 && parentRow < int(t.size()) ? t[size_t(parentRow)].id : 0;
     const LayerTree after = tree::moved(t, ids, before, parent);
-    if (after == t) return;
+    if (after == t || refuse3d(after)) return;
     const bool into = parent && std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].parent != parent; });
     m_undo->push(new cmd::SetStructure(m_engine, t, after, into ? QStringLiteral("Move into Group") : QStringLiteral("Move Layers")));
     selectLayer(m_engine->indexOfId(ids.front()));
@@ -2028,6 +2103,12 @@ void MainWindow::createGroup()
         if (at < 0 || r < at) at = r; // the new group goes where the first of them is, in the same group
     }
     if (at < 0) at = 0;
+    // A 3D object stays in its scene, and a scene holds no group
+    const bool inScene = at < int(t.size()) && t[size_t(at)].parent && t[size_t(tree::indexOf(t, t[size_t(at)].parent))].role == TreeNode::Scene3d;
+    if (inScene || std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].role == TreeNode::Object3d; })) {
+        statusBar()->showMessage(QStringLiteral("A 3D scene holds models and lights only: its objects cannot be grouped."), 5000);
+        return;
+    }
     m_undo->beginMacro(QStringLiteral("New Group"));
     const int gi = m_engine->addGroup(QString(), at);
     m_undo->push(new cmd::AddLayer(m_engine, gi, QStringLiteral("New Group")));
@@ -2043,6 +2124,110 @@ void MainWindow::createGroup()
                              4000);
 }
 
+// New 3D Scene; Add Light (a scene or one of its objects selected); Import 3D Model… (into the selected scene, or a new
+// one)
+void MainWindow::fill3dMenu(QMenu *menu)
+{
+    menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    const int cur = currentLayer();
+    bool inScene = false;
+    if (cur >= 0) {
+        const LayerTree t = m_engine->structure();
+        const int g = t[size_t(cur)].role == TreeNode::Scene3d ? cur : t[size_t(cur)].parent ? tree::indexOf(t, t[size_t(cur)].parent) : -1;
+        inScene = g >= 0 && t[size_t(g)].role == TreeNode::Scene3d;
+    }
+    QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
+    light->setEnabled(inScene);
+    menu->addAction(QStringLiteral("Import 3D Model…"), this, [this, inScene] {
+        QStringList ext;
+        for (const QString &e : Model3D::extensions()) ext << QStringLiteral("*.") + e;
+        QSettings s;
+        const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("Import 3D Model"), s.value("dirs/model").toString(),
+                                                       QStringLiteral("3D Models (%1)").arg(ext.join(' ')));
+        if (f.isEmpty()) return;
+        s.setValue("dirs/model", QFileInfo(f).absolutePath());
+        m_bin->importFiles({f});
+        int target = currentLayer();
+        if (inScene) {
+            const LayerTree t = m_engine->structure();
+            if (t[size_t(target)].role != TreeNode::Scene3d) target = tree::indexOf(t, t[size_t(target)].parent);
+            loadIntoLayer(target, f); // a new object of that scene
+        } else {
+            loadIntoNewLayer(f); // a new scene around it
+        }
+    });
+}
+
+bool MainWindow::refuse3d(const LayerTree &after)
+{
+    if (tree::valid3d(after)) return false;
+    statusBar()->showMessage(QStringLiteral("A 3D scene holds models and lights only, and they stay in it."), 5000);
+    return true;
+}
+
+int MainWindow::addLightLayer(int scene)
+{
+    const quint64 sid = m_engine->layerId(scene);
+    int count = 0;
+    for (int m : m_engine->groupMembers(scene)) {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m); l && l->type == SourceType::Light) ++count;
+    }
+    const int li = m_engine->addLayer(QStringLiteral("Light %1").arg(count + 1), scene + 1);
+    m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("Add Light")));
+    const QJsonObject before = m_engine->layerJson(li);
+    m_engine->setLayerLight(li);
+    m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("Add Light"), {}));
+    const quint64 lid = m_engine->layerId(li);
+    const LayerTree t = m_engine->structure();
+    const LayerTree after = tree::intoGroup(t, {lid}, sid);
+    if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Add Light")));
+    return m_engine->indexOfId(lid);
+}
+
+void MainWindow::createScene()
+{
+    int at = currentLayer();
+    if (at < 0) at = 0;
+    m_undo->beginMacro(QStringLiteral("New 3D Scene"));
+    const int si = m_engine->addScene(QString(), at);
+    m_undo->push(new cmd::AddLayer(m_engine, si, QStringLiteral("New 3D Scene")));
+    const quint64 sid = m_engine->layerId(si);
+    addLightLayer(si);
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(sid));
+    statusBar()->showMessage(QStringLiteral("3D scene created: drop an FBX, glTF or OBJ onto it to add a model."), 5000);
+}
+
+void MainWindow::addLightToScene()
+{
+    int s = currentLayer();
+    if (s < 0) return;
+    const LayerTree t = m_engine->structure();
+    if (t[size_t(s)].role != TreeNode::Scene3d) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+    if (s < 0 || t[size_t(s)].role != TreeNode::Scene3d) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene (or one of its objects) to add a light to it."), 4000);
+        return;
+    }
+    if (refuseLocked(s)) return;
+    m_undo->beginMacro(QStringLiteral("Add Light"));
+    const int li = addLightLayer(s);
+    m_undo->endMacro();
+    selectLayer(li);
+}
+
+void MainWindow::wrapInScene(int layer)
+{
+    const quint64 id = m_engine->layerId(layer);
+    const int si = m_engine->addScene(QString(), layer);
+    m_undo->push(new cmd::AddLayer(m_engine, si, QStringLiteral("New 3D Scene")));
+    const quint64 sid = m_engine->layerId(si);
+    const LayerTree t = m_engine->structure();
+    const LayerTree after = tree::intoGroup(t, {id}, sid);
+    if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Into 3D Scene")));
+    addLightLayer(m_engine->indexOfId(sid));
+}
+
 void MainWindow::ungroupCurrent()
 {
     int g = currentLayer();
@@ -2052,6 +2237,7 @@ void MainWindow::ungroupCurrent()
     if (g < 0) return;
     if (!t[size_t(g)].isGroup() || refuseLocked(g)) return;
     const quint64 gid = t[size_t(g)].id;
+    if (refuse3d(tree::ungrouped(t, gid))) return;
     m_undo->beginMacro(QStringLiteral("Ungroup"));
     m_undo->push(new cmd::SetStructure(m_engine, t, tree::ungrouped(t, gid), QStringLiteral("Ungroup")));
     m_undo->push(new cmd::RemoveLayer(m_engine, m_engine->indexOfId(gid)));
