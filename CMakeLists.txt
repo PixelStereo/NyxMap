@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 include(cmake/Version.cmake)
-project(NyxMap VERSION ${NYXMAP_VERSION_NUMERIC} LANGUAGES CXX)
+project(NyxMap VERSION ${NYXMAP_VERSION_NUMERIC} LANGUAGES C CXX) # C: ufbx.c
 configure_file(cmake/Version.h.in generated/NyxMapVersion.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)

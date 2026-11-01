@@ -422,6 +422,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_layerTable, &LayerTable::removeClicked, this, &MainWindow::removeCurrentLayer);
     connect(m_layerTable, &LayerTable::groupClicked, this, &MainWindow::createGroup);
+    connect(m_layerTable, &LayerTable::scene3dClicked, this, [this](QWidget *anchor) {
+        QMenu menu(this);
+        fill3dMenu(&menu);
+        menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
     connect(m_layerTable, &LayerTable::viewportClicked, this, &MainWindow::addViewport);
     connect(m_layerTable, &LayerTable::lockToggled, this, [this](int row) {
         if (m_engine->groupIndexOf(row) >= 0 && m_engine->isLocked(m_engine->groupIndexOf(row))) { // any group above
@@ -2014,6 +2019,8 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
     addPasteMenu(&menu, onLayer && !locked, group);
     menu.addSeparator();
     menu.addAction(QStringLiteral("New Layer"), this, &MainWindow::addEmptyLayer);
+    menu.addSeparator();
+    fill3dMenu(&menu);
     menu.exec(globalPos);
 }
 
@@ -2110,6 +2117,40 @@ void MainWindow::createGroup()
     statusBar()->showMessage(ids.empty() ? QStringLiteral("Empty group created: drag layers onto it.")
                                          : QStringLiteral("Group created with %1 layer(s).").arg(ids.size()),
                              4000);
+}
+
+// New 3D Scene; Add Light (a scene or one of its objects selected); Import 3D Model… (into the selected scene, or a new
+// one)
+void MainWindow::fill3dMenu(QMenu *menu)
+{
+    menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    const int cur = currentLayer();
+    bool inScene = false;
+    if (cur >= 0) {
+        const LayerTree t = m_engine->structure();
+        const int g = t[size_t(cur)].role == TreeNode::Scene3d ? cur : t[size_t(cur)].parent ? tree::indexOf(t, t[size_t(cur)].parent) : -1;
+        inScene = g >= 0 && t[size_t(g)].role == TreeNode::Scene3d;
+    }
+    QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
+    light->setEnabled(inScene);
+    menu->addAction(QStringLiteral("Import 3D Model…"), this, [this, inScene] {
+        QStringList ext;
+        for (const QString &e : Model3D::extensions()) ext << QStringLiteral("*.") + e;
+        QSettings s;
+        const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("Import 3D Model"), s.value("dirs/model").toString(),
+                                                       QStringLiteral("3D Models (%1)").arg(ext.join(' ')));
+        if (f.isEmpty()) return;
+        s.setValue("dirs/model", QFileInfo(f).absolutePath());
+        m_bin->importFiles({f});
+        int target = currentLayer();
+        if (inScene) {
+            const LayerTree t = m_engine->structure();
+            if (t[size_t(target)].role != TreeNode::Scene3d) target = tree::indexOf(t, t[size_t(target)].parent);
+            loadIntoLayer(target, f); // a new object of that scene
+        } else {
+            loadIntoNewLayer(f); // a new scene around it
+        }
+    });
 }
 
 bool MainWindow::refuse3d(const LayerTree &after)

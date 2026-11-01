@@ -652,6 +652,7 @@ public:
         QString path;
         bool video = false;      // video file
         bool audio = false;      // audio file (neither: image)
+        bool model = false;      // 3D model (FBX, glTF, GLB, OBJ)
         bool missing = false;
         bool imported = false;   // added to the media bin by the user
         QStringList users;       // "Layer" or "Layer › FX"
