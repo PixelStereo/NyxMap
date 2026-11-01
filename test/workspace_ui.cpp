@@ -779,6 +779,24 @@ int main(int argc, char **argv)
                 check(std::abs(opacityOf(ids[0]) - .6) < 1e-6 && std::abs(opacityOf(ids[2]) - .6) < 1e-6,
                       "paste reaches every selected layer");
             }
+            // Deselecting: Cmd / Ctrl + click on the current row moves the current one to the row still selected,
+            // and an empty selection survives the list refreshing
+            table->clearSelection();
+            table->setCurrentCell(a, 4);
+            table->selectionModel()->select(table->model()->index(c, 0),
+                                            QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            table->selectionModel()->select(table->model()->index(a, 0),
+                                            QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+            app.processEvents();
+            check(table->currentRow() == c, "deselecting the current row makes the selected one current");
+            table->selectionModel()->select(table->model()->index(c, 0),
+                                            QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+            app.processEvents();
+            check(table->currentRow() == -1, "deselecting the last row leaves no current layer");
+            emit engine.layersChanged();
+            app.processEvents();
+            check(table->currentRow() == -1 && table->selectionModel()->selectedRows().isEmpty(),
+                  "a deselected list stays empty after a refresh");
             // Viewports: several selected in their list, pasted onto together and edited together
             auto *tabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *viewportList = window.findChild<QListWidget *>("viewportList");

@@ -1279,11 +1279,14 @@ void MainWindow::refreshLayerList()
     const int n = int(rows.size());
     int keep = qBound(-1, m_layerTable->currentRow(), n - 1);
     if (keep >= 0 && rows[size_t(keep)].viewport) keep = -1;
+    const bool filled = m_listedRows == 0 && n > 0; // the list was empty (a project opened, the first layer made)
+    m_listedRows = n;
     m_layerTable->setRows(rows);
-    // Nothing selected yet: the first layer below the viewports (or the first viewport)
+    // A list just filled: its first layer below the viewports (or the first viewport). Otherwise what the user chose,
+    // nothing included: a layer deselected stays deselected
     int firstLayer = 0;
     while (firstLayer < n && rows[size_t(firstLayer)].viewport) ++firstLayer;
-    const int sel = keep >= 0 ? keep : n == 0 ? -1 : firstLayer < n ? firstLayer : -1;
+    const int sel = keep >= 0 ? keep : filled && firstLayer < n ? firstLayer : -1;
     if (sel != m_layerTable->currentRow()) m_layerTable->setCurrentRow(sel);
     // By index and by id: an opened project may put another layer at the same index (its edits would be lost)
     if (sel != m_inspector->layerIndex() || (sel >= 0 && m_engine->layerId(sel) != m_inspector->layerId())) {
@@ -2315,6 +2318,10 @@ void MainWindow::afterProjectLoaded(const QJsonObject &ui)
     m_composition->syncFromEngine();
     m_bin->refresh();
     m_snapshots->clearActive(); // the "recalled last" marker belonged to the previous project
+    // The list starts afresh: its first layer chosen, then the one the project saved (a viewport leaves that first layer)
+    m_listedRows = 0;
+    m_layerTable->setCurrentRow(-1);
+    refreshLayerList();
     selectLayer(qBound(-1, ui.value("selected_layer").toInt(0), m_engine->layerCount() - 1));
     applyViews(ui.value("views").toObject()); // how many views, what each shows, their zoom, as saved
     updateTitle();
