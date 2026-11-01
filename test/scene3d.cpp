@@ -96,6 +96,13 @@ int runScene3dTests(Engine &engine)
     engine.setParameter(model, "enable", false);
     check(center().lightness() == 0, "a hidden model is not drawn");
     engine.setParameter(model, "enable", true);
+    engine.renderFrame();
+    check(engine.grabOutput().pixelColor(20, 32).lightness() > 0, "the cube reaches aside the middle");
+    engine.setParameter(model, "model/scale/x", 0.1);
+    engine.renderFrame();
+    check(engine.grabOutput().pixelColor(20, 32).lightness() == 0 && engine.grabOutput().pixelColor(32, 32).lightness() > 0,
+          "scaled along X only, it narrows and stays in the middle");
+    engine.setParameter(model, "model/scale/x", 1.0);
     engine.setParameter(model, "model/position/x", 5.0);
     check(center().lightness() == 0, "a model moved aside leaves the middle");
     engine.setParameter(model, "model/position/x", 0.0);

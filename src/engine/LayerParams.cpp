@@ -682,7 +682,9 @@ const std::vector<Parameter *> &Layer::parameters()
             f3("model/rotation/" + xyz[a], "Model › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)])
                 .step(0.1)
                 .ramp(Parameter::Ramp::Angle);
-        f3("model/scale", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
+        f3("model/scale/all", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
     }
     if (type == SourceType::Light) {
         LightSettings *lt = &light;

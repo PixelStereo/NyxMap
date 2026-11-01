@@ -25,7 +25,8 @@ struct ModelPlacement {
     bool fit = true; // centered and brought to a unit size first
     std::array<float, 3> position{{0, 0, 0}};
     std::array<float, 3> rotation{{0, 0, 0}}; // degrees, around X, Y then Z
-    float scale = 1;
+    float scale = 1;                          // all of it, times its scale along each axis
+    std::array<float, 3> axisScale{{1, 1, 1}};
 };
 
 // A light of a scene

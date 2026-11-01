@@ -1416,7 +1416,9 @@ bool Engine::setLayerModel(int i, const QString &path, QString *err)
         g = detachSource(*l);
         l->type = SourceType::Model;
         l->model = std::move(model);
-        l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        // a primitive keeps its virtual path (made absolute, it would take a drive letter on Windows)
+        l->sourcePath = Model3D::isPrimitivePath(path) ? Model3D::primitivePath(path.section('/', -1))
+                                                       : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         l->srcWidth = m_compSize.width();
         l->srcHeight = m_compSize.height();
     }

@@ -534,7 +534,7 @@ QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
     m.rotate(p.rotation[2], 0, 0, 1);
     m.rotate(p.rotation[1], 0, 1, 0);
     m.rotate(p.rotation[0], 1, 0, 0);
-    m.scale(p.scale);
+    m.scale(p.scale * p.axisScale[0], p.scale * p.axisScale[1], p.scale * p.axisScale[2]);
     if (p.fit) {
         m.scale(1.0f / m_radius);
         m.translate(-m_center);

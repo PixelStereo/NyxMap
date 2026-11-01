@@ -149,7 +149,9 @@ int runScene3dUiTests(Engine &engine)
     const QStringList objectTabs = tabNames();
     check(objectTabs.contains("3D") && !objectTabs.contains("Spatial") && !objectTabs.contains("FX"),
           "a model's inspector shows its 3D values, not a picture's tabs");
-    check(inspector && inspector->findChild<SliderField *>("param3d:model/scale"), "the model's scale is a bar");
+    check(inspector && inspector->findChild<SliderField *>("param3d:model/scale/all") &&
+              inspector->findChild<SliderField *>("param3d:model/scale/x") && inspector->findChild<SliderField *>("param3d:model/scale/z"),
+          "the model's scale, overall and along each axis, are bars");
     // A primitive from the Media Bin dropped onto a plain layer: into a new scene
     select(engine.indexOfId(plain));
     emit list->filesDropped(engine.indexOfId(plain), {Model3D::primitivePath("Sphere")});
