@@ -90,6 +90,9 @@ private:
     void fillFixtures(const QJsonArray &fixtures); // their part: each one, on / off, solo, intensity
     void setFixtureIncluded(int i, quint64 id, bool included);
     void refreshRows(); // value and time texts of the tree, after an edit (no rebuild)
+    QJsonValue liveValue(const MemField &f) const; // the value it stores, as it is now (undefined: not a live value)
+    void markChanged(); // the stored values no longer at their live value: orange, as in a preset
+    void updateWithLive(); // the selected values take their live value
     int selected() const;
     int indexOf(QTreeWidgetItem *it) const;  // the snapshot a row shows (-1: a group, none)
     QTreeWidgetItem *itemOf(int i) const;     // the row of a snapshot

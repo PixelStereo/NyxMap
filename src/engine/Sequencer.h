@@ -179,6 +179,9 @@ public:
     bool goSequence(int index);
     bool backSequence(int index);
     bool goToStepOf(int index, int step);
+    // A step of a sequence made the one GO plays next: the step played and the show are left as they are. Its GO is then
+    // a jump (with tracking, the steps before it are played at once first); any GO or jump drops it
+    bool loadAsNext(int index, int step);
     void stopSequence(int index);
     bool goById(quint64 id);
     bool backById(quint64 id);
@@ -243,6 +246,8 @@ private:
     std::vector<Sequence> m_sequences;
     int m_current = -1; // UI selection only, never the owner of all active runs
     std::vector<int> m_positions; // playhead per sequence (not persisted)
+    std::map<quint64, quint64> m_loadedNext; // sequence id → the step GO plays next (Load as Next), by its runtime id
+    int loadedNextLocked(int index) const;   // under m_mutex; -1: none
     std::vector<quint64> m_sequenceIds; // runtime identity, aligned with m_sequences
     quint64 m_nextSequenceId = 1;
     quint64 m_nextStepId = 1;

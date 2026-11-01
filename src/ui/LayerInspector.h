@@ -143,6 +143,13 @@ private:
     bool m_locked = false;
     QVBoxLayout *m_layout = nullptr;
     QWidget *m_content = nullptr;
+    // Above the part that scrolls, always shown: the layer picker, the selection note, Enable / lock / Solo / name
+    QWidget *m_pinned = nullptr;
+    QVBoxLayout *m_pinnedLayout = nullptr;
+    QWidget *m_head = nullptr; // its Enable / lock / Solo / name row, made again with the rest
+public:
+    QWidget *pinnedHeader() const { return m_pinned; } // laid out by the window above the inspector's scroll area
+private:
 
     QPointer<QWidget> m_fxDetail;
     QPointer<SliderField> m_position, m_speed;

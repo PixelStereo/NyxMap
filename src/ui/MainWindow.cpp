@@ -133,7 +133,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_composition->setUndoStack(m_undo);
     m_tabs = new QTabWidget;
     m_tabs->setObjectName(QStringLiteral("mainInspectorTabs"));
-    m_tabs->addTab(scrolled(m_inspector), QStringLiteral("Layer"));
+    // The layer's tab: its header pinned at the top (picker, Enable / lock / Solo / name), the rest scrolling under it
+    auto *layerPage = new QWidget;
+    auto *layerColumn = new QVBoxLayout(layerPage);
+    layerColumn->setContentsMargins(0, 0, 0, 0);
+    layerColumn->setSpacing(0);
+    layerColumn->addWidget(m_inspector->pinnedHeader());
+    layerColumn->addWidget(scrolled(m_inspector), 1);
+    m_tabs->addTab(layerPage, QStringLiteral("Layer"));
     auto *viewportPage = new QWidget;
     auto *viewportLayout = new QVBoxLayout(viewportPage);
     viewportLayout->setContentsMargins(0, 0, 0, 0);
@@ -295,7 +302,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
     cv->setSpacing(0);
-    auto *previews = new PreviewWorkspace(m_engine, m_view);
+    auto *previews = m_previews = new PreviewWorkspace(m_engine, m_view);
+    // The views travel with the project, and with the presets (and the snapshots, as the settings say) that hold them
+    m_engine->setViewProvider([this] { return viewsState(); });
+    connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
     connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
     cv->addWidget(m_seqBar);
@@ -2260,7 +2270,26 @@ QJsonObject MainWindow::uiState() const
 {
     QJsonObject o;
     o["selected_layer"] = currentLayer();
+    o["views"] = viewsState();
     return o;
+}
+
+QJsonObject MainWindow::viewsState() const
+{
+    QJsonObject o = m_previews->state();
+    const int layer = currentLayer();
+    o["layer"] = QString::number(layer >= 0 ? m_engine->layerId(layer) : 0);
+    return o;
+}
+
+void MainWindow::applyViews(const QJsonObject &views)
+{
+    if (views.isEmpty()) return;
+    m_previews->setState(views);
+    if (views.contains("layer")) {
+        const int index = m_engine->indexOfId(views.value("layer").toString().toULongLong());
+        if (index >= 0) selectLayer(index);
+    }
 }
 
 bool MainWindow::maybeSave()
@@ -2287,6 +2316,7 @@ void MainWindow::afterProjectLoaded(const QJsonObject &ui)
     m_bin->refresh();
     m_snapshots->clearActive(); // the "recalled last" marker belonged to the previous project
     selectLayer(qBound(-1, ui.value("selected_layer").toInt(0), m_engine->layerCount() - 1));
+    applyViews(ui.value("views").toObject()); // how many views, what each shows, their zoom, as saved
     updateTitle();
 }
 

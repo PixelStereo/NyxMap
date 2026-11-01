@@ -418,6 +418,17 @@ void Engine::clearAnimationFilterHistory(quint64 layer, quint64 animation)
     }
 }
 
+bool Engine::animationFilterSignal(quint64 layer, quint64 animation, const QString &path, double *input,
+                                   std::vector<double> *stages) const
+{
+    Lock lk(&m_mutex);
+    const auto it = m_animationFilters.constFind(QString::number(layer) + ":" + QString::number(animation) + ":" + path);
+    if (it == m_animationFilters.constEnd() || !it->processor.level()) return false;
+    if (input) *input = *it->processor.level();
+    if (stages) *stages = it->processor.stageOutputs();
+    return true;
+}
+
 double Engine::filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
                                     double raw, double dt, double played)
 {

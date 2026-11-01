@@ -6,6 +6,7 @@
 #include "Widgets.h"
 #include <QComboBox>
 #include <QGridLayout>
+#include <QJsonArray>
 #include <QMenu>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
@@ -65,6 +66,19 @@ public:
         update();
     }
     double zoom() const { return m_zoom; }
+    QJsonObject viewState() const
+    {
+        return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_fixturesButton->isChecked()}};
+    }
+    void setViewState(const QJsonObject &o)
+    {
+        if (o.contains("zoom")) m_zoom = std::clamp(o.value("zoom").toDouble(1.0), 0.25, 64.0);
+        const QJsonArray pan = o.value("pan").toArray();
+        if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
+        if (o.contains("fixtures")) m_fixturesButton->setChecked(o.value("fixtures").toBool());
+        m_bar->setZoom(m_zoom);
+        update();
+    }
 
 protected:
     void initializeGL() override { m_draw.init(); }
@@ -195,7 +209,7 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto *count = new QComboBox;
+    auto *count = m_countBox = new QComboBox;
     count->setObjectName(QStringLiteral("previewLayout"));
     count->addItems({QStringLiteral("1 view"), QStringLiteral("2 views"), QStringLiteral("3 views"), QStringLiteral("4 views")});
     layout->addWidget(count);
@@ -271,4 +285,32 @@ void PreviewWorkspace::setCount(int count)
 void PreviewWorkspace::refreshFrames()
 {
     for (int slot = 0; slot < m_count; ++slot) m_cells[size_t(slot)].picture->update();
+}
+
+QJsonObject PreviewWorkspace::state() const
+{
+    QJsonArray cells;
+    for (const Cell &c : m_cells)
+        cells.append(QJsonObject{{"source", QString::number(c.id)}, {"view", c.picture->viewState()}});
+    return {{"count", m_count}, {"cells", cells}, {"mapping", m_mapping->viewState()}};
+}
+
+void PreviewWorkspace::setState(const QJsonObject &o)
+{
+    const QJsonArray cells = o.value("cells").toArray();
+    for (int slot = 0; slot < int(m_cells.size()) && slot < cells.size(); ++slot) {
+        const QJsonObject c = cells[slot].toObject();
+        const quint64 id = c.value("source").toString().toULongLong();
+        QString label = QStringLiteral("Composition");
+        if (id) {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *layer = m_engine->layer(m_engine->indexOfId(id));
+            if (!layer) continue; // gone: the view keeps what it shows
+            label = layer->name;
+        }
+        selectSource(slot, id, label);
+        m_cells[size_t(slot)].picture->setViewState(c.value("view").toObject());
+    }
+    if (o.contains("mapping")) m_mapping->setViewState(o.value("mapping").toObject());
+    if (o.contains("count")) m_countBox->setCurrentIndex(std::clamp(o.value("count").toInt(1), 1, 4) - 1);
 }

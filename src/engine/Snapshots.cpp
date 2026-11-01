@@ -443,6 +443,7 @@ void Engine::recallPreset(int i)
 {
     const Preset p = preset(i);
     if (!p.id) return;
+    if (!p.views.isEmpty()) emit viewsRecalled(p.views);
     resumeAfterStop();
     const double fade = std::max(0.0, p.fade);
     std::map<quint64, QJsonObject> meshes; // the meshes it holds, by layer: moved there below, not set at once
@@ -925,6 +926,7 @@ void Engine::recallSnapshotCopy(const Snapshot &m, int i)
     if (!m.id) return;
     resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
+    if (!m.views.isEmpty()) emit viewsRecalled(m.views);
     if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && m.fixtures.isEmpty() &&
         interactions().empty())
         return;
@@ -1616,6 +1618,7 @@ QJsonObject Engine::snapshotToJson(const Snapshot &m, const QString &dir) const
     if (!m.composition.isEmpty()) out["composition"] = m.composition;
     if (!m.interactions.isEmpty()) out["interactions"] = m.interactions;
     if (!m.fixtures.isEmpty()) out["fixtures"] = m.fixtures;
+    if (!m.views.isEmpty()) out["views"] = m.views;
     if (!m.thumbnail.isNull()) {
         QByteArray png;
         QBuffer buf(&png);
@@ -1637,6 +1640,7 @@ Engine::Snapshot Engine::snapshotFromJson(const QJsonObject &o, const QString &d
     m.composition = o.value("composition").toObject();
     m.interactions = o.value("interactions").toArray();
     m.fixtures = o.value("fixtures").toArray();
+    m.views = o.value("views").toObject();
     for (const QJsonValue &v : o.value("layers").toArray()) {
         QJsonObject l = v.toObject();
         auto resolve = [&](QJsonObject x) {

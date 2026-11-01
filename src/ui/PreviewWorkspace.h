@@ -1,5 +1,6 @@
 #pragma once
 #include <QWidget>
+#include <QJsonObject>
 #include <array>
 class Engine;
 class MappingView;
@@ -15,6 +16,9 @@ public:
     PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget *parent = nullptr);
     ~PreviewWorkspace() override;
     void refreshFrames();
+    // What it shows: how many views, each one's source, zoom, pan and fixtures, the mapping view's (a project, a preset)
+    QJsonObject state() const;
+    void setState(const QJsonObject &o);
 private:
     void setCount(int count);
     void selectSource(int slot, quint64 id, const QString &label);
@@ -30,4 +34,5 @@ private:
     };
     std::array<Cell, 4> m_cells;
     int m_count = 1;
+    class QComboBox *m_countBox = nullptr;
 };

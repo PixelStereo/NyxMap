@@ -717,7 +717,8 @@ int main(int argc, char **argv)
                                             QItemSelectionModel::Select | QItemSelectionModel::Rows);
             app.processEvents();
             check(inspector->coTargets() == QList<quint64>{ids[2]}, "inspector knows the other selected layer");
-            auto *note = inspector->findChild<QLabel *>("multiSelectionNote");
+            // In the header pinned above the inspector's scroll area
+            auto *note = inspector->pinnedHeader()->findChild<QLabel *>("multiSelectionNote");
             check(note && note->isVisible(), "inspector says the edit applies to the whole selection");
             auto *sourceSpace = inspector->findChild<QComboBox *>("sourceColorSpace");
             check(sourceSpace && sourceSpace->findData("displayp3") >= 0, "source interpretation control is present");

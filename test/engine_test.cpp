@@ -5,6 +5,7 @@
 #include "LogModel.h"
 #include "DeckLink.h"
 #include "Engine.h"
+#include "EngineInternal.h"
 #include "ImageFile.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
@@ -2626,6 +2627,37 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.advanceFades(5);
             CHECK(close(value("rotation"), -10) && close(value("opacity"), 0.9));
             CHECK(!e.sequencer().toJson().at(si).toObject().value("tracking").toBool(true));
+            // Load as Next: only the step GO plays next changes (the step played and the show stay); its GO is a jump,
+            // with tracking the steps before it played at once first
+            off.tracking = true;
+            e.sequencer().setSequence(si, off);
+            e.setParameter(t, "rotation", -10.0);
+            e.setParameter(t, "position/x", 100.0);
+            e.sequencer().setCurrent(si);
+            e.sequencer().goToStepOf(si, 0); // the snapshot: the step played is the first
+            e.advanceFades(5);
+            e.setParameter(t, "rotation", -10.0);
+            CHECK(e.sequencer().loadAsNext(si, 3));
+            CHECK(e.sequencer().next() == 3 && e.sequencer().positionOf(si) == 0 && close(value("rotation"), -10));
+            CHECK(e.sequencer().go() && e.sequencer().positionOf(si) == 3 && close(value("rotation"), 45));
+            CHECK(e.sequencer().next() != 3 || e.sequencer().sequence(si).loop);
+            e.advanceFades(5);
+            CHECK(close(value("position/x"), 300));
+            // A preset can hold the views: saved with it, handed back when it is recalled
+            {
+                Engine::Preset withViews = e.preset(e.indexOfPreset(show.steps[1].preset));
+                withViews.views = QJsonObject{{"count", 2}};
+                std::vector<Engine::Preset> all = e.presets();
+                for (auto &x : all)
+                    if (x.id == withViews.id) x = withViews;
+                e.setPresets(all);
+                QJsonObject shown;
+                auto c = QObject::connect(&e, &Engine::viewsRecalled, [&](const QJsonObject &v) { shown = v; });
+                e.recallPreset(e.indexOfPreset(withViews.id));
+                QObject::disconnect(c);
+                CHECK(shown.value("count").toInt() == 2);
+                CHECK(presetFromJson(presetToJson(withViews)).views == withViews.views);
+            }
             e.sequencer().remove(si);
             e.removeLayer(e.indexOfId(t));
             e.setFadesManual(false);

@@ -314,6 +314,14 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         QSettings().setValue(kFollowKey, on);
         s_followFades = on ? 1 : 0;
     });
+    auto *snapshotViews = new FlagBox(QStringLiteral("Snapshots hold the views"));
+    snapshotViews->setObjectName(QStringLiteral("snapshotsHoldViews"));
+    snapshotViews->setChecked(QSettings().value(QStringLiteral("snapshots/views"), false).toBool());
+    lookForm->addRow(snapshotViews);
+    lookForm->addRow(note(QStringLiteral("On: a snapshot stored or updated keeps the views as they are (how many, what "
+                                         "each shows, zoom, fixtures, the layer selected) and shows them again when it is "
+                                         "recalled. Off: the views are left alone. A preset can always hold them.")));
+    connect(snapshotViews, &QCheckBox::toggled, this, [](bool on) { QSettings().setValue(QStringLiteral("snapshots/views"), on); });
     connect(swatch, &QPushButton::clicked, this, [this, paintSwatch] {
         const QColor c = ColorPicker::getColor(theme::accent(), this, QStringLiteral("Accent color"),
                                                QStringLiteral("ui/colorPickerMode/settings/accent"), false);

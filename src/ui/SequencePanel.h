@@ -145,6 +145,7 @@ private:
     QCheckBox *m_loop, *m_beats;
     QCheckBox *m_tracking; // a jump plays first what the steps before it leave
     QToolButton *m_clock;  // the clock its steps' timecodes are on
+    class QTabWidget *m_tabs; // Steps (of the selected sequence), Sequences, Timelines
     class NumberBox *m_bpm;
     QPushButton *m_tap, *m_clockRun;
     QLabel *m_beatLabel;

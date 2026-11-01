@@ -330,7 +330,8 @@ public:
         setAcceptDrops(true);
         setAlignment(Qt::AlignCenter);
         setWordWrap(true);
-        setMinimumHeight(64);
+        setFixedHeight(76); // the same size whatever it shows: the inspector under it does not move
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         setHover(false);
     }
     // Loaded: it stands out (a filled, framed card), empty: a dashed outline; missing: in red
@@ -407,13 +408,19 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
 {
     m_layout = new QVBoxLayout(this);
     m_layout->setContentsMargins(8, 8, 8, 8);
+    m_pinned = new QWidget;
+    m_pinned->setObjectName(QStringLiteral("layerInspectorHeader"));
+    m_pinnedLayout = new QVBoxLayout(m_pinned);
+    m_pinnedLayout->setContentsMargins(8, 8, 8, 4);
+    m_pinnedLayout->setSpacing(6);
+    m_layout->addWidget(m_pinned); // on its own, at its top; the main window lays it above its scroll area
     buildPicker();
     m_multiNote = new QLabel;
     m_multiNote->setObjectName(QStringLiteral("multiSelectionNote"));
     m_multiNote->setWordWrap(true);
     m_multiNote->setStyleSheet("background:#3a3320; color:#f0d890; border-radius:3px; padding:4px 6px;");
     m_multiNote->hide();
-    m_layout->addWidget(m_multiNote);
+    m_pinnedLayout->addWidget(m_multiNote);
     // A number animated or no longer: the tabs again (the ∿ by its name); an edit of an animation: its card follows
     connect(engine, &Engine::layerAnimsChanged, this, [this](quint64 layer) {
         if (layer != m_layerId) return;
@@ -449,7 +456,7 @@ void LayerInspector::buildPicker()
     h->addWidget(m_pickerPrev);
     h->addWidget(m_picker, 1);
     h->addWidget(m_pickerNext);
-    m_layout->addWidget(row);
+    m_pinnedLayout->addWidget(row);
     connect(m_picker, qOverload<int>(&QComboBox::activated), this, [this](int k) {
         const quint64 id = m_picker->itemData(k).toULongLong();
         if (id && id != m_layerId) emit layerPickRequested(id);
@@ -707,6 +714,11 @@ void LayerInspector::rebuild()
         m_content->hide();
         m_content->deleteLater();
     }
+    if (m_head) {
+        m_head->hide();
+        m_head->deleteLater();
+        m_head = nullptr;
+    }
     m_content = new QWidget;
     m_textColors.clear();
     m_toxFields.clear();
@@ -738,8 +750,11 @@ void LayerInspector::rebuild()
     m_animate = new AnimateMenu(m_engine, m_undo, s.id, [this](const QString &p) { showAnimation(p); }, m_content);
     const QString kind = s.isViewport ? QStringLiteral("Viewport") : s.isGroup ? QStringLiteral("Group") : QStringLiteral("Layer");
     emit kindChanged(kind);
-    // Header: visibility, lock, name
-    auto *head = new QHBoxLayout;
+    // Header: visibility, lock, name (pinned above the part that scrolls)
+    m_head = new QWidget;
+    m_head->setObjectName(QStringLiteral("layerHeadRow"));
+    auto *head = new QHBoxLayout(m_head);
+    head->setContentsMargins(0, 0, 0, 0);
     auto *name = new QLineEdit(s.name);
     name->setStyleSheet("font-weight:bold; font-size:14px;");
     name->setToolTip(kind + QStringLiteral(" name"));
@@ -775,7 +790,7 @@ void LayerInspector::rebuild()
         }
         emit layerChanged();
     });
-    v->addLayout(head);
+    m_pinnedLayout->addWidget(m_head);
     connect(lock, &QToolButton::toggled, this, [this](bool on) {
         setProp(cmd::SetLayerProp::Locked, on);
         emit layerChanged();
