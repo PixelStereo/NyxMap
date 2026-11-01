@@ -26,7 +26,7 @@
 #include <cmath>
 #include <functional>
 
-enum Col { ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
@@ -188,6 +188,10 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *e) override
     {
+        if (!e->buttons()) { // over a handle: a hand, it can be dragged
+            const QPoint p = e->position().toPoint();
+            viewport()->setCursor(rowAt(p.y()) >= 0 && columnAt(p.x()) == ColHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        }
         if (m_pressRow >= 0 && (e->buttons() & Qt::LeftButton) &&
             (e->position().toPoint() - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
             QList<int> dragged;
@@ -379,11 +383,12 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onCollapse = [this](int row) { emit collapseToggled(row); };
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
-    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
                                         QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
+    m_table->horizontalHeaderItem(ColHandle)->setToolTip(QStringLiteral("Drag to reorder"));
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
@@ -396,8 +401,11 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);
     m_table->setIconSize(QSize(16, 16));
+    m_table->setMouseTracking(true); // the handles' hand
     auto *h = m_table->horizontalHeader();
     h->setHighlightSections(false);
+    h->setSectionResizeMode(ColHandle, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColHandle, 16);
     h->setSectionResizeMode(ColVisible, QHeaderView::Fixed);
     m_table->setColumnWidth(ColVisible, 30);
     h->setSectionResizeMode(ColLock, QHeaderView::Fixed);
@@ -514,6 +522,16 @@ void LayerTable::updateRow(int r, const Row &row)
         it->setToolTip(tip.isEmpty() ? t : tip);
         return it;
     };
+    // Its handle: dragged, the layer moves (in the list, into a group)
+    QTableWidgetItem *handle = m_table->item(r, ColHandle);
+    if (!handle) {
+        handle = new QTableWidgetItem(QStringLiteral("⠿"));
+        handle->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        handle->setTextAlignment(Qt::AlignCenter);
+        handle->setForeground(QColor(130, 130, 138));
+        handle->setToolTip(QStringLiteral("Drag to reorder, or onto a group"));
+        m_table->setItem(r, ColHandle, handle);
+    }
     QTableWidgetItem *vis = m_table->item(r, ColVisible);
     if (!vis) {
         vis = new QTableWidgetItem;
