@@ -1,6 +1,7 @@
 #include "FxChainPanel.h"
 #include "Widgets.h"
 
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -24,6 +25,8 @@ QToolButton *button(const QString &text, const QString &tip)
 
 namespace {
 constexpr int kOutlineRole = Qt::UserRole + 40; // 0: off, 1: on, 2: on, for the masks only
+constexpr int kReserveRole = Qt::UserRole + 41; // width of the controls at the row's right end
+constexpr int kRowHeight = 34;
 
 // An FX's row outlined by what it does: none when off, a thin line when on, dashes when only a mask takes it
 class OutlineDelegate : public QStyledItemDelegate
@@ -32,7 +35,18 @@ public:
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
     {
-        QStyledItemDelegate::paint(p, opt, idx);
+        const int reserve = idx.data(kReserveRole).toInt();
+        if (reserve > 0) { // the row's background across its width, its name stopping before the controls
+            QStyleOptionViewItem full(opt);
+            initStyleOption(&full, idx);
+            const QStyle *style = full.widget ? full.widget->style() : QApplication::style();
+            style->drawPrimitive(QStyle::PE_PanelItemViewItem, &full, p, full.widget);
+            QStyleOptionViewItem cut(opt);
+            cut.rect.setRight(cut.rect.right() - reserve);
+            QStyledItemDelegate::paint(p, cut, idx);
+        } else {
+            QStyledItemDelegate::paint(p, opt, idx);
+        }
         const int state = idx.data(kOutlineRole).toInt();
         if (!state) return;
         p->save();
@@ -145,6 +159,32 @@ void FxChainPanel::setMaximum(int maximum)
     updateButtons();
 }
 
+void FxChainPanel::setRowWidget(int row, QWidget *w)
+{
+    QListWidgetItem *item = m_list->item(row);
+    if (!item) return;
+    // Right-aligned; the empty part on its left ignores the clicks, which reach the list (the row is picked)
+    auto *holder = new QWidget;
+    holder->setAttribute(Qt::WA_TranslucentBackground);
+    auto *h = new QHBoxLayout(holder);
+    h->setContentsMargins(0, 0, 6, 0);
+    h->addStretch(1);
+    h->addWidget(w);
+    m_filling = true; // a change of the item's data is not a click on its switch
+    item->setData(kReserveRole, w->sizeHint().width() + 12);
+    m_filling = false;
+    m_list->setItemWidget(item, holder);
+}
+
+void FxChainPanel::setRowMaskOnly(int row, bool maskOnly)
+{
+    QListWidgetItem *item = m_list->item(row);
+    if (!item || !item->data(kOutlineRole).toInt()) return;
+    m_filling = true;
+    item->setData(kOutlineRole, maskOnly ? 2 : 1);
+    m_filling = false;
+}
+
 void FxChainPanel::setEmptyText(const QString &text) { static_cast<QLabel *>(m_empty)->setText(text); }
 
 void FxChainPanel::updateButtons()
@@ -166,6 +206,7 @@ void FxChainPanel::setRows(const std::vector<Row> &rows, int selected, bool chai
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
         item->setData(kOutlineRole, !r.enabled ? 0 : r.maskOnly ? 2 : 1);
+        item->setSizeHint(QSize(0, kRowHeight));
         if (r.maskOnly && r.tooltip.isEmpty()) item->setToolTip(QStringLiteral("Mask only: computed for the masks, not in the picture"));
         m_list->addItem(item);
     }
@@ -174,7 +215,7 @@ void FxChainPanel::setRows(const std::vector<Row> &rows, int selected, bool chai
     m_list->setVisible(m_count > 0);
     if (m_count) {
         m_list->setCurrentRow(std::clamp(selected, 0, m_count - 1));
-        m_list->setMaximumHeight(qMin(160, 26 * m_count + 8));
+        m_list->setMaximumHeight(qMin(6 * kRowHeight + 8, kRowHeight * m_count + 8));
     }
     m_list->setStyleSheet(chainEnabled ? QString() : QStringLiteral("QListWidget { color:#777; }"));
     m_filling = false;

@@ -35,6 +35,7 @@ class ParamAnimPanel;
 class AnimateMenu;
 class QTabWidget;
 class FxChainPanel;
+class NumberBox;
 class LevelMeter;
 class ViewportOutputPanel;
 
@@ -115,6 +116,7 @@ private:
     unsigned m_masksRev = 0; // the masks' revision the panel shows
     int m_maskIndex = -1; // the mask selected (kept while the inspector is rebuilt for the same layer)
     QWidget *buildEffects(const LayerValues &s);
+    QWidget *effectRowControls(int k, FxChainPanel *panel); // its speed, mask and channels, on its row
     void showEffectParams(); // parameters of the selected effect, swapped without rebuilding the list
     void editMapping(const QString &text, const std::function<void(Mapping &)> &fn, bool merge = false);
     void refreshSpatial(); // position / scale fields follow the mapping (handles dragged in the preview)
@@ -138,8 +140,8 @@ private:
     int m_selectedEffect = 0;
     QString m_subTab = QStringLiteral("Source"); // the tab shown, by its name: kept from one layer to the next
     quint64 m_layerId = 0;
-    QPointer<SliderField> m_fxSpeed; // the selected FX's speed
-    QString m_fxSpeedPath;
+    std::vector<std::pair<QPointer<NumberBox>, QString>> m_fxSpeeds; // each FX row's speed, and its parameter
+
     bool m_locked = false;
     QVBoxLayout *m_layout = nullptr;
     QWidget *m_content = nullptr;

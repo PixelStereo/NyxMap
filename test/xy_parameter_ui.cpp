@@ -10,7 +10,11 @@
 #include <QContextMenuEvent>
 #include <QDoubleSpinBox>
 #include <QDir>
+#include <QCheckBox>
+#include <QFrame>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QToolButton>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -238,5 +242,39 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     const auto *scalarToggle = timelinePath.findChild<QPushButton *>("showXyPath");
     check(scalarPreview && !scalarPreview->isVisible() && scalarToggle && !scalarToggle->isVisible(),
           "switching to a scalar target hides XY-only controls");
+
+    // The FX row carries its speed, its mask and its channels; building it pushes nothing to undo
+    inspector.setLayer(li); pump();
+    for (auto *tabs : inspector.findChildren<QTabWidget *>())
+        for (int k = 0; k < tabs->count(); ++k) if (tabs->tabText(k).startsWith("FX")) tabs->setCurrentIndex(k);
+    pump();
+    const int steps = undo.count();
+    auto *list = inspector.findChild<QListWidget *>("fxChainList");
+    QWidget *row = list && list->count() ? list->itemWidget(list->item(0)) : nullptr;
+    auto *speed = row ? row->findChild<QDoubleSpinBox *>("fxSpeed") : nullptr;
+    auto *mask = row ? row->findChild<QToolButton *>("fxMask") : nullptr;
+    auto *red = row ? row->findChild<QToolButton *>("fxChannelR") : nullptr;
+    check(speed && mask && red, "FX row shows its speed, mask and channels");
+    check(undo.count() == steps, "building the FX rows is not an edit");
+    if (speed) {
+        speed->setValue(0.5); pump();
+        check(std::abs(engine.parameterValue(layer, engine.shaderPrefix(layer, fx) + "speed").toDouble() - 0.5) < 1e-6,
+              "row speed sets the FX's speed");
+    }
+    if (red) {
+        red->click(); pump();
+        check(!engine.parameterValue(layer, engine.shaderPrefix(layer, fx) + "channel/r").toBool(true),
+              "row R button leaves the red channel out");
+    }
+    if (mask) {
+        mask->click(); pump();
+        auto *pop = qobject_cast<QFrame *>(QApplication::activePopupWidget());
+        check(pop && pop->findChild<QComboBox *>("fxMaskLayer") && pop->findChild<QComboBox *>("fxMaskStage") &&
+                  pop->findChild<QCheckBox *>("fxMaskOnly"),
+              "mask chip opens the mask's layer, stage, invert and mask-only settings");
+        if (!captures.isEmpty()) inspector.grab().save(QDir(captures).filePath("fx-rows.png"));
+        if (pop) pop->close();
+        pump();
+    }
     return failures;
 }
