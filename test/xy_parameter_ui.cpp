@@ -14,6 +14,7 @@
 #include <QFrame>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QStyleOptionViewItem>
 #include <QToolButton>
 #include <QMenu>
 #include <QMouseEvent>
@@ -254,13 +255,44 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
     auto *speed = row ? row->findChild<QDoubleSpinBox *>("fxSpeed") : nullptr;
     auto *mask = row ? row->findChild<QToolButton *>("fxMask") : nullptr;
     auto *red = row ? row->findChild<QToolButton *>("fxChannelR") : nullptr;
-    check(speed && mask && red, "FX row shows its speed, mask and channels");
+    check(speed && mask && red, "FX row has its speed, mask and channels");
     check(undo.count() == steps, "building the FX rows is not an edit");
-    if (speed) {
-        speed->setValue(0.5); pump();
-        check(std::abs(engine.parameterValue(layer, engine.shaderPrefix(layer, fx) + "speed").toDouble() - 0.5) < 1e-6,
-              "row speed sets the FX's speed");
+    // Its switch, under the row's controls, still enables and disables it
+    if (list && list->count()) {
+        QListWidgetItem *item = list->item(0);
+        const bool was = item->checkState() == Qt::Checked;
+        QStyleOptionViewItem opt;
+        opt.initFrom(list->viewport());
+        opt.rect = list->visualItemRect(item);
+        opt.features |= QStyleOptionViewItem::HasCheckIndicator;
+        const QRect box = list->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, list);
+        const QPoint at = box.isValid() ? box.center() : opt.rect.topLeft() + QPoint(12, opt.rect.height() / 2);
+        // As the mouse would: to the widget under the point (the row's controls, if they covered it)
+        auto click = [&] {
+            QWidget *target = list->viewport()->childAt(at);
+            if (!target) target = list->viewport();
+            const QPoint local = target->mapFrom(list->viewport(), at);
+            for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                QMouseEvent e(type, local, target->mapToGlobal(local), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, {});
+                QApplication::sendEvent(target, &e);
+            }
+            pump();
+        };
+        QWidget *target = list->viewport()->childAt(at);
+        check(!target || !row || (target != row && !row->isAncestorOf(target)), "the row's controls leave its switch to the list");
+        const int before = undo.count();
+        click();
+        check(undo.count() == before + 1, "the switch's click is one undo step");
+        list = inspector.findChild<QListWidget *>("fxChainList");
+        item = list && list->count() ? list->item(0) : nullptr;
+        check(item && (item->checkState() == Qt::Checked) != was, "a click on the row's switch toggles the FX");
+        click();
     }
+    // Layer Position never reads TIME: no speed (its place kept). Its offset is animated (above): ∿ on its row
+    check(speed && speed->isHidden(), "an FX without TIME shows no speed");
+    auto *animated = row ? row->findChild<QToolButton *>("fxAnimated") : nullptr;
+    check(animated && !animated->isHidden(), "an FX whose number is animated shows ∿ on its row");
     if (red) {
         red->click(); pump();
         check(!engine.parameterValue(layer, engine.shaderPrefix(layer, fx) + "channel/r").toBool(true),
@@ -275,6 +307,21 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
         if (!captures.isEmpty()) inspector.grab().save(QDir(captures).filePath("fx-rows.png"));
         if (pop) pop->close();
         pump();
+    }
+    // A shader that reads TIME: its speed on the row, edited there
+    const int timed = engine.addEffect(li, root + "/../isf/effects/Zoom Volumetric.fs", &error);
+    check(timed >= 0, "load Zoom Volumetric FX");
+    inspector.setLayer(li); pump();
+    list = inspector.findChild<QListWidget *>("fxChainList");
+    row = list && list->count() > timed ? list->itemWidget(list->item(timed)) : nullptr;
+    speed = row ? row->findChild<QDoubleSpinBox *>("fxSpeed") : nullptr;
+    check(speed && !speed->isHidden(), "an FX reading TIME shows its speed");
+    if (speed && timed >= 0) {
+        speed->setValue(0.5); pump();
+        check(std::abs(engine.parameterValue(layer, engine.shaderPrefix(layer, timed) + "speed").toDouble() - 0.5) < 1e-6,
+              "row speed sets the FX's speed");
+        auto *idle = row->findChild<QToolButton *>("fxAnimated");
+        check(idle && idle->isHidden(), "no ∿ on an FX with nothing animated");
     }
     return failures;
 }

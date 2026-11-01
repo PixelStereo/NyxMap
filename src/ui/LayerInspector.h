@@ -81,6 +81,7 @@ signals:
     void lineDrawRequested();              // a Line generator: the preview draws a new line point by point
     // A Line generator: a pixel mapping fixture of that type on each of its lines, its pixels along it
     void lineFixturesRequested(const QString &typeId, int pixels);
+    void timelineRequested(quint64 id); // a timeline drives one of its numbers: open it
 
 private:
     void buildPicker();   // the menu at the top (made once)

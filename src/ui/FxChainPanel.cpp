@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QStyledItemDelegate>
 #include <QPushButton>
@@ -61,6 +62,25 @@ public:
 };
 } // namespace
 
+namespace {
+// Takes the clicks over its controls only: masked to them, the list under it gets the others (the row's switch)
+class RowHolder : public QWidget
+{
+public:
+    explicit RowHolder(QWidget *controls) : m_controls(controls) {}
+
+protected:
+    void resizeEvent(QResizeEvent *e) override
+    {
+        QWidget::resizeEvent(e);
+        setMask(QRegion(m_controls->geometry()));
+    }
+
+private:
+    QWidget *m_controls;
+};
+} // namespace
+
 FxChainPanel::FxChainPanel(const QString &chain, QWidget *parent) : QWidget(parent), m_chain(chain)
 {
     setObjectName(QStringLiteral("fxChainPanel"));
@@ -102,6 +122,7 @@ FxChainPanel::FxChainPanel(const QString &chain, QWidget *parent) : QWidget(pare
     m_list->setObjectName(QStringLiteral("fxChainList"));
     m_list->setProperty("allowLocked", true); // selecting an FX to see its parameters is not an edit
     m_list->setItemDelegate(new OutlineDelegate(m_list));
+    m_list->viewport()->installEventFilter(this); // the switches of the rows that carry controls (eventFilter)
     v->addWidget(m_list);
 
     m_detail = new QWidget;
@@ -159,12 +180,33 @@ void FxChainPanel::setMaximum(int maximum)
     updateButtons();
 }
 
+// A row with controls (setRowWidget) is an index widget, and a view sends no click to the delegate of such a row: its
+// switch is toggled here
+bool FxChainPanel::eventFilter(QObject *o, QEvent *e)
+{
+    if (o == m_list->viewport() && e->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(e);
+        const QModelIndex index = m_list->indexAt(me->position().toPoint());
+        QListWidgetItem *item = m_list->item(index.row());
+        if (me->button() == Qt::LeftButton && item && m_list->indexWidget(index)) {
+            QStyleOptionViewItem opt;
+            opt.initFrom(m_list->viewport());
+            opt.rect = m_list->visualRect(index);
+            opt.features |= QStyleOptionViewItem::HasCheckIndicator;
+            const QRect box = m_list->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, m_list);
+            if (box.adjusted(-3, -3, 3, 3).contains(me->position().toPoint()))
+                item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked); // → toggled
+        }
+    }
+    return QWidget::eventFilter(o, e);
+}
+
 void FxChainPanel::setRowWidget(int row, QWidget *w)
 {
     QListWidgetItem *item = m_list->item(row);
     if (!item) return;
-    // Right-aligned; the empty part on its left ignores the clicks, which reach the list (the row is picked)
-    auto *holder = new QWidget;
+    // Right-aligned, and masked to the controls: the rest of the row (its switch, its name) is the list's own
+    auto *holder = new RowHolder(w);
     holder->setAttribute(Qt::WA_TranslucentBackground);
     auto *h = new QHBoxLayout(holder);
     h->setContentsMargins(0, 0, 6, 0);

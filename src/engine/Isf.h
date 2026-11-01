@@ -167,6 +167,8 @@ public:
     QString error() const { return m_error; }
     bool isValid() const { return m_program != 0; }
     bool isFilter() const { return m_isFilter; }
+    // Its picture moves with TIME or TIMEDELTA (the compiler drops a uniform the shader never reads): `speed` matters
+    bool usesTime() const { return m_locTime >= 0 || m_locTimeDelta >= 0; }
     bool enabled = true;
     // Pace of TIME and TIMEDELTA (1: real time, 0: stopped): it scales the step, so TIME goes on from where it is
     // and the picture does not jump when it changes

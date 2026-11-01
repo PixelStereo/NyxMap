@@ -64,6 +64,9 @@ signals:
     void toggled(int row, bool on);
     void currentChanged(int row); // another FX picked: show its parameters (the list is not rebuilt)
 
+protected:
+    bool eventFilter(QObject *o, QEvent *e) override;
+
 private:
     void updateButtons();
     QString m_chain;

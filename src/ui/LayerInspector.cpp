@@ -3637,7 +3637,7 @@ void LayerInspector::showEffectParams()
 // An FX's row controls: its speed (dragged sideways), its mask (a chip that opens its settings) and its channels
 QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
 {
-    bool valid = false, invert = false, maskOnly = false;
+    bool valid = false, usesTime = false, invert = false, maskOnly = false;
     quint64 maskId = 0, selfId = 0;
     int maskStage = -1;
     QString maskName;
@@ -3650,6 +3650,7 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
         if (!l || k >= int(l->effects.size())) return new QWidget;
         const IsfInstance *fx = l->effects[size_t(k)].get();
         valid = fx->isValid();
+        usesTime = fx->usesTime();
         maskId = fx->maskLayer;
         invert = fx->maskInvert;
         maskStage = fx->maskStage;
@@ -3672,7 +3673,44 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
     h->setSpacing(6);
     const QString prefix = m_engine->shaderPrefix(m_layerId, k);
 
-    // Speed: the pace of its TIME, a number dragged sideways (double-click: back to 1)
+    // ∿ when one of its numbers is animated: a click opens that animation (the layer's own, or the timeline). Its speed
+    // is that animation's, not the FX's
+    QString localPath;
+    quint64 timeline = 0;
+    QStringList driven;
+    for (const Animation &a : m_engine->layerAnims(m_layerId))
+        for (const AnimTrack &t : a.tracks)
+            if (t.param.startsWith(prefix)) {
+                if (localPath.isEmpty()) localPath = t.param;
+                driven << paramanim::label(m_engine, m_layerId, t.param);
+            }
+    for (int i = 0; i < m_engine->animationCount(); ++i) {
+        const Animation a = m_engine->animation(i);
+        for (const AnimTrack &t : a.tracks)
+            if (t.layer == m_layerId && t.param.startsWith(prefix)) {
+                if (!timeline) timeline = a.id;
+                driven << QStringLiteral("%1 (%2)").arg(paramanim::label(m_engine, m_layerId, t.param), a.name);
+            }
+    }
+    auto *animated = new QToolButton;
+    animated->setObjectName(QStringLiteral("fxAnimated"));
+    animated->setText(QStringLiteral("∿"));
+    animated->setAutoRaise(true);
+    // The amber of the animations (their current-value badge), readable on a selected row as on the others
+    animated->setStyleSheet(QStringLiteral("QToolButton { color:#e0a030; font-size:15px; font-weight:bold; padding:0 2px; border:none; }"));
+    animated->setToolTip(QStringLiteral("Animated: %1\nClick to open its animation (its speed is set there)")
+                             .arg(driven.join(QStringLiteral(", "))));
+    connect(animated, &QToolButton::clicked, this, [this, localPath, timeline] {
+        if (!localPath.isEmpty()) showAnimation(localPath);
+        else if (timeline) emit timelineRequested(timeline);
+    });
+    QSizePolicy keep = animated->sizePolicy();
+    keep.setRetainSizeWhenHidden(true); // the rows' controls stay in columns
+    animated->setSizePolicy(keep);
+    h->addWidget(animated);
+    animated->setVisible(!driven.isEmpty()); // once in the row (shown alone, it would be a window)
+
+    // Speed: the pace of its TIME, a number dragged sideways. Only for a shader that reads TIME (a place kept otherwise)
     if (valid) {
         const QString path = prefix + QStringLiteral("speed");
         auto *speed = new NumberBox;
@@ -3691,9 +3729,16 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
             setValue(path, x, QStringLiteral("Change Speed"));
             tint();
         });
-        m_animate->attach(speed, {path});
-        m_fxSpeeds.push_back({speed, path});
         h->addWidget(speed);
+        if (usesTime) {
+            m_animate->attach(speed, {path});
+            m_fxSpeeds.push_back({speed, path});
+        } else {
+            QSizePolicy hold = speed->sizePolicy();
+            hold.setRetainSizeWhenHidden(true);
+            speed->setSizePolicy(hold);
+            speed->setVisible(false);
+        }
     }
 
     // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
