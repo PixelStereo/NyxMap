@@ -1,4 +1,5 @@
 #include "MappingView.h"
+#include <QJsonArray>
 
 #include <algorithm>
 #include <limits>
@@ -346,6 +347,23 @@ void MappingView::zoomAt(QPointF widgetPos, double factor)
 }
 
 void MappingView::zoomBy(double factor) { zoomAt(QPointF(width() / 2.0, height() / 2.0), factor); }
+
+QJsonObject MappingView::viewState() const
+{
+    return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_showFixtures},
+            {"mask_edit", m_maskEditMode}};
+}
+
+void MappingView::setViewState(const QJsonObject &o)
+{
+    if (o.contains("zoom")) m_zoom = std::clamp(o.value("zoom").toDouble(1.0), 0.05, 64.0);
+    const QJsonArray pan = o.value("pan").toArray();
+    if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
+    if (o.contains("fixtures")) setShowFixtures(o.value("fixtures").toBool());
+    if (o.contains("mask_edit")) setMaskEditMode(o.value("mask_edit").toBool());
+    updateZoomLabel();
+    update();
+}
 
 void MappingView::zoomToFit()
 {

@@ -1721,6 +1721,8 @@ void TrackRow::build()
 
 void TrackRow::rebuildFilters()
 {
+    m_filterMeters.clear(); // their widgets go with the old ones
+    if (m_filterTimer) m_filterTimer->stop();
     if (m_filters) {
         m_outer->removeWidget(m_filters);
         m_filters->hide();
@@ -1736,6 +1738,27 @@ void TrackRow::rebuildFilters()
         m_filters->hide();
         return;
     }
+    // The signal, through the chain: a meter for what comes in, then one under each filter (read only, the track's range)
+    auto meter = [this](QBoxLayout *into, const QString &name) {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(name);
+        label->setStyleSheet(QStringLiteral("color:#9a9aa0;"));
+        auto *bar = new QSlider(Qt::Horizontal);
+        bar->setObjectName(QStringLiteral("animationFilterSignal"));
+        bar->setRange(0, 1000);
+        bar->setFocusPolicy(Qt::NoFocus);
+        bar->setAttribute(Qt::WA_TransparentForMouseEvents);
+        bar->setToolTip(QStringLiteral("The signal here, now (read only)"));
+        auto *value = new QLabel(QStringLiteral("—"));
+        value->setMinimumWidth(64);
+        value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(label);
+        row->addWidget(bar, 1);
+        row->addWidget(value);
+        into->addLayout(row);
+        m_filterMeters.emplace_back(bar, value);
+    };
+    if (!editedTrack().dataFilters.isEmpty()) meter(layout, QStringLiteral("In"));
     auto *add = new QPushButton(QStringLiteral("Add Data Filter…"));
     add->setObjectName("addAnimationDataFilter");
     layout->addWidget(add);
@@ -1832,6 +1855,7 @@ void TrackRow::rebuildFilters()
                 rebuildFilters();
             });
         }
+        meter(column, QStringLiteral("Out"));
         if (stage.kind == InteractionFilter::Curve) {
             auto *curve = new CurveLane;
             curve->setTrack(stage.curve, 1, 0, 1);
@@ -1843,6 +1867,32 @@ void TrackRow::rebuildFilters()
                       gesture ? QStringLiteral("filterCurve%1/%2").arg(k).arg(gesture) : QString());
             });
         }
+    }
+    if (!m_filterTimer) {
+        m_filterTimer = new QTimer(this);
+        m_filterTimer->setInterval(50);
+        connect(m_filterTimer, &QTimer::timeout, this, &TrackRow::showFilterSignal);
+    }
+    if (m_filterMeters.empty()) m_filterTimer->stop();
+    else m_filterTimer->start();
+}
+
+void TrackRow::showFilterSignal()
+{
+    if (m_filterMeters.empty() || !isVisible()) return;
+    const AnimTrack &t = track();
+    const QString path = t.isPoint() ? t.param + (m_axisIndex ? "/y" : "/x") : t.param;
+    double input = 0;
+    std::vector<double> stages;
+    // A timeline's animation by its id; a layer's own animation under 0
+    const bool known = m_e->animationFilterSignal(t.layer, m_ed->m_edit.id, path, &input, &stages) ||
+                       m_e->animationFilterSignal(t.layer, 0, path, &input, &stages);
+    const auto [lo, hi] = range();
+    for (size_t k = 0; k < m_filterMeters.size(); ++k) {
+        const bool has = known && (k == 0 || k - 1 < stages.size());
+        const double v = !has ? 0 : k == 0 ? input : stages[k - 1];
+        m_filterMeters[k].first->setValue(has && hi > lo ? int(std::clamp((v - lo) / (hi - lo), 0.0, 1.0) * 1000) : 0);
+        m_filterMeters[k].second->setText(has ? QString::number(v, 'g', 4) : QStringLiteral("—"));
     }
 }
 

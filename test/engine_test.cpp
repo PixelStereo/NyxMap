@@ -5,6 +5,7 @@
 #include "LogModel.h"
 #include "DeckLink.h"
 #include "Engine.h"
+#include "EngineInternal.h"
 #include "ImageFile.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
@@ -2626,6 +2627,32 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.advanceFades(5);
             CHECK(close(value("rotation"), -10) && close(value("opacity"), 0.9));
             CHECK(!e.sequencer().toJson().at(si).toObject().value("tracking").toBool(true));
+            // Load as Next: GO plays that step next, not played now; with tracking, the steps before it played at once
+            off.tracking = true;
+            e.sequencer().setSequence(si, off);
+            e.setParameter(t, "rotation", -10.0);
+            e.setParameter(t, "position/x", 100.0);
+            CHECK(e.sequencer().loadAsNext(si, 3));
+            e.sequencer().setCurrent(si);
+            CHECK(e.sequencer().next() == 3 && close(value("rotation"), 45) && close(value("position/x"), 100));
+            CHECK(e.sequencer().go() && e.sequencer().positionOf(si) == 3);
+            e.advanceFades(5);
+            CHECK(close(value("position/x"), 300));
+            // A preset can hold the views: saved with it, handed back when it is recalled
+            {
+                Engine::Preset withViews = e.preset(e.indexOfPreset(show.steps[1].preset));
+                withViews.views = QJsonObject{{"count", 2}};
+                std::vector<Engine::Preset> all = e.presets();
+                for (auto &x : all)
+                    if (x.id == withViews.id) x = withViews;
+                e.setPresets(all);
+                QJsonObject shown;
+                auto c = QObject::connect(&e, &Engine::viewsRecalled, [&](const QJsonObject &v) { shown = v; });
+                e.recallPreset(e.indexOfPreset(withViews.id));
+                QObject::disconnect(c);
+                CHECK(shown.value("count").toInt() == 2);
+                CHECK(presetFromJson(presetToJson(withViews)).views == withViews.views);
+            }
             e.sequencer().remove(si);
             e.removeLayer(e.indexOfId(t));
             e.setFadesManual(false);

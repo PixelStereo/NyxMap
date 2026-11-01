@@ -384,6 +384,9 @@ public:
         // "included", "timing", "easing" and "delay" as an interaction's: [{"id", "name", "included", "params"}]
         // (one made since, or one it leaves out, is left alone; one removed since is not made again)
         QJsonArray fixtures;
+        // The interface's views (how many, what each shows, zoom, fixtures, the layer selected), held only when the
+        // settings say snapshots hold them; empty: the views are left as they are
+        QJsonObject views;
     };
     QJsonObject captureComposition() const;
     void applyComposition(const QJsonObject &c, double fade); // the recall's part for the composition
@@ -461,6 +464,7 @@ public:
         std::vector<Interaction> interactions;
         QJsonObject categories; // layer:part -> structural source/FX/mask/routing state
         QJsonObject geometry; // layer id -> mesh topology/offsets; corner/position values are in values
+        QJsonObject views;    // the interface's views it shows (how many, what each shows, zoom…); empty: none
         int indexOf(quint64 layer, const QString &path) const; // -1: not in it
     };
     int presetCount() const;
@@ -834,7 +838,13 @@ public:
 
     IsfLibrary &library() { return m_library; }
 
+    // The interface's views as they are now (the interface gives them: a snapshot or a preset stores them); a recall
+    // that holds some hands them back (viewsRecalled)
+    void setViewProvider(std::function<QJsonObject()> f) { m_viewProvider = std::move(f); }
+    QJsonObject currentViews() const { return m_viewProvider ? m_viewProvider() : QJsonObject(); }
+
 signals:
+    void viewsRecalled(const QJsonObject &views); // a snapshot or a preset recalled with views: the interface shows them
     void layersChanged();
     void fixturesChanged(); // the pixel mapping (setFixturePatch, a project loaded or cleared)
     void layerLinesChanged(quint64 layer); // a Line generator's lines (setLayerLines)
@@ -1122,6 +1132,7 @@ private:
     double m_screenHz = 60;
     std::vector<Animation> m_animations;
     quint64 m_nextAnimationId = 1;
+    std::function<QJsonObject()> m_viewProvider;
     struct AnimationFilterRuntime {
         QJsonArray definition;
         Interaction config;
@@ -1130,6 +1141,12 @@ private:
     };
     QHash<QString, AnimationFilterRuntime> m_animationFilters;
     void clearAnimationFilterHistory(quint64 layer, quint64 animation);
+public:
+    // A filtered animated value's signal, as last computed: what came in, then the value after each filter (an animation
+    // of a timeline: its id; a layer's own: 0). false: not computed yet
+    bool animationFilterSignal(quint64 layer, quint64 animation, const QString &path, double *input,
+                               std::vector<double> *stages) const;
+private:
     double filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
                                 double raw, double dt, double played);
     void applyAnimation(Animation &a, double dt = 0); // sets its values where it is (lock held)

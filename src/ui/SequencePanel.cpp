@@ -31,6 +31,7 @@
 #include <QSpinBox>
 #include <QStyledItemDelegate>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QUndoCommand>
@@ -775,10 +776,15 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
 {
     setWindowTitle(QStringLiteral("Sequences"));
     resize(1020, 460);
-    auto *h = new QHBoxLayout(this);
+    // In tabs: the steps of the selected sequence, the sequences, the timelines playing
+    auto *outer = new QVBoxLayout(this);
+    auto *tabs = m_tabs = new QTabWidget;
+    tabs->setObjectName(QStringLiteral("sequenceTabs"));
+    outer->addWidget(tabs);
 
     // Sequences
-    auto *left = new QVBoxLayout;
+    auto *sequencesPage = new QWidget;
+    auto *left = new QVBoxLayout(sequencesPage);
     left->addWidget(new QLabel(QStringLiteral("<b>Sequences</b>")));
     m_sequences = new QListWidget;
     m_sequences->setToolTip(QStringLiteral("Select which sequence GO / Stop controls. Other sequences keep playing in the background. Double-click to rename."));
@@ -871,10 +877,11 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     connect(clockTimer, &QTimer::timeout, this, &SequenceWindow::pollClock);
     clockTimer->start();
     m_bpm->setValue(m_engine->beatClock().bpm());
-    h->addLayout(left, 1);
+
 
     // Steps
-    auto *right = new QVBoxLayout;
+    auto *stepsPage = new QWidget;
+    auto *right = new QVBoxLayout(stepsPage);
     right->addWidget(new QLabel(QStringLiteral("<b>Steps</b> — right-click to choose a snapshot, preset, timeline or sequence")));
     m_status = new QLabel;
     m_status->setTextFormat(Qt::RichText);
@@ -928,7 +935,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                                        "choose a snapshot, preset, timeline or sequence"));
     right->addWidget(m_steps, 1);
     auto *activity = new TimelineActivity(m_engine);
-    right->addWidget(activity);
+    auto *timelinesPage = new QWidget;
+    auto *timelinesLayout = new QVBoxLayout(timelinesPage);
+    timelinesLayout->addWidget(activity, 1);
     connect(activity, &TimelineActivity::editRequested, this, &SequenceWindow::timelineRequested);
     auto *stb = new QHBoxLayout;
     m_stepAdd = new QPushButton(QStringLiteral("+ Step"));
@@ -958,7 +967,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     connect(runs, &QTimer::timeout, this, &SequenceWindow::pollRuns);
     runs->start();
     right->addLayout(stb);
-    h->addLayout(right, 3);
+    tabs->addTab(stepsPage, QStringLiteral("Steps"));
+    tabs->addTab(sequencesPage, QStringLiteral("Sequences"));
+    tabs->addTab(timelinesPage, QStringLiteral("Timelines"));
 
     auto current = [this] { return m_engine->sequencer().current(); };
     connect(m_sequences, &QListWidget::currentRowChanged, this, [this](int r) {
@@ -1207,6 +1218,11 @@ void SequenceWindow::fillStepMenu(QMenu *menu, int row)
             ->setEnabled(row < int(cs.steps.size()) && !cs.steps[size_t(row)].actions.empty());
         menu->addSeparator();
         menu->addAction(QStringLiteral("Play this step"), this, [this, row] { emit goToRequested(row); });
+        auto *load = menu->addAction(QStringLiteral("Load as Next"), this, [this, row] {
+            m_engine->sequencer().loadAsNext(m_engine->sequencer().current(), row);
+        });
+        load->setToolTip(QStringLiteral("GO plays this step next. With tracking, the show is first where the steps before "
+                                        "it leave it"));
         menu->addAction(QStringLiteral("Delete"), this, &SequenceWindow::removeSteps);
     }
 }
@@ -1363,6 +1379,8 @@ void SequenceWindow::refresh()
     m_sequences->setCurrentRow(cur);
     const Sequencer::Sequence s = m_engine->sequencer().sequence(cur);
     m_loop->setChecked(s.loop);
+    m_tabs->setTabText(0, cur >= 0 ? QStringLiteral("Steps · %1").arg(s.name.isEmpty() ? QString::number(cur + 1) : s.name)
+                                   : QStringLiteral("Steps"));
     m_beats->setChecked(s.beats);
     const QString unit = s.beats ? QStringLiteral("beats") : QStringLiteral("seconds");
     m_steps->horizontalHeaderItem(ColPre)->setToolTip(QStringLiteral("In %1, between the step's GO (and its quantize) and its snapshot").arg(unit));

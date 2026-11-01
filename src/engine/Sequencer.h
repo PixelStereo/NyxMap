@@ -179,6 +179,9 @@ public:
     bool goSequence(int index);
     bool backSequence(int index);
     bool goToStepOf(int index, int step);
+    // A step of a sequence made the one GO plays next, without playing it (its pending waits dropped). With tracking,
+    // the show is first where the steps before it would have left it, at once, so that its GO lands as in the run
+    bool loadAsNext(int index, int step);
     void stopSequence(int index);
     bool goById(quint64 id);
     bool backById(quint64 id);

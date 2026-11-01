@@ -296,7 +296,10 @@ private:
     XyPathPreview *m_pointPreview = nullptr;
     void updateStartMode();
     void rebuildFilters();
+    void showFilterSignal(); // what comes in and what each filter makes of it, now
     QWidget *m_filters = nullptr;
+    std::vector<std::pair<class QSlider *, QLabel *>> m_filterMeters; // the input, then each filter's output
+    class QTimer *m_filterTimer = nullptr;
     QVBoxLayout *m_outer = nullptr;
     class CurveLane *m_lane = nullptr;
     ColorLane *m_colorLane = nullptr;

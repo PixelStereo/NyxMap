@@ -498,6 +498,31 @@ void Sequencer::playAtOnce(const std::vector<Step> &steps)
     }
 }
 
+bool Sequencer::loadAsNext(int index, int step)
+{
+    std::vector<Step> before;
+    {
+        QMutexLocker lk(&m_mutex);
+        if (index < 0 || index >= int(m_sequences.size())) return false;
+        const Sequence &s = m_sequences[size_t(index)];
+        if (step < 0 || step >= int(s.steps.size())) return false;
+        if (!s.editMode && s.tracking && step > 0) {
+            int from = step - 1;
+            while (from > 0 && !s.steps[size_t(from)].snapshot) --from;
+            for (int k = std::max(0, from); k < step; ++k) before.push_back(s.steps[size_t(k)]);
+        }
+        stopSequenceLocked(index);
+    }
+    if (!before.empty()) playAtOnce(before);
+    {
+        QMutexLocker lk(&m_mutex);
+        if (index >= int(m_positions.size())) return false;
+        m_positions[size_t(index)] = step - 1; // GO plays this step next
+    }
+    emit positionChanged();
+    return true;
+}
+
 bool Sequencer::go()
 {
     int index;

@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSet>
+#include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -454,6 +455,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         if (index < 0) { m_match->clear(); return; }
         QString reason;
         const bool same = m_engine->snapshotMatches(m_engine->snapshot(index).id, &reason);
+        markChanged();
         m_match->setText(same ? QStringLiteral("● Matches live state") : QStringLiteral("● Modified"));
         m_match->setStyleSheet(same ? QStringLiteral("color:#4cd964;") : QStringLiteral("color:#f0a348;"));
         if (auto *item = itemOf(index)) {
@@ -1001,6 +1003,64 @@ void SnapshotPanel::showTime(QTreeWidgetItem *it, const MemField &f)
 }
 
 // Values and times shown in the tree, after an edit of the selected snapshot (the tree is not rebuilt)
+// A stored parameter as it is now: a layer's, the composition's (its level, its volume); the rest is not compared
+QJsonValue SnapshotPanel::liveValue(const MemField &f) const
+{
+    const int i = selected();
+    if (i < 0 || f.path.isEmpty()) return QJsonValue(QJsonValue::Undefined);
+    if (f.row >= 0 && f.path.size() == 2 && f.path[0] == QLatin1String("params")) {
+        const quint64 layer = rowObject(m_engine->snapshot(i), f.row).value("id").toString().toULongLong();
+        return layer ? m_engine->parameterValue(layer, f.path[1]) : QJsonValue(QJsonValue::Undefined);
+    }
+    if (f.row == -1 && f.path.size() == 1) return m_engine->captureComposition().value(f.path[0]);
+    return QJsonValue(QJsonValue::Undefined);
+}
+
+static bool sameValue(const QJsonValue &a, const QJsonValue &b)
+{
+    if (a.isDouble() && b.isDouble()) return std::abs(a.toDouble() - b.toDouble()) <= 1e-6 * std::max(1.0, std::abs(a.toDouble()));
+    return a == b;
+}
+
+void SnapshotPanel::markChanged()
+{
+    const int i = selected();
+    if (i < 0) return;
+    const Engine::Snapshot m = m_engine->snapshot(i);
+    for (QTreeWidgetItemIterator x(m_layers); *x; ++x) {
+        const QVariant fi = (*x)->data(0, FieldRole);
+        if (!fi.isValid()) continue;
+        const MemField &f = m_fields[size_t(fi.toInt())];
+        const QJsonValue live = liveValue(f);
+        const bool changed = !live.isUndefined() && !sameValue(live, jsonAt(rowObject(m, f.row), f.path));
+        const QBrush ink = changed ? QBrush(QColor(255, 159, 10)) : QBrush();
+        if ((*x)->foreground(0) != ink) (*x)->setForeground(0, ink);
+    }
+}
+
+void SnapshotPanel::updateWithLive()
+{
+    const int i = selected();
+    if (i < 0) return;
+    Engine::Snapshot m = m_engine->snapshot(i);
+    bool any = false;
+    for (QTreeWidgetItem *it : m_layers->selectedItems()) {
+        const QVariant fi = it->data(0, FieldRole);
+        if (!fi.isValid()) continue;
+        const MemField &f = m_fields[size_t(fi.toInt())];
+        const QJsonValue live = liveValue(f);
+        if (live.isUndefined()) continue;
+        any |= setRowObject(m, f.row, jsonWith(rowObject(m, f.row), f.path, live).toObject());
+    }
+    if (!any) return;
+    m_applying = true;
+    m_engine->setSnapshot(i, m);
+    m_applying = false;
+    emit edited();
+    refreshRows();
+    markChanged();
+}
+
 void SnapshotPanel::refreshRows()
 {
     const int i = selected();
@@ -1554,6 +1614,7 @@ void SnapshotPanel::store()
     m.composition = m_engine->captureComposition();
     m.interactions = m_engine->captureInteractions();
     m.fixtures = m_engine->captureFixtures();
+    if (QSettings().value(QStringLiteral("snapshots/views"), false).toBool()) m.views = m_engine->currentViews();
     m.thumbnail = m_engine->grabOutput().scaled(kThumb * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     const int sel = selected();
     const int i = m_engine->addSnapshot(m, sel >= 0 ? sel + 1 : -1); // after the selected one, in its group
@@ -1606,6 +1667,7 @@ void SnapshotPanel::updateSnapshot(int i)
         };
         updateRows(m.interactions, m_engine->captureInteractions());
         updateRows(m.fixtures, m_engine->captureFixtures());
+        if (QSettings().value(QStringLiteral("snapshots/views"), false).toBool()) m.views = m_engine->currentViews();
         cmd::editSnapshotLibrary(m_undo, m_engine, QStringLiteral("Update Snapshot Elements"),
                                  [&] { m_engine->setSnapshot(i, m); });
         emit edited();
@@ -1677,6 +1739,7 @@ void SnapshotPanel::updateSnapshot(int i)
         }
         m.fixtures = now;
     }
+    if (QSettings().value(QStringLiteral("snapshots/views"), false).toBool()) m.views = m_engine->currentViews();
     m.thumbnail = m_engine->grabOutput().scaled(kThumb * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_engine->setSnapshot(i, m);
     emit edited();
@@ -2114,6 +2177,18 @@ void SnapshotPanel::connectPresets()
                 m_presetName->setFocus();
                 m_presetName->selectAll();
             });
+            // The views as they are now (how many, what each shows, zoom, fixtures, the layer selected): shown again by it
+            menu.addAction(QStringLiteral("Store Current Views in Preset"), this, [this] {
+                const int i = selectedPreset();
+                if (i < 0) return;
+                const quint64 id = m_engine->preset(i).id;
+                const QJsonObject views = m_engine->currentViews();
+                cmd::editPresets(m_undo, m_engine, QStringLiteral("Store Views in Preset"), [&](std::vector<Engine::Preset> &all) {
+                    for (Engine::Preset &p : all)
+                        if (p.id == id) p.views = views;
+                });
+                emit edited();
+            });
             menu.addSeparator();
             menu.addAction(QStringLiteral("Delete"), this, removePreset);
         }
@@ -2372,6 +2447,9 @@ void SnapshotPanel::showPreset()
         item->setData(0, KeyRole, key);
         item->setToolTip(0, QStringLiteral("Stored definition; right-click to remove from preset"));
     };
+    if (!p.views.isEmpty())
+        extra(0, QStringLiteral("@views"), QStringLiteral("Views"),
+              QStringLiteral("%1 view(s), their sources and zoom").arg(p.views.value("count").toInt(1)));
     for (auto it = p.geometry.begin(); it != p.geometry.end(); ++it)
         extra(it.key().toULongLong(), QStringLiteral("@geometry/") + it.key(), QStringLiteral("Geometry › Mesh"), QStringLiteral("Topology and points"));
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) {
@@ -2800,6 +2878,11 @@ void SnapshotPanel::setupContentEditing()
         menu.addAction(QStringLiteral("Paste elements"), this, [this] { pasteContents(false); })
             ->setEnabled(QApplication::clipboard()->mimeData()->hasFormat("application/x-nyxmap-stored-content"));
         menu.addSeparator();
+        bool live = false;
+        for (QTreeWidgetItem *it : m_layers->selectedItems())
+            if (const QVariant fi = it->data(0, FieldRole); fi.isValid() && !liveValue(m_fields[size_t(fi.toInt())]).isUndefined())
+                live = true;
+        menu.addAction(QStringLiteral("Update with Current Value"), this, [this] { updateWithLive(); })->setEnabled(live);
         menu.addAction(QStringLiteral("Remove from Snapshot"), this, [this] { deleteContents(false); })
             ->setEnabled(!snapshotSelection().empty());
         menu.addSeparator();

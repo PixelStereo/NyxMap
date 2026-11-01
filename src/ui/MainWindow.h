@@ -81,6 +81,8 @@ private:
     bool saveTo(const QString &path);
     bool isDirty() const;
     QJsonObject uiState() const;
+    QJsonObject viewsState() const;          // the views and the layer selected (a project, a preset, a snapshot)
+    void applyViews(const QJsonObject &views); // shown as they were
     void autosave();
     static QString autosavePath();
     void afterProjectLoaded(const QJsonObject &ui);
@@ -130,6 +132,7 @@ private:
     class InteractionPanel *m_interactions = nullptr;
     class ControlsPanel *m_controls = nullptr;
     MappingView *m_view = nullptr;
+    class PreviewWorkspace *m_previews = nullptr;
     LayerInspector *m_inspector = nullptr;
     LayerInspector *m_viewportInspector = nullptr;
     class QListWidget *m_viewportList = nullptr;
