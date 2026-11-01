@@ -976,17 +976,12 @@ void OscNamespace::addLayer(const QString &P, quint64 id)
                      }
                      return e->setEffectMask(idx, slot, id, invert);
                  });
-        L.method(P + "/fx/" + seg + "/mask/tap", "s", 3, "Mask Tap",
+        // The mask layer's picture it takes: -1 its final one, 0 its source, k after its effect k
+        L.method(P + "/fx/" + seg + "/mask/stage", "i", 3, "Mask Stage",
                  [slot](Layer &l) {
-                     return slot < int(l.effects.size()) ? QVariantList{l.effects[size_t(slot)]->maskPreFx ? "prefx" : "postfx"}
-                                                         : QVariantList();
+                     return slot < int(l.effects.size()) ? QVariantList{l.effects[size_t(slot)]->maskStage} : QVariantList();
                  },
-                 [e, slot](int idx, const QVariantList &a) {
-                     const QString k = a.value(0).toString().toLower();
-                     if (k != "prefx" && k != "postfx") return false;
-                     return e->setEffectMaskTap(idx, slot, k == "prefx");
-                 })
-            .range = {vals({"prefx", "postfx"})};
+                 [e, slot](int idx, const QVariantList &a) { return e->setEffectMaskStage(idx, slot, a.value(0).toInt()); });
     }
 
     if (!isGroup) {

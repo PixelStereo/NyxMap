@@ -117,7 +117,7 @@ struct LayerValues {
     std::vector<std::pair<quint64, QString>> candidates;
     struct Fx {
         QString name, error;
-        bool valid = false, enabled = true, masked = false;
+        bool valid = false, enabled = true, masked = false, maskOnly = false;
     };
     std::vector<Fx> effects;
     bool meshMode = false;
@@ -205,7 +205,7 @@ struct LayerValues {
                 s.candidates.push_back({o->id, o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
             }
         for (const auto &fx : l->effects)
-            s.effects.push_back({fx->name(), fx->error(), fx->isValid(), fx->enabled, fx->maskLayer != 0});
+            s.effects.push_back({fx->name(), fx->error(), fx->isValid(), fx->enabled, fx->maskLayer != 0, fx->maskOnly});
         s.meshMode = l->mapping.meshMode;
         s.cols = l->mapping.cols;
         s.rows = l->mapping.rows;
@@ -3540,6 +3540,7 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
         row.tooltip = fx.masked ? QStringLiteral("Through a mask") : QString();
         row.enabled = fx.enabled;
         row.warning = !fx.valid;
+        row.maskOnly = fx.maskOnly;
         rows.push_back(row);
     }
     const int count = int(rows.size());
@@ -3594,8 +3595,11 @@ void LayerInspector::showEffectParams()
     QString name, error;
     bool valid = false;
     quint64 maskId = 0, selfId = 0;
-    bool invert = false, maskPre = false;
+    bool invert = false, maskOnly = false;
+    int maskStage = -1;
     std::vector<std::pair<quint64, QString>> masks; // layers that can mask it (no viewport, no feedback)
+    QHash<quint64, QStringList> stagesOf;           // each one's effects, by name (its stages after them)
+    QStringList ownEffects;                         // this layer's effects above this one
     {
         Engine::Lock lk(&m_engine->mutex());
         Layer *l = m_engine->layer(m_layer);
@@ -3607,12 +3611,15 @@ void LayerInspector::showEffectParams()
         valid = fx->isValid();
         maskId = fx->maskLayer;
         invert = fx->maskInvert;
-        maskPre = fx->maskPreFx;
+        maskStage = fx->maskStage;
+        maskOnly = fx->maskOnly;
         selfId = l->id;
+        for (int k = 0; k < m_selectedEffect; ++k) ownEffects << l->effects[size_t(k)]->name();
         for (int k = 0; k < m_engine->layerCount(); ++k) {
             const Layer *o = m_engine->layer(k);
             if (!o || o->isViewport || o->id == selfId || m_engine->layerDependsOn(o->id, selfId)) continue;
             masks.push_back({o->id, o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
+            for (const auto &e : o->effects) stagesOf[o->id] << e->name();
         }
     }
     lay->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(name.toHtmlEscaped())));
@@ -3655,6 +3662,9 @@ void LayerInspector::showEffectParams()
         auto *pick = new QComboBox;
         pick->addItem(QStringLiteral("None — everywhere"), QVariant(qulonglong(0)));
         int current = 0;
+        // This very layer, from a stage above this effect (its source, an effect before it)
+        pick->addItem(QStringLiteral("This layer"), QVariant(qulonglong(selfId)));
+        if (maskId == selfId) current = 1;
         for (const auto &[id, n] : masks) {
             pick->addItem(n, QVariant(qulonglong(id)));
             if (id == maskId) current = pick->count() - 1;
@@ -3673,18 +3683,28 @@ void LayerInspector::showEffectParams()
         row->addWidget(label);
         row->addWidget(pick, 1);
         row->addWidget(inv);
-        auto *tap = new QComboBox;
-        tap->addItem(QStringLiteral("Pre-FX"), true);
-        tap->addItem(QStringLiteral("Post-FX"), false);
-        tap->setCurrentIndex(maskPre ? 0 : 1);
-        tap->setEnabled(maskId != 0);
-        tap->setToolTip(QStringLiteral("The mask's picture: before or after the mask layer's own FX"));
-        row->addWidget(tap);
         lay->addLayout(row);
-        connect(tap, &QComboBox::activated, this, [this, tap](int i) {
-            const bool pre = tap->itemData(i).toBool();
+        // Its stage: the mask layer's source, its picture after one of its FX, or its final picture (this layer: above
+        // this FX only)
+        auto *stageRow = new QHBoxLayout;
+        auto *stage = new QComboBox;
+        stage->setObjectName(QStringLiteral("fxMaskStage"));
+        stage->addItem(QStringLiteral("Source (before its FX)"), 0);
+        const QStringList effects = maskId == selfId ? ownEffects : stagesOf.value(maskId);
+        for (int e = 0; e < effects.size(); ++e)
+            stage->addItem(QStringLiteral("After %1 · %2").arg(e + 1).arg(effects[e]), e + 1);
+        if (maskId != selfId) stage->addItem(QStringLiteral("Final"), -1);
+        stage->setCurrentIndex(std::max(0, stage->findData(maskStage)));
+        stage->setEnabled(maskId != 0);
+        stage->setToolTip(QStringLiteral("The mask layer's picture taken: its source, after one of its FX, or its final "
+                                         "picture. This layer: its source or an FX above this one"));
+        stageRow->addWidget(new QLabel(QStringLiteral("Taken at")));
+        stageRow->addWidget(stage, 1);
+        lay->addLayout(stageRow);
+        connect(stage, &QComboBox::activated, this, [this, stage](int i) {
+            const int at = stage->itemData(i).toInt();
             const int k = m_selectedEffect;
-            editEffects(QStringLiteral("Set FX Mask Tap"), [&] { m_engine->setEffectMaskTap(m_layer, k, pre); });
+            editEffects(QStringLiteral("Set FX Mask Stage"), [&] { m_engine->setEffectMaskStage(m_layer, k, at); });
         });
         connect(pick, &QComboBox::activated, this, [this, pick, inv](int i) {
             const quint64 id = pick->itemData(i).toULongLong();
@@ -3701,6 +3721,22 @@ void LayerInspector::showEffectParams()
             const int k = m_selectedEffect;
             editEffects(QStringLiteral("Invert FX Mask"), [&] { m_engine->setEffectMask(m_layer, k, id, on); });
         });
+    }
+
+    // Mask only: computed for the masks that take it, the picture going on without it
+    if (valid) {
+        const QString path = m_engine->shaderPrefix(m_layerId, m_selectedEffect) + QStringLiteral("mask_only");
+        auto *only = new FlagBox(QStringLiteral("Mask only — not in the picture"));
+        only->setObjectName(QStringLiteral("fxMaskOnly"));
+        only->setChecked(maskOnly);
+        only->setToolTip(QStringLiteral("This FX is computed, and a mask can take its picture (an FX below it, another "
+                                        "layer's), but the layer's picture goes on as if it were not there"));
+        connect(only, &QCheckBox::toggled, this, [this, path](bool on) {
+            setValue(path, on, QStringLiteral("FX Mask Only"));
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its outline in the list
+        });
+        m_animate->attach(only, {path});
+        lay->addWidget(only);
     }
 
     // Channels: the ones it changes (all by default); a channel off keeps the picture the effect was given

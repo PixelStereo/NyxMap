@@ -1195,7 +1195,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         for (size_t k = 0; k < l->effects.size() && int(k) < fx.size(); ++k) { // their masks
             const QJsonObject e = fx[int(k)].toObject();
             l->effects[k]->maskLayer = e.value("mask").toString().toULongLong();
-            l->effects[k]->maskPreFx = e.value("mask_tap").toString() == "prefx";
+            l->effects[k]->maskStage = e.value("mask_stage").toInt(-1);
         }
         // Visibility: shown at once and faded in from 0, or faded out then hidden
         const bool visible = o.value("enable").toBool(l->enabled);
