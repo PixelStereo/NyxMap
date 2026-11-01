@@ -3607,8 +3607,6 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
     for (const auto &fx : s.effects) {
         FxChainPanel::Row row;
         row.label = fx.name;
-        row.suffix = fx.masked ? QStringLiteral("  ◐") : QString();
-        row.tooltip = fx.masked ? QStringLiteral("Through a mask") : QString();
         row.enabled = fx.enabled;
         row.warning = !fx.valid;
         row.maskOnly = fx.maskOnly;
@@ -3652,6 +3650,11 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
         rebuild();
     });
 
+    // Each FX's speed, mask and channels on its row
+    m_fxSpeeds.clear();
+    for (int k = 0; k < count; ++k) panel->setRowWidget(k, effectRowControls(k, panel));
+    lockInputs(panel->list(), m_locked);
+
     // Parameters of the selected effect: their own container, refilled in place
     m_fxDetail = panel->detail();
     showEffectParams();
@@ -3662,80 +3665,164 @@ void LayerInspector::showEffectParams()
 {
     if (!m_fxDetail) return;
     auto *lay = static_cast<QVBoxLayout *>(m_fxDetail->layout());
-    clearLayout(lay); // the Speed and Mask rows are layouts of their own
-    QString name, error;
+    clearLayout(lay);
+    QString error;
     bool valid = false;
-    quint64 maskId = 0, selfId = 0;
-    bool invert = false, maskOnly = false;
-    int maskStage = -1;
-    std::vector<std::pair<quint64, QString>> masks; // layers that can mask it (no viewport, no feedback)
-    QHash<quint64, QStringList> stagesOf;           // each one's effects, by name (its stages after them)
-    QStringList ownEffects;                         // this layer's effects above this one
     {
         Engine::Lock lk(&m_engine->mutex());
         Layer *l = m_engine->layer(m_layer);
         if (!l || l->effects.empty()) return;
         m_selectedEffect = std::clamp(m_selectedEffect, 0, int(l->effects.size()) - 1);
         const IsfInstance *fx = l->effects[size_t(m_selectedEffect)].get();
-        name = fx->name();
         error = fx->error();
         valid = fx->isValid();
+    }
+    // Its name, speed, mask and channels are on its row of the list: here, its own parameters only
+    if (!error.isEmpty()) lay->addWidget(errorLabel(error));
+    if (valid) {
+        auto *params = new ParamPanel(m_engine, m_undo, m_layer, m_selectedEffect, ParamPanel::NoSpeed);
+        params->setCoTargets(coTargets());
+        m_effectParams = params;
+        params->attachAnimate(m_animate);
+        connect(params, &ParamPanel::rebuildRequested, this, &LayerInspector::rebuild, Qt::QueuedConnection);
+        lay->addWidget(params);
+    }
+    lockInputs(m_fxDetail, m_locked);
+}
+
+// An FX's row controls: its speed (dragged sideways), its mask (a chip that opens its settings) and its channels
+QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
+{
+    bool valid = false, usesTime = false, invert = false, maskOnly = false;
+    quint64 maskId = 0, selfId = 0;
+    int maskStage = -1;
+    QString maskName;
+    std::vector<std::pair<quint64, QString>> masks; // layers that can mask it (no viewport, no feedback)
+    QHash<quint64, QStringList> stagesOf;           // each one's effects, by name (its stages after them)
+    QStringList ownEffects;                         // this layer's effects above this one
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        Layer *l = m_engine->layer(m_layer);
+        if (!l || k >= int(l->effects.size())) return new QWidget;
+        const IsfInstance *fx = l->effects[size_t(k)].get();
+        valid = fx->isValid();
+        usesTime = fx->usesTime();
         maskId = fx->maskLayer;
         invert = fx->maskInvert;
         maskStage = fx->maskStage;
         maskOnly = fx->maskOnly;
         selfId = l->id;
-        for (int k = 0; k < m_selectedEffect; ++k) ownEffects << l->effects[size_t(k)]->name();
-        for (int k = 0; k < m_engine->layerCount(); ++k) {
-            const Layer *o = m_engine->layer(k);
+        for (int e = 0; e < k; ++e) ownEffects << l->effects[size_t(e)]->name();
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
             if (!o || o->isViewport || o->id == selfId || m_engine->layerDependsOn(o->id, selfId)) continue;
             masks.push_back({o->id, o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
             for (const auto &e : o->effects) stagesOf[o->id] << e->name();
+            if (o->id == maskId) maskName = o->name;
         }
+        if (maskId == selfId) maskName = QStringLiteral("Self");
+        else if (maskId && maskName.isEmpty()) maskName = QStringLiteral("(gone)");
     }
-    lay->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(name.toHtmlEscaped())));
-    if (!error.isEmpty()) lay->addWidget(errorLabel(error));
+    auto *box = new QWidget;
+    auto *h = new QHBoxLayout(box);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(6);
+    const QString prefix = m_engine->shaderPrefix(m_layerId, k);
 
-    // Its speed (the pace of its TIME), above its mask
+    // ∿ when one of its numbers is animated: a click opens that animation (the layer's own, or the timeline). Its speed
+    // is that animation's, not the FX's
+    QString localPath;
+    quint64 timeline = 0;
+    QStringList driven;
+    for (const Animation &a : m_engine->layerAnims(m_layerId))
+        for (const AnimTrack &t : a.tracks)
+            if (t.param.startsWith(prefix)) {
+                if (localPath.isEmpty()) localPath = t.param;
+                driven << paramanim::label(m_engine, m_layerId, t.param);
+            }
+    for (int i = 0; i < m_engine->animationCount(); ++i) {
+        const Animation a = m_engine->animation(i);
+        for (const AnimTrack &t : a.tracks)
+            if (t.layer == m_layerId && t.param.startsWith(prefix)) {
+                if (!timeline) timeline = a.id;
+                driven << QStringLiteral("%1 (%2)").arg(paramanim::label(m_engine, m_layerId, t.param), a.name);
+            }
+    }
+    auto *animated = new QToolButton;
+    animated->setObjectName(QStringLiteral("fxAnimated"));
+    animated->setText(QStringLiteral("∿"));
+    animated->setAutoRaise(true);
+    // The amber of the animations (their current-value badge), readable on a selected row as on the others
+    animated->setStyleSheet(QStringLiteral("QToolButton { color:#e0a030; font-size:15px; font-weight:bold; padding:0 2px; border:none; }"));
+    animated->setToolTip(QStringLiteral("Animated: %1\nClick to open its animation (its speed is set there)")
+                             .arg(driven.join(QStringLiteral(", "))));
+    connect(animated, &QToolButton::clicked, this, [this, localPath, timeline] {
+        if (!localPath.isEmpty()) showAnimation(localPath);
+        else if (timeline) emit timelineRequested(timeline);
+    });
+    QSizePolicy keep = animated->sizePolicy();
+    keep.setRetainSizeWhenHidden(true); // the rows' controls stay in columns
+    animated->setSizePolicy(keep);
+    h->addWidget(animated);
+    animated->setVisible(!driven.isEmpty()); // once in the row (shown alone, it would be a window)
+
+    // Speed: the pace of its TIME, a number dragged sideways. Only for a shader that reads TIME (a place kept otherwise)
     if (valid) {
-        const QString path = m_engine->shaderPrefix(m_layerId, m_selectedEffect) + QStringLiteral("speed");
-        auto *speed = new SliderField;
+        const QString path = prefix + QStringLiteral("speed");
+        auto *speed = new NumberBox;
+        speed->setObjectName(QStringLiteral("fxSpeed"));
         speed->setRange(0, 10);
         speed->setDecimals(2);
         speed->setSingleStep(0.05);
-        speed->setTicks(10);
-        speed->setSnaps({1});
+        speed->setPrefix(QStringLiteral("×"));
         speed->setValue(m_engine->parameterValue(m_layerId, path).toDouble(1.0));
-        speed->setToolTip(QStringLiteral("Speed of the FX's time (1 = normal, 0 = stopped)"));
-        m_fxSpeed = speed;
-        m_fxSpeedPath = path;
-        auto *label = new ResetLabel(QStringLiteral("Speed"), [this, speed, path] {
-            speed->setValue(1);
-            setValue(path, 1.0, QStringLiteral("Change Speed"));
+        speed->setToolTip(QStringLiteral("Speed of the FX's time (1 = normal, 0 = stopped): drag sideways"));
+        auto tint = [speed] {
+            speed->setStyleSheet(std::abs(speed->value() - 1) > 1e-6 ? QStringLiteral("color:#ffd27a;") : QString());
+        };
+        tint();
+        connect(speed, &QDoubleSpinBox::valueChanged, this, [this, path, tint](double x) {
+            setValue(path, x, QStringLiteral("Change Speed"));
+            tint();
         });
-        connect(speed, &SliderField::valueEdited, this,
-                [this, path](double x) { setValue(path, x, QStringLiteral("Change Speed")); });
-        m_animate->attach({label, speed}, {path});
-        auto *row = new QHBoxLayout;
-        row->addWidget(label);
-        row->addWidget(speed, 1);
-        lay->addLayout(row);
+        h->addWidget(speed);
+        if (usesTime) {
+            m_animate->attach(speed, {path});
+            m_fxSpeeds.push_back({speed, path});
+        } else {
+            QSizePolicy hold = speed->sizePolicy();
+            hold.setRetainSizeWhenHidden(true);
+            speed->setSizePolicy(hold);
+            speed->setVisible(false);
+        }
     }
 
-    // Mask: where the effect applies, from another layer's picture stretched over this one
-    {
-        auto *row = new QHBoxLayout;
-        auto *label = new ResetLabel(QStringLiteral("Mask"), [this] {
-            const int k = m_selectedEffect;
-            editEffects(QStringLiteral("Remove FX Mask"), [this, k] { m_engine->setEffectMask(m_layer, k, 0, false); });
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // the list shows ◐
-        });
+    // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
+    auto *mask = new QToolButton;
+    mask->setObjectName(QStringLiteral("fxMask"));
+    auto label = [mask](const QString &name, bool inverted) {
+        mask->setText((inverted ? QStringLiteral("◑ ") : QStringLiteral("◐ ")) + (name.isEmpty() ? QStringLiteral("—") : name));
+        mask->setStyleSheet(name.isEmpty() ? QStringLiteral("QToolButton { color:#666; padding:1px 6px; }")
+                                           : QStringLiteral("QToolButton { color:white; background:%1; border-radius:3px; "
+                                                            "padding:1px 6px; }").arg(theme::accent().darker(140).name()));
+    };
+    label(maskName, invert);
+    mask->setMaximumWidth(110);
+    mask->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at all "
+                                    "where it is black or transparent. Click to choose it"));
+    h->addWidget(mask);
+    connect(mask, &QToolButton::clicked, this, [this, mask, label, masks, stagesOf, ownEffects, selfId, maskId, maskStage,
+                                                 invert, maskOnly, valid, prefix, panel, k] {
+        auto *pop = new QFrame(mask, Qt::Popup);
+        pop->setAttribute(Qt::WA_DeleteOnClose);
+        pop->setObjectName(QStringLiteral("fxMaskPopup"));
+        pop->setFrameShape(QFrame::StyledPanel);
+        auto *f = new QFormLayout(pop);
         auto *pick = new QComboBox;
+        pick->setObjectName(QStringLiteral("fxMaskLayer"));
         pick->addItem(QStringLiteral("None — everywhere"), QVariant(qulonglong(0)));
-        int current = 0;
-        // This very layer, from a stage above this effect (its source, an effect before it)
         pick->addItem(QStringLiteral("This layer"), QVariant(qulonglong(selfId)));
-        if (maskId == selfId) current = 1;
+        int current = maskId == selfId ? 1 : 0;
         for (const auto &[id, n] : masks) {
             pick->addItem(n, QVariant(qulonglong(id)));
             if (id == maskId) current = pick->count() - 1;
@@ -3745,19 +3832,9 @@ void LayerInspector::showEffectParams()
             current = pick->count() - 1;
         }
         pick->setCurrentIndex(current);
-        pick->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at "
-                                        "all where it is black or transparent, in proportion in between. That picture is "
-                                        "stretched over this layer's, before the mapping. The layer can stay hidden."));
-        auto *inv = new FlagBox(QStringLiteral("Invert"));
-        inv->setChecked(invert);
-        inv->setEnabled(maskId != 0);
-        row->addWidget(label);
-        row->addWidget(pick, 1);
-        row->addWidget(inv);
-        lay->addLayout(row);
+        f->addRow(QStringLiteral("Mask"), pick);
         // Its stage: the mask layer's source, its picture after one of its FX, or its final picture (this layer: above
         // this FX only)
-        auto *stageRow = new QHBoxLayout;
         auto *stage = new QComboBox;
         stage->setObjectName(QStringLiteral("fxMaskStage"));
         stage->addItem(QStringLiteral("Source (before its FX)"), 0);
@@ -3769,57 +3846,53 @@ void LayerInspector::showEffectParams()
         stage->setEnabled(maskId != 0);
         stage->setToolTip(QStringLiteral("The mask layer's picture taken: its source, after one of its FX, or its final "
                                          "picture. This layer: its source or an FX above this one"));
-        stageRow->addWidget(new QLabel(QStringLiteral("Taken at")));
-        stageRow->addWidget(stage, 1);
-        lay->addLayout(stageRow);
-        connect(stage, &QComboBox::activated, this, [this, stage](int i) {
-            const int at = stage->itemData(i).toInt();
-            const int k = m_selectedEffect;
-            editEffects(QStringLiteral("Set FX Mask Stage"), [&] { m_engine->setEffectMaskStage(m_layer, k, at); });
-        });
-        connect(pick, &QComboBox::activated, this, [this, pick, inv](int i) {
+        f->addRow(QStringLiteral("Taken at"), stage);
+        auto *inv = new FlagBox(QStringLiteral("Invert"));
+        inv->setChecked(invert);
+        inv->setEnabled(maskId != 0);
+        f->addRow(QString(), inv);
+        auto *only = new FlagBox(QStringLiteral("Mask only — not in the picture"));
+        only->setObjectName(QStringLiteral("fxMaskOnly"));
+        only->setChecked(maskOnly);
+        only->setEnabled(valid);
+        only->setToolTip(QStringLiteral("This FX is computed, and a mask can take its picture (an FX below it, another "
+                                        "layer's), but the layer's picture goes on as if it were not there"));
+        f->addRow(QString(), only);
+        lockInputs(pop, m_locked);
+        connect(pick, &QComboBox::activated, this, [this, pick, inv, pop, k](int i) {
             const quint64 id = pick->itemData(i).toULongLong();
-            const int k = m_selectedEffect;
             QString err;
             bool ok = true;
             editEffects(id ? QStringLiteral("Set FX Mask") : QStringLiteral("Remove FX Mask"),
                         [&] { ok = m_engine->setEffectMask(m_layer, k, id, inv->isChecked(), &err); });
+            pop->close();
             if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Mask"), err);
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages, the chip
         });
-        connect(inv, &QCheckBox::toggled, this, [this, pick](bool on) {
+        connect(stage, &QComboBox::activated, this, [this, stage, k](int i) {
+            const int at = stage->itemData(i).toInt();
+            editEffects(QStringLiteral("Set FX Mask Stage"), [&] { m_engine->setEffectMaskStage(m_layer, k, at); });
+        });
+        connect(inv, &QCheckBox::toggled, this, [this, pick, label, k](bool on) {
             const quint64 id = pick->currentData().toULongLong();
-            const int k = m_selectedEffect;
             editEffects(QStringLiteral("Invert FX Mask"), [&] { m_engine->setEffectMask(m_layer, k, id, on); });
+            label(pick->currentIndex() == 1 ? QStringLiteral("Self") : pick->currentText(), on);
         });
-    }
-
-    // Mask only: computed for the masks that take it, the picture going on without it
-    if (valid) {
-        const QString path = m_engine->shaderPrefix(m_layerId, m_selectedEffect) + QStringLiteral("mask_only");
-        auto *only = new FlagBox(QStringLiteral("Mask only — not in the picture"));
-        only->setObjectName(QStringLiteral("fxMaskOnly"));
-        only->setChecked(maskOnly);
-        only->setToolTip(QStringLiteral("This FX is computed, and a mask can take its picture (an FX below it, another "
-                                        "layer's), but the layer's picture goes on as if it were not there"));
-        connect(only, &QCheckBox::toggled, this, [this, path](bool on) {
-            setValue(path, on, QStringLiteral("FX Mask Only"));
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its outline in the list
+        connect(only, &QCheckBox::toggled, this, [this, prefix, panel, k](bool on) {
+            setValue(prefix + QStringLiteral("mask_only"), on, QStringLiteral("FX Mask Only"));
+            panel->setRowMaskOnly(k, on); // its outline in the list
         });
-        m_animate->attach(only, {path});
-        lay->addWidget(only);
-    }
+        m_animate->attach(only, {prefix + QStringLiteral("mask_only")});
+        pop->adjustSize();
+        pop->move(mask->mapToGlobal(QPoint(mask->width() - pop->width(), mask->height())));
+        pop->show();
+    });
 
     // Channels: the ones it changes (all by default); a channel off keeps the picture the effect was given
     if (valid) {
-        const QString prefix = m_engine->shaderPrefix(m_layerId, m_selectedEffect);
-        auto *row = new QHBoxLayout;
-        auto *label = new ResetLabel(QStringLiteral("Channels"), [this, prefix] {
-            for (QChar c : QStringLiteral("rgba")) setValue(prefix + QStringLiteral("channel/") + c, true, QStringLiteral("FX Channels"));
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
-        });
-        row->addWidget(label);
         static const QColor kTints[] = {QColor(230, 70, 70), QColor(80, 200, 90), QColor(80, 140, 240), QColor(200, 200, 205)};
+        auto *channels = new QHBoxLayout;
+        channels->setSpacing(2);
         for (int c = 0; c < 4; ++c) {
             const QString path = prefix + QStringLiteral("channel/") + QChar("rgba"[c]);
             auto *b = new QToolButton;
@@ -3827,29 +3900,19 @@ void LayerInspector::showEffectParams()
             b->setText(QString(QChar("RGBA"[c])));
             b->setCheckable(true);
             b->setChecked(m_engine->parameterValue(m_layerId, path).toBool(true));
-            b->setMinimumWidth(30);
+            b->setFixedSize(18, 20);
             b->setToolTip(QStringLiteral("%1: changed by this FX (off: it keeps the picture the FX was given)")
                               .arg(QStringLiteral("Red,Green,Blue,Alpha").split(',')[c]));
-            b->setStyleSheet(QStringLiteral("QToolButton { font-weight:bold; color:#777; } "
-                                            "QToolButton:checked { background:%1; color:white; border-radius:3px; }")
-                                 .arg(kTints[c].name()));
+            b->setStyleSheet(QStringLiteral("QToolButton { font-size:10px; font-weight:bold; color:#666; padding:0; } "
+                                            "QToolButton:checked { background:%1; color:%2; border-radius:2px; }")
+                                 .arg(kTints[c].name(), c == 3 ? QStringLiteral("#222") : QStringLiteral("white")));
             connect(b, &QToolButton::toggled, this, [this, path](bool on) { setValue(path, on, QStringLiteral("FX Channel")); });
             m_animate->attach(b, {path});
-            row->addWidget(b);
+            channels->addWidget(b);
         }
-        row->addStretch();
-        lay->addLayout(row);
+        h->addLayout(channels);
     }
-    if (valid) {
-        lay->addWidget(accentSeparator());
-        auto *params = new ParamPanel(m_engine, m_undo, m_layer, m_selectedEffect, ParamPanel::NoSpeed);
-        params->setCoTargets(coTargets());
-        m_effectParams = params;
-        params->attachAnimate(m_animate);
-        connect(params, &ParamPanel::rebuildRequested, this, &LayerInspector::rebuild, Qt::QueuedConnection);
-        lay->addWidget(params);
-    }
-    lockInputs(m_fxDetail, m_locked);
+    return box;
 }
 
 void LayerInspector::refreshSpatial()
@@ -4266,7 +4329,13 @@ void LayerInspector::refreshDynamic()
             show(m_genSpeed, gs);
         }
         if (m_effectParams) m_effectParams->refresh();
-        if (m_fxSpeed) show(m_fxSpeed, m_engine->parameterValue(m_layerId, m_fxSpeedPath).toDouble(1.0));
+        for (const auto &[box, path] : m_fxSpeeds) {
+            const double v = m_engine->parameterValue(m_layerId, path).toDouble(1.0);
+            if (box && !box->hasFocus() && std::abs(box->value() - v) > 1e-3) {
+                QSignalBlocker block(box);
+                box->setValue(v);
+            }
+        }
         for (size_t k = 0; k < m_routeFields.size(); ++k) {
             const RouteField &r = m_routeFields[k];
             if (!r.field || r.field->isDragging()) continue;
