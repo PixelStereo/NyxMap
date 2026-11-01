@@ -320,7 +320,8 @@ void Sequencer::setPosition(int step)
 int Sequencer::next() const
 {
     QMutexLocker lk(&m_mutex);
-    return nextOfLocked(m_current);
+    const int loaded = loadedNextLocked(m_current);
+    return loaded >= 0 ? loaded : nextOfLocked(m_current);
 }
 
 int Sequencer::previous() const
@@ -450,6 +451,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
     {
         QMutexLocker lk(&m_mutex);
         if (expected && !expected->load()) return false;
+        m_loadedNext.erase(owner); // a GO or a jump: the step loaded as next is used, or left
         const int index = sequenceIndexLocked(owner);
         if (index < 0) return false; // removed before a queued GO arrived
         const Sequence &s = m_sequences[size_t(index)];
@@ -500,27 +502,26 @@ void Sequencer::playAtOnce(const std::vector<Step> &steps)
 
 bool Sequencer::loadAsNext(int index, int step)
 {
-    std::vector<Step> before;
     {
         QMutexLocker lk(&m_mutex);
         if (index < 0 || index >= int(m_sequences.size())) return false;
         const Sequence &s = m_sequences[size_t(index)];
         if (step < 0 || step >= int(s.steps.size())) return false;
-        if (!s.editMode && s.tracking && step > 0) {
-            int from = step - 1;
-            while (from > 0 && !s.steps[size_t(from)].snapshot) --from;
-            for (int k = std::max(0, from); k < step; ++k) before.push_back(s.steps[size_t(k)]);
-        }
-        stopSequenceLocked(index);
-    }
-    if (!before.empty()) playAtOnce(before);
-    {
-        QMutexLocker lk(&m_mutex);
-        if (index >= int(m_positions.size())) return false;
-        m_positions[size_t(index)] = step - 1; // GO plays this step next
+        m_loadedNext[m_sequenceIds[size_t(index)]] = s.steps[size_t(step)].runtimeId;
     }
     emit positionChanged();
     return true;
+}
+
+int Sequencer::loadedNextLocked(int index) const
+{
+    if (index < 0 || index >= int(m_sequences.size())) return -1;
+    const auto it = m_loadedNext.find(m_sequenceIds[size_t(index)]);
+    if (it == m_loadedNext.end()) return -1;
+    const auto &steps = m_sequences[size_t(index)].steps;
+    for (size_t k = 0; k < steps.size(); ++k)
+        if (steps[k].runtimeId == it->second) return int(k);
+    return -1;
 }
 
 bool Sequencer::go()
@@ -621,7 +622,8 @@ bool Sequencer::relativeGo(quint64 owner, bool back, std::shared_ptr<std::atomic
     {
         QMutexLocker lk(&m_mutex);
         const int index = sequenceIndexLocked(owner);
-        step = back ? previousOfLocked(index) : nextOfLocked(index);
+        const int loaded = back ? -1 : loadedNextLocked(index);
+        step = back ? previousOfLocked(index) : loaded >= 0 ? loaded : nextOfLocked(index);
     }
     return goToSequence(owner, step, !back, expected);
 }
@@ -1183,6 +1185,7 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
 
 void Sequencer::clear()
 {
+    m_loadedNext.clear();
     QMutexLocker lk(&m_mutex);
     for (auto &[owner, token] : m_commandTokens) *token = false;
     m_commandTokens.clear();

@@ -2627,15 +2627,20 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.advanceFades(5);
             CHECK(close(value("rotation"), -10) && close(value("opacity"), 0.9));
             CHECK(!e.sequencer().toJson().at(si).toObject().value("tracking").toBool(true));
-            // Load as Next: GO plays that step next, not played now; with tracking, the steps before it played at once
+            // Load as Next: only the step GO plays next changes (the step played and the show stay); its GO is a jump,
+            // with tracking the steps before it played at once first
             off.tracking = true;
             e.sequencer().setSequence(si, off);
             e.setParameter(t, "rotation", -10.0);
             e.setParameter(t, "position/x", 100.0);
-            CHECK(e.sequencer().loadAsNext(si, 3));
             e.sequencer().setCurrent(si);
-            CHECK(e.sequencer().next() == 3 && close(value("rotation"), 45) && close(value("position/x"), 100));
-            CHECK(e.sequencer().go() && e.sequencer().positionOf(si) == 3);
+            e.sequencer().goToStepOf(si, 0); // the snapshot: the step played is the first
+            e.advanceFades(5);
+            e.setParameter(t, "rotation", -10.0);
+            CHECK(e.sequencer().loadAsNext(si, 3));
+            CHECK(e.sequencer().next() == 3 && e.sequencer().positionOf(si) == 0 && close(value("rotation"), -10));
+            CHECK(e.sequencer().go() && e.sequencer().positionOf(si) == 3 && close(value("rotation"), 45));
+            CHECK(e.sequencer().next() != 3 || e.sequencer().sequence(si).loop);
             e.advanceFades(5);
             CHECK(close(value("position/x"), 300));
             // A preset can hold the views: saved with it, handed back when it is recalled

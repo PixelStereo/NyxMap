@@ -1221,8 +1221,8 @@ void SequenceWindow::fillStepMenu(QMenu *menu, int row)
         auto *load = menu->addAction(QStringLiteral("Load as Next"), this, [this, row] {
             m_engine->sequencer().loadAsNext(m_engine->sequencer().current(), row);
         });
-        load->setToolTip(QStringLiteral("GO plays this step next. With tracking, the show is first where the steps before "
-                                        "it leave it"));
+        load->setToolTip(QStringLiteral("GO plays this step next; the step played and the show stay as they are. With "
+                                        "tracking, its GO first plays what the steps before it leave"));
         menu->addAction(QStringLiteral("Delete"), this, &SequenceWindow::removeSteps);
     }
 }
