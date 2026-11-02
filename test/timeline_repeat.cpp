@@ -91,7 +91,7 @@ int finiteRepeat(Engine &e, const QString &tmp, int hz)
     check(e.animation(repeatedIndex).state == Engine::AnimState::Playing, "repeat timeline started");
 
     const double dt = 1.0 / hz;
-    const int frames = int(std::round(3.55 * hz));
+    const int frames = int(std::round(4.05 * hz));
     double largestValueError = 0;
     int largestPixelError = 0;
     int pixelSamples = 0;
@@ -142,8 +142,8 @@ int finiteRepeat(Engine &e, const QString &tmp, int hz)
     check(largestPixelError <= 12, "rendered pixels track animated opacity");
     check(secondAt >= 3.25 - dt && secondAt <= 3.25 + 2 * dt,
           "AutoFollow fires after Repeat x3 and 250 ms");
-    check(thirdAt >= 3.35 - dt && thirdAt <= 3.35 + 2 * dt,
-          "AutoFollow fires 100 ms after a timeline with no keys");
+    check(thirdAt >= secondAt + 0.6 - dt && thirdAt <= secondAt + 0.6 + 2 * dt,
+          "AutoFollow fires after step two's 500 ms and its 100 ms");
     check(e.sequencer().positionOf(seqIndex) == 2, "third step reached");
     check(e.animation(markerIndex).state == Engine::AnimState::Stopped, "third step stopped marker");
 

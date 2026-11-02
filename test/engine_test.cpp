@@ -2880,7 +2880,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 e.setSnapshot(mB1, m);
             }
 
-            // Pre-wait, post-wait, follow / auto-follow / wait
+            // Pre-wait, post-wait, auto-follow / wait
             std::vector<int> fired;
             e.sequencer().setRecaller([&](int mi) {
                 fired.push_back(mi);
@@ -2892,7 +2892,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             s0.snapshot = e.snapshot(mA1).id;
             s0.preWait = 1.0;
             s0.postWait = 0.5;
-            s0.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after this one is triggered
+            s0.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after its action
             s1.snapshot = e.snapshot(mB1).id;
             s1.postWait = 0.5;
             s1.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after its 2 s action
@@ -2905,9 +2905,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(fired.empty());
             e.sequencer().advance(0.5);
             CHECK(fired == std::vector<int>{mA1} && e.sequencer().position() == 0);
-            e.sequencer().advance(0.4);
+            const double firstAction = e.sequencer().stepDuration(s0);
+            e.sequencer().advance(firstAction + 0.4);
             CHECK(e.sequencer().position() == 0);
-            e.sequencer().advance(0.1); // 1.5 s: pre-wait + post-wait, the next one without waiting for the action
+            e.sequencer().advance(0.1); // its action and its post-wait over
             CHECK(fired == (std::vector<int>{mA1, mB1}) && e.sequencer().position() == 1);
             e.sequencer().advance(2.4);
             CHECK(e.sequencer().position() == 1);
