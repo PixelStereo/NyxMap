@@ -249,7 +249,23 @@ else()
   endif()
 endif()
 if(NYXMAP_MIDI_API)
-  add_library(rtmidi_static STATIC "${rtmidi_SOURCE_DIR}/RtMidi.cpp")
+  # RtMidi declares its CoreMIDI client getters throw() (noexcept), yet reports a failed MIDIClientCreate by throwing
+  # RtMidiError from them: std::terminate, the process aborts before Midi.cpp's catch. MIDIClientCreate does fail now
+  # and then when several processes reach the MIDI server at once (the UI tests under ctest -j). Built from a copy
+  # without those throw(), the error is caught and the port list is empty.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${rtmidi_SOURCE_DIR}/RtMidi.cpp")
+  file(READ "${rtmidi_SOURCE_DIR}/RtMidi.cpp" rtmidi_code)
+  string(REPLACE "getCoreMidiClientSingleton(const std::string& clientName) throw()"
+                 "getCoreMidiClientSingleton(const std::string& clientName)" rtmidi_code "${rtmidi_code}")
+  set(rtmidi_patched "${CMAKE_BINARY_DIR}/generated/rtmidi/RtMidi.cpp")
+  set(rtmidi_previous "")
+  if(EXISTS "${rtmidi_patched}")
+    file(READ "${rtmidi_patched}" rtmidi_previous)
+  endif()
+  if(NOT rtmidi_previous STREQUAL rtmidi_code)
+    file(WRITE "${rtmidi_patched}" "${rtmidi_code}")
+  endif()
+  add_library(rtmidi_static STATIC "${rtmidi_patched}")
   target_include_directories(rtmidi_static PUBLIC "${rtmidi_SOURCE_DIR}")
   target_compile_definitions(rtmidi_static PUBLIC ${NYXMAP_MIDI_API})
   target_link_libraries(rtmidi_static PUBLIC ${NYXMAP_MIDI_LIBS})
@@ -925,6 +941,17 @@ if(NYXMAP_TESTS)
     add_test(NAME render_cli COMMAND ${CMAKE_COMMAND} -DNYXMAP=$<TARGET_FILE:NyxMap> -DOUT=${CMAKE_BINARY_DIR}/render_cli
              -P "${CMAKE_SOURCE_DIR}/test/render_cli.cmake")
   endif()
+  # The tests that show real windows share the one desktop. Side by side (ctest -j), one takes the key window from
+  # another, whose menus and dialogs macOS then closes as they open: a check finds no menu, or Qt's Cocoa plugin frees
+  # a menu's window inside its own show and the test crashes. They take turns; the headless tests still run beside them.
+  get_property(nyxmap_all_tests DIRECTORY PROPERTY TESTS)
+  set(nyxmap_window_tests "")
+  foreach(test ${nyxmap_all_tests})
+    if(test MATCHES "_ui$" OR test MATCHES "^(rendering|animation_drivers|timeline_activity|number_widgets)$")
+      list(APPEND nyxmap_window_tests ${test})
+    endif()
+  endforeach()
+  set_tests_properties(${nyxmap_window_tests} PROPERTIES RESOURCE_LOCK desktop)
   # Several videos played together: cmake --build build --target nyxmap_bench
   add_executable(nyxmap_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(nyxmap_bench PRIVATE nyxmap_engine)
