@@ -1,4 +1,4 @@
-# Controls and the phone remote
+# Controls, Show Control and the remote
 
 ## Controls
 
@@ -16,7 +16,7 @@ A control is a value of the show, `control/<name>` (a color: `control/<name>/r`,
 * a **timeline animates it** (sliders and colors), an event track sets a switch;
 * **OSC** reads and sets it: `/control/<name>` (a slider: float in its range; a toggle or a button: 0 / 1; a selector: 1 is the
   first choice; a color: three floats 0..1), and OSCQuery lists it;
-* the **phone remote** moves it.
+* the **remote** moves it.
 
 The address is made from the name when the control is created and does not follow a rename (an interaction or a remote knows
 it by that address); duplicates get `_2`.
@@ -24,26 +24,40 @@ it by that address); duplicates get `_2`.
 A **Button** is a gate, not a trigger: its value is 1 while it is held. Feed it to an *Envelope* filter for a flash that fires
 on the press and releases on the let-go.
 
-## Phone remote
+## The remote: two web pages
 
-**Settings › OSC › Phone remote**: tick *Serve the Controls as a web page*, open the address shown on the phone (the same
-network), enter the **PIN**. The page shows each control as something a thumb can use (sliders, big switches, selector
-buttons, hold buttons, color pickers), and follows the show live: what moves in NyxMap moves on the phone, and back.
+**Settings › OSC › Remote**: tick *Serve the Show Control and the Controls as web pages*, then open an address shown there on a
+phone, a tablet or a browser on the same network, and enter the **PIN**. Each page links to the other; `http://<this machine>:8765/`
+leads to `/control`.
+
+* **`http://<this machine>:8765/control`** shows each control as something a thumb can use (sliders, big switches, selector
+  buttons, hold buttons, color pickers), and follows the show live: what moves in NyxMap moves on the phone, and back.
+* **`http://<this machine>:8765/show`** is the show desk: see [Show Control](#show-control) below.
 
 Safety, because it is a door into a show:
 
-* it reaches **the controls only**, not the layers, the project or OSC;
-* a **PIN** of 6 digits (made at first use, **New PIN** to change it, 5 to 12 digits), compared in constant time; eight wrong
-  PINs lock an address out for a minute;
-* the WebSocket is accepted only from the page this server served (same origin), so a page of another site cannot reach it;
-* the page's script and style are the only code its Content-Security-Policy allows (hashes of exactly what is served);
-* at most 16 phones, frames of at most 4 KB, 300 messages a second each;
+* it **plays the show and moves live values** (controls, cues, snapshots, presets, timelines, any layer's values); it cannot open,
+  save or edit the project, and it reaches nothing else of the OSC namespace;
+* a **PIN** of 4 to 32 letters or digits (made at first use, **Random** to change it), compared in constant time; eight wrong
+  codes lock an address out for a minute. Without a code, anyone on the network can play the show;
+* the WebSocket is accepted only from a page this server served (same origin), so a page of another site cannot reach it;
+* each page's script and style are the only code its Content-Security-Policy allows (hashes of exactly what is served);
+* at most 16 clients, frames of at most 4 KB, 300 messages a second each;
 * **no encryption**: the PIN and the values cross the network in clear, as OSC does. Use it on the show's network, not on a
   shared one. It listens where OSC does (*Listen on*).
 
 It is off by default. To write your own client, the protocol is a WebSocket at `/ws?pin=<PIN>` with JSON text frames
 (described in `src/engine/RemoteServer.h`).
 
-Why not Open Stage Control inside NyxMap? It is a separate application on Electron, and its GPL holders grant no permission for the NDI runtime NyxMap's packages include. The
-existing Open Stage Control desk (`integrations/open-stage-control`) keeps working against the OSC namespace, controls
-included (`/control/…`); this page is the integrated one.
+## Show Control
+
+The **Show Control** tab (Shift+6) and the `/show` page are the same desk, to play a show from:
+
+* **SHOW**: the selected sequence; its previous, current and next cues, with their text, their times and how far they are; GO,
+  GO BACK, STOP WAITS and STOP ALL WAITS (twice, for every sequence); the elapsed and remaining time; the cue stack, where a click
+  plays a cue. Each cue tells how the next one starts: **WAIT · GO** (manual), **FOLLOW** (after its start plus its post-wait),
+  **AUTO-FOLLOW** (after its end plus its post-wait).
+* **SNAPSHOTS**, **PRESETS**: a button each, following the open project.
+* **TIMELINES**: play, pause and stop, with their time and pass.
+* **LAYERS** (the web page only: in NyxMap, *LAYER CONTROL →* leads to the Layers tab): any layer's values by section, live.
+  Double-click or double-tap a name marked ↺ to reset it.

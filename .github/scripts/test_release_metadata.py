@@ -72,16 +72,16 @@ class ReleaseMetadataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             metadata.select_release([], REPO)
 
-    def test_remote_link_only_when_asset_is_published(self):
+    def test_companion_link_only_when_asset_is_published(self):
         current = release()
         _, urls = metadata.select_release([current], REPO)
-        self.assertNotIn('Download Open Stage Control remote', metadata.downloads(current, urls, REPO))
-        remote = {'name': 'NyxMap-OpenStageControl.zip', 'state': 'uploaded', 'size': 123,
-                  'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/NyxMap-OpenStageControl.zip'}
-        current['assets'].append(remote)
+        self.assertNotIn('Download the Stream Deck module', metadata.downloads(current, urls, REPO))
+        companion = {'name': 'NyxMap-Companion-v1.2.3.tgz', 'state': 'uploaded', 'size': 123,
+                     'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/NyxMap-Companion-v1.2.3.tgz'}
+        current['assets'].append(companion)
         _, urls = metadata.select_release([current], REPO)
-        self.assertIn(remote['browser_download_url'], metadata.downloads(current, urls, REPO))
-        remote['browser_download_url'] = 'https://example.org/remote.zip'
+        self.assertIn(companion['browser_download_url'], metadata.downloads(current, urls, REPO))
+        companion['browser_download_url'] = 'https://example.org/module.tgz'
         with self.assertRaises(ValueError):
             metadata.select_release([current], REPO)
 

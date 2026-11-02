@@ -28,5 +28,5 @@ Agreement requires for packages that include the NDI runtime are in `THIRD-PARTY
 This permission covers only the code whose copyright is held by NyxMap's licensors. Code under the GPL from anyone else
 (an FFmpeg built with x264, for example) cannot be combined with those two components in a package through it.
 
-The integrations in `integrations/companion` and `integrations/open-stage-control` are separate programs under the MIT
-licence (the `LICENSE` file in each). Third-party components keep their own licences: see `THIRD-PARTY-NOTICES.md`.
+The Companion module in `integrations/companion` is a separate program under the MIT licence (its `LICENSE` file).
+Third-party components keep their own licences: see `THIRD-PARTY-NOTICES.md`.

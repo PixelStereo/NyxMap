@@ -173,6 +173,7 @@ private:
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
     class RemoteServer *m_remote = nullptr;
+    class ShowControlPanel *m_showControl = nullptr;
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;

@@ -1,5 +1,5 @@
 #pragma once
-// The page the phone remote serves (RemoteServer.h): a single file, no library, no external request. Its style and its script
+// The page the remote serves at /control (RemoteServer.h): a single file, no library, no external request. Its style and its script
 // are hashed into the Content-Security-Policy at start-up, so that nothing but this exact code can run in it.
 #include <QByteArray>
 
@@ -11,6 +11,7 @@ html, body { margin:0; background:var(--bg); color:var(--text); font:16px/1.35 -
 header { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--bg); border-bottom:1px solid var(--line); }
 header h1 { flex:1; margin:0; font-size:17px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #state { font-size:12px; color:var(--dim); }
+header a { font-size:13px; color:var(--text); text-decoration:none; white-space:nowrap; border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
 #state.ok::before { content:"● "; color:#46c46a; }
 #state.bad::before { content:"● "; color:#e5564a; }
 main { display:grid; gap:12px; padding:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
@@ -31,8 +32,8 @@ input[type=color] { width:100%; height:56px; border:1px solid var(--line); borde
 )CSS";
 
 inline constexpr char kBody[] = R"HTML(
-<header><h1 id="title">NyxMap</h1><span id="state">…</span></header>
-<div id="login" hidden><h2>NyxMap remote</h2><p id="loginText">Enter the code set in NyxMap (Settings › OSC › Phone remote).</p><input id="pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" enterkeyhint="go"><button id="go" type="button">Connect</button></div>
+<header><h1 id="title">NyxMap</h1><span id="state">…</span><a id="toShow" href="/show">Show control →</a></header>
+<div id="login" hidden><h2>NyxMap remote</h2><p id="loginText">Enter the code set in NyxMap (Settings › OSC › Remote).</p><input id="pin" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" enterkeyhint="go"><button id="go" type="button">Connect</button></div>
 <main id="list" hidden></main>
 )HTML";
 

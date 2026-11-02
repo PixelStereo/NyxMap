@@ -11,7 +11,7 @@ class QTimer;
 
 // The Controls tab: the operator's own sliders, switches, selectors, buttons and colors (ShowControl.h), each a parameter
 // of the show that an interaction can follow (Internal source) or drive (target), a timeline animate and OSC reach. The
-// panel is where they are made, shaped and played; the phone remote (RemoteServer.h) shows the same list. Definitions are
+// panel is where they are made, shaped and played; the remote (RemoteServer.h) shows the same list. Definitions are
 // edited through the undo stack; moving a control is a performance, not an edit.
 class ControlsPanel : public QWidget
 {

@@ -93,6 +93,7 @@ add_library(nyxmap_engine STATIC
   src/engine/MiniaudioImpl.cpp
   src/engine/Osc.cpp
   src/engine/OscShowControl.cpp
+  src/engine/ShowDesk.cpp
   src/engine/EventLog.cpp
   src/engine/FrameTiming.cpp
   src/engine/OscCodec.cpp
@@ -399,6 +400,7 @@ set(APP_SOURCES
   src/ui/LogPanel.cpp
   src/ui/LogModel.cpp
   src/ui/ControlsPanel.cpp
+  src/ui/ShowControlPanel.cpp
   src/ui/FxChainPanel.cpp
   src/ui/LayerInspector.cpp
   src/ui/ParamPanel.cpp
@@ -886,7 +888,7 @@ if(NYXMAP_TESTS)
   add_test(NAME line_ui COMMAND nyxmap_line_ui_test)
   set(WORKSPACE_TEST_SOURCES ${APP_SOURCES})
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
-  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/scene3d_ui.cpp test/audio_fx_ui.cpp test/controls_ui.cpp ${WORKSPACE_TEST_SOURCES})
+  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/scene3d_ui.cpp test/audio_fx_ui.cpp test/controls_ui.cpp test/show_control_ui.cpp ${WORKSPACE_TEST_SOURCES})
   target_include_directories(nyxmap_workspace_ui_test PRIVATE src src/ui "${CMAKE_BINARY_DIR}/generated")
   # Without Qt WebEngine (WebPageQt.cpp compiled empty): the Media Bin then does not offer the Web Page generator
   target_link_libraries(nyxmap_workspace_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -899,6 +901,8 @@ if(NYXMAP_TESTS)
   add_test(NAME layer_source_ui COMMAND nyxmap_workspace_ui_test --layer-source)
   add_test(NAME scene3d_ui COMMAND nyxmap_workspace_ui_test --scene3d)
   add_test(NAME controls_ui COMMAND nyxmap_workspace_ui_test --controls)
+  add_test(NAME show_control_ui COMMAND nyxmap_workspace_ui_test --show-control)
+  set_tests_properties(show_control_ui PROPERTIES TIMEOUT 60)
   set_tests_properties(controls_ui PROPERTIES TIMEOUT 60)
   add_test(NAME audio_fx_ui COMMAND nyxmap_workspace_ui_test --audio-fx)
   set_tests_properties(audio_fx_ui PROPERTIES TIMEOUT 60)
