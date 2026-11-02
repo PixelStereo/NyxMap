@@ -5,7 +5,7 @@ import shutil
 import zipfile
 
 FILES = ('nyxmap.json', 'nyxmap.js', 'nyxmap-layers.cjs', 'nyxmap-dependencies.cjs',
-         'nyxmap-dependencies.LICENSE.txt', 'README.md')
+         'nyxmap-dependencies.LICENSE.txt', 'README.md', 'LICENSE')
 
 
 def package(repository, destination):
@@ -19,7 +19,6 @@ def package(repository, destination):
     text = readme.read_text(encoding='utf-8').replace('](../../docs/',
         '](https://github.com/PixelStereo/NyxMap/blob/main/docs/')
     readme.write_text(text, encoding='utf-8')
-    shutil.copyfile(repository / 'LICENSE', folder / 'LICENSE')
     archive = destination / 'NyxMap-OpenStageControl.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
         for path in sorted(folder.iterdir()):

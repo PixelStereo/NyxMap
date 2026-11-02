@@ -44,6 +44,6 @@ Safety, because it is a door into a show:
 It is off by default. To write your own client, the protocol is a WebSocket at `/ws?pin=<PIN>` with JSON text frames
 (described in `src/engine/RemoteServer.h`).
 
-Why not Open Stage Control inside NyxMap? It is a GPL-3.0 application on Electron: it cannot be part of an MIT program. The
+Why not Open Stage Control inside NyxMap? It is a separate application on Electron, and its GPL holders grant no permission for the NDI runtime NyxMap's packages include. The
 existing Open Stage Control desk (`integrations/open-stage-control`) keeps working against the OSC namespace, controls
 included (`/control/…`); this page is the integrated one.

@@ -11,7 +11,7 @@ From a single screen to a multi-output installation, design the image and run th
 <p>
   <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
   <a href="#download"><img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge"></a>
-  <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-MIT-24272C?style=for-the-badge"></a>
+  <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-GPLv3-24272C?style=for-the-badge"></a>
 </p>
 
 </div>
@@ -28,7 +28,7 @@ From a single screen to a multi-output installation, design the image and run th
 
 ---
 
-- **Free, open source, cross-platform.** macOS, Windows and Linux, MIT licensed.
+- **Free, open source, cross-platform.** macOS, Windows and Linux, licensed under the GPL v3.
 
 ---
 
@@ -84,4 +84,4 @@ Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, L
 
 ## License
 
-NYXMAP is free software under the [MIT License](LICENSE). Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
+NYXMAP is free software under the [GNU GPL v3 or later](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) for the NDI runtime and the TouchEngine SDK. Versions published before this change remain available under the MIT License. Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.

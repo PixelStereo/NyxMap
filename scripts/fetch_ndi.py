@@ -34,7 +34,8 @@ LIBRARY = {"Windows": "Processing.NDI.Lib.x64.dll", "Darwin": "libndi.dylib", "L
 NOTICE = """NDI runtime bundled with NyxMap
 
 This application includes the NDI(R) runtime library from the NDI SDK, distributed under the NDI SDK License
-Agreement (https://ndi.video/sdk/). NDI(R) is a registered trademark of Vizrt NDI AB. https://ndi.video
+Agreement (https://ndi.video/sdk/). Its terms, which apply to these components only, are in THIRD-PARTY-NOTICES.md.
+NDI(R) is a registered trademark of Vizrt NDI AB. https://ndi.video
 
 The licences of the third-party components of the NDI library are in Processing.NDI.Lib.Licenses.txt.
 """
