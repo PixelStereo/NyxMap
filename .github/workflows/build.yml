@@ -535,7 +535,7 @@ jobs:
           done < <(find "$APP/Contents" -type f -print0)
           test -x "$EXE"
           test -d "$APP/Contents/Resources/isf"
-          cp LICENSE THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
+          cp LICENSE LICENSE-EXCEPTION.md THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
           # Only LGPL FFmpeg libraries and no GPL-only one; the notices of every library copied from Homebrew
           python3 scripts/build_ffmpeg_lgpl.py check "$APP"
           python3 scripts/macos_notices.py "$APP"
@@ -659,7 +659,7 @@ jobs:
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
           Copy-Item -Recurse -Force build\audio dist\audio
-          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
+          Copy-Item LICENSE, LICENSE-EXCEPTION.md, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 
           # Deploy Qt libraries, platform plugins, multimedia plugins and the MSVC runtime.

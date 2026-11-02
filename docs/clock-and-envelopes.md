@@ -59,7 +59,7 @@ project (tempo and bar length, not the running state). From OSC:
 | `/clock/sync <beat> <bpm> [playing]` | a tempo and position measured elsewhere: the clock takes them, and follows them while they keep coming |
 
 `/clock/sync` is how an external clock drives the steps: a DAW, a controller, or a small helper program that reads
-Ableton Link and sends the beat and tempo. The helper is a separate program (Link is GPL; NyxMap stays MIT).
+Ableton Link and sends the beat and tempo. The helper is a separate program (Link's GPL holders grant no permission for the NDI runtime NyxMap's packages include).
 
 ## Sequences in time
 
