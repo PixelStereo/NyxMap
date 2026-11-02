@@ -1,6 +1,7 @@
 // The Show Control tab: the desk follows the sequence, GO, GO BACK and the stops play it, the cue stack and the libraries launch,
 // and it follows what something else plays.
 #include "Engine.h"
+#include "MainWindow.h"
 #include "ShowControlPanel.h"
 #include <QApplication>
 #include <QComboBox>
@@ -106,6 +107,29 @@ int runShowControlUiTests(Engine &engine)
     for (auto *b : panel.findChildren<QPushButton *>())
         if (b->text().startsWith("LAYER CONTROL")) b->click();
     check(layers == 1, "LAYER CONTROL leads to the layers");
+
+    // In the window: a tab of the left pane, after the others
+    {
+        MainWindow window(&engine);
+        window.setQuiet(true);
+        window.setAutosaveEnabled(false);
+        window.show();
+        qApp->processEvents();
+        QTabWidget *left = nullptr;
+        int index = -1;
+        for (auto *candidate : window.findChildren<QTabWidget *>())
+            for (int k = 0; k < candidate->count(); ++k)
+                if (candidate->tabText(k) == QLatin1String("Show Control")) { left = candidate; index = k; }
+        check(left && index == left->count() - 1, "the window has a Show Control tab, the last on the left");
+        if (left) {
+            left->setCurrentIndex(index);
+            qApp->processEvents();
+            check(left->currentWidget()->findChild<QPushButton *>("showGo") != nullptr, "and it shows the desk");
+            for (auto *b : left->currentWidget()->findChildren<QPushButton *>())
+                if (b->text().startsWith("LAYER CONTROL")) b->click();
+            check(left->currentIndex() == 1, "LAYER CONTROL opens the Layers tab");
+        }
+    }
 
     qApp->processEvents();
     if (qEnvironmentVariableIsSet("NYXMAP_SHOW_CONTROL_SHOT")) panel.grab().save(qEnvironmentVariable("NYXMAP_SHOW_CONTROL_SHOT"));
