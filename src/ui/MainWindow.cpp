@@ -871,14 +871,14 @@ void MainWindow::buildMenus()
         box.setTextFormat(Qt::RichText);
         box.setTextInteractionFlags(Qt::TextBrowserInteraction);
         box.setText(QStringLiteral("<h2>NYXMAP</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
-                                   "<p>© 2025-2026 PIXEL STEREO. Released under the %2.</p>"
+                                   "<p>© 2025-2026 PIXEL STEREO. Released under the %2, without any warranty.</p>"
                                    "<p>Built with Qt and FFmpeg (GNU LGPL) and other open source components: see the %3.</p>"
                                    "<p>TouchEngine and TouchDesigner are products of Derivative Inc. "
                                    "TouchEngine SDK: Shared Use License (licenses/touchengine.txt). "
                                    "Playback requires a separately installed and licensed TouchDesigner or TouchPlayer.</p>"
                                    "<p>NDI® is a registered trademark of Vizrt NDI AB. "
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
-                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("MIT License")),
+                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU GPL v3 or later")),
                              link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
         box.setIconPixmap(QPixmap(QStringLiteral(":/branding/nyxmap.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();

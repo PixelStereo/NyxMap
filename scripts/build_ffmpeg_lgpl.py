@@ -9,8 +9,8 @@ Usage:
   build_ffmpeg_lgpl.py check-dlls DIR  Windows: every FFmpeg DLL in DIR is LGPL v2.1 or later, or LGPL v3 or later
                                        (BtbN's lgpl builds may use --enable-version3); prints the licence last
 
-Homebrew builds FFmpeg with --enable-gpl (libx264, libx265…): an application that ships it is a GPL work, which the
-NDI runtime and NyxMap's own terms do not allow. This build has no --enable-gpl and no --enable-nonfree, so it is
+Homebrew builds FFmpeg with --enable-gpl (libx264, libx265…): its GPL holders grant no permission to ship it beside the
+NDI runtime (NyxMap's own additional permission covers only NyxMap's code). This build has no --enable-gpl and no --enable-nonfree, so it is
 LGPL v2.1 or later. NyxMap and Qt's FFmpeg plugin are built against Homebrew's FFmpeg of the same version, so its
 libraries keep their names and interface; the tests run against Homebrew's, the package ships these.
 

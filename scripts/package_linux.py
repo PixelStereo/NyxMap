@@ -130,7 +130,7 @@ def package(build, ffmpeg, omt, ndi, output):
     copy(build / "NyxMap", binary / "NyxMap")
     shutil.copytree(build / "isf", binary / "isf")
     shutil.copytree(build / "audio", binary / "audio")
-    for name in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
+    for name in ("LICENSE", "LICENSE-EXCEPTION.md", "THIRD-PARTY-NOTICES.md"):
         copy(ROOT / name, binary / name)
     shutil.copytree(ROOT / "licenses", binary / "licenses")
     for folder, names in ((omt, ["libomt.so", "libvmx.so", "OMT-LICENSES.txt"]),
