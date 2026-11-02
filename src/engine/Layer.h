@@ -345,6 +345,11 @@ struct Layer {
     // the source shader. Original pixels remain available for manual overrides.
     Texture2D imageAutoTex;
     QImage pendingAutoImage;
+    // An HDR image (.hdr, .exr): its pixels as read, linear floats not clipped, for what needs them (a 3D scene's
+    // environment: its "HDR file" stage). The layer's own picture is the clipped one, as any image's
+    Texture2D hdrTex;
+    std::vector<float> pendingHdr;
+    QSize pendingHdrSize;
     RenderTarget sourceColorTarget;
     QString sourceColorCachedKey;
     std::unique_ptr<LiveInput> input; // a live input (its URI in sourcePath): frames come in on its own thread
@@ -369,6 +374,9 @@ struct Layer {
     // Where those layers' pictures are taken (as an FX mask's): -1 their final picture, 0 their source (before their
     // FX), k after their FX k
     int modelPictureStage = -1, modelDisplaceStage = -1;
+    // A 3D scene: the layer whose picture (equirectangular: an HDRI, a video…) surrounds it and lights it, at a stage
+    quint64 sceneEnvironment = 0;
+    int sceneEnvironmentStage = -1;
     LightSettings light;
     bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light; }
 

@@ -46,7 +46,7 @@ struct Engine::Garbage {
     std::unique_ptr<VideoDecoder> video;
     std::unique_ptr<VideoTexture> videoTex;
     std::shared_ptr<AudioStream> audio;
-    Texture2D tex, textTex, imageAutoTex;
+    Texture2D tex, textTex, imageAutoTex, hdrTex;
     std::unique_ptr<IsfInstance> generator;
     RenderTarget generatorTarget;
     std::vector<std::unique_ptr<IsfInstance>> effects;

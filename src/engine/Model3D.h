@@ -33,6 +33,9 @@ struct ModelPlacement {
     // Displacement: its points pushed along their normals by a layer's luminance (Layer::modelDisplace), times this,
     // a luminance of `displaceMid` staying in place
     float displaceAmount = 0.2f, displaceMid = 0;
+    // A built-in primitive's material (a file keeps its own)
+    std::array<float, 3> color{{0.8f, 0.8f, 0.8f}};
+    float metal = 0, rough = 0.6f;
 };
 
 // A light of a scene
@@ -53,6 +56,10 @@ struct SceneSettings {
     float ambientIntensity = 0.15f;
     std::array<float, 4> background{{0, 0, 0, 0}};
     float exposure = 1;
+    // Its environment (a layer's picture, equirectangular: Layer::sceneEnvironment): how strong, turned around Y,
+    // shown behind the models or only lighting them, how blurred when shown
+    float envIntensity = 1, envRotation = 0, envBlur = 0;
+    bool envShow = false;
 };
 
 class Model3D
@@ -80,7 +87,8 @@ public:
     QMatrix4x4 matrix(const ModelPlacement &p) const;
     // Its meshes drawn with the scene's program bound (render thread); `picture`: a layer's picture over its UVs instead
     // of its materials' colours
-    void drawMeshes(GLuint program, GLuint picture = 0);
+    // pass 0: its opaque and cut-out meshes; 1: its blended ones (a picture laid on it: all of it in pass 0)
+    void drawMeshes(GLuint program, GLuint picture = 0, int pass = 0, const ModelPlacement *look = nullptr);
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
     int detail() const { return m_detail; }
@@ -98,7 +106,14 @@ private:
         std::array<float, 4> baseColor{{0.8f, 0.8f, 0.8f, 1}};
         float metallic = 0, roughness = 0.6f;
         std::array<float, 3> emissive{{0, 0, 0}};
-        int texture = -1; // index into m_images (-1: none)
+        int texture = -1; // its base colour's, an index into m_images (-1: none)
+        // Its other maps (indices into m_images): roughness and metal (in one of their channels), normals, occlusion,
+        // emission
+        int roughTex = -1, metalTex = -1, normalTex = -1, aoTex = -1, emTex = -1;
+        int roughChannel = 1, metalChannel = 2; // glTF: green and blue of one picture
+        float normalScale = 1, aoStrength = 1;
+        int alphaMode = 0; // 0 opaque, 1 cut out under alphaCutoff, 2 blended (drawn after the others)
+        float alphaCutoff = 0.5f;
     };
     struct Mesh {
         std::vector<Vertex> vertices;
@@ -154,12 +169,18 @@ public:
     Scene3D(const Scene3D &) = delete;
     Scene3D &operator=(const Scene3D &) = delete;
     // Its picture (premultiplied), w × h; render thread, a GL context current
-    GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h);
+    // environment: a layer's picture (equirectangular, its first row at the bottom), 0 none
+    // environmentLinear: its values linear light (an HDR file as read), else display encoded (a layer's picture)
+    GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
+                GLuint environment = 0, bool environmentLinear = false);
     void releaseGl();
 
 private:
-    GLuint m_program = 0;
+    bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
+    GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0, m_depth = 0;
+    GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
+    static constexpr int kEnvW = 1024, kEnvH = 512;
     int m_w = 0, m_h = 0;
 };

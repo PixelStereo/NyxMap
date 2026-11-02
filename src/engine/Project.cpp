@@ -169,6 +169,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         o["group"] = true;
         o["collapsed"] = l.collapsed;
         if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
+        if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
+            o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
     }
     if (l.isViewport) {
         o["viewport"] = true;
@@ -311,6 +313,11 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->isGroup = o.value("group").toBool(false);
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
+        if (l->scene3d) {
+            const QJsonObject env = o.value("environment").toObject();
+            l->sceneEnvironment = env.value("layer").toString().toULongLong();
+            l->sceneEnvironmentStage = env.value("stage").toInt(-1);
+        }
         l->collapsed = o.value("collapsed").toBool(false);
         l->isViewport = o.value("viewport").toBool(false);
         if (l->isViewport) {

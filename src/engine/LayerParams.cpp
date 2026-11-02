@@ -33,7 +33,7 @@ quint64 keyOf(const Layer &l)
           quint64(l.hasPicture()), quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
           // the played range: the playhead's (an Internal interaction takes its range from it)
           quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000)), quint64(l.scene3d),
-          quint64(bool(l.model))})
+          quint64(quintptr(l.model.get()))}) // another model: a primitive has its material
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
@@ -672,6 +672,10 @@ const std::vector<Parameter *> &Layer::parameters()
         for (int c = 0; c < 4; ++c)
             f3(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
                &sc->background[size_t(c)]).colorComponent(c);
+        f3("scene/environment/intensity", "Environment › Intensity", 0, 10, d.envIntensity, &sc->envIntensity).step(0.01);
+        f3("scene/environment/rotation", "Environment › Rotation (°)", -180, 180, 0, &sc->envRotation).step(0.1).ramp(Parameter::Ramp::Angle);
+        flag("scene/environment/show", "Environment › Shown Behind", false, &sc->envShow).ramp(Parameter::Ramp::Cut);
+        f3("scene/environment/blur", "Environment › Blur", 0, 1, 0, &sc->envBlur).step(0.01);
     }
     if (type == SourceType::Model) {
         ModelPlacement *mp = &modelPlacement;
@@ -690,6 +694,13 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
+        if (model && model->isPrimitive()) { // a primitive's material (a file keeps its own)
+            for (int c = 0; c < 3; ++c)
+                f3(QStringLiteral("model/material/color/") + QChar("rgb"[c]), QStringLiteral("Material › Color ") + QChar("RGB"[c]), 0, 1,
+                   0.8, &mp->color[size_t(c)]).colorComponent(c);
+            f3("model/material/metal", "Material › Metal", 0, 1, 0, &mp->metal).step(0.01);
+            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, &mp->rough).step(0.01);
+        }
         f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)

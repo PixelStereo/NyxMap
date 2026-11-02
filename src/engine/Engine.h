@@ -116,7 +116,10 @@ public:
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
     bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
-    // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k (render thread, lock held)
+    bool setSceneEnvironment(int index, quint64 layer, QString *err = nullptr, int stage = -1); // a 3D scene's HDRI
+    // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k, kStageHdrFile an HDR
+    // image's file as read (linear, unclipped; its final picture when it has none) (render thread, lock held)
+    static constexpr int kStageHdrFile = -2;
     GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);

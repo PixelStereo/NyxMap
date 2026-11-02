@@ -1,12 +1,15 @@
 #include "Engine.h"
+#include "ImageFile.h"
 #include "Model3D.h"
 #include <QColor>
 #include <QFile>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <cstdio>
+#include <tuple>
 
 // 3D scenes (Model3D.h): a group whose picture its models make, seen by its camera, under its lights
 int runScene3dTests(Engine &engine)
@@ -317,5 +320,124 @@ int runScene3dTests(Engine &engine)
         check(p && p->modelPicture == picture && p->modelDisplace == bump, "its picture and displacement layers come back");
         check(p && p->modelPictureStage == 1 && p->modelDisplaceStage == -1, "and the stages they are taken at");
     }
+    // An environment (a layer's picture, as an HDRI would be): a scene without lights lit by it alone, shown behind if asked
+    {
+        const QString redSky = dir.path() + "/RedSky.fs";
+        QFile f(redSky);
+        check(f.open(QIODevice::WriteOnly), "write the environment shader");
+        f.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { gl_FragColor = vec4(1.0, 0.15, 0.1, 1.0); }\n");
+        f.close();
+        const int ei = engine.addLayer("Sky");
+        const quint64 sky = engine.layerId(ei);
+        check(engine.setLayerIsf(ei, redSky, &error), "an environment layer");
+        engine.setParameter(sky, "enable", false);
+        const int s3 = engine.addScene();
+        const quint64 lit = engine.layerId(s3);
+        const int ball = engine.addLayer("Ball", s3 + 1);
+        check(engine.setLayerModel(ball, Model3D::primitivePath("Sphere"), &error), "a sphere");
+        engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(ball)}, lit));
+        engine.setParameter(lit, "scene/ambient_intensity", 0.0);
+        for (int i = 0; i < engine.layerCount(); ++i) { // the other scenes out of the way
+            Engine::Lock lk(&engine.mutex());
+            if (Layer *o = engine.layer(i); o && o->scene3d && o->id != lit) o->enabled = false;
+        }
+        const QColor unlitBall = at(32, 32);
+        check(unlitBall.lightness() < 10, "no light, no environment: dark");
+        check(engine.setSceneEnvironment(engine.indexOfId(lit), sky, &error), "the layer surrounds the scene");
+        check(!engine.setSceneEnvironment(engine.indexOfId(lit), lit, &error), "the scene itself is refused (a loop)");
+        const QColor envBall = at(32, 32);
+        check(envBall.red() > 60 && envBall.red() > 3 * envBall.blue(), "the environment lights the sphere (red)");
+        check(at(1, 1).lightness() == 0, "not shown behind unless asked");
+        engine.setParameter(lit, "scene/environment/show", true);
+        const QColor behind = at(1, 1);
+        check(behind.red() > 150 && behind.blue() < 80, "shown behind the models");
+        engine.setParameter(lit, "scene/environment/intensity", 0.0);
+        check(at(32, 32).lightness() < 10, "its intensity at 0: dark again");
+        engine.setParameter(lit, "scene/environment/intensity", 1.0);
+        if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+            // A sky (blue above, a warm horizon, a sun, a dark ground), a smooth metal ball, a rough one, a matte one
+            const QString skyShader = dir.path() + "/Sky.fs";
+            QFile f(skyShader);
+            if (f.open(QIODevice::WriteOnly)) {
+                f.write("/*{\"ISFVSN\":\"2\"}*/\nvoid main() { vec2 u = isf_FragNormCoord; float y = u.y * 2.0 - 1.0;"
+                        " vec3 sky = mix(vec3(1.0, 0.75, 0.45), vec3(0.15, 0.35, 0.8), smoothstep(0.0, 0.6, y));"
+                        " vec3 ground = mix(vec3(0.25, 0.2, 0.15), vec3(0.05), smoothstep(0.0, -0.5, y));"
+                        " vec3 c = y > 0.0 ? sky : ground;"
+                        " float sun = smoothstep(0.03, 0.0, distance(u, vec2(0.62, 0.68)));"
+                        " gl_FragColor = vec4(c + sun * 4.0, 1.0); }\n");
+                f.close();
+            }
+            engine.setLayerIsf(engine.indexOfId(sky), skyShader, &error);
+            engine.setCompositionSize({480, 270});
+            engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {480, 270});
+            engine.setParameter(lit, "camera/distance", 4.0);
+            engine.setParameter(lit, "camera/pitch", 8.0);
+            const quint64 smooth = engine.layerId(ball);
+            engine.setParameter(smooth, "model/position/x", -1.1);
+            engine.setParameter(smooth, "model/material/metal", 1.0);
+            engine.setParameter(smooth, "model/material/rough", 0.08);
+            engine.setParameter(smooth, "model/material/color/r", 0.95);
+            engine.setParameter(smooth, "model/material/color/g", 0.95);
+            engine.setParameter(smooth, "model/material/color/b", 0.95);
+            for (const auto &[x, metal, rough] : {std::tuple{0.0, 1.0, 0.45}, std::tuple{1.1, 0.0, 0.5}}) {
+                const int k = engine.addLayer("Ball", engine.indexOfId(lit) + 1);
+                engine.setLayerModel(k, Model3D::primitivePath("Sphere"), &error);
+                const quint64 id = engine.layerId(k);
+                engine.setStructure(tree::intoGroup(engine.structure(), {id}, lit));
+                engine.setParameter(id, "model/position/x", x);
+                engine.setParameter(id, "model/material/metal", metal);
+                engine.setParameter(id, "model/material/rough", rough);
+                engine.setParameter(id, "model/material/color/r", metal > 0 ? 1.0 : 0.8);
+                engine.setParameter(id, "model/material/color/g", metal > 0 ? 0.75 : 0.25);
+                engine.setParameter(id, "model/material/color/b", metal > 0 ? 0.35 : 0.2);
+            }
+            engine.renderFrame();
+            engine.renderFrame();
+            engine.grabOutput().save(captures + "/environment.png");
+            engine.setCompositionSize({64, 64});
+        }
+        // An HDR file (Radiance .hdr, a red of 8.0): its values above 1 kept, read linear; brighter than its clipped picture
+        {
+            const QString hdrPath = dir.path() + "/red8.hdr";
+            QFile f(hdrPath);
+            check(f.open(QIODevice::WriteOnly), "write an HDR file");
+            f.write("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 4\n");
+            for (int k = 0; k < 8; ++k) f.write(QByteArray::fromHex("80101084")); // 8.0, 1.0, 1.0 (RGBE)
+            f.close();
+            std::vector<float> px;
+            QSize size;
+            check(readHdrPixels(hdrPath, &px, &size) && size == QSize(4, 2) && px.size() == 32 && px[0] > 7.5 && px[0] < 8.5,
+                  "an HDR file is read as floats, not clipped (8.0 stays 8.0)");
+            // The same as an EXR in half floats (its usual), when FFmpeg can write one here
+            const QString exrPath = dir.path() + "/red8h.exr";
+            if (QProcess::execute("ffmpeg", {"-hide_banner", "-loglevel", "error", "-y", "-i", hdrPath, "-c:v", "exr", "-format", "half", exrPath}) == 0) {
+                std::vector<float> ex;
+                QSize exSize;
+                check(readHdrPixels(exrPath, &ex, &exSize) && ex.size() == 32 && ex[0] > 7.5 && ex[0] < 8.5,
+                      "a half-float EXR is read unclipped too");
+            }
+            const int hi = engine.addLayer("HDRI");
+            const quint64 hdri = engine.layerId(hi);
+            check(engine.setLayerFile(hi, hdrPath, &error), "an image layer loads the HDR file");
+            engine.setParameter(hdri, "enable", false);
+            engine.setParameter(lit, "scene/environment/show", false);
+            check(engine.setSceneEnvironment(engine.indexOfId(lit), hdri, &error, -1), "the HDR layer, clipped");
+            const QColor clipped = at(32, 32);
+            check(engine.setSceneEnvironment(engine.indexOfId(lit), hdri, &error, Engine::kStageHdrFile), "the HDR file as read");
+            const QColor full = at(32, 32);
+            check(full.lightness() > clipped.lightness() + 10, "the unclipped HDR lights more than its clipped picture");
+            engine.setSceneEnvironment(engine.indexOfId(lit), sky, &error);
+        }
+        const QString envProject = dir.path() + "/environment.nyxmap";
+        check(engine.saveProject(envProject, {}, &error), "save the environment");
+        engine.newProject();
+        check(engine.loadProject(envProject, &ui, &error), "open the environment");
+        {
+            Engine::Lock lk(&engine.mutex());
+            const Layer *l = engine.layer(engine.indexOfId(lit));
+            check(l && l->sceneEnvironment == sky && l->sceneEnvironmentStage == -1, "the scene's environment comes back");
+        }
+    }
+
     return failures;
 }
