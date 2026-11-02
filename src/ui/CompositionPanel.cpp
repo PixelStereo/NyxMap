@@ -402,8 +402,8 @@ void CompositionPanel::syncStartupSequence()
     if (shown >= 0) {
         const auto steps = seq.sequence(shown).steps;
         for (int i = 0; i < int(steps.size()); ++i)
-            m_startupStep->addItem(steps[size_t(i)].text.isEmpty() ? QStringLiteral("%1").arg(i + 1)
-                                                                  : QStringLiteral("%1 · %2").arg(i + 1).arg(steps[size_t(i)].text));
+            m_startupStep->addItem(steps[size_t(i)].description.isEmpty() ? QStringLiteral("%1").arg(i + 1)
+                                                                         : QStringLiteral("%1 · %2").arg(i + 1).arg(steps[size_t(i)].description));
     }
     m_startupStep->setCurrentIndex(m_startupStep->count() ? std::clamp(seq.startupStep(), 0, m_startupStep->count() - 1) : -1);
     m_startupStep->setEnabled(selected && m_startupStep->count() > 0);

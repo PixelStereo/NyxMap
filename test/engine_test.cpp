@@ -1539,10 +1539,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             Sequencer::Sequence s;
             s.name = "Feedback show";
             Sequencer::Step a, b;
-            a.text = "Intro";
             a.description = "Lights first";
             a.preWait = 2;
-            b.text = "Second";
+            b.description = "Second";
             s.steps = {a, b};
             return s;
         }());
@@ -1576,13 +1575,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         receive();
         CHECK(got["/sequence/name"].toString() == "Feedback show" && got["/sequence/steps"].toInt() == 2 &&
               got["/sequence/index"].toInt() == seq + 1);
-        CHECK(got["/sequence/cue/current/number"].toInt() == 1 && got["/sequence/cue/current/text"].toString() == "Intro" &&
+        CHECK(got["/sequence/cue/current/number"].toInt() == 1 && got["/sequence/cue/current/description"].toString() == "Lights first" &&
               got["/sequence/cue/current/description"].toString() == "Lights first" &&
               got["/sequence/cue/current/label"].toString().startsWith("1 · "));
         CHECK(got["/sequence/cue/current/phase"].toString() == "pre-wait" && got["/sequence/cue/current/phase_percent"].toInt() == 0 &&
               std::abs(got["/sequence/cue/current/prewait"].toDouble() - 2) < 1e-6 &&
               got["/sequence/cue/current/continue"].toString() == "wait");
-        CHECK(got["/sequence/cue/next/number"].toInt() == 2 && got["/sequence/cue/next/text"].toString() == "Second" &&
+        CHECK(got["/sequence/cue/next/number"].toInt() == 2 && got["/sequence/cue/next/description"].toString() == "Second" &&
               got["/sequence/cue/next/phase"].toString().isEmpty());
         CHECK(got["/sequence/cue/previous/number"].toInt() == 0 && got["/sequence/running"].toInt() == 1);
         // Halfway through its pre-wait: only what changed is sent again
@@ -1593,7 +1592,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         const int half = got["/sequence/cue/current/phase_percent"].toInt();
         CHECK(half == 50 && got["/sequence/cue/current/percent"].toInt() == half &&
               std::abs(got["/sequence/cue/current/remaining"].toDouble() - 1.0) < 1e-6);
-        CHECK(!got.count("/sequence/name") && !got.count("/sequence/cue/next/text"));
+        CHECK(!got.count("/sequence/name") && !got.count("/sequence/cue/next/description"));
         e.sequencer().stopAll();
         fb.setEnabled(false);
         e.sequencer().remove(seq);
@@ -2494,7 +2493,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(readJson(tmp + "/sequences.nyxmap").value("startup_sequence").toInt(-1) == 1);
             CHECK(e.loadProject(tmp + "/sequences.nyxmap", nullptr, &err));
             CHECK(e.sequencer().count() == 2 && e.sequencer().current() == 1 && e.sequencer().sequence(0).loop &&
-                  e.sequencer().sequence(0).steps.size() == 3 && e.sequencer().sequence(0).steps[0].text == "Act 1" &&
+                  e.sequencer().sequence(0).steps.size() == 3 && e.sequencer().sequence(0).steps[0].description == "Act 1" &&
                   e.sequencer().sequence(0).steps[0].snapshot == e.snapshot(1).id);
             CHECK(e.sequencer().startupSequence() == 1);
             CHECK(e.sequencer().startupStep() == 0 && e.sequencer().startupGo()); // older projects: GO on the first step
@@ -2677,7 +2676,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             a0.snapshot = e.snapshot(0).id;
             a0.preWait = 1.0;
             a0.postWait = 0.5;
-            a0.next = Sequencer::StepContinue::Follow;
+            a0.next = Sequencer::StepContinue::AutoFollow;
             a1.snapshot = e.snapshot(1).id;
             a.steps = {a0, a1};
             b.name = "Editing B";
@@ -2893,7 +2892,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             s0.snapshot = e.snapshot(mA1).id;
             s0.preWait = 1.0;
             s0.postWait = 0.5;
-            s0.next = Sequencer::StepContinue::Follow; // the next GO 0.5 s after this one is triggered
+            s0.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after this one is triggered
             s1.snapshot = e.snapshot(mB1).id;
             s1.postWait = 0.5;
             s1.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after its 2 s action
@@ -2945,7 +2944,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             {
                 const Sequencer::Sequence w = e.sequencer().sequence(e.sequencer().current());
                 CHECK(w.steps.size() == 3 && near(w.steps[0].preWait, 1.0) && near(w.steps[0].postWait, 0.5) &&
-                      w.steps[0].next == Sequencer::StepContinue::Follow &&
+                      w.steps[0].next == Sequencer::StepContinue::AutoFollow &&
                       w.steps[1].next == Sequencer::StepContinue::AutoFollow && w.steps[2].next == Sequencer::StepContinue::Wait);
             }
             e.sequencer().setRecaller(nullptr);

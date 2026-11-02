@@ -82,6 +82,8 @@ void Engine::clearProject()
         m_snapshotTree.clear();
         m_nextSnapshotGroupId = 1;
         m_presets.clear();
+        m_presetTree.clear();
+        m_timelineTree.clear();
         m_nextPresetId = 1;
         m_render = RenderSettings(); // the machine's defaults
         m_paused = false;
@@ -589,6 +591,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray presets;
         for (const Preset &p : m_presets) presets.append(presetToJson(p));
         root["presets"] = presets;
+        root["preset_tree"] = snapshotTreeToJson(m_presetTree);
+        root["timeline_tree"] = snapshotTreeToJson(m_timelineTree);
         root["timelines"] = animationsToJson();
         QJsonArray tcOutputs, midiOutputs;
         for (const TimecodeOutput &t : m_tcOutputs) tcOutputs.append(t.toJson());
@@ -865,6 +869,19 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         for (Snapshot &m : m_snapshots)
             if (!m.id) m.id = m_nextSnapshotId++;
         m_snapshotTree = snapshotTreeFromJson(root.value("snapshot_tree").toArray());
+        m_presetTree = snapshotTreeFromJson(root.value("preset_tree").toArray());
+        m_timelineTree = snapshotTreeFromJson(root.value("timeline_tree").toArray());
+        {
+            std::function<void(const std::vector<SnapshotNode> &)> bump = [&](const std::vector<SnapshotNode> &nodes) {
+                for (const SnapshotNode &n : nodes)
+                    if (!n.snapshot) {
+                        m_nextSnapshotGroupId = std::max(m_nextSnapshotGroupId, n.group + 1);
+                        bump(n.children);
+                    }
+            };
+            bump(m_presetTree);
+            bump(m_timelineTree);
+        }
         normalizeSnapshotTree();
         for (const QJsonValue &v : root.value("presets").toArray()) {
             Preset p = presetFromJson(v.toObject());

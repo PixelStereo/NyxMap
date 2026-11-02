@@ -371,7 +371,7 @@ int Sequencer::positionOf(int index) const
 // Playing: pre-wait, action, post-wait, and what follows
 
 // A step's run, from its GO
-static Sequencer::Run runOf(const Sequencer::Step &st, int k, bool chain, quint64 owner, const BeatClock &clock, bool beats)
+static Sequencer::Run runOf(const Sequencer::Step &st, int k, bool chain, quint64 owner, const BeatClock &clock, const Sequencer::Sequence &s)
 {
     Sequencer::Run r;
     r.step = k;
@@ -379,10 +379,16 @@ static Sequencer::Run runOf(const Sequencer::Step &st, int k, bool chain, quint6
     r.target = st;
     r.snapshot = st.timeline ? 0 : st.snapshot;
     // In beats: at the tempo of now. A GO that follows a grid waits for its line first, then the pre-wait counts
-    const double unit = beats ? clock.secondsPerBeat() : 1.0;
-    r.preWait = chain ? std::max(0.0, st.preWait) * unit + clock.secondsToNext(st.quantize) : 0.0;
+    // (a sequence on a timecode clock has no grid: its steps go when the clock says)
+    const double unit = s.beats ? clock.secondsPerBeat() : 1.0;
+    const double grid = s.clockParam.isEmpty() ? clock.secondsToNext(st.quantize) : 0.0;
+    r.preWait = chain ? std::max(0.0, st.preWait) * unit + grid : 0.0;
     r.postWait = std::max(0.0, st.postWait) * unit;
     r.next = chain ? st.next : Sequencer::StepContinue::Wait;
+    for (Sequencer::Step &action : r.target.actions) { // in seconds from here on; an audition has no waits
+        action.preWait = chain ? std::max(0.0, action.preWait) * unit : 0.0;
+        action.postWait = chain ? std::max(0.0, action.postWait) * unit : 0.0;
+    }
     return r;
 }
 
@@ -465,7 +471,7 @@ bool Sequencer::goToSequence(quint64 owner, int step, bool chain, std::shared_pt
                 [owner](const Run &r) { return r.sequenceId == owner; }), m_runs.end());
         }
         m_engine.resumeAfterStop(); // a deliberate GO must also release Escape before its pre-wait
-        Run r = runOf(st, step, chain, owner, m_engine.beatClock(), s.beats);
+        Run r = runOf(st, step, chain, owner, m_engine.beatClock(), s);
         r.valid = commandTokenLocked(owner);
         r.duration = stepDuration(st);
         m_runs.push_back(r);
@@ -704,7 +710,7 @@ bool Sequencer::running() const
     const quint64 owner = m_sequenceIds[size_t(m_current)];
     for (const Run &r : m_runs)
         if (r.sequenceId == owner &&
-            (!r.fired || (r.next != StepContinue::Wait && !r.continued))) return true;
+            (!r.fired || !r.pending.empty() || (r.next != StepContinue::Wait && !r.continued))) return true;
     return false;
 }
 
@@ -843,13 +849,21 @@ static double timelineRemaining(Engine &engine, const Sequencer::Step &step)
         remaining = std::max(remaining, timelineRemaining(engine, action));
     return remaining;
 }
+// What a group's timelines played wait after they end: their post-wait
+static double trackedPostWait(const Sequencer::Step &step)
+{
+    double post = 0;
+    for (const auto &action : step.actions)
+        if (tracksTimeline(action)) post = std::max(post, action.postWait);
+    return post;
+}
 static double fixedDuration(Sequencer &seq, const Sequencer::Step &step)
 {
     if (step.actions.empty())
         return tracksTimeline(step) ? 0 : seq.stepDuration(step);
     double duration = 0;
     for (const auto &action : step.actions)
-        duration = std::max(duration, fixedDuration(seq, action));
+        duration = std::max(duration, action.preWait + fixedDuration(seq, action) + action.postWait);
     return duration;
 }
 void Sequencer::advance(double dt)
@@ -882,28 +896,49 @@ void Sequencer::advance(double dt)
                         const double late = r.elapsed - r.preWait;
                         r.duration = stepDuration(r.target) + late;
                         r.fixedDuration = fixedDuration(*this, r.target) + late;
+                        r.trackedPost = trackedPostWait(r.target);
                     }
                     r.trackPending = tracksTimeline(r.target);
-                    fire.push_back(r);
-                } else if (r.tracking) {
+                    // A group: its actions without a pre-wait now, the others when theirs is over
+                    Run now = r;
+                    now.target.actions.clear();
+                    for (const Step &action : r.target.actions) {
+                        if (action.preWait > 0) r.pending.emplace_back(r.preWait + action.preWait, action);
+                        else now.target.actions.push_back(action);
+                    }
+                    if (r.target.actions.empty() || !now.target.actions.empty()) fire.push_back(now);
+                } else if (r.tracking && r.pending.empty()) {
                     // Track the animation's real remaining time while it runs, including speed and loop edits.
                     // Freeze the action's duration when playback ends. Otherwise elapsed + 0 is recomputed
                     // on every tick, so AutoFollow's post-wait deadline moves forever.
                     const double remaining = timelineRemaining(m_engine, r.target);
                     if (remaining <= 0.0) {
-                        r.duration = std::max(r.fixedDuration, r.elapsed - r.preWait);
+                        r.duration = std::max(r.fixedDuration, r.elapsed - r.preWait + r.trackedPost);
                         r.tracking = false;
                     } else {
-                        r.duration = std::max(r.fixedDuration, std::max(0.0, r.elapsed - r.preWait) + remaining);
+                        r.duration = std::max(r.fixedDuration, std::max(0.0, r.elapsed - r.preWait) + remaining + r.trackedPost);
                     }
                 }
+                if (!r.pending.empty()) { // a group's actions whose pre-wait is over
+                    Run due = r;
+                    due.target.actions.clear();
+                    for (auto it = r.pending.begin(); it != r.pending.end();) {
+                        if (r.elapsed >= it->first) {
+                            due.target.actions.push_back(it->second);
+                            it = r.pending.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                    if (!due.target.actions.empty()) fire.push_back(due);
+                }
                 const double at = r.continueAt();
-                if (!r.fired || r.continued || at < 0 || r.elapsed < at) continue;
+                if (!r.fired || !r.pending.empty() || r.continued || at < 0 || r.elapsed < at) continue;
                 r.continued = true;
                 const int k = r.step + 1 < n ? r.step + 1 : s.loop ? 0 : -1;
                 if (k < 0) continue;
                 const Step &st = s.steps[size_t(k)];
-                Run x = runOf(st, k, true, r.sequenceId, m_engine.beatClock(), s.beats);
+                Run x = runOf(st, k, true, r.sequenceId, m_engine.beatClock(), s);
                 x.valid = r.valid;
                 x.callers = r.callers;
                 x.elapsed = r.elapsed - at;
@@ -912,7 +947,7 @@ void Sequencer::advance(double dt)
             }
             m_runs.erase(std::remove_if(m_runs.begin(), m_runs.end(),
                                         [](const Run &r) {
-                                            return r.fired && (r.next == StepContinue::Wait || r.continued) &&
+                                            return r.fired && r.pending.empty() && (r.next == StepContinue::Wait || r.continued) &&
                                                    r.elapsed >= r.preWait + r.duration;
                                         }),
                          m_runs.end());
@@ -961,7 +996,7 @@ void Sequencer::advance(double dt)
                 };
                 const bool audition = editing(action.sequenceId) || editing(owner) ||
                                       std::any_of(action.callers.begin(), action.callers.end(), editing);
-                Run child = runOf(target, 0, !audition, owner, m_engine.beatClock(), m_sequences[size_t(sequence)].beats);
+                Run child = runOf(target, 0, !audition, owner, m_engine.beatClock(), m_sequences[size_t(sequence)]);
                 child.valid = commandTokenLocked(owner);
                 child.duration = stepDuration(target);
                 child.callers = action.callers;
@@ -1039,8 +1074,6 @@ QJsonObject Sequencer::stepToJson(const Step &st)
     } else {
         o["snapshot"] = QString::number(st.snapshot);
     }
-    if (!st.text.isEmpty())
-        o["text"] = st.text;
     if (!st.description.isEmpty())
         o["description"] = st.description;
     if (st.preWait > 0)
@@ -1050,9 +1083,13 @@ QJsonObject Sequencer::stepToJson(const Step &st)
     if (st.quantize > 0)
         o["quantize"] = st.quantize;
     if (st.next != StepContinue::Wait)
-        o["continue"] = st.next == StepContinue::Follow ? "follow" : "auto_follow";
+        o["continue"] = "auto_follow";
     if (st.at >= 0)
         o["at"] = st.at;
+    if (!st.open)
+        o["closed"] = true;
+    if (st.folder)
+        o["folder"] = QString::number(st.folder);
     if (!st.actions.empty()) {
         QJsonArray actions;
         for (auto action : st.actions) {
@@ -1088,22 +1125,22 @@ Sequencer::Step Sequencer::stepFromJson(const QJsonObject &so)
         st.repeat = std::clamp(so.value("repeat").toInt(0), 0, 100000);
         st.snapshot = 0;
     }
-    st.text = so.value("text").toString();
     st.description = so.value("description").toString();
     st.preWait = std::clamp(so.value("pre_wait").toDouble(0), 0.0, 3600.0);
     st.postWait = std::clamp(so.value("post_wait").toDouble(0), 0.0, 3600.0);
     st.quantize = std::clamp(so.value("quantize").toDouble(0), 0.0, 64.0);
     const QString c = so.value("continue").toString();
-    st.next = c == "follow" ? StepContinue::Follow : c == "auto_follow" ? StepContinue::AutoFollow : StepContinue::Wait;
+    st.next = c == "follow" || c == "auto_follow" ? StepContinue::AutoFollow : StepContinue::Wait;
     const double at = so.value("at").toDouble(-1);
     st.at = std::isfinite(at) && at >= 0 ? at : -1;
+    st.open = !so.value("closed").toBool();
+    st.folder = so.value("folder").toString().toULongLong();
     // Only one group level is accepted, bounded before parsing clipboard/project data.
     const auto actions = so.value("actions").toArray();
     for (int i = 0; i < std::min(64, int(actions.size())); ++i) {
         auto item = actions[i].toObject();
         item.remove("actions");
         Step action = stepFromJson(item);
-        action.preWait = action.postWait = 0;
         action.next = StepContinue::Wait;
         action.at = -1;
         st.actions.push_back(std::move(action));
@@ -1130,6 +1167,11 @@ QJsonArray Sequencer::toJson() const
                        {"tracking", s.tracking},
                        {"edit_mode", s.editMode},
                        {"steps", steps}};
+        if (!s.closedFolders.empty()) {
+            QJsonArray closed;
+            for (quint64 folder : s.closedFolders) closed.append(QString::number(folder));
+            so["closed_folders"] = closed;
+        }
         if (!s.clockParam.isEmpty()) so["timecode"] = QJsonObject{{"layer", QString::number(s.clockLayer)}, {"param", s.clockParam}};
         out.append(so);
     }
@@ -1164,6 +1206,7 @@ void Sequencer::fromJson(const QJsonArray &a, int current)
         s.beats = o.value("beats").toBool(false);
         s.tracking = o.value("tracking").toBool(true);
         s.editMode = o.value("edit_mode").toBool(false);
+        for (const QJsonValue &closed : o.value("closed_folders").toArray()) s.closedFolders.push_back(closed.toString().toULongLong());
         const QJsonObject clock = o.value("timecode").toObject();
         s.clockLayer = clock.value("layer").toString().toULongLong();
         s.clockParam = clock.value("param").toString();
@@ -1203,12 +1246,12 @@ void Sequencer::clear()
     ++m_generation;
 }
 
-double Sequencer::stepDuration(const Step &st) const
+double Sequencer::stepDuration(const Step &st, double unit) const
 {
     if (!st.actions.empty()) {
         double duration = 0;
         for (const auto &action : st.actions)
-            duration = std::max(duration, stepDuration(action));
+            duration = std::max(duration, (action.preWait + action.postWait) * unit + stepDuration(action));
         return duration;
     }
     if (st.sequence) return 0; // starts an independent sequence, which owns its waits and follows

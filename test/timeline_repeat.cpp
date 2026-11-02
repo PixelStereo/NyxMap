@@ -78,12 +78,12 @@ int finiteRepeat(Engine &e, const QString &tmp, int hz)
     first.postWait = 0.25;
     second.timeline = markerId;
     second.action = Engine::AnimAction::Play;
-    second.next = Sequencer::StepContinue::Follow;
+    second.next = Sequencer::StepContinue::AutoFollow;
     second.postWait = 0.10;
     third.timeline = markerId;
     third.action = Engine::AnimAction::Stop;
     Sequencer::Sequence seq;
-    seq.name = QStringLiteral("Repeat 3 -> AutoFollow -> Follow -> Stop");
+    seq.name = QStringLiteral("Repeat 3 -> Auto -> Auto -> Stop");
     seq.steps = {first, second, third};
     const int seqIndex = e.sequencer().add(seq);
     e.sequencer().setCurrent(seqIndex);
@@ -136,14 +136,14 @@ int finiteRepeat(Engine &e, const QString &tmp, int hz)
         }
     }
     std::printf("Repeat %dHz: %d GPU samples; max opacity error %.5f; max pixel error %d/255; "
-                "AutoFollow at %.4fs; Follow at %.4fs\n",
+                "second step at %.4fs; third step at %.4fs\n",
                 hz, pixelSamples, largestValueError, largestPixelError, secondAt, thirdAt);
     check(largestValueError < 0.015, "oscillator remains phase-continuous at Repeat boundaries");
     check(largestPixelError <= 12, "rendered pixels track animated opacity");
     check(secondAt >= 3.25 - dt && secondAt <= 3.25 + 2 * dt,
           "AutoFollow fires after Repeat x3 and 250 ms");
     check(thirdAt >= 3.35 - dt && thirdAt <= 3.35 + 2 * dt,
-          "Follow fires 100 ms after step two");
+          "AutoFollow fires 100 ms after a timeline with no keys");
     check(e.sequencer().positionOf(seqIndex) == 2, "third step reached");
     check(e.animation(markerIndex).state == Engine::AnimState::Stopped, "third step stopped marker");
 

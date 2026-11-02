@@ -44,7 +44,7 @@ int runEmergencyStopTests(Engine &engine)
     Sequencer::Step a;
     a.snapshot = engine.snapshot(si).id;
     a.preWait = 4.0;
-    a.next = Sequencer::StepContinue::Follow;
+    a.next = Sequencer::StepContinue::AutoFollow;
     Sequencer::Step b = a;
     b.preWait = 1.0;
     Sequencer::Sequence first, second;

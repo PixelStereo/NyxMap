@@ -130,11 +130,10 @@ int main(int argc, char **argv)
         for (int k = 0; k < 2; ++k) {
             Sequencer::Step step;
             step.snapshot = engine.snapshot(k).id;
-            step.text = k ? "Bow" : "Lights up";
             step.description = k ? "Everybody on stage" : "On the conductor";
             step.preWait = k ? 0 : 1.5;
             step.postWait = k ? 0 : 2;
-            step.next = k ? Sequencer::StepContinue::Wait : Sequencer::StepContinue::Follow;
+            step.next = k ? Sequencer::StepContinue::Wait : Sequencer::StepContinue::AutoFollow;
             sequence.steps.push_back(step);
         }
         engine.sequencer().setCurrent(engine.sequencer().add(sequence));

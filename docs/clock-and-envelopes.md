@@ -67,7 +67,9 @@ Ableton Link and sends the beat and tempo. The helper is a separate program (Lin
   clock's tempo when each step starts.
 * **Quantize** (a column of the steps): a step started by a GO waits for the next multiple of that many beats of the
   clock (1: the beat, 4: a 4/4 bar), *then* its pre-wait runs. A stopped clock holds no grid: the step goes at once.
-* With *Follow* / *Auto-follow* and *Loop*, a sequence of steps on a bar grid is a step sequencer: each step recalls a
+  A sequence with a **Timecode** clock has no grid: its steps go when the clock says, and the column shows their
+  timecode in place of the quantize, which is kept for when the clock is taken away.
+* With *AUTO* and *Loop*, a sequence of steps on a bar grid is a step sequencer: each step recalls a
   snapshot or plays a timeline, on the beat.
 
 Limits: the tempo is read when a step starts; a tempo changed during a wait takes effect from the next step.

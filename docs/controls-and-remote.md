@@ -55,8 +55,7 @@ The **Show Control** tab (Shift+6) and the `/show` page are the same desk, to pl
 
 * **SHOW**: the selected sequence; its previous, current and next cues, with their text, their times and how far they are; GO,
   GO BACK, STOP WAITS and STOP ALL WAITS (twice, for every sequence); the elapsed and remaining time; the cue stack, where a click
-  plays a cue. Each cue tells how the next one starts: **WAIT · GO** (manual), **FOLLOW** (after its start plus its post-wait),
-  **AUTO-FOLLOW** (after its end plus its post-wait).
+  plays a cue. Each cue tells how the next one starts: **WAIT · GO** (manual) or **AUTO** (after its end plus its post-wait).
 * **SNAPSHOTS**, **PRESETS**: a button each, following the open project.
 * **TIMELINES**: play, pause and stop, with their time and pass.
 * **LAYERS** (the web page only: in NyxMap, *LAYER CONTROL →* leads to the Layers tab): any layer's values by section, live.

@@ -152,6 +152,48 @@ int main(int argc, char **argv)
         check(engine.sequencer().position() == 0, "auto-follow waits for longest grouped action");
         engine.sequencer().advance(.12);
         check(engine.sequencer().position() == 1 && fired == 3, "group auto-follow reaches next cue once");
+        // Each step of a group has its waits: its Pre after the group's, its Post counted before AUTO goes on
+        {
+            Sequencer::Step early = first, late = second, delayed;
+            late.preWait = .3;
+            late.postWait = .2;
+            delayed.actions = {early, late};
+            delayed.preWait = .1;
+            delayed.next = Sequencer::StepContinue::AutoFollow;
+            Sequencer::Sequence withWaits;
+            withWaits.steps = {delayed, last};
+            const int wi = engine.sequencer().add(withWaits);
+            engine.sequencer().setCurrent(wi);
+            const double length = engine.sequencer().stepDuration(engine.sequencer().sequence(wi).steps[0]);
+            fired = 0;
+            engine.sequencer().go();
+            engine.sequencer().advance(.1);
+            check(fired == 1, "a step of a group without a pre-wait goes on the group's GO");
+            engine.sequencer().advance(.29);
+            check(fired == 1, "the other waits its own pre-wait");
+            engine.sequencer().advance(.02);
+            check(fired == 2, "then goes");
+            check(engine.sequencer().positionOf(wi) == 0 && engine.sequencer().running(), "AUTO waits for the last step, its post-wait too");
+            engine.sequencer().advance(length - .3 - .05);
+            check(engine.sequencer().positionOf(wi) == 0, "not before its post-wait is over");
+            engine.sequencer().advance(.1);
+            check(engine.sequencer().positionOf(wi) == 1 && fired == 3, "then the next step");
+            const auto saved = engine.sequencer().toJson()[wi].toObject().value("steps").toArray()[0].toObject().value("actions").toArray()[1].toObject();
+            check(saved.value("pre_wait").toDouble() == .3 && saved.value("post_wait").toDouble() == .2, "a step's waits in a group are saved");
+            check(Sequencer::stepFromJson(engine.sequencer().toJson()[wi].toObject().value("steps").toArray()[0].toObject()).actions[1].preWait == .3, "and read back");
+            // STOP drops a step of a group still in its pre-wait
+            engine.sequencer().setPosition(-1);
+            fired = 0;
+            engine.sequencer().go();
+            engine.sequencer().advance(.2);
+            check(fired == 1, "the first has gone");
+            engine.sequencer().stop();
+            engine.sequencer().advance(1);
+            check(fired == 1 && !engine.sequencer().running(), "STOP drops the one still waiting");
+            engine.sequencer().remove(wi);
+            engine.sequencer().setCurrent(qi);
+            fired = 0;
+        }
         auto json = engine.sequencer().toJson();
         check(json[qi].toObject().value("steps").toArray()[0].toObject().value("actions").toArray().size() == 2,
               "groups serialized");

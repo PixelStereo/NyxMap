@@ -377,6 +377,24 @@ private:
     std::vector<Engine::SnapshotNode> m_before, m_after;
 };
 
+// A library's list rearranged (the presets', the timelines')
+class SetLibraryTree : public QUndoCommand
+{
+public:
+    using Tree = std::vector<Engine::SnapshotNode>;
+    SetLibraryTree(std::function<void(const Tree &)> set, Tree before, Tree after, const QString &text)
+        : m_set(std::move(set)), m_before(std::move(before)), m_after(std::move(after))
+    {
+        setText(text);
+    }
+    void undo() override { m_set(m_before); }
+    void redo() override { m_set(m_after); }
+
+private:
+    std::function<void(const Tree &)> m_set;
+    Tree m_before, m_after;
+};
+
 // The presets edited (one made, removed, a value added or taken out, a name, a fade, a time). Edits with the same
 // non-empty merge key that follow one another are one step
 class SetPresets : public QUndoCommand

@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QWidget>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "Engine.h"
@@ -96,10 +97,6 @@ private:
     int selected() const;
     int indexOf(QTreeWidgetItem *it) const;  // the snapshot a row shows (-1: a group, none)
     QTreeWidgetItem *itemOf(int i) const;     // the row of a snapshot
-    void editTree(const QString &text, const std::function<void(std::vector<Engine::SnapshotNode> &)> &fn);
-    void moveNode(const QString &key, const QString &target, int where);
-    void newGroup();
-    void removeGroup(quint64 group);
     // Presets
     QWidget *buildPresetView();
     void connectPresets();
@@ -117,7 +114,8 @@ private:
 
     Engine *m_engine;
     QUndoStack *m_undo;
-    QTreeWidget *m_list;
+    class LibraryList *m_list;
+    std::shared_ptr<class LibraryGroups> m_groups, m_presetGroups;
     bool m_wasRunning = false;
     QLabel *m_thumb, *m_title, *m_match;
     QLineEdit *m_name;
@@ -126,10 +124,10 @@ private:
     QPushButton *m_go, *m_update, *m_delete, *m_store, *m_newGroup;
     class QStackedWidget *m_modeListStack = nullptr; // snap/preset lists share the same left slot
     class QStackedWidget *m_middle;                  // the snapshot's contents, or the preset's
-    QTreeWidget *m_presets, *m_presetValues;
-    QPushButton *m_presetEdit, *m_presetNew, *m_presetGo, *m_presetUpdate, *m_presetDelete;
+    class LibraryList *m_presets;
+    QTreeWidget *m_presetValues;
+    QPushButton *m_presetEdit, *m_presetNew, *m_presetGo, *m_presetUpdate, *m_presetDelete, *m_presetGroup;
     QLabel *m_presetTitle;
-    QLineEdit *m_presetName;
     QDoubleSpinBox *m_presetFade;
     QWidget *m_inspector, *m_detail;
     QVBoxLayout *m_detailLayout;

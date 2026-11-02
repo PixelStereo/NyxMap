@@ -38,13 +38,12 @@ input[type=range] { width:100%; margin:0; height:30px; accent-color:var(--follow
 .cue .head { font-size:11px; font-weight:700; letter-spacing:2px; color:var(--edge); }
 .cue .cont { font-size:12px; font-weight:700; letter-spacing:.5px; margin:3px 0; }
 .cue .label { font-size:19px; font-weight:600; }
-.cue .text { font-size:15px; color:#d2d2d9; min-height:1em; }
-.cue .desc { font-size:13px; color:var(--dim); }
+.cue .desc { font-size:15px; color:#d2d2d9; min-height:1em; }
 .cue .phase { font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
 .cue .times { font-size:12px; font-family:monospace; color:var(--dim); }
-#card-previous { --edge:#676771; --tint:#242428; } #card-previous .label { color:var(--dim); } #card-previous .text { color:#9797a0; }
-#card-previous .desc, #card-previous .phase, #card-previous .times { display:none; }
-#card-current { --edge:var(--go); --tint:#262b28; } #card-current .label { font-size:28px; } #card-current .text { font-size:20px; }
+#card-previous { --edge:#676771; --tint:#242428; } #card-previous .label { color:var(--dim); } #card-previous .desc { color:#9797a0; }
+#card-previous .phase, #card-previous .times { display:none; }
+#card-current { --edge:var(--go); --tint:#262b28; } #card-current .label { font-size:28px; } #card-current .desc { font-size:20px; }
 #card-next { --edge:var(--stop); --tint:#2c2728; }
 #transport { display:grid; gap:8px; grid-template-columns:1fr 2fr; grid-template-areas:"back go" "stop stopall"; }
 #back { grid-area:back; } #go { grid-area:go; font-size:28px; min-height:84px; } #stop { grid-area:stop; } #stopAll { grid-area:stopall; }
@@ -107,9 +106,8 @@ inline constexpr char kBody[] = R"HTML(
 <div class="box"><h3>ELAPSED</h3><div class="clock" id="elapsed">0:00.0</div></div>
 <div class="box"><h3>REMAINING</h3><div class="clock" id="remaining">0:00.0</div></div>
 <div class="box"><h3>PHASE PROGRESS</h3><div class="meter"><div id="phaseMeter"></div></div><div class="legend">WAIT · GO: manual advance
-FOLLOW: action start + post-wait
-AUTO-FOLLOW: action end + post-wait</div></div>
-<div class="note">STOP WAITS cancels pending cues and follows. It does not stop media or timelines. Double-tap STOP ALL WAITS for every sequence.</div>
+AUTO: action end + post-wait</div></div>
+<div class="note">STOP WAITS cancels pending cues. It does not stop media or timelines. Double-tap STOP ALL WAITS for every sequence.</div>
 </div></div>
 <h2>CUE STACK</h2><div id="cues"></div>
 </section>
@@ -137,11 +135,10 @@ inline constexpr char kScript[] = R"JS(
     return Math.floor(tenths / 600) + ':' + String(Math.floor(tenths / 10) % 60).padStart(2, '0') + '.' + (tenths % 10);
   };
   const phaseColor = p => p === 'pre-wait' ? '#e0b43a' : p === 'post-wait' ? '#569ce6' : '#4cd964';
-  const modeColor = m => m === 'wait' ? '#d5bd82' : m === 'follow' ? '#79cbb6' : m === 'auto-follow' ? '#b7a1d9' : '#a4a4ae';
+  const modeColor = m => m === 'wait' ? '#d5bd82' : m === 'auto' ? '#b7a1d9' : '#a4a4ae';
   const continuation = (mode, postwait) => {
     const delay = clock(Number(postwait) || 0);
-    if (mode === 'follow') return ['FOLLOW', 'Start + ' + delay];
-    if (mode === 'auto-follow') return ['AUTO-FOLLOW', 'End + ' + delay];
+    if (mode === 'auto') return ['AUTO', 'End + ' + delay];
     if (mode === 'wait') return ['WAIT · GO', 'Manual advance'];
     return ['—', ''];
   };
@@ -200,7 +197,7 @@ inline constexpr char kScript[] = R"JS(
   for (const role of ['previous', 'current', 'next']) {
     const c = el('div', 'cue'); c.id = 'card-' + role;
     const part = name => { const d = el('div', name); c.appendChild(d); return d; };
-    cards[role] = { fill: part('fill'), head: part('head'), cont: part('cont'), label: part('label'), text: part('text'), desc: part('desc'), phase: part('phase'), times: part('times') };
+    cards[role] = { fill: part('fill'), head: part('head'), cont: part('cont'), label: part('label'), desc: part('desc'), phase: part('phase'), times: part('times') };
     cards[role].head.textContent = role.toUpperCase();
     $('#cards').appendChild(c);
   }
@@ -212,7 +209,6 @@ inline constexpr char kScript[] = R"JS(
     c.cont.textContent = at('number') ? m[0] + (m[1] ? ' · ' + m[1] : '') : '';
     c.cont.style.color = modeColor(mode);
     c.label.textContent = at('label') || '—';
-    c.text.textContent = at('text') || '';
     c.desc.textContent = at('description') || '';
     c.phase.textContent = phase;
     c.phase.style.color = phase === 'pre-wait' ? '#e0b43a' : phase === 'post-wait' ? '#569ce6' : phase === 'action' ? '#4cd964' : '#9797a0';
@@ -236,7 +232,7 @@ inline constexpr char kScript[] = R"JS(
     selected = String(val('/sequence/id') || '0');
     if ($('#sequence').value !== selected) $('#sequence').value = selected;
     const background = (state.sequences || []).filter(s => s.active && s.id !== selected).length;
-    $('#running').textContent = (val('/sequence/running') ? 'WAITS / FOLLOW ACTIVE' : 'WAITING FOR GO') + ' · ' + background + ' background';
+    $('#running').textContent = (val('/sequence/running') ? 'WAITS ACTIVE' : 'WAITING FOR GO') + ' · ' + background + ' background';
     ['previous', 'current', 'next'].forEach(renderCard);
     $('#elapsed').textContent = val('/sequence/cue/current/elapsed_text') || '0:00.0';
     $('#remaining').textContent = val('/sequence/cue/current/remaining_text') || '0:00.0';
@@ -299,8 +295,8 @@ inline constexpr char kScript[] = R"JS(
     if (!cues.length) { box.appendChild(el('div', 'empty', 'Select a sequence containing cues.')); return; }
     for (const cue of cues) {
       const row = el('div', 'row'); row.dataset.number = cue.index;
-      const b = el('button', 'btn', cue.index + ' · ' + (cue.text || cue.name || (cue.missing ? 'Missing target' : 'Empty cue')));
-      b.appendChild(el('small', '', [cue.target_type, cue.name, cue.description].filter(Boolean).join(' · ')));
+      const b = el('button', 'btn', cue.index + ' · ' + (cue.description || cue.name || (cue.missing ? 'Missing target' : 'Empty cue')));
+      b.appendChild(el('small', '', [cue.target_type, cue.name].filter(Boolean).join(' · ')));
       b.onclick = () => command('cue', { id: selected, cue: cue.id });
       const m = continuation(cue.continue, cue.postwait), badge = el('div', 'badge', m[0]);
       badge.style.setProperty('--m', modeColor(cue.continue));

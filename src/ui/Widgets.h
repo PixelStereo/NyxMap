@@ -2,6 +2,7 @@
 class QPainter;
 // Small interface building blocks shared by the inspector and the parameter panels.
 
+#include <QPushButton>
 #include <QBrush>
 #include <QCheckBox>
 #include <QToolButton>
@@ -17,6 +18,14 @@ class QPainter;
 #include <QWidget>
 #include <functional>
 #include <vector>
+
+// A button of one symbol (+, −, ⧉) in a tight bar: narrow, as high as the words beside it
+inline void symbolButton(QPushButton *button)
+{
+    button->setFixedWidth(28);
+    button->setStyleSheet(QStringLiteral("QPushButton { padding:3px 0; }"));
+    button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+}
 
 class QDoubleSpinBox;
 class QSlider;

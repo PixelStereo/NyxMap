@@ -161,7 +161,7 @@ arrays: `sequences`, `snapshots`, `presets`, `timelines`, `layers`.
   "sequences": [{
     "id": "3", "index": 1, "name": "Main", "loop": false,
     "cues": [{
-      "id": "41", "index": 1, "name": "Opening look", "text": "House out",
+      "id": "41", "index": 1, "name": "Opening look",
       "description": "Stand by lighting", "target_type": "snapshot",
       "target_id": "12", "missing": false, "prewait": 0,
       "action_duration": 2, "postwait": 0, "continue": "wait"
@@ -213,9 +213,9 @@ For each role **`previous`**, **`current`**, **`next`**, the base is
 | Suffix | Meaning |
 | :--- | :--- |
 | `/number`, `/name`, `/label` | Cue number, target name, display-ready `number · name`. |
-| `/text`, `/description` | Operator text and advance notice. |
+| `/description` | Advance notice for the operator. |
 | `/prewait`, `/action`, `/postwait` | Timing in seconds; action `-1` means endless. |
-| `/continue` | `wait`, `follow`, `auto-follow`. |
+| `/continue` | `wait`, `auto`. |
 | `/phase` | `pre-wait`, `action`, `post-wait`, `done`, or empty before GO. |
 | `/elapsed`, `/elapsed_text` | Time since GO, as seconds and formatted text. |
 | `/remaining`, `/remaining_text` | Time to the cue's end; `-1` / `∞` when endless. |
@@ -223,8 +223,7 @@ For each role **`previous`**, **`current`**, **`next`**, the base is
 | `/phase_progress`, `/phase_percent` | Completion of the current timing phase. |
 
 `current` means the last cue given GO; it may still be in its pre-wait. `next`
-means the cue a new GO will play. Follow can start another cue before the earlier
-action finishes. A `done` cue's elapsed counter can keep increasing.
+means the cue a new GO will play. A `done` cue's elapsed counter can keep increasing.
 
 Optional UDP feedback is enabled in Settings with one or more target addresses.
 It sends changes at 10 Hz, plus a full refresh every two seconds. Its additional

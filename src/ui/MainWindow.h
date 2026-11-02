@@ -16,7 +16,6 @@ class SettingsPanel;
 class FixturePanel;
 class FixtureInspector;
 class SnapshotPanel;
-class SequenceBar;
 class SequenceFeedback;
 class SequenceWindow;
 class TimelineWindow;
@@ -153,7 +152,6 @@ private:
     FixtureInspector *m_fixtureInspector = nullptr;
     QWidget *m_fixtureTab = nullptr; // the inspector's scroll area, in the right tabs
     SnapshotPanel *m_snapshots = nullptr;
-    SequenceBar *m_seqBar = nullptr;
     SequenceFeedback *m_feedback = nullptr;
     SequenceWindow *m_seqWindow = nullptr;
     TimelineWindow *m_timelineWindow = nullptr;

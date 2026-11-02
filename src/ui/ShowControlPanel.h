@@ -32,7 +32,7 @@ protected:
 private:
     struct Card {
         class CueFill *fill = nullptr;
-        QLabel *continuation = nullptr, *label = nullptr, *text = nullptr, *description = nullptr, *phase = nullptr, *times = nullptr;
+        QLabel *continuation = nullptr, *label = nullptr, *description = nullptr, *phase = nullptr, *times = nullptr;
     };
     struct TimelineRow {
         QLabel *clock = nullptr;
