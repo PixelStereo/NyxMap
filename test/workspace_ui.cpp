@@ -57,6 +57,7 @@ int runLayerSourceUiTests(Engine &engine); // layer_source_ui.cpp
 int runScene3dUiTests(Engine &engine);     // scene3d_ui.cpp
 int runAudioFxUiTests(Engine &engine);     // audio_fx_ui.cpp
 int runControlsUiTests(Engine &engine);    // controls_ui.cpp
+int runShowControlUiTests(Engine &engine); // show_control_ui.cpp
 
 static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, const char *)> &check)
 {
@@ -277,6 +278,7 @@ int main(int argc, char **argv)
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
     bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false;
+    bool showControlUi = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
@@ -288,11 +290,17 @@ int main(int argc, char **argv)
         else if (arg == QLatin1String("--scene3d")) scene3dUi = true;
         else if (arg == QLatin1String("--audio-fx")) audioFx = true;
         else if (arg == QLatin1String("--controls")) controlsUi = true;
+        else if (arg == QLatin1String("--show-control")) showControlUi = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
         else capture = arg;
     }
     if (xy) {
         const int failures = runXyParameterUiTests(engine, QStringLiteral(TEST_DIR));
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (showControlUi) {
+        const int failures = runShowControlUiTests(engine);
         engine.shutdown();
         return failures ? 1 : 0;
     }

@@ -7,7 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const ejson = require('ejson');
-const fixture = require('./open_stage_control_fixture.cjs');
+const fixture = require('./oscquery_fixture.cjs');
 async function until(condition) {
     const deadline = Date.now() + 10000;
     while (!condition()) { if (Date.now() > deadline) assert.fail('Timed out waiting for Companion SDK state'); await new Promise(r => setTimeout(r, 20)); }

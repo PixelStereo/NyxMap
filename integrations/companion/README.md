@@ -5,15 +5,15 @@ sequence and cue selection, snapshot/preset recalls, timeline transport,
 live elapsed/remaining time and phase-colored progress bars.
 
 Requires **Companion 4.2 or newer**, supporting module API 1.14 and Node 22,
-and a NyxMap build with the show-control OSC API. It runs independently of
-Open Stage Control. See [installation and operating help](companion/HELP.md)
+and a NyxMap build with the show-control OSC API. See [installation and operating help](companion/HELP.md)
 or the [illustrated layout guide](../../docs/companion.md).
 
 GitHub CI validates the manifest, runs protocol/preset tests, exercises the
 real Companion SDK over IPC, builds an importable `.tgz`, and repeats the
 runtime scenario against the packaged entrypoint without external dependencies.
-Download **NyxMap-Companion** from the
-[module workflow](https://github.com/PixelStereo/NyxMap/actions/workflows/companion.yml).
+Each [release](https://github.com/PixelStereo/NyxMap/releases/latest) publishes that
+`.tgz` under its version (`NyxMap-Companion-<version>.tgz`): import it in Companion with
+**Modules → Import module package**.
 
 For development, use Node 22.18+:
 

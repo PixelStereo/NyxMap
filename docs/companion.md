@@ -5,10 +5,10 @@ show desk by dragging ready-made presets onto Stream Deck buttons.
 
 ## Installation
 
-Download **NyxMap-Companion** from a successful
-[Companion module workflow](https://github.com/PixelStereo/NyxMap/actions/workflows/companion.yml).
-Extract the ZIP, import its `.tgz` with **Modules → Import module package**, and
-add **Pixel Stereo: NyxMap** as a connection. Requires Companion 4.2+ with Node 22
+Download `NyxMap-Companion-<version>.tgz` from the **Assets** of the
+[latest release](https://github.com/PixelStereo/NyxMap/releases/latest). In Companion,
+import it with **Modules → Import module package**, and add **Pixel Stereo: NyxMap**
+as a connection. Take the module of the same release as your NyxMap. Requires Companion 4.2+ with Node 22
 module support. This is a custom package; it is not yet in Bitfocus's store.
 
 Enable OSC / OSCQuery in NyxMap Settings. Configure `127.0.0.1:5678` on the same

@@ -459,18 +459,18 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         "No password: any machine on a network listened on can control the show. On a shared network, listen on the "
         "show's interface only, or on this computer only.")));
     oscPage->addWidget(osc);
-    // The phone remote: the controls (Controls tab) as a page for a phone or a tablet on the same network
+    // The remote: the Controls tab and the show desk as web pages for a phone or a tablet on the same network
     {
-        auto *box = new QGroupBox(QStringLiteral("Phone remote"));
+        auto *box = new QGroupBox(QStringLiteral("Remote"));
         auto *rf = new QFormLayout(box);
-        m_remote = new FlagBox(QStringLiteral("Serve the Controls as a web page for a phone or a tablet"));
+        m_remote = new FlagBox(QStringLiteral("Serve the Show Control and the Controls as web pages"));
         m_remote->setObjectName(QStringLiteral("remoteEnabled"));
         m_remote->setChecked(remoteEnabled());
         m_remotePort = new IntBox;
         m_remotePort->setRange(1024, 65535);
         m_remotePort->setKeyboardTracking(false);
         m_remotePort->setValue(remotePort());
-        m_remotePinUsed = new FlagBox(QStringLiteral("Ask a code (PIN) on the phone"));
+        m_remotePinUsed = new FlagBox(QStringLiteral("Ask a code (PIN) on the web pages"));
         m_remotePinUsed->setObjectName(QStringLiteral("remotePinRequired"));
         m_remotePinUsed->setChecked(remotePinRequired());
         {
@@ -500,9 +500,10 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
         m_remoteStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
         rf->addRow(m_remoteStatus);
         rf->addRow(note(QStringLiteral(
-            "Open the address on the phone, enter the PIN: sliders, switches, selectors, hold buttons and color pickers for the "
-            "controls made in the Controls tab, moving live both ways. It reaches the controls only, not the layers or the project. "
-            "Eight wrong codes lock an address out for a minute. Without a code, anyone on the network can move the controls. "
+            "Open an address on a phone, a tablet or a browser and enter the PIN. /show: GO, the cues and their times, snapshots, "
+            "presets, timelines and the layers' values. /control: the controls made in the Controls tab. Each page links to the "
+            "other. Both are live, both ways. They play the show and move values; they cannot open, save or edit the project. "
+            "Eight wrong codes lock an address out for a minute. Without a code, anyone on the network can play the show. "
             "No encryption: use it on the show's network, not a shared one. It listens where OSC does (Listen on, above).")));
         oscPage->addWidget(box);
         auto apply = [this] {

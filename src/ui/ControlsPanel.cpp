@@ -79,7 +79,7 @@ ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) 
     head->addWidget(add);
     v->addLayout(head);
     auto *note = new QLabel(QStringLiteral("Each control is a value of the show: an interaction can follow it or drive it, a timeline can animate it, "
-                                           "OSC and the phone remote can move it."));
+                                           "OSC and the remote can move it."));
     note->setWordWrap(true);
     note->setStyleSheet("color:#888; font-size:11px;");
     v->addWidget(note);

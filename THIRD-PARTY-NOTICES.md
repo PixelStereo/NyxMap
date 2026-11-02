@@ -63,15 +63,6 @@ not endorse it. Playback requires a separately installed TouchDesigner or TouchP
 Commercial or Pro licence. NyxMap neither installs nor activates that licence. Builders must explicitly opt in with
 `NYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
 
-**Open Stage Control remote.** The ready-to-load integration includes pure
-JavaScript dependencies in `integrations/open-stage-control/nyxmap-dependencies.cjs`:
-[ws](https://github.com/websockets/ws) (MIT),
-[osc.js](https://github.com/colinbdclark/osc.js) (MIT option) and
-[long.js](https://github.com/dcodeIO/long.js) (Apache-2.0).
-Their versions and full license texts are preserved beside the bundle in
-`nyxmap-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
-GPL-3.0 application, installed by the user; it is not included in the remote ZIP.
-
 ## Faust (GRAME)
 
 Built-in audio instruments are generated with Faust 2.79.3 and use its standard

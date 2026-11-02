@@ -2,16 +2,16 @@
 
 ## Install and connect
 
-1. Use Companion 4.2+ with Node 22 module support. Download the **NyxMap-Companion**
-   artifact from NyxMap's successful Companion module workflow and extract its ZIP.
+1. Use Companion 4.2+ with Node 22 module support. Download `NyxMap-Companion-<version>.tgz`
+   from the **Assets** of NyxMap's [latest release](https://github.com/PixelStereo/NyxMap/releases/latest).
 2. In Companion's **Modules** page, choose **Import module package** and import
-   the enclosed `.tgz`. Add the **Pixel Stereo: NyxMap** connection.
+   that `.tgz`. Add the **Pixel Stereo: NyxMap** connection.
 3. In NyxMap Settings, enable **Control by OSC and publish the namespace (OSCQuery)**.
 4. Configure the connection with the NyxMap host and **OSCQuery TCP port**, normally
    `127.0.0.1` and `5678` on the same computer. On another computer, use NyxMap's LAN
    IP and a reachable **Listen on** interface.
 5. Once connected, open Companion's **Presets** pane and drag NyxMap presets onto
-   Stream Deck buttons. No UDP feedback target or Open Stage Control is required.
+   Stream Deck buttons. No UDP feedback target is required.
 
 ## Presets
 

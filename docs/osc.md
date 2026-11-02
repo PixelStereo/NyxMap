@@ -4,7 +4,7 @@
 
 **Discover the show. Drive it. Follow what actually plays.**
 
-[Connect](#connect) · [Show control](#show-control) · [Live feedback](#live-feedback) · [Parameters](#parameters) · [OSCQuery](#oscquery) · [Open Stage Control](../integrations/open-stage-control/README.md)
+[Connect](#connect) · [Show control](#show-control) · [Live feedback](#live-feedback) · [Parameters](#parameters) · [OSCQuery](#oscquery)
 
 </div>
 
@@ -24,7 +24,7 @@ the controller can reach.
 
 ```mermaid
 flowchart LR
-    C["Controller<br/>Open Stage Control · console · script"]
+    C["Controller<br/>Companion · console · script"]
     P["NyxMap<br/>OSC namespace"]
     S["Show state<br/>Sequences · cues · timelines"]
     C -->|"HTTP · discover"| P
@@ -42,9 +42,10 @@ curl 'http://127.0.0.1:5678/show/catalog?VALUE'
 curl 'http://127.0.0.1:5678/sequence'
 ```
 
-The [ready-to-load Open Stage Control desk](../integrations/open-stage-control/README.md)
-uses one WebSocket for commands and live state. Its pages follow the current
-project without manually entering snapshot, preset or timeline numbers.
+The [Stream Deck module for Companion](companion.md) uses one WebSocket for commands
+and live state, and follows the current project without manually entering snapshot,
+preset or timeline numbers. For a desk with nothing to install, see
+[Show Control](controls-and-remote.md#show-control).
 
 ## Address rules
 

@@ -18,6 +18,7 @@
 #include "LayerTable.h"
 #include "ControlsPanel.h"
 #include "RemoteServer.h"
+#include "ShowControlPanel.h"
 #include "InteractionPanel.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
@@ -283,12 +284,16 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     m_logs = new LogPanel;
     m_leftTabs->addTab(m_logs, QStringLiteral("Logs"));
+    m_showControl = new ShowControlPanel(m_engine);
+    m_leftTabs->addTab(m_showControl, QStringLiteral("Show Control"));
+    connect(m_showControl, &ShowControlPanel::layersRequested, this, [this] { m_leftTabs->setCurrentIndex(1); });
     // The Logs panel reads the events' ring (EventLog) a few times a second: no signal per message
     m_leftTabs->setTabToolTip(0, QStringLiteral("Media Bin (Shift+1)"));
     m_leftTabs->setTabToolTip(1, QStringLiteral("Layers (Shift+2)"));
     m_leftTabs->setTabToolTip(2, QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
     m_leftTabs->setTabToolTip(3, QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
-    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_controls), QStringLiteral("Controls: your own sliders, switches, selectors, buttons and colors, for interactions, timelines, OSC and the phone remote (Shift+5)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_controls), QStringLiteral("Controls: your own sliders, switches, selectors, buttons and colors, for interactions, timelines, OSC and the remote (Shift+5)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_showControl), QStringLiteral("Show Control: GO, the cues and their times, snapshots, presets and timelines. Also a web page: see Settings › OSC › Remote (Shift+6)"));
     connect(m_interactions, &InteractionPanel::edited, this, &MainWindow::markDirty);
     connect(m_interactions, &InteractionPanel::showRequested, this, [this] { m_leftTabs->setCurrentWidget(m_interactions); });
     m_leftTabs->tabBar()->setChangeCurrentOnDrag(true);
@@ -810,6 +815,7 @@ bool MainWindow::eventFilter(QObject *o, QEvent *e)
             if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = 2;
             if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = 3;
             if (k->key() == Qt::Key_5 || k->key() == Qt::Key_Percent) tab = m_leftTabs->indexOf(m_controls);
+            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) tab = m_leftTabs->indexOf(m_showControl);
             if (tab >= 0 && !k->isAutoRepeat()) {
                 m_leftTabs->setCurrentIndex(tab);
                 return true;
@@ -2297,7 +2303,7 @@ void MainWindow::startOsc()
     if (on) statusBar()->showMessage(status, 6000);
 }
 
-// The phone remote: its own thread, as OSC has, so that a phone is answered while the interface is busy
+// The remote: its own thread, as OSC has, so that a phone is answered while the interface is busy
 void MainWindow::startRemote()
 {
     if (!m_remoteThread) {
@@ -2305,6 +2311,12 @@ void MainWindow::startRemote()
         m_remoteThread->setObjectName("Remote");
         m_remote = new RemoteServer(m_engine);
         m_remote->moveToThread(m_remoteThread);
+        connect(m_remote, &RemoteServer::showDriven, this, [this] {
+            markDirty();
+            refreshLayerList();
+            m_composition->syncFromEngine();
+            m_inspectorTimer.start(); // as OSC: not during a gesture, a bit later
+        });
         connect(m_remoteThread, &QThread::finished, m_remote, &QObject::deleteLater);
         m_remoteThread->start();
     }
@@ -2320,7 +2332,7 @@ void MainWindow::startRemote()
             status = on ? m_remote->status() : QString();
         },
         Qt::BlockingQueuedConnection);
-    m_settings->setRemoteStatus(on ? status : QStringLiteral("Phone remote off"));
+    m_settings->setRemoteStatus(on ? status : QStringLiteral("Remote off"));
     if (on) statusBar()->showMessage(status, 8000);
 }
 

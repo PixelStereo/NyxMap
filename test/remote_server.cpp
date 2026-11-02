@@ -2,6 +2,7 @@
 #include "Engine.h"
 #include "RemotePage.h"
 #include "RemoteServer.h"
+#include "ShowPage.h"
 #include "WebSocketFrame.h"
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -111,6 +112,36 @@ int main(int argc, char **argv)
         color.name = "Wash";
         color.kind = ShowControl::Kind::Color;
         const quint64 a = engine.addControl(slider), b = engine.addControl(button), c = engine.addControl(color);
+        // A little show for the desk
+        for (const char *name : {"Opening", "Finale"}) {
+            Engine::Snapshot snapshot;
+            snapshot.name = name;
+            engine.addSnapshot(snapshot);
+        }
+        Engine::Preset preset;
+        preset.name = "Warm";
+        engine.addPreset(preset);
+        Animation timeline;
+        timeline.name = "Sweep";
+        timeline.duration = 8;
+        engine.addAnimation(timeline);
+        Sequencer::Sequence sequence;
+        sequence.name = "Main";
+        for (int k = 0; k < 2; ++k) {
+            Sequencer::Step step;
+            step.snapshot = engine.snapshot(k).id;
+            step.text = k ? "Bow" : "Lights up";
+            step.description = k ? "Everybody on stage" : "On the conductor";
+            step.preWait = k ? 0 : 1.5;
+            step.postWait = k ? 0 : 2;
+            step.next = k ? Sequencer::StepContinue::Wait : Sequencer::StepContinue::Follow;
+            sequence.steps.push_back(step);
+        }
+        engine.sequencer().setCurrent(engine.sequencer().add(sequence));
+        const quint64 sequenceId = engine.sequencer().sequenceId(0);
+        const int layerIndex = engine.addLayer("Wash");
+        engine.layer(layerIndex)->type = SourceType::Text;
+        const quint64 layerId = engine.layerId(layerIndex);
         if (qEnvironmentVariableIsSet("NYXMAP_REMOTE_DEMO")) { // serves the page for a look in a browser, then quits
             ShowControl toggle, choice;
             toggle.name = "Strobe";
@@ -122,7 +153,7 @@ int main(int argc, char **argv)
             engine.addControl(choice);
             RemoteServer demo(&engine);
             demo.start(8799, qEnvironmentVariableIsSet("NYXMAP_REMOTE_NOCODE") ? QString() : QStringLiteral("482913"), "127.0.0.1");
-            std::cerr << "DEMO http://127.0.0.1:8799/?pin=482913\n";
+            std::cerr << "DEMO http://127.0.0.1:8799/show?pin=482913\n";
             QElapsedTimer limit;
             limit.start();
             while (limit.elapsed() < 150000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
@@ -145,8 +176,9 @@ int main(int argc, char **argv)
         {
             Client h;
             require(h.connectTo(port), "connect");
-            const QByteArray reply = h.request("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            const QByteArray reply = h.request("GET /control HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
             require(reply.startsWith("HTTP/1.1 200") && reply.contains("<title>NyxMap remote</title>"), "the page is served");
+            require(reply.contains("href=\"/show\""), "it links to the show desk");
             require(reply.contains("Content-Security-Policy: default-src 'none'; script-src 'sha256-") && reply.contains("style-src 'sha256-") &&
                         reply.contains("connect-src 'self'"), "its script and style are hashed into the policy, nothing else allowed");
             require(reply.contains("X-Frame-Options: DENY") && reply.contains("nosniff") && reply.contains("no-store"), "and the usual headers");
@@ -155,6 +187,23 @@ int main(int argc, char **argv)
             // The hash is that of the code served
             const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(QByteArray(remote_page::kScript), QCryptographicHash::Sha256).toBase64() + "'";
             require(reply.contains(scriptHash), "the policy's hash is the script's");
+        }
+        {
+            Client h;
+            require(h.connectTo(port), "connect");
+            const QByteArray reply = h.request("GET /show HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            require(reply.startsWith("HTTP/1.1 200") && reply.contains("<title>NyxMap show control</title>"), "the show desk is served");
+            require(reply.contains("href=\"/control\""), "it links to the controls");
+            const QByteArray scriptHash = "'sha256-" + QCryptographicHash::hash(QByteArray(show_page::kScript), QCryptographicHash::Sha256).toBase64() + "'";
+            const QByteArray styleHash = "'sha256-" + QCryptographicHash::hash(QByteArray(show_page::kStyle), QCryptographicHash::Sha256).toBase64() + "'";
+            require(reply.contains(scriptHash) && reply.contains(styleHash), "the policy's hashes are its own script's and style's");
+            require(!reply.contains("482913"), "the PIN is nowhere in it");
+        }
+        {
+            Client h;
+            require(h.connectTo(port), "connect");
+            const QByteArray reply = h.request("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            require(reply.startsWith("HTTP/1.1 302") && reply.contains("Location: /control\r\n"), "the root leads to the controls");
         }
         {
             Client h;
@@ -174,6 +223,64 @@ int main(int argc, char **argv)
             const QByteArray reply = h.request("GET /info HTTP/1.1\r\nHost: x\r\n\r\n");
             require(reply.startsWith("HTTP/1.1 200") && reply.contains("{\"pin\":true}") && !reply.contains("482913"), "/info says a code is asked");
         }
+        // The show desk: what the project holds, where the show is, its commands, a layer's values, and nothing else
+        {
+            Client desk;
+            require(desk.connectTo(port), "connect");
+            require(desk.upgrade("/ws?pin=482913").startsWith("HTTP/1.1 101"), "a desk connects with the code");
+            const auto last = [&](const char *type) {
+                QJsonObject found;
+                for (const QJsonObject &m : desk.messages())
+                    if (m.value("t").toString() == QLatin1String(type)) found = m;
+                return found;
+            };
+            desk.sendText("{\"t\":\"desk\"}");
+            desk.pump(400);
+            const QJsonObject catalog = last("catalog").value("catalog").toObject();
+            require(catalog.value("sequences").toArray().size() == 1 && catalog.value("snapshots").toArray().size() == 2 &&
+                        catalog.value("presets").toArray().size() == 1 && catalog.value("timelines").toArray().size() == 1,
+                    "a desk receives what the project holds");
+            require(last("state").value("state").toObject().value("values").toObject().value("/sequence/name").toString() == "Main",
+                    "and where the show is");
+            const QByteArray id = QByteArray::number(sequenceId);
+            desk.sendText("{\"t\":\"do\",\"c\":\"go\",\"id\":\"" + id + "\"}");
+            desk.pump(400);
+            require(engine.sequencer().position() == 0, "its GO plays the first cue");
+            require(last("state").value("state").toObject().value("values").toObject().value("/sequence/cue/current/number").toInt() == 1,
+                    "and it follows");
+            desk.sendText("{\"t\":\"do\",\"c\":\"stop_all\"}");
+            desk.sendText("{\"t\":\"do\",\"c\":\"cue\",\"id\":\"" + id + "\",\"cue\":\"" +
+                          QByteArray::number(engine.sequencer().sequence(0).steps[1].runtimeId) + "\"}");
+            desk.pump(300);
+            require(engine.sequencer().position() == 1, "a cue of the stack is played by its id");
+
+            const QByteArray root = "/show/layer/by-id/" + QByteArray::number(layerId);
+            desk.sendText("{\"t\":\"layer\",\"id\":\"" + QByteArray::number(layerId) + "\"}");
+            desk.pump(300);
+            const QJsonObject tree = last("layer").value("tree").toObject();
+            require(tree.value("FULL_PATH").toString() == QString::fromLatin1(root) && tree.value("CONTENTS").toObject().contains("opacity"),
+                    "a layer's tree, as OSCQuery tells it");
+            desk.sendText("{\"t\":\"listen\",\"path\":\"" + root + "/opacity\"}");
+            desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[0.25]}");
+            desk.pump(300);
+            require(std::abs(engine.layer(layerIndex)->opacity - 0.25) < 1e-4, "a layer's value is written");
+            require(std::abs(last("params").value("v").toObject().value(QString::fromLatin1(root) + "/opacity").toArray().at(0).toDouble() - 0.25) < 1e-4,
+                    "and followed");
+            engine.layer(layerIndex)->locked = true;
+            desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[0.75]}");
+            desk.pump(200);
+            require(std::abs(engine.layer(layerIndex)->opacity - 0.25) < 1e-4, "a locked layer refuses it");
+            engine.layer(layerIndex)->locked = false;
+            const bool blackout = engine.blackout();
+            desk.sendText("{\"t\":\"write\",\"path\":\"/composition/blackout\",\"args\":[true]}");
+            desk.pump(200);
+            require(engine.blackout() == blackout, "nothing of the namespace but the layers");
+            desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[]}");
+            desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[\"x\"]}");
+            desk.pump(200);
+            require(std::abs(engine.layer(layerIndex)->opacity - 0.25) < 1e-4, "values of the wrong shape are dropped");
+        }
+
         // The PIN, the origin
         {
             Client h;
@@ -310,7 +417,7 @@ int main(int argc, char **argv)
         const bool answered = gone.connectTo(port) && gone.request("GET / HTTP/1.1\r\nHost: x\r\n\r\n").startsWith("HTTP/");
         require(!answered && !server.isRunning() && server.clientCount() == 0, "stopped");
         engine.shutdown();
-        std::cout << "Remote server: page, policy, PIN, origin, lockout, both ways, limits passed\n";
+        std::cout << "Remote server: pages, policy, PIN, origin, lockout, both ways, limits, show desk passed\n";
         return 0;
     } catch (const std::exception &ex) {
         std::cerr << ex.what() << '\n';

@@ -36,7 +36,7 @@ public:
     static bool gpuShareOneFrameLate(); // Syphon / Spout: the frame before, without waiting for the GPU
     // OSC control and OSCQuery publication (defaults of libossia / score: OSC 1234, OSCQuery 5678)
     static bool oscEnabled();
-    // The phone remote (RemoteServer.h): off until asked, a port, a PIN made on first use
+    // The remote (RemoteServer.h): off until asked, a port, a PIN made on first use
     static bool remoteEnabled();
     static int remotePort();
     static bool remotePinRequired(); // false: no code is asked
