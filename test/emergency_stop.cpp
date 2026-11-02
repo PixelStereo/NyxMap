@@ -127,6 +127,7 @@ int runEmergencyStopTests(Engine &engine)
     // A sequence's clock (a soundtrack that rewinds or loops as it is stopped) fires no step while the show is stopped: a step
     // would take the show out of the stop. It is still read, so that it goes on from where it is.
     {
+        engine.setPaused(false); // out of the stops above
         const int clockLayer = engine.addLayer(QStringLiteral("Clock"));
         engine.layer(clockLayer)->type = SourceType::Text;
         const quint64 clockId = engine.layerId(clockLayer);
