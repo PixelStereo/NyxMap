@@ -124,6 +124,42 @@ int runEmergencyStopTests(Engine &engine)
     engine.advanceFades(20);
     check(text.shown() == shown && text.typeDur == 0, "typewriter does not finish after Escape");
 
+    // A sequence's clock (a soundtrack that rewinds or loops as it is stopped) fires no step while the show is stopped: a step
+    // would take the show out of the stop. It is still read, so that it goes on from where it is.
+    {
+        engine.setPaused(false); // out of the stops above
+        const int clockLayer = engine.addLayer(QStringLiteral("Clock"));
+        engine.layer(clockLayer)->type = SourceType::Text;
+        const quint64 clockId = engine.layerId(clockLayer);
+        engine.setParameter(clockId, QStringLiteral("opacity"), 0.1);
+        Sequencer::Sequence tape;
+        tape.clockLayer = clockId;
+        tape.clockParam = QStringLiteral("opacity");
+        for (double at : {0.2, 0.5, 0.8}) {
+            Sequencer::Step step;
+            step.snapshot = 987654; // gone: the position moves, nothing else
+            step.at = at;
+            tape.steps.push_back(step);
+        }
+        const int index = engine.sequencer().add(tape);
+        auto clockAt = [&](double t) {
+            engine.setParameter(clockId, QStringLiteral("opacity"), t);
+            engine.renderFrame();
+        };
+        engine.renderFrame(); // its first reading
+        clockAt(0.3);
+        check(engine.sequencer().positionOf(index) == 0, "the clock plays its step");
+        engine.stopShowPlayback();
+        clockAt(0.6);
+        check(engine.sequencer().positionOf(index) == 0, "stopped, a clock going on fires no step");
+        clockAt(0.25);
+        check(engine.sequencer().positionOf(index) == 0, "stopped, a clock jumping back fires no step");
+        check(engine.paused(), "the show stays stopped");
+        engine.setPaused(false);
+        clockAt(0.55);
+        check(engine.sequencer().positionOf(index) == 1, "released, it goes on from where it was read");
+    }
+
     engine.setFadesManual(false);
     engine.newProject();
     return failures;
