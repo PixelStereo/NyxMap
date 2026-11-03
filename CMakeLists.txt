@@ -763,6 +763,10 @@ if(NYXMAP_TESTS)
   # GNU-compatible Linux linkers inject failures at our FFmpeg call sites only.
   # No test hooks or extra branches are compiled into the production decoder.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(nyxmap_video_transfer_test test/video_transfer.cpp)
+    target_link_libraries(nyxmap_video_transfer_test PRIVATE nyxmap_engine)
+    target_link_options(nyxmap_video_transfer_test PRIVATE -Wl,--wrap=av_hwframe_transfer_data)
+    add_test(NAME video_transfer COMMAND nyxmap_video_transfer_test)
     add_executable(nyxmap_decoder_allocations_test test/decoder_allocations.cpp)
     target_link_libraries(nyxmap_decoder_allocations_test PRIVATE nyxmap_engine)
     target_compile_options(nyxmap_decoder_allocations_test PRIVATE ${NYXMAP_WARNINGS})

@@ -98,6 +98,7 @@ uniform vec4 u_sel0, u_sel1, u_sel2, u_sel3; // which channel of the texel
 uniform vec2 u_off0, u_off1, u_off2, u_off3; // chroma siting
 uniform vec4 u_scale;                        // bit depth held in 16 bits
 uniform int u_mode, u_alpha;
+uniform int u_sampling; // 1: packed channels, 2: shared interleaved chroma, 0: independent planes
 uniform mat3 u_matrix;
 uniform vec4 u_range;                        // Y offset, Y scale, C offset, C scale
 uniform vec2 u_crop, u_clamp;                // part of the textures holding the picture
@@ -114,10 +115,13 @@ void main() {
         o = vec4(clamp(rgb, 0.0, 1.0), u_mode == 5 ? T(u_t1, uv).r : 1.0);
         return;
     }
-    float a = dot(T(u_t0, uv + u_off0), u_sel0) * u_scale.x;
-    float b = dot(T(u_t1, uv + u_off1), u_sel1) * u_scale.y;
-    float c = dot(T(u_t2, uv + u_off2), u_sel2) * u_scale.z;
-    float alpha = u_alpha != 0 ? dot(T(u_t3, uv + u_off3), u_sel3) * u_scale.w : 1.0;
+    vec4 t0 = T(u_t0, uv + u_off0);
+    vec4 t1 = u_sampling == 1 ? t0 : T(u_t1, uv + u_off1);
+    vec4 t2 = u_sampling == 1 ? t0 : u_sampling == 2 ? t1 : T(u_t2, uv + u_off2);
+    float a = dot(t0, u_sel0) * u_scale.x;
+    float b = dot(t1, u_sel1) * u_scale.y;
+    float c = dot(t2, u_sel2) * u_scale.z;
+    float alpha = u_alpha != 0 ? dot(u_sampling == 1 ? t0 : T(u_t3, uv + u_off3), u_sel3) * u_scale.w : 1.0;
     vec3 rgb = u_mode == 0 ? u_matrix * vec3((a - u_range.x) * u_range.y, (b - u_range.z) * u_range.w, (c - u_range.z) * u_range.w)
              : u_mode == 1 ? vec3(a, b, c) : vec3(a);
     o = vec4(clamp(rgb, 0.0, 1.0), clamp(alpha, 0.0, 1.0));
@@ -138,6 +142,7 @@ bool VideoConverter::Program::load(bool rect, QString *log)
     }
     scale = f->glGetUniformLocation(id, "u_scale");
     mode = f->glGetUniformLocation(id, "u_mode");
+    sampling = f->glGetUniformLocation(id, "u_sampling");
     alpha = f->glGetUniformLocation(id, "u_alpha");
     matrix = f->glGetUniformLocation(id, "u_matrix");
     range = f->glGetUniformLocation(id, "u_range");
@@ -462,6 +467,12 @@ bool VideoTexture::convert(const VideoLayout &L, const VideoConverter &conv, boo
     f->glDisable(GL_BLEND);
     f->glUseProgram(P.id);
     const bool hap = L.mode >= VideoLayout::Mode::HapRgb;
+    // Packed RGB/gray/4:4:4 need one fetch, NV12/P010 and their relatives need two.
+    // Keep channel selectors and bit-depth scales so channel order and alpha stay identical.
+    const bool packed = !hap && L.planeCount == 1 && L.chromaShift[0] == 0 && L.chromaShift[1] == 0;
+    const bool sharedChroma = L.mode == VideoLayout::Mode::Yuv && L.srcPlane[1] >= 0 &&
+                              L.srcPlane[1] == L.srcPlane[2];
+    f->glUniform1i(P.sampling, packed ? 1 : sharedChroma ? 2 : 0);
     int mode = 0;
     switch (L.mode) {
     case VideoLayout::Mode::Yuv: mode = 0; break;
@@ -472,12 +483,15 @@ bool VideoTexture::convert(const VideoLayout &L, const VideoConverter &conv, boo
     case VideoLayout::Mode::HapYCoCgAlpha: mode = 5; break;
     case VideoLayout::Mode::HapAlphaOnly: mode = 6; break;
     }
+    // Bind each physical plane once. Several output channels can share the same texture unit
+    // (packed RGB/alpha, interleaved UV); do not bind it again for every channel.
+    for (int p = 0; p < L.planeCount; ++p) {
+        f->glActiveTexture(GL_TEXTURE0 + GLenum(p));
+        f->glBindTexture(target, planes[p]);
+    }
     for (int c = 0; c < 4; ++c) {
-        // HAP: units 0 and 1 are its textures; planes: unit c holds the plane of output channel c
         const int plane = hap ? std::min(c, L.planeCount - 1) : (L.srcPlane[c] >= 0 ? L.srcPlane[c] : 0);
-        f->glActiveTexture(GL_TEXTURE0 + GLenum(c));
-        f->glBindTexture(target, planes[plane]);
-        f->glUniform1i(P.tex[c], c);
+        f->glUniform1i(P.tex[c], plane);
         float sel[4] = {0, 0, 0, 0};
         if (!hap && L.srcPlane[c] >= 0) sel[std::clamp(L.srcChannel[c], 0, 3)] = 1;
         f->glUniform4fv(P.sel[c], 1, sel);
@@ -503,8 +517,8 @@ bool VideoTexture::convert(const VideoLayout &L, const VideoConverter &conv, boo
     f->glBindVertexArray(conv.m_quadVao);
     f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     f->glBindVertexArray(0);
-    for (int c = 3; c >= 0; --c) {
-        f->glActiveTexture(GL_TEXTURE0 + GLenum(c));
+    for (int p = L.planeCount - 1; p >= 0; --p) {
+        f->glActiveTexture(GL_TEXTURE0 + GLenum(p));
         f->glBindTexture(target, 0);
     }
     return true;
