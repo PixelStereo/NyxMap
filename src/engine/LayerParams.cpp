@@ -691,6 +691,10 @@ const std::vector<Parameter *> &Layer::parameters()
                &sc->ambient[size_t(c)]).colorComponent(c);
         f3("scene/ambient_intensity", "Scene › Ambient Intensity", 0, 5, d.ambientIntensity, &sc->ambientIntensity).step(0.01);
         f3("scene/exposure", "Scene › Exposure", 0, 10, d.exposure, &sc->exposure).step(0.01);
+        f3("scene/studio", "Scene › Studio Light", 0, 5, d.studio, &sc->studio).step(0.01);
+        f3("scene/ao", "Scene › Contact Shadows", 0, 3, d.ao, &sc->ao).step(0.01);
+        f3("scene/ao_radius", "Scene › Contact Shadows Reach", 0.01, 5, d.aoRadius, &sc->aoRadius).step(0.01);
+        f3("scene/reflections", "Scene › Reflections", 0, 1, d.reflections, &sc->reflections).step(0.01);
         for (int c = 0; c < 4; ++c)
             f3(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
                &sc->background[size_t(c)]).colorComponent(c);
@@ -748,6 +752,9 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("light/yaw", "Light › Yaw (°)", -180, 180, d.yaw, &lt->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
         f3("light/pitch", "Light › Pitch (°)", -90, 90, d.pitch, &lt->pitch).step(0.1);
         f3("light/angle", "Light › Spot Angle (°)", 1, 89, d.angle, &lt->angle).step(0.1);
+        f3("light/falloff", "Light › Spot Falloff", 0, 1, d.falloff, &lt->falloff).step(0.01);
+        flag("light/shadow", "Light › Shadows", d.shadow, &lt->shadow).ramp(Parameter::Ramp::Cut);
+        f3("light/softness", "Light › Shadow Softness", 0, 16, d.softness, &lt->softness).step(0.1);
         num("light/level", "Light › Level", 0, 1, 1.0, [self] { return double(self->opacity); },
             [self](double v) { self->opacity = float(v); });
     }

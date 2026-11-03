@@ -59,6 +59,20 @@
   light; its handles move, turn or scale it along X, Y, Z (W, E, R; one undo step
   each). "View from Camera" and "Camera = View" exchange the view's and the scene's
   cameras. Not yet: moving a mesh's points by hand in that view.
+  Lights show in that view: a lamp's head and its cone for a spot (down to the
+  ground, its falloff dashed inside), a sun with parallel rays for a directional
+  light, a bulb for a point light. A spot's `light/falloff` goes from a sharp edge (0)
+  to a gradient from its middle (1). The models cast shadows (`light/shadow`,
+  `light/softness`) from up to four spots and directional lights and two point lights,
+  all around those, except what is far larger than the others (a floor, a wall), which
+  only receives them; their maps are drawn again only when something they show moves.
+  Without an environment, a scene's `scene/studio` gives the models a photo studio's
+  panels to reflect. `scene/ao` and `scene/ao_radius` darken where surfaces meet, and
+  `scene/reflections` shows the other models in smooth surfaces. Both work from what
+  the camera sees: a reflection only holds what is on screen, and fades on surfaces
+  that face the camera. Without a graphics card (a renderer running on the processor),
+  a scene leaves out antialiasing, shadows, contact shadows and reflections. See
+  `examples/pbr/`.
   Lighting is physically based in linear light with ACES tone mapping. A scene's
   environment is a layer's picture (an HDRI, .hdr or .exr, loaded in an image layer
   that can stay hidden; or a video, a generator), equirectangular, taken at any

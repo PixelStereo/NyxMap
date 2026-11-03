@@ -8,10 +8,11 @@
 // render thread. Its meshes are drawn as the file places them (its nodes' transforms), centered and brought to a unit
 // size when "fit" is on, then moved, turned and scaled as its placement says. The scene draws all its models in one
 // pass with physically based materials (base colour, metal, roughness, emission, the base colour's texture) under its
-// lights.
+// lights, their shadows, and its environment or a studio's light.
 
 #include "Gl.h"
 
+#include <QByteArray>
 #include <QImage>
 #include <QMatrix4x4>
 #include <QString>
@@ -46,6 +47,9 @@ struct LightSettings {
     std::array<float, 3> position{{2, 3, 3}};
     float yaw = 0, pitch = -45; // where a directional light or a spot points (degrees)
     float angle = 30;           // a spot's half angle (degrees)
+    float falloff = 0.35f;      // a spot's soft edge: 0 sharp, 1 a gradient from its middle to its edge
+    bool shadow = true;         // its light stopped by the models (the first ones of a scene: Scene3D::kMaxShadows)
+    float softness = 2;         // how soft its shadows' edge is
 };
 
 // A scene's camera, ambient light, background (transparent by default: the layers under it show) and exposure
@@ -60,6 +64,11 @@ struct SceneSettings {
     // shown behind the models or only lighting them, how blurred when shown
     float envIntensity = 1, envRotation = 0, envBlur = 0;
     bool envShow = false;
+    // Without an environment, a photo studio's light (panels over a dark room) for the models to reflect: how strong
+    float studio = 1;
+    // Darker where surfaces meet (screen space): how strong, how far it looks in the scene's units
+    float ao = 1, aoRadius = 0.4f;
+    float reflections = 1; // the other models seen in smooth surfaces (screen space)
 };
 
 class Model3D
@@ -145,6 +154,7 @@ private:
 struct Camera3D {
     QMatrix4x4 view, proj;
     QVector3D eye;
+    float nearPlane = 0.01f, farPlane = 100;
     static Camera3D of(const SceneSettings &s, float aspect);
     static QVector3D aim(float yawDeg, float pitchDeg); // the direction from these angles (a light, the camera's eye)
 };
@@ -154,6 +164,8 @@ class Scene3D
 {
 public:
     static constexpr int kMaxLights = 8;
+    static constexpr int kMaxShadows = 4, kShadowSize = 2048; // spots and directional lights
+    static constexpr int kMaxPointShadows = 2, kPointShadowSize = 1024; // point lights, all around
     struct Item {
         std::shared_ptr<Model3D> model;
         ModelPlacement placement;
@@ -174,12 +186,25 @@ public:
     GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
                 GLuint environment = 0, bool environmentLinear = false);
     void releaseGl();
+    int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
+    // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
+    // no antialiasing, shadows, contact shadows or reflections
+    static bool lite(const QString &renderer);
 
 private:
     bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
-    GLuint m_fbo = 0, m_color = 0, m_depth = 0;
+    GLuint m_fbo = 0, m_color = 0;                          // its picture
+    GLuint m_msFbo = 0, m_msColor = 0, m_depth = 0;         // drawn antialiased here
+    GLuint m_shadowProgram = 0, m_shadowFbo = 0, m_shadowMaps = 0; // the lights' views of the models, one layer each
+    GLuint m_pointProgram = 0, m_pointMaps[kMaxPointShadows] = {}; // a point light's: the distances all around it
+    QByteArray m_shadowKey; // what its maps show
+    int m_shadowRenders = 0;
+    GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
+    GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
+    bool m_lite = false;
+    bool m_hasPicture = false;                              // m_color holds the last frame: what a reflection shows
     GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
     static constexpr int kEnvW = 1024, kEnvH = 512;
     int m_w = 0, m_h = 0;

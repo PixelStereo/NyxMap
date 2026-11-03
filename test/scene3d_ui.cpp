@@ -7,6 +7,8 @@
 #include "MediaBin.h"
 #include "PreviewWorkspace.h"
 #include "Scene3DView.h"
+#include <QCheckBox>
+#include <QLabel>
 #include <QJsonArray>
 #include <QMouseEvent>
 #include "Model3D.h"
@@ -265,6 +267,63 @@ int runScene3dUiTests(Engine &engine)
             check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - 30) < 1e-6 &&
                       std::abs(engine.parameterValue(scene, "camera/pitch").toDouble() - 20) < 1e-6,
                   "Camera = View gives the scene the view's camera");
+            // The three kinds of light are drawn differently, a spot with its cone
+            {
+                const int at = engine.addLayer("Drawn light", engine.indexOfId(scene) + 1);
+                const quint64 drawn = engine.layerId(at);
+                check(engine.setLayerLight(at), "a light to draw");
+                engine.setStructure(tree::intoGroup(engine.structure(), {drawn}, scene));
+                engine.setParameter(drawn, "light/position/x", 1.5);
+                engine.setParameter(drawn, "light/position/y", 2.0);
+                engine.setParameter(drawn, "light/position/z", 0.0);
+                engine.setParameter(drawn, "light/pitch", -80.0);
+                engine.setParameter(drawn, "light/intensity", 0.0); // only its symbol differs
+                // Its settings are in the inspector
+                {
+                    QUndoStack inspectorUndo;
+                    LayerInspector inspector(&engine, &inspectorUndo);
+                    inspector.setLayer(engine.indexOfId(drawn));
+                    inspector.rebuild();
+                    pump();
+                    QStringList shown;
+                    for (auto *label : inspector.findChildren<QLabel *>()) shown << label->text();
+                    for (const char *name : {"Spot Falloff", "Shadows", "Shadow Softness"})
+                        check(shown.filter(QLatin1String(name)).size() > 0, "a light's setting in the inspector");
+                }
+                view->setSelected(0);
+                const auto lit = [&](const QString &kind) {
+                    engine.setParameter(drawn, "light/type", kind);
+                    for (int k = 0; k < 3; ++k) {
+                        engine.renderFrame();
+                        pump();
+                    }
+                    return view->grabFramebuffer();
+                };
+                const QImage point = lit("point"), spot = lit("spot"), sun = lit("directional");
+                const auto different = [](const QImage &x, const QImage &y) {
+                    int count = 0;
+                    for (int j = 0; j < x.height(); ++j)
+                        for (int i = 0; i < x.width(); ++i) count += x.pixel(i, j) != y.pixel(i, j);
+                    return count;
+                };
+                check(different(point, spot) > 200, "a spot is drawn with its cone");
+                check(different(point, sun) > 50 && different(sun, spot) > 200, "a directional light has its own symbol");
+                engine.setParameter(drawn, "light/type", QStringLiteral("spot"));
+                engine.setParameter(drawn, "light/falloff", 0.0);
+                for (int k = 0; k < 3; ++k) {
+                    engine.renderFrame();
+                    pump();
+                }
+                const QImage sharp = view->grabFramebuffer();
+                check(different(sharp, spot) > 20, "its falloff is drawn inside its cone");
+                if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+                    point.save(captures + "/light-point.png");
+                    spot.save(captures + "/light-spot.png");
+                    sun.save(captures + "/light-sun.png");
+                }
+                engine.removeLayer(engine.indexOfId(drawn));
+                pump();
+            }
             if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
                 view->setSelected(layer);
                 view->setMode(Scene3DView::Mode::Move);

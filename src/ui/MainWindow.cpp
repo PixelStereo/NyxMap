@@ -1211,6 +1211,7 @@ void MainWindow::refreshLayerList()
             r.tag = l->isViewport ? QStringLiteral("▭")
                     : l->scene3d  ? QStringLiteral("⬡")
                     : l->isGroup  ? QStringLiteral("▤")
+                                  : l->type == SourceType::Light ? QStringList{QStringLiteral("☀"), QStringLiteral("✦"), QStringLiteral("▽")}.value(l->light.type, QStringLiteral("✦"))
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
