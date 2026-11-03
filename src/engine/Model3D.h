@@ -84,6 +84,13 @@ struct Scene3DQuality {
     int antialiasing = 2, shadows = 2, contact = 2, reflections = 2;
 };
 
+// Where the program that shades a mesh takes what its material says, found once
+struct MeshUniforms {
+    GLint base = -1, metal = -1, rough = -1, emissive = -1, alphaMode = -1, alphaCutoff = -1, normalScale = -1, aoStrength = -1;
+    GLint roughCh = -1, metalCh = -1, hasTex = -1, layerTex = -1, has[5] = {-1, -1, -1, -1, -1};
+    void resolve(GLuint program);
+};
+
 class Model3D
 {
 public:
@@ -102,7 +109,7 @@ public:
 
     bool load(const QString &path, QString *err); // reads the file (no GL): its meshes, materials and textures
     QString path() const { return m_path; }
-    int meshCount() const { return int(m_meshes.size()); }
+    int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;
 
     // Its model matrix: fitted (if asked), then placed. Its meshes drawn with the scene's program bound (render thread)
@@ -110,7 +117,9 @@ public:
     // Its meshes drawn with the scene's program bound (render thread); `picture`: a layer's picture over its UVs instead
     // of its materials' colours
     // pass 0: its opaque and cut-out meshes; 1: its blended ones (a picture laid on it: all of it in pass 0)
-    void drawMeshes(GLuint program, GLuint picture = 0, int pass = 0, const ModelPlacement *look = nullptr);
+    void drawMeshes(const MeshUniforms &uniforms, GLuint picture = 0, int pass = 0, const ModelPlacement *look = nullptr);
+    void drawDepth(bool picture); // only where it is: no colour is computed (shadows, depth)
+    bool hasBlended() const;
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
     int detail() const { return m_detail; }
@@ -149,10 +158,13 @@ private:
     bool loadUfbx(const QString &path, QString *err);
     int addImage(const QImage &image);
     void computeBounds();
+    void mergeMeshes();
+    void upload();
     bool uploadGl();
 
     QString m_path;
     std::vector<Mesh> m_meshes;
+    int m_meshesRead = 0;
     std::vector<Material> m_materials;
     std::vector<QImage> m_images;
     std::vector<GLuint> m_textures;
@@ -204,6 +216,7 @@ public:
                 GLuint environment = 0, bool environmentLinear = false, const Scene3DQuality &quality = {});
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
+    int shadowMapsDrawn() const { return m_mapsDrawn; }   // and how many maps in all: a light moving draws only its own
     // Its last frame: the triangles it has, those it had to compute in all its passes (0: nothing moved, it was kept)
     int triangles() const { return m_triangles.load(); }
     int trianglesComputed() const { return m_computed.load(); }
@@ -214,14 +227,27 @@ public:
 
 private:
     bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
+    // Where a program takes a model's place, found once
+    struct PlaceUniforms {
+        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1;
+        void resolve(GLuint program);
+    };
+    MeshUniforms m_meshUniforms;
+    PlaceUniforms m_placeMain, m_placeDepth, m_placePoint;
+    GLint m_unlitAt = -1, m_flatAt = -1;
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0;                          // its picture
     GLuint m_msFbo = 0, m_msColor = 0, m_depth = 0;         // drawn antialiased here
     GLuint m_shadowProgram = 0, m_shadowFbo = 0, m_shadowMaps = 0; // the lights' views of the models, one layer each
     GLuint m_pointProgram = 0, m_pointMaps[kMaxPointShadows] = {}; // a point light's: the distances all around it
-    QByteArray m_shadowKey; // what its maps show
-    int m_shadowRenders = 0;
+    QByteArray m_shadowKey; // the models its maps show
+    QMatrix4x4 m_shadowSeen[kMaxShadows]; // each map's light, as it was drawn
+    bool m_shadowFresh[kMaxShadows] = {};
+    QVector3D m_pointSeenAt[kMaxPointShadows];
+    float m_pointSeenFar[kMaxPointShadows] = {};
+    bool m_pointFresh[kMaxPointShadows] = {};
+    int m_shadowRenders = 0, m_mapsDrawn = 0;
     GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
     GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
     bool m_lite = false;
