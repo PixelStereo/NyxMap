@@ -962,6 +962,7 @@ void MainWindow::buildMenus()
     // 3D: a scene renders its models (FBX, glTF, OBJ: dropped onto a layer) under its lights, seen by its camera
     layer->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
     layer->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
+    layer->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1210,6 +1211,7 @@ void MainWindow::refreshLayerList()
             r.soloHidden = leftOut[size_t(i)];
             r.tag = l->isViewport ? QStringLiteral("▭")
                     : l->scene3d  ? QStringLiteral("⬡")
+                    : l->merge3d  ? QStringLiteral("◇")
                     : l->isGroup  ? QStringLiteral("▤")
                                   : l->type == SourceType::Light ? QStringList{QStringLiteral("☀"), QStringLiteral("✦"), QStringLiteral("▽")}.value(l->light.type, QStringLiteral("✦"))
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
@@ -1245,7 +1247,8 @@ void MainWindow::refreshLayerList()
             case SourceType::Video:
             case SourceType::Audio:
             case SourceType::Image:
-                r.source = l->scene3d  ? QStringLiteral("3D scene of %1 object(s)").arg(m_engine->groupMembers(i).size())
+                r.source = l->merge3d ? QStringLiteral("Merge 3D of %1 object(s)").arg(m_engine->groupMembers(i).size())
+                           : l->scene3d  ? QStringLiteral("3D scene of %1 object(s)").arg(m_engine->groupMembers(i).size())
                            : l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
                                         : QFileInfo(l->sourcePath).fileName();
                 break;
@@ -1621,7 +1624,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     }
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (m_engine->layer(i)->isGroup && m_engine->layer(i)->scene3d && Model3D::isModelFile(path)) {
+        if (m_engine->layer(i)->isGroup && (m_engine->layer(i)->scene3d || m_engine->layer(i)->merge3d) && Model3D::isModelFile(path)) {
             lk.unlock(); // a model dropped onto a 3D scene: a new object of it
             const quint64 sid = m_engine->layerId(i);
             m_undo->beginMacro(QStringLiteral("Add \"%1\" to 3D Scene").arg(fi.fileName()));
@@ -1664,7 +1667,7 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     {
         const LayerTree t = m_engine->structure();
         const int g = t[size_t(i)].parent ? tree::indexOf(t, t[size_t(i)].parent) : -1;
-        inScene = g >= 0 && t[size_t(g)].role == TreeNode::Scene3d;
+        inScene = g >= 0 && (t[size_t(g)].role == TreeNode::Scene3d || t[size_t(g)].role == TreeNode::Merge3d);
     }
     if (inScene && !modelFile) {
         statusBar()->showMessage(QStringLiteral("A 3D scene holds models (FBX, glTF, OBJ) and lights: drop this onto a layer "
@@ -2135,8 +2138,9 @@ void MainWindow::fill3dMenu(QMenu *menu)
     bool inScene = false;
     if (cur >= 0) {
         const LayerTree t = m_engine->structure();
-        const int g = t[size_t(cur)].role == TreeNode::Scene3d ? cur : t[size_t(cur)].parent ? tree::indexOf(t, t[size_t(cur)].parent) : -1;
-        inScene = g >= 0 && t[size_t(g)].role == TreeNode::Scene3d;
+        const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+        const int g = holds3d(cur) ? cur : t[size_t(cur)].parent ? tree::indexOf(t, t[size_t(cur)].parent) : -1;
+        inScene = g >= 0 && holds3d(g);
     }
     QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
     light->setEnabled(inScene);
@@ -2152,7 +2156,7 @@ void MainWindow::fill3dMenu(QMenu *menu)
         int target = currentLayer();
         if (inScene) {
             const LayerTree t = m_engine->structure();
-            if (t[size_t(target)].role != TreeNode::Scene3d) target = tree::indexOf(t, t[size_t(target)].parent);
+            if (t[size_t(target)].role != TreeNode::Scene3d && t[size_t(target)].role != TreeNode::Merge3d) target = tree::indexOf(t, t[size_t(target)].parent);
             loadIntoLayer(target, f); // a new object of that scene
         } else {
             loadIntoNewLayer(f); // a new scene around it
@@ -2201,13 +2205,63 @@ void MainWindow::createScene()
     statusBar()->showMessage(QStringLiteral("3D scene created: drop an FBX, glTF or OBJ onto it to add a model."), 5000);
 }
 
+// A new Merge 3D: in the 3D scene or the Merge 3D selected, or beside the 3D objects selected, which go into it
+void MainWindow::createMerge3d()
+{
+    const LayerTree t = m_engine->structure();
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    std::vector<quint64> ids;
+    quint64 holder = 0;
+    int at = -1;
+    for (int r : m_layerTable->selectedRows()) {
+        if (r < 0 || r >= int(t.size())) continue;
+        if (t[size_t(r)].role == TreeNode::Scene3d) {
+            holder = t[size_t(r)].id;
+            continue;
+        }
+        if (t[size_t(r)].role != TreeNode::Object3d && t[size_t(r)].role != TreeNode::Merge3d) continue;
+        if (m_engine->isLocked(r)) continue;
+        if (!holder) holder = t[size_t(r)].parent;
+        if (t[size_t(r)].parent == holder) ids.push_back(t[size_t(r)].id); // those of one place
+        if (at < 0 || r < at) at = r;
+    }
+    if (!holder) {
+        const int cur = currentLayer();
+        if (cur >= 0 && holds3d(cur)) holder = t[size_t(cur)].id;
+        else if (cur >= 0 && t[size_t(cur)].parent) holder = t[size_t(cur)].parent;
+    }
+    if (!holder) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene or some of its objects to make a Merge 3D."), 4000);
+        return;
+    }
+    const int holderRow = tree::indexOf(t, holder);
+    if (holderRow < 0 || !holds3d(holderRow)) {
+        statusBar()->showMessage(QStringLiteral("A Merge 3D is made in a 3D scene or in another Merge 3D."), 4000);
+        return;
+    }
+    if (at < 0) at = holderRow + 1;
+    m_undo->beginMacro(QStringLiteral("New Merge 3D"));
+    const int mi = m_engine->addMerge3d(QString(), at);
+    const quint64 mid = m_engine->layerId(mi);
+    m_undo->push(new cmd::AddLayer(m_engine, mi, QStringLiteral("New Merge 3D")));
+    const LayerTree before = m_engine->structure();
+    LayerTree after = tree::intoGroup(before, {mid}, holder);
+    if (!ids.empty()) after = tree::intoGroup(after, ids, mid);
+    if (after != before) m_undo->push(new cmd::SetStructure(m_engine, before, after, QStringLiteral("Into Merge 3D")));
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(mid));
+    statusBar()->showMessage(ids.empty() ? QStringLiteral("Empty Merge 3D: drag 3D objects onto it, or other Merge 3Ds.")
+                                         : QStringLiteral("Merge 3D of %1 object(s): move it, and they follow.").arg(ids.size()), 4000);
+}
+
 void MainWindow::addLightToScene()
 {
     int s = currentLayer();
     if (s < 0) return;
     const LayerTree t = m_engine->structure();
-    if (t[size_t(s)].role != TreeNode::Scene3d) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
-    if (s < 0 || t[size_t(s)].role != TreeNode::Scene3d) {
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    if (!holds3d(s)) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+    if (s < 0 || !holds3d(s)) {
         statusBar()->showMessage(QStringLiteral("Select a 3D scene (or one of its objects) to add a light to it."), 4000);
         return;
     }

@@ -55,6 +55,9 @@ private:
     struct Object {
         quint64 id = 0;
         bool light = false;
+        bool merge = false;
+        QMatrix4x4 parent; // the Merge 3Ds it is in: its values are in their space
+        quint64 parentId = 0;
         int lightType = 1;
         float angle = 30, falloff = 0;  // a spot's
         QVector3D position, direction; // world; a light's direction (directional, spot)
@@ -62,6 +65,7 @@ private:
         QVector3D rotation, axisScale{1, 1, 1};
         float scale = 1;
     };
+    static QVector3D axisOf(const Object &o, int axis); // where an axis of its values points in the scene
     std::vector<Object> objects() const; // the scene's shown models and lights (takes the lock)
     SceneSettings sceneCamera() const;
     Camera3D cameraNow() const;

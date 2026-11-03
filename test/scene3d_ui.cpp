@@ -9,6 +9,7 @@
 #include "Scene3DView.h"
 #include <QCheckBox>
 #include <QLabel>
+#include <QAction>
 #include <QJsonArray>
 #include <QMouseEvent>
 #include "Model3D.h"
@@ -321,7 +322,67 @@ int runScene3dUiTests(Engine &engine)
                     spot.save(captures + "/light-spot.png");
                     sun.save(captures + "/light-sun.png");
                 }
-                engine.removeLayer(engine.indexOfId(drawn));
+                // New Merge 3D: the 3D object selected goes into it, in its place; it has its own 3D tab
+                emit view->layerPicked(engine.indexOfId(drawn)); // as a click on it
+                pump();
+                const int layersBefore = engine.layerCount();
+                QAction *newMerge = nullptr;
+                for (QAction *action : window.findChildren<QAction *>())
+                    if (action->text().startsWith("New Merge 3D")) newMerge = action;
+                check(newMerge != nullptr, "the menu offers a Merge 3D");
+                if (newMerge) newMerge->trigger();
+                pump();
+                check(engine.layerCount() == layersBefore + 1, "New Merge 3D makes one");
+                quint64 merged = 0;
+                {
+                    Engine::Lock lk(&engine.mutex());
+                    if (const Layer *l = engine.layer(engine.indexOfId(drawn))) merged = l->parent;
+                }
+                {
+                    Engine::Lock lk(&engine.mutex());
+                    const Layer *m = engine.layer(engine.indexOfId(merged));
+                    check(m && m->merge3d && m->parent == scene, "the object is in it, and it is in the scene");
+                }
+                check(tree::valid3d(engine.structure()), "the 3D rule holds");
+                if (merged) {
+                    QUndoStack inspectorUndo;
+                    LayerInspector inspector(&engine, &inspectorUndo);
+                    inspector.setLayer(engine.indexOfId(merged));
+                    inspector.rebuild();
+                    pump();
+                    QStringList shown;
+                    for (auto *label : inspector.findChildren<QLabel *>()) shown << label->text();
+                    check(!shown.filter("Position X").isEmpty() && !shown.filter("Rotation Y").isEmpty(), "a Merge 3D's transform in the inspector");
+                    check(!shown.filter("Merge 3D").isEmpty() && shown.filter("Blend Mode").isEmpty(), "it says what it is: no picture, no blending");
+                    if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+                        engine.setParameter(merged, "merge/position/x", -1.0);
+                        emit view->layerPicked(engine.indexOfId(merged));
+                        view->setSelected(merged);
+                        for (int k = 0; k < 4; ++k) {
+                            engine.renderFrame();
+                            pump();
+                        }
+                        view->grabFramebuffer().save(captures + "/merge3d-view.png");
+                        inspector.resize(420, 620);
+                        inspector.grab().save(captures + "/merge3d-inspector.png");
+                        if (auto *box = window.findChild<QWidget *>("quality3d")) box->grab().save(captures + "/quality3d.png");
+                    }
+                    // Its handles: the view knows it, and moves it
+                    engine.setParameter(merged, "merge/position/x", 0.3);
+                    pump();
+                    check(std::abs(engine.parameterValue(drawn, "light/position/x").toDouble() - 1.5) < 1e-6, "what it holds keeps its own values");
+                    engine.setParameter(merged, "merge/position/x", 0.0);
+                }
+                // The composition's quality, for all the scenes
+                auto *shadows = window.findChild<QComboBox *>("quality3d/shadows");
+                check(shadows != nullptr, "the composition offers the 3D quality");
+                if (shadows) {
+                    shadows->setCurrentText("low");
+                    check(engine.quality3d().shadows == 1, "it sets the shadows of all the scenes");
+                    shadows->setCurrentText("medium");
+                }
+                if (merged) engine.removeLayer(engine.indexOfId(merged));
+                else engine.removeLayer(engine.indexOfId(drawn));
                 pump();
             }
             if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
