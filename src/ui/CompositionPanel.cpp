@@ -361,6 +361,8 @@ QWidget *CompositionPanel::buildQuality3d()
     row(QStringLiteral("Shadows"), QStringLiteral("quality3d/shadows"), &Scene3DQuality::shadows, levels);
     row(QStringLiteral("Contact Shadows"), QStringLiteral("quality3d/contact"), &Scene3DQuality::contact, levels);
     row(QStringLiteral("Reflections"), QStringLiteral("quality3d/reflections"), &Scene3DQuality::reflections, levels);
+    row(QStringLiteral("Glow"), QStringLiteral("quality3d/glow"), &Scene3DQuality::glow, levels);
+    row(QStringLiteral("Fog"), QStringLiteral("quality3d/atmosphere"), &Scene3DQuality::atmosphere, levels);
     return g;
 }
 

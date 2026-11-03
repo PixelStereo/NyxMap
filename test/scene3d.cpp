@@ -12,6 +12,8 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QThread>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <tuple>
@@ -79,6 +81,7 @@ int runScene3dTests(Engine &engine)
     engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {64, 64});
     const int si = engine.addScene();
     const quint64 scene = engine.layerId(si);
+    engine.setParameter(scene, "scene/glow", 0.0); // what follows reads its edges
     const int mi = engine.addLayer("Cube", si + 1);
     const quint64 model = engine.layerId(mi);
     check(engine.setLayerModel(mi, cube, &error), "the cube is read");
@@ -463,6 +466,7 @@ int runScene3dTests(Engine &engine)
         engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {128, 128});
         const int si2 = engine.addScene();
         const quint64 stage = engine.layerId(si2);
+        engine.setParameter(stage, "scene/glow", 0.0); // what follows compares levels of light
         const auto solid = [&](const QString &prim, double y, double size, double tilt) {
             const int at = engine.addLayer(prim, engine.indexOfId(stage) + 1);
             const quint64 id = engine.layerId(at);
@@ -886,6 +890,7 @@ int runScene3dTests(Engine &engine)
         lamps[1].light.yaw = -145;
         SceneSettings camera;
         camera.yaw = camera.pitch = 0;
+        camera.glow = 0;
         const int w = 128, h = 64;
         Scene3D scene;
         QImage shot = read(scene.draw(camera, items, lamps, w, h, 0, false, plain), w, h);
@@ -1088,6 +1093,273 @@ int runScene3dTests(Engine &engine)
         engine.removeLayer(engine.indexOfId(mergeId));
         engine.removeLayer(engine.indexOfId(lampId));
         engine.removeLayer(engine.indexOfId(stage));
+    }
+
+    // The look of a picture: its glow, colours and vignette; shadows soft as far as what stops the light; area lights; fog
+    {
+        engine.renderFrame();
+        auto *g = QOpenGLContext::currentContext()->extraFunctions();
+        const bool lite = Scene3D::lite(QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER))));
+        const int size = 128;
+        const auto read = [&](GLuint tex) {
+            GLuint fbo = 0;
+            g->glGenFramebuffers(1, &fbo);
+            g->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+            QImage shot(size, size, QImage::Format_RGBA8888_Premultiplied);
+            g->glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, shot.bits());
+            g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            g->glDeleteFramebuffers(1, &fbo);
+            return shot;
+        };
+        const auto model = [&](const char *name, float scale, const QVector3D &at, const std::array<float, 3> &color = {{0.8f, 0.8f, 0.8f}}) {
+            Scene3D::Item item;
+            item.model = std::make_shared<Model3D>();
+            QString err;
+            check(item.model->load(Model3D::primitivePath(name), &err), "a primitive for the look");
+            item.placement.fit = true;
+            item.placement.scale = scale;
+            item.placement.position = {{at.x(), at.y(), at.z()}};
+            item.placement.color = color;
+            item.placement.rough = 1;
+            return item;
+        };
+        SceneSettings dark;
+        dark.yaw = dark.pitch = 0;
+        dark.distance = 4;
+        dark.studio = dark.ambientIntensity = dark.ao = dark.reflections = 0;
+        dark.glow = 0;
+        const auto draw = [&](Scene3D &scene, const SceneSettings &s, const std::vector<Scene3D::Item> &items, const std::vector<Scene3D::Lamp> &lamps,
+                              const Scene3DQuality &q = {}) {
+            GLuint tex = 0;
+            for (int k = 0; k < 2; ++k) tex = scene.draw(s, items, lamps, size, size, 0, false, q);
+            return read(tex);
+        };
+        std::vector<Scene3D::Lamp> lamps(1);
+        lamps[0].light.position = {{0, 0, 2}};
+        lamps[0].light.shadow = false;
+        lamps[0].light.intensity = 400; // far more than a screen can show
+        // Its glow: around what shines, over nothing else
+        const std::vector<Scene3D::Item> ball{model("Sphere", 0.3f, {})};
+        const auto around = [&](const QImage &sharp, const QImage &shot) {
+            int sum = 0;
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x)
+                    if (qAlpha(sharp.pixel(x, y)) == 0) sum += QColor::fromRgba(shot.pixel(x, y)).alpha();
+            return sum;
+        };
+        {
+            Scene3D scene;
+            const QImage sharp = draw(scene, dark, ball, lamps);
+            check(around(sharp, sharp) == 0, "no glow: nothing around it");
+            SceneSettings glowing = dark;
+            glowing.glow = 2;
+            const QImage shining = draw(scene, glowing, ball, lamps);
+            check(lite ? shining == sharp : around(sharp, shining) > 500, "what shines glows around it");
+            Scene3DQuality off;
+            off.glow = 0;
+            check(around(sharp, draw(scene, glowing, ball, lamps, off)) == 0, "its glow off in the 3D quality");
+            glowing.glowThreshold = 10000;
+            check(around(sharp, draw(scene, glowing, ball, lamps)) <= size, "nothing above its threshold: nothing glows");
+            scene.releaseGl();
+        }
+        // Its colours and darker edges, in lite mode too
+        {
+            Scene3D scene;
+            std::vector<Scene3D::Lamp> soft = lamps;
+            soft[0].light.intensity = 6;
+            const std::vector<Scene3D::Item> wall{model("Plane", 8, {}, {{0.8f, 0.2f, 0.2f}})};
+            const QImage plain = draw(scene, dark, wall, soft);
+            SceneSettings gray = dark;
+            gray.saturation = 0;
+            const QColor grey = QColor::fromRgba(draw(scene, gray, wall, soft).pixel(size / 2, size / 2));
+            check(QColor::fromRgba(plain.pixel(size / 2, size / 2)).red() > QColor::fromRgba(plain.pixel(size / 2, size / 2)).green() + 40, "a red wall");
+            check(std::abs(grey.red() - grey.green()) <= 2 && std::abs(grey.green() - grey.blue()) <= 2, "no saturation: gray");
+            SceneSettings warm = dark;
+            warm.temperature = 1;
+            const QColor warmer = QColor::fromRgba(draw(scene, warm, wall, soft).pixel(size / 2, size / 2));
+            check(warmer.blue() < QColor::fromRgba(plain.pixel(size / 2, size / 2)).blue(), "warmer: less blue");
+            SceneSettings edges = dark;
+            edges.vignette = 1;
+            const QImage dim = draw(scene, edges, wall, soft);
+            check(QColor::fromRgba(dim.pixel(1, 1)).red() < QColor::fromRgba(plain.pixel(1, 1)).red() - 10, "its vignette darkens its corners");
+            check(std::abs(QColor::fromRgba(dim.pixel(size / 2, size / 2)).red() - QColor::fromRgba(plain.pixel(size / 2, size / 2)).red()) <= 2, "not its middle");
+            scene.releaseGl();
+        }
+        // An area light: lights what it faces, not behind it
+        {
+            Scene3D scene;
+            std::vector<Scene3D::Lamp> area(1);
+            area[0].light.type = 3;
+            area[0].light.position = {{0, 0, 2}};
+            area[0].light.pitch = 0;
+            area[0].light.yaw = 180; // towards the wall
+            area[0].light.width = 4;
+            area[0].light.height = 2;
+            area[0].light.intensity = 4;
+            area[0].light.shadow = false;
+            const std::vector<Scene3D::Item> wall{model("Plane", 8, {})};
+            const int faced = QColor::fromRgba(draw(scene, dark, wall, area).pixel(size / 2, size / 2)).red();
+            area[0].light.yaw = 0;
+            const int behind = QColor::fromRgba(draw(scene, dark, wall, area).pixel(size / 2, size / 2)).red();
+            check(faced > 40 && behind < 5, "an area light lights what it faces");
+            // A wider one lights further aside
+            area[0].light.yaw = 180;
+            area[0].light.width = 0.2f;
+            area[0].light.height = 0.2f;
+            const QColor small = QColor::fromRgba(draw(scene, dark, wall, area).pixel(size - 8, size / 2));
+            area[0].light.width = 8;
+            const QColor wide = QColor::fromRgba(draw(scene, dark, wall, area).pixel(size - 8, size / 2));
+            check(wide.red() > small.red() + 10, "a wider area lights further aside");
+            scene.releaseGl();
+        }
+        // Soft shadows: the farther what stops the light, the softer its edge
+        if (!lite) {
+            const auto penumbra = [&](float away) {
+                Scene3D scene;
+                std::vector<Scene3D::Item> set{model("Plane", 8, {}), model("Cube", 0.5f, {0, 0, away})};
+                std::vector<Scene3D::Lamp> lamp(1);
+                lamp[0].light.type = 2;
+                lamp[0].light.position = {{2, 0, 6}};
+                lamp[0].light.yaw = 180 + qRadiansToDegrees(std::atan2(2.0f, 6.0f));
+                lamp[0].light.pitch = 0;
+                lamp[0].light.angle = 40;
+                lamp[0].light.falloff = 0;
+                lamp[0].light.intensity = 40;
+                lamp[0].light.softness = 8;
+                SceneSettings camera = dark;
+                camera.yaw = -30;
+                camera.distance = 7;
+                const QImage on = draw(scene, camera, set, lamp);
+                lamp[0].light.shadow = false;
+                const QImage free = draw(scene, camera, set, lamp);
+                scene.releaseGl();
+                // How wide its edge is across, in the rows that have one: its size does not count
+                int edge = 0, rows = 0;
+                for (int y = 0; y < size; ++y) {
+                    int across = 0;
+                    for (int x = 0; x < size; ++x) {
+                        const float a = float(QColor::fromRgba(on.pixel(x, y)).red()), b = float(QColor::fromRgba(free.pixel(x, y)).red());
+                        across += b > 20 && a / b > 0.2f && a / b < 0.9f;
+                    }
+                    edge += across;
+                    rows += across > 0;
+                }
+                return rows ? float(edge) / float(rows) : 0.0f;
+            };
+            const float near = penumbra(0.5f), far = penumbra(3.0f);
+            check(far > near * 2.5f, "what stops the light far away: a softer edge");
+        }
+        // Fog: what it hides, what it adds; a light seen in it, stopped by what is in its way
+        {
+            Scene3D scene;
+            std::vector<Scene3D::Item> wall{model("Plane", 8, {})};
+            std::vector<Scene3D::Lamp> even(1);
+            even[0].light.type = 0;
+            even[0].light.yaw = 180;
+            even[0].light.pitch = 0;
+            even[0].light.intensity = 2;
+            even[0].light.shadow = false;
+            even[0].light.rays = 0;
+            const QImage clear = draw(scene, dark, wall, even);
+            SceneSettings thick = dark;
+            thick.fogDensity = 1;
+            thick.fogFalloff = 0;
+            thick.fogColor = {{0, 0, 0}};
+            const QImage hidden = draw(scene, thick, wall, even);
+            const int seen = QColor::fromRgba(clear.pixel(size / 2, size / 2)).red(), through = QColor::fromRgba(hidden.pixel(size / 2, size / 2)).red();
+            check(lite ? through == seen : through < seen - 20, "fog hides what is behind it");
+            Scene3DQuality off;
+            off.atmosphere = 0;
+            check(draw(scene, thick, wall, even, off) == clear, "fog off in the 3D quality");
+            // In the air alone, with no model behind: the fog has its own alpha
+            const std::vector<Scene3D::Item> tiny{model("Cube", 0.05f, {0, 0, -5})};
+            SceneSettings colored = thick;
+            colored.fogColor = {{1, 1, 1}};
+            colored.fogDensity = 0.3f;
+            check(lite || qAlpha(draw(scene, colored, tiny, even).pixel(4, 4)) > 40, "over the layers under it");
+            // A spot's beam, its light stopped under what is in its way
+            if (!lite) {
+                std::vector<Scene3D::Lamp> beam(1);
+                beam[0].light.type = 2;
+                beam[0].light.position = {{0, 3, 0}};
+                beam[0].light.yaw = 0;
+                beam[0].light.pitch = -89;
+                beam[0].light.angle = 14;
+                beam[0].light.falloff = 0.1f;
+                beam[0].light.intensity = 200;
+                beam[0].light.softness = 0;
+                SceneSettings air = dark;
+                air.fogDensity = 0.4f;
+                air.fogFalloff = 0;
+                air.fogColor = {{0, 0, 0}};
+                air.fogReach = 12;
+                air.distance = 6;
+                std::vector<Scene3D::Item> blocker{model("Cube", 0.5f, {0, 1, 0}), model("Cube", 0.02f, {3, -3, 0})};
+                Scene3DQuality fine;
+                fine.atmosphere = 3;
+                const QImage rays = draw(scene, air, blocker, beam, fine);
+                const auto lum = [&](const QImage &i, int x, int y) { return QColor::fromRgba(i.pixel(x, y)).red(); };
+                // y from the bottom. The beam comes down the middle, from above the cube to under it
+                const int above = lum(rays, size / 2, size * 3 / 4 + 8), aside = lum(rays, size / 2 + 40, size * 3 / 4 + 8);
+                check(above > aside + 15, "a spot's beam shows in the fog");
+                const int under = lum(rays, size / 2, size / 2 - 12);
+                beam[0].light.shadow = false;
+                const int unstopped = lum(draw(scene, air, blocker, beam, fine), size / 2, size / 2 - 12);
+                check(under < unstopped - 8, "its beam stopped under what is in its way");
+                beam[0].light.shadow = true;
+                beam[0].light.rays = 0;
+                check(lum(draw(scene, air, blocker, beam, fine), size / 2, size * 3 / 4 + 8) < 4, "a light kept out of the fog");
+            }
+            // Kept while nothing moves, and drawn again when the fog changes
+            const int frames = scene.framesDrawn();
+            for (int k = 0; k < 6; ++k) scene.draw(thick, wall, even, size, size);
+            check(scene.framesDrawn() - frames <= 3, "a still scene in fog keeps its picture");
+            const int kept = scene.framesDrawn();
+            thick.fogDensity = 0.5f;
+            scene.draw(thick, wall, even, size, size);
+            check(scene.framesDrawn() == kept + 1, "the fog changing: drawn again");
+            scene.releaseGl();
+        }
+        // Its settings, with the project
+        {
+            QTemporaryDir saved;
+            const QString file = saved.filePath("look.nyxmap");
+            const int stage = engine.addScene(QStringLiteral("Look"));
+            const quint64 stageId = engine.layerId(stage);
+            const int lampAt = engine.addLayer(QStringLiteral("Panel"), stage + 1);
+            const quint64 lampId = engine.layerId(lampAt);
+            check(engine.setLayerLight(lampAt), "a light for the look");
+            engine.setStructure(tree::intoGroup(engine.structure(), {lampId}, stageId));
+            engine.setParameter(stageId, "scene/fog/density", 0.25);
+            engine.setParameter(stageId, "scene/glow", 1.5);
+            engine.setParameter(stageId, "scene/vignette", 0.4);
+            engine.setParameter(lampId, "light/type", QStringLiteral("area"));
+            engine.setParameter(lampId, "light/width", 3.0);
+            engine.setParameter(lampId, "light/rays", 2.0);
+            engine.setParameter(0, "quality3d/glow", QStringLiteral("low"));
+            engine.setParameter(0, "quality3d/atmosphere", QStringLiteral("high"));
+            QString err;
+            check(engine.saveProject(file, {}, &err), "a project with a look is saved");
+            engine.newProject();
+            check(engine.loadProject(file, nullptr, &err), "and opened");
+            const auto near = [](double a, double b) { return std::abs(a - b) < 1e-4; };
+            quint64 sceneBack = 0, lampBack = 0;
+            for (int i = 0; i < engine.layerCount(); ++i) {
+                Engine::Lock lk(&engine.mutex());
+                const Layer *l = engine.layer(i);
+                if (l && l->name == "Look") sceneBack = l->id;
+                if (l && l->name == "Panel") lampBack = l->id;
+            }
+            check(sceneBack && near(engine.parameterValue(sceneBack, "scene/fog/density").toDouble(), 0.25) &&
+                      near(engine.parameterValue(sceneBack, "scene/glow").toDouble(), 1.5) && near(engine.parameterValue(sceneBack, "scene/vignette").toDouble(), 0.4),
+                  "its look comes back");
+            check(lampBack && engine.parameterValue(lampBack, "light/type").toString() == "area" && near(engine.parameterValue(lampBack, "light/width").toDouble(), 3) &&
+                      near(engine.parameterValue(lampBack, "light/rays").toDouble(), 2),
+                  "its area light comes back");
+            check(engine.quality3d().glow == 1 && engine.quality3d().atmosphere == 3, "the quality of its glow and fog comes back");
+            engine.newProject();
+        }
     }
 
     return failures;

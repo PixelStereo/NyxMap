@@ -583,7 +583,7 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["format_version"] = kProjectFormat;
         root["composition"] = QJsonObject{{"width", m_compSize.width()}, {"height", m_compSize.height()},
                                     {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()},
-                                    {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections}}};
+                                    {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections, m_quality3d.glow, m_quality3d.atmosphere}}};
         QJsonArray layers;
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
@@ -814,9 +814,9 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     {
         const QJsonArray q = comp.value("quality_3d").toArray();
         m_quality3d = Scene3DQuality();
-        if (q.size() == 4) {
+        if (q.size() == 6) {
             const auto level = [&](int k) { return std::clamp(q[k].toInt(2), 0, 3); };
-            m_quality3d = {level(0), level(1), level(2), level(3)};
+            m_quality3d = {level(0), level(1), level(2), level(3), level(4), level(5)};
         }
     }
     {

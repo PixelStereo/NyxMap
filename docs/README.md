@@ -62,6 +62,13 @@
   or a light does not see is not drawn, and a scene where nothing moves keeps its picture
   (not with a layer's picture on a model or around the scene, which can change at any
   frame).
+  Each scene has a look (Scene tab): a glow around what shines above its threshold,
+  contrast, saturation, temperature and a vignette; and fog, with its density, height
+  and reach, in which its lights show as beams stopped by the models (each light's
+  "In the Fog"). Shadows are sharp where what stops the light is near, soft where it is
+  far. An area light is a rectangle lit on the side it faces, soft-shadowed as wide as
+  it is. Glow and fog are in the composition's 3D Quality too; without a graphics card
+  they are off, and so are soft shadows' searches.
   A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
   its own camera (drag: turn; Shift or middle button: pan; wheel: distance), the
   ground grid, the scene's lights and camera drawn; its models in flat colours with

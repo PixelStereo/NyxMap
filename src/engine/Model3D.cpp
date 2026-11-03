@@ -542,7 +542,12 @@ void main() {
 // equirectangular: diffuse from its most blurred level, reflections from the level its roughness asks); exposure, ACES
 // tone mapping, sRGB out
 static const char *kFragment = R"(#version 330 core
-in vec3 v_pos; in vec3 v_n; in vec2 v_uv; out vec4 o;
+in vec3 v_pos; in vec3 v_n; in vec2 v_uv;
+layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 o_bright; // what shines more than a screen can show: its glow (linear light)
+uniform float u_glowLimit;
+uniform vec3 u_lright[8], u_lup[8]; uniform vec2 u_lhalf[8]; // an area light: its sides, half its size
+uniform int u_penumbra; uniform vec3 u_shadowPlanes[4]; uniform sampler2DArray u_shadowRaw; uniform samplerCube u_pointRaw0, u_pointRaw1;
 uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
 uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_flat; uniform int u_hasDisp; uniform int u_layerTex;
 uniform sampler2D u_roughTex, u_metalTex, u_normalTex, u_aoTexMap, u_emTex;
@@ -561,6 +566,15 @@ const float PI = 3.14159265;
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
 // How much of a light gets here: its view of the models, sampled around this point, turned at each pixel (the noise of a
 // soft edge is finer than its bands)
+vec4 bright(vec3 c, float a) {
+    float l = max(c.r, max(c.g, c.b));
+    return vec4(min(c * max(l - u_glowLimit, 0.0) / max(l, 1e-4), vec3(64.0)) * a, a);
+}
+// Distance from a light, from what its map holds
+float mapDistance(int s, float z) {
+    vec3 p = u_shadowPlanes[s];
+    return p.z > 0.0 ? p.x + z * (p.y - p.x) : p.x * p.y / (p.y - z * (p.y - p.x));
+}
 float lit(int i, vec3 N) {
     int s = u_shadow[i];
     int p = u_pointShadow[i];
@@ -569,6 +583,18 @@ float lit(int i, vec3 N) {
         float ref = length(d) / u_pointFar[p] - 0.0006;
         vec3 x = normalize(cross(d, abs(d.y) > 0.9 * length(d) ? vec3(1, 0, 0) : vec3(0, 1, 0))), y = normalize(cross(d, x));
         float angle = noise() * 6.2831853, sum = 0.0, spread = u_pointSoft[p] * 0.0018 * length(d);
+        if (u_penumbra != 0 && spread > 0.0) { // sharp where what stops the light is near, soft where it is far
+            float found = 0.0, blockers = 0.0;
+            for (int k = 0; k < 8; ++k) {
+                float rr = sqrt((float(k) + 0.5) / 8.0), aa = float(k) * 2.39996323; // the same at each pixel: an even edge
+                vec3 q = normalize(d + (x * cos(aa) + y * sin(aa)) * rr * spread * 4.0);
+                float there = p == 0 ? textureLod(u_pointRaw0, q, 0.0).r : textureLod(u_pointRaw1, q, 0.0).r;
+                if (there < ref) { found += there; blockers += 1.0; }
+            }
+            if (blockers == 0.0) return 1.0;
+            float near = found / blockers;
+            spread *= clamp((ref - near) / max(near, 1e-3) * 4.0 + 0.25, 0.25, 2.0);
+        }
         for (int k = 0; k < u_taps; ++k) {
             float rr = sqrt((float(k) + 0.5) / float(u_taps)), aa = angle + float(k) * 2.39996323;
             vec3 q = d + (x * cos(aa) + y * sin(aa)) * rr * spread;
@@ -581,13 +607,28 @@ float lit(int i, vec3 N) {
     vec3 t = q.xyz / q.w * 0.5 + 0.5;
     if (q.w <= 0.0 || t.x <= 0.0 || t.x >= 1.0 || t.y <= 0.0 || t.y >= 1.0 || t.z >= 1.0) return 1.0;
     float angle = noise() * 6.2831853, sum = 0.0;
-    float c = cos(angle), si = sin(angle);
-    for (int k = 0; k < u_taps; ++k) {
-        float rr = sqrt((float(k) + 0.5) / float(u_taps)), aa = float(k) * 2.39996323;
-        vec2 d = vec2(cos(aa), sin(aa)) * rr;
-        sum += texture(u_shadows, vec4(t.xy + vec2(c * d.x - si * d.y, si * d.x + c * d.y) * u_shadowRadius[s], float(s), t.z));
+    float c = cos(angle), si = sin(angle), radius = u_shadowRadius[s];
+    // Sharp where what stops the light is near, soft where it is far. An area's is wide: as few looks as this would draw
+    // contours in it, all of it as soft
+    if (u_penumbra != 0 && radius > 0.0 && u_type[i] != 3) {
+        float found = 0.0, blockers = 0.0;
+        for (int k = 0; k < 8; ++k) {
+            float rr = sqrt((float(k) + 0.5) / 8.0), aa = float(k) * 2.39996323;
+            vec2 d = vec2(cos(aa), sin(aa)) * rr;
+            float there = textureLod(u_shadowRaw, vec3(t.xy + d * radius * 4.0, float(s)), 0.0).r; // the same at each pixel: an even edge
+            if (there < t.z) { found += mapDistance(s, there); blockers += 1.0; }
+        }
+        if (blockers == 0.0) return 1.0;
+        float near = found / blockers;
+        radius *= clamp((mapDistance(s, t.z) - near) / max(near, 1e-3) * 4.0 + 0.25, 0.25, 2.0);
     }
-    return sum / float(u_taps);
+    int taps = u_type[i] == 3 ? u_taps * 2 : u_taps; // its edge is wide: more of them, or it shows grain
+    for (int k = 0; k < taps; ++k) {
+        float rr = sqrt((float(k) + 0.5) / float(taps)), aa = float(k) * 2.39996323;
+        vec2 d = vec2(cos(aa), sin(aa)) * rr;
+        sum += texture(u_shadows, vec4(t.xy + vec2(c * d.x - si * d.y, si * d.x + c * d.y) * radius, float(s), t.z));
+    }
+    return sum / float(taps);
 }
 float panel(vec3 d, vec3 at, float size, float blur) { return smoothstep(size - blur, size + blur * 0.4, dot(d, normalize(at))); }
 // A photo studio: a large panel above, a smaller one behind on each side, a dark room; blurred as the surface is rough
@@ -662,9 +703,17 @@ void main() {
     vec4 base = u_base;
     if (u_hasTex != 0) {
         vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
-        if (u_unlit != 0) { o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a); return; } // as it is: a screen
+        if (u_unlit != 0) { // as it is: a screen
+            o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a);
+            o_bright = bright(pow(t.rgb * u_base.rgb, vec3(2.2)), t.a * u_base.a);
+            return;
+        }
         base *= vec4(pow(t.rgb, vec3(2.2)), t.a);
-    } else if (u_unlit != 0) { o = vec4(u_base.rgb * u_base.a, u_base.a); return; }
+    } else if (u_unlit != 0) {
+        o = vec4(u_base.rgb * u_base.a, u_base.a);
+        o_bright = bright(pow(u_base.rgb, vec3(2.2)), u_base.a);
+        return;
+    }
     if (u_alphaMode == 1 && base.a < u_alphaCutoff) discard;
     if (u_alphaMode == 0) base.a = 1.0;
     vec3 N = u_hasDisp != 0 || u_flat != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced, flat: its own surface
@@ -708,9 +757,25 @@ void main() {
     }
     for (int i = 0; i < 8; ++i) {
         if (i >= u_count) break;
-        vec3 L; float att = 1.0;
+        vec3 L, Lspec; float att = 1.0, aSpec = a;
         if (u_type[i] == 0) L = normalize(-u_ldir[i]);
-        else {
+        else if (u_type[i] == 3) { // an area: diffuse from its nearest point, reflections from where the mirror direction meets it
+            vec3 n = normalize(u_ldir[i]), toP = v_pos - u_lpos[i];
+            vec2 q = clamp(vec2(dot(toP, u_lright[i]), dot(toP, u_lup[i])), -u_lhalf[i], u_lhalf[i]);
+            vec3 d = u_lpos[i] + u_lright[i] * q.x + u_lup[i] * q.y - v_pos;
+            float dist2 = max(dot(d, d), 1e-4);
+            L = d * inversesqrt(dist2);
+            att = max(dot(-L, n), 0.0) / dist2;
+            vec3 R = reflect(-V, N);
+            float along = dot(R, n);
+            Lspec = L;
+            if (along < -1e-3) {
+                vec3 hit = v_pos + R * (dot(u_lpos[i] - v_pos, n) / along) - u_lpos[i];
+                vec2 h = clamp(vec2(dot(hit, u_lright[i]), dot(hit, u_lup[i])), -u_lhalf[i], u_lhalf[i]);
+                Lspec = normalize(u_lpos[i] + u_lright[i] * h.x + u_lup[i] * h.y - v_pos);
+            }
+            aSpec = min(a + length(u_lhalf[i]) * inversesqrt(dist2) * 0.5, 1.0);
+        } else {
             vec3 d = u_lpos[i] - v_pos;
             float dist2 = max(dot(d, d), 1e-4);
             L = d * inversesqrt(dist2);
@@ -719,19 +784,23 @@ void main() {
         }
         float NdL = max(dot(N, L), 0.0);
         if (NdL <= 0.0 || att <= 0.0) continue; // nothing comes here: no need to know what stops it
-        vec3 H = normalize(L + V);
+        if (u_type[i] != 3) Lspec = L;
+        float NdS = u_type[i] == 3 ? max(dot(N, Lspec), 1e-3) : NdL;
+        vec3 H = normalize(Lspec + V);
         float NdH = max(dot(N, H), 0.0), VdH = max(dot(V, H), 0.0);
-        float dd = NdH * NdH * (a * a - 1.0) + 1.0;
-        float D = a * a / (dd * dd);
+        float dd = NdH * NdH * (aSpec * aSpec - 1.0) + 1.0;
+        float D = aSpec * aSpec / (dd * dd) * (a / aSpec) * (a / aSpec);
         float k = (r + 1.0) * (r + 1.0) / 8.0;
-        float G = (NdV / (NdV * (1.0 - k) + k)) * (NdL / (NdL * (1.0 - k) + k));
+        float G = (NdV / (NdV * (1.0 - k) + k)) * (NdS / (NdS * (1.0 - k) + k));
         vec3 F = F0 + (1.0 - F0) * pow(1.0 - VdH, 5.0);
-        vec3 spec = D * G * F / (4.0 * NdV * NdL + 1e-4);
+        vec3 spec = D * G * F / (4.0 * NdV * NdS + 1e-4);
         vec3 kd = (1.0 - F) * (1.0 - metal);
-        c += (kd * base.rgb + spec) * u_color[i] * NdL * att * lit(i, N) * mix(1.0, contact, 0.5);
+        c += (kd * base.rgb * NdL + spec * NdS) * u_color[i] * att * lit(i, N) * mix(1.0, contact, 0.5);
     }
     vec3 em = u_emissive * (u_hasEm != 0 ? pow(texture(u_emTex, v_uv).rgb, vec3(2.2)) : vec3(1.0));
-    c = aces((c + em) * u_exposure);
+    vec3 shining = (c + em) * u_exposure;
+    o_bright = bright(shining, base.a);
+    c = aces(shining);
     // Dithered: no bands in the gradients of a spot on a floor. Premultiplied, as a group's picture
     o = vec4(clamp(pow(c, vec3(1.0 / 2.2)) + (noise() - 0.5) / 255.0, 0.0, 1.0) * base.a, base.a);
 }
@@ -795,7 +864,10 @@ out vec2 v_ndc;
 void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0; v_ndc = p; gl_Position = vec4(p, 1.0, 1.0); }
 )";
 static const char *kSkyFragment = R"(#version 330 core
-in vec2 v_ndc; out vec4 o;
+in vec2 v_ndc;
+layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 o_bright;
+uniform float u_glowLimit;
 uniform mat4 u_inv; uniform vec3 u_eye; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_lod, u_exposure;
 uniform int u_envLinear;
 const float PI = 3.14159265;
@@ -808,7 +880,146 @@ void main() {
     vec2 uv = vec2(0.5 + atan(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
     vec3 e = textureLod(u_env, vec2(uv.x, 1.0 - uv.y), u_lod).rgb;
     e = (u_envLinear != 0 ? e : pow(e, vec3(2.2))) * u_envIntensity;
-    o = vec4(pow(aces(e * u_exposure), vec3(1.0 / 2.2)), 1.0);
+    vec3 shining = e * u_exposure;
+    float l = max(shining.r, max(shining.g, shining.b));
+    o_bright = vec4(min(shining * max(l - u_glowLimit, 0.0) / max(l, 1e-4), vec3(64.0)), 1.0);
+    o = vec4(pow(aces(shining), vec3(1.0 / 2.2)), 1.0);
+}
+)";
+
+// Its glow: what shines, halved and spread again, each step wider
+static const char *kGlowDown = R"(#version 330 core
+in vec2 v_ndc; out vec4 o;
+uniform sampler2D u_from; uniform vec2 u_texel;
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    vec3 c = texture(u_from, uv).rgb * 4.0;
+    for (int y = -1; y <= 1; y += 2)
+        for (int x = -1; x <= 1; x += 2) c += texture(u_from, uv + vec2(x, y) * u_texel).rgb;
+    o = vec4(c / 8.0, 1.0);
+}
+)";
+static const char *kGlowUp = R"(#version 330 core
+in vec2 v_ndc; out vec4 o;
+uniform sampler2D u_from; uniform vec2 u_texel; uniform float u_weight;
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    vec3 c = vec3(0.0);
+    for (int y = -1; y <= 1; y += 2)
+        for (int x = -1; x <= 1; x += 2) {
+            c += texture(u_from, uv + vec2(x, y) * u_texel).rgb * 2.0;
+            c += texture(u_from, uv + vec2(x * 2, 0) * u_texel).rgb * 0.5;
+            c += texture(u_from, uv + vec2(0, y * 2) * u_texel).rgb * 0.5;
+        }
+    o = vec4(c / 12.0 * u_weight, 1.0);
+}
+)";
+
+// The air in front of what is seen: walked from the camera, the light each step receives (stopped by the models where the
+// shadow maps say) and what the air hides. In rgb what it adds, in a what is still seen through it
+static const char *kFogFragment = R"(#version 330 core
+in vec2 v_ndc; out vec4 o;
+uniform sampler2D u_seen; uniform mat4 u_inv; uniform vec3 u_eye, u_fogColor;
+uniform float u_density, u_fogBase, u_falloff, u_reach, u_exposure; uniform int u_steps;
+uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8], u_cosIn[8];
+uniform int u_shadow[8], u_pointShadow[8]; uniform mat4 u_shadowMat[4]; uniform sampler2DArrayShadow u_shadows;
+uniform float u_pointFar[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
+float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
+float through(int i, vec3 p) {
+    int s = u_shadow[i], c = u_pointShadow[i];
+    if (c >= 0) {
+        vec3 d = p - u_lpos[i];
+        float ref = length(d) / u_pointFar[c] - 0.0006;
+        return c == 0 ? texture(u_pointMap0, vec4(d, ref)) : texture(u_pointMap1, vec4(d, ref));
+    }
+    if (s < 0) return 1.0;
+    vec4 q = u_shadowMat[s] * vec4(p, 1.0);
+    vec3 t = q.xyz / q.w * 0.5 + 0.5;
+    if (q.w <= 0.0 || t.x <= 0.0 || t.x >= 1.0 || t.y <= 0.0 || t.y >= 1.0 || t.z >= 1.0) return 1.0;
+    return texture(u_shadows, vec4(t.xy, float(s), t.z));
+}
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    vec4 w = u_inv * vec4(v_ndc, texture(u_seen, uv).r * 2.0 - 1.0, 1.0);
+    vec3 to = w.xyz / w.w - u_eye;
+    float far = min(length(to), u_reach), ds = far / float(u_steps);
+    vec3 dir = normalize(to);
+    vec3 added = vec3(0.0);
+    float seen = 1.0, t = ds * noise();
+    for (int k = 0; k < u_steps; ++k, t += ds) {
+        vec3 p = u_eye + dir * t;
+        float air = u_density * exp(-u_falloff * max(p.y - u_fogBase, 0.0));
+        float gets = air * ds;
+        vec3 light = u_fogColor;
+        for (int i = 0; i < u_count; ++i) {
+            if (dot(u_color[i], u_color[i]) <= 0.0) continue;
+            vec3 L = -u_ldir[i];
+            float att = 1.0;
+            if (u_type[i] != 0) {
+                vec3 d = u_lpos[i] - p;
+                float dist2 = max(dot(d, d), 0.05);
+                L = d * inversesqrt(dist2);
+                att = 1.0 / dist2;
+                if (u_type[i] == 2) att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(dot(-L, normalize(u_ldir[i])), -1.0, 1.0)));
+                if (u_type[i] == 3) att *= max(dot(-L, normalize(u_ldir[i])), 0.0);
+                if (att <= 1e-4) continue;
+            }
+            float cosine = dot(dir, -L), phase = 0.0796 * (1.0 - 0.16) / pow(1.16 - 0.8 * cosine, 1.5); // forward, as dust
+            light += u_color[i] * att * phase * through(i, p);
+        }
+        added += seen * gets * light;
+        seen *= exp(-gets);
+    }
+    o = vec4(added * u_exposure, seen);
+}
+)";
+// Its noise taken away, across no edge of what is seen
+static const char *kFogBlur = R"(#version 330 core
+in vec2 v_ndc; out vec4 o;
+uniform sampler2D u_fog, u_seen; uniform vec2 u_texel;
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    float depth = texture(u_seen, uv).r, weight = 0.0;
+    vec4 sum = vec4(0.0);
+    for (int y = -2; y <= 2; ++y)
+        for (int x = -2; x <= 2; ++x) {
+            vec2 at = uv + vec2(x, y) * u_texel;
+            float w = 1.0 / (1e-3 + abs(texture(u_seen, at).r - depth) * 2000.0);
+            sum += texture(u_fog, at) * w;
+            weight += w;
+        }
+    o = sum / max(weight, 1e-5);
+}
+)";
+// All over its picture, as a camera does: the air, the glow, then the colours, the darker edges
+static const char *kPostFragment = R"(#version 330 core
+in vec2 v_ndc; out vec4 o;
+uniform sampler2D u_pic, u_glow, u_fog; uniform int u_hasGlow, u_hasFog;
+uniform float u_glowAmount, u_vignette, u_contrast, u_saturation, u_temperature;
+float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
+vec3 shown(vec3 linear) { return pow(1.0 - exp(-linear), vec3(1.0 / 2.2)); }
+void main() {
+    vec2 uv = v_ndc * 0.5 + 0.5;
+    vec4 c = texture(u_pic, uv);
+    if (u_hasFog != 0) {
+        vec4 air = texture(u_fog, uv);
+        c = vec4(c.rgb * air.a + shown(air.rgb), c.a * air.a + 1.0 - air.a);
+    }
+    if (u_hasGlow != 0) {
+        vec3 g = shown(texture(u_glow, uv).rgb * u_glowAmount);
+        c.rgb = 1.0 - (1.0 - clamp(c.rgb, 0.0, 1.0)) * (1.0 - g);
+        c.a = 1.0 - (1.0 - c.a) * (1.0 - max(g.r, max(g.g, g.b))); // over the layers under it too
+    }
+    if (c.a > 0.0) {
+        vec3 rgb = c.rgb / c.a;
+        rgb *= vec3(1.0 + u_temperature * 0.2, 1.0, 1.0 - u_temperature * 0.2);
+        float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+        rgb = mix(vec3(luma), rgb, u_saturation);
+        rgb = (rgb - 0.5) * u_contrast + 0.5;
+        c.rgb = max(rgb, 0.0) * c.a;
+    }
+    c.rgb *= 1.0 - u_vignette * smoothstep(0.45, 1.45, length(v_ndc));
+    o = clamp(vec4(c.rgb + (noise() - 0.5) / 255.0, c.a), 0.0, 1.0);
 }
 )";
 
@@ -1320,6 +1531,24 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             m_unlitAt = f->glGetUniformLocation(m_program, "u_unlit");
             m_flatAt = f->glGetUniformLocation(m_program, "u_flat");
         }
+        if (!m_lite) {
+            m_glowDownProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowDown), &log);
+            if (!m_glowDownProgram) qWarning("3D glow shader: %s", qPrintable(log));
+            m_glowUpProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowUp), &log);
+            if (!m_glowUpProgram) qWarning("3D glow shader: %s", qPrintable(log));
+            m_fogProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogFragment), &log);
+            if (!m_fogProgram) qWarning("3D fog shader: %s", qPrintable(log));
+            m_fogBlurProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogBlur), &log);
+            if (!m_fogBlurProgram) qWarning("3D fog shader: %s", qPrintable(log));
+        }
+        m_postProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kPostFragment), &log);
+        if (!m_postProgram) qWarning("3D post shader: %s", qPrintable(log));
+        f->glGenSamplers(1, &m_rawSampler); // a shadow map as distances, not as a comparison
+        f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         if (m_shadowProgram) m_placeDepth.resolve(m_shadowProgram);
         if (m_pointProgram) m_placePoint.resolve(m_pointProgram);
     }
@@ -1352,7 +1581,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         add(&h, sizeof h);
         const auto addScene = [&] {
             for (float v : {s.distance, s.yaw, s.pitch, s.fov, s.ambientIntensity, s.exposure, s.envIntensity, s.envRotation, s.envBlur, s.studio, s.ao,
-                            s.aoRadius, s.reflections}) add(&v, sizeof v);
+                            s.aoRadius, s.reflections, s.glow, s.glowThreshold, s.glowSize, s.vignette, s.contrast, s.saturation, s.temperature,
+                            s.fogDensity, s.fogBase, s.fogFalloff, s.fogReach}) add(&v, sizeof v);
+            add(s.fogColor.data(), sizeof(float) * 3);
             add(s.target.data(), sizeof(float) * 3);
             add(s.ambient.data(), sizeof(float) * 3);
             add(s.background.data(), sizeof(float) * 4);
@@ -1376,13 +1607,13 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             add(&l.type, sizeof l.type);
             add(l.color.data(), sizeof(float) * 3);
             add(l.position.data(), sizeof(float) * 3);
-            for (float v : {l.intensity, l.yaw, l.pitch, l.angle, l.falloff, l.softness, lamp.gain}) add(&v, sizeof v);
+            for (float v : {l.intensity, l.yaw, l.pitch, l.angle, l.falloff, l.softness, l.width, l.height, l.rays, lamp.gain}) add(&v, sizeof v);
             add(&l.shadow, sizeof(bool));
         }
         if (could && m_fbo && key == m_frameKey) {
             if (++m_stillFrames >= 3) {
                 m_computed = 0;
-                return m_color;
+                return m_picture;
             }
         } else {
             m_stillFrames = 0;
@@ -1419,6 +1650,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glDeleteTextures(1, &m_preDepth);
             f->glDeleteFramebuffers(1, &m_aoFbo);
             f->glDeleteTextures(2, m_aoTex);
+            releaseLook();
         }
         m_hasPicture = false;
         m_w = w;
@@ -1479,6 +1711,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     // The lights' views of the models: what each shadow is read from
     QMatrix4x4 shadowMatrices[kMaxShadows];
     float shadowRadii[kMaxShadows] = {}, shadowBiases[kMaxShadows] = {};
+    QVector3D shadowPlanes[kMaxShadows];
     GLint shadowOf[kMaxLights], pointOf[kMaxLights];
     std::fill(std::begin(shadowOf), std::end(shadowOf), -1);
     std::fill(std::begin(pointOf), std::end(pointOf), -1);
@@ -1534,19 +1767,24 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             if (shadows >= kMaxShadows) continue;
             QMatrix4x4 lightView, lightProj;
             float across; // the width its map covers where the models are
+            QVector3D planes;
             if (l.type == 0) {
                 const QVector3D up = std::abs(dir.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
                 lightView.lookAt(center - dir * reach * 2.5f, center, up);
                 lightProj.ortho(-reach, reach, -reach, reach, reach * 0.1f, reach * 5);
                 across = reach * 2;
+                planes = QVector3D(reach * 0.1f, reach * 5, 1);
             } else {
                 const float away = (center - at).length();
-                const QVector3D aim = dir;
-                const float half = std::clamp(l.angle + 2.0f, 2.0f, 80.0f);
+                const QVector3D aim = l.type == 3 && away > reach ? (center - at).normalized() : dir;
+                // An area shines all around what it faces: its map as tight around the models as can be, its detail where it is seen
+                const float half = l.type == 3 ? std::clamp(qRadiansToDegrees(std::atan2(reach * 1.2f, std::max(away, 0.1f))), 5.0f, 80.0f)
+                                               : std::clamp(l.angle + 2.0f, 2.0f, 80.0f);
                 const QVector3D up = std::abs(aim.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
                 lightView.lookAt(at, at + aim, up);
                 const float farPlane = std::max(away + reach * 1.5f, 1.0f);
                 lightProj.perspective(half * 2, 1, std::max(0.05f, farPlane * 0.002f), farPlane);
+                planes = QVector3D(std::max(0.05f, farPlane * 0.002f), farPlane, 0);
                 across = 2 * std::max(away, 0.1f) * std::tan(qDegreesToRadians(half));
             }
             const int slot = shadows++;
@@ -1554,7 +1792,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             shadowMatrices[slot] = lightProj * lightView;
             const float texel = across / float(shadowSize);
             shadowRadii[slot] = std::max(0.0f, l.softness) * 2.0f / float(shadowSize);
+            if (l.type == 3) shadowRadii[slot] += std::max(l.width, l.height) / across * 0.07f; // as wide as it is
+            shadowPlanes[slot] = planes;
             shadowBiases[slot] = texel * 1.5f + across * 0.0008f * std::max(0.0f, l.softness);
+            if (l.type == 3) shadowBiases[slot] += std::max(l.width, l.height) * 0.08f; // its wide edge reaches round a curved surface
         }
         // A map drawn again only when what it shows has changed: the models that cast, or its own light (one light moving
         // leaves the others'). A picture pushing a model's points can change at any frame
@@ -1708,7 +1949,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
     const bool wantsAo = contactLevel && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
     const float reflections = reflectLevel ? s.reflections : 0.0f;
-    if (wantsAo || reflections > 0) {
+    const bool wantsFog = !m_lite && quality.atmosphere > 0 && s.fogDensity > 0 && m_fogProgram && m_fogBlurProgram;
+    const bool wantsGlow = !m_lite && quality.glow > 0 && s.glow > 0 && m_glowDownProgram && m_glowUpProgram;
+    if (wantsAo || reflections > 0 || wantsFog) {
         f->glBindFramebuffer(GL_FRAMEBUFFER, m_preFbo);
         f->glViewport(0, 0, w, h);
         f->glClear(GL_DEPTH_BUFFER_BIT);
@@ -1764,7 +2007,19 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glViewport(0, 0, w, h);
     const float a = s.background[3];
     f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
+    if (wantsGlow && !m_msBright) { // what shines, beside its picture: asked for, or no memory taken
+        f->glGenRenderbuffers(1, &m_msBright);
+        f->glBindRenderbuffer(GL_RENDERBUFFER, m_msBright);
+        f->glRenderbufferStorageMultisample(GL_RENDERBUFFER, m_samples, GL_RGBA16F, w, h);
+        f->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, m_msBright);
+    }
+    const GLenum both[2] = {GL_COLOR_ATTACHMENT0, wantsGlow ? GLenum(GL_COLOR_ATTACHMENT1) : GLenum(GL_NONE)};
+    f->glDrawBuffers(2, both);
     f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (wantsGlow) {
+        const GLfloat nothing[4] = {0, 0, 0, 0};
+        f->glClearBufferfv(GL_COLOR, 1, nothing);
+    }
     f->glEnable(GL_DEPTH_TEST);
     f->glDepthFunc(GL_LEQUAL);
     f->glDisable(GL_BLEND);
@@ -1783,6 +2038,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1f(f->glGetUniformLocation(m_sky, "u_exposure"), s.exposure);
         f->glUniform1i(f->glGetUniformLocation(m_sky, "u_envLinear"), environmentLinear ? 1 : 0);
         f->glUniform1i(f->glGetUniformLocation(m_sky, "u_env"), 2);
+        f->glUniform1f(f->glGetUniformLocation(m_sky, "u_glowLimit"), s.glowThreshold);
         f->glActiveTexture(GL_TEXTURE2);
         f->glBindTexture(GL_TEXTURE_2D, m_env);
         f->glBindVertexArray(m_skyVao);
@@ -1801,18 +2057,26 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform1f(loc("u_exposure"), s.exposure);
     GLint types[kMaxLights] = {};
     GLfloat colors[3 * kMaxLights] = {}, positions[3 * kMaxLights] = {}, directions[3 * kMaxLights] = {}, cones[kMaxLights] = {}, conesIn[kMaxLights] = {};
+    GLfloat rights[3 * kMaxLights] = {}, ups[3 * kMaxLights] = {}, halves[2 * kMaxLights] = {}, rayColors[3 * kMaxLights] = {};
     int count = 0;
     for (const Lamp &lamp : lamps) {
         const LightSettings &l = lamp.light;
         const float power = l.intensity * lamp.gain;
         if (power <= 0 || count >= kMaxLights) continue;
         const int k = count++;
-        types[k] = std::clamp(l.type, 0, 2);
+        types[k] = std::clamp(l.type, 0, 3);
         const QVector3D d = Camera3D::aim(l.yaw, l.pitch);
+        const QVector3D right = QVector3D::crossProduct(d, std::abs(d.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0)).normalized(),
+                        upward = QVector3D::crossProduct(right, d);
+        halves[2 * k] = std::max(0.001f, l.width) * 0.5f;
+        halves[2 * k + 1] = std::max(0.001f, l.height) * 0.5f;
         for (int c = 0; c < 3; ++c) {
             colors[3 * k + c] = l.color[size_t(c)] * power;
             positions[3 * k + c] = l.position[size_t(c)];
             directions[3 * k + c] = d[c];
+            rights[3 * k + c] = right[c];
+            ups[3 * k + c] = upward[c];
+            rayColors[3 * k + c] = colors[3 * k + c] * std::max(0.0f, l.rays);
         }
         const float spread = std::clamp(l.angle, 1.0f, 89.0f);
         cones[k] = qDegreesToRadians(spread); // angles, in radians
@@ -1820,6 +2084,24 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
     f->glUniform1i(loc("u_count"), count);
     f->glUniform1iv(loc("u_type"), kMaxLights, types);
+    f->glUniform3fv(loc("u_lright"), kMaxLights, rights);
+    f->glUniform3fv(loc("u_lup"), kMaxLights, ups);
+    f->glUniform2fv(loc("u_lhalf"), kMaxLights, halves);
+    f->glUniform1f(loc("u_glowLimit"), s.glowThreshold);
+    f->glUniform1i(loc("u_penumbra"), shadowLevel >= 2 ? 1 : 0);
+    f->glUniform1i(loc("u_shadowRaw"), 15);
+    f->glUniform1i(loc("u_pointRaw0"), 16);
+    f->glUniform1i(loc("u_pointRaw1"), 17);
+    for (int slot = 0; slot < shadows; ++slot)
+        f->glUniform3f(f->glGetUniformLocation(m_program, qPrintable(QStringLiteral("u_shadowPlanes[%1]").arg(slot))), shadowPlanes[slot].x(), shadowPlanes[slot].y(), shadowPlanes[slot].z());
+    f->glActiveTexture(GL_TEXTURE15);
+    f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
+    f->glBindSampler(15, m_rawSampler);
+    for (int slot = 0; slot < kMaxPointShadows; ++slot) {
+        f->glActiveTexture(GLenum(GL_TEXTURE16 + slot));
+        f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
+        f->glBindSampler(GLuint(16 + slot), m_rawSampler);
+    }
     f->glUniform3fv(loc("u_color"), kMaxLights, colors);
     f->glUniform3fv(loc("u_lpos"), kMaxLights, positions);
     f->glUniform3fv(loc("u_ldir"), kMaxLights, directions);
@@ -1910,6 +2192,14 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glActiveTexture(GLenum(GL_TEXTURE0 + unit));
         f->glBindTexture(GL_TEXTURE_2D, 0);
     }
+    f->glActiveTexture(GL_TEXTURE15);
+    f->glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    f->glBindSampler(15, 0);
+    for (int unit : {16, 17}) {
+        f->glActiveTexture(GLenum(GL_TEXTURE0 + unit));
+        f->glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        f->glBindSampler(GLuint(unit), 0);
+    }
     f->glActiveTexture(GL_TEXTURE0);
     f->glDisable(GL_DEPTH_TEST);
     m_hasPicture = true;
@@ -1920,7 +2210,177 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     m_computed = computed;
     ++m_framesDrawn;
-    return m_color;
+    m_picture = m_color;
+    // All over its picture, as a camera does. m_color stays as it is: what a reflection reads
+    const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
+    if (!m_postProgram || !(wantsGlow || wantsFog || graded)) return m_color;
+    makeLookTargets(w, h);
+    const auto target = [&](GLuint tex, int tw, int th) {
+        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        f->glViewport(0, 0, tw, th);
+    };
+    f->glDisable(GL_BLEND);
+    f->glBindVertexArray(m_skyVao);
+    if (wantsGlow) {
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, m_msFbo);
+        f->glReadBuffer(GL_COLOR_ATTACHMENT1);
+        f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_lookFbo);
+        f->glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_bright, 0);
+        f->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, m_msFbo);
+        f->glReadBuffer(GL_COLOR_ATTACHMENT0);
+        f->glBindFramebuffer(GL_FRAMEBUFFER, m_lookFbo);
+        const int levels = std::clamp(quality.glow == 1 ? 3 : quality.glow == 3 ? 6 : 5, 1, kGlowLevels);
+        f->glUseProgram(m_glowDownProgram);
+        f->glUniform1i(f->glGetUniformLocation(m_glowDownProgram, "u_from"), 0);
+        GLuint from = m_bright;
+        int fw = w, fh = h;
+        for (int k = 0; k < levels; ++k) {
+            const int tw = std::max(1, w >> (k + 1)), th = std::max(1, h >> (k + 1));
+            target(m_glowTex[k], tw, th);
+            f->glUniform2f(f->glGetUniformLocation(m_glowDownProgram, "u_texel"), 1.0f / float(fw), 1.0f / float(fh));
+            f->glBindTexture(GL_TEXTURE_2D, from);
+            f->glDrawArrays(GL_TRIANGLES, 0, 3);
+            from = m_glowTex[k];
+            fw = tw;
+            fh = th;
+        }
+        f->glUseProgram(m_glowUpProgram);
+        f->glUniform1i(f->glGetUniformLocation(m_glowUpProgram, "u_from"), 0);
+        f->glEnable(GL_BLEND);
+        f->glBlendFunc(GL_ONE, GL_ONE);
+        for (int k = levels - 1; k > 0; --k) { // the wider a level, the more of it as its size asks
+            target(m_glowTex[k - 1], std::max(1, w >> k), std::max(1, h >> k));
+            f->glUniform2f(f->glGetUniformLocation(m_glowUpProgram, "u_texel"), 1.0f / float(std::max(1, w >> (k + 1))), 1.0f / float(std::max(1, h >> (k + 1))));
+            f->glUniform1f(f->glGetUniformLocation(m_glowUpProgram, "u_weight"), std::clamp(s.glowSize, 0.0f, 1.0f));
+            f->glBindTexture(GL_TEXTURE_2D, m_glowTex[k]);
+            f->glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        f->glDisable(GL_BLEND);
+    }
+    f->glBindFramebuffer(GL_FRAMEBUFFER, m_lookFbo);
+    if (wantsFog) {
+        const int fw = std::max(1, w / 2), fh = std::max(1, h / 2);
+        target(m_fogTex[0], fw, fh);
+        f->glUseProgram(m_fogProgram);
+        auto where = [&](const char *name) { return f->glGetUniformLocation(m_fogProgram, name); };
+        const QMatrix4x4 inv = viewProj.inverted();
+        f->glUniformMatrix4fv(where("u_inv"), 1, GL_FALSE, inv.constData());
+        f->glUniform3f(where("u_eye"), eye.x(), eye.y(), eye.z());
+        f->glUniform3f(where("u_fogColor"), s.fogColor[0], s.fogColor[1], s.fogColor[2]);
+        f->glUniform1f(where("u_density"), s.fogDensity);
+        f->glUniform1f(where("u_fogBase"), s.fogBase);
+        f->glUniform1f(where("u_falloff"), std::max(0.0f, s.fogFalloff));
+        f->glUniform1f(where("u_reach"), std::max(0.01f, s.fogReach));
+        f->glUniform1f(where("u_exposure"), s.exposure);
+        f->glUniform1i(where("u_steps"), quality.atmosphere == 1 ? 8 : quality.atmosphere == 3 ? 32 : 16);
+        f->glUniform1i(where("u_count"), count);
+        f->glUniform1iv(where("u_type"), kMaxLights, types);
+        f->glUniform3fv(where("u_color"), kMaxLights, rayColors);
+        f->glUniform3fv(where("u_lpos"), kMaxLights, positions);
+        f->glUniform3fv(where("u_ldir"), kMaxLights, directions);
+        f->glUniform1fv(where("u_cos"), kMaxLights, cones);
+        f->glUniform1fv(where("u_cosIn"), kMaxLights, conesIn);
+        f->glUniform1iv(where("u_shadow"), kMaxLights, shadowOf);
+        f->glUniform1iv(where("u_pointShadow"), kMaxLights, pointOf);
+        f->glUniform1fv(where("u_pointFar"), kMaxPointShadows, pointFar);
+        for (int slot = 0; slot < shadows; ++slot)
+            f->glUniformMatrix4fv(f->glGetUniformLocation(m_fogProgram, qPrintable(QStringLiteral("u_shadowMat[%1]").arg(slot))), 1, GL_FALSE, shadowMatrices[slot].constData());
+        f->glUniform1i(where("u_seen"), 0);
+        f->glUniform1i(where("u_shadows"), 9);
+        f->glUniform1i(where("u_pointMap0"), 10);
+        f->glUniform1i(where("u_pointMap1"), 11);
+        f->glBindTexture(GL_TEXTURE_2D, m_preDepth);
+        f->glActiveTexture(GL_TEXTURE9);
+        f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
+        for (int slot = 0; slot < kMaxPointShadows; ++slot) {
+            f->glActiveTexture(GLenum(GL_TEXTURE10 + slot));
+            f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
+        }
+        f->glActiveTexture(GL_TEXTURE0);
+        f->glDrawArrays(GL_TRIANGLES, 0, 3);
+        f->glActiveTexture(GL_TEXTURE9);
+        f->glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        for (int slot = 0; slot < kMaxPointShadows; ++slot) {
+            f->glActiveTexture(GLenum(GL_TEXTURE10 + slot));
+            f->glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        }
+        target(m_fogTex[1], fw, fh);
+        f->glUseProgram(m_fogBlurProgram);
+        f->glUniform1i(f->glGetUniformLocation(m_fogBlurProgram, "u_seen"), 0);
+        f->glUniform1i(f->glGetUniformLocation(m_fogBlurProgram, "u_fog"), 1);
+        f->glUniform2f(f->glGetUniformLocation(m_fogBlurProgram, "u_texel"), 1.0f / float(fw), 1.0f / float(fh));
+        f->glActiveTexture(GL_TEXTURE1);
+        f->glBindTexture(GL_TEXTURE_2D, m_fogTex[0]);
+        f->glActiveTexture(GL_TEXTURE0);
+        f->glBindTexture(GL_TEXTURE_2D, m_preDepth);
+        f->glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    target(m_final, w, h);
+    f->glUseProgram(m_postProgram);
+    auto where = [&](const char *name) { return f->glGetUniformLocation(m_postProgram, name); };
+    f->glUniform1i(where("u_pic"), 0);
+    f->glUniform1i(where("u_glow"), 1);
+    f->glUniform1i(where("u_fog"), 2);
+    f->glUniform1i(where("u_hasGlow"), wantsGlow ? 1 : 0);
+    f->glUniform1i(where("u_hasFog"), wantsFog ? 1 : 0);
+    f->glUniform1f(where("u_glowAmount"), s.glow);
+    f->glUniform1f(where("u_vignette"), std::clamp(s.vignette, 0.0f, 1.0f));
+    f->glUniform1f(where("u_contrast"), s.contrast);
+    f->glUniform1f(where("u_saturation"), s.saturation);
+    f->glUniform1f(where("u_temperature"), s.temperature);
+    f->glActiveTexture(GL_TEXTURE2);
+    f->glBindTexture(GL_TEXTURE_2D, wantsFog ? m_fogTex[1] : 0);
+    f->glActiveTexture(GL_TEXTURE1);
+    f->glBindTexture(GL_TEXTURE_2D, wantsGlow ? m_glowTex[0] : 0);
+    f->glActiveTexture(GL_TEXTURE0);
+    f->glBindTexture(GL_TEXTURE_2D, m_color);
+    f->glDrawArrays(GL_TRIANGLES, 0, 3);
+    for (int unit : {2, 1, 0}) {
+        f->glActiveTexture(GL_TEXTURE0 + GLenum(unit));
+        f->glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    f->glBindVertexArray(0);
+    f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    f->glViewport(0, 0, w, h);
+    m_picture = m_final;
+    return m_final;
+}
+
+// What its look needs, its size, kept while it is not resized
+void Scene3D::makeLookTargets(int w, int h)
+{
+    if (m_lookFbo) return;
+    auto f = gl();
+    const auto make = [&](GLuint *tex, GLint format, GLenum type, int tw, int th) {
+        f->glGenTextures(1, tex);
+        f->glBindTexture(GL_TEXTURE_2D, *tex);
+        f->glTexImage2D(GL_TEXTURE_2D, 0, format, tw, th, 0, GL_RGBA, type, nullptr);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+    make(&m_final, GL_RGBA8, GL_UNSIGNED_BYTE, w, h);
+    make(&m_bright, GL_RGBA16F, GL_FLOAT, w, h);
+    for (int k = 0; k < kGlowLevels; ++k) make(&m_glowTex[k], GL_RGBA16F, GL_FLOAT, std::max(1, w >> (k + 1)), std::max(1, h >> (k + 1)));
+    for (GLuint &tex : m_fogTex) make(&tex, GL_RGBA16F, GL_FLOAT, std::max(1, w / 2), std::max(1, h / 2));
+    f->glBindTexture(GL_TEXTURE_2D, 0);
+    f->glGenFramebuffers(1, &m_lookFbo);
+}
+
+void Scene3D::releaseLook()
+{
+    auto f = gl();
+    if (m_lookFbo) f->glDeleteFramebuffers(1, &m_lookFbo);
+    if (m_msBright) f->glDeleteRenderbuffers(1, &m_msBright);
+    if (m_final) f->glDeleteTextures(1, &m_final);
+    if (m_bright) f->glDeleteTextures(1, &m_bright);
+    f->glDeleteTextures(kGlowLevels, m_glowTex);
+    f->glDeleteTextures(2, m_fogTex);
+    m_lookFbo = m_msBright = m_final = m_bright = 0;
+    std::fill(std::begin(m_glowTex), std::end(m_glowTex), 0);
+    m_fogTex[0] = m_fogTex[1] = 0;
 }
 
 // What a 3D view draws, nothing of the lights in it. Simple: each model in one flat colour with its edges. Unlit: its colours
@@ -2120,6 +2580,14 @@ void Scene3D::releaseGl()
     if (m_envFbo) f->glDeleteFramebuffers(1, &m_envFbo);
     if (m_readFbo) f->glDeleteFramebuffers(1, &m_readFbo);
     m_sky = m_skyVao = m_env = m_envFbo = m_readFbo = 0;
+    releaseLook();
+    for (GLuint *program : {&m_glowDownProgram, &m_glowUpProgram, &m_fogProgram, &m_fogBlurProgram, &m_postProgram}) {
+        if (*program) f->glDeleteProgram(*program);
+        *program = 0;
+    }
+    if (m_rawSampler) f->glDeleteSamplers(1, &m_rawSampler);
+    m_rawSampler = 0;
+    m_picture = 0;
     if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo);
     if (m_color) f->glDeleteTextures(1, &m_color);
     if (m_depth) f->glDeleteRenderbuffers(1, &m_depth);

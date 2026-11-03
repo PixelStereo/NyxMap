@@ -62,6 +62,7 @@ private:
         quint64 parentId = 0;
         int lightType = 1;
         float angle = 30, falloff = 0;  // a spot's
+        float areaWidth = 1, areaHeight = 1; // an area's
         QVector3D position, direction; // world; a light's direction (directional, spot)
         float radius = 0.1f;           // world: what a click picks
         QVector3D rotation, axisScale{1, 1, 1};

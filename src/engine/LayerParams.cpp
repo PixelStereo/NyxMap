@@ -695,6 +695,20 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("scene/ao", "Scene › Contact Shadows", 0, 3, d.ao, &sc->ao).step(0.01);
         f3("scene/ao_radius", "Scene › Contact Shadows Reach", 0.01, 5, d.aoRadius, &sc->aoRadius).step(0.01);
         f3("scene/reflections", "Scene › Reflections", 0, 1, d.reflections, &sc->reflections).step(0.01);
+        f3("scene/glow", "Look › Glow", 0, 5, d.glow, &sc->glow).step(0.01);
+        f3("scene/glow_threshold", "Look › Glow Threshold", 0, 10, d.glowThreshold, &sc->glowThreshold).step(0.01);
+        f3("scene/glow_size", "Look › Glow Size", 0, 1, d.glowSize, &sc->glowSize).step(0.01);
+        f3("scene/contrast", "Look › Contrast", 0, 2, d.contrast, &sc->contrast).step(0.01);
+        f3("scene/saturation", "Look › Saturation", 0, 2, d.saturation, &sc->saturation).step(0.01);
+        f3("scene/temperature", "Look › Temperature", -1, 1, d.temperature, &sc->temperature).step(0.01);
+        f3("scene/vignette", "Look › Vignette", 0, 1, d.vignette, &sc->vignette).step(0.01);
+        f3("scene/fog/density", "Fog › Density", 0, 2, d.fogDensity, &sc->fogDensity).step(0.001);
+        f3("scene/fog/base", "Fog › Height", -20, 20, d.fogBase, &sc->fogBase).step(0.01);
+        f3("scene/fog/falloff", "Fog › Thinning Above", 0, 5, d.fogFalloff, &sc->fogFalloff).step(0.01);
+        f3("scene/fog/reach", "Fog › Reach", 0.1, 200, d.fogReach, &sc->fogReach).step(0.1);
+        for (int c = 0; c < 3; ++c)
+            f3(QStringLiteral("scene/fog/color/") + QChar("rgb"[c]), QStringLiteral("Fog › Color ") + QChar("RGB"[c]), 0, 1,
+               d.fogColor[size_t(c)], &sc->fogColor[size_t(c)]).colorComponent(c);
         for (int c = 0; c < 4; ++c)
             f3(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
                &sc->background[size_t(c)]).colorComponent(c);
@@ -752,7 +766,7 @@ const std::vector<Parameter *> &Layer::parameters()
     if (type == SourceType::Light) {
         LightSettings *lt = &light;
         const LightSettings d;
-        static const QStringList kinds{QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot")};
+        static const QStringList kinds{QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot"), QStringLiteral("area")};
         add("light/type", "Light › Type", T::Choice)
             .choices(kinds)
             .byDefault(kinds.value(d.type))
@@ -772,6 +786,9 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("light/falloff", "Light › Spot Falloff", 0, 1, d.falloff, &lt->falloff).step(0.01);
         flag("light/shadow", "Light › Shadows", d.shadow, &lt->shadow).ramp(Parameter::Ramp::Cut);
         f3("light/softness", "Light › Shadow Softness", 0, 16, d.softness, &lt->softness).step(0.1);
+        f3("light/width", "Light › Area Width", 0.01, 40, d.width, &lt->width).step(0.01);
+        f3("light/height", "Light › Area Height", 0.01, 40, d.height, &lt->height).step(0.01);
+        f3("light/rays", "Light › In the Fog", 0, 10, d.rays, &lt->rays).step(0.01);
         num("light/level", "Light › Level", 0, 1, 1.0, [self] { return double(self->opacity); },
             [self](double v) { self->opacity = float(v); });
         flag("light/lookat", "Look At › On", d.lookAt, &lt->lookAt).ramp(Parameter::Ramp::Cut);
