@@ -324,6 +324,24 @@ int Engine::addScene(const QString &name, int at)
     return indexOfId(id); // where it is now
 }
 
+int Engine::addMerge3d(const QString &name, int at)
+{
+    const int i = addGroup(name, at);
+    const quint64 id = layerId(i);
+    {
+        Lock lk(&m_mutex);
+        int merges = 0;
+        for (const auto &l : m_layers) merges += l->merge3d;
+        Layer &g = *m_layers[size_t(i)];
+        g.merge3d = true;
+        g.modelPlacement = ModelPlacement();
+        if (name.isEmpty()) g.name = QStringLiteral("Merge 3D %1").arg(merges + 1);
+        normalizeLocked();
+    }
+    emit layersChanged();
+    return indexOfId(id);
+}
+
 // The picture laid on a 3D model: another layer's, after its FX (0: its materials). Refused when that layer is made from
 // the model's scene (a scene shown on itself)
 bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, false, err); }
@@ -426,7 +444,7 @@ static TreeNode nodeOf(const Layer &l)
     n.id = l.id;
     n.parent = l.parent;
     n.kind = l.isViewport ? TreeNode::Viewport : l.isGroup ? TreeNode::Group : TreeNode::Item;
-    n.role = l.scene3d ? TreeNode::Scene3d : l.is3dObject() ? TreeNode::Object3d : TreeNode::Plain;
+    n.role = l.scene3d ? TreeNode::Scene3d : l.merge3d ? TreeNode::Merge3d : l.is3dObject() ? TreeNode::Object3d : TreeNode::Plain;
     return n;
 }
 

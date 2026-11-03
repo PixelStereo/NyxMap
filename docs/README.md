@@ -71,8 +71,15 @@
   `scene/reflections` shows the other models in smooth surfaces. Both work from what
   the camera sees: a reflection only holds what is on screen, and fades on surfaces
   that face the camera. Without a graphics card (a renderer running on the processor),
-  a scene leaves out antialiasing, shadows, contact shadows and reflections. See
-  `examples/pbr/`.
+  a scene leaves out antialiasing, shadows, contact shadows and reflections. The
+  Composition tab's **3D Quality** lightens all the scenes of a project when needed:
+  `quality3d/antialiasing` (off, 2x, 4x, 8x), `shadows`, `contact` and `reflections`
+  (off, low, medium, high). See `examples/pbr/`.
+  A **Merge 3D** (Layer › New Merge 3D) is a transform for what it holds, as in a node
+  graph: models, lights and other Merge 3Ds, in a 3D scene only. It is not rendered: its
+  scene draws what it holds, moved, turned and scaled by `merge/position`, `rotation`
+  and `scale`, its own and those above it. A hidden one hides all it holds. In the 3D
+  view it is a diamond with a line to each thing it holds, and its handles move it.
   Lighting is physically based in linear light with ACES tone mapping. A scene's
   environment is a layer's picture (an HDRI, .hdr or .exr, loaded in an image layer
   that can stay hidden; or a video, a generator), equirectangular, taken at any

@@ -427,7 +427,8 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                     render(k);
                     members.push_back(m_layers[k].get());
                 }
-            if (l.needed && l.scene3d) renderScene(l, members, rc);
+            if (l.merge3d) l.finalTex = l.rawTex = l.preFxTex = 0; // no picture: its scene draws what it holds
+            else if (l.needed && l.scene3d) renderScene(l, members, rc);
             else if (l.needed) renderGroup(l, members, rc);
             else l.finalTex = l.rawTex = l.preFxTex = 0;
         } else {
@@ -994,7 +995,7 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     const int w = m_compSize.width(), h = m_compSize.height();
     const Layer *env = g.sceneEnvironment ? layer(indexOfId(g.sceneEnvironment)) : nullptr;
     const bool linear = env && g.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex; // an HDR file as read
-    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear);
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear, m_quality3d);
     if (!tex) return;
     processLayer(g, tex, w, h, true, rc);
 }
@@ -1008,9 +1009,18 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
-void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps)
+void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
+                          const QMatrix4x4 &parent)
 {
     for (Layer *m : members) {
+        if (m->merge3d) { // what it holds, under its transform and those above it; hidden, all of it
+            if (!m->enabled) continue;
+            std::vector<Layer *> inside;
+            for (auto &o : m_layers)
+                if (o->parent == m->id) inside.push_back(o.get());
+            collectScene(inside, items, lamps, parent * m->modelPlacement.transform());
+            continue;
+        }
         if (!m->enabled || m->soloHidden) continue;
         if (m->type == SourceType::Model && m->model) {
             m->model->setDetail(m->modelPlacement.detail);
@@ -1018,9 +1028,13 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
             items.push_back({m->model, m->modelPlacement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
                              disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
-                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid});
+                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid, parent});
         } else if (m->type == SourceType::Light) {
-            lamps.push_back({m->light, m->opacity});
+            LightSettings light = m->light; // where it is once its Merge 3Ds have moved and turned it
+            const QVector3D at = parent.map(QVector3D(light.position[0], light.position[1], light.position[2]));
+            for (int a = 0; a < 3; ++a) light.position[size_t(a)] = at[a];
+            Camera3D::anglesOf(parent.mapVector(Camera3D::aim(light.yaw, light.pitch)), &light.yaw, &light.pitch);
+            lamps.push_back({light, m->opacity});
         }
     }
 }
@@ -1509,7 +1523,7 @@ void Engine::frame(double dt)
             const Layer *env = layer.sceneEnvironment ? this->layer(indexOfId(layer.sceneEnvironment)) : nullptr;
             const bool linear = env && layer.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex;
             slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height(),
-                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0, linear);
+                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0, linear, m_quality3d);
             if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
             continue;
         }

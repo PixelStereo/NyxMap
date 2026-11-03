@@ -568,6 +568,24 @@ const std::vector<Parameter *> &Engine::compositionParameters()
                                                              [this](const QVariant &v) { m_audio->setVolume(float(v.toDouble())); });
     add("speed", "Speed").range(0, 10).byDefault(1.0).bind([this] { return QVariant(m_compositionSpeed.load()); },
                                                            [this](const QVariant &v) { setCompositionSpeed(v.toDouble()); });
+    // What a frame of 3D may cost, for all the composition's 3D scenes: a setting of the project, not a value of the show
+    const auto quality3d = [this](const QString &path, const QString &label, int Scene3DQuality::*m, const QStringList &levels) {
+        m_compParams.push_back(std::make_unique<Parameter>(path, label, Parameter::Type::Choice));
+        m_compParams.back()
+            ->choices(levels)
+            .byDefault(levels.value(Scene3DQuality().*m))
+            .ramp(Parameter::Ramp::Cut)
+            .animatable(false)
+            .transient()
+            .bind([this, m, levels] { return QVariant(levels.value(m_quality3d.*m)); },
+                  [this, m, levels](const QVariant &v) { m_quality3d.*m = std::max(0, int(levels.indexOf(v.toString()))); });
+    };
+    const QStringList levels{QStringLiteral("off"), QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")};
+    quality3d("quality3d/antialiasing", "3D Quality › Antialiasing", &Scene3DQuality::antialiasing,
+              {QStringLiteral("off"), QStringLiteral("2x"), QStringLiteral("4x"), QStringLiteral("8x")});
+    quality3d("quality3d/shadows", "3D Quality › Shadows", &Scene3DQuality::shadows, levels);
+    quality3d("quality3d/contact", "3D Quality › Contact Shadows", &Scene3DQuality::contact, levels);
+    quality3d("quality3d/reflections", "3D Quality › Reflections", &Scene3DQuality::reflections, levels);
     // Read-only sources for Internal interactions; never saved or driven by a timeline.
     add("audio/level", "Audio analysis › Level").range(0,1).readOnly().bind([this] { return QVariant(m_audio->analysis().level); }, {});
     add("audio/bass", "Audio analysis › Bass").range(0,1).readOnly().bind([this] { return QVariant(m_audio->analysis().bass); }, {});

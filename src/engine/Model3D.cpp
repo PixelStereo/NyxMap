@@ -526,7 +526,7 @@ uniform vec3 u_eye, u_ambient; uniform float u_exposure;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8];
 uniform int u_hasEnv; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_envMaxLod; uniform int u_envLinear;
 uniform float u_cosIn[8]; uniform float u_studio;
-uniform int u_taps; uniform int u_pointShadow[8]; uniform float u_pointFar[2], u_pointSoft[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
+uniform int u_taps, u_steps; uniform int u_pointShadow[8]; uniform float u_pointFar[2], u_pointSoft[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
 uniform sampler2D u_aoTex, u_seen, u_last; uniform vec2 u_screen; uniform float u_aoAmount, u_reflections; uniform int u_hasLast;
 uniform mat4 u_viewProj; uniform vec2 u_depthRange; uniform float u_lastExposure;
 uniform int u_shadow[8]; uniform mat4 u_shadowMat[4]; uniform float u_shadowRadius[4], u_shadowBias[4]; uniform sampler2DArrayShadow u_shadows;
@@ -588,9 +588,11 @@ vec4 reflected(vec3 R, float rough) {
     float span = length(u_eye - v_pos) * 0.05;
     vec3 p = v_pos + R * span * 0.3;
     float jitter = 0.9 + 0.2 * noise();
-    for (int k = 0; k < 40; ++k) {
+    float grow = pow(1.07, 40.0 / float(u_steps)); // reaching as far, in fewer steps or more
+    span *= 40.0 / float(u_steps);
+    for (int k = 0; k < u_steps; ++k) {
         p += R * span * jitter;
-        span *= 1.07;
+        span *= grow;
         vec4 q = u_viewProj * vec4(p, 1.0);
         if (q.w <= 0.0) return vec4(0.0);
         vec3 s = q.xyz / q.w * 0.5 + 0.5;
@@ -610,7 +612,7 @@ vec4 reflected(vec3 R, float rough) {
             vec4 c = texture(u_last, s.xy);
             if (c.a <= 0.0) return vec4(0.0);
             vec2 edge = smoothstep(vec2(0.0), vec2(0.08), s.xy) * smoothstep(vec2(0.0), vec2(0.08), 1.0 - s.xy);
-            float fade = away * edge.x * edge.y * (1.0 - float(k) / 40.0) * smoothstep(0.65, 0.15, rough);
+            float fade = away * edge.x * edge.y * (1.0 - float(k) / float(u_steps)) * smoothstep(0.65, 0.15, rough);
             return vec4(unprocessed(c.rgb / c.a), fade * u_reflections);
         }
     }
@@ -711,7 +713,7 @@ void main() {
 // Where surfaces meet: from what is seen, how much of the half-sphere over each point its neighbours hide
 static const char *kAoFragment = R"(#version 330 core
 in vec2 v_ndc; out vec4 o;
-uniform sampler2D u_seen; uniform mat4 u_invProj; uniform mat4 u_proj; uniform float u_radius, u_amount;
+uniform sampler2D u_seen; uniform mat4 u_invProj; uniform mat4 u_proj; uniform float u_radius, u_amount; uniform int u_samples;
 vec3 at(vec2 uv) {
     vec4 p = u_invProj * vec4(uv * 2.0 - 1.0, texture(u_seen, uv).r * 2.0 - 1.0, 1.0);
     return p.xyz / p.w;
@@ -724,7 +726,7 @@ void main() {
     if (dot(N, P) > 0.0) N = -N;
     float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     float hidden = 0.0;
-    const int count = 14;
+    int count = u_samples;
     for (int k = 0; k < count; ++k) {
         float t = (float(k) + 0.5) / float(count), a = (noise + float(k) * 0.61803399) * 6.2831853;
         float rr = sqrt(t), z = sqrt(max(0.0, 1.0 - t));
@@ -817,6 +819,17 @@ bool Model3D::uploadGl()
     }
     f->glBindTexture(GL_TEXTURE_2D, 0);
     return true;
+}
+
+QMatrix4x4 ModelPlacement::transform() const
+{
+    QMatrix4x4 m;
+    m.translate(position[0], position[1], position[2]);
+    m.rotate(rotation[2], 0, 0, 1);
+    m.rotate(rotation[1], 0, 1, 0);
+    m.rotate(rotation[0], 1, 0, 0);
+    m.scale(scale * axisScale[0], scale * axisScale[1], scale * axisScale[2]);
+    return m;
 }
 
 QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
@@ -951,6 +964,13 @@ QVector3D Camera3D::aim(float yawDeg, float pitchDeg)
     return QVector3D(std::cos(p) * std::sin(y), std::sin(p), std::cos(p) * std::cos(y));
 }
 
+void Camera3D::anglesOf(const QVector3D &direction, float *yawDeg, float *pitchDeg)
+{
+    const QVector3D d = direction.normalized();
+    *yawDeg = qRadiansToDegrees(std::atan2(d.x(), d.z()));
+    *pitchDeg = qRadiansToDegrees(std::asin(std::clamp(d.y(), -1.0f, 1.0f)));
+}
+
 Camera3D Camera3D::of(const SceneSettings &s, float aspect)
 {
     Camera3D c;
@@ -1005,7 +1025,7 @@ bool Scene3D::lite(const QString &renderer)
 }
 
 GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
-                     GLuint environment, bool environmentLinear)
+                     GLuint environment, bool environmentLinear, const Scene3DQuality &quality)
 {
     if (w <= 0 || h <= 0) return 0;
     auto f = gl();
@@ -1032,7 +1052,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     const bool hasEnv = environment && copyEnvironment(environment);
     const float envMaxLod = std::log2(float(kEnvW));
     if (!m_program) return 0;
-    if (!m_fbo || w != m_w || h != m_h) { // its targets, the composition's size: antialiased with depth, and its picture
+    const int aaLevel = m_lite ? 0 : std::clamp(quality.antialiasing, 0, 3);
+    GLint maxSamples = 1;
+    f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, maxSamples));
+    if (!m_fbo || w != m_w || h != m_h || wantedSamples != m_samples) { // its targets, the composition's size: antialiased with depth, and its picture
         if (m_fbo) {
             f->glDeleteFramebuffers(1, &m_fbo);
             f->glDeleteFramebuffers(1, &m_msFbo);
@@ -1058,9 +1082,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glGenFramebuffers(1, &m_fbo);
         f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
         f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_color, 0);
-        GLint maxSamples = 0;
-        f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
-        const GLsizei samples = m_lite ? 1 : std::clamp(maxSamples, 1, 4);
+        m_samples = wantedSamples;
+        const GLsizei samples = wantedSamples;
         f->glGenRenderbuffers(1, &m_msColor);
         f->glBindRenderbuffer(GL_RENDERBUFFER, m_msColor);
         f->glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
@@ -1105,6 +1128,16 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     std::fill(std::begin(shadowOf), std::end(shadowOf), -1);
     std::fill(std::begin(pointOf), std::end(pointOf), -1);
     int shadows = 0, pointShadows = 0;
+    // Its shadow maps, as sharp as its quality asks
+    const int shadowLevel = m_lite ? 0 : std::clamp(quality.shadows, 0, 3);
+    const int shadowSize = shadowLevel ? 512 << shadowLevel : 0, pointSize = shadowSize / 2;
+    if (shadowSize && shadowSize != m_shadowSize) { // made again at their new size
+        if (m_shadowMaps) f->glDeleteTextures(1, &m_shadowMaps);
+        f->glDeleteTextures(kMaxPointShadows, m_pointMaps);
+        m_shadowMaps = m_pointMaps[0] = m_pointMaps[1] = 0;
+        m_shadowSize = shadowSize;
+        m_shadowKey.clear();
+    }
     QVector3D pointAt[kMaxPointShadows];
     float pointFar[kMaxPointShadows] = {}, pointSoft[kMaxPointShadows] = {};
     {
@@ -1112,7 +1145,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         QVector3D center;
         float weight = 0, reach = 0;
         const auto sphere = [](const Item &item) {
-            const QMatrix4x4 m = item.model->matrix(item.placement);
+            const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
             const float size = std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
             return std::pair(m.map(item.model->center()), item.model->radius() * size);
         };
@@ -1139,7 +1172,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const LightSettings &l = lamp.light;
             if (l.intensity * lamp.gain <= 0 || lightIndex >= kMaxLights) continue;
             const int k = lightIndex++;
-            if (m_lite || !l.shadow || reach <= 0 || !m_shadowProgram) continue;
+            if (!shadowLevel || !l.shadow || reach <= 0 || !m_shadowProgram) continue;
             const QVector3D at(l.position[0], l.position[1], l.position[2]), dir = Camera3D::aim(l.yaw, l.pitch);
             if (l.type == 1) { // a point: the distances all around it
                 if (pointShadows >= kMaxPointShadows || !m_pointProgram) continue;
@@ -1171,8 +1204,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const int slot = shadows++;
             shadowOf[k] = slot;
             shadowMatrices[slot] = lightProj * lightView;
-            const float texel = across / float(kShadowSize);
-            shadowRadii[slot] = std::max(0.0f, l.softness) * 2.0f / float(kShadowSize);
+            const float texel = across / float(shadowSize);
+            shadowRadii[slot] = std::max(0.0f, l.softness) * 2.0f / float(shadowSize);
             shadowBiases[slot] = texel * 1.5f + across * 0.0008f * std::max(0.0f, l.softness);
         }
         // Its maps drawn again only when what they show has changed. A picture pushing a model's points can change at
@@ -1182,7 +1215,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         const auto addTo = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
         for (const Item &item : items)
             if (casts(item)) {
-                const QMatrix4x4 m = item.model->matrix(item.placement);
+                const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
                 const Model3D *which = item.model.get();
                 addTo(&which, sizeof which);
                 addTo(m.constData(), sizeof(float) * 16);
@@ -1204,7 +1237,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             auto where = [&](const char *name) { return f->glGetUniformLocation(program, name); };
             for (const Item &item : items) {
                 if (!casts(item)) continue; // a screen gives light, a floor or a wall only receives
-                const QMatrix4x4 model = item.model->matrix(item.placement);
+                const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
                 f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
                 f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
                 f->glUniform1f(where("u_bend"), qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
@@ -1225,7 +1258,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const GLenum none = GL_NONE;
             f->glDrawBuffers(1, &none);
             f->glReadBuffer(GL_NONE);
-            f->glViewport(0, 0, kPointShadowSize, kPointShadowSize);
+            f->glViewport(0, 0, pointSize, pointSize);
             f->glEnable(GL_DEPTH_TEST);
             f->glDepthFunc(GL_LESS);
             f->glDisable(GL_BLEND);
@@ -1240,7 +1273,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                     f->glGenTextures(1, &m_pointMaps[slot]);
                     f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
                     for (int face = 0; face < 6; ++face)
-                        f->glTexImage2D(GLenum(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face), 0, GL_DEPTH_COMPONENT24, kPointShadowSize, kPointShadowSize, 0,
+                        f->glTexImage2D(GLenum(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face), 0, GL_DEPTH_COMPONENT24, pointSize, pointSize, 0,
                                         GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
                     f->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                     f->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1270,7 +1303,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             if (!m_shadowMaps) {
                 f->glGenTextures(1, &m_shadowMaps);
                 f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
-                f->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize, kMaxShadows, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+                f->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24, shadowSize, shadowSize, kMaxShadows, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
                 f->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 f->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 f->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1284,7 +1317,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const GLenum none = GL_NONE;
             f->glDrawBuffers(1, &none);
             f->glReadBuffer(GL_NONE);
-            f->glViewport(0, 0, kShadowSize, kShadowSize);
+            f->glViewport(0, 0, shadowSize, shadowSize);
             f->glEnable(GL_DEPTH_TEST);
             f->glDepthFunc(GL_LESS);
             f->glDisable(GL_BLEND);
@@ -1309,8 +1342,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
     const QMatrix4x4 &view = cam.view, &proj = cam.proj;
     const QVector3D eye = cam.eye;
-    const bool wantsAo = !m_lite && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
-    const float reflections = m_lite ? 0.0f : s.reflections;
+    const int contactLevel = m_lite ? 0 : std::clamp(quality.contact, 0, 3), reflectLevel = m_lite ? 0 : std::clamp(quality.reflections, 0, 3);
+    const bool wantsAo = contactLevel && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
+    const float reflections = reflectLevel ? s.reflections : 0.0f;
     if (wantsAo || reflections > 0) {
         f->glBindFramebuffer(GL_FRAMEBUFFER, m_preFbo);
         f->glViewport(0, 0, w, h);
@@ -1326,7 +1360,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1i(where("u_disp"), 1);
         for (const Item &item : items) {
             if (!item.model) continue;
-            const QMatrix4x4 model = item.model->matrix(item.placement);
+            const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
             f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
             f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
             f->glUniform1f(where("u_bend"), qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
@@ -1355,6 +1389,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, proj.constData());
         f->glUniform1f(where("u_radius"), std::max(0.001f, s.aoRadius));
         f->glUniform1f(where("u_amount"), s.ao);
+        f->glUniform1i(where("u_samples"), contactLevel == 1 ? 8 : contactLevel == 2 ? 14 : 24);
         f->glUniform1i(where("u_seen"), 0);
         f->glActiveTexture(GL_TEXTURE0);
         f->glBindTexture(GL_TEXTURE_2D, m_preDepth);
@@ -1463,7 +1498,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform2f(loc("u_depthRange"), cam.nearPlane, cam.farPlane);
     f->glUniform1f(loc("u_aoAmount"), wantsAo ? s.ao : 0.0f);
     f->glUniform1f(loc("u_reflections"), reflections);
-    f->glUniform1i(loc("u_taps"), 12);
+    f->glUniform1i(loc("u_taps"), shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12);
+    f->glUniform1i(loc("u_steps"), reflectLevel == 1 ? 20 : reflectLevel == 3 ? 80 : 40);
     f->glUniform1f(loc("u_lastExposure"), s.exposure);
     f->glUniform1i(loc("u_hasLast"), m_hasPicture && reflections > 0 ? 1 : 0);
     f->glUniform1i(loc("u_aoTex"), 12);
@@ -1490,7 +1526,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     for (int pass = 0; pass < 2; ++pass)
     for (const Item &item : items) {
         if (!item.model) continue;
-        const QMatrix4x4 model = item.model->matrix(item.placement);
+        const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
         f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
         f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
         const float bend = qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f));

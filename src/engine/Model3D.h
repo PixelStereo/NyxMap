@@ -28,6 +28,8 @@ struct ModelPlacement {
     std::array<float, 3> rotation{{0, 0, 0}}; // degrees, around X, Y then Z
     float scale = 1;                          // all of it, times its scale along each axis
     std::array<float, 3> axisScale{{1, 1, 1}};
+    // A Merge 3D's own transform, around its position: all it holds moves with it
+    QMatrix4x4 transform() const;
     float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
     int detail = 1;      // a primitive's mesh: how finely it is cut (1 to 8)
@@ -69,6 +71,12 @@ struct SceneSettings {
     // Darker where surfaces meet (screen space): how strong, how far it looks in the scene's units
     float ao = 1, aoRadius = 0.4f;
     float reflections = 1; // the other models seen in smooth surfaces (screen space)
+};
+
+// What a frame of 3D may cost, the composition's for all its scenes: 0 off, 1 low, 2 medium, 3 high (antialiasing: off, 2×,
+// 4×, 8×)
+struct Scene3DQuality {
+    int antialiasing = 2, shadows = 2, contact = 2, reflections = 2;
 };
 
 class Model3D
@@ -157,6 +165,7 @@ struct Camera3D {
     float nearPlane = 0.01f, farPlane = 100;
     static Camera3D of(const SceneSettings &s, float aspect);
     static QVector3D aim(float yawDeg, float pitchDeg); // the direction from these angles (a light, the camera's eye)
+    static void anglesOf(const QVector3D &direction, float *yawDeg, float *pitchDeg); // the reverse
 };
 
 // Draws a scene: its models in one pass, with depth, under its lights, into its own target
@@ -164,14 +173,15 @@ class Scene3D
 {
 public:
     static constexpr int kMaxLights = 8;
-    static constexpr int kMaxShadows = 4, kShadowSize = 2048; // spots and directional lights
-    static constexpr int kMaxPointShadows = 2, kPointShadowSize = 1024; // point lights, all around
+    static constexpr int kMaxShadows = 4;      // spots and directional lights
+    static constexpr int kMaxPointShadows = 2; // point lights, all around
     struct Item {
         std::shared_ptr<Model3D> model;
         ModelPlacement placement;
         GLuint picture = 0; // a layer's picture laid on it (straight alpha), 0: its materials
         GLuint displace = 0; // a layer's picture whose luminance pushes its points (0: none)
         float displaceAmount = 0, displaceMid = 0;
+        QMatrix4x4 parent;   // the Merge 3D it is in, all of them: applied after its placement
     };
     struct Lamp {
         LightSettings light;
@@ -184,7 +194,7 @@ public:
     // environment: a layer's picture (equirectangular, its first row at the bottom), 0 none
     // environmentLinear: its values linear light (an HDR file as read), else display encoded (a layer's picture)
     GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
-                GLuint environment = 0, bool environmentLinear = false);
+                GLuint environment = 0, bool environmentLinear = false, const Scene3DQuality &quality = {});
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
     // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
@@ -204,6 +214,7 @@ private:
     GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
     GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
     bool m_lite = false;
+    int m_samples = 0, m_shadowSize = 0; // of its targets and its shadow maps, as its quality asks
     bool m_hasPicture = false;                              // m_color holds the last frame: what a reflection shows
     GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
     static constexpr int kEnvW = 1024, kEnvH = 512;

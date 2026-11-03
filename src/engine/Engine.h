@@ -112,6 +112,8 @@ public:
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
+    Scene3DQuality quality3d() const { Lock lk(&m_mutex); return m_quality3d; } // the composition's, for all its 3D scenes
+    int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
@@ -1066,7 +1068,8 @@ private:
         GLuint editorTex[2] = {0, 0};
     };
     // A scene's objects as its renderer takes them (shown ones only; render thread, lock held)
-    void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps);
+    void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
+                      const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
@@ -1074,6 +1077,7 @@ private:
     int m_back = 1;
 
     QSize m_compSize{1920, 1080};
+    Scene3DQuality m_quality3d;
     std::vector<std::unique_ptr<Layer>> m_layers;
     quint64 m_nextId = 1;
     std::vector<float> m_meshScratch;

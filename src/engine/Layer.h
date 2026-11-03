@@ -381,6 +381,9 @@ struct Layer {
     // are 3D objects only: models (type Model: its file, read; its meshes reach the GPU on the render thread) and lights
     // (type Light)
     bool scene3d = false;
+    // A Merge 3D (only in a 3D scene or another Merge 3D): a transform for what it holds, models, lights and other Merge
+    // 3Ds. It is not rendered: its scene draws what it holds. Its transform is modelPlacement's
+    bool merge3d = false;
     SceneSettings scene;
     std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
@@ -394,7 +397,7 @@ struct Layer {
     quint64 sceneEnvironment = 0;
     int sceneEnvironmentStage = -1;
     LightSettings light;
-    bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light; }
+    bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light || merge3d; }
 
     // TouchDesigner component: native SDK access stays on the render thread.
     ToxSettings tox;

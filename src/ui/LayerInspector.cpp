@@ -71,7 +71,7 @@
 struct LayerValues {
     bool valid = false;
     quint64 id = 0;
-    bool isGroup = false, isViewport = false, locked = false, lockedByGroup = false;
+    bool isGroup = false, isViewport = false, locked = false, lockedByGroup = false, merge3d = false;
     int members = 0;
     QSize vpSize;
     // Routing: an item at the top of the list chooses its viewports; inside a group, its top group does
@@ -142,6 +142,7 @@ struct LayerValues {
         s.valid = true;
         s.id = l->id;
         s.isGroup = l->isGroup;
+        s.merge3d = l->merge3d;
         s.isViewport = l->isViewport;
         s.vpSize = l->viewportSize();
         s.locked = l->locked;
@@ -826,7 +827,7 @@ void LayerInspector::rebuild()
         tv->setContentsMargins(0, 0, 0, 0);
         tv->setSpacing(8);
         tv->addWidget(buildSource(s));
-        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light) { // a sound, a 3D
+        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && !s.merge3d) { // a sound, a 3D
                                                                                                            // object: no picture
             tv->addWidget(separator());
             tv->addWidget(buildCompositing(s));
@@ -852,12 +853,12 @@ void LayerInspector::rebuild()
     });
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
     tabs->setStyleSheet(theme::tabStyle());
-    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light;
-    bool scene3d = false;
+    bool scene3d = false, merge3d = false;
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d;
+        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d;
     }
+    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || merge3d;
     if (scene3d) {
         auto *both = new QWidget;
         auto *bv = new QVBoxLayout(both);
@@ -868,7 +869,7 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
     if (object3d) {
-        QWidget *values = build3d({s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")});
+        QWidget *values = build3d({merge3d ? QStringLiteral("merge/") : s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")});
         if (s.type == SourceType::Model) {
             auto *both = new QWidget;
             auto *bv = new QVBoxLayout(both);
@@ -878,7 +879,8 @@ void LayerInspector::rebuild()
             values = both;
         }
         const int t = tabs->addTab(page(values), QStringLiteral("3D"));
-        tabs->setTabToolTip(t, s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
+        tabs->setTabToolTip(t, merge3d ? QStringLiteral("Where all it holds is in the scene")
+                              : s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
                                                           : QStringLiteral("The light: its kind, color, level and where it is"));
     }
     const bool hasSource = !s.isGroup && !s.isViewport && !object3d;
@@ -1009,6 +1011,10 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
             if (const Layer *l = m_engine->layer(m_layer)) scene = l->scene3d;
         }
         auto *info = new QLabel(
+            s.merge3d ? QStringLiteral("<b>Merge 3D</b> of %1 object(s)<br><span style='font-size:11px; color:#999'>"
+                                       "No picture of its own: its scene draws what it holds, moved, turned and scaled by its "
+                                       "transform (3D tab) and those above it. Drag 3D objects and other Merge 3Ds onto it.</span>")
+                                        .arg(s.members) :
             scene ? QStringLiteral("<b>3D Scene</b> of %1 object(s)<br><span style='font-size:11px; color:#999'>"
                                    "Its picture is its models seen by its camera (Scene tab), under its lights. Drop an "
                                    "FBX, glTF or OBJ onto it to add a model; Layer › Add Light to 3D Scene.</span>")
