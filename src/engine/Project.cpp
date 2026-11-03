@@ -89,6 +89,7 @@ void Engine::clearProject()
         m_paused = false;
         m_emergencyHeld = false;
         m_compositionSpeed = 1.0;
+        m_quality3d = Scene3DQuality();
         updateTimeScale();
         m_sequencer->clear();
         m_controls.clear();
@@ -171,6 +172,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         o["group"] = true;
         o["collapsed"] = l.collapsed;
         if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
+        if (l.merge3d) o["merge3d"] = true; // its transform: its params
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
             o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
     }
@@ -314,6 +316,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         l->isGroup = o.value("group").toBool(false);
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
+        l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
             const QJsonObject env = o.value("environment").toObject();
@@ -574,7 +577,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["app"] = "NyxMap";
         root["format_version"] = kProjectFormat;
         root["composition"] = QJsonObject{{"width", m_compSize.width()}, {"height", m_compSize.height()},
-                                    {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()}};
+                                    {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()},
+                                    {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections}}};
         QJsonArray layers;
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
@@ -802,6 +806,14 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     const QJsonObject comp = root.value("composition").toObject();
     setCompositionSize(QSize(comp.value("width").toInt(1920), comp.value("height").toInt(1080)));
     setCompositionSpeed(comp.value("speed").toDouble(1.0));
+    {
+        const QJsonArray q = comp.value("quality_3d").toArray();
+        m_quality3d = Scene3DQuality();
+        if (q.size() == 4) {
+            const auto level = [&](int k) { return std::clamp(q[k].toInt(2), 0, 3); };
+            m_quality3d = {level(0), level(1), level(2), level(3)};
+        }
+    }
     {
         RenderSettings rs;
         rs.frameRate = comp.value("fps").toDouble(-1); // -1: the machine's default

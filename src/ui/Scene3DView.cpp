@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QPainter>
+#include <functional>
 #include <QPainterPath>
 #include <QPaintEngine>
 #include <QToolButton>
@@ -18,7 +19,7 @@
 
 namespace {
 const QColor kAxis[3] = {QColor(235, 80, 80), QColor(110, 210, 90), QColor(80, 140, 245)};
-const QColor kLight(255, 214, 90), kCamera(150, 205, 255), kSelected(255, 170, 40);
+const QColor kLight(255, 214, 90), kCamera(150, 205, 255), kSelected(255, 170, 40), kMerge(160, 220, 170);
 const char *kAxisName[3] = {"x", "y", "z"};
 
 // The distance from a point to a segment (widget pixels)
@@ -198,39 +199,63 @@ void Scene3DView::setViewState(const QJsonObject &o)
     setCamera(c);
 }
 
+QVector3D Scene3DView::axisOf(const Object &o, int axis)
+{
+    QVector3D unit;
+    unit[axis] = 1;
+    return o.parent.mapVector(unit).normalized();
+}
+
 std::vector<Scene3DView::Object> Scene3DView::objects() const
 {
     std::vector<Object> out;
     Engine::Lock lk(&m_engine->mutex());
-    for (int i = 0; i < m_engine->layerCount(); ++i) {
-        const Layer *l = m_engine->layer(i);
-        if (!l || l->parent != m_scene || !l->is3dObject()) continue;
-        Object o;
-        o.id = l->id;
-        if (l->type == SourceType::Light) {
-            o.light = true;
-            o.lightType = l->light.type;
-            o.angle = l->light.angle;
-            o.falloff = l->light.falloff;
-            o.position = QVector3D(l->light.position[0], l->light.position[1], l->light.position[2]);
-            o.direction = Camera3D::aim(l->light.yaw, l->light.pitch);
-            o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
-            o.radius = 0.15f;
-        } else {
+    // Those of a scene or a Merge 3D, then what each Merge 3D holds, under its transform
+    const std::function<void(quint64, const QMatrix4x4 &, quint64)> collect = [&](quint64 holder, const QMatrix4x4 &parent, quint64 parentId) {
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *l = m_engine->layer(i);
+            if (!l || l->parent != holder || !l->is3dObject()) continue;
+            Object o;
+            o.id = l->id;
+            o.parent = parent;
+            o.parentId = parentId;
             const ModelPlacement &p = l->modelPlacement;
-            o.position = QVector3D(p.position[0], p.position[1], p.position[2]);
-            o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
-            o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
-            o.scale = p.scale;
-            if (l->model) { // its bounds, placed: what a click picks
-                const QMatrix4x4 m = l->model->matrix(p);
-                const QVector3D c = m.map(l->model->center());
-                o.position = c;
-                o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());
+            if (l->merge3d) {
+                o.merge = true;
+                o.position = parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+                o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
+                o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
+                o.scale = p.scale;
+                o.radius = 0.1f;
+                out.push_back(o);
+                if (l->enabled) collect(l->id, parent * p.transform(), l->id);
+                continue;
             }
+            if (l->type == SourceType::Light) {
+                o.light = true;
+                o.lightType = l->light.type;
+                o.angle = l->light.angle;
+                o.falloff = l->light.falloff;
+                o.position = parent.map(QVector3D(l->light.position[0], l->light.position[1], l->light.position[2]));
+                o.direction = parent.mapVector(Camera3D::aim(l->light.yaw, l->light.pitch)).normalized();
+                o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
+                o.radius = 0.15f;
+            } else {
+                o.position = parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+                o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
+                o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
+                o.scale = p.scale;
+                if (l->model) { // its bounds, placed: what a click picks
+                    const QMatrix4x4 m = parent * l->model->matrix(p);
+                    const QVector3D c = m.map(l->model->center());
+                    o.position = c;
+                    o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());
+                }
+            }
+            out.push_back(o);
         }
-        out.push_back(o);
-    }
+    };
+    collect(m_scene, QMatrix4x4(), 0);
     return out;
 }
 
@@ -257,7 +282,7 @@ std::vector<QPointF> Scene3DView::ring(const Object &o, int axis) const
         if (axis == 0) d = QVector3D(0, std::cos(a), std::sin(a));
         else if (axis == 1) d = QVector3D(std::cos(a), 0, std::sin(a));
         else d = QVector3D(std::cos(a), std::sin(a), 0);
-        pts.push_back(project(o.position + d * r));
+        pts.push_back(project(o.position + o.parent.mapVector(d).normalized() * r));
     }
     return pts;
 }
@@ -280,9 +305,7 @@ int Scene3DView::hitHandle(const Object &o, QPointF at) const
     int best = -1;
     double bestD = 8;
     for (int a = 0; a < 3; ++a) {
-        QVector3D axis;
-        axis[a] = 1;
-        const double d = toSegment(at, c, project(o.position + axis * handleLength()));
+        const double d = toSegment(at, c, project(o.position + axisOf(o, a) * handleLength()));
         if (d < bestD) bestD = d, best = a;
     }
     return best;
@@ -294,8 +317,9 @@ QString Scene3DView::pathOf(const Object &o, const QString &what, int axis) cons
         if (what == QLatin1String("rotation")) return axis == 1 ? QStringLiteral("light/yaw") : QStringLiteral("light/pitch");
         return QStringLiteral("light/position/") + kAxisName[axis];
     }
-    if (what == QLatin1String("scale") && axis == 3) return QStringLiteral("model/scale/all");
-    return QStringLiteral("model/%1/%2").arg(what, kAxisName[axis]);
+    const QString base = o.merge ? QStringLiteral("merge") : QStringLiteral("model");
+    if (what == QLatin1String("scale") && axis == 3) return base + QStringLiteral("/scale/all");
+    return QStringLiteral("%1/%2/%3").arg(base, what, kAxisName[axis]);
 }
 
 void Scene3DView::beginEdit(const Object &o)
@@ -308,7 +332,7 @@ void Scene3DView::beginEdit(const Object &o)
         if (!o.light) paths << pathOf(o, QStringLiteral("rotation"), a) << pathOf(o, QStringLiteral("scale"), a);
     }
     if (o.light) paths << QStringLiteral("light/yaw") << QStringLiteral("light/pitch");
-    else paths << QStringLiteral("model/scale/all");
+    else paths << pathOf(o, QStringLiteral("scale"), 3);
     for (const QString &p : paths) m_before.push_back({p, m_engine->parameterValue(o.id, p).toDouble()});
 }
 
@@ -408,8 +432,34 @@ void Scene3DView::paintOverlay(QPainter &p)
             p.drawText(e2 + QPointF(8, -6), QStringLiteral("Camera"));
         }
     }
-    // The lights: where they are, where a directional light or a spot points
     const std::vector<Object> objs = objects();
+    // The Merge 3Ds: a diamond, and a line to each thing it holds
+    for (const Object &o : objs) {
+        if (!o.merge && !o.parentId) continue;
+        if (o.parentId) {
+            for (const Object &up : objs) {
+                if (up.id != o.parentId) continue;
+                bool a, b;
+                const QPointF from = project(up.position, &a), to = project(o.position, &b);
+                if (a && b) {
+                    p.setPen(QPen(kMerge, 1, Qt::DotLine));
+                    p.drawLine(from, to);
+                }
+            }
+        }
+        if (o.merge) {
+            bool front;
+            const QPointF c = project(o.position, &front);
+            if (!front) continue;
+            const bool sel = o.id == m_selected;
+            QPolygonF diamond;
+            diamond << c + QPointF(0, -8) << c + QPointF(8, 0) << c + QPointF(0, 8) << c + QPointF(-8, 0);
+            p.setPen(QPen(sel ? kSelected : kMerge, sel ? 2 : 1.4));
+            p.setBrush(QColor(kMerge.red(), kMerge.green(), kMerge.blue(), 70));
+            p.drawPolygon(diamond);
+        }
+    }
+    // The lights: where they are, where a directional light or a spot points
     for (const Object &o : objs) {
         if (!o.light) continue;
         bool front;
@@ -502,7 +552,7 @@ void Scene3DView::paintOverlay(QPainter &p)
         bool front;
         const QPointF c = project(o.position, &front);
         if (!front) break;
-        if (!o.light) { // its bounds, as a circle
+        if (!o.light && !o.merge) { // its bounds, as a circle
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             p.setPen(QPen(kSelected, 1, Qt::DotLine));
             p.setBrush(Qt::NoBrush);
@@ -518,9 +568,7 @@ void Scene3DView::paintOverlay(QPainter &p)
             }
         } else {
             for (int a = 0; a < 3; ++a) {
-                QVector3D axis;
-                axis[a] = 1;
-                const QPointF e = project(o.position + axis * handleLength());
+                const QPointF e = project(o.position + axisOf(o, a) * handleLength());
                 p.setPen(QPen(kAxis[a], a == active ? 3.5 : 2));
                 p.drawLine(c, e);
                 p.setBrush(kAxis[a]);
@@ -571,11 +619,11 @@ void Scene3DView::mousePressEvent(QMouseEvent *e)
         const QPointF c = project(o.position, &front);
         if (!front) continue;
         double r = 10;
-        if (!o.light) {
+        if (!o.light && !o.merge) {
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             r = std::max(8.0, std::hypot(edge.x() - c.x(), edge.y() - c.y()));
         }
-        const float dist = (o.position - eye).length() - (o.light ? 1000 : 0); // a light over a model
+        const float dist = (o.position - eye).length() - (o.light || o.merge ? 1000 : 0); // a light, a Merge 3D over a model
         if (std::hypot(e->position().x() - c.x(), e->position().y() - c.y()) <= r && dist < nearest) {
             nearest = dist;
             picked = o.id;
@@ -620,15 +668,13 @@ void Scene3DView::mouseMoveEvent(QMouseEvent *e)
             const QPointF a0 = m_press - c, a1 = at - c;
             double turn = qRadiansToDegrees(std::atan2(-a1.y(), a1.x()) - std::atan2(-a0.y(), a0.x()));
             turn = std::remainder(turn, 360.0);
-            QVector3D axis;
-            axis[m_axis] = 1;
+            const QVector3D axis = axisOf(o, m_axis);
             const float toward = QVector3D::dotProduct(axis, cameraNow().eye - o.position) >= 0 ? 1 : -1;
             const double base = o.light ? (m_axis == 1 ? o.rotation.y() : o.rotation.x()) : o.rotation[m_axis];
             m_engine->setParameter(o.id, pathOf(o, QStringLiteral("rotation"), m_axis), base + turn * toward);
         } else {
             const int axisIndex = std::min(m_axis, 2);
-            QVector3D axis;
-            axis[axisIndex] = 1;
+            const QVector3D axis = axisOf(o, axisIndex);
             QPointF screen = project(o.position + axis * handleLength()) - c;
             if (m_axis == 3) screen = QPointF(1, -1) * 40; // all of it: up and to the right grows it
             const double len2 = QPointF::dotProduct(screen, screen);
@@ -638,8 +684,12 @@ void Scene3DView::mouseMoveEvent(QMouseEvent *e)
                 for (const auto &[path, v] : m_before)
                     for (int a = 0; a < 3; ++a)
                         if (path == pathOf(o, QStringLiteral("position"), a)) start[a] = float(v);
+                // Its value is in its Merge 3Ds' space: a handle's length in the scene is less there when they are large
+                QVector3D unit;
+                unit[axisIndex] = 1;
+                const float across = std::max(1e-4f, o.parent.mapVector(unit).length());
                 m_engine->setParameter(o.id, pathOf(o, QStringLiteral("position"), axisIndex),
-                                       start[axisIndex] + amount * handleLength());
+                                       start[axisIndex] + amount * handleLength() / across);
             } else { // scale: a handle's length dragged doubles it
                 const double factor = std::max(0.01, 1 + amount);
                 const double base = m_axis == 3 ? o.scale : o.axisScale[axisIndex];

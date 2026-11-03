@@ -32,7 +32,7 @@ quint64 keyOf(const Layer &l)
           quint64(quintptr(l.generator.get())), quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)),
           quint64(l.hasPicture()), quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
           // the played range: the playhead's (an Internal interaction takes its range from it)
-          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000)), quint64(l.scene3d),
+          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000)), quint64(l.scene3d), quint64(l.merge3d),
           quint64(quintptr(l.model.get()))}) // another model: a primitive has its material
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
@@ -680,6 +680,16 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("scene/environment/rotation", "Environment › Rotation (°)", -180, 180, 0, &sc->envRotation).step(0.1).ramp(Parameter::Ramp::Angle);
         flag("scene/environment/show", "Environment › Shown Behind", false, &sc->envShow).ramp(Parameter::Ramp::Cut);
         f3("scene/environment/blur", "Environment › Blur", 0, 1, 0, &sc->envBlur).step(0.01);
+    }
+    if (merge3d) { // where all it holds is in the scene
+        ModelPlacement *mp = &modelPlacement;
+        for (int a = 0; a < 3; ++a)
+            f3("merge/position/" + xyz[a], "Merge 3D › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
+        for (int a = 0; a < 3; ++a)
+            f3("merge/rotation/" + xyz[a], "Merge 3D › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("merge/scale/all", "Merge 3D › Scale", 0.01, 10, 1, &mp->scale).step(0.01).limits(0.001, 1000);
+        for (int a = 0; a < 3; ++a)
+            f3("merge/scale/" + xyz[a], "Merge 3D › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(0.001, 1000);
     }
     if (type == SourceType::Model) {
         ModelPlacement *mp = &modelPlacement;

@@ -49,6 +49,7 @@ signals:
 private:
     QWidget *buildCompositionLevel();
     QWidget *buildComposition(); // Dimensions: size and frame rate
+    QWidget *buildQuality3d();
     QWidget *buildStartup();
     QWidget *buildAudio();
     void refreshMeters();

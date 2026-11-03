@@ -574,11 +574,146 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(floorId, "model/material/metal", 0.0);
         engine.setParameter(floorId, "model/material/rough", 1.0);
         engine.setParameter(stage, "scene/studio", 0.0);
+        // The quality, the composition's for all its scenes: what is off is off, and it costs no map
+        engine.setParameter(spot, "light/intensity", 6.0);
+        engine.setParameter(stage, "scene/studio", 0.0);
+        engine.setParameter(caster, "model/position/x", 0.6);
+        engine.setParameter(caster, "model/position/y", 1.0);
+        for (const char *level : {"low", "high", "medium"}) {
+            engine.setParameter(0, "quality3d/shadows", QString::fromLatin1(level));
+            check(lite || levels(112) < without - 10, "shadows at each level of quality");
+        }
+        engine.setParameter(0, "quality3d/shadows", QStringLiteral("off"));
+        const int shadowsOff = levels(112);
+        check(std::abs(shadowsOff - without) < 12, "shadows off: none");
+        engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
+        for (const char *level : {"off", "2x", "8x", "4x"}) {
+            engine.setParameter(0, "quality3d/antialiasing", QString::fromLatin1(level));
+            check(levels(64) > 0, "every antialiasing draws the scene");
+        }
+        for (const char *path : {"quality3d/contact", "quality3d/reflections"})
+            for (const char *level : {"off", "low", "high", "medium"}) {
+                engine.setParameter(0, QString::fromLatin1(path), QString::fromLatin1(level));
+                check(levels(64) > 0, "every level of quality draws the scene");
+            }
+        engine.setParameter(0, "quality3d/shadows", QStringLiteral("high"));
+        check(engine.quality3d().shadows == 3, "the composition says its quality");
+        engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
+        engine.setParameter(spot, "light/intensity", 0.0);
+        engine.setParameter(caster, "model/position/x", 0.0);
         // The studio's light: something to reflect, without an environment
         engine.setParameter(spot, "light/intensity", 0.0);
         const int unlitFloor = levels(64);
         engine.setParameter(stage, "scene/studio", 1.0);
         check(levels(64) > unlitFloor, "the studio lights the models");
+        engine.newProject();
+    }
+
+    // A Merge 3D: not a render, a transform for what it holds; one can hold another
+    {
+        engine.newProject();
+        engine.setCompositionSize({128, 128});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {128, 128});
+        const quint64 stage = engine.layerId(engine.addScene());
+        const int cubeAt = engine.addLayer("Cube", engine.indexOfId(stage) + 1);
+        const quint64 cubeId = engine.layerId(cubeAt);
+        QString err;
+        check(engine.setLayerModel(cubeAt, Model3D::primitivePath("Cube"), &err), "a cube in a merge");
+        const int lampAt = engine.addLayer("Lamp", engine.indexOfId(stage) + 1);
+        const quint64 lampId = engine.layerId(lampAt);
+        check(engine.setLayerLight(lampAt), "a light in a merge");
+        const quint64 outer = engine.layerId(engine.addMerge3d("Outer", engine.indexOfId(stage) + 1));
+        const quint64 inner = engine.layerId(engine.addMerge3d("Inner", engine.indexOfId(stage) + 1));
+        LayerTree nested = tree::intoGroup(engine.structure(), {outer}, stage);
+        check(tree::valid3d(nested) == false, "not yet: a Merge 3D's objects are still outside");
+        nested = tree::intoGroup(engine.structure(), {lampId, outer}, stage);
+        nested = tree::intoGroup(nested, {inner}, outer);
+        nested = tree::intoGroup(nested, {cubeId}, inner);
+        check(tree::valid3d(nested), "a scene holds a Merge 3D, which holds another, which holds a model");
+        engine.setStructure(nested);
+        const LayerTree shown = engine.structure();
+        check(shown[size_t(tree::indexOf(shown, inner))].role == TreeNode::Merge3d, "the structure knows a Merge 3D");
+        check(!tree::valid3d(tree::ungrouped(shown, stage)), "a Merge 3D out of its scene is refused");
+        const int plain = engine.addLayer("Plain");
+        check(!tree::valid3d(tree::intoGroup(engine.structure(), {engine.layerId(plain)}, inner)), "a 2D layer in a Merge 3D is refused");
+        engine.removeLayer(engine.indexOfId(engine.layerId(plain)));
+        engine.setParameter(cubeId, "model/scale/all", 0.2);
+        engine.setParameter(lampId, "light/type", QStringLiteral("directional"));
+        engine.setParameter(lampId, "light/intensity", 3.0);
+        engine.setParameter(lampId, "light/yaw", 0.0);
+        engine.setParameter(lampId, "light/pitch", -89.0);
+        engine.setParameter(lampId, "light/shadow", false);
+        engine.setParameter(stage, "camera/target/x", 0.0);
+        engine.setParameter(stage, "camera/target/y", 0.0);
+        engine.setParameter(stage, "camera/target/z", 0.0);
+        engine.setParameter(stage, "camera/yaw", 0.0);
+        engine.setParameter(stage, "camera/pitch", 0.0);
+        engine.setParameter(stage, "camera/distance", 4.0);
+        engine.setParameter(stage, "camera/fov", 40.0);
+        engine.setParameter(stage, "scene/studio", 1.0);
+        const auto lit = [&](int x, int y) {
+            engine.renderFrame();
+            return engine.grabOutput().pixelColor(x, y).lightness() > 12;
+        };
+        check(lit(64, 64), "what it holds is drawn by the scene");
+        // Each moves what it holds, and they add up: 4 away at 40° of view, 0.5 is 22 pixels of 128
+        engine.setParameter(outer, "merge/position/x", 0.5);
+        check(!lit(64, 64) && lit(64 + 22, 64), "a Merge 3D moves what it holds");
+        engine.setParameter(inner, "merge/position/x", 0.5);
+        check(!lit(64 + 22, 64) && lit(64 + 44, 64), "one inside another: both");
+        // Its transform turns and scales around itself: the outer one turned a quarter, the inner offset goes up
+        engine.setParameter(outer, "merge/position/x", 0.0);
+        engine.setParameter(outer, "merge/rotation/z", 90.0);
+        check(!lit(64 + 22, 64) && lit(64, 64 - 22), "it turns what it holds, with what is inside it");
+        engine.setParameter(outer, "merge/rotation/z", 0.0);
+        engine.setParameter(outer, "merge/scale/all", 2.0);
+        check(!lit(64 + 22, 64) && lit(64 + 44, 64), "it scales where what it holds is");
+        engine.setParameter(outer, "merge/scale/all", 1.0);
+        // Hidden: all it holds
+        engine.setParameter(inner, "merge/position/x", 0.0);
+        check(lit(64, 64), "back in the middle");
+        engine.setParameter(outer, "enable", false);
+        check(!lit(64, 64), "a hidden Merge 3D hides what it holds");
+        engine.setParameter(outer, "enable", true);
+        // It moves a light too: in front of the cube it lights it, carried behind it no more
+        {
+            const quint64 holder = engine.layerId(engine.addMerge3d("Lamp holder", engine.indexOfId(stage) + 1));
+            LayerTree moved = tree::intoGroup(engine.structure(), {holder}, stage);
+            moved = tree::intoGroup(moved, {lampId}, holder);
+            engine.setStructure(moved);
+            engine.setParameter(stage, "scene/studio", 0.0);
+            engine.setParameter(stage, "scene/ambient_intensity", 0.0);
+            engine.setParameter(lampId, "light/type", QStringLiteral("point"));
+            engine.setParameter(lampId, "light/position/x", 0.0);
+            engine.setParameter(lampId, "light/position/y", 0.0);
+            engine.setParameter(lampId, "light/position/z", 2.0);
+            check(lit(64, 64), "a light in a Merge 3D lights the cube");
+            engine.setParameter(holder, "merge/position/z", -4.0);
+            check(!lit(64, 64), "carried behind it, no more");
+            engine.setParameter(holder, "merge/position/z", 0.0);
+            engine.setParameter(holder, "merge/rotation/y", 180.0);
+            check(!lit(64, 64), "turned around, no more either");
+        }
+        // Saved, and read back
+        const QJsonObject json = engine.layerJson(engine.indexOfId(inner));
+        check(json.value("merge3d").toBool(), "saved as a Merge 3D");
+        const QString file = dir.filePath("merge.nyxmap");
+        engine.setParameter(outer, "merge/position/x", 0.5);
+        engine.setParameter(0, "quality3d/reflections", QStringLiteral("low")); // saved with the project
+        check(engine.saveProject(file, {}, &err), "a project with Merge 3Ds is saved");
+        engine.newProject();
+        check(engine.loadProject(file, nullptr, &err), "and opened");
+        bool found = false;
+        for (int i = 0; i < engine.layerCount(); ++i) {
+            Engine::Lock lk(&engine.mutex());
+            const Layer *l = engine.layer(i);
+            if (l && l->merge3d && l->name == "Outer") found = l->isGroup && std::abs(l->modelPlacement.position[0] - 0.5f) < 1e-4f;
+        }
+        check(found, "its transform comes back");
+        check(engine.quality3d().reflections == 1, "the 3D quality comes back with the project");
+        engine.newProject();
+        check(engine.quality3d().reflections == 2, "a new project: the default quality");
+        check(tree::valid3d(engine.structure()), "the nesting too");
         engine.newProject();
     }
 
