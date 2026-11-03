@@ -156,6 +156,8 @@ int runScene3dUiTests(Engine &engine)
     }
     check(inspector && inspector->findChild<QComboBox *>("sceneEnvironmentLayer") && inspector->findChild<QComboBox *>("sceneEnvironmentStage"),
           "its Scene tab chooses its environment (an HDRI's layer) and its stage");
+    for (const char *path : {"param3d:scene/glow", "param3d:scene/glow_threshold", "param3d:scene/vignette", "param3d:scene/saturation", "param3d:scene/fog/density"})
+        check(inspector && inspector->findChild<SliderField *>(path), "its look and fog are bars of its Scene tab");
     auto *yaw = inspector ? inspector->findChild<SliderField *>("param3d:camera/yaw") : nullptr;
     check(yaw != nullptr, "the camera's yaw is a bar");
     if (yaw && undo) {
@@ -376,7 +378,7 @@ int runScene3dUiTests(Engine &engine)
                     }
                     return view->grabFramebuffer();
                 };
-                const QImage point = lit("point"), spot = lit("spot"), sun = lit("directional");
+                const QImage point = lit("point"), spot = lit("spot"), sun = lit("directional"), panel = lit("area");
                 const auto different = [](const QImage &x, const QImage &y) {
                     int count = 0;
                     for (int j = 0; j < x.height(); ++j)
@@ -385,6 +387,7 @@ int runScene3dUiTests(Engine &engine)
                 };
                 check(different(point, spot) > 200, "a spot is drawn with its cone");
                 check(different(point, sun) > 50 && different(sun, spot) > 200, "a directional light has its own symbol");
+                check(different(point, panel) > 30 && different(spot, panel) > 100, "an area light is drawn as its rectangle");
                 engine.setParameter(drawn, "light/type", QStringLiteral("spot"));
                 engine.setParameter(drawn, "light/falloff", 0.0);
                 for (int k = 0; k < 3; ++k) {
@@ -494,6 +497,7 @@ int runScene3dUiTests(Engine &engine)
                     engine.setParameter(merged, "merge/position/x", 0.0);
                 }
                 // The composition's quality, for all the scenes
+                check(window.findChild<QComboBox *>("quality3d/glow") && window.findChild<QComboBox *>("quality3d/atmosphere"), "the 3D quality has its glow and fog");
                 auto *shadows = window.findChild<QComboBox *>("quality3d/shadows");
                 check(shadows != nullptr, "the composition offers the 3D quality");
                 if (shadows) {

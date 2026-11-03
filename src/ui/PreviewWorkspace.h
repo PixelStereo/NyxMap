@@ -19,6 +19,7 @@ public:
     PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget *parent = nullptr);
     ~PreviewWorkspace() override;
     void refreshFrames();
+    void setShowFps(bool visible);
     // What it shows: how many views, each one's source, zoom, pan and fixtures, the mapping view's (a project, a preset)
     QJsonObject state() const;
     void setState(const QJsonObject &o);
@@ -45,4 +46,6 @@ private:
     std::array<Cell, 4> m_cells;
     int m_count = 1;
     class QComboBox *m_countBox = nullptr;
+    class QLabel *m_fpsLabel = nullptr;
+    class QTimer *m_fpsTimer = nullptr;
 };

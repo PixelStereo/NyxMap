@@ -51,6 +51,7 @@ public:
     // The inspector's fields move with the values while a snapshot fades them (on unless changed); off, they
     // stay still and show the snapshot's values once the fade is over
     static bool followFades();
+    static bool showPreviewFps();
 
     // The project opened at launch instead of an empty one, as a template (untitled): "" when none is chosen or
     // "Empty project" is selected
@@ -67,6 +68,7 @@ public:
     static Engine::RenderSettings renderDefaults();
 
 signals:
+    void previewFpsChanged(bool visible);
     void playModeChanged();
     void hardwareDecodingChanged();
     void oscChanged();

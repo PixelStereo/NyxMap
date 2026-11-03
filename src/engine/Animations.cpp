@@ -589,6 +589,8 @@ const std::vector<Parameter *> &Engine::compositionParameters()
     quality3d("quality3d/shadows", "3D Quality › Shadows", &Scene3DQuality::shadows, levels);
     quality3d("quality3d/contact", "3D Quality › Contact Shadows", &Scene3DQuality::contact, levels);
     quality3d("quality3d/reflections", "3D Quality › Reflections", &Scene3DQuality::reflections, levels);
+    quality3d("quality3d/glow", "3D Quality › Glow", &Scene3DQuality::glow, levels);
+    quality3d("quality3d/atmosphere", "3D Quality › Fog", &Scene3DQuality::atmosphere, levels);
     // Read-only sources for Internal interactions; never saved or driven by a timeline.
     add("audio/level", "Audio analysis › Level").range(0,1).readOnly().bind([this] { return QVariant(m_audio->analysis().level); }, {});
     add("audio/bass", "Audio analysis › Bass").range(0,1).readOnly().bind([this] { return QVariant(m_audio->analysis().bass); }, {});

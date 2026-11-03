@@ -1120,7 +1120,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
     case SourceType::Light: {
         kind = QStringLiteral("Light");
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer)) name = QStringList{"Directional", "Point", "Spot"}.value(l->light.type);
+        if (const Layer *l = m_engine->layer(m_layer)) name = QStringList{"Directional", "Point", "Spot", "Area"}.value(l->light.type);
         d << QStringLiteral("lights the models of its 3D scene");
         break;
     }

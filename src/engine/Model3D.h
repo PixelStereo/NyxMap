@@ -48,7 +48,7 @@ struct ModelPlacement {
 
 // A light of a scene
 struct LightSettings {
-    int type = 1; // 0 directional, 1 point, 2 spot
+    int type = 1; // 0 directional, 1 point, 2 spot, 3 area (a rectangle, lit on the side it faces)
     std::array<float, 3> color{{1, 1, 1}};
     float intensity = 25;
     std::array<float, 3> position{{2, 3, 3}};
@@ -57,6 +57,8 @@ struct LightSettings {
     float falloff = 0.35f;      // a spot's soft edge: 0 sharp, 1 a gradient from its middle to its edge
     bool shadow = true;         // its light stopped by the models (the first ones of a scene: Scene3D::kMaxShadows)
     float softness = 2;         // how soft its shadows' edge is
+    float width = 1, height = 1; // an area's size
+    float rays = 1;              // how much it shows in a scene's fog
     // Where it points instead of its yaw and pitch: this point of the scene, or an object (Layer::lightLookAt)
     bool lookAt = false;
     std::array<float, 3> lookPoint{{0, 0, 0}};
@@ -88,12 +90,19 @@ struct SceneSettings {
     // Darker where surfaces meet (screen space): how strong, how far it looks in the scene's units
     float ao = 1, aoRadius = 0.4f;
     float reflections = 1; // the other models seen in smooth surfaces (screen space)
+    // As a camera: what shines more than its threshold glows around it, how far; the colours; darker edges
+    float glow = 0.6f, glowThreshold = 1, glowSize = 0.6f;
+    float contrast = 1, saturation = 1, temperature = 0, vignette = 0;
+    // The air: how thick (0: none), up to where (it thins out above that height, by its falloff), how far it is seen, the
+    // colour of what is lit evenly. The lights show in it, stopped by the models (LightSettings::rays)
+    float fogDensity = 0, fogBase = 0, fogFalloff = 0.3f, fogReach = 30;
+    std::array<float, 3> fogColor{{0.02f, 0.022f, 0.025f}};
 };
 
 // What a frame of 3D may cost, the composition's for all its scenes: 0 off, 1 low, 2 medium, 3 high (antialiasing: off, 2×,
 // 4×, 8×)
 struct Scene3DQuality {
-    int antialiasing = 2, shadows = 2, contact = 2, reflections = 2;
+    int antialiasing = 2, shadows = 2, contact = 2, reflections = 2, glow = 2, atmosphere = 2;
 };
 
 // Where the program that shades a mesh takes what its material says, found once
@@ -247,6 +256,12 @@ public:
 
 private:
     bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
+    void makeLookTargets(int w, int h);
+    void releaseLook();
+    static constexpr int kGlowLevels = 6;
+    GLuint m_glowDownProgram = 0, m_glowUpProgram = 0, m_fogProgram = 0, m_fogBlurProgram = 0, m_postProgram = 0, m_rawSampler = 0;
+    GLuint m_msBright = 0, m_bright = 0, m_glowTex[kGlowLevels] = {}, m_fogTex[2] = {}, m_final = 0, m_lookFbo = 0;
+    GLuint m_picture = 0; // what it gives: its final picture, or m_color with nothing over it
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
         GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1;

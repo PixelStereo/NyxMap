@@ -283,6 +283,8 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.lightType = l->light.type;
                 o.angle = l->light.angle;
                 o.falloff = l->light.falloff;
+                o.areaWidth = l->light.width;
+                o.areaHeight = l->light.height;
                 const LightSettings placed = m_engine->placedLight(*l, parent, &o.lookingAt);
                 o.looks = placed.lookAt;
                 o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
@@ -581,6 +583,25 @@ void Scene3DView::paintOverlay(QPainter &p)
             p.setPen(QPen(ink, sel ? 2 : 1.4));
             p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), 110));
             p.drawPolygon(head);
+        } else if (o.lightType == 3) {
+            // An area: its rectangle, and which way it faces
+            QPolygonF shape;
+            bool whole = true;
+            for (const QPointF corner : {QPointF(-1, -1), QPointF(1, -1), QPointF(1, 1), QPointF(-1, 1)}) {
+                bool ahead;
+                shape << project(o.position + across * float(corner.x()) * o.areaWidth * 0.5f + across2 * float(corner.y()) * o.areaHeight * 0.5f, &ahead);
+                whole = whole && ahead;
+            }
+            p.setPen(QPen(ink, sel ? 2 : 1.4));
+            p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), 90));
+            if (whole) p.drawPolygon(shape);
+            else p.drawEllipse(c, 6, 6);
+            bool ahead;
+            const QPointF end = project(o.position + o.direction * handleLength() * 1.5f, &ahead);
+            if (ahead) {
+                p.setPen(QPen(faint, sel ? 1.6 : 1.2));
+                p.drawLine(c, end);
+            }
         } else if (o.lightType == 0) {
             // The sun: a disc, and parallel rays where it shines
             p.setPen(QPen(ink, sel ? 2 : 1.4));
