@@ -237,8 +237,11 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.lightType = l->light.type;
                 o.angle = l->light.angle;
                 o.falloff = l->light.falloff;
-                o.position = parent.map(QVector3D(l->light.position[0], l->light.position[1], l->light.position[2]));
-                o.direction = parent.mapVector(Camera3D::aim(l->light.yaw, l->light.pitch)).normalized();
+                const LightSettings placed = m_engine->placedLight(*l, parent, &o.lookingAt);
+                o.looks = placed.lookAt;
+                o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
+                o.direction = Camera3D::aim(placed.yaw, placed.pitch);
+                for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {
@@ -458,6 +461,23 @@ void Scene3DView::paintOverlay(QPainter &p)
             p.setPen(QPen(sel ? kSelected : kMerge, sel ? 2 : 1.4));
             p.setBrush(QColor(kMerge.red(), kMerge.green(), kMerge.blue(), 70));
             p.drawPolygon(diamond);
+        }
+    }
+    // The paths the lights go around, and what they look at
+    for (const Object &o : objs) {
+        if (!o.light) continue;
+        const QColor ink = o.id == m_selected ? kSelected : kLight;
+        const auto line = [&](const QVector3D &a, const QVector3D &b) {
+            bool frontA, frontB;
+            const QPointF pa = project(a, &frontA), pb = project(b, &frontB);
+            if (frontA && frontB) p.drawLine(pa, pb);
+        };
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(ink, o.id == m_selected ? 1.6 : 1));
+        for (size_t k = 1; k < o.path.size(); ++k) line(o.path[k - 1], o.path[k]);
+        if (o.looks) {
+            p.setPen(QPen(ink, 1, Qt::DashLine));
+            line(o.position, o.lookingAt);
         }
     }
     // The lights: where they are, where a directional light or a spot points

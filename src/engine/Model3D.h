@@ -57,6 +57,18 @@ struct LightSettings {
     float falloff = 0.35f;      // a spot's soft edge: 0 sharp, 1 a gradient from its middle to its edge
     bool shadow = true;         // its light stopped by the models (the first ones of a scene: Scene3D::kMaxShadows)
     float softness = 2;         // how soft its shadows' edge is
+    // Where it points instead of its yaw and pitch: this point of the scene, or an object (Layer::lightLookAt)
+    bool lookAt = false;
+    std::array<float, 3> lookPoint{{0, 0, 0}};
+    // It goes around a shape whose middle is its position: flat (X, Z) as it is made, then turned, a size across each way
+    int pathShape = 0; // 0 none, 1 circle, 2 rectangle
+    float pathWidth = 4, pathDepth = 4;
+    std::array<float, 3> pathRotation{{0, 0, 0}}; // degrees, around X, Y then Z
+    float pathPosition = 0, pathSpeed = 0;        // where on it (0 to 1, once around), turns per second
+    double pathTravel = 0;                        // how far its speed has taken it (not kept in a project)
+    QVector3D pathPoint(double around) const;     // on its path, 0 to 1 once around at an even pace
+    QVector3D located() const;                    // where it is now, in its Merge 3Ds' space
+    std::vector<QVector3D> pathOutline() const;   // its path to draw, closed (none: empty)
 };
 
 // A scene's camera, ambient light, background (transparent by default: the layers under it show) and exposure

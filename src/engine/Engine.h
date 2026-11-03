@@ -121,6 +121,12 @@ public:
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
     bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
+    // The 3D object of its scene a light looks at (0: its Look At's point); refused: itself, or what is not in its scene
+    bool setLightLookAt(int index, quint64 object);
+    // A light as its scene sees it (lock held): where its path and its Merge 3Ds put it, where it points; `target`: the
+    // point it looks at, when it looks at one
+    LightSettings placedLight(const Layer &light, const QMatrix4x4 &parent, QVector3D *target = nullptr);
+    QVector3D placeOf3dObject(const Layer &object); // in its scene, through its Merge 3Ds (lock held)
     bool setSceneEnvironment(int index, quint64 layer, QString *err = nullptr, int stage = -1); // a 3D scene's HDRI
     // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k, kStageHdrFile an HDR
     // image's file as read (linear, unclipped; its final picture when it has none) (render thread, lock held)

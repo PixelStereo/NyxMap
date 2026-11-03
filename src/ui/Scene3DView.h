@@ -64,6 +64,9 @@ private:
         float radius = 0.1f;           // world: what a click picks
         QVector3D rotation, axisScale{1, 1, 1};
         float scale = 1;
+        std::vector<QVector3D> path;  // a light's, world, closed
+        bool looks = false;           // a light that looks at a point:
+        QVector3D lookingAt;          // that point, world
     };
     static QVector3D axisOf(const Object &o, int axis); // where an axis of its values points in the scene
     std::vector<Object> objects() const; // the scene's shown models and lights (takes the lock)
