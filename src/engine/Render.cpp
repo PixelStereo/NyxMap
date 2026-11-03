@@ -1541,17 +1541,14 @@ void Engine::frame(double dt)
             std::vector<Scene3D::Lamp> lamps;
             collectScene(members, items, lamps);
             if (!slot.editor[m_back]) slot.editor[m_back] = std::make_shared<Scene3D>();
-            SceneSettings view = layer.scene; // its light and exposure; the view's camera and background
+            SceneSettings view = layer.scene; // the view's camera and background
             for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
             view.distance = slot.camera.distance;
             view.yaw = slot.camera.yaw;
             view.pitch = slot.camera.pitch;
             view.fov = slot.camera.fov;
             view.background = slot.camera.background;
-            const Layer *env = layer.sceneEnvironment ? this->layer(indexOfId(layer.sceneEnvironment)) : nullptr;
-            const bool linear = env && layer.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex;
-            slot.editorTex[m_back] = slot.editor[m_back]->draw(view, items, lamps, slot.sceneSize.width(), slot.sceneSize.height(),
-                                                               env ? stagePicture(*env, layer.sceneEnvironmentStage) : 0, linear, m_quality3d);
+            slot.editorTex[m_back] = slot.editor[m_back]->drawView(view, items, slot.sceneSize.width(), slot.sceneSize.height(), slot.sceneLook);
             if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
             continue;
         }

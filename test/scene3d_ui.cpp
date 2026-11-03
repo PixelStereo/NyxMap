@@ -9,6 +9,7 @@
 #include "Scene3DView.h"
 #include <QCheckBox>
 #include <QLabel>
+#include <QMenu>
 #include <QAction>
 #include <QJsonArray>
 #include <QMouseEvent>
@@ -264,6 +265,30 @@ int runScene3dUiTests(Engine &engine)
             const QImage shot = view->grabFramebuffer();
             const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
             check(middle.lightness() > 60, "the 3D view draws the scene's model");
+            // Its button: simple or unlit, saved with the view
+            auto *lookButton = view->findChild<QToolButton *>("scene3dLook");
+            check(lookButton && lookButton->menu() && lookButton->menu()->actions().size() == 2 && lookButton->text() == "Simple",
+                  "the 3D view chooses how it draws, simple at first");
+            if (lookButton && lookButton->menu()) {
+                for (QAction *action : lookButton->menu()->actions())
+                    if (action->text() == "Unlit") action->trigger();
+                for (int k = 0; k < 3; ++k) {
+                    engine.renderFrame();
+                    pump();
+                }
+                const QImage unlit = view->grabFramebuffer();
+                check(view->look() == Scene3D::ViewLook::Unlit && lookButton->text() == "Unlit", "unlit, chosen");
+                check(unlit != shot, "it draws differently");
+                check(view->viewState().value("look").toString() == "unlit", "saved with the view");
+                if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+                    shot.save(captures + "/view-simple.png");
+                    unlit.save(captures + "/view-unlit.png");
+                }
+                QJsonObject state = view->viewState();
+                state["look"] = "simple";
+                view->setViewState(state);
+                check(view->look() == Scene3D::ViewLook::Simple && lookButton->text() == "Simple", "read back");
+            }
             // Click the cube: selected; drag its X handle: it moves along X, one undo step
             const QPointF at = view->project({0, 0, 0});
             auto mouse = [&](QEvent::Type type, QPointF p, Qt::MouseButtons buttons) {

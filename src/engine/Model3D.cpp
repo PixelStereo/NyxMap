@@ -75,8 +75,31 @@ bool Model3D::load(const QString &path, QString *err)
         return false;
     }
     if (m_materials.empty()) m_materials.emplace_back();
+    m_meshesRead = int(m_meshes.size());
+    mergeMeshes();
     computeBounds();
     return true;
+}
+
+// One drawing per material: a file of thousands of parts costs as one of a few
+void Model3D::mergeMeshes()
+{
+    std::vector<Mesh> merged;
+    std::map<int, size_t> ofMaterial;
+    for (Mesh &m : m_meshes) {
+        const auto found = ofMaterial.find(m.material);
+        if (found == ofMaterial.end()) {
+            ofMaterial[m.material] = merged.size();
+            merged.push_back(std::move(m));
+            continue;
+        }
+        Mesh &into = merged[found->second];
+        const quint32 first = quint32(into.vertices.size());
+        into.vertices.insert(into.vertices.end(), m.vertices.begin(), m.vertices.end());
+        into.indices.reserve(into.indices.size() + m.indices.size());
+        for (quint32 index : m.indices) into.indices.push_back(first + index);
+    }
+    m_meshes = std::move(merged);
 }
 
 void Model3D::computeBounds()
@@ -695,7 +718,7 @@ void main() {
             if (u_type[i] == 2) att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(dot(-L, normalize(u_ldir[i])), -1.0, 1.0))); // by its angle: an even gradient
         }
         float NdL = max(dot(N, L), 0.0);
-        if (NdL <= 0.0) continue;
+        if (NdL <= 0.0 || att <= 0.0) continue; // nothing comes here: no need to know what stops it
         vec3 H = normalize(L + V);
         float NdH = max(dot(N, H), 0.0), VdH = max(dot(V, H), 0.0);
         float dd = NdH * NdH * (a * a - 1.0) + 1.0;
@@ -923,23 +946,136 @@ QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
     return m;
 }
 
-void Model3D::drawMeshes(GLuint program, GLuint picture, int pass, const ModelPlacement *look)
+void MeshUniforms::resolve(GLuint program)
 {
     auto f = gl();
-    if (!m_uploaded) {
-        m_uploaded = true;
-        uploadGl();
-    }
-    auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
-    auto image = [&](int index) -> GLuint { return index >= 0 && size_t(index) < m_textures.size() ? m_textures[size_t(index)] : 0; };
+    const auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
+    base = loc("u_base");
+    metal = loc("u_metal");
+    rough = loc("u_rough");
+    emissive = loc("u_emissive");
+    alphaMode = loc("u_alphaMode");
+    alphaCutoff = loc("u_alphaCutoff");
+    normalScale = loc("u_normalScale");
+    aoStrength = loc("u_aoStrength");
+    roughCh = loc("u_roughCh");
+    metalCh = loc("u_metalCh");
+    hasTex = loc("u_hasTex");
+    layerTex = loc("u_layerTex");
     // Its maps on units 3 to 7 (0: its base colour, 1: the displacement, 2: the environment)
-    struct Map {
-        const char *sampler, *has;
-        int unit;
-    };
-    static const Map maps[5] = {{"u_roughTex", "u_hasRough", 3}, {"u_metalTex", "u_hasMetal", 4}, {"u_normalTex", "u_hasNormal", 5},
-                                {"u_aoTexMap", "u_hasAo", 6}, {"u_emTex", "u_hasEm", 7}};
-    for (const Map &map : maps) f->glUniform1i(loc(map.sampler), map.unit);
+    static const char *const kMaps[5][2] = {{"u_roughTex", "u_hasRough"}, {"u_metalTex", "u_hasMetal"}, {"u_normalTex", "u_hasNormal"},
+                                            {"u_aoTexMap", "u_hasAo"}, {"u_emTex", "u_hasEm"}};
+    f->glUseProgram(program);
+    for (int k = 0; k < 5; ++k) {
+        f->glUniform1i(loc(kMaps[k][0]), 3 + k);
+        has[k] = loc(kMaps[k][1]);
+    }
+}
+
+void Model3D::upload()
+{
+    if (m_uploaded) return;
+    m_uploaded = true;
+    uploadGl();
+}
+
+bool Model3D::hasBlended() const
+{
+    for (const Mesh &m : m_meshes)
+        if (!m_materials.empty() && m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))].alphaMode == 2) return true;
+    return false;
+}
+
+void Model3D::drawDepth(bool picture)
+{
+    auto f = gl();
+    upload();
+    for (const Mesh &m : m_meshes) {
+        if (!m.vao) continue;
+        // A picture laid on it: all of it. Its blended surfaces hide nothing
+        if (!picture && !m_materials.empty() && m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))].alphaMode == 2) continue;
+        f->glBindVertexArray(m.vao);
+        f->glDrawElements(GL_TRIANGLES, GLsizei(m.indices.size()), GL_UNSIGNED_INT, nullptr);
+    }
+    f->glBindVertexArray(0);
+}
+
+// Its edges: not those between two faces of one flat surface (a cube has twelve, no diagonals). Above this many triangles,
+// only its sharp ones; far above, none
+void Model3D::makeEdges(Mesh &m)
+{
+    auto f = gl();
+    if (m.edgeVao) return;
+    f->glGenVertexArrays(1, &m.edgeVao);
+    f->glBindVertexArray(m.edgeVao);
+    f->glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+    f->glEnableVertexAttribArray(0);
+    f->glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, p)));
+    f->glEnableVertexAttribArray(1);
+    f->glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, n)));
+    f->glEnableVertexAttribArray(2);
+    f->glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, uv)));
+    std::vector<quint32> edges;
+    const size_t triangles = m.indices.size() / 3;
+    if (triangles <= 200000) {
+        const float flat = triangles > 20000 ? std::cos(qDegreesToRadians(30.0f)) : 0.9999f;
+        // The same point in faces that have their own normals or UVs is one point
+        std::map<std::array<qint64, 3>, quint32> points;
+        const float grid = 1e5f / std::max(m_radius, 1e-6f);
+        std::vector<quint32> point(m.vertices.size());
+        for (size_t k = 0; k < m.vertices.size(); ++k) {
+            const float *q = m.vertices[k].p;
+            point[k] = points.try_emplace({{qint64(std::llround(q[0] * grid)), qint64(std::llround(q[1] * grid)), qint64(std::llround(q[2] * grid))}}, quint32(k)).first->second;
+        }
+        struct Edge {
+            QVector3D normal;
+            bool shown = true;
+        };
+        std::map<std::pair<quint32, quint32>, Edge> seen;
+        const auto at = [&](quint32 k) { return QVector3D(m.vertices[k].p[0], m.vertices[k].p[1], m.vertices[k].p[2]); };
+        for (size_t t = 0; t < triangles; ++t) {
+            const quint32 a = point[m.indices[3 * t]], b = point[m.indices[3 * t + 1]], c = point[m.indices[3 * t + 2]];
+            const QVector3D normal = QVector3D::crossProduct(at(b) - at(a), at(c) - at(a)).normalized();
+            for (const auto &[from, to] : {std::pair(a, b), std::pair(b, c), std::pair(c, a)}) {
+                if (from == to) continue;
+                const auto [edge, isNew] = seen.try_emplace(std::minmax(from, to), Edge{normal, true});
+                if (!isNew) edge->second.shown = std::abs(QVector3D::dotProduct(edge->second.normal, normal)) < flat;
+            }
+        }
+        edges.reserve(seen.size() * 2);
+        for (const auto &[ends, edge] : seen)
+            if (edge.shown) {
+                edges.push_back(ends.first);
+                edges.push_back(ends.second);
+            }
+    }
+    m.edgeCount = GLsizei(edges.size());
+    f->glGenBuffers(1, &m.edgeIbo);
+    f->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.edgeIbo);
+    f->glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(edges.size() * sizeof(quint32)), edges.data(), GL_STATIC_DRAW);
+    f->glBindVertexArray(0);
+}
+
+void Model3D::drawEdges()
+{
+    auto f = gl();
+    upload();
+    for (Mesh &m : m_meshes) {
+        if (!m.vao) continue;
+        makeEdges(m);
+        if (!m.edgeCount) continue;
+        f->glBindVertexArray(m.edgeVao);
+        f->glDrawElements(GL_LINES, m.edgeCount, GL_UNSIGNED_INT, nullptr);
+    }
+    f->glBindVertexArray(0);
+}
+
+void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const ModelPlacement *look)
+{
+    auto f = gl();
+    upload();
+    auto image = [&](int index) -> GLuint { return index >= 0 && size_t(index) < m_textures.size() ? m_textures[size_t(index)] : 0; };
+    GLuint bound[5] = {}; // what is on its maps' units: nothing when it starts, nothing when it ends
     for (const Mesh &m : m_meshes) {
         if (!m.vao) continue;
         Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
@@ -956,36 +1092,39 @@ void Model3D::drawMeshes(GLuint program, GLuint picture, int pass, const ModelPl
             mat.alphaMode = 0;
         }
         if ((mat.alphaMode == 2) != (pass == 1)) continue; // the blended ones after the others
-        f->glUniform4f(loc("u_base"), mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
-        f->glUniform1f(loc("u_metal"), mat.metallic);
-        f->glUniform1f(loc("u_rough"), mat.roughness);
-        f->glUniform3f(loc("u_emissive"), mat.emissive[0], mat.emissive[1], mat.emissive[2]);
-        f->glUniform1i(loc("u_alphaMode"), picture ? 2 : mat.alphaMode); // a picture keeps its alpha
-        f->glUniform1f(loc("u_alphaCutoff"), mat.alphaCutoff);
-        f->glUniform1f(loc("u_normalScale"), mat.normalScale);
-        f->glUniform1f(loc("u_aoStrength"), mat.aoStrength);
+        f->glUniform4f(u.base, mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
+        f->glUniform1f(u.metal, mat.metallic);
+        f->glUniform1f(u.rough, mat.roughness);
+        f->glUniform3f(u.emissive, mat.emissive[0], mat.emissive[1], mat.emissive[2]);
+        f->glUniform1i(u.alphaMode, picture ? 2 : mat.alphaMode); // a picture keeps its alpha
+        f->glUniform1f(u.alphaCutoff, mat.alphaCutoff);
+        f->glUniform1f(u.normalScale, mat.normalScale);
+        f->glUniform1f(u.aoStrength, mat.aoStrength);
         auto channel = [](int c) { return QVector4D(c == 0, c == 1, c == 2, c == 3); };
         const QVector4D rc = channel(mat.roughChannel), mc = channel(mat.metalChannel);
-        f->glUniform4f(loc("u_roughCh"), rc.x(), rc.y(), rc.z(), rc.w());
-        f->glUniform4f(loc("u_metalCh"), mc.x(), mc.y(), mc.z(), mc.w());
+        f->glUniform4f(u.roughCh, rc.x(), rc.y(), rc.z(), rc.w());
+        f->glUniform4f(u.metalCh, mc.x(), mc.y(), mc.z(), mc.w());
         const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
         for (int k = 0; k < 5; ++k) {
             const GLuint t = image(indices[k]);
-            f->glUniform1i(loc(maps[k].has), t ? 1 : 0);
-            f->glActiveTexture(GL_TEXTURE0 + GLenum(maps[k].unit));
+            f->glUniform1i(u.has[k], t ? 1 : 0);
+            if (t == bound[k]) continue;
+            bound[k] = t;
+            f->glActiveTexture(GL_TEXTURE3 + GLenum(k));
             f->glBindTexture(GL_TEXTURE_2D, t);
         }
         f->glActiveTexture(GL_TEXTURE0);
         const bool textured = picture || image(mat.texture);
-        f->glUniform1i(loc("u_hasTex"), textured ? 1 : 0);
-        f->glUniform1i(loc("u_layerTex"), picture ? 1 : 0);
+        f->glUniform1i(u.hasTex, textured ? 1 : 0);
+        f->glUniform1i(u.layerTex, picture ? 1 : 0);
         f->glBindTexture(GL_TEXTURE_2D, picture ? picture : image(mat.texture));
         f->glBindVertexArray(m.vao);
         f->glDrawElements(GL_TRIANGLES, GLsizei(m.indices.size()), GL_UNSIGNED_INT, nullptr);
     }
     f->glBindVertexArray(0);
-    for (const Map &map : maps) {
-        f->glActiveTexture(GL_TEXTURE0 + GLenum(map.unit));
+    for (int k = 0; k < 5; ++k) {
+        if (!bound[k]) continue;
+        f->glActiveTexture(GL_TEXTURE3 + GLenum(k));
         f->glBindTexture(GL_TEXTURE_2D, 0);
     }
     f->glActiveTexture(GL_TEXTURE0);
@@ -1020,7 +1159,10 @@ void Model3D::releaseMeshes()
         if (m.vao) f->glDeleteVertexArrays(1, &m.vao);
         if (m.vbo) f->glDeleteBuffers(1, &m.vbo);
         if (m.ibo) f->glDeleteBuffers(1, &m.ibo);
-        m.vao = m.vbo = m.ibo = 0;
+        if (m.edgeVao) f->glDeleteVertexArrays(1, &m.edgeVao);
+        if (m.edgeIbo) f->glDeleteBuffers(1, &m.edgeIbo);
+        m.vao = m.vbo = m.ibo = m.edgeVao = m.edgeIbo = 0;
+        m.edgeCount = 0;
     }
     for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
     m_textures.clear();
@@ -1035,7 +1177,10 @@ void Model3D::releaseGl()
         if (m.vao) f->glDeleteVertexArrays(1, &m.vao);
         if (m.vbo) f->glDeleteBuffers(1, &m.vbo);
         if (m.ibo) f->glDeleteBuffers(1, &m.ibo);
-        m.vao = m.vbo = m.ibo = 0;
+        if (m.edgeVao) f->glDeleteVertexArrays(1, &m.edgeVao);
+        if (m.edgeIbo) f->glDeleteBuffers(1, &m.edgeIbo);
+        m.vao = m.vbo = m.ibo = m.edgeVao = m.edgeIbo = 0;
+        m.edgeCount = 0;
     }
     for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
     m_textures.clear();
@@ -1104,23 +1249,40 @@ bool Scene3D::copyEnvironment(GLuint source)
 }
 
 // Where an item is: a sphere around it
-static std::pair<QVector3D, float> sphereOf(const Scene3D::Item &item)
-{
-    const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
-    const float size = std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
-    return {m.map(item.model->center()), item.model->radius() * size};
+// A model where it is in this frame: its matrix and the sphere around it, worked out once
+namespace {
+struct Placed {
+    const Scene3D::Item *item = nullptr;
+    QMatrix4x4 model;
+    QMatrix3x3 normal;
+    QVector3D center;
+    float radius = 0;
+};
 }
 // Whether that sphere is seen through a camera's matrix. A bent or pushed model is not where its sphere says: always
-static bool inView(const QMatrix4x4 &viewProj, const Scene3D::Item &item)
+static bool inView(const QMatrix4x4 &viewProj, const Placed &p)
 {
-    if (item.placement.bend != 0 || item.displace) return true;
-    const auto [c, r] = sphereOf(item);
+    if (p.item->placement.bend != 0 || p.item->displace) return true;
     const QVector4D row0 = viewProj.row(0), row1 = viewProj.row(1), row2 = viewProj.row(2), row3 = viewProj.row(3);
     for (const QVector4D &plane : {row3 + row0, row3 - row0, row3 + row1, row3 - row1, row3 + row2, row3 - row2}) {
         const float length = plane.toVector3D().length();
-        if (length > 1e-6f && QVector3D::dotProduct(plane.toVector3D(), c) + plane.w() < -r * length) return false;
+        if (length > 1e-6f && QVector3D::dotProduct(plane.toVector3D(), p.center) + plane.w() < -p.radius * length) return false;
     }
     return true;
+}
+
+void Scene3D::PlaceUniforms::resolve(GLuint program)
+{
+    auto f = gl();
+    const auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
+    model = loc("u_model");
+    normal = loc("u_normal");
+    bend = loc("u_bend");
+    bendCx = loc("u_bendCx");
+    bendW = loc("u_bendW");
+    hasDisp = loc("u_hasDisp");
+    dispAmount = loc("u_dispAmount");
+    dispMid = loc("u_dispMid");
 }
 
 bool Scene3D::lite(const QString &renderer)
@@ -1152,6 +1314,14 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         m_sky = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kSkyFragment), &log);
         if (!m_sky) qWarning("3D environment shader: %s", qPrintable(log));
         f->glGenVertexArrays(1, &m_skyVao);
+        if (m_program) {
+            m_meshUniforms.resolve(m_program);
+            m_placeMain.resolve(m_program);
+            m_unlitAt = f->glGetUniformLocation(m_program, "u_unlit");
+            m_flatAt = f->glGetUniformLocation(m_program, "u_flat");
+        }
+        if (m_shadowProgram) m_placeDepth.resolve(m_shadowProgram);
+        if (m_pointProgram) m_placePoint.resolve(m_pointProgram);
     }
     // An HDR file's picture does not change: copied and blurred once
     bool hasEnv = environment && environmentLinear && environment == m_envSource && m_env;
@@ -1161,12 +1331,23 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
     const float envMaxLod = std::log2(float(kEnvW));
     if (!m_program) return 0;
+    std::vector<Placed> placed;
+    placed.reserve(items.size());
+    for (const Item &item : items) {
+        if (!item.model) continue;
+        Placed &p = placed.emplace_back();
+        p.item = &item;
+        p.model = item.parent * item.model->matrix(item.placement);
+        p.center = p.model.map(item.model->center());
+        p.radius = item.model->radius() * std::max({p.model.column(0).toVector3D().length(), p.model.column(1).toVector3D().length(), p.model.column(2).toVector3D().length()});
+    }
     // Nothing changed for a few frames (a reflection reads the frame before, so it takes a few to settle): its picture is
     // kept. A layer's picture on a model or around the scene can change at any frame
     {
         QByteArray key;
         const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
-        bool could = !environment;
+        bool could = !environment || hasEnv && environment == m_envSource; // an HDR file's picture does not change
+        add(&environment, sizeof environment);
         add(&w, sizeof w);
         add(&h, sizeof h);
         const auto addScene = [&] {
@@ -1179,13 +1360,12 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         };
         addScene();
         add(&quality, sizeof quality);
-        for (const Item &item : items) {
-            if (!item.model) continue;
+        for (const Placed &placedItem : placed) {
+            const Item &item = *placedItem.item;
             could = could && !item.picture && !item.displace;
             const Model3D *which = item.model.get();
             add(&which, sizeof which);
-            const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
-            add(m.constData(), sizeof(float) * 16);
+            add(placedItem.model.constData(), sizeof(float) * 16);
             const ModelPlacement &p = item.placement;
             add(p.color.data(), sizeof(float) * 3);
             for (float v : {p.metal, p.rough, p.bend}) add(&v, sizeof v);
@@ -1209,6 +1389,21 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         }
         m_frameKey = key;
     }
+    for (Placed &p : placed) p.normal = p.model.normalMatrix();
+    const auto place = [&](const PlaceUniforms &u, const Placed &p) {
+        const Item &item = *p.item;
+        f->glUniformMatrix4fv(u.model, 1, GL_FALSE, p.model.constData());
+        f->glUniformMatrix3fv(u.normal, 1, GL_FALSE, p.normal.constData());
+        f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
+        f->glUniform1f(u.bendCx, item.model->centerX());
+        f->glUniform1f(u.bendW, item.model->width());
+        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform1f(u.dispAmount, item.displaceAmount);
+        f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glActiveTexture(GL_TEXTURE1);
+        f->glBindTexture(GL_TEXTURE_2D, item.displace);
+        f->glActiveTexture(GL_TEXTURE0);
+    };
     const int aaLevel = m_lite ? 0 : std::clamp(quality.antialiasing, 0, 3);
     GLint maxSamples = 1;
     f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
@@ -1279,8 +1474,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
 
     int computed = 0, total = 0;
-    for (const Item &item : items)
-        if (item.model) total += item.model->triangleCount();
+    for (const Placed &p : placed) total += p.item->model->triangleCount();
     m_triangles = total;
     // The lights' views of the models: what each shadow is read from
     QMatrix4x4 shadowMatrices[kMaxShadows];
@@ -1297,7 +1491,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glDeleteTextures(kMaxPointShadows, m_pointMaps);
         m_shadowMaps = m_pointMaps[0] = m_pointMaps[1] = 0;
         m_shadowSize = shadowSize;
-        m_shadowKey.clear();
+        std::fill(std::begin(m_shadowFresh), std::end(m_shadowFresh), false);
+        std::fill(std::begin(m_pointFresh), std::end(m_pointFresh), false);
     }
     QVector3D pointAt[kMaxPointShadows];
     float pointFar[kMaxPointShadows] = {}, pointSoft[kMaxPointShadows] = {};
@@ -1305,25 +1500,21 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         // All the models, in a sphere
         QVector3D center;
         float weight = 0, reach = 0;
-        const auto sphere = [](const Item &item) { return sphereOf(item); };
         // Leaving out what is far larger than the others: a floor, a wall only receive shadows, and the maps stay sharp
         std::vector<float> sizes;
-        for (const Item &item : items)
-            if (item.model && !item.placement.unlit) sizes.push_back(sphere(item).second);
+        for (const Placed &p : placed)
+            if (!p.item->placement.unlit) sizes.push_back(p.radius);
         std::sort(sizes.begin(), sizes.end());
         const float largest = sizes.empty() ? 0.0f : sizes[sizes.size() / 2] * 4;
-        const auto casts = [&](const Item &item) { return item.model && !item.placement.unlit && sphere(item).second <= largest; };
-        for (const Item &item : items)
-            if (casts(item)) {
-                center += sphere(item).first;
+        const auto casts = [&](const Placed &p) { return !p.item->placement.unlit && p.radius <= largest; };
+        for (const Placed &p : placed)
+            if (casts(p)) {
+                center += p.center;
                 weight += 1;
             }
         if (weight > 0) center /= weight;
-        for (const Item &item : items)
-            if (casts(item)) {
-                const auto [c, r] = sphere(item);
-                reach = std::max(reach, (c - center).length() + r);
-            }
+        for (const Placed &p : placed)
+            if (casts(p)) reach = std::max(reach, (p.center - center).length() + p.radius);
         int lightIndex = 0;
         for (const Lamp &lamp : lamps) {
             const LightSettings &l = lamp.light;
@@ -1365,52 +1556,53 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             shadowRadii[slot] = std::max(0.0f, l.softness) * 2.0f / float(shadowSize);
             shadowBiases[slot] = texel * 1.5f + across * 0.0008f * std::max(0.0f, l.softness);
         }
-        // Its maps drawn again only when what they show has changed. A picture pushing a model's points can change at
-        // any frame
+        // A map drawn again only when what it shows has changed: the models that cast, or its own light (one light moving
+        // leaves the others'). A picture pushing a model's points can change at any frame
         QByteArray key;
         bool still = true;
         const auto addTo = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
-        for (const Item &item : items)
-            if (casts(item)) {
-                const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
+        for (const Placed &p : placed)
+            if (casts(p)) {
+                const Item &item = *p.item;
                 const Model3D *which = item.model.get();
                 addTo(&which, sizeof which);
-                addTo(m.constData(), sizeof(float) * 16);
+                addTo(p.model.constData(), sizeof(float) * 16);
                 addTo(&item.placement.bend, sizeof(float));
                 addTo(&item.placement.detail, sizeof(int));
                 still = still && !item.displace;
             }
-        for (int slot = 0; slot < shadows; ++slot) addTo(shadowMatrices[slot].constData(), sizeof(float) * 16);
-        for (int slot = 0; slot < pointShadows; ++slot) {
-            addTo(&pointAt[slot], sizeof(QVector3D));
-            addTo(&pointFar[slot], sizeof(float));
-        }
-        addTo(&shadows, sizeof shadows);
-        addTo(&pointShadows, sizeof pointShadows);
-        const bool again = !still || key != m_shadowKey;
+        const bool castersMoved = !still || key != m_shadowKey;
         m_shadowKey = key;
-        if (again && (shadows || pointShadows)) ++m_shadowRenders;
-        const auto drawCasters = [&](GLuint program, const QMatrix4x4 &lightSees) {
-            auto where = [&](const char *name) { return f->glGetUniformLocation(program, name); };
-            for (const Item &item : items) {
-                if (!casts(item) || !inView(lightSees, item)) continue; // a screen gives light, a floor or a wall only receives
-                computed += item.model->triangleCount();
-                const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
-                f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
-                f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
-                f->glUniform1f(where("u_bend"), qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
-                f->glUniform1f(where("u_bendCx"), item.model->centerX());
-                f->glUniform1f(where("u_bendW"), item.model->width());
-                f->glUniform1i(where("u_hasDisp"), item.displace ? 1 : 0);
-                f->glUniform1f(where("u_dispAmount"), item.displaceAmount);
-                f->glUniform1f(where("u_dispMid"), item.displaceMid);
-                f->glActiveTexture(GL_TEXTURE1);
-                f->glBindTexture(GL_TEXTURE_2D, item.displace);
-                f->glActiveTexture(GL_TEXTURE0);
-                item.model->drawMeshes(program, item.picture, 0, &item.placement);
+        bool shadowAgain[kMaxShadows] = {}, pointAgain[kMaxPointShadows] = {};
+        bool anyShadow = false, anyPoint = false;
+        for (int slot = 0; slot < kMaxShadows; ++slot) {
+            const bool used = slot < shadows;
+            shadowAgain[slot] = used && (castersMoved || !m_shadowFresh[slot] || shadowMatrices[slot] != m_shadowSeen[slot]);
+            if (used) m_shadowSeen[slot] = shadowMatrices[slot];
+            m_shadowFresh[slot] = used; // not drawn while it is not used: drawn when it is used again
+            anyShadow = anyShadow || shadowAgain[slot];
+        }
+        for (int slot = 0; slot < kMaxPointShadows; ++slot) {
+            const bool used = slot < pointShadows;
+            pointAgain[slot] = used && (castersMoved || !m_pointFresh[slot] || pointAt[slot] != m_pointSeenAt[slot] || pointFar[slot] != m_pointSeenFar[slot]);
+            if (used) {
+                m_pointSeenAt[slot] = pointAt[slot];
+                m_pointSeenFar[slot] = pointFar[slot];
+            }
+            m_pointFresh[slot] = used;
+            anyPoint = anyPoint || pointAgain[slot];
+        }
+        if (anyShadow || anyPoint) ++m_shadowRenders;
+        m_mapsDrawn += int(std::count(std::begin(shadowAgain), std::end(shadowAgain), true)) + int(std::count(std::begin(pointAgain), std::end(pointAgain), true));
+        const auto drawCasters = [&](const PlaceUniforms &u, const QMatrix4x4 &lightSees) {
+            for (const Placed &p : placed) {
+                if (!casts(p) || !inView(lightSees, p)) continue; // a screen gives light, a floor or a wall only receives
+                computed += p.item->model->triangleCount();
+                place(u, p);
+                p.item->model->drawDepth(p.item->picture != 0);
             }
         };
-        if (again && pointShadows) {
+        if (anyPoint) {
             if (!m_shadowFbo) f->glGenFramebuffers(1, &m_shadowFbo);
             f->glBindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
             const GLenum none = GL_NONE;
@@ -1427,6 +1619,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             static const QVector3D kLook[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             static const QVector3D kUp[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
             for (int slot = 0; slot < pointShadows; ++slot) {
+                if (!pointAgain[slot]) continue;
                 if (!m_pointMaps[slot]) {
                     f->glGenTextures(1, &m_pointMaps[slot]);
                     f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
@@ -1451,13 +1644,13 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                     faceProj.perspective(90, 1, 0.02f, pointFar[slot]);
                     f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, faceView.constData());
                     f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, faceProj.constData());
-                    drawCasters(m_pointProgram, faceProj * faceView);
+                    drawCasters(m_placePoint, faceProj * faceView);
                 }
             }
             // The array of maps goes back on this framebuffer below
             f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
         }
-        if (again && shadows) {
+        if (anyShadow) {
             if (!m_shadowMaps) {
                 f->glGenTextures(1, &m_shadowMaps);
                 f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
@@ -1488,10 +1681,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, identity.constData());
             f->glUniform1i(where("u_disp"), 1);
             for (int slot = 0; slot < shadows; ++slot) {
+                if (!shadowAgain[slot]) continue;
                 f->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_shadowMaps, 0, slot);
                 f->glClear(GL_DEPTH_BUFFER_BIT);
                 f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, shadowMatrices[slot].constData());
-                drawCasters(m_shadowProgram, shadowMatrices[slot]);
+                drawCasters(m_placeDepth, shadowMatrices[slot]);
             }
             f->glDisable(GL_POLYGON_OFFSET_FILL);
         }
@@ -1502,15 +1696,15 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     const QVector3D eye = cam.eye;
     const int contactLevel = m_lite ? 0 : std::clamp(quality.contact, 0, 3), reflectLevel = m_lite ? 0 : std::clamp(quality.reflections, 0, 3);
     // What the camera sees, the nearest first: what is behind is then hidden before it costs anything
-    std::vector<const Item *> nearestFirst;
+    std::vector<const Placed *> nearestFirst;
     {
         const QMatrix4x4 sees = proj * view;
-        for (const Item &item : items)
-            if (item.model && inView(sees, item)) nearestFirst.push_back(&item);
-        std::vector<std::pair<float, const Item *>> byDistance;
-        for (const Item *item : nearestFirst) byDistance.push_back({(sphereOf(*item).first - eye).lengthSquared(), item});
+        std::vector<std::pair<float, const Placed *>> byDistance;
+        for (const Placed &p : placed)
+            if (inView(sees, p)) byDistance.push_back({(p.center - eye).lengthSquared(), &p});
         std::stable_sort(byDistance.begin(), byDistance.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
-        for (size_t k = 0; k < byDistance.size(); ++k) nearestFirst[k] = byDistance[k].second;
+        nearestFirst.reserve(byDistance.size());
+        for (const auto &near : byDistance) nearestFirst.push_back(near.second);
     }
     const bool wantsAo = contactLevel && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
     const float reflections = reflectLevel ? s.reflections : 0.0f;
@@ -1527,22 +1721,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, view.constData());
         f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, proj.constData());
         f->glUniform1i(where("u_disp"), 1);
-        for (const Item *near : nearestFirst) {
-            const Item &item = *near;
-            computed += item.model->triangleCount();
-            const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
-            f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
-            f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
-            f->glUniform1f(where("u_bend"), qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
-            f->glUniform1f(where("u_bendCx"), item.model->centerX());
-            f->glUniform1f(where("u_bendW"), item.model->width());
-            f->glUniform1i(where("u_hasDisp"), item.displace ? 1 : 0);
-            f->glUniform1f(where("u_dispAmount"), item.displaceAmount);
-            f->glUniform1f(where("u_dispMid"), item.displaceMid);
-            f->glActiveTexture(GL_TEXTURE1);
-            f->glBindTexture(GL_TEXTURE_2D, item.displace);
-            f->glActiveTexture(GL_TEXTURE0);
-            item.model->drawMeshes(m_shadowProgram, item.picture, 0, &item.placement);
+        for (const Placed *near : nearestFirst) {
+            computed += near->item->model->triangleCount();
+            place(m_placeDepth, *near);
+            near->item->model->drawDepth(near->item->picture != 0);
         }
     }
     if (wantsAo) {
@@ -1696,29 +1878,19 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     for (int pass = 0; pass < 2; ++pass)
     for (size_t order = 0; order < nearestFirst.size(); ++order) {
         // The opaque ones nearest first; the blended ones over them, farthest first
-        const Item &item = *nearestFirst[pass == 0 ? order : nearestFirst.size() - 1 - order];
+        const Placed &p = *nearestFirst[pass == 0 ? order : nearestFirst.size() - 1 - order];
+        const Item &item = *p.item;
+        if (pass == 1 && (item.picture || !item.model->hasBlended())) continue;
         if (pass == 0) computed += item.model->triangleCount();
-        const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
-        f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
-        f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
-        const float bend = qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f));
-        f->glUniform1f(loc("u_bend"), bend);
-        f->glUniform1f(loc("u_bendCx"), item.model->centerX());
-        f->glUniform1f(loc("u_bendW"), item.model->width());
-        f->glUniform1i(loc("u_unlit"), item.placement.unlit ? 1 : 0);
-        f->glUniform1i(loc("u_flat"), item.placement.shading == 2 ? 1 : 0);
-        f->glUniform1i(loc("u_hasDisp"), item.displace ? 1 : 0);
-        f->glUniform1f(loc("u_dispAmount"), item.displaceAmount);
-        f->glUniform1f(loc("u_dispMid"), item.displaceMid);
-        f->glActiveTexture(GL_TEXTURE1);
-        f->glBindTexture(GL_TEXTURE_2D, item.displace);
-        f->glActiveTexture(GL_TEXTURE0);
+        place(m_placeMain, p);
+        f->glUniform1i(m_unlitAt, item.placement.unlit ? 1 : 0);
+        f->glUniform1i(m_flatAt, item.placement.shading == 2 ? 1 : 0);
         if (pass == 1) {
             f->glEnable(GL_BLEND);
             f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied
             f->glDepthMask(GL_FALSE);
         }
-        item.model->drawMeshes(m_program, item.picture, pass, &item.placement);
+        item.model->drawMeshes(m_meshUniforms, item.picture, pass, &item.placement);
         if (pass == 1) {
             f->glDisable(GL_BLEND);
             f->glDepthMask(GL_TRUE);
@@ -1751,10 +1923,196 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     return m_color;
 }
 
+// What a 3D view draws, nothing of the lights in it. Simple: each model in one flat colour with its edges. Unlit: its colours
+// and pictures as they are
+static const char *kUnlitFragment = R"(#version 330 core
+in vec2 v_uv; out vec4 o;
+uniform vec4 u_base; uniform vec3 u_emissive; uniform int u_hasTex, u_layerTex, u_alphaMode; uniform float u_alphaCutoff; uniform sampler2D u_tex;
+void main() {
+    vec4 c = u_base;
+    if (u_hasTex != 0) {
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        c *= vec4(pow(t.rgb, vec3(2.2)), t.a);
+    }
+    if (u_alphaMode == 1 && c.a < u_alphaCutoff) discard;
+    if (u_alphaMode == 0) c.a = 1.0;
+    o = vec4(pow(clamp(c.rgb + u_emissive, 0.0, 1.0), vec3(1.0 / 2.2)) * c.a, c.a); // premultiplied
+}
+)";
+
+GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items, int w, int h, ViewLook look)
+{
+    if (w <= 0 || h <= 0) return 0;
+    auto f = gl();
+    if (!m_plainProgram) {
+        QString log;
+        m_plainProgram = compileProgram(QString::fromLatin1(kVertex),
+                                        QStringLiteral("#version 330 core\nuniform vec4 u_ink; out vec4 o; void main() { o = u_ink; }\n"), &log);
+        if (!m_plainProgram) {
+            qWarning("3D plain shader: %s", qPrintable(log));
+            return 0;
+        }
+        m_placePlain.resolve(m_plainProgram);
+    }
+    if (look == ViewLook::Unlit && !m_unlitProgram) {
+        QString log;
+        m_unlitProgram = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kUnlitFragment), &log);
+        if (!m_unlitProgram) {
+            qWarning("3D unlit shader: %s", qPrintable(log));
+            return 0;
+        }
+        m_placeUnlit.resolve(m_unlitProgram);
+        m_unlitUniforms.resolve(m_unlitProgram);
+    }
+    // Nothing changed: its picture is kept. A layer's picture, shown or pushing a model's points, can change at any frame
+    QByteArray key;
+    bool could = true;
+    const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
+    add(&look, sizeof look);
+    for (float v : {s.distance, s.yaw, s.pitch, s.fov}) add(&v, sizeof v);
+    add(s.target.data(), sizeof(float) * 3);
+    add(s.background.data(), sizeof(float) * 4);
+    std::vector<Placed> placed;
+    placed.reserve(items.size());
+    for (const Item &item : items) {
+        if (!item.model) continue;
+        Placed &p = placed.emplace_back();
+        p.item = &item;
+        p.model = item.parent * item.model->matrix(item.placement);
+        p.center = p.model.map(item.model->center());
+        p.radius = item.model->radius() * std::max({p.model.column(0).toVector3D().length(), p.model.column(1).toVector3D().length(), p.model.column(2).toVector3D().length()});
+        could = could && !item.displace && !(look == ViewLook::Unlit && item.picture);
+        const Model3D *which = item.model.get();
+        add(&which, sizeof which);
+        add(p.model.constData(), sizeof(float) * 16);
+        add(item.placement.color.data(), sizeof(float) * 3);
+        add(&item.placement.bend, sizeof(float));
+        add(&item.placement.detail, sizeof(int));
+    }
+    if (!m_plainFbo || w != m_w || h != m_h) {
+        if (m_plainFbo) {
+            f->glDeleteFramebuffers(1, &m_plainFbo);
+            f->glDeleteTextures(1, &m_plainColor);
+            f->glDeleteRenderbuffers(1, &m_plainDepth);
+        }
+        m_w = w;
+        m_h = h;
+        m_frameKey.clear();
+        f->glGenTextures(1, &m_plainColor);
+        f->glBindTexture(GL_TEXTURE_2D, m_plainColor);
+        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        f->glBindTexture(GL_TEXTURE_2D, 0);
+        f->glGenRenderbuffers(1, &m_plainDepth);
+        f->glBindRenderbuffer(GL_RENDERBUFFER, m_plainDepth);
+        f->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        f->glGenFramebuffers(1, &m_plainFbo);
+        f->glBindFramebuffer(GL_FRAMEBUFFER, m_plainFbo);
+        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_plainColor, 0);
+        f->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_plainDepth);
+    }
+    int total = 0;
+    for (const Placed &p : placed) total += p.item->model->triangleCount();
+    m_triangles = total;
+    if (could && key == m_frameKey) {
+        m_computed = 0;
+        return m_plainColor;
+    }
+    m_frameKey = key;
+    const Camera3D cam = Camera3D::of(s, float(w) / float(h));
+    const QMatrix4x4 sees = cam.proj * cam.view;
+    f->glBindFramebuffer(GL_FRAMEBUFFER, m_plainFbo);
+    f->glViewport(0, 0, w, h);
+    const float a = s.background[3];
+    f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
+    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    f->glEnable(GL_DEPTH_TEST);
+    f->glDepthFunc(GL_LEQUAL);
+    f->glDisable(GL_BLEND);
+    f->glDisable(GL_CULL_FACE);
+    const GLuint program = look == ViewLook::Unlit ? m_unlitProgram : m_plainProgram;
+    const PlaceUniforms &u = look == ViewLook::Unlit ? m_placeUnlit : m_placePlain;
+    f->glUseProgram(program);
+    f->glUniformMatrix4fv(f->glGetUniformLocation(program, "u_view"), 1, GL_FALSE, cam.view.constData());
+    f->glUniformMatrix4fv(f->glGetUniformLocation(program, "u_proj"), 1, GL_FALSE, cam.proj.constData());
+    f->glUniform1i(f->glGetUniformLocation(program, "u_disp"), 1);
+    f->glUniform1i(f->glGetUniformLocation(program, "u_tex"), 0);
+    const GLint ink = f->glGetUniformLocation(program, "u_ink");
+    const auto place = [&](Placed &p) {
+        const Item &item = *p.item;
+        p.normal = p.model.normalMatrix();
+        f->glUniformMatrix4fv(u.model, 1, GL_FALSE, p.model.constData());
+        f->glUniformMatrix3fv(u.normal, 1, GL_FALSE, p.normal.constData());
+        f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
+        f->glUniform1f(u.bendCx, item.model->centerX());
+        f->glUniform1f(u.bendW, item.model->width());
+        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform1f(u.dispAmount, item.displaceAmount);
+        f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glActiveTexture(GL_TEXTURE1);
+        f->glBindTexture(GL_TEXTURE_2D, item.displace);
+        f->glActiveTexture(GL_TEXTURE0);
+    };
+    int computed = 0;
+    if (look == ViewLook::Unlit) {
+        // The opaque surfaces, then the blended ones over them (their depth not written: what is behind them still shows)
+        for (int pass = 0; pass < 2; ++pass)
+            for (Placed &p : placed) {
+                if (!inView(sees, p)) continue;
+                const Item &item = *p.item;
+                if (pass == 1 && (item.picture || !item.model->hasBlended())) continue;
+                if (pass == 0) computed += item.model->triangleCount();
+                place(p);
+                if (pass == 1) {
+                    f->glEnable(GL_BLEND);
+                    f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied
+                    f->glDepthMask(GL_FALSE);
+                }
+                item.model->drawMeshes(m_unlitUniforms, item.picture, pass, &item.placement);
+                if (pass == 1) {
+                    f->glDisable(GL_BLEND);
+                    f->glDepthMask(GL_TRUE);
+                }
+            }
+    } else {
+        f->glEnable(GL_POLYGON_OFFSET_FILL); // behind its own edges
+        f->glPolygonOffset(1.0f, 1.0f);
+        for (Placed &p : placed) {
+            if (!inView(sees, p)) continue;
+            const Item &item = *p.item;
+            computed += item.model->triangleCount();
+            place(p);
+            const auto &c = item.placement.color;
+            f->glUniform4f(ink, c[0] * 0.4f, c[1] * 0.4f, c[2] * 0.4f, 1);
+            item.model->drawDepth(true);
+            f->glUniform4f(ink, c[0] * 0.4f + 0.45f, c[1] * 0.4f + 0.45f, c[2] * 0.4f + 0.45f, 1);
+            item.model->drawEdges();
+        }
+        f->glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+    f->glActiveTexture(GL_TEXTURE1);
+    f->glBindTexture(GL_TEXTURE_2D, 0);
+    f->glActiveTexture(GL_TEXTURE0);
+    f->glDisable(GL_DEPTH_TEST);
+    m_computed = computed;
+    ++m_framesDrawn;
+    return m_plainColor;
+}
+
 void Scene3D::releaseGl()
 {
     if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
+    if (m_plainProgram) f->glDeleteProgram(m_plainProgram);
+    if (m_unlitProgram) f->glDeleteProgram(m_unlitProgram);
+    m_unlitProgram = 0;
+    if (m_plainFbo) f->glDeleteFramebuffers(1, &m_plainFbo);
+    if (m_plainColor) f->glDeleteTextures(1, &m_plainColor);
+    if (m_plainDepth) f->glDeleteRenderbuffers(1, &m_plainDepth);
+    m_plainProgram = m_plainFbo = m_plainColor = m_plainDepth = 0;
     if (m_program) f->glDeleteProgram(m_program);
     if (m_sky) f->glDeleteProgram(m_sky);
     if (m_skyVao) f->glDeleteVertexArrays(1, &m_skyVao);
@@ -1782,6 +2140,8 @@ void Scene3D::releaseGl()
     m_pointProgram = m_preFbo = m_preDepth = m_aoProgram = m_aoBlurProgram = m_aoFbo = 0;
     m_pointMaps[0] = m_pointMaps[1] = m_aoTex[0] = m_aoTex[1] = 0;
     m_shadowKey.clear();
+    std::fill(std::begin(m_shadowFresh), std::end(m_shadowFresh), false);
+    std::fill(std::begin(m_pointFresh), std::end(m_pointFresh), false);
     m_frameKey.clear();
     m_envSource = 0;
     m_stillFrames = 0;

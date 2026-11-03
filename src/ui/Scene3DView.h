@@ -34,6 +34,8 @@ public:
     void frameSelection();       // turns around what is selected (the scene's middle when nothing is)
     QJsonObject viewState() const;
     void setViewState(const QJsonObject &o);
+    Scene3D::ViewLook look() const { return m_look; }
+    void setLook(Scene3D::ViewLook look); // how it draws the models
     QPointF project(const QVector3D &p, bool *front = nullptr) const; // a world point in the widget
     float handleLength() const;                                       // world: a handle's length here
 
@@ -90,6 +92,8 @@ private:
     SceneSettings m_cam;
     Mode m_mode = Mode::Move;
     QToolButton *m_modeButtons[3] = {};
+    QToolButton *m_lookButton = nullptr;
+    Scene3D::ViewLook m_look = Scene3D::ViewLook::Simple;
     // Gesture
     enum class Drag { None, Orbit, Pan, Handle } m_drag = Drag::None;
     QPointF m_press, m_last;
