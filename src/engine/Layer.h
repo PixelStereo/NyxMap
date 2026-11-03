@@ -390,6 +390,7 @@ struct Layer {
     ModelPlacement modelPlacement;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
     quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
+    quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)
     // Where those layers' pictures are taken (as an FX mask's): -1 their final picture, 0 their source (before their
     // FX), k after their FX k
     int modelPictureStage = -1, modelDisplaceStage = -1;

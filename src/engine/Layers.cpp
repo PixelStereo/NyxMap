@@ -424,6 +424,26 @@ bool Engine::setSceneEnvironment(int i, quint64 env, QString *err, int stage)
     return true;
 }
 
+bool Engine::setLightLookAt(int i, quint64 object)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Light) return false;
+        if (object) {
+            const auto sceneOf = [this](const Layer *o) {
+                while (o && !o->scene3d) o = o->parent ? layer(indexOfId(o->parent)) : nullptr;
+                return o;
+            };
+            const Layer *o = layer(indexOfId(object));
+            if (!o || o == l || !o->is3dObject() || sceneOf(o) != sceneOf(l)) return false;
+        }
+        l->lightLookAt = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
 // A light of a 3D scene (the layer goes into its scene with setStructure)
 bool Engine::setLayerLight(int i)
 {

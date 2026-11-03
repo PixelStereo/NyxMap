@@ -774,6 +774,24 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("light/softness", "Light › Shadow Softness", 0, 16, d.softness, &lt->softness).step(0.1);
         num("light/level", "Light › Level", 0, 1, 1.0, [self] { return double(self->opacity); },
             [self](double v) { self->opacity = float(v); });
+        flag("light/lookat", "Look At › On", d.lookAt, &lt->lookAt).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("light/lookpoint/" + xyz[a], "Look At › Point " + XYZ[a], -20, 20, d.lookPoint[size_t(a)], &lt->lookPoint[size_t(a)]).step(0.01);
+        static const QStringList kPaths{QStringLiteral("none"), QStringLiteral("circle"), QStringLiteral("rectangle")};
+        add("light/path/shape", "Path › Shape", T::Choice)
+            .choices(kPaths)
+            .byDefault(kPaths.value(d.pathShape))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([lt] { return QVariant(kPaths.value(lt->pathShape)); },
+                  [lt](const QVariant &v) { lt->pathShape = std::max(0, int(kPaths.indexOf(v.toString()))); });
+        f3("light/path/width", "Path › Width", 0, 40, d.pathWidth, &lt->pathWidth).step(0.01);
+        f3("light/path/depth", "Path › Depth", 0, 40, d.pathDepth, &lt->pathDepth).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("light/path/rotation/" + xyz[a], "Path › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &lt->pathRotation[size_t(a)])
+                .step(0.1)
+                .ramp(Parameter::Ramp::Angle);
+        f3("light/path/position", "Path › Position", 0, 1, d.pathPosition, &lt->pathPosition).step(0.001);
+        f3("light/path/speed", "Path › Speed (turns/s)", -2, 2, d.pathSpeed, &lt->pathSpeed).step(0.001);
     }
 
     if (type == SourceType::Tox && toxPlayer) {
