@@ -297,6 +297,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         return it;
     };
     m_text = generator(m_generators, QStringLiteral("Text"), kTextGeneratorPath);
+    m_cursive = generator(m_generators, QStringLiteral("Cursive"), kCursiveGeneratorPath);
     m_timecode = generator(m_generators, QStringLiteral("Timecode"), kTimecodeGeneratorPath);
     for (ClockKind k : {ClockKind::Countdown, ClockKind::Stopwatch, ClockKind::Clock})
         m_clocks[int(k)] = generator(m_generators, clockKindName(k), clockGeneratorPath(k));
@@ -777,11 +778,12 @@ void MediaBin::refreshText()
 {
     const SortingPause sorting(m_tree);
     QStringList texts, timecodes, webs, lines, clocks[3];
+    QStringList cursives;
     {
         Engine::Lock lk(&m_engine->mutex());
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
-            if (l->type == SourceType::Text) (l->clockGen ? clocks[int(l->clockGen->kind())] : l->timecode ? timecodes : texts) << l->name;
+            if (l->type == SourceType::Text) (l->clockGen ? clocks[int(l->clockGen->kind())] : l->timecode ? timecodes : l->text.cursive ? cursives : texts) << l->name;
             if (l->type == SourceType::Web) webs << l->name;
             if (l->type == SourceType::Isf && isLineGeneratorPath(l->sourcePath)) lines << l->name;
         }
@@ -794,6 +796,7 @@ void MediaBin::refreshText()
         it->setToolTip(2, usedBy);
         it->setText(3, QStringLiteral("Unspecified (generated)"));
     };
+    show(m_cursive, cursives, QStringLiteral("Cursive generator: a text in a cursive font, written as by a pen over its Writing Time."));
     show(m_text, texts, QStringLiteral("Text generator: type a text; a snapshot that holds another text types it (typewriter)"));
     show(m_timecode, timecodes,
          QStringLiteral("Timecode generator: shows a timecode, from its own clock (time of day, free run) or received "

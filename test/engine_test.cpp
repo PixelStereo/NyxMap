@@ -66,6 +66,7 @@ int runColorAnimationTests(Engine &engine, const QString &root);
 int runXyControlTests(Engine &engine, const QString &root);
 int runShowControlTests(Engine &engine);
 int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cpp
+int runTextWritingTests(Engine &e);                         // text_writing.cpp
 int runTimelineEventTests(Engine &e, const QString &root, const QString &tmp); // timeline_events.cpp
 int runMediaPlayheadTests(Engine &e, const QString &root); // media_playhead.cpp
 int runShowActionTests(Engine &e, const QString &root, const QString &tmp); // show_actions.cpp
@@ -210,6 +211,7 @@ int main(int argc, char **argv)
     if (area("psd")) failures += runPsdLayerTests(e, tmp);
     if (area("live_inputs")) failures += runLiveInputTests(e);
     if (area("clocks")) failures += runClockGeneratorTests(e);
+    if (area("text_writing")) failures += runTextWritingTests(e);
     if (area("tox")) failures += runToxTests(e, tmp);
     if (area("file_sources")) failures += runFileSourceTests(e, tmp);
     if (area("timeline_repeat")) {

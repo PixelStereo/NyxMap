@@ -1067,7 +1067,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         break;
     case SourceType::Text:
         d << QStringLiteral("Color space: Unspecified (generated)");
-        kind = s.clock ? clockKindName(s.clock->kind) : s.timecode ? QStringLiteral("Timecode") : QStringLiteral("Text");
+        kind = s.clock ? clockKindName(s.clock->kind) : s.timecode ? QStringLiteral("Timecode") : s.text.cursive ? QStringLiteral("Cursive") : QStringLiteral("Text");
         name = s.clock      ? clockSummary(*s.clock)
                : s.timecode ? TimecodeSettings::sourceName(s.timecode->source)
                             : s.text.content.section('\n', 0, 0).left(40);
@@ -2348,6 +2348,82 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             connect(editor, &QPlainTextEdit::textChanged, this, [this, editor, live] {
                 live(QStringLiteral("Edit Text"), [this, editor] { m_engine->setLayerTextContent(m_layer, editor->toPlainText()); });
             });
+        }
+
+        if (!s.clock && !s.timecode) { // written as by a pen: over a time, or driven like any value
+            auto *box = new QGroupBox(QStringLiteral("Writing"));
+            box->setObjectName(QStringLiteral("textWriting"));
+            auto *form = new QFormLayout(box);
+            form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            auto *progress = new SliderField;
+            progress->setObjectName(QStringLiteral("textWriteProgress"));
+            progress->setRange(0, 100);
+            progress->setDecimals(0);
+            progress->setSuffix(QStringLiteral(" %"));
+            progress->setValue(s.text.writeProgress * 100);
+            form->addRow(QStringLiteral("Written"), progress);
+            trackRow(form, progress, {QStringLiteral("text/write/progress")});
+            connect(progress, &SliderField::valueEdited, this, [this](double v) {
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/pause"), true);
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/progress"), v / 100);
+            });
+            auto *time = new NumberBox;
+            time->setObjectName(QStringLiteral("textWriteDuration"));
+            time->setRange(0.05, 3600);
+            time->setDecimals(2);
+            time->setSingleStep(0.5);
+            time->setSuffix(QStringLiteral(" s"));
+            time->setValue(s.text.writeDuration);
+            form->addRow(new ResetLabel(QStringLiteral("Time"), [time, def] { time->setValue(def.writeDuration); }), time);
+            trackRow(form, time, {QStringLiteral("text/write/duration")});
+            connect(time, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [style](double v) {
+                style(QStringLiteral("Writing Time"), [v](Layer &l) { l.text.writeDuration = float(v); });
+            });
+            auto *row = new QHBoxLayout;
+            auto *write = new QPushButton(QStringLiteral("▶ Write"));
+            write->setObjectName(QStringLiteral("textWriteStart"));
+            write->setToolTip(QStringLiteral("Write it from the start, over its time"));
+            auto *pause = new QPushButton(QStringLiteral("❚❚"));
+            pause->setObjectName(QStringLiteral("textWritePause"));
+            pause->setToolTip(QStringLiteral("Hold the pen where it is, or go on"));
+            auto *reset = new QPushButton(QStringLiteral("Clear"));
+            reset->setObjectName(QStringLiteral("textWriteReset"));
+            reset->setToolTip(QStringLiteral("Nothing written, ready to start"));
+            auto *whole = new QPushButton(QStringLiteral("All"));
+            whole->setToolTip(QStringLiteral("All of it written: as any text"));
+            for (QPushButton *b : {write, pause, reset, whole}) row->addWidget(b);
+            form->addRow(QString(), row);
+            // An action, not undone, as a clock's transport
+            connect(write, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("text/write/start"), true); });
+            connect(pause, &QPushButton::clicked, this, [this] {
+                bool playing = false;
+                {
+                    Engine::Lock lk(&m_engine->mutex());
+                    if (const Layer *l = m_engine->layer(m_layer)) playing = l->text.writePlaying;
+                }
+                m_engine->setParameter(m_layerId, playing ? QStringLiteral("text/write/pause") : QStringLiteral("text/write/resume"), true);
+            });
+            connect(reset, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("text/write/reset"), true); });
+            connect(whole, &QPushButton::clicked, this, [this] {
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/pause"), true);
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/progress"), 1.0);
+            });
+            auto *follow = new QTimer(box); // the pen going by
+            follow->setInterval(50);
+            connect(follow, &QTimer::timeout, progress, [this, progress] {
+                if (progress->underMouse() && QApplication::mouseButtons()) return;
+                double now = 1;
+                {
+                    Engine::Lock lk(&m_engine->mutex());
+                    if (const Layer *l = m_engine->layer(m_layer)) now = l->text.writeProgress;
+                }
+                if (std::abs(progress->value() - now * 100) > 0.4) {
+                    const QSignalBlocker blocker(progress);
+                    progress->setValue(now * 100);
+                }
+            });
+            follow->start();
+            v->addWidget(box);
         }
 
         auto *fmt = new QFormLayout;

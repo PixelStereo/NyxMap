@@ -60,6 +60,7 @@ private:
     QTreeWidgetItem *m_videoRoot, *m_audioRoot;
     QTreeWidgetItem *m_videos, *m_images, *m_models, *m_primitives, *m_audios, *m_generators, *m_text, *m_timecode, *m_line, *m_web, *m_inputs, *m_isf, *m_isfGenerators;
     QTreeWidgetItem *m_audioGenerators, *m_audioInputs;
+    QTreeWidgetItem *m_cursive = nullptr;
     QTreeWidgetItem *m_clocks[3] = {}; // Countdown, Stopwatch, Clock (ClockKind)
     QPushButton *m_relink, *m_remove, *m_reveal;
     QLabel *m_summary;
