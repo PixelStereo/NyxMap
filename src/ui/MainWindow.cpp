@@ -308,6 +308,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     cv->setContentsMargins(0, 0, 0, 0);
     cv->setSpacing(0);
     auto *previews = m_previews = new PreviewWorkspace(m_engine, m_view);
+    previews->setShowFps(SettingsPanel::showPreviewFps());
+    connect(m_settings, &SettingsPanel::previewFpsChanged, previews, &PreviewWorkspace::setShowFps);
     // The views travel with the project, and with the presets (and the snapshots, as the settings say) that hold them
     m_engine->setViewProvider([this] { return viewsState(); });
     connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);

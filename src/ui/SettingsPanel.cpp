@@ -35,6 +35,7 @@
 static const char *kPlayModeKey = "playback/defaultMode";
 static const char *kHardwareKey = "playback/hardwareDecoding";
 static const char *kFollowKey = "ui/followFades";
+static const char *kPreviewFpsKey = "ui/showPreviewFps";
 static const char *kOscKey = "osc/enabled";
 static const char *kOscPortKey = "osc/udpPort";        // (osc/port, osc/queryPort: earlier defaults, ignored)
 static const char *kQueryPortKey = "osc/oscQueryPort";
@@ -84,6 +85,7 @@ PlayMode SettingsPanel::defaultPlayMode()
 }
 bool SettingsPanel::gpuShareOneFrameLate() { return QSettings().value(kShareLateKey, true).toBool(); }
 bool SettingsPanel::hardwareDecoding() { return QSettings().value(kHardwareKey, true).toBool(); }
+bool SettingsPanel::showPreviewFps() { return QSettings().value(kPreviewFpsKey, false).toBool(); }
 static int s_followFades = -1; // read once, then kept up to date by the check box (asked 10 times a second)
 bool SettingsPanel::followFades()
 {
@@ -285,6 +287,15 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
                      swatch);
     lookForm->addRow(note(QStringLiteral("Used for the selected layer, the bars, the buttons that are on and the "
                                          "links. A click on the name puts it back to the default light grey.")));
+    auto *previewFps = new FlagBox(QStringLiteral("Show FPS in viewer"));
+    previewFps->setObjectName(QStringLiteral("showPreviewFps"));
+    previewFps->setToolTip(QStringLiteral("Show the rendering frame rate next to the viewer controls."));
+    previewFps->setChecked(showPreviewFps());
+    lookForm->addRow(previewFps);
+    connect(previewFps, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue(kPreviewFpsKey, on);
+        emit previewFpsChanged(on);
+    });
     // Magnetism: its state when NyxMap starts (the button next to the zoom changes it meanwhile), its reach
     auto *magnetOn = new FlagBox(QStringLiteral("Magnetism on at start"));
     magnetOn->setChecked(magnet::enabledAtStart());
