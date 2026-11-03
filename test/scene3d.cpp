@@ -599,6 +599,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("off"));
         const int shadowsOff = levels(112);
         check(std::abs(shadowsOff - without) < 12, "shadows off: none");
+        if (std::abs(shadowsOff - without) >= 12) std::printf("  off %d, without %d, aside %d\n", shadowsOff, without, levels(100));
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
         for (const char *level : {"off", "2x", "8x", "4x"}) {
             engine.setParameter(0, "quality3d/antialiasing", QString::fromLatin1(level));
