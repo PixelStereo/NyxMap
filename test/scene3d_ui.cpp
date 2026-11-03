@@ -144,6 +144,15 @@ int runScene3dUiTests(Engine &engine)
     };
     select(engine.indexOfId(scene));
     check(tabNames().contains("Scene"), "a scene's inspector has its Scene tab");
+    {
+        engine.renderFrame();
+        pump();
+        auto *count = inspector ? inspector->findChild<QLabel *>("sceneTriangles") : nullptr;
+        check(count && count->isVisibleTo(inspector) && count->text().contains("computed per frame"),
+              "a scene's inspector says its triangles, and those computed");
+        if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); inspector && !captures.isEmpty())
+            inspector->grab().save(captures + "/scene-inspector.png");
+    }
     check(inspector && inspector->findChild<QComboBox *>("sceneEnvironmentLayer") && inspector->findChild<QComboBox *>("sceneEnvironmentStage"),
           "its Scene tab chooses its environment (an HDRI's layer) and its stage");
     auto *yaw = inspector ? inspector->findChild<SliderField *>("param3d:camera/yaw") : nullptr;
@@ -177,6 +186,24 @@ int runScene3dUiTests(Engine &engine)
     check(inspector && inspector->findChild<SliderField *>("param3d:model/scale/all") &&
               inspector->findChild<SliderField *>("param3d:model/scale/x") && inspector->findChild<SliderField *>("param3d:model/scale/z"),
           "the model's scale, overall and along each axis, are bars");
+    if (auto *shading = inspector ? inspector->findChild<QComboBox *>("param3d:model/shading") : nullptr) {
+        check(shading->findData("smooth") >= 0 && shading->findData("flat") >= 0, "a model's 3D tab chooses its shading");
+        const int smooth = shading->findData("smooth");
+        shading->setCurrentIndex(smooth);
+        emit shading->activated(smooth);
+        check(engine.parameterValue(layer, "model/shading").toString() == "smooth", "its choice is the model's");
+        if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
+            for (auto *tabs : inspector->findChildren<QTabWidget *>("layerCategoryTabs"))
+                for (int k = 0; k < tabs->count(); ++k)
+                    if (tabs->tabText(k).startsWith("3D")) tabs->setCurrentIndex(k);
+            pump();
+            inspector->grab().save(captures + "/model-inspector.png");
+        }
+        if (undo) undo->undo();
+        check(engine.parameterValue(layer, "model/shading").toString() != "smooth", "undo puts it back");
+    } else {
+        check(false, "a model's 3D tab has its Shading");
+    }
     check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer") && inspector->findChild<QComboBox *>("modelDisplaceLayer"),
           "a model's 3D tab chooses the layer shown on it and the one that displaces it");
     check(inspector && inspector->findChild<QComboBox *>("modelPictureStage") && inspector->findChild<QComboBox *>("modelDisplaceStage"),
