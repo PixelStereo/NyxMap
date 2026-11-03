@@ -538,6 +538,8 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(spot, "light/position/x", 0.0);
         engine.setParameter(spot, "light/position/y", 2.0);
         engine.setParameter(caster, "model/position/y", 1.0);
+        // Without a graphics card, they go: the render stays usable
+        const bool lite = Scene3D::lite(engine.glRenderer());
         // Where surfaces meet: darker with the contact shadows; away from them, as it was
         engine.setParameter(spot, "light/intensity", 0.0);
         engine.setParameter(stage, "scene/studio", 1.0);
@@ -546,7 +548,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "scene/ao", 0.0);
         const int openNear = levels(73), openFar = levels(120);
         engine.setParameter(stage, "scene/ao", 1.0);
-        check(levels(73) < openNear - 4, "contact shadows where the cube meets the floor");
+        check(lite || levels(73) < openNear - 4, "contact shadows where the cube meets the floor");
         check(std::abs(levels(120) - openFar) < 6, "not away from it");
         // A smooth floor shows the cube over it, from the side
         engine.setParameter(stage, "camera/pitch", 25.0);
@@ -568,7 +570,7 @@ int runScene3dTests(Engine &engine)
         for (int y = 0; y < mirror.height(); ++y)
             for (int x = 0; x < mirror.width(); ++x)
                 redder += QColor(mirror.pixel(x, y)).red() > QColor(dull.pixel(x, y)).red() + 12;
-        check(redder > 40, "the floor reflects the red cube");
+        check(lite || redder > 40, "the floor reflects the red cube");
         engine.setParameter(floorId, "model/material/metal", 0.0);
         engine.setParameter(floorId, "model/material/rough", 1.0);
         engine.setParameter(stage, "scene/studio", 0.0);

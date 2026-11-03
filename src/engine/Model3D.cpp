@@ -1,5 +1,7 @@
 #include "Model3D.h"
 
+#include <QtGlobal>
+
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
 #include "ufbx.h"
@@ -524,7 +526,7 @@ uniform vec3 u_eye, u_ambient; uniform float u_exposure;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8];
 uniform int u_hasEnv; uniform sampler2D u_env; uniform float u_envIntensity, u_envRot, u_envMaxLod; uniform int u_envLinear;
 uniform float u_cosIn[8]; uniform float u_studio;
-uniform int u_pointShadow[8]; uniform float u_pointFar[2], u_pointSoft[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
+uniform int u_taps; uniform int u_pointShadow[8]; uniform float u_pointFar[2], u_pointSoft[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
 uniform sampler2D u_aoTex, u_seen, u_last; uniform vec2 u_screen; uniform float u_aoAmount, u_reflections; uniform int u_hasLast;
 uniform mat4 u_viewProj; uniform vec2 u_depthRange; uniform float u_lastExposure;
 uniform int u_shadow[8]; uniform mat4 u_shadowMat[4]; uniform float u_shadowRadius[4], u_shadowBias[4]; uniform sampler2DArrayShadow u_shadows;
@@ -540,12 +542,12 @@ float lit(int i, vec3 N) {
         float ref = length(d) / u_pointFar[p] - 0.0006;
         vec3 x = normalize(cross(d, abs(d.y) > 0.9 * length(d) ? vec3(1, 0, 0) : vec3(0, 1, 0))), y = normalize(cross(d, x));
         float angle = noise() * 6.2831853, sum = 0.0, spread = u_pointSoft[p] * 0.0018 * length(d);
-        for (int k = 0; k < 10; ++k) {
-            float rr = sqrt((float(k) + 0.5) / 10.0), aa = angle + float(k) * 2.39996323;
+        for (int k = 0; k < u_taps; ++k) {
+            float rr = sqrt((float(k) + 0.5) / float(u_taps)), aa = angle + float(k) * 2.39996323;
             vec3 q = d + (x * cos(aa) + y * sin(aa)) * rr * spread;
             sum += p == 0 ? texture(u_pointMap0, vec4(q, ref)) : texture(u_pointMap1, vec4(q, ref));
         }
-        return sum / 10.0;
+        return sum / float(u_taps);
     }
     if (s < 0) return 1.0;
     vec4 q = u_shadowMat[s] * vec4(v_pos + N * u_shadowBias[s], 1.0);
@@ -553,12 +555,12 @@ float lit(int i, vec3 N) {
     if (q.w <= 0.0 || t.x <= 0.0 || t.x >= 1.0 || t.y <= 0.0 || t.y >= 1.0 || t.z >= 1.0) return 1.0;
     float angle = noise() * 6.2831853, sum = 0.0;
     float c = cos(angle), si = sin(angle);
-    for (int k = 0; k < 12; ++k) {
-        float rr = sqrt((float(k) + 0.5) / 12.0), aa = float(k) * 2.39996323;
+    for (int k = 0; k < u_taps; ++k) {
+        float rr = sqrt((float(k) + 0.5) / float(u_taps)), aa = float(k) * 2.39996323;
         vec2 d = vec2(cos(aa), sin(aa)) * rr;
         sum += texture(u_shadows, vec4(t.xy + vec2(c * d.x - si * d.y, si * d.x + c * d.y) * u_shadowRadius[s], float(s), t.z));
     }
-    return sum / 12.0;
+    return sum / float(u_taps);
 }
 float panel(vec3 d, vec3 at, float size, float blur) { return smoothstep(size - blur, size + blur * 0.4, dot(d, normalize(at))); }
 // A photo studio: a large panel above, a smaller one behind on each side, a dark room; blurred as the surface is rough
@@ -997,6 +999,11 @@ bool Scene3D::copyEnvironment(GLuint source)
     return true;
 }
 
+bool Scene3D::lite(const QString &renderer)
+{
+    return renderer.contains(QLatin1String("Apple Software Renderer")) || qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
+}
+
 GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
                      GLuint environment, bool environmentLinear)
 {
@@ -1004,6 +1011,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     auto f = gl();
     if (!m_compiled) {
         m_compiled = true;
+        m_lite = lite(QString::fromLatin1(reinterpret_cast<const char *>(f->glGetString(GL_RENDERER))));
         QString log;
         m_program = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kFragment), &log);
         if (!m_program) qWarning("3D scene shader: %s", qPrintable(log));
@@ -1052,7 +1060,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_color, 0);
         GLint maxSamples = 0;
         f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
-        const GLsizei samples = std::clamp(maxSamples, 1, 4);
+        const GLsizei samples = m_lite ? 1 : std::clamp(maxSamples, 1, 4);
         f->glGenRenderbuffers(1, &m_msColor);
         f->glBindRenderbuffer(GL_RENDERBUFFER, m_msColor);
         f->glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, w, h);
@@ -1301,8 +1309,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
     const QMatrix4x4 &view = cam.view, &proj = cam.proj;
     const QVector3D eye = cam.eye;
-    const bool wantsAo = s.ao > 0 && m_aoProgram && m_aoBlurProgram;
-    if (wantsAo || s.reflections > 0) {
+    const bool wantsAo = !m_lite && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
+    const float reflections = m_lite ? 0.0f : s.reflections;
+    if (wantsAo || reflections > 0) {
         f->glBindFramebuffer(GL_FRAMEBUFFER, m_preFbo);
         f->glViewport(0, 0, w, h);
         f->glClear(GL_DEPTH_BUFFER_BIT);
@@ -1453,9 +1462,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform2f(loc("u_screen"), float(w), float(h));
     f->glUniform2f(loc("u_depthRange"), cam.nearPlane, cam.farPlane);
     f->glUniform1f(loc("u_aoAmount"), wantsAo ? s.ao : 0.0f);
-    f->glUniform1f(loc("u_reflections"), s.reflections);
+    f->glUniform1f(loc("u_reflections"), reflections);
+    f->glUniform1i(loc("u_taps"), m_lite ? 4 : 12);
     f->glUniform1f(loc("u_lastExposure"), s.exposure);
-    f->glUniform1i(loc("u_hasLast"), m_hasPicture && s.reflections > 0 ? 1 : 0);
+    f->glUniform1i(loc("u_hasLast"), m_hasPicture && reflections > 0 ? 1 : 0);
     f->glUniform1i(loc("u_aoTex"), 12);
     f->glUniform1i(loc("u_seen"), 13);
     f->glUniform1i(loc("u_last"), 14);

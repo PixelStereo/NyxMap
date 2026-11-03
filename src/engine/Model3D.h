@@ -187,6 +187,9 @@ public:
                 GLuint environment = 0, bool environmentLinear = false);
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
+    // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
+    // no antialiasing, contact shadows or reflections, and shadows sampled less
+    static bool lite(const QString &renderer);
 
 private:
     bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
@@ -200,6 +203,7 @@ private:
     int m_shadowRenders = 0;
     GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
     GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
+    bool m_lite = false;
     bool m_hasPicture = false;                              // m_color holds the last frame: what a reflection shows
     GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
     static constexpr int kEnvW = 1024, kEnvH = 512;
