@@ -894,17 +894,19 @@ int runScene3dTests(Engine &engine)
         };
         check(covered(0, w / 2 - 6) > 50 && covered(w / 2 + 6, w) > 50, "both its parts are drawn");
         check(covered(w / 2 - 2, w / 2 + 2) == 0, "and not what is between them");
-        // Its shadow maps: each one only when what it shows has changed
-        check(scene.shadowMapsDrawn() == 2, "its two lights' maps drawn");
+        // Its shadow maps: each one only when what it shows has changed (without a graphics card, no shadows)
+        const bool lite = Scene3D::lite(QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER))));
+        const auto maps = [&](int drawn) { return scene.shadowMapsDrawn() == (lite ? 0 : drawn); };
+        check(maps(2), "its two lights' maps drawn");
         camera.yaw = 1;
         scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(scene.shadowMapsDrawn() == 2, "the camera moving draws none");
+        check(maps(2), "the camera moving draws none");
         lamps[0].light.position[0] = -2.5f;
         scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(scene.shadowMapsDrawn() == 3, "a light moving draws its own, not the other's");
+        check(maps(3), "a light moving draws its own, not the other's");
         items[0].placement.position[0] = 0.01f;
         scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(scene.shadowMapsDrawn() == 5, "a model moving draws them both");
+        check(maps(5), "a model moving draws them both");
         // A light away while a model moved: its map, out of date, is drawn again when it comes back
         const float power = lamps[1].light.intensity;
         lamps[1].light.intensity = 0;
