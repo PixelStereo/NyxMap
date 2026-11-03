@@ -57,6 +57,17 @@ int runScene3dTests(Engine &engine)
                         shape.meshCount() == 1 && shape.triangleCount() >= 2;
         if (!ok) std::printf("FAIL scene3d: built-in primitive %s\n", qPrintable(name)), ++failures;
     }
+    // As few triangles as the shape needs: a mesh that costs nothing unless it is asked to
+    {
+        const auto triangles = [&](const QString &name) {
+            Model3D shape;
+            return shape.load(Model3D::primitivePath(name), &error) ? shape.triangleCount() : -1;
+        };
+        check(triangles("Plane") == 2, "a plane is 2 triangles");
+        check(triangles("Cube") == 12, "a cube is 12");
+        check(triangles("Pyramid") == 6, "a pyramid is 6");
+        check(triangles("Sphere") <= 600 && triangles("Cylinder") <= 100 && triangles("Cone") <= 100, "round ones, enough to be round");
+    }
     check(!Model3D::isPrimitivePath("/NyxMap/3D/Teapot"), "an unknown primitive is not one");
 
     engine.newProject();
@@ -253,7 +264,7 @@ int runScene3dTests(Engine &engine)
         Engine::Lock lk(&engine.mutex());
         coarse = engine.layer(engine.indexOfId(screen))->model->triangleCount();
     }
-    engine.setParameter(screen, "model/detail", 4);
+    engine.setParameter(screen, "model/detail", 8);
     engine.renderFrame();
     {
         Engine::Lock lk(&engine.mutex());
@@ -606,6 +617,110 @@ int runScene3dTests(Engine &engine)
         const int unlitFloor = levels(64);
         engine.setParameter(stage, "scene/studio", 1.0);
         check(levels(64) > unlitFloor, "the studio lights the models");
+        engine.newProject();
+    }
+
+    // Mesh Detail: more when asked, and when a bend or a displacement need points to move
+    {
+        engine.newProject();
+        const quint64 stage = engine.layerId(engine.addScene());
+        const int at = engine.addLayer("Plane", engine.indexOfId(stage) + 1);
+        const quint64 plane = engine.layerId(at);
+        QString err;
+        check(engine.setLayerModel(at, Model3D::primitivePath("Plane"), &err), "a plane to cut");
+        engine.setStructure(tree::intoGroup(engine.structure(), {plane}, stage));
+        const auto triangles = [&] {
+            engine.renderFrame();
+            Engine::Lock lk(&engine.mutex());
+            const Layer *l = engine.layer(engine.indexOfId(plane));
+            return l && l->model ? l->model->triangleCount() : -1;
+        };
+        check(triangles() == 2, "as it is: the least");
+        engine.setParameter(plane, "model/detail", 3);
+        check(triangles() == 2 * 8 * 8, "detail 3: as cut as it asks");
+        engine.setParameter(plane, "model/detail", 1);
+        check(triangles() == 2, "back to the least");
+        engine.setParameter(plane, "model/bend", 90.0);
+        check(triangles() == 2 * 64 * 64, "bent: as many as a curve needs");
+        engine.setParameter(plane, "model/bend", 0.0);
+        check(triangles() == 2, "straight again: the least");
+        engine.newProject();
+    }
+
+    // Shading, the count, and what is not computed
+    {
+        engine.newProject();
+        engine.setCompositionSize({128, 128});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {128, 128});
+        const quint64 stage = engine.layerId(engine.addScene());
+        const int ballAt = engine.addLayer("Ball", engine.indexOfId(stage) + 1);
+        const quint64 ball = engine.layerId(ballAt);
+        QString err;
+        check(engine.setLayerModel(ballAt, Model3D::primitivePath("Sphere"), &err), "a sphere to shade");
+        const int boxAt = engine.addLayer("Box", engine.indexOfId(stage) + 1);
+        const quint64 box = engine.layerId(boxAt);
+        check(engine.setLayerModel(boxAt, Model3D::primitivePath("Cube"), &err), "a cube beside it");
+        const int lampAt = engine.addLayer("Lamp", engine.indexOfId(stage) + 1);
+        const quint64 lamp = engine.layerId(lampAt);
+        check(engine.setLayerLight(lampAt), "a light for them");
+        engine.setStructure(tree::intoGroup(engine.structure(), {ball, box, lamp}, stage));
+        engine.setParameter(box, "model/position/x", -1.2);
+        engine.setParameter(ball, "model/position/x", 0.5);
+        engine.setParameter(box, "model/scale/all", 0.5);
+        engine.setParameter(lamp, "light/position/x", 1.0);
+        engine.setParameter(lamp, "light/position/y", 1.0);
+        engine.setParameter(lamp, "light/position/z", 3.0);
+        const auto picture = [&] {
+            engine.renderFrame();
+            engine.renderFrame();
+            return engine.grabOutput();
+        };
+        const auto different = [](const QImage &x, const QImage &y) {
+            int count = 0;
+            for (int j = 0; j < x.height(); ++j)
+                for (int i = 0; i < x.width(); ++i) count += std::abs(QColor(x.pixel(i, j)).lightness() - QColor(y.pixel(i, j)).lightness()) > 6;
+            return count;
+        };
+        // Its shading: facets on a sphere, rounded edges on a cube; back as it was
+        const QImage made = picture();
+        engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
+        check(different(made, picture()) > 30, "flat: the sphere's facets show");
+        engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
+        engine.setParameter(box, "model/shading", QStringLiteral("smooth"));
+        check(different(made, picture()) > 30, "smooth: the cube's edges are rounded");
+        engine.setParameter(box, "model/shading", QStringLiteral("as made"));
+        check(different(made, picture()) < 6, "as made: as it was");
+        // The count: what it holds, shown
+        const int sceneRow = engine.indexOfId(stage);
+        const auto triangleOf = [&](quint64 id) {
+            Engine::Lock lk(&engine.mutex());
+            return engine.layer(engine.indexOfId(id))->model->triangleCount();
+        };
+        check(engine.sceneTriangles(sceneRow) == triangleOf(ball) + triangleOf(box), "the scene counts its triangles");
+        engine.setParameter(box, "enable", false);
+        check(engine.sceneTriangles(sceneRow) == triangleOf(ball), "only what is shown");
+        engine.setParameter(box, "enable", true);
+        // Nothing moves: its picture is kept
+        const auto framesOf = [&] {
+            Engine::Lock lk(&engine.mutex());
+            return engine.layer(engine.indexOfId(stage))->sceneRenderer->framesDrawn();
+        };
+        for (int k = 0; k < 6; ++k) engine.renderFrame();
+        const int settled = framesOf();
+        for (int k = 0; k < 6; ++k) engine.renderFrame();
+        check(framesOf() == settled, "nothing moved: not drawn again");
+        check(engine.sceneTrianglesComputed(sceneRow) == 0, "and nothing computed");
+        const QImage kept = engine.grabOutput();
+        engine.setParameter(ball, "model/position/y", 0.1);
+        engine.renderFrame();
+        check(framesOf() == settled + 1, "something moved: drawn");
+        const int seen = engine.sceneTrianglesComputed(sceneRow);
+        check(seen > 0, "and computed");
+        check(different(kept, engine.grabOutput()) > 0, "and it shows");
+        // Out of the camera's view: not computed; the rest as it was
+        engine.setParameter(ball, "model/position/x", 200.0);
+        engine.renderFrame();
+        check(engine.sceneTrianglesComputed(sceneRow) < seen / 2, "what no one sees is not computed");
         engine.newProject();
     }
 

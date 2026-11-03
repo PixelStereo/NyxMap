@@ -1,6 +1,8 @@
 #include "Model3D.h"
 
 #include <QtGlobal>
+#include <utility>
+#include <map>
 
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
@@ -173,7 +175,9 @@ struct Builder {
 bool Model3D::loadPrimitive(const QString &name, QString *err)
 {
     Builder b;
-    const int S = 64 * m_detail, F = 16 * m_detail; // segments around; cuts of a flat face
+    // As little as the shape needs, more when asked: segments around; cuts of a flat face (a cube is 12 triangles, a plane 2)
+    static const int kRound[8] = {24, 32, 48, 64, 96, 128, 192, 256}, kFlat[8] = {1, 4, 8, 16, 32, 64, 128, 256};
+    const int S = kRound[std::clamp(m_detail, 1, 8) - 1], F = kFlat[std::clamp(m_detail, 1, 8) - 1];
     const float h = 0.5f;
     if (name == QLatin1String("Cube") || name == QLatin1String("Open Cube")) {
         b.face({-h, -h, h}, {1, 0, 0}, {0, 1, 0}, F, F);   // front
@@ -185,9 +189,9 @@ bool Model3D::loadPrimitive(const QString &name, QString *err)
             b.face({-h, -h, -h}, {1, 0, 0}, {0, 0, 1}, F, F);  // bottom
         }
     } else if (name == QLatin1String("Plane")) { // upright, facing +Z: a screen
-        b.face({-h, -h, 0}, {1, 0, 0}, {0, 1, 0}, S, S);
+        b.face({-h, -h, 0}, {1, 0, 0}, {0, 1, 0}, F, F);
     } else if (name == QLatin1String("Disc")) { // upright, facing +Z, in rings (a bend curves it smoothly)
-        const int rings = 16 * m_detail;
+        const int rings = F;
         const quint32 centre = b.vertex({0, 0, 0}, {0, 0, 1}, 0.5f, 0.5f);
         const quint32 first = quint32(b.data.size() / 8);
         for (int r = 1; r <= rings; ++r)
@@ -517,7 +521,7 @@ void main() {
 static const char *kFragment = R"(#version 330 core
 in vec3 v_pos; in vec3 v_n; in vec2 v_uv; out vec4 o;
 uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
-uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_hasDisp; uniform int u_layerTex;
+uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_flat; uniform int u_hasDisp; uniform int u_layerTex;
 uniform sampler2D u_roughTex, u_metalTex, u_normalTex, u_aoTexMap, u_emTex;
 uniform int u_hasRough, u_hasMetal, u_hasNormal, u_hasAo, u_hasEm;
 uniform vec4 u_roughCh, u_metalCh; uniform float u_normalScale, u_aoStrength;
@@ -640,7 +644,7 @@ void main() {
     } else if (u_unlit != 0) { o = vec4(u_base.rgb * u_base.a, u_base.a); return; }
     if (u_alphaMode == 1 && base.a < u_alphaCutoff) discard;
     if (u_alphaMode == 0) base.a = 1.0;
-    vec3 N = u_hasDisp != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced: its own surface
+    vec3 N = u_hasDisp != 0 || u_flat != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced, flat: its own surface
     vec3 V = normalize(u_eye - v_pos);
     if (dot(N, V) < 0.0) N = -N; // both faces lit
     if (u_hasNormal != 0) { // its normal map, in the frame its UVs make on screen
@@ -785,15 +789,47 @@ void main() {
 }
 )";
 
+// Each point's normal, the average of the faces around it: points at one place with different normals (the edges of a
+// cube, of a file's hard edges) are one point here
+static_assert(sizeof(float) * 8 == 32);
+static void averageNormals(std::vector<std::array<float, 8>> &points, const std::vector<quint32> &indices, float size)
+{
+    const float step = std::max(size, 1e-6f) * 1e-4f;
+    const auto keyOf = [&](const std::array<float, 8> &p) {
+        return std::array<qint64, 3>{qint64(std::llround(p[0] / step)), qint64(std::llround(p[1] / step)), qint64(std::llround(p[2] / step))};
+    };
+    std::map<std::array<qint64, 3>, QVector3D> sums;
+    for (size_t k = 0; k + 2 < indices.size(); k += 3) {
+        const auto &a = points[indices[k]], &b = points[indices[k + 1]], &c = points[indices[k + 2]];
+        QVector3D face = QVector3D::crossProduct(QVector3D(b[0] - a[0], b[1] - a[1], b[2] - a[2]), QVector3D(c[0] - a[0], c[1] - a[1], c[2] - a[2]));
+        // On the side its normals say (a file may wind its faces either way)
+        if (QVector3D::dotProduct(face, QVector3D(a[3] + b[3] + c[3], a[4] + b[4] + c[4], a[5] + b[5] + c[5])) < 0) face = -face;
+        for (quint32 i : {indices[k], indices[k + 1], indices[k + 2]}) sums[keyOf(points[i])] += face;
+    }
+    for (auto &p : points) {
+        const QVector3D n = sums[keyOf(p)].normalized();
+        if (n.isNull()) continue;
+        p[3] = n.x();
+        p[4] = n.y();
+        p[5] = n.z();
+    }
+}
+
 bool Model3D::uploadGl()
 {
     auto f = gl();
     for (Mesh &m : m_meshes) {
+        std::vector<std::array<float, 8>> smooth;
+        if (m_smooth) { // a copy: its own normals come back when it is asked
+            smooth.resize(m.vertices.size());
+            std::memcpy(smooth.data(), m.vertices.data(), smooth.size() * sizeof(smooth[0]));
+            averageNormals(smooth, m.indices, m_radius);
+        }
         f->glGenVertexArrays(1, &m.vao);
         f->glBindVertexArray(m.vao);
         f->glGenBuffers(1, &m.vbo);
         f->glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
-        f->glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(m.vertices.size() * sizeof(Vertex)), m.vertices.data(), GL_STATIC_DRAW);
+        f->glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(m.vertices.size() * sizeof(Vertex)), m_smooth ? static_cast<const void *>(smooth.data()) : m.vertices.data(), GL_STATIC_DRAW);
         f->glGenBuffers(1, &m.ibo);
         f->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ibo);
         f->glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(m.indices.size() * sizeof(quint32)), m.indices.data(), GL_STATIC_DRAW);
@@ -916,6 +952,14 @@ void Model3D::drawMeshes(GLuint program, GLuint picture, int pass, const ModelPl
     f->glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void Model3D::setSmooth(bool on)
+{
+    if (on == m_smooth) return;
+    m_smooth = on;
+    releaseMeshes(); // sent again with its normals, when next drawn
+    m_uploaded = false;
+}
+
 void Model3D::setDetail(int detail)
 {
     detail = std::clamp(detail, 1, 8);
@@ -1019,6 +1063,26 @@ bool Scene3D::copyEnvironment(GLuint source)
     return true;
 }
 
+// Where an item is: a sphere around it
+static std::pair<QVector3D, float> sphereOf(const Scene3D::Item &item)
+{
+    const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
+    const float size = std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
+    return {m.map(item.model->center()), item.model->radius() * size};
+}
+// Whether that sphere is seen through a camera's matrix. A bent or pushed model is not where its sphere says: always
+static bool inView(const QMatrix4x4 &viewProj, const Scene3D::Item &item)
+{
+    if (item.placement.bend != 0 || item.displace) return true;
+    const auto [c, r] = sphereOf(item);
+    const QVector4D row0 = viewProj.row(0), row1 = viewProj.row(1), row2 = viewProj.row(2), row3 = viewProj.row(3);
+    for (const QVector4D &plane : {row3 + row0, row3 - row0, row3 + row1, row3 - row1, row3 + row2, row3 - row2}) {
+        const float length = plane.toVector3D().length();
+        if (length > 1e-6f && QVector3D::dotProduct(plane.toVector3D(), c) + plane.w() < -r * length) return false;
+    }
+    return true;
+}
+
 bool Scene3D::lite(const QString &renderer)
 {
     return renderer.contains(QLatin1String("Apple Software Renderer")) || qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
@@ -1049,9 +1113,62 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         if (!m_sky) qWarning("3D environment shader: %s", qPrintable(log));
         f->glGenVertexArrays(1, &m_skyVao);
     }
-    const bool hasEnv = environment && copyEnvironment(environment);
+    // An HDR file's picture does not change: copied and blurred once
+    bool hasEnv = environment && environmentLinear && environment == m_envSource && m_env;
+    if (environment && !hasEnv) {
+        hasEnv = copyEnvironment(environment);
+        m_envSource = hasEnv && environmentLinear ? environment : 0;
+    }
     const float envMaxLod = std::log2(float(kEnvW));
     if (!m_program) return 0;
+    // Nothing changed for a few frames (a reflection reads the frame before, so it takes a few to settle): its picture is
+    // kept. A layer's picture on a model or around the scene can change at any frame
+    {
+        QByteArray key;
+        const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
+        bool could = !environment;
+        add(&w, sizeof w);
+        add(&h, sizeof h);
+        const auto addScene = [&] {
+            for (float v : {s.distance, s.yaw, s.pitch, s.fov, s.ambientIntensity, s.exposure, s.envIntensity, s.envRotation, s.envBlur, s.studio, s.ao,
+                            s.aoRadius, s.reflections}) add(&v, sizeof v);
+            add(s.target.data(), sizeof(float) * 3);
+            add(s.ambient.data(), sizeof(float) * 3);
+            add(s.background.data(), sizeof(float) * 4);
+            add(&s.envShow, sizeof(bool));
+        };
+        addScene();
+        add(&quality, sizeof quality);
+        for (const Item &item : items) {
+            if (!item.model) continue;
+            could = could && !item.picture && !item.displace;
+            const Model3D *which = item.model.get();
+            add(&which, sizeof which);
+            const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
+            add(m.constData(), sizeof(float) * 16);
+            const ModelPlacement &p = item.placement;
+            add(p.color.data(), sizeof(float) * 3);
+            for (float v : {p.metal, p.rough, p.bend}) add(&v, sizeof v);
+            for (int v : {p.detail, p.shading, int(p.unlit)}) add(&v, sizeof v);
+        }
+        for (const Lamp &lamp : lamps) {
+            const LightSettings &l = lamp.light;
+            add(&l.type, sizeof l.type);
+            add(l.color.data(), sizeof(float) * 3);
+            add(l.position.data(), sizeof(float) * 3);
+            for (float v : {l.intensity, l.yaw, l.pitch, l.angle, l.falloff, l.softness, lamp.gain}) add(&v, sizeof v);
+            add(&l.shadow, sizeof(bool));
+        }
+        if (could && m_fbo && key == m_frameKey) {
+            if (++m_stillFrames >= 3) {
+                m_computed = 0;
+                return m_color;
+            }
+        } else {
+            m_stillFrames = 0;
+        }
+        m_frameKey = key;
+    }
     const int aaLevel = m_lite ? 0 : std::clamp(quality.antialiasing, 0, 3);
     GLint maxSamples = 1;
     f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
@@ -1121,6 +1238,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glGenFramebuffers(1, &m_aoFbo);
     }
 
+    int computed = 0, total = 0;
+    for (const Item &item : items)
+        if (item.model) total += item.model->triangleCount();
+    m_triangles = total;
     // The lights' views of the models: what each shadow is read from
     QMatrix4x4 shadowMatrices[kMaxShadows];
     float shadowRadii[kMaxShadows] = {}, shadowBiases[kMaxShadows] = {};
@@ -1144,11 +1265,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         // All the models, in a sphere
         QVector3D center;
         float weight = 0, reach = 0;
-        const auto sphere = [](const Item &item) {
-            const QMatrix4x4 m = item.parent * item.model->matrix(item.placement);
-            const float size = std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
-            return std::pair(m.map(item.model->center()), item.model->radius() * size);
-        };
+        const auto sphere = [](const Item &item) { return sphereOf(item); };
         // Leaving out what is far larger than the others: a floor, a wall only receive shadows, and the maps stay sharp
         std::vector<float> sizes;
         for (const Item &item : items)
@@ -1233,10 +1350,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         const bool again = !still || key != m_shadowKey;
         m_shadowKey = key;
         if (again && (shadows || pointShadows)) ++m_shadowRenders;
-        const auto drawCasters = [&](GLuint program) {
+        const auto drawCasters = [&](GLuint program, const QMatrix4x4 &lightSees) {
             auto where = [&](const char *name) { return f->glGetUniformLocation(program, name); };
             for (const Item &item : items) {
-                if (!casts(item)) continue; // a screen gives light, a floor or a wall only receives
+                if (!casts(item) || !inView(lightSees, item)) continue; // a screen gives light, a floor or a wall only receives
+                computed += item.model->triangleCount();
                 const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
                 f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
                 f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
@@ -1293,7 +1411,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                     faceProj.perspective(90, 1, 0.02f, pointFar[slot]);
                     f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, faceView.constData());
                     f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, faceProj.constData());
-                    drawCasters(m_pointProgram);
+                    drawCasters(m_pointProgram, faceProj * faceView);
                 }
             }
             // The array of maps goes back on this framebuffer below
@@ -1333,7 +1451,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                 f->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_shadowMaps, 0, slot);
                 f->glClear(GL_DEPTH_BUFFER_BIT);
                 f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, shadowMatrices[slot].constData());
-                drawCasters(m_shadowProgram);
+                drawCasters(m_shadowProgram, shadowMatrices[slot]);
             }
             f->glDisable(GL_POLYGON_OFFSET_FILL);
         }
@@ -1343,6 +1461,17 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     const QMatrix4x4 &view = cam.view, &proj = cam.proj;
     const QVector3D eye = cam.eye;
     const int contactLevel = m_lite ? 0 : std::clamp(quality.contact, 0, 3), reflectLevel = m_lite ? 0 : std::clamp(quality.reflections, 0, 3);
+    // What the camera sees, the nearest first: what is behind is then hidden before it costs anything
+    std::vector<const Item *> nearestFirst;
+    {
+        const QMatrix4x4 sees = proj * view;
+        for (const Item &item : items)
+            if (item.model && inView(sees, item)) nearestFirst.push_back(&item);
+        std::vector<std::pair<float, const Item *>> byDistance;
+        for (const Item *item : nearestFirst) byDistance.push_back({(sphereOf(*item).first - eye).lengthSquared(), item});
+        std::stable_sort(byDistance.begin(), byDistance.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        for (size_t k = 0; k < byDistance.size(); ++k) nearestFirst[k] = byDistance[k].second;
+    }
     const bool wantsAo = contactLevel && s.ao > 0 && m_aoProgram && m_aoBlurProgram;
     const float reflections = reflectLevel ? s.reflections : 0.0f;
     if (wantsAo || reflections > 0) {
@@ -1358,8 +1487,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, view.constData());
         f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, proj.constData());
         f->glUniform1i(where("u_disp"), 1);
-        for (const Item &item : items) {
-            if (!item.model) continue;
+        for (const Item *near : nearestFirst) {
+            const Item &item = *near;
+            computed += item.model->triangleCount();
             const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
             f->glUniformMatrix4fv(where("u_model"), 1, GL_FALSE, model.constData());
             f->glUniformMatrix3fv(where("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
@@ -1524,8 +1654,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glActiveTexture(GL_TEXTURE0);
     // The opaque surfaces, then the blended ones over them (their depth not written: what is behind them still shows)
     for (int pass = 0; pass < 2; ++pass)
-    for (const Item &item : items) {
-        if (!item.model) continue;
+    for (size_t order = 0; order < nearestFirst.size(); ++order) {
+        // The opaque ones nearest first; the blended ones over them, farthest first
+        const Item &item = *nearestFirst[pass == 0 ? order : nearestFirst.size() - 1 - order];
+        if (pass == 0) computed += item.model->triangleCount();
         const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
         f->glUniformMatrix4fv(loc("u_model"), 1, GL_FALSE, model.constData());
         f->glUniformMatrix3fv(loc("u_normal"), 1, GL_FALSE, model.normalMatrix().constData());
@@ -1534,6 +1666,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1f(loc("u_bendCx"), item.model->centerX());
         f->glUniform1f(loc("u_bendW"), item.model->width());
         f->glUniform1i(loc("u_unlit"), item.placement.unlit ? 1 : 0);
+        f->glUniform1i(loc("u_flat"), item.placement.shading == 2 ? 1 : 0);
         f->glUniform1i(loc("u_hasDisp"), item.displace ? 1 : 0);
         f->glUniform1f(loc("u_dispAmount"), item.displaceAmount);
         f->glUniform1f(loc("u_dispMid"), item.displaceMid);
@@ -1573,6 +1706,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fbo);
     f->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    m_computed = computed;
+    ++m_framesDrawn;
     return m_color;
 }
 
@@ -1607,6 +1742,9 @@ void Scene3D::releaseGl()
     m_pointProgram = m_preFbo = m_preDepth = m_aoProgram = m_aoBlurProgram = m_aoFbo = 0;
     m_pointMaps[0] = m_pointMaps[1] = m_aoTex[0] = m_aoTex[1] = 0;
     m_shadowKey.clear();
+    m_frameKey.clear();
+    m_envSource = 0;
+    m_stillFrames = 0;
     m_hasPicture = false;
     m_compiled = false;
     m_w = m_h = 0;

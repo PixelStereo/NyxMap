@@ -66,6 +66,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
+#include <QLocale>
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSplitter>
@@ -1248,7 +1249,7 @@ void MainWindow::refreshLayerList()
             case SourceType::Audio:
             case SourceType::Image:
                 r.source = l->merge3d ? QStringLiteral("Merge 3D of %1 object(s)").arg(m_engine->groupMembers(i).size())
-                           : l->scene3d  ? QStringLiteral("3D scene of %1 object(s)").arg(m_engine->groupMembers(i).size())
+                           : l->scene3d  ? QStringLiteral("3D scene of %1 object(s) · %2 triangles").arg(m_engine->groupMembers(i).size()).arg(QLocale().toString(m_engine->sceneTriangles(i)))
                            : l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
                                         : QFileInfo(l->sourcePath).fileName();
                 break;

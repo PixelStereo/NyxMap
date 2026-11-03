@@ -60,6 +60,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QLocale>
 #include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
@@ -1025,6 +1026,23 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
                                     .arg(s.members));
         info->setWordWrap(true);
         v->addWidget(info);
+        if (scene) { // what it costs, as it goes
+            auto *count = new QLabel;
+            count->setObjectName(QStringLiteral("sceneTriangles"));
+            count->setToolTip(QStringLiteral("Its shown models' triangles; those its last frame computed, shadows and depth included "
+                                             "(0: nothing moved, its picture is kept)"));
+            const auto show = [this, count] {
+                const QLocale here;
+                count->setText(QStringLiteral("%1 triangles · %2 computed per frame")
+                                   .arg(here.toString(m_engine->sceneTriangles(m_layer)), here.toString(m_engine->sceneTrianglesComputed(m_layer))));
+            };
+            show();
+            auto *poll = new QTimer(count);
+            poll->setInterval(250);
+            connect(poll, &QTimer::timeout, count, show);
+            poll->start();
+            v->addWidget(count);
+        }
         return g;
     }
 

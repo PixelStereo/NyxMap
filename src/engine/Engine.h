@@ -113,6 +113,9 @@ public:
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
     Scene3DQuality quality3d() const { Lock lk(&m_mutex); return m_quality3d; } // the composition's, for all its 3D scenes
+    // A 3D scene's triangles, in all its shown models; those its last frame computed in all its passes (shadows too)
+    int sceneTriangles(int scene) const;
+    int sceneTrianglesComputed(int scene) const;
     int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
