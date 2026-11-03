@@ -210,6 +210,8 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
         if (l->type == SourceType::Light) {
             o.light = true;
             o.lightType = l->light.type;
+            o.angle = l->light.angle;
+            o.falloff = l->light.falloff;
             o.position = QVector3D(l->light.position[0], l->light.position[1], l->light.position[2]);
             o.direction = Camera3D::aim(l->light.yaw, l->light.pitch);
             o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
@@ -414,16 +416,84 @@ void Scene3DView::paintOverlay(QPainter &p)
         const QPointF c = project(o.position, &front);
         if (!front) continue;
         const bool sel = o.id == m_selected;
-        p.setPen(QPen(sel ? kSelected : kLight, sel ? 2 : 1.4));
-        p.setBrush(QColor(kLight.red(), kLight.green(), kLight.blue(), 60));
-        p.drawEllipse(c, 7, 7);
-        for (int k = 0; k < 8; ++k) {
-            const double a = k * M_PI / 4;
-            p.drawLine(c + QPointF(std::cos(a), std::sin(a)) * 9, c + QPointF(std::cos(a), std::sin(a)) * 13);
-        }
-        if (o.lightType != 1) { // it points somewhere
-            p.setPen(QPen(sel ? kSelected : kLight, 1, Qt::DashLine));
-            p.drawLine(c, project(o.position + o.direction * handleLength() * 2));
+        const QColor ink = sel ? kSelected : kLight;
+        const QColor faint(ink.red(), ink.green(), ink.blue(), sel ? 170 : 110);
+        // Two directions across where it points
+        const QVector3D across = QVector3D::crossProduct(o.direction, std::abs(o.direction.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0)).normalized();
+        const QVector3D across2 = QVector3D::crossProduct(o.direction, across).normalized();
+        p.setBrush(Qt::NoBrush);
+        if (o.lightType == 2) {
+            // Its cone, down to the ground when it reaches it: what it lights, and inside it where its falloff starts
+            float reach = handleLength() * 3;
+            if (o.direction.y() < -0.05f && o.position.y() > 0) reach = std::min(o.position.y() / -o.direction.y(), std::max(reach, m_cam.distance * 3));
+            const auto ring = [&](float degrees) {
+                const float spread = reach * std::tan(qDegreesToRadians(std::clamp(degrees, 0.0f, 85.0f)));
+                QPolygonF poly;
+                bool whole = true;
+                for (int k = 0; k <= 48; ++k) {
+                    const double t = k * 2 * M_PI / 48;
+                    bool ahead;
+                    poly << project(o.position + o.direction * reach + (across * float(std::cos(t)) + across2 * float(std::sin(t))) * spread, &ahead);
+                    whole = whole && ahead;
+                }
+                return whole ? poly : QPolygonF();
+            };
+            const QPolygonF edge = ring(o.angle), inner = ring(o.angle * (1 - std::clamp(o.falloff, 0.0f, 1.0f)));
+            if (!edge.isEmpty()) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), sel ? 36 : 20));
+                p.drawPolygon(edge);
+                p.setBrush(Qt::NoBrush);
+                p.setPen(QPen(faint, sel ? 1.6 : 1.1));
+                p.drawPolygon(edge);
+                for (int k = 0; k < 8; ++k) p.drawLine(c, edge[k * 6]);
+                if (!inner.isEmpty() && o.falloff > 0.01f) {
+                    p.setPen(QPen(faint, 1, Qt::DashLine));
+                    p.drawPolygon(inner);
+                }
+            }
+            // Its symbol: a lamp's head, wide towards where it points
+            bool ahead;
+            const QPointF tip = project(o.position + o.direction * handleLength() * 0.5f, &ahead);
+            QPointF way = tip - c;
+            const double length = std::hypot(way.x(), way.y());
+            way = length > 1 ? way / length : QPointF(0, 1);
+            const QPointF side(-way.y(), way.x());
+            QPolygonF head;
+            head << c - way * 5 - side * 3 << c - way * 5 + side * 3 << c + way * 7 + side * 8 << c + way * 7 - side * 8;
+            p.setPen(QPen(ink, sel ? 2 : 1.4));
+            p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), 110));
+            p.drawPolygon(head);
+        } else if (o.lightType == 0) {
+            // The sun: a disc, and parallel rays where it shines
+            p.setPen(QPen(ink, sel ? 2 : 1.4));
+            p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), 110));
+            p.drawEllipse(c, 6, 6);
+            p.setPen(QPen(faint, sel ? 1.6 : 1.2));
+            const float gap = handleLength() * 0.45f, length = handleLength() * 2;
+            for (int k = 0; k < 5; ++k) {
+                const QVector3D from = o.position + (k == 4 ? QVector3D() : (k % 2 ? across2 : across) * (k < 2 ? gap : -gap));
+                bool a1, a2;
+                const QPointF start = project(from, &a1), end = project(from + o.direction * length, &a2);
+                if (!a1 || !a2) continue;
+                p.drawLine(start, end);
+                QPointF way = end - start;
+                const double size = std::hypot(way.x(), way.y());
+                if (size < 1) continue;
+                way /= size;
+                const QPointF side(-way.y(), way.x());
+                p.drawLine(end, end - way * 7 + side * 4);
+                p.drawLine(end, end - way * 7 - side * 4);
+            }
+        } else {
+            // A bulb: rays all around
+            p.setPen(QPen(ink, sel ? 2 : 1.4));
+            p.setBrush(QColor(ink.red(), ink.green(), ink.blue(), 60));
+            p.drawEllipse(c, 7, 7);
+            for (int k = 0; k < 8; ++k) {
+                const double a = k * M_PI / 4;
+                p.drawLine(c + QPointF(std::cos(a), std::sin(a)) * 9, c + QPointF(std::cos(a), std::sin(a)) * 13);
+            }
         }
     }
     // The selected object's outline and handles

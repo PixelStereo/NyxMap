@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <cmath>
 #include <cstdio>
 #include <tuple>
 
@@ -341,6 +342,7 @@ int runScene3dTests(Engine &engine)
             Engine::Lock lk(&engine.mutex());
             if (Layer *o = engine.layer(i); o && o->scene3d && o->id != lit) o->enabled = false;
         }
+        engine.setParameter(lit, "scene/studio", 0.0); // no studio's light either
         const QColor unlitBall = at(32, 32);
         check(unlitBall.lightness() < 10, "no light, no environment: dark");
         check(engine.setSceneEnvironment(engine.indexOfId(lit), sky, &error), "the layer surrounds the scene");
@@ -437,6 +439,145 @@ int runScene3dTests(Engine &engine)
             const Layer *l = engine.layer(engine.indexOfId(lit));
             check(l && l->sceneEnvironment == sky && l->sceneEnvironmentStage == -1, "the scene's environment comes back");
         }
+    }
+
+    // A scene of its own, seen from above: a floor, a cube over it, a spot right over them
+    {
+        engine.newProject();
+        engine.setCompositionSize({128, 128});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {128, 128});
+        const int si2 = engine.addScene();
+        const quint64 stage = engine.layerId(si2);
+        const auto solid = [&](const QString &prim, double y, double size, double tilt) {
+            const int at = engine.addLayer(prim, engine.indexOfId(stage) + 1);
+            const quint64 id = engine.layerId(at);
+            QString err;
+            check(engine.setLayerModel(at, Model3D::primitivePath(prim), &err), "a primitive for the shadows");
+            engine.setParameter(id, "model/position/y", y);
+            engine.setParameter(id, "model/scale/all", size);
+            engine.setParameter(id, "model/rotation/x", tilt);
+            engine.setParameter(id, "model/material/rough", 1.0);
+            return id;
+        };
+        const quint64 floorId = solid("Plane", 0, 10, -90);
+        const quint64 caster = solid("Cube", 1.0, 0.25, 0);
+        engine.setParameter(caster, "model/position/x", 0.6);
+        const int lampAt = engine.addLayer("Spot", engine.indexOfId(stage) + 1);
+        const quint64 spot = engine.layerId(lampAt);
+        check(engine.setLayerLight(lampAt), "a light for the shadows");
+        engine.setStructure(tree::intoGroup(engine.structure(), {floorId, caster, spot}, stage));
+        engine.setParameter(spot, "light/type", QStringLiteral("spot"));
+        engine.setParameter(spot, "light/position/x", 0.0);
+        engine.setParameter(spot, "light/position/y", 2.0);
+        engine.setParameter(spot, "light/position/z", 0.0);
+        engine.setParameter(spot, "light/pitch", -89.0);
+        engine.setParameter(spot, "light/angle", 50.0);
+        engine.setParameter(spot, "light/intensity", 6.0);
+        engine.setParameter(spot, "light/softness", 0.0);
+        engine.setParameter(stage, "scene/studio", 0.0);
+        engine.setParameter(stage, "scene/ambient_intensity", 0.0);
+        engine.setParameter(stage, "camera/target/x", 0.0);
+        engine.setParameter(stage, "camera/target/y", 0.0);
+        engine.setParameter(stage, "camera/target/z", 0.0);
+        engine.setParameter(stage, "camera/yaw", 0.0);
+        engine.setParameter(stage, "camera/pitch", 89.0);
+        engine.setParameter(stage, "camera/distance", 3.0);
+        engine.setParameter(stage, "camera/fov", 60.0);
+        engine.setParameter(caster, "enable", false);
+        const auto levels = [&](int x) {
+            engine.renderFrame();
+            return engine.grabOutput().pixelColor(x, 64).lightness();
+        };
+        // Falloff: at 0 the light holds to the edge; at 1 it fades from the middle
+        engine.setParameter(spot, "light/falloff", 0.0);
+        const int middleSharp = levels(64), asideSharp = levels(90);
+        engine.setParameter(spot, "light/falloff", 1.0);
+        const int middleSoft = levels(64), asideSoft = levels(90);
+        check(middleSharp > 40, "the spot lights the floor under it");
+        check(std::abs(middleSoft - middleSharp) < 16 && asideSoft < asideSharp - 10, "its falloff fades towards its edge, not its middle");
+        // Shadows: the cube's on the floor, only when asked; a shadow takes nothing away beside it
+        engine.setParameter(spot, "light/falloff", 0.2);
+        const int aside = levels(80);
+        engine.setParameter(caster, "enable", true);
+        engine.setParameter(spot, "light/shadow", false);
+        const int without = levels(112);
+        engine.setParameter(spot, "light/shadow", true);
+        const int with = levels(112);
+        check(with < without - 10, "the cube's shadow on the floor");
+        check(std::abs(levels(80) - aside) < 12, "beside it, the floor as it was");
+        // Its shadow maps are only drawn when what they show moves
+        const auto renders = [&] {
+            Engine::Lock lk(&engine.mutex());
+            const Layer *l = engine.layer(engine.indexOfId(stage));
+            return l && l->sceneRenderer ? l->sceneRenderer->shadowRenders() : -1;
+        };
+        engine.renderFrame();
+        const int drawn = renders();
+        engine.renderFrame();
+        engine.renderFrame();
+        check(drawn > 0 && renders() == drawn, "nothing moved: the shadow maps are not drawn again");
+        engine.setParameter(caster, "model/position/z", 0.01);
+        engine.renderFrame();
+        check(renders() == drawn + 1, "a model moved: they are");
+        engine.setParameter(caster, "model/position/z", 0.0);
+        // A point light's shadows fall on all sides of it
+        engine.setParameter(spot, "light/type", QStringLiteral("point"));
+        engine.setParameter(spot, "light/shadow", false);
+        const int pointWithout = levels(112);
+        engine.setParameter(spot, "light/shadow", true);
+        const int pointWith = levels(112);
+        check(pointWith < pointWithout - 10, "a point light's shadow on the floor");
+        engine.setParameter(spot, "light/position/y", 0.5);
+        engine.setParameter(spot, "light/position/x", 0.6);
+        engine.setParameter(caster, "model/position/y", 1.5);
+        engine.setParameter(spot, "light/shadow", false);
+        const int under = levels(64);
+        engine.setParameter(spot, "light/shadow", true);
+        check(std::abs(levels(64) - under) < 12, "and light goes on where nothing stops it");
+        engine.setParameter(spot, "light/type", QStringLiteral("spot"));
+        engine.setParameter(spot, "light/position/x", 0.0);
+        engine.setParameter(spot, "light/position/y", 2.0);
+        engine.setParameter(caster, "model/position/y", 1.0);
+        // Where surfaces meet: darker with the contact shadows; away from them, as it was
+        engine.setParameter(spot, "light/intensity", 0.0);
+        engine.setParameter(stage, "scene/studio", 1.0);
+        engine.setParameter(caster, "model/position/x", 0.0);
+        engine.setParameter(caster, "model/position/y", 0.144);
+        engine.setParameter(stage, "scene/ao", 0.0);
+        const int openNear = levels(73), openFar = levels(120);
+        engine.setParameter(stage, "scene/ao", 1.0);
+        check(levels(73) < openNear - 4, "contact shadows where the cube meets the floor");
+        check(std::abs(levels(120) - openFar) < 6, "not away from it");
+        // A smooth floor shows the cube over it, from the side
+        engine.setParameter(stage, "camera/pitch", 25.0);
+        engine.setParameter(floorId, "model/material/rough", 0.03);
+        engine.setParameter(floorId, "model/material/metal", 1.0);
+        engine.setParameter(caster, "model/material/color/r", 1.0);
+        engine.setParameter(caster, "model/material/color/g", 0.1);
+        engine.setParameter(caster, "model/material/color/b", 0.1);
+        const auto twice = [&] {
+            engine.renderFrame();
+            engine.renderFrame();
+            return engine.grabOutput();
+        };
+        engine.setParameter(stage, "scene/reflections", 0.0);
+        const QImage dull = twice();
+        engine.setParameter(stage, "scene/reflections", 1.0);
+        const QImage mirror = twice();
+        int redder = 0;
+        for (int y = 0; y < mirror.height(); ++y)
+            for (int x = 0; x < mirror.width(); ++x)
+                redder += QColor(mirror.pixel(x, y)).red() > QColor(dull.pixel(x, y)).red() + 12;
+        check(redder > 40, "the floor reflects the red cube");
+        engine.setParameter(floorId, "model/material/metal", 0.0);
+        engine.setParameter(floorId, "model/material/rough", 1.0);
+        engine.setParameter(stage, "scene/studio", 0.0);
+        // The studio's light: something to reflect, without an environment
+        engine.setParameter(spot, "light/intensity", 0.0);
+        const int unlitFloor = levels(64);
+        engine.setParameter(stage, "scene/studio", 1.0);
+        check(levels(64) > unlitFloor, "the studio lights the models");
+        engine.newProject();
     }
 
     return failures;

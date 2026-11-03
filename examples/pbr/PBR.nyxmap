@@ -1,0 +1,3083 @@
+{
+    "app": "NyxMap",
+    "audio": {
+        "volume": 1
+    },
+    "audio_channel_outputs": [
+    ],
+    "bin": [
+    ],
+    "clock": {
+        "beats_per_bar": 4,
+        "bpm": 120
+    },
+    "composition": {
+        "fps": -1,
+        "height": 1080,
+        "speed": 1,
+        "width": 1920
+    },
+    "current_sequence": -1,
+    "format_version": 1,
+    "interactions": [
+    ],
+    "layers": [
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "3",
+            "locked": false,
+            "name": "Viewport 1",
+            "output": {
+                "height": 1080,
+                "mode": 0,
+                "screen": "",
+                "width": 1920
+            },
+            "params": {
+                "add/b": 0,
+                "add/enable": true,
+                "add/g": 0,
+                "add/r": 0,
+                "color/enable": true,
+                "fx/enable": true,
+                "height": 1080,
+                "mask/invert": false,
+                "opacity": 1,
+                "output/exposure": 0,
+                "output/input_space": "srgb",
+                "output/space": "same",
+                "pivot/x": 50,
+                "pivot/y": 50,
+                "position/x": 960,
+                "position/y": 540,
+                "remove/b": 0,
+                "remove/enable": true,
+                "remove/g": 0,
+                "remove/r": 0,
+                "roi/bottom": 1,
+                "roi/left": 0,
+                "roi/right": 1,
+                "roi/top": 0,
+                "rotation": 0,
+                "temp": 0,
+                "temp/enable": true,
+                "tint": 0,
+                "tint/enable": true,
+                "width": 1920
+            },
+            "publish": {
+                "decklink": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "ndi": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "omt": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "omt_quality": 0,
+                "spout": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                },
+                "syphon": {
+                    "enable": false,
+                    "name": "NyxMap Viewport 1"
+                }
+            },
+            "source": {
+                "type": "none"
+            },
+            "viewport": true,
+            "viewports": {
+            }
+        },
+        {
+            "collapsed": false,
+            "enable": true,
+            "fx": [
+            ],
+            "group": true,
+            "id": "4",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "PBR Scene",
+            "params": {
+                "add/b": 0,
+                "add/enable": true,
+                "add/g": 0,
+                "add/r": 0,
+                "blend_mode": "normal",
+                "camera/distance": 6.400000095367432,
+                "camera/fov": 40,
+                "camera/pitch": 19,
+                "camera/target/x": 0,
+                "camera/target/y": 0.30000001192092896,
+                "camera/target/z": -0.4000000059604645,
+                "camera/yaw": 8,
+                "color/enable": true,
+                "corner/bottom_left/x": 0,
+                "corner/bottom_left/y": 0,
+                "corner/bottom_right/x": 0,
+                "corner/bottom_right/y": 0,
+                "corner/top_left/x": 0,
+                "corner/top_left/y": 0,
+                "corner/top_right/x": 0,
+                "corner/top_right/y": 0,
+                "fx/enable": true,
+                "mask/invert": false,
+                "opacity": 1,
+                "pivot/x": 50,
+                "pivot/y": 50,
+                "position/x": 960,
+                "position/y": 540,
+                "remove/b": 0,
+                "remove/enable": true,
+                "remove/g": 0,
+                "remove/r": 0,
+                "roi/bottom": 1,
+                "roi/left": 0,
+                "roi/right": 1,
+                "roi/top": 0,
+                "rotation": 0,
+                "scale/x": 100,
+                "scale/y": 100,
+                "scene/ambient/b": 1,
+                "scene/ambient/g": 1,
+                "scene/ambient/r": 1,
+                "scene/ambient_intensity": 0.009999999776482582,
+                "scene/background/a": 1,
+                "scene/background/b": 0.01600000075995922,
+                "scene/background/g": 0.013000000268220901,
+                "scene/background/r": 0.012000000104308128,
+                "scene/environment/blur": 0,
+                "scene/environment/intensity": 1,
+                "scene/environment/rotation": 0,
+                "scene/environment/show": false,
+                "scene/exposure": 1,
+                "scene/studio": 0.550000011920929,
+                "temp": 0,
+                "temp/enable": true,
+                "tint": 0,
+                "tint/enable": true
+            },
+            "scene3d": true,
+            "source": {
+                "type": "none"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "5",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Floor",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.21176470816135406,
+                "model/material/color/g": 0.1882352977991104,
+                "model/material/color/r": 0.18039216101169586,
+                "model/material/metal": 0,
+                "model/material/rough": 0.41999998688697815,
+                "model/position/x": 0,
+                "model/position/y": 0,
+                "model/position/z": -1,
+                "model/rotation/x": -90,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 10,
+                "model/scale/x": 4,
+                "model/scale/y": 4,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Plane",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "6",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Backdrop",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.21176470816135406,
+                "model/material/color/g": 0.1882352977991104,
+                "model/material/color/r": 0.18039216101169586,
+                "model/material/metal": 0,
+                "model/material/rough": 0.6000000238418579,
+                "model/position/x": 0,
+                "model/position/y": 3,
+                "model/position/z": -5.5,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 10,
+                "model/scale/x": 4,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Plane",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "7",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 1",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.05999999865889549,
+                "model/position/x": -2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "8",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 1",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.05999999865889549,
+                "model/position/x": -2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "9",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 1",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.13333334028720856,
+                "model/material/color/g": 0.11764705926179886,
+                "model/material/color/r": 0.7450980544090271,
+                "model/material/metal": 0,
+                "model/material/rough": 0.05999999865889549,
+                "model/position/x": -2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "10",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 2",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.23000000417232513,
+                "model/position/x": -1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "11",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 2",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.23000000417232513,
+                "model/position/x": -1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "12",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 2",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.4901960790157318,
+                "model/material/color/g": 0.47058823704719543,
+                "model/material/color/r": 0.0784313753247261,
+                "model/material/metal": 0,
+                "model/material/rough": 0.23000000417232513,
+                "model/position/x": -1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "13",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 3",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.4000000059604645,
+                "model/position/x": -0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "14",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 3",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.4000000059604645,
+                "model/position/x": -0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "15",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 3",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.13333334028720856,
+                "model/material/color/g": 0.11764705926179886,
+                "model/material/color/r": 0.7450980544090271,
+                "model/material/metal": 0,
+                "model/material/rough": 0.4000000059604645,
+                "model/position/x": -0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "16",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 4",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.5699999928474426,
+                "model/position/x": 0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "17",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 4",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.5699999928474426,
+                "model/position/x": 0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "18",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 4",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.4901960790157318,
+                "model/material/color/g": 0.47058823704719543,
+                "model/material/color/r": 0.0784313753247261,
+                "model/material/metal": 0,
+                "model/material/rough": 0.5699999928474426,
+                "model/position/x": 0.4300000071525574,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "19",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 5",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.7400000095367432,
+                "model/position/x": 1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "20",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 5",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.7400000095367432,
+                "model/position/x": 1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "21",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 5",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.13333334028720856,
+                "model/material/color/g": 0.11764705926179886,
+                "model/material/color/r": 0.7450980544090271,
+                "model/material/metal": 0,
+                "model/material/rough": 0.7400000095367432,
+                "model/position/x": 1.2899999618530273,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "22",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Gold 6",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3607843220233917,
+                "model/material/color/g": 0.7686274647712708,
+                "model/material/color/r": 1,
+                "model/material/metal": 1,
+                "model/material/rough": 0.9100000262260437,
+                "model/position/x": 2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.8500000238418579,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "23",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Steel 6",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.843137264251709,
+                "model/material/color/g": 0.8235294222831726,
+                "model/material/color/r": 0.8039215803146362,
+                "model/material/metal": 1,
+                "model/material/rough": 0.9100000262260437,
+                "model/position/x": 2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": -0.05000000074505806,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "24",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Plastic 6",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.4901960790157318,
+                "model/material/color/g": 0.47058823704719543,
+                "model/material/color/r": 0.0784313753247261,
+                "model/material/metal": 0,
+                "model/material/rough": 0.9100000262260437,
+                "model/position/x": 2.1500000953674316,
+                "model/position/y": 0.30000001192092896,
+                "model/position/z": 0.75,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.5199999809265137,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Sphere",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "25",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Copper Cone",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.3529411852359772,
+                "model/material/color/g": 0.5098039507865906,
+                "model/material/color/r": 0.9411764740943909,
+                "model/material/metal": 1,
+                "model/material/rough": 0.2199999988079071,
+                "model/position/x": -2.700000047683716,
+                "model/position/y": 0.36000001430511475,
+                "model/position/z": -1.899999976158142,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.7200000286102295,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Cone",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "26",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "White Cube",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.8941176533699036,
+                "model/material/color/g": 0.8823529481887817,
+                "model/material/color/r": 0.8823529481887817,
+                "model/material/metal": 0,
+                "model/material/rough": 0.30000001192092896,
+                "model/position/x": 2.700000047683716,
+                "model/position/y": 0.3499999940395355,
+                "model/position/z": -1.899999976158142,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.6000000238418579,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Cube",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "27",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Dark Cylinder",
+            "params": {
+                "model/bend": 0,
+                "model/detail": 6,
+                "model/displace/amount": 0.20000000298023224,
+                "model/displace/mid": 0,
+                "model/fit": true,
+                "model/material/color/b": 0.14901961386203766,
+                "model/material/color/g": 0.125490203499794,
+                "model/material/color/r": 0.11764705926179886,
+                "model/material/metal": 0.20000000298023224,
+                "model/material/rough": 0.18000000715255737,
+                "model/position/x": 0,
+                "model/position/y": 0.5,
+                "model/position/z": -2.0999999046325684,
+                "model/rotation/x": 0,
+                "model/rotation/y": 0,
+                "model/rotation/z": 0,
+                "model/scale/all": 0.7200000286102295,
+                "model/scale/x": 1,
+                "model/scale/y": 1,
+                "model/scale/z": 1,
+                "model/unlit": false
+            },
+            "parent": "4",
+            "source": {
+                "path": "/NyxMap/3D/Cylinder",
+                "type": "model"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "28",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Key Spot",
+            "params": {
+                "light/angle": 38,
+                "light/color/b": 0.8235294222831726,
+                "light/color/g": 0.9254902005195618,
+                "light/color/r": 1,
+                "light/falloff": 0.8500000238418579,
+                "light/intensity": 130,
+                "light/level": 1,
+                "light/pitch": -50.02116775512695,
+                "light/position/x": -2.5999999046325684,
+                "light/position/y": 5.199999809265137,
+                "light/position/z": 3.200000047683716,
+                "light/shadow": true,
+                "light/softness": 5,
+                "light/type": "spot",
+                "light/yaw": 143.5
+            },
+            "parent": "4",
+            "source": {
+                "type": "light"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "29",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Fill Sun",
+            "params": {
+                "light/angle": 30,
+                "light/color/b": 1,
+                "light/color/g": 0.7058823704719543,
+                "light/color/r": 0.5882353186607361,
+                "light/falloff": 0.3499999940395355,
+                "light/intensity": 0.550000011920929,
+                "light/level": 1,
+                "light/pitch": -38.2858772277832,
+                "light/position/x": 4.5,
+                "light/position/y": 4.5,
+                "light/position/z": -3.5,
+                "light/shadow": true,
+                "light/softness": 8,
+                "light/type": "directional",
+                "light/yaw": -52
+            },
+            "parent": "4",
+            "source": {
+                "type": "light"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "id": "30",
+            "locked": false,
+            "mesh": {
+                "cols": 4,
+                "edit": false,
+                "offsets": [
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ],
+                    [
+                        0,
+                        0
+                    ]
+                ],
+                "rows": 4
+            },
+            "name": "Rim Bulb",
+            "params": {
+                "light/angle": 30,
+                "light/color/b": 0.23529411852359772,
+                "light/color/g": 0.47058823704719543,
+                "light/color/r": 1,
+                "light/falloff": 0.3499999940395355,
+                "light/intensity": 14,
+                "light/level": 1,
+                "light/pitch": 0,
+                "light/position/x": 4.599999904632568,
+                "light/position/y": 3.200000047683716,
+                "light/position/z": -3.4000000953674316,
+                "light/shadow": true,
+                "light/softness": 2,
+                "light/type": "point",
+                "light/yaw": 0
+            },
+            "parent": "4",
+            "source": {
+                "type": "light"
+            },
+            "viewports": {
+            }
+        }
+    ],
+    "midi_outputs": [
+    ],
+    "preset_tree": [
+    ],
+    "presets": [
+    ],
+    "sequences": [
+    ],
+    "snapshot_tree": [
+    ],
+    "snapshots": [
+    ],
+    "startup_go": true,
+    "startup_sequence": -1,
+    "startup_step": 0,
+    "timecode_outputs": [
+    ],
+    "timeline_tree": [
+    ],
+    "timelines": [
+    ],
+    "ui": {
+    }
+}
