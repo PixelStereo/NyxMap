@@ -64,7 +64,10 @@
   frame).
   A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
   its own camera (drag: turn; Shift or middle button: pan; wheel: distance), the
-  ground grid, the scene's lights and camera drawn; a click picks a model or a
+  ground grid, the scene's lights and camera drawn; its models in flat colours with
+  their edges, the lightest ("Simple"), or their colours and pictures with no light
+  on them ("Unlit"), chosen by its button (the scene's own picture is in the output,
+  as it will be seen); a click picks a model or a
   light; its handles move, turn or scale it along X, Y, Z (W, E, R; one undo step
   each). "View from Camera" and "Camera = View" exchange the view's and the scene's
   cameras. Not yet: moving a mesh's points by hand in that view.

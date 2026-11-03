@@ -960,6 +960,76 @@ void Model3D::drawDepth(bool picture)
     f->glBindVertexArray(0);
 }
 
+// Its edges: not those between two faces of one flat surface (a cube has twelve, no diagonals). Above this many triangles,
+// only its sharp ones; far above, none
+void Model3D::makeEdges(Mesh &m)
+{
+    auto f = gl();
+    if (m.edgeVao) return;
+    f->glGenVertexArrays(1, &m.edgeVao);
+    f->glBindVertexArray(m.edgeVao);
+    f->glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+    f->glEnableVertexAttribArray(0);
+    f->glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, p)));
+    f->glEnableVertexAttribArray(1);
+    f->glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, n)));
+    f->glEnableVertexAttribArray(2);
+    f->glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, uv)));
+    std::vector<quint32> edges;
+    const size_t triangles = m.indices.size() / 3;
+    if (triangles <= 200000) {
+        const float flat = triangles > 20000 ? std::cos(qDegreesToRadians(30.0f)) : 0.9999f;
+        // The same point in faces that have their own normals or UVs is one point
+        std::map<std::array<qint64, 3>, quint32> points;
+        const float grid = 1e5f / std::max(m_radius, 1e-6f);
+        std::vector<quint32> point(m.vertices.size());
+        for (size_t k = 0; k < m.vertices.size(); ++k) {
+            const float *q = m.vertices[k].p;
+            point[k] = points.try_emplace({{qint64(std::llround(q[0] * grid)), qint64(std::llround(q[1] * grid)), qint64(std::llround(q[2] * grid))}}, quint32(k)).first->second;
+        }
+        struct Edge {
+            QVector3D normal;
+            bool shown = true;
+        };
+        std::map<std::pair<quint32, quint32>, Edge> seen;
+        const auto at = [&](quint32 k) { return QVector3D(m.vertices[k].p[0], m.vertices[k].p[1], m.vertices[k].p[2]); };
+        for (size_t t = 0; t < triangles; ++t) {
+            const quint32 a = point[m.indices[3 * t]], b = point[m.indices[3 * t + 1]], c = point[m.indices[3 * t + 2]];
+            const QVector3D normal = QVector3D::crossProduct(at(b) - at(a), at(c) - at(a)).normalized();
+            for (const auto &[from, to] : {std::pair(a, b), std::pair(b, c), std::pair(c, a)}) {
+                if (from == to) continue;
+                const auto [edge, isNew] = seen.try_emplace(std::minmax(from, to), Edge{normal, true});
+                if (!isNew) edge->second.shown = std::abs(QVector3D::dotProduct(edge->second.normal, normal)) < flat;
+            }
+        }
+        edges.reserve(seen.size() * 2);
+        for (const auto &[ends, edge] : seen)
+            if (edge.shown) {
+                edges.push_back(ends.first);
+                edges.push_back(ends.second);
+            }
+    }
+    m.edgeCount = GLsizei(edges.size());
+    f->glGenBuffers(1, &m.edgeIbo);
+    f->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.edgeIbo);
+    f->glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(edges.size() * sizeof(quint32)), edges.data(), GL_STATIC_DRAW);
+    f->glBindVertexArray(0);
+}
+
+void Model3D::drawEdges()
+{
+    auto f = gl();
+    upload();
+    for (Mesh &m : m_meshes) {
+        if (!m.vao) continue;
+        makeEdges(m);
+        if (!m.edgeCount) continue;
+        f->glBindVertexArray(m.edgeVao);
+        f->glDrawElements(GL_LINES, m.edgeCount, GL_UNSIGNED_INT, nullptr);
+    }
+    f->glBindVertexArray(0);
+}
+
 void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const ModelPlacement *look)
 {
     auto f = gl();
@@ -1049,7 +1119,10 @@ void Model3D::releaseMeshes()
         if (m.vao) f->glDeleteVertexArrays(1, &m.vao);
         if (m.vbo) f->glDeleteBuffers(1, &m.vbo);
         if (m.ibo) f->glDeleteBuffers(1, &m.ibo);
-        m.vao = m.vbo = m.ibo = 0;
+        if (m.edgeVao) f->glDeleteVertexArrays(1, &m.edgeVao);
+        if (m.edgeIbo) f->glDeleteBuffers(1, &m.edgeIbo);
+        m.vao = m.vbo = m.ibo = m.edgeVao = m.edgeIbo = 0;
+        m.edgeCount = 0;
     }
     for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
     m_textures.clear();
@@ -1064,7 +1137,10 @@ void Model3D::releaseGl()
         if (m.vao) f->glDeleteVertexArrays(1, &m.vao);
         if (m.vbo) f->glDeleteBuffers(1, &m.vbo);
         if (m.ibo) f->glDeleteBuffers(1, &m.ibo);
-        m.vao = m.vbo = m.ibo = 0;
+        if (m.edgeVao) f->glDeleteVertexArrays(1, &m.edgeVao);
+        if (m.edgeIbo) f->glDeleteBuffers(1, &m.edgeIbo);
+        m.vao = m.vbo = m.ibo = m.edgeVao = m.edgeIbo = 0;
+        m.edgeCount = 0;
     }
     for (GLuint t : m_textures) f->glDeleteTextures(1, &t);
     m_textures.clear();
@@ -1807,10 +1883,196 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     return m_color;
 }
 
+// What a 3D view draws, nothing of the lights in it. Simple: each model in one flat colour with its edges. Unlit: its colours
+// and pictures as they are
+static const char *kUnlitFragment = R"(#version 330 core
+in vec2 v_uv; out vec4 o;
+uniform vec4 u_base; uniform vec3 u_emissive; uniform int u_hasTex, u_layerTex, u_alphaMode; uniform float u_alphaCutoff; uniform sampler2D u_tex;
+void main() {
+    vec4 c = u_base;
+    if (u_hasTex != 0) {
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        c *= vec4(pow(t.rgb, vec3(2.2)), t.a);
+    }
+    if (u_alphaMode == 1 && c.a < u_alphaCutoff) discard;
+    if (u_alphaMode == 0) c.a = 1.0;
+    o = vec4(pow(clamp(c.rgb + u_emissive, 0.0, 1.0), vec3(1.0 / 2.2)) * c.a, c.a); // premultiplied
+}
+)";
+
+GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items, int w, int h, ViewLook look)
+{
+    if (w <= 0 || h <= 0) return 0;
+    auto f = gl();
+    if (!m_plainProgram) {
+        QString log;
+        m_plainProgram = compileProgram(QString::fromLatin1(kVertex),
+                                        QStringLiteral("#version 330 core\nuniform vec4 u_ink; out vec4 o; void main() { o = u_ink; }\n"), &log);
+        if (!m_plainProgram) {
+            qWarning("3D plain shader: %s", qPrintable(log));
+            return 0;
+        }
+        m_placePlain.resolve(m_plainProgram);
+    }
+    if (look == ViewLook::Unlit && !m_unlitProgram) {
+        QString log;
+        m_unlitProgram = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kUnlitFragment), &log);
+        if (!m_unlitProgram) {
+            qWarning("3D unlit shader: %s", qPrintable(log));
+            return 0;
+        }
+        m_placeUnlit.resolve(m_unlitProgram);
+        m_unlitUniforms.resolve(m_unlitProgram);
+    }
+    // Nothing changed: its picture is kept. A layer's picture, shown or pushing a model's points, can change at any frame
+    QByteArray key;
+    bool could = true;
+    const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
+    add(&look, sizeof look);
+    for (float v : {s.distance, s.yaw, s.pitch, s.fov}) add(&v, sizeof v);
+    add(s.target.data(), sizeof(float) * 3);
+    add(s.background.data(), sizeof(float) * 4);
+    std::vector<Placed> placed;
+    placed.reserve(items.size());
+    for (const Item &item : items) {
+        if (!item.model) continue;
+        Placed &p = placed.emplace_back();
+        p.item = &item;
+        p.model = item.parent * item.model->matrix(item.placement);
+        p.center = p.model.map(item.model->center());
+        p.radius = item.model->radius() * std::max({p.model.column(0).toVector3D().length(), p.model.column(1).toVector3D().length(), p.model.column(2).toVector3D().length()});
+        could = could && !item.displace && !(look == ViewLook::Unlit && item.picture);
+        const Model3D *which = item.model.get();
+        add(&which, sizeof which);
+        add(p.model.constData(), sizeof(float) * 16);
+        add(item.placement.color.data(), sizeof(float) * 3);
+        add(&item.placement.bend, sizeof(float));
+        add(&item.placement.detail, sizeof(int));
+    }
+    if (!m_plainFbo || w != m_w || h != m_h) {
+        if (m_plainFbo) {
+            f->glDeleteFramebuffers(1, &m_plainFbo);
+            f->glDeleteTextures(1, &m_plainColor);
+            f->glDeleteRenderbuffers(1, &m_plainDepth);
+        }
+        m_w = w;
+        m_h = h;
+        m_frameKey.clear();
+        f->glGenTextures(1, &m_plainColor);
+        f->glBindTexture(GL_TEXTURE_2D, m_plainColor);
+        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        f->glBindTexture(GL_TEXTURE_2D, 0);
+        f->glGenRenderbuffers(1, &m_plainDepth);
+        f->glBindRenderbuffer(GL_RENDERBUFFER, m_plainDepth);
+        f->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        f->glGenFramebuffers(1, &m_plainFbo);
+        f->glBindFramebuffer(GL_FRAMEBUFFER, m_plainFbo);
+        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_plainColor, 0);
+        f->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_plainDepth);
+    }
+    int total = 0;
+    for (const Placed &p : placed) total += p.item->model->triangleCount();
+    m_triangles = total;
+    if (could && key == m_frameKey) {
+        m_computed = 0;
+        return m_plainColor;
+    }
+    m_frameKey = key;
+    const Camera3D cam = Camera3D::of(s, float(w) / float(h));
+    const QMatrix4x4 sees = cam.proj * cam.view;
+    f->glBindFramebuffer(GL_FRAMEBUFFER, m_plainFbo);
+    f->glViewport(0, 0, w, h);
+    const float a = s.background[3];
+    f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
+    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    f->glEnable(GL_DEPTH_TEST);
+    f->glDepthFunc(GL_LEQUAL);
+    f->glDisable(GL_BLEND);
+    f->glDisable(GL_CULL_FACE);
+    const GLuint program = look == ViewLook::Unlit ? m_unlitProgram : m_plainProgram;
+    const PlaceUniforms &u = look == ViewLook::Unlit ? m_placeUnlit : m_placePlain;
+    f->glUseProgram(program);
+    f->glUniformMatrix4fv(f->glGetUniformLocation(program, "u_view"), 1, GL_FALSE, cam.view.constData());
+    f->glUniformMatrix4fv(f->glGetUniformLocation(program, "u_proj"), 1, GL_FALSE, cam.proj.constData());
+    f->glUniform1i(f->glGetUniformLocation(program, "u_disp"), 1);
+    f->glUniform1i(f->glGetUniformLocation(program, "u_tex"), 0);
+    const GLint ink = f->glGetUniformLocation(program, "u_ink");
+    const auto place = [&](Placed &p) {
+        const Item &item = *p.item;
+        p.normal = p.model.normalMatrix();
+        f->glUniformMatrix4fv(u.model, 1, GL_FALSE, p.model.constData());
+        f->glUniformMatrix3fv(u.normal, 1, GL_FALSE, p.normal.constData());
+        f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
+        f->glUniform1f(u.bendCx, item.model->centerX());
+        f->glUniform1f(u.bendW, item.model->width());
+        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform1f(u.dispAmount, item.displaceAmount);
+        f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glActiveTexture(GL_TEXTURE1);
+        f->glBindTexture(GL_TEXTURE_2D, item.displace);
+        f->glActiveTexture(GL_TEXTURE0);
+    };
+    int computed = 0;
+    if (look == ViewLook::Unlit) {
+        // The opaque surfaces, then the blended ones over them (their depth not written: what is behind them still shows)
+        for (int pass = 0; pass < 2; ++pass)
+            for (Placed &p : placed) {
+                if (!inView(sees, p)) continue;
+                const Item &item = *p.item;
+                if (pass == 1 && (item.picture || !item.model->hasBlended())) continue;
+                if (pass == 0) computed += item.model->triangleCount();
+                place(p);
+                if (pass == 1) {
+                    f->glEnable(GL_BLEND);
+                    f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied
+                    f->glDepthMask(GL_FALSE);
+                }
+                item.model->drawMeshes(m_unlitUniforms, item.picture, pass, &item.placement);
+                if (pass == 1) {
+                    f->glDisable(GL_BLEND);
+                    f->glDepthMask(GL_TRUE);
+                }
+            }
+    } else {
+        f->glEnable(GL_POLYGON_OFFSET_FILL); // behind its own edges
+        f->glPolygonOffset(1.0f, 1.0f);
+        for (Placed &p : placed) {
+            if (!inView(sees, p)) continue;
+            const Item &item = *p.item;
+            computed += item.model->triangleCount();
+            place(p);
+            const auto &c = item.placement.color;
+            f->glUniform4f(ink, c[0] * 0.4f, c[1] * 0.4f, c[2] * 0.4f, 1);
+            item.model->drawDepth(true);
+            f->glUniform4f(ink, c[0] * 0.4f + 0.45f, c[1] * 0.4f + 0.45f, c[2] * 0.4f + 0.45f, 1);
+            item.model->drawEdges();
+        }
+        f->glDisable(GL_POLYGON_OFFSET_FILL);
+    }
+    f->glActiveTexture(GL_TEXTURE1);
+    f->glBindTexture(GL_TEXTURE_2D, 0);
+    f->glActiveTexture(GL_TEXTURE0);
+    f->glDisable(GL_DEPTH_TEST);
+    m_computed = computed;
+    ++m_framesDrawn;
+    return m_plainColor;
+}
+
 void Scene3D::releaseGl()
 {
     if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
+    if (m_plainProgram) f->glDeleteProgram(m_plainProgram);
+    if (m_unlitProgram) f->glDeleteProgram(m_unlitProgram);
+    m_unlitProgram = 0;
+    if (m_plainFbo) f->glDeleteFramebuffers(1, &m_plainFbo);
+    if (m_plainColor) f->glDeleteTextures(1, &m_plainColor);
+    if (m_plainDepth) f->glDeleteRenderbuffers(1, &m_plainDepth);
+    m_plainProgram = m_plainFbo = m_plainColor = m_plainDepth = 0;
     if (m_program) f->glDeleteProgram(m_program);
     if (m_sky) f->glDeleteProgram(m_sky);
     if (m_skyVao) f->glDeleteVertexArrays(1, &m_skyVao);

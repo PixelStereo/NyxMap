@@ -794,7 +794,7 @@ void Engine::setPreviewSource(int slot, quint64 id)
     if (slot >= 0 && slot < int(m_previewSlots.size())) m_previewSlots[size_t(slot)].id = id;
 }
 
-void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSize size)
+void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSize size, Scene3D::ViewLook look)
 {
     Lock lk(&m_mutex);
     if (slot < 0 || slot >= int(m_previewSlots.size())) return;
@@ -802,6 +802,7 @@ void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSi
     p.sceneView = on;
     p.camera = camera;
     p.sceneSize = size.boundedTo(QSize(2048, 2048)).expandedTo(QSize(1, 1));
+    p.sceneLook = look;
 }
 
 GLuint Engine::previewTexture(int slot, QSize *size, int *buffer) const

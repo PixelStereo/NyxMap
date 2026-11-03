@@ -119,6 +119,7 @@ public:
     // pass 0: its opaque and cut-out meshes; 1: its blended ones (a picture laid on it: all of it in pass 0)
     void drawMeshes(const MeshUniforms &uniforms, GLuint picture = 0, int pass = 0, const ModelPlacement *look = nullptr);
     void drawDepth(bool picture); // only where it is: no colour is computed (shadows, depth)
+    void drawEdges(); // only its edges, as lines (made when first asked)
     bool hasBlended() const;
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
@@ -152,6 +153,8 @@ private:
         std::vector<quint32> indices;
         int material = 0;
         GLuint vao = 0, vbo = 0, ibo = 0;
+        GLuint edgeVao = 0, edgeIbo = 0;
+        GLsizei edgeCount = 0;
     };
     bool loadPrimitive(const QString &name, QString *err);
     bool loadGltf(const QString &path, QString *err);
@@ -159,6 +162,7 @@ private:
     int addImage(const QImage &image);
     void computeBounds();
     void mergeMeshes();
+    void makeEdges(Mesh &m);
     void upload();
     bool uploadGl();
 
@@ -214,6 +218,10 @@ public:
     // environmentLinear: its values linear light (an HDR file as read), else display encoded (a layer's picture)
     GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
                 GLuint environment = 0, bool environmentLinear = false, const Scene3DQuality &quality = {});
+    // A view for placing things, nothing of the lights in it (its picture, w × h; render thread). Simple: flat colours and
+    // edges; Unlit: the models' colours and pictures as they are
+    enum class ViewLook { Simple, Unlit };
+    GLuint drawView(const SceneSettings &s, const std::vector<Item> &items, int w, int h, ViewLook look = ViewLook::Simple);
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
     int shadowMapsDrawn() const { return m_mapsDrawn; }   // and how many maps in all: a light moving draws only its own
@@ -232,6 +240,9 @@ private:
         GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1;
         void resolve(GLuint program);
     };
+    GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
+    PlaceUniforms m_placePlain, m_placeUnlit;
+    MeshUniforms m_unlitUniforms;
     MeshUniforms m_meshUniforms;
     PlaceUniforms m_placeMain, m_placeDepth, m_placePoint;
     GLint m_unlitAt = -1, m_flatAt = -1;

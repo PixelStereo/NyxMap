@@ -5,6 +5,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QFile>
+#include <QHash>
 #include <QImage>
 #include <QJsonObject>
 #include <QPainter>
@@ -943,6 +944,65 @@ int runScene3dTests(Engine &engine)
         check(frames(other, true) == 3, "another file: drawn again, then kept");
         check(frames(hdr, false) == 8, "under a layer's picture, drawn at each frame");
         lit.releaseGl();
+        // A view's light drawing: one colour and its edges, whatever the lights; what has not changed is not drawn again
+        {
+            Scene3D plain;
+            std::vector<Scene3D::Item> one(1);
+            one[0].model = std::make_shared<Model3D>();
+            check(one[0].model->load(Model3D::primitivePath("Cube"), &err), "a cube to draw plainly");
+            one[0].placement.fit = true;
+            one[0].placement.rotation = {{20, 30, 0}};
+            one[0].placement.color = {{1, 0, 0}};
+            camera.yaw = 0;
+            camera.background = {{0, 0, 0, 0}};
+            const int size = 96;
+            shot = read(plain.drawView(camera, one, size, size), size, size);
+            QHash<QRgb, int> inks;
+            for (int y = 0; y < size; ++y)
+                for (int x = 0; x < size; ++x) ++inks[shot.pixel(x, y)];
+            check(inks.size() == 3, "only three colours: around it, its faces, its edges");
+            int edge = 0, face = 0;
+            for (auto ink = inks.cbegin(); ink != inks.cend(); ++ink) {
+                if (qAlpha(ink.key()) == 0) continue;
+                (ink.value() > 400 ? face : edge) = ink.value();
+            }
+            check(face > 400 && edge > 40 && edge < 600, "its edges drawn over its faces, a cube's only");
+            check(plain.framesDrawn() == 1 && plain.trianglesComputed() == 12, "a cube's twelve triangles");
+            plain.drawView(camera, one, size, size);
+            check(plain.framesDrawn() == 1 && plain.trianglesComputed() == 0, "nothing moved: kept");
+            camera.yaw = 10;
+            plain.drawView(camera, one, size, size);
+            check(plain.framesDrawn() == 2, "the camera moving: drawn again");
+            // Unlit: its colour, and a layer's picture on it, as they are, whatever the lights
+            const auto inkAt = [&](QRgb wanted, int by) {
+                const QColor seen = shot.pixelColor(size / 2, size / 2), want(wanted);
+                return std::abs(seen.red() - want.red()) <= by && std::abs(seen.green() - want.green()) <= by && std::abs(seen.blue() - want.blue()) <= by;
+            };
+            shot = read(plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit), size, size);
+            check(inkAt(qRgb(255, 0, 0), 2), "unlit: its colour as it is");
+            const int unlitFrames = plain.framesDrawn();
+            plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit);
+            check(plain.framesDrawn() == unlitFrames, "unlit, nothing moved: kept");
+            GLuint picture = 0;
+            const unsigned char blue[4] = {0, 0, 255, 255};
+            g->glGenTextures(1, &picture);
+            g->glBindTexture(GL_TEXTURE_2D, picture);
+            g->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, blue);
+            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            g->glBindTexture(GL_TEXTURE_2D, 0);
+            one[0].picture = picture;
+            shot = read(plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit), size, size);
+            check(inkAt(qRgb(0, 0, 255), 2), "unlit: a layer's picture on it");
+            const int withPicture = plain.framesDrawn();
+            plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit);
+            check(plain.framesDrawn() == withPicture + 1, "a picture can change at any frame: drawn again");
+            shot = read(plain.drawView(camera, one, size, size), size, size);
+            check(!inkAt(qRgb(0, 0, 255), 40), "simple: no picture");
+            g->glDeleteTextures(1, &picture);
+            plain.releaseGl();
+            one[0].model->releaseGl();
+        }
         g->glDeleteTextures(1, &hdr);
         g->glDeleteTextures(1, &other);
         scene.releaseGl();

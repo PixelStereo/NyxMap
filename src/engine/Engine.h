@@ -787,7 +787,7 @@ public:
     void setPreviewSource(int slot, quint64 id); // 0: composition; four bounded GPU-only preview slots
     // The slot's source, a 3D scene, drawn from this camera (its framing, its distance) at this size: a 3D view. Off:
     // the slot shows the source's picture again
-    void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {});
+    void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {}, Scene3D::ViewLook look = Scene3D::ViewLook::Simple);
     GLuint previewTexture(int slot, QSize *size, int *buffer = nullptr) const; // caller holds mutex(), shared GL context current
     void finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f); // mutex held
     GLuint outputTexture() const;        // last published frame (readable from a shared context)
@@ -1067,6 +1067,7 @@ private:
         bool sceneView = false;
         SceneSettings camera;
         QSize sceneSize;
+        Scene3D::ViewLook sceneLook = Scene3D::ViewLook::Simple;
         std::shared_ptr<Scene3D> editor[2];
         GLuint editorTex[2] = {0, 0};
     };

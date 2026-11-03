@@ -2,6 +2,7 @@
 #include "Commands.h"
 #include "Engine.h"
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -11,6 +12,9 @@
 #include <functional>
 #include <QPainterPath>
 #include <QPaintEngine>
+#include <QAction>
+#include <QActionGroup>
+#include <QMenu>
 #include <QToolButton>
 #include <QUndoStack>
 #include <QWheelEvent>
@@ -47,9 +51,12 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
     // Its bar: the handles' mode, the scene's camera
     auto *bar = new QWidget(this);
     bar->setObjectName(QStringLiteral("scene3dBar"));
-    auto *h = new QHBoxLayout(bar);
-    h->setContentsMargins(6, 6, 6, 0);
+    auto *rows = new QVBoxLayout(bar); // two rows: all of it in a narrow view too
+    rows->setContentsMargins(6, 6, 6, 0);
+    rows->setSpacing(3);
+    auto *h = new QHBoxLayout;
     h->setSpacing(3);
+    rows->addLayout(h);
     const QString names[3] = {QStringLiteral("Move"), QStringLiteral("Rotate"), QStringLiteral("Scale")};
     const QString keys[3] = {QStringLiteral("W"), QStringLiteral("E"), QStringLiteral("R")};
     for (int k = 0; k < 3; ++k) {
@@ -62,27 +69,50 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
         h->addWidget(b);
     }
     h->addSpacing(8);
+    m_lookButton = new QToolButton;
+    m_lookButton->setObjectName(QStringLiteral("scene3dLook"));
+    m_lookButton->setPopupMode(QToolButton::InstantPopup);
+    m_lookButton->setToolTip(QStringLiteral("How this view draws the models (the scene's own picture does not change)"));
+    auto *looks = new QMenu(m_lookButton);
+    auto *lookGroup = new QActionGroup(looks);
+    const auto addLook = [&](const QString &name, const QString &tip, Scene3D::ViewLook which) {
+        QAction *action = looks->addAction(name);
+        action->setToolTip(tip);
+        action->setCheckable(true);
+        action->setData(int(which));
+        lookGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, which] { setLook(which); });
+    };
+    addLook(QStringLiteral("Simple"), QStringLiteral("Flat colours and edges: the lightest"), Scene3D::ViewLook::Simple);
+    addLook(QStringLiteral("Unlit"), QStringLiteral("The models' colours and pictures, no light on them"), Scene3D::ViewLook::Unlit);
+    looks->setToolTipsVisible(true);
+    m_lookButton->setMenu(looks);
+    h->addWidget(m_lookButton);
+    h->addStretch();
+    auto *h2 = new QHBoxLayout;
+    h2->setSpacing(3);
+    rows->addLayout(h2);
     auto *look = new QToolButton;
     look->setText(QStringLiteral("View from Camera"));
     look->setObjectName(QStringLiteral("scene3dViewFromCamera"));
     look->setToolTip(QStringLiteral("This view takes the scene's camera (what the scene's picture shows)"));
     connect(look, &QToolButton::clicked, this, &Scene3DView::viewFromSceneCamera);
-    h->addWidget(look);
+    h2->addWidget(look);
     auto *set = new QToolButton;
     set->setText(QStringLiteral("Camera = View"));
     set->setObjectName(QStringLiteral("scene3dCameraFromView"));
     set->setToolTip(QStringLiteral("The scene's camera takes this view (undoable): the scene's picture shows what is seen here"));
     connect(set, &QToolButton::clicked, this, &Scene3DView::sceneCameraFromView);
-    h->addWidget(set);
+    h2->addWidget(set);
     auto *frame = new QToolButton;
     frame->setText(QStringLiteral("Frame"));
     frame->setToolTip(QStringLiteral("Turn around the selection (F)"));
     connect(frame, &QToolButton::clicked, this, &Scene3DView::frameSelection);
-    h->addWidget(frame);
-    h->addStretch();
+    h2->addWidget(frame);
+    h2->addStretch();
     bar->setStyleSheet(QStringLiteral("QToolButton { background:rgba(30,30,34,200); padding:2px 6px; border-radius:3px; } "
                                       "QToolButton:checked { background:#0b5c69; color:white; }"));
-    bar->adjustSize();
+    setLook(Scene3D::ViewLook::Simple);
     setMode(Mode::Move);
     setToolTip(QStringLiteral("Drag: turn around · Shift / middle button + drag: pan · wheel: closer, farther\n"
                               "Click a model or a light to select it; drag its handles (W move, E rotate, R scale) · "
@@ -119,6 +149,19 @@ void Scene3DView::setMode(Mode m)
     update();
 }
 
+void Scene3DView::setLook(Scene3D::ViewLook look)
+{
+    m_look = look;
+    for (QAction *action : m_lookButton->menu()->actions())
+        if (action->data().toInt() == int(look)) {
+            action->setChecked(true);
+            m_lookButton->setText(action->text());
+        }
+    if (auto *bar = findChild<QWidget *>(QStringLiteral("scene3dBar"))) bar->adjustSize();
+    pushCamera();
+    update();
+}
+
 void Scene3DView::setCamera(const SceneSettings &c)
 {
     m_cam.target = c.target;
@@ -134,7 +177,7 @@ void Scene3DView::pushCamera()
 {
     if (!m_scene) return;
     const qreal dpr = devicePixelRatioF();
-    m_engine->setPreviewScene(m_slot, true, m_cam, QSize(int(width() * dpr), int(height() * dpr)));
+    m_engine->setPreviewScene(m_slot, true, m_cam, QSize(int(width() * dpr), int(height() * dpr)), m_look);
 }
 
 SceneSettings Scene3DView::sceneCamera() const
@@ -183,7 +226,8 @@ void Scene3DView::frameSelection()
 QJsonObject Scene3DView::viewState() const
 {
     return {{"target", QJsonArray{m_cam.target[0], m_cam.target[1], m_cam.target[2]}},
-            {"distance", m_cam.distance}, {"yaw", m_cam.yaw}, {"pitch", m_cam.pitch}, {"fov", m_cam.fov}};
+            {"distance", m_cam.distance}, {"yaw", m_cam.yaw}, {"pitch", m_cam.pitch}, {"fov", m_cam.fov},
+            {"look", m_look == Scene3D::ViewLook::Unlit ? "unlit" : "simple"}};
 }
 
 void Scene3DView::setViewState(const QJsonObject &o)
@@ -198,6 +242,7 @@ void Scene3DView::setViewState(const QJsonObject &o)
     c.pitch = float(o.value("pitch").toDouble(c.pitch));
     c.fov = float(o.value("fov").toDouble(c.fov));
     setCamera(c);
+    setLook(o.value("look").toString() == "unlit" ? Scene3D::ViewLook::Unlit : Scene3D::ViewLook::Simple);
 }
 
 QVector3D Scene3DView::axisOf(const Object &o, int axis)
