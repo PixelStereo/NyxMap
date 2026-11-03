@@ -1010,7 +1010,6 @@ int runScene3dTests(Engine &engine)
         items[0].model->releaseGl();
     }
 
-
     // A light's Look At and path
     {
         LightSettings l;
@@ -1090,5 +1089,6 @@ int runScene3dTests(Engine &engine)
         engine.removeLayer(engine.indexOfId(lampId));
         engine.removeLayer(engine.indexOfId(stage));
     }
+
     return failures;
 }

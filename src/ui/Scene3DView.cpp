@@ -111,7 +111,8 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
     h2->addWidget(frame);
     h2->addStretch();
     bar->setStyleSheet(QStringLiteral("QToolButton { background:rgba(30,30,34,200); padding:2px 6px; border-radius:3px; } "
-                                      "QToolButton:checked { background:#0b5c69; color:white; }"));
+                                      "QToolButton:checked { background:#0b5c69; color:white; } "
+                                      "QToolButton#scene3dLook { padding-right:16px; }"));
     setLook(Scene3D::ViewLook::Simple);
     setMode(Mode::Move);
     setToolTip(QStringLiteral("Drag: turn around · Shift / middle button + drag: pan · wheel: closer, farther\n"
