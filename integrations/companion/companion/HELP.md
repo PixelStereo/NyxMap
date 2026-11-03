@@ -35,7 +35,7 @@ placed buttons keep their saved actions; refreshing updates the preset gallery.
 - GO/BACK/STOP target the sequence displayed by the latest feedback. A specific
   sequence can also be chosen in the action options. Selecting does not start it
   or stop other sequences.
-- **STOP WAITS** cancels pending waits/follows. It does not stop media or timelines
+- **STOP WAITS** cancels pending waits. It does not stop media or timelines
   already playing. Use timeline STOP or a deliberately prepared blackout cue.
 - The STOP ALL preset runs only after a two-second hold. Its underlying action
   also requires the confirmation option.

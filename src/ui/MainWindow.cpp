@@ -302,8 +302,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
 
     auto *top = new QSplitter(Qt::Horizontal);
     top->addWidget(workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll")));
-    // The preview, with the sequences' bar under it
-    m_seqBar = new SequenceBar(m_engine);
     auto *center = new QWidget;
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
@@ -316,7 +314,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
     previews->setUndoStack(m_undo);
     connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
-    cv->addWidget(m_seqBar);
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
     top->setStretchFactor(0, 0);
@@ -340,9 +337,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_workspaceTabs->addTab(QStringLiteral("Timelines"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
-    library->setMinimumWidth(360);
+    library->setMinimumWidth(340);
     auto *libraryLayout = new QVBoxLayout(library);
     libraryLayout->setContentsMargins(0, 0, 0, 0);
+    m_workspaceTabs->setExpanding(true);
+    m_workspaceTabs->setUsesScrollButtons(false);
+    m_workspaceTabs->setElideMode(Qt::ElideNone);
     libraryLayout->addWidget(m_workspaceTabs);
     auto *libraryPages = new QStackedWidget;
     libraryPages->setObjectName(QStringLiteral("showLibraryPages"));
@@ -352,16 +352,16 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *workspacePages = new QStackedWidget;
     workspacePages->setObjectName(QStringLiteral("showWorkspacePages"));
     workspacePages->addWidget(m_snapshots);
-    workspacePages->addWidget(m_timelineWindow->editor());
+    workspacePages->addWidget(m_timelineWindow->workspace());
     m_timelineWindow->hide(); // retains the library/editor controller connections
     auto *librarySplit = new QSplitter(Qt::Horizontal);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
     librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
     librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
-    librarySplit->setStretchFactor(0, 1);
-    librarySplit->setStretchFactor(1, 3);
-    librarySplit->setSizes({360, 700});
+    librarySplit->setStretchFactor(0, 0);
+    librarySplit->setStretchFactor(1, 1);
+    librarySplit->setSizes({355, 825});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -376,14 +376,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     bottom->addWidget(workspace);
     bottom->setStretchFactor(0, 1);
     bottom->setStretchFactor(1, 2);
-    bottom->setSizes({500, 1000});
+    bottom->setSizes({620, 1000});
     auto *split = new QSplitter(Qt::Vertical);
     split->addWidget(top);
     split->addWidget(bottom);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
-    split->setSizes({720, 220});
-    split->setObjectName("mainSplit2"); // (layout changed: earlier saved states are not restored)
+    split->setSizes({620, 340});
+    split->setObjectName("mainSplit3"); // (layout changed: earlier saved states are not restored)
     top->setObjectName("topSplit2");
     connect(m_snapshots, &SnapshotPanel::edited, this, &MainWindow::markDirty);
     connect(m_snapshots, &SnapshotPanel::recalled, this, &MainWindow::scheduleRecallRefresh);
@@ -604,28 +604,23 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(space, &QShortcut::activated, this, &MainWindow::sequenceGo);
     auto *spaceBack = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
     connect(spaceBack, &QShortcut::activated, this, &MainWindow::sequenceBack);
-    connect(m_seqBar, &SequenceBar::goRequested, this, &MainWindow::sequenceGo);
-    connect(m_seqBar, &SequenceBar::backRequested, this, &MainWindow::sequenceBack);
+    connect(m_seqWindow, &SequenceWindow::goRequested, this, &MainWindow::sequenceGo);
+    connect(m_seqWindow, &SequenceWindow::backRequested, this, &MainWindow::sequenceBack);
     connect(m_seqWindow, &SequenceWindow::goToRequested, this, &MainWindow::sequenceGoTo);
     connect(m_seqWindow, &SequenceWindow::edited, this, &MainWindow::markDirty);
-    connect(m_seqBar, &SequenceBar::stopRequested, &m_engine->sequencer(), &Sequencer::stop);
     connect(m_seqWindow, &SequenceWindow::stopRequested, &m_engine->sequencer(), &Sequencer::stop);
-    connect(m_seqBar, &SequenceBar::stopAllRequested, &m_engine->sequencer(), &Sequencer::stopAll);
     connect(m_seqWindow, &SequenceWindow::stopAllRequested, &m_engine->sequencer(), &Sequencer::stopAll);
     m_timelineWindow->addActions({m_undoAction, m_redoAction}); // undo / redo from the Timelines window too
     connect(m_timelineWindow, &TimelineWindow::edited, this, &MainWindow::markDirty);
     connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
-    connect(m_seqWindow, &SequenceWindow::timelinesRequested, this, &MainWindow::openTimelines);
-    connect(m_seqWindow, &SequenceWindow::timelineRequested, this, [this](quint64 id) { openTimelines(); m_timelineWindow->selectTimeline(id); });
     connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
         m_timelineWindow->setCurrentLayer(r >= 0 ? m_engine->layerId(r) : 0);
     });
-    // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the bar
+    // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the panel
     // then shows the step unchanged
     m_engine->sequencer().setRecaller([this](int snapshot) {
         m_snapshots->recall(snapshot);
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
@@ -640,20 +635,17 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
                                                  before.fixtures));
         scheduleRecallRefresh();
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
-    // Played elsewhere (OSC) or another sequence: nothing changed since; any edit afterwards: the bar says so
+    // Played elsewhere (OSC) or another sequence: nothing changed since; any edit afterwards: the panel says so
     connect(&m_engine->sequencer(), &Sequencer::positionChanged, this, [this] {
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
     connect(m_undo, &QUndoStack::indexChanged, this, [this](int i) {
         if (m_engine->sequencer().position() >= 0 && i != m_cueUndoIndex) {
-            m_seqBar->setModified(true);
             m_seqWindow->setModified(true);
             m_feedback->setModified(true);
         }
@@ -709,7 +701,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     startOsc();
     startRemote();
     restoreGeometry(s.value("ui/geometry").toByteArray());
-    split->restoreState(s.value("ui/mainSplit2").toByteArray());
+    split->restoreState(s.value("ui/mainSplit3").toByteArray());
     top->restoreState(s.value("ui/topSplit2").toByteArray());
     fitToAvailableScreen();
 }
@@ -2757,7 +2749,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
     m_quitting = true;
     QSettings s;
     s.setValue("ui/geometry", saveGeometry());
-    if (auto *split = findChild<QSplitter *>("mainSplit2")) s.setValue("ui/mainSplit2", split->saveState());
+    if (auto *split = findChild<QSplitter *>("mainSplit3")) s.setValue("ui/mainSplit3", split->saveState());
     if (auto *top = findChild<QSplitter *>("topSplit2")) s.setValue("ui/topSplit2", top->saveState());
     for (auto &[id, o] : m_outputs) o.window->hideOutput();
     // Normal exit: no recovery to offer on next launch.

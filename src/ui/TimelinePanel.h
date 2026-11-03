@@ -1,26 +1,25 @@
 #pragma once
 #include "AnimEditor.h"
+#include "LibraryTree.h"
 
-#include <QListWidget>
+#include <memory>
 #include <QWidget>
 
 class QPushButton;
+class QStackedWidget;
+class TimelineActivity;
 class QUndoStack;
 class QMenu;
 
 // A timeline dragged from the list of the timelines carries its id (onto a step of a sequence)
 inline constexpr const char *kTimelineMime = "application/x-nyxmap-timeline";
 
-// The list of the timelines, a drag source
-class TimelineList : public QListWidget
+// The list of the timelines, in their groups; a timeline dragged from it carries its id
+class TimelineList : public LibraryList
 {
-    Q_OBJECT
 public:
-    using QListWidget::QListWidget;
-
-protected:
-    QStringList mimeTypes() const override;
-    QMimeData *mimeData(const QList<QListWidgetItem *> &items) const override;
+    enum Roles { TimelineRole = Qt::UserRole, GroupRole = Qt::UserRole + 1 };
+    TimelineList();
 };
 
 // A timeline of the show (Engine::animation), edited: its tracks each drive a number of a layer (or of the
@@ -57,6 +56,7 @@ public:
     explicit TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent = nullptr);
     QWidget *listPanel() const { return m_listPanel; }
     TimelineEditor *editor() const { return m_editor; }
+    QWidget *workspace() const; // the one selected, or all of them folded on a line each
     void selectTimeline(quint64 id);
     static void fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
                               const QStringList &paths, QWidget *anchor);
@@ -76,8 +76,11 @@ private:
     QUndoStack *m_undo = nullptr;
     QWidget *m_listPanel;
     TimelineList *m_list;
-    QPushButton *m_add, *m_dup, *m_del;
+    QPushButton *m_add, *m_dup, *m_del, *m_group, *m_go, *m_overview;
+    std::unique_ptr<LibraryGroups> m_groups;
     TimelineEditor *m_editor;
+    QStackedWidget *m_workspace;
+    TimelineActivity *m_activity;
     quint64 m_current = 0;
     bool m_filling = false, m_renaming = false;
 };

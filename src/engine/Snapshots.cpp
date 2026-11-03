@@ -558,6 +558,7 @@ void Engine::recallPreset(int i)
                 l->enabled = params.value("enable").toBool();
             }
         }
+        if (params.contains("solo")) l->solo = params.value("solo").toBool();
         applyParams(*l, params, timing, easing, fade, *job, false, false, false, delays);
         if (!job->done()) m_fades.push_back(std::move(job));
     }

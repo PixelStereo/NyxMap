@@ -9,15 +9,15 @@ function fixture(port = 0) {
         presets: [{id: '301', index: 1, name: 'Warm look'}], timelines: [{id: '401', index: 1, name: 'Opening fade', duration: 12}],
         sequences: [{id: '501', index: 1, name: 'Evening show', cues: [
             {id: '601', index: 1, name: 'Opening look', text: 'House out', description: 'Stand by lighting', target_type: 'snapshot', continue: 'wait'},
-            {id: '602', index: 2, name: 'Opening fade', text: 'Start the film', description: 'On the musical accent', target_type: 'timeline', continue: 'auto-follow'},
-            {id: '603', index: 3, name: 'Warm look', text: 'Scene two', description: 'Hold for performer', target_type: 'preset', continue: 'wait'},
-            {id: '604', index: 4, name: 'Opening look', text: 'Overlapping entrance', target_type: 'snapshot', continue: 'follow', postwait: 2.5}]}]};
+            {id: '602', index: 2, name: 'Opening fade', description: 'On the musical accent', target_type: 'timeline', continue: 'auto'},
+            {id: '603', index: 3, name: 'Warm look', description: 'Hold for performer', target_type: 'preset', continue: 'wait'},
+            {id: '604', index: 4, name: 'Opening look', target_type: 'snapshot', continue: 'auto', postwait: 2.5}]}]};
     const values = {'/sequence/id': '501', '/sequence/name': 'Evening show', '/sequence/index': 1, '/sequence/running': 1,
         '/sequence/go_enabled': 1, '/sequence/back_enabled': 1, '/composition/pause': false, '/composition/blackout': false};
     for (const [role, index] of [['previous', 0], ['current', 1], ['next', 2]]) {
         const cue = catalog.sequences[0].cues[index], base = '/sequence/cue/' + role;
         for (const [key, value] of Object.entries({number: cue.index, name: cue.name, label: `${cue.index} · ${cue.name}`,
-            text: cue.text, description: cue.description, phase: role === 'current' ? 'action' : role === 'previous' ? 'done' : '',
+            description: cue.description, phase: role === 'current' ? 'action' : role === 'previous' ? 'done' : '',
             elapsed_text: role === 'current' ? '0:04.2' : '0:00.0', remaining_text: role === 'current' ? '0:07.8' : '',
             prewait: 0, action: role === 'current' ? 12 : 0, postwait: 0,
             progress: role === 'current' ? .35 : role === 'previous' ? 1 : 0,

@@ -75,7 +75,7 @@ int runShowControlTests(Engine &e)
     AnimTrack track; track.layer = layer; track.param = "opacity"; track.keys = {{0, 0, 0}, {2, 1, 0}};
     timeline.tracks = {track}; const int ti = e.addAnimation(timeline); const quint64 tid = e.animation(ti).id;
     Sequencer::Sequence sequence; sequence.name = "Main";
-    Sequencer::Step first, second; first.snapshot = sid; first.text = "Intro"; first.preWait = 1;
+    Sequencer::Step first, second; first.snapshot = sid; first.description = "Intro"; first.preWait = 1;
     second.preset = pid; second.description = "Then the look"; sequence.steps = {first, second};
     const int qi = e.sequencer().add(sequence); const quint64 qid = e.sequencer().sequenceId(qi);
     e.sequencer().setCurrent(qi);
@@ -84,7 +84,7 @@ int runShowControlTests(Engine &e)
     check(data.value("version").toInt() == 1 && data.value("snapshots").toArray()[0].toObject().value("id").toString() == QString::number(sid),
           "catalog IDs are strings and schema is versioned");
     const auto cues = data.value("sequences").toArray()[0].toObject().value("cues").toArray();
-    check(cues.size() == 2 && cues[0].toObject().value("text") == "Intro" && cues[1].toObject().value("target_type") == "preset" &&
+    check(cues.size() == 2 && cues[0].toObject().value("description") == "Intro" && !cues[0].toObject().contains("text") && cues[1].toObject().value("target_type") == "preset" &&
           cues[1].toObject().value("id").toString() == QString::number(cueId), "catalog lists all cue metadata with runtime identity");
     const QString snapshotPath = QStringLiteral("/snapshot/by-id/%1/recall").arg(sid);
     e.addSnapshot(snapshot, 0); // identical labels still change the structure identity
@@ -97,7 +97,7 @@ int runShowControlTests(Engine &e)
     const QString sequencePath = QStringLiteral("/sequence/by-id/%1").arg(qid);
     const QString oldSignature = OscNamespace(&e).signature();
     auto edited = e.sequencer().sequence(e.sequencer().indexOfSequence(qid));
-    std::reverse(edited.steps.begin(), edited.steps.end()); edited.steps[0].text = "Moved preset cue";
+    std::reverse(edited.steps.begin(), edited.steps.end()); edited.steps[0].description = "Moved preset cue";
     e.sequencer().setSequence(e.sequencer().indexOfSequence(qid), edited);
     check(OscNamespace(&e).signature() != oldSignature, "cue edits invalidate the OSCQuery catalog");
     check(server.handleMessage({sequencePath + "/cue/go", "s", {QString::number(cueId)}}) && e.sequencer().position() == 0,

@@ -20,7 +20,7 @@
 //   …/label s                        "2 · Name", ready for a button
 //   …/text s, …/description s        the step's text and its description
 //   …/prewait f, …/action f, …/postwait f   its times in seconds (action: -1 when endless)
-//   …/continue s                     "wait", "follow" or "auto-follow"
+//   …/continue s                     "wait" or "auto"
 //   …/phase s                        where its time is: "pre-wait", "action", "post-wait", "done" ("" before its GO)
 //   …/elapsed f, …/elapsed_text s    seconds since its GO ("1:05.0")
 //   …/remaining f, …/remaining_text s   seconds left until its end (pre-wait + action, and the post-wait of a follow)

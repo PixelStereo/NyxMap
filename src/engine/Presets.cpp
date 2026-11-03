@@ -35,6 +35,93 @@ void Engine::setSnapshotTree(const std::vector<SnapshotNode> &tree)
     emit snapshotsChanged();
 }
 
+// A tree as its list holds now: what is gone left out, what is new at the end
+static std::vector<Engine::SnapshotNode> arrangedTree(const std::vector<Engine::SnapshotNode> &tree, const std::vector<quint64> &members)
+{
+    QSet<quint64> known(members.begin(), members.end()), seen;
+    std::function<std::vector<Engine::SnapshotNode>(const std::vector<Engine::SnapshotNode> &)> clean = [&](const std::vector<Engine::SnapshotNode> &nodes) {
+        std::vector<Engine::SnapshotNode> out;
+        for (const Engine::SnapshotNode &n : nodes) {
+            if (n.snapshot) {
+                if (known.contains(n.snapshot) && !seen.contains(n.snapshot)) {
+                    seen.insert(n.snapshot);
+                    out.push_back(n);
+                }
+            } else {
+                Engine::SnapshotNode group = n;
+                group.children = clean(n.children);
+                out.push_back(group);
+            }
+        }
+        return out;
+    };
+    std::vector<Engine::SnapshotNode> out = clean(tree);
+    for (const quint64 id : members)
+        if (!seen.contains(id)) {
+            Engine::SnapshotNode n;
+            n.snapshot = id;
+            out.push_back(n);
+        }
+    return out;
+}
+
+std::vector<Engine::SnapshotNode> Engine::presetTree() const
+{
+    Lock lk(&m_mutex);
+    std::vector<quint64> ids;
+    for (const Preset &p : m_presets) ids.push_back(p.id);
+    return arrangedTree(m_presetTree, ids);
+}
+
+void Engine::setPresetTree(const std::vector<SnapshotNode> &tree)
+{
+    {
+        Lock lk(&m_mutex);
+        m_presetTree = tree;
+        std::vector<SnapshotNode> arranged = presetTree();
+        std::vector<Preset> ordered;
+        std::function<void(const std::vector<SnapshotNode> &)> walk = [&](const std::vector<SnapshotNode> &nodes) {
+            for (const SnapshotNode &n : nodes) {
+                if (!n.snapshot) {
+                    m_nextSnapshotGroupId = std::max(m_nextSnapshotGroupId, n.group + 1);
+                    walk(n.children);
+                    continue;
+                }
+                for (const Preset &p : m_presets)
+                    if (p.id == n.snapshot) ordered.push_back(p);
+            }
+        };
+        walk(arranged);
+        m_presets = std::move(ordered);
+    }
+    emit presetsChanged();
+}
+
+std::vector<Engine::SnapshotNode> Engine::timelineTree() const
+{
+    Lock lk(&m_mutex);
+    std::vector<quint64> ids;
+    for (const Animation &a : m_animations) ids.push_back(a.id);
+    return arrangedTree(m_timelineTree, ids);
+}
+
+void Engine::setTimelineTree(const std::vector<SnapshotNode> &tree)
+{
+    {
+        Lock lk(&m_mutex);
+        m_timelineTree = tree;
+        std::function<void(const std::vector<SnapshotNode> &)> walk = [&](const std::vector<SnapshotNode> &nodes) {
+            for (const SnapshotNode &n : nodes)
+                if (!n.snapshot) {
+                    m_nextSnapshotGroupId = std::max(m_nextSnapshotGroupId, n.group + 1);
+                    walk(n.children);
+                }
+        };
+        walk(tree);
+    }
+    emit animationsChanged();
+}
+
 void Engine::normalizeSnapshotTree()
 {
     QSet<quint64> known, seen, groups;

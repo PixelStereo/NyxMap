@@ -33,8 +33,7 @@ QString phaseColor(const QString &phase)
 QString modeColor(const QString &mode)
 {
     if (mode == QLatin1String("wait")) return QStringLiteral("#d5bd82");
-    if (mode == QLatin1String("follow")) return QStringLiteral("#79cbb6");
-    if (mode == QLatin1String("auto-follow")) return QStringLiteral("#b7a1d9");
+    if (mode == QLatin1String("auto")) return QStringLiteral("#b7a1d9");
     return QStringLiteral("#a4a4ae");
 }
 
@@ -47,8 +46,7 @@ QString clockText(double seconds)
 
 QStringList continuation(const QString &mode, double postwait)
 {
-    if (mode == QLatin1String("follow")) return {QStringLiteral("FOLLOW"), QStringLiteral("Start + ") + clockText(postwait)};
-    if (mode == QLatin1String("auto-follow")) return {QStringLiteral("AUTO-FOLLOW"), QStringLiteral("End + ") + clockText(postwait)};
+    if (mode == QLatin1String("auto")) return {QStringLiteral("AUTO"), QStringLiteral("End + ") + clockText(postwait)};
     if (mode == QLatin1String("wait")) return {QStringLiteral("WAIT · GO"), QStringLiteral("Manual advance")};
     return {QStringLiteral("—"), QString()};
 }
@@ -137,11 +135,9 @@ QWidget *ShowControlPanel::makeCard(const QString &role, const QString &heading,
     c.label = small({}, QStringLiteral("font-size:%1px; font-weight:600; color:%2;").arg(current ? 24 : 17).arg(previous ? QStringLiteral("#a4a4ae") : QStringLiteral("#ececf0")));
     c.label->setObjectName(QStringLiteral("cueLabel_") + role);
     v->addWidget(c.label);
-    c.text = small({}, QStringLiteral("font-size:%1px; color:%2;").arg(current ? 17 : 14).arg(previous ? QStringLiteral("#9797a0") : QStringLiteral("#d2d2d9")));
-    v->addWidget(c.text);
+    c.description = small({}, QStringLiteral("font-size:%1px; color:%2;").arg(current ? 17 : 14).arg(previous ? QStringLiteral("#9797a0") : QStringLiteral("#d2d2d9")));
+    v->addWidget(c.description);
     if (!previous) {
-        c.description = small({}, QStringLiteral("font-size:12px; color:#a4a4ae;"));
-        v->addWidget(c.description);
         c.phase = small({}, QStringLiteral("font-size:12px; font-weight:600;"));
         v->addWidget(c.phase);
         c.times = small({}, QStringLiteral("font-size:11px; font-family:monospace; color:#a4a4ae;"));
@@ -311,8 +307,7 @@ void ShowControlPanel::renderCard(const QString &role, const QJsonObject &values
     c.continuation->setText(any ? m[0] + (m[1].isEmpty() ? QString() : QStringLiteral(" · ") + m[1]) : QString());
     c.continuation->setStyleSheet(QStringLiteral("QLabel { background:transparent; font-size:12px; font-weight:700; color:%1; }").arg(modeColor(mode)));
     c.label->setText(any ? at("label").toString() : QStringLiteral("—"));
-    c.text->setText(at("text").toString());
-    if (c.description) c.description->setText(at("description").toString());
+    c.description->setText(at("description").toString());
     if (c.phase) {
         c.phase->setText(phase.toUpper());
         c.phase->setStyleSheet(QStringLiteral("QLabel { background:transparent; font-size:12px; font-weight:600; color:%1; }")
@@ -351,7 +346,7 @@ void ShowControlPanel::refresh()
         background += o.value("active").toBool() && o.value("id").toString().toULongLong() != selected;
     }
     m_running->setText(QStringLiteral("%1 · %2 background")
-                           .arg(values.value("/sequence/running").toInt() ? QStringLiteral("WAITS / FOLLOW ACTIVE") : QStringLiteral("WAITING FOR GO"))
+                           .arg(values.value("/sequence/running").toInt() ? QStringLiteral("WAITS ACTIVE") : QStringLiteral("WAITING FOR GO"))
                            .arg(background));
     for (const QString &role : {QStringLiteral("previous"), QStringLiteral("current"), QStringLiteral("next")}) renderCard(role, values);
     m_elapsed->setText(values.value("/sequence/cue/current/elapsed_text").toString(QStringLiteral("0:00.0")));
@@ -453,11 +448,11 @@ void ShowControlPanel::rebuildCues()
     for (const QJsonValue &value : cues) {
         const QJsonObject o = value.toObject();
         const int number = o.value("index").toInt();
-        QString name = o.value("text").toString();
+        QString name = o.value("description").toString();
         if (name.isEmpty()) name = o.value("name").toString();
         if (name.isEmpty()) name = o.value("missing").toBool() ? QStringLiteral("Missing target") : QStringLiteral("Empty cue");
         QStringList details;
-        for (const char *key : {"target_type", "name", "description"})
+        for (const char *key : {"target_type", "name"})
             if (const QString part = o.value(QLatin1String(key)).toString(); !part.isEmpty()) details << part;
         auto *row = new QHBoxLayout;
         row->setSpacing(6);

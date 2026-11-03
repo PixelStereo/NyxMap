@@ -1,5 +1,5 @@
 #pragma once
-// Sequences: ordered steps, each recalling a snapshot or driving a timeline (and carrying a text for the operator),
+// Sequences: ordered steps, each recalling a snapshot or driving a timeline,
 // played by GO / GO BACK — the cue list of a show. Several sequences may execute concurrently;
 // the selected sequence determines which one GO / STOP edits, not which running cues survive.
 // Sequence steps are saved with the project; runtime playhead positions are not. Owned by the Engine (Engine::sequencer()), it goes through the Engine's public API only, and
@@ -10,9 +10,9 @@
 // a speed or a loop mode changed meanwhile, by a step or by OSC, is taken into account, and a frozen timeline
 // (speed 0) is waited for until it moves on and ends; the other actions take no time). What comes next (as in QLab):
 //  - Wait: nothing, the next step waits for GO (button, Space, OSC);
-//  - Follow: the next step gets its GO once this one was triggered (pre-wait over), after the post-wait, without
-//    waiting for the action to end;
 //  - AutoFollow: the next step gets its GO once the action is over, after the post-wait.
+// A group holds steps that overlap: they share one GO and the group's own waits, and each has its pre-wait and post-wait
+// within the group. The group's action is over with the last of them, post-wait included.
 // A sequence can follow a clock: a value of the show in seconds (an audio or video layer's Playhead, a Timecode
 // generator's Position: internal, LTC, MTC, ATC). A step with a timecode gets its GO when that clock gets there, as a
 // tape plays the show (Engine::followSequenceClocks): each step passed on the way, in order; after a jump (a seek, a
@@ -44,6 +44,7 @@
 #include <functional>
 #include <memory>
 #include <map>
+#include <utility>
 #include <vector>
 
 class Engine;
@@ -54,11 +55,10 @@ class Sequencer : public QObject
 {
     Q_OBJECT
 public:
-    enum class StepContinue { Wait = 0, Follow = 1, AutoFollow = 2 };
+    enum class StepContinue { Wait = 0, AutoFollow = 1 };
     struct Step {
         quint64 snapshot = 0; // its id (0: none yet)
-        QString text;
-        QString description; // advance notice for the operator; saved separately from the cue comment
+        QString description; // advance notice for the operator
         quint64 timeline = 0; // or a timeline's (an animation's) id, driven by `action`
         AnimAction action = AnimAction::Play;
         double seekTime = 0;            // Seek
@@ -73,7 +73,11 @@ public:
         quint64 runtimeId = 0; // stable across edits; assigned by Sequencer, not serialized
         quint64 preset = 0;
         quint64 sequence = 0; // starts this sequence from its first step; stable identity across edits/save/load
-        std::vector<Step> actions; // optional flat action group, sharing this cue's waits and continuation
+        std::vector<Step> actions; // optional flat group of steps, on this one's GO, each with its own waits inside it
+        bool open = true;     // a group: its steps shown in the list (nothing else depends on it)
+        // Consecutive steps with the same id are shown as a group played one GO at a time (QLab's Start First And Enter):
+        // steps like any other for all that plays them
+        quint64 folder = 0;
         double at = -1;       // its timecode on the sequence's clock, in seconds (< 0: none)
     };
     // A step on its way: since its GO, through its pre-wait, its action, and until the next step's GO
@@ -87,6 +91,8 @@ public:
         double preWait = 0, duration = 0, postWait = 0;
         StepContinue next = StepContinue::Wait;
         double fixedDuration = 0; // non-timeline actions in a group, measured from its actual dispatch
+        double trackedPost = 0;   // the post-wait of a group's timeline played, after the timeline ends
+        std::vector<std::pair<double, Step>> pending; // a group's actions still in their pre-wait, and when (its elapsed) they go
         bool fired = false, continued = false;
         bool trackPending = false, tracking = false; // a Play: its action lasts as long as the timeline does
         std::vector<quint64> callers; // reference ancestry, carried through follows to reject cyclic calls
@@ -94,7 +100,6 @@ public:
         double continueAt() const
         {
             switch (next) {
-            case StepContinue::Follow: return preWait + postWait;
             case StepContinue::AutoFollow: return preWait + duration + postWait;
             default: return -1;
             }
@@ -109,6 +114,7 @@ public:
         bool beats = false;
         bool editMode = false; // suspend external timecode and automatic chaining while editing
         bool tracking = true; // a jump plays first what the steps before it leave
+        std::vector<quint64> closedFolders; // those groups of steps folded in the list
         std::vector<Step> steps;
         quint64 clockLayer = 0; // the clock its steps' timecodes are on: a value of the show (a layer's id, 0: the
         QString clockParam;     // composition) in seconds, as "playhead" or "tc/position" (empty: none)
@@ -206,7 +212,7 @@ public:
     bool clockRunning() const; // the cue clock is ticking (waits on their way)
     // A step's action: its snapshot's, or the time its timeline will play (Play on a timeline that ends; else 0;
     // infinity: its timeline is frozen, speed 0, and plays on when its speed is raised)
-    double stepDuration(const Step &st) const;
+    double stepDuration(const Step &st, double unit = 1) const; // unit: the seconds of a group's waits (of a beat, in beats)
 
     // The project's: saved, loaded, cleared (the caller emits changed / positionChanged once it is all in)
     static QJsonObject stepToJson(const Step &step);

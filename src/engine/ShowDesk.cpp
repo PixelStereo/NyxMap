@@ -77,12 +77,11 @@ QJsonObject catalog(Engine *e)
                     actions.append(Sequencer::stepToJson(action));
                 cue["actions"] = actions;
             }
-            cue["text"] = step.text; cue["description"] = step.description;
+            cue["description"] = step.description;
             cue["target_type"] = kind; cue["target_id"] = idText(target); cue["missing"] = target && index < 0;
             cue["prewait"] = step.preWait; cue["postwait"] = step.postWait;
             cue["action_duration"] = finiteTime(sq.stepDuration(step));
-            cue["continue"] = step.next == Sequencer::StepContinue::Follow ? "follow"
-                            : step.next == Sequencer::StepContinue::AutoFollow ? "auto-follow" : "wait";
+            cue["continue"] = step.next == Sequencer::StepContinue::AutoFollow ? "auto" : "wait";
             cues.append(cue);
         }
         entry["cues"] = cues;

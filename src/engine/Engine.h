@@ -453,6 +453,12 @@ public:
     // it does not have is dropped; the snapshots' order follows
     void setSnapshotTree(const std::vector<SnapshotNode> &tree);
     quint64 newSnapshotGroupId(); // for a group about to be put in the tree
+    // The presets and the timelines in their groups, as the snapshots' (a node's `snapshot` holds the member's id). A member
+    // missing from a tree comes at the end, one it does not have is left out. The presets' order follows theirs.
+    std::vector<SnapshotNode> presetTree() const;
+    void setPresetTree(const std::vector<SnapshotNode> &tree);
+    std::vector<SnapshotNode> timelineTree() const;
+    void setTimelineTree(const std::vector<SnapshotNode> &tree);
 
     // --- Presets: a few values of the layers (and of the composition), chosen one by one, recalled with a fade as a
     // snapshot's values are. By layer id (0: the composition) and address; each with its own time (< 0: the preset's
@@ -1117,6 +1123,7 @@ private:
     quint64 m_nextSnapshotGroupId = 1;
     void normalizeSnapshotTree(); // lock held: every snapshot once, their order the tree's
     std::vector<Preset> m_presets;
+    std::vector<SnapshotNode> m_presetTree, m_timelineTree;
     quint64 m_nextPresetId = 1;
     std::vector<std::shared_ptr<FadeJob>> m_fades;
     QString m_glRenderer, m_glVersion, m_glVendor;

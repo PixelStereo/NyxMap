@@ -782,6 +782,10 @@ void LayerInspector::rebuild()
     solo->setStyleSheet("QToolButton { font-weight:bold; min-width:22px; } QToolButton:checked { background:#5a4a1a; color:#ffd65a; }");
     solo->setProperty("allowLocked", true);
     solo->setVisible(!s.isViewport);
+    if (PresetEditor *preset = PresetEditor::instance()) {
+        preset->track(vis, s.id, {QStringLiteral("enable")});
+        if (!s.isViewport) preset->track(solo, s.id, {QStringLiteral("solo")});
+    }
     head->addWidget(vis);
     head->addWidget(lock);
     head->addWidget(solo);

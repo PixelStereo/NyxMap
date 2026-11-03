@@ -12,7 +12,10 @@
 #include <QMimeData>
 #include <QPushButton>
 #include <QPointer>
+#include <QHeaderView>
+#include <QStackedWidget>
 #include <QTimer>
+#include "TimelineActivity.h"
 #include <QUndoStack>
 #include <QVBoxLayout>
 
@@ -114,14 +117,13 @@ void TimelineWindow::fillValueMenu(QMenu *menu, Engine *engine, QUndoStack *undo
 // ---------------------------------------------------------------------------
 // TimelineList
 
-QStringList TimelineList::mimeTypes() const { return {QString::fromLatin1(kTimelineMime)}; }
-
-QMimeData *TimelineList::mimeData(const QList<QListWidgetItem *> &items) const
+TimelineList::TimelineList()
+    : LibraryList(TimelineRole, GroupRole, "application/x-nyxmap-timeline-node", {QString::fromLatin1(kTimelineMime)})
 {
-    if (items.isEmpty()) return nullptr;
-    auto *m = new QMimeData;
-    m->setData(kTimelineMime, QByteArray::number(items.first()->data(Qt::UserRole).toULongLong()));
-    return m;
+    carry = [](QMimeData *m, QTreeWidgetItem *it) { // onto a step of a sequence
+        m->setData(kTimelineMime, QByteArray::number(it->data(0, TimelineRole).toULongLong()));
+        m->setText(it->text(1));
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -438,45 +440,125 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_listPanel = new QWidget;
     auto *left = new QVBoxLayout(m_listPanel);
     left->setContentsMargins(0, 0, 0, 0);
-    left->addWidget(new QLabel(QStringLiteral("<b>Timelines</b>")));
-    m_list = new TimelineList;
-    m_list->setDragEnabled(true);
-    m_list->setDragDropMode(QAbstractItemView::DragOnly);
-    m_list->setToolTip(QStringLiteral("Drag a timeline onto a step of a sequence (Play by default) · double-click to rename"));
-    left->addWidget(m_list, 1);
-    auto *lb = new QHBoxLayout;
+    auto *lb = new QHBoxLayout; // as the snapshots' and the presets'
+    lb->setSpacing(4);
+    lb->addStretch();
+    m_overview = new QPushButton(QStringLiteral("≡ All"));
+    m_overview->setObjectName(QStringLiteral("timelinesOverview"));
+    m_overview->setCheckable(true);
+    m_overview->setToolTip(QStringLiteral("Fold all the timelines: each one's run on a line, with its time and its transport. "
+                                          "Double-click one to edit it"));
+    m_group = new QPushButton(QStringLiteral("Group"));
+    m_group->setObjectName(QStringLiteral("timelineGroup"));
+    m_group->setToolTip(QStringLiteral("A new group of timelines: drag timelines (and groups) into it"));
     m_add = new QPushButton(QStringLiteral("+"));
+    m_add->setObjectName(QStringLiteral("timelineNew"));
     m_add->setToolTip(QStringLiteral("New timeline"));
-    m_dup = new QPushButton(QStringLiteral("Duplicate"));
+    symbolButton(m_add);
     m_del = new QPushButton(QStringLiteral("−"));
+    m_del->setObjectName(QStringLiteral("timelineDelete"));
     m_del->setToolTip(QStringLiteral("Delete the timeline (the steps that drive it then do nothing)"));
-    for (QPushButton *b : {m_add, m_dup, m_del}) lb->addWidget(b);
+    symbolButton(m_del);
+    m_dup = new QPushButton(QStringLiteral("⧉"));
+    m_dup->setObjectName(QStringLiteral("timelineDuplicate"));
+    m_dup->setToolTip(QStringLiteral("Duplicate timeline"));
+    symbolButton(m_dup);
+    m_go = new QPushButton(QStringLiteral("PLAY ▶"));
+    m_go->setObjectName(QStringLiteral("timelinePlay"));
+    m_go->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 8px; }");
+    m_go->setToolTip(QStringLiteral("Play the selected timeline"));
+    for (QPushButton *b : {m_overview, m_group, m_add, m_del, m_dup, m_go}) lb->addWidget(b);
     left->addLayout(lb);
-    auto *hint = new QLabel(QStringLiteral("Drag a timeline onto a step of a sequence: the step plays it (or pauses, "
-                                           "stops, rewinds, seeks, changes its loop)."));
-    hint->setWordWrap(true);
-    hint->setStyleSheet("color:#8a8a90; font-size:11px;");
-    left->addWidget(hint);
+    m_list = new TimelineList;
+    m_list->setObjectName(QStringLiteral("timelineList"));
+    m_list->setColumnCount(3);
+    m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Length")});
+    m_list->setRootIsDecorated(true);
+    m_list->setIndentation(12);
+    m_list->setUniformRowHeights(true);
+    m_list->setAlternatingRowColors(true);
+    m_list->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_list->setEditTriggers(QAbstractItemView::NoEditTriggers); // a double-click renames
+    m_list->setExpandsOnDoubleClick(false);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_list->header()->setStretchLastSection(false);
+    m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_list->setColumnWidth(0, 54); // room for the groups' indentation
+    m_list->setColumnWidth(2, 58);
+    m_list->setToolTip(QStringLiteral("Drag a timeline onto a step of a sequence (Play by default: the step can also pause, stop, rewind, "
+                                      "seek or change its loop), or into a group\n"
+                                      "Double-click or Return: rename · ⌘Return: play · Delete: delete · ⌘D: duplicate · ⌘G: new group"));
+    left->addWidget(new LibraryFilter(m_list, QStringLiteral("timelineFilter"), [this] { refreshList(); }));
+    left->addWidget(m_list, 1);
+    new ListKeys(m_list, {[this] {
+                              if (QTreeWidgetItem *it = m_list->currentItem())
+                                  m_list->editItem(it, it->data(0, TimelineList::GroupRole).toULongLong() ? 0 : 1);
+                          },
+                          [this] { m_go->click(); }, [this] { m_del->click(); }, [this] { m_dup->click(); },
+                          [this] { m_group->click(); }});
+    m_groups = std::make_unique<LibraryGroups>(m_list, QStringLiteral("Timelines"), LibraryGroups::Access{
+        [this] { return m_engine->timelineTree(); },
+        [this](const LibraryGroups::Tree &before, const LibraryGroups::Tree &after, const QString &text) {
+            auto set = [e = m_engine](const LibraryGroups::Tree &tree) { e->setTimelineTree(tree); };
+            if (m_undo) m_undo->push(new cmd::SetLibraryTree(set, before, after, text));
+            else set(after);
+            emit edited();
+        },
+        [this](const LibraryGroups::Tree &tree) { // a group folded: the list and the editor stay
+            m_renaming = true;
+            m_engine->setTimelineTree(tree);
+            m_renaming = false;
+            emit edited();
+        },
+        [this] { return m_filling; },
+        [this] { return m_engine->newSnapshotGroupId(); }});
+    connect(m_group, &QPushButton::clicked, this, [this] { m_groups->newGroup(); });
+    connect(m_go, &QPushButton::clicked, this, [this] {
+        if (m_engine->indexOfAnimation(m_current) >= 0) m_engine->controlAnimation(m_current, AnimAction::Play);
+    });
+    connect(m_list, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QTreeWidgetItem *row = m_list->itemAt(pos);
+        if (row) m_list->setCurrentItem(row);
+        QMenu menu;
+        menu.addAction(QStringLiteral("New Timeline"), m_add, &QPushButton::click);
+        menu.addAction(QStringLiteral("New Group"), this, [this] { m_groups->newGroup(); });
+        m_groups->fillMenu(menu, row);
+        menu.exec(m_list->viewport()->mapToGlobal(pos));
+    });
+    connect(m_list, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it) {
+        m_list->editItem(it, it->data(0, TimelineList::GroupRole).toULongLong() ? 0 : 1);
+    });
     h->addWidget(m_listPanel, 1);
 
     // The one selected
     m_editor = new TimelineEditor(engine, undo);
-    h->addWidget(m_editor, 4);
+    m_activity = new TimelineActivity(engine);
+    m_activity->setCompact(true);
+    m_workspace = new QStackedWidget;
+    m_workspace->setObjectName(QStringLiteral("timelineWorkspace"));
+    m_workspace->addWidget(m_editor);
+    m_workspace->addWidget(m_activity);
+    h->addWidget(m_workspace, 4);
+    connect(m_overview, &QPushButton::toggled, this, [this](bool all) { m_workspace->setCurrentWidget(all ? static_cast<QWidget *>(m_activity) : m_editor); });
+    connect(m_activity, &TimelineActivity::editRequested, this, [this](quint64 id) {
+        selectTimeline(id);
+        m_overview->setChecked(false);
+    });
     connect(m_editor, &AnimEditor::edited, this, &TimelineWindow::edited);
 
-    connect(m_list, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) {
+    connect(m_list, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *it) {
         if (m_filling) return;
-        m_current = it ? it->data(Qt::UserRole).toULongLong() : 0;
+        m_current = it ? it->data(0, TimelineList::TimelineRole).toULongLong() : 0;
         showCurrent();
     });
-    connect(m_list, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
-        if (m_filling) return;
-        const int i = m_engine->indexOfAnimation(it->data(Qt::UserRole).toULongLong());
+    connect(m_list, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int column) {
+        if (m_filling || column != 1) return;
+        const int i = m_engine->indexOfAnimation(it->data(0, TimelineList::TimelineRole).toULongLong());
         if (i < 0) return;
         const Animation before = m_engine->animation(i);
-        if (before.name == it->text()) return;
+        if (before.name == it->text(1)) return;
         Animation a = before;
-        a.name = it->text();
+        a.name = it->text(1);
         m_renaming = true;
         if (m_undo) m_undo->push(new cmd::SetAnimation(m_engine, a.id, before, a, QStringLiteral("Rename Timeline")));
         else m_engine->setAnimation(i, a);
@@ -507,6 +589,11 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
         add(a, i + 1, QStringLiteral("Duplicate Timeline"));
     });
     connect(m_del, &QPushButton::clicked, this, [this] {
+        const QTreeWidgetItem *row = m_list->currentItem();
+        if (const quint64 group = row ? row->data(0, TimelineList::GroupRole).toULongLong() : 0) {
+            m_groups->removeGroup(group);
+            return;
+        }
         const int i = m_engine->indexOfAnimation(m_current);
         if (i < 0) return;
         if (m_undo) {
@@ -531,25 +618,48 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
 
 void TimelineWindow::refreshList()
 {
+    QTreeWidgetItem *was = m_list->currentItem();
+    const quint64 keptGroup = was ? was->data(0, TimelineList::GroupRole).toULongLong() : 0;
     m_filling = true;
     m_list->clear();
-    const int n = m_engine->animationCount();
-    if (m_engine->indexOfAnimation(m_current) < 0) m_current = n > 0 ? m_engine->animation(0).id : 0;
-    for (int i = 0; i < n; ++i) {
-        const Animation a = m_engine->animation(i);
-        auto *it = new QListWidgetItem(a.name, m_list);
-        it->setData(Qt::UserRole, QVariant::fromValue<quint64>(a.id));
-        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
-        if (a.id == m_current) m_list->setCurrentItem(it);
-    }
+    if (!keptGroup && m_engine->indexOfAnimation(m_current) < 0) m_current = m_engine->animationCount() > 0 ? m_engine->animation(0).id : 0;
+    QTreeWidgetItem *current = nullptr;
+    int number = 0;
+    std::function<void(const std::vector<Engine::SnapshotNode> &, QTreeWidgetItem *)> add =
+        [&](const std::vector<Engine::SnapshotNode> &nodes, QTreeWidgetItem *parent) {
+            for (const Engine::SnapshotNode &node : nodes) {
+                QTreeWidgetItem *it = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_list);
+                if (!node.snapshot) {
+                    LibraryGroups::styleGroup(it, node, TimelineList::GroupRole, QStringLiteral("timelines"));
+                    add(node.children, it);
+                    it->setExpanded(node.open);
+                    if (node.group == keptGroup) current = it;
+                    continue;
+                }
+                const Animation a = m_engine->animation(m_engine->indexOfAnimation(node.snapshot));
+                it->setText(0, QString::number(++number));
+                it->setText(1, a.name);
+                it->setText(2, QStringLiteral("%1 s").arg(a.duration, 0, 'f', 1));
+                it->setData(0, TimelineList::TimelineRole, QVariant::fromValue<quint64>(a.id));
+                it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
+                it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+                it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
+                if (a.id == m_current && !keptGroup) current = it;
+            }
+        };
+    add(m_engine->timelineTree(), nullptr);
+    if (current) m_list->setCurrentItem(current);
+    m_list->applyFilter();
     m_filling = false;
 }
 
 void TimelineWindow::showCurrent()
 {
     const bool has = m_engine->indexOfAnimation(m_current) >= 0;
+    const QTreeWidgetItem *row = m_list->currentItem();
     m_dup->setEnabled(has);
-    m_del->setEnabled(has);
+    m_go->setEnabled(has);
+    m_del->setEnabled(has || (row && row->data(0, TimelineList::GroupRole).toULongLong()));
     m_editor->setTimeline(has ? m_current : 0);
 }
 
@@ -558,13 +668,17 @@ void TimelineWindow::pollList()
     if (!isVisible()) return;
     std::vector<Engine::AnimationPlayback> playback;
     if (!m_engine->sampleAnimations(&playback)) return;
-    for (int k = 0; k < m_list->count(); ++k) {
-        QListWidgetItem *it = m_list->item(k);
-        const auto found = std::find_if(playback.begin(), playback.end(), [it](const auto &a) { return a.id == it->data(Qt::UserRole).toULongLong(); });
+    for (QTreeWidgetItemIterator row(m_list); *row; ++row) {
+        QTreeWidgetItem *it = *row;
+        const quint64 id = it->data(0, TimelineList::TimelineRole).toULongLong();
+        if (!id) continue;
+        const auto found = std::find_if(playback.begin(), playback.end(), [id](const auto &a) { return a.id == id; });
         if (found == playback.end()) continue;
-        const auto &a = *found;
-        const QBrush b = a.state == AnimState::Playing ? QBrush(kPlaying) : QBrush();
-        if (it->foreground() != b) it->setForeground(b);
+        const QBrush b = found->state == AnimState::Playing ? QBrush(kPlaying) : QBrush();
+        if (it->foreground(1) != b) {
+            const QSignalBlocker blocker(m_list); // not a rename
+            it->setForeground(1, b);
+        }
     }
 }
 
@@ -575,6 +689,9 @@ bool TimelineEditor::fetchPlayback(Engine::AnimationPlayback *a) const { return 
 void TimelineWindow::selectTimeline(quint64 id) {
     if (m_engine->indexOfAnimation(id) < 0) return;
     m_current = id;
-    for (int i=0; i<m_list->count(); ++i) if (m_list->item(i)->data(Qt::UserRole).toULongLong()==id) m_list->setCurrentRow(i);
+    for (QTreeWidgetItemIterator it(m_list); *it; ++it)
+        if ((*it)->data(0, TimelineList::TimelineRole).toULongLong() == id) m_list->setCurrentItem(*it);
     showCurrent();
 }
+
+QWidget *TimelineWindow::workspace() const { return m_workspace; }

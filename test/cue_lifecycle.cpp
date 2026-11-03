@@ -55,7 +55,7 @@ int runCueLifecycleTests(Engine &engine)
 
     reset();
     auto s = seq.sequence(0);
-    s.steps[0].preWait = 1; s.steps[0].next = Sequencer::StepContinue::Follow;
+    s.steps[0].preWait = 1; s.steps[0].next = Sequencer::StepContinue::AutoFollow;
     s.steps[0].postWait = 1;
     seq.setSequence(0, s); seq.go();
     s = seq.sequence(0);
@@ -77,7 +77,7 @@ int runCueLifecycleTests(Engine &engine)
     check(fired == std::vector<int>({1}) && seq.position() == 0, "queued absolute cue follows its identity through reorder");
 
     reset(); s = seq.sequence(0);
-    s.steps[0].preWait = 1; s.steps[0].next = Sequencer::StepContinue::Follow;
+    s.steps[0].preWait = 1; s.steps[0].next = Sequencer::StepContinue::AutoFollow;
     seq.setSequence(0, s);
     seq.setRecaller([&](int index) { fired.push_back(index); seq.stopAll(); });
     seq.go(); seq.advance(1); seq.advance(10);
@@ -115,7 +115,7 @@ int runCueLifecycleTests(Engine &engine)
     reset();
     Sequencer::Sequence child; child.name = "Child";
     Sequencer::Step first; first.snapshot = engine.snapshot(1).id; first.preWait = .5;
-    first.next = Sequencer::StepContinue::Follow; first.postWait = .2;
+    first.next = Sequencer::StepContinue::AutoFollow; first.postWait = .2;
     Sequencer::Step second; second.snapshot = engine.snapshot(2).id; second.preWait = .1;
     child.steps = {first, second};
     const int ci = seq.add(child);

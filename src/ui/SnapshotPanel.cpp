@@ -1,5 +1,6 @@
 #include "SnapshotPanel.h"
 #include "Commands.h"
+#include "LibraryTree.h"
 #include "PresetEditor.h"
 #include "Engine.h"
 #include "Widgets.h"
@@ -155,126 +156,16 @@ static QPixmap thumbnail(const QImage &thumb)
 }
 
 namespace {
-// What a row of the snapshots' list is, in a drag inside it: "s<id>" a snapshot, "g<id>" a group
+// What a row of a list is, in a drag inside it: "s<id>" a member, "g<id>" a group
 constexpr const char *kNodeMime = "application/x-nyxmap-snapshot-node";
-
-QString nodeKey(const QTreeWidgetItem *it)
-{
-    if (!it) return {};
-    if (const quint64 g = it->data(0, GroupRole).toULongLong()) return QStringLiteral("g%1").arg(g);
-    return QStringLiteral("s%1").arg(it->data(0, SnapshotRole).toULongLong());
-}
-
-// The list of the snapshots, in their groups. A snapshot dragged from it carries its id (onto a step of a sequence);
-// inside it, a row dragged is moved: between two rows, or into a group
-class SnapshotList : public QTreeWidget
-{
-public:
-    using QTreeWidget::QTreeWidget;
-    // A row (its key) dropped by `target` (its key; empty: at the end): where -1 before it, 1 after it, 0 into it
-    std::function<void(const QString &key, const QString &target, int where)> onMove;
-
-protected:
-    QStringList mimeTypes() const override { return {QString::fromLatin1(kSnapshotMime), QString::fromLatin1(kNodeMime)}; }
-    Qt::DropActions supportedDropActions() const override { return Qt::MoveAction | Qt::CopyAction; }
-    QMimeData *mimeData(const QList<QTreeWidgetItem *> &items) const override
-    {
-        if (items.isEmpty()) return nullptr;
-        QTreeWidgetItem *it = items.first();
-        auto *m = new QMimeData;
-        m->setData(kNodeMime, nodeKey(it).toUtf8());
-        if (const quint64 id = it->data(0, SnapshotRole).toULongLong()) {
-            m->setData(kSnapshotMime, QByteArray::number(id));
-            m->setText(it->text(1));
-        }
-        return m;
-    }
-    void dragEnterEvent(QDragEnterEvent *e) override
-    {
-        if (e->source() == this && e->mimeData()->hasFormat(kNodeMime)) QTreeWidget::dragEnterEvent(e);
-        else e->ignore();
-    }
-    void dragMoveEvent(QDragMoveEvent *e) override
-    {
-        if (e->source() != this || !e->mimeData()->hasFormat(kNodeMime)) {
-            e->ignore();
-            return;
-        }
-        QTreeWidget::dragMoveEvent(e);
-        e->setDropAction(Qt::MoveAction);
-        e->accept();
-    }
-    void dropEvent(QDropEvent *e) override
-    {
-        if (e->source() != this || !e->mimeData()->hasFormat(kNodeMime)) {
-            e->ignore();
-            return;
-        }
-        const QString key = QString::fromUtf8(e->mimeData()->data(kNodeMime));
-        QTreeWidgetItem *target = itemAt(e->position().toPoint());
-        const DropIndicatorPosition where = dropIndicatorPosition();
-        e->setDropAction(Qt::IgnoreAction); // the list is rebuilt from the engine: nothing moves here
-        e->accept();
-        if (onMove) {
-            const QString t = where == OnViewport || !target ? QString() : nodeKey(target);
-            const int w = where == OnItem ? 0 : where == AboveItem ? -1 : 1;
-            QMetaObject::invokeMethod(this, [this, key, t, w] { onMove(key, t, w); }, Qt::QueuedConnection);
-        }
-    }
-};
-
+constexpr const char *kPresetNodeMime = "application/x-nyxmap-preset-node";
 using Node = Engine::SnapshotNode;
 
-QString keyOf(const Node &n) { return n.snapshot ? QStringLiteral("s%1").arg(n.snapshot) : QStringLiteral("g%1").arg(n.group); }
-
-// Takes the node out of the tree; false: not in it
-bool takeNode(std::vector<Node> &nodes, const QString &key, Node *out)
+// Wide enough for its text: a style sheet's padding does not count in a button's size hint
+void fitText(QPushButton *button, int padding = 18)
 {
-    for (size_t k = 0; k < nodes.size(); ++k) {
-        if (keyOf(nodes[k]) == key) {
-            *out = nodes[k];
-            nodes.erase(nodes.begin() + long(k));
-            return true;
-        }
-        if (!nodes[k].snapshot && takeNode(nodes[k].children, key, out)) return true;
-    }
-    return false;
+    button->setMinimumWidth(button->fontMetrics().horizontalAdvance(button->text()) + padding);
 }
-
-Node *findNode(std::vector<Node> &nodes, const QString &key)
-{
-    for (Node &n : nodes) {
-        if (keyOf(n) == key) return &n;
-        if (!n.snapshot)
-            if (Node *f = findNode(n.children, key)) return f;
-    }
-    return nullptr;
-}
-
-// Next to `target` (before or after it, in its group); false: not in the tree
-bool insertBeside(std::vector<Node> &nodes, const QString &target, const Node &n, bool after)
-{
-    for (size_t k = 0; k < nodes.size(); ++k) {
-        if (keyOf(nodes[k]) == target) {
-            nodes.insert(nodes.begin() + long(k) + (after ? 1 : 0), n);
-            return true;
-        }
-        if (!nodes[k].snapshot && insertBeside(nodes[k].children, target, n, after)) return true;
-    }
-    return false;
-}
-
-// The groups, depth first, with their path ("Act 1 › Scene 2")
-void listGroups(const std::vector<Node> &nodes, const QString &prefix, std::vector<std::pair<quint64, QString>> &out)
-{
-    for (const Node &n : nodes) {
-        if (n.snapshot) continue;
-        const QString name = prefix.isEmpty() ? n.name : prefix + QStringLiteral(" › ") + n.name;
-        out.push_back({n.group, name});
-        listGroups(n.children, name, out);
-    }
-}
-
 } // namespace
 
 // The list of the snapshots: the one recalled last is marked apart from the selection — a green stripe on its left
@@ -324,23 +215,42 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     auto *lv = new QVBoxLayout(left);
     lv->setContentsMargins(0, 0, 0, 0);
     auto *bar = new QHBoxLayout;
+    bar->setSpacing(4);
     auto *title = new QLabel(QStringLiteral("<b>Snapshots</b>"));
     title->hide(); // named by the library tab
     bar->addWidget(title);
     bar->addStretch();
     m_store = new QPushButton(QStringLiteral("+"));
     m_store->setToolTip(QStringLiteral("Store the current state of the layers in a new snapshot"));
-    m_store->setFixedWidth(34);
+    symbolButton(m_store);
     m_go = new QPushButton(QStringLiteral("PLAY ▶"));
-    m_go->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 14px; }");
-    m_go->setToolTip(QStringLiteral("Recall the selected snapshot (double-click or Enter in the list)"));
+    m_go->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 8px; }");
+    m_go->setToolTip(QStringLiteral("Recall the selected snapshot (⌘Return in the list)"));
     m_newGroup = new QPushButton(QStringLiteral("Group"));
     m_newGroup->setToolTip(QStringLiteral("A new group of snapshots: drag snapshots (and groups) into it"));
     bar->addWidget(m_newGroup);
     bar->addWidget(m_store);
     bar->addWidget(m_go);
     lv->addLayout(bar);
-    m_list = new SnapshotList;
+    m_list = new LibraryList(SnapshotRole, GroupRole, kNodeMime, {QString::fromLatin1(kSnapshotMime)});
+    m_list->carry = [](QMimeData *m, QTreeWidgetItem *it) { // onto a step of a sequence
+        m->setData(kSnapshotMime, QByteArray::number(it->data(0, SnapshotRole).toULongLong()));
+        m->setText(it->text(1));
+    };
+    m_groups = std::make_shared<LibraryGroups>(m_list, QStringLiteral("Snapshots"), LibraryGroups::Access{
+        [this] { return m_engine->snapshotTree(); },
+        [this](const LibraryGroups::Tree &before, const LibraryGroups::Tree &after, const QString &text) {
+            m_undo->push(new cmd::SetSnapshotTree(m_engine, before, after, text));
+            emit edited();
+        },
+        [this](const LibraryGroups::Tree &tree) {
+            m_applying = true;
+            m_engine->setSnapshotTree(tree);
+            m_applying = false;
+            emit edited();
+        },
+        [this] { return m_filling; },
+        [this] { return m_engine->newSnapshotGroupId(); }});
     m_list->setColumnCount(3);
     m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_list->setRootIsDecorated(true);
@@ -352,13 +262,14 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_list->setDragDropMode(QAbstractItemView::DragDrop);
     m_list->setDropIndicatorShown(true);
     m_list->setDefaultDropAction(Qt::MoveAction);
-    m_list->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
+    m_list->setEditTriggers(QAbstractItemView::NoEditTriggers); // a double-click or Return renames
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->header()->setStretchLastSection(false);
     m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_list->setColumnWidth(0, 62); // room for the groups' indentation
+    m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
-    m_list->setToolTip(QStringLiteral("Double-click or Enter: recall · drag to reorder, into a group, or onto a step of a sequence\n"
+    m_list->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
+                                      "Drag to reorder, into a group, or onto a step of a sequence\n"
                                       "Green stripe and ▶: the snapshot recalled last; the green line under it: its fade"));
     m_list->setItemDelegate(new SnapshotRowDelegate(m_engine, m_list));
     { // the fade running moves the line under its snapshot
@@ -372,6 +283,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         t->start();
     }
     m_list->setObjectName(QStringLiteral("snapshotList"));
+    lv->addWidget(new LibraryFilter(m_list, QStringLiteral("snapshotFilter"), [this] { refresh(); }));
     lv->addWidget(m_list, 1);
     left->setMinimumWidth(220);
     m_modeListStack = new QStackedWidget;
@@ -382,8 +294,9 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     // --- The presets, beside the snapshots: a few values each
     auto *presets = new QWidget;
     auto *pv = new QVBoxLayout(presets);
-    pv->setContentsMargins(6, 0, 0, 0);
+    pv->setContentsMargins(0, 0, 0, 0);
     auto *pbar = new QHBoxLayout;
+    pbar->setSpacing(4);
     // The library tab names this list.
     pbar->addStretch();
     m_presetEdit = new QPushButton(QStringLiteral("Edit"));
@@ -393,29 +306,50 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
                                             "to put it in the preset or take it out."));
     m_presetEdit->setStyleSheet(QStringLiteral("QPushButton:checked { background:%1; color:white; }").arg(theme::css()));
     m_presetNew = new QPushButton(QStringLiteral("+"));
-    m_presetNew->setFixedWidth(34);
+    symbolButton(m_presetNew);
     m_presetNew->setToolTip(QStringLiteral("A new empty preset: fill it in Edit mode, or right-click a value › Add to Preset"));
     m_presetGo = new QPushButton(QStringLiteral("PLAY ▶"));
-    m_presetGo->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 14px; }");
-    m_presetGo->setToolTip(QStringLiteral("Recall the selected preset (double-click or Enter in the list)"));
+    m_presetGo->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 8px; }");
+    m_presetGo->setToolTip(QStringLiteral("Recall the selected preset (⌘Return in the list)"));
+    m_presetGroup = new QPushButton(QStringLiteral("Group"));
+    m_presetGroup->setObjectName(QStringLiteral("presetGroup"));
+    m_presetGroup->setToolTip(QStringLiteral("A new group of presets: drag presets (and groups) into it"));
     pbar->addWidget(m_presetEdit);
+    pbar->addWidget(m_presetGroup);
     pbar->addWidget(m_presetNew);
     pbar->addWidget(m_presetGo);
     pv->addLayout(pbar);
-    m_presets = new QTreeWidget;
+    m_presets = new LibraryList(PresetRole, GroupRole, kPresetNodeMime);
+    m_presetGroups = std::make_shared<LibraryGroups>(m_presets, QStringLiteral("Presets"), LibraryGroups::Access{
+        [this] { return m_engine->presetTree(); },
+        [this](const LibraryGroups::Tree &before, const LibraryGroups::Tree &after, const QString &text) {
+            m_undo->push(new cmd::SetLibraryTree([e = m_engine](const LibraryGroups::Tree &tree) { e->setPresetTree(tree); }, before, after, text));
+            emit edited();
+        },
+        [this](const LibraryGroups::Tree &tree) {
+            m_engine->setPresetTree(tree);
+            emit edited();
+        },
+        [this] { return m_filling; },
+        [this] { return m_engine->newSnapshotGroupId(); }});
+    connect(m_presetGroup, &QPushButton::clicked, this, [this] { m_presetGroups->newGroup(); });
     m_presets->setObjectName(QStringLiteral("presetList"));
     m_presets->setColumnCount(3);
     m_presets->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
-    m_presets->setRootIsDecorated(false);
+    m_presets->setRootIsDecorated(true);
+    m_presets->setIndentation(12);
+    m_presets->setEditTriggers(QAbstractItemView::NoEditTriggers); // a double-click or Return renames
     m_presets->setUniformRowHeights(true);
     m_presets->setAlternatingRowColors(true);
     m_presets->setSelectionMode(QAbstractItemView::SingleSelection);
     m_presets->setContextMenuPolicy(Qt::CustomContextMenu);
     m_presets->header()->setStretchLastSection(false);
     m_presets->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_presets->setColumnWidth(0, 36);
+    m_presets->setColumnWidth(0, 54); // room for the groups' indentation
     m_presets->setColumnWidth(2, 58);
-    m_presets->setToolTip(QStringLiteral("Double-click or Enter: recall · a preset holds only the values put in it"));
+    m_presets->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
+                                         "Drag to reorder or into a group · a preset holds only the values put in it"));
+    pv->addWidget(new LibraryFilter(m_presets, QStringLiteral("presetFilter"), [this] { refreshPresets(); }));
     pv->addWidget(m_presets, 1);
     presets->setMinimumWidth(200);
     m_modeListStack->addWidget(presets);
@@ -475,15 +409,18 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_delete->setText(QStringLiteral("−"));
     m_delete->setToolTip(QStringLiteral("Delete selected snapshot"));
     m_delete->setObjectName(QStringLiteral("snapshotDelete"));
-    m_delete->setFixedWidth(30);
+    symbolButton(m_delete);
     bar->insertWidget(bar->indexOf(m_store) + 1, m_delete);
     bar->insertWidget(bar->indexOf(m_delete) + 1, m_update);
     m_update->setObjectName(QStringLiteral("snapshotUpdate"));
     auto *duplicateSnapshot = new QPushButton(QStringLiteral("⧉"));
-    duplicateSnapshot->setFixedWidth(30);
+    symbolButton(duplicateSnapshot);
     duplicateSnapshot->setToolTip(QStringLiteral("Duplicate snapshot (Ctrl/Cmd+D)"));
     duplicateSnapshot->setObjectName("snapshotDuplicate");
     bar->insertWidget(bar->indexOf(m_update) + 1, duplicateSnapshot);
+    fitText(m_newGroup);
+    fitText(m_update);
+    fitText(m_go, 22);
     connect(duplicateSnapshot, &QPushButton::clicked, this, [this] { duplicateSelected(false); });
     fields->addLayout(buttons);
     fields->addStretch();
@@ -530,13 +467,23 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_middle->addWidget(m_inspector);
     m_middle->addWidget(buildPresetView());
     m_presetDelete->setText(QStringLiteral("−"));
-    m_presetDelete->setFixedWidth(30);
+    symbolButton(m_presetDelete);
     m_presetDelete->setToolTip(QStringLiteral("Delete selected preset"));
     m_presetDelete->setObjectName(QStringLiteral("presetDelete"));
     m_presetUpdate->setText(QStringLiteral("Update"));
     m_presetUpdate->setObjectName(QStringLiteral("presetUpdate"));
     pbar->insertWidget(pbar->indexOf(m_presetNew) + 1, m_presetDelete);
     pbar->insertWidget(pbar->indexOf(m_presetDelete) + 1, m_presetUpdate);
+    auto *duplicatePreset = new QPushButton(QStringLiteral("⧉"));
+    symbolButton(duplicatePreset);
+    duplicatePreset->setToolTip(QStringLiteral("Duplicate preset"));
+    duplicatePreset->setObjectName(QStringLiteral("presetDuplicate"));
+    pbar->insertWidget(pbar->indexOf(m_presetUpdate) + 1, duplicatePreset);
+    fitText(m_presetEdit);
+    fitText(m_presetGroup);
+    fitText(m_presetUpdate);
+    fitText(m_presetGo, 22);
+    connect(duplicatePreset, &QPushButton::clicked, this, [this] { duplicateSelected(true); });
     split->addWidget(m_middle);
 
     // --- The selected value
@@ -564,85 +511,49 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         showInspector(selected());
     });
     connect(m_list, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it) {
-        if (it->data(0, GroupRole).toULongLong()) m_list->editItem(it, 0); // a group: renamed
-        else recall(indexOf(it));
+        m_list->editItem(it, it->data(0, GroupRole).toULongLong() ? 0 : 1);
     });
-    static_cast<SnapshotList *>(m_list)->onMove = [this](const QString &key, const QString &target, int where) {
-        moveNode(key, target, where);
-    };
-    connect(m_newGroup, &QPushButton::clicked, this, &SnapshotPanel::newGroup);
-    connect(m_list, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int col) {
-        const quint64 g = it->data(0, GroupRole).toULongLong();
-        if (m_filling || !g || col != 0) return;
-        const QString name = it->text(0).trimmed();
-        editTree(QStringLiteral("Rename Group"), [&](std::vector<Engine::SnapshotNode> &t) {
-            if (Node *n = findNode(t, QStringLiteral("g%1").arg(g))) n->name = name.isEmpty() ? n->name : name;
-        });
+    // A name typed in the row: taken once the editor is closed, the list being built again from it
+    connect(m_list, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int column) {
+        const quint64 id = it->data(0, SnapshotRole).toULongLong();
+        if (m_filling || column != 1 || !id) return;
+        const QString name = it->text(1).trimmed();
+        QMetaObject::invokeMethod(this, [this, id, name] {
+            const int i = m_engine->indexOfSnapshot(id);
+            if (i < 0) return;
+            Engine::Snapshot m = m_engine->snapshot(i);
+            if (name.isEmpty() || m.name == name) return refresh();
+            m.name = name;
+            m_engine->setSnapshot(i, m);
+            emit edited();
+        }, Qt::QueuedConnection);
     });
-    // A group folded or unfolded: kept (saved), not an undo step
-    auto fold = [this](QTreeWidgetItem *it, bool open) {
-        const quint64 g = it->data(0, GroupRole).toULongLong();
-        if (m_filling || !g) return;
-        std::vector<Engine::SnapshotNode> t = m_engine->snapshotTree();
-        Node *n = findNode(t, QStringLiteral("g%1").arg(g));
-        if (!n || n->open == open) return;
-        n->open = open;
-        m_applying = true;
-        m_engine->setSnapshotTree(t);
-        m_applying = false;
-        emit edited();
-    };
-    connect(m_list, &QTreeWidget::itemExpanded, this, [fold](QTreeWidgetItem *it) { fold(it, true); });
-    connect(m_list, &QTreeWidget::itemCollapsed, this, [fold](QTreeWidgetItem *it) { fold(it, false); });
-    auto *enter = new QShortcut(QKeySequence(Qt::Key_Return), m_list, nullptr, nullptr, Qt::WidgetShortcut);
-    connect(enter, &QShortcut::activated, this, [this] { recall(selected()); });
-    auto *del = new QShortcut(QKeySequence::Delete, m_list, nullptr, nullptr, Qt::WidgetShortcut);
-    connect(del, &QShortcut::activated, this, [this] { removeSnapshot(selected()); });
-    auto *bs = new QShortcut(QKeySequence(Qt::Key_Backspace), m_list, nullptr, nullptr, Qt::WidgetShortcut);
-    connect(bs, &QShortcut::activated, this, [this] { removeSnapshot(selected()); });
+    connect(m_newGroup, &QPushButton::clicked, this, [this] { m_groups->newGroup(); });
+    new ListKeys(m_list, {[this] {
+                              if (QTreeWidgetItem *it = m_list->currentItem())
+                                  m_list->editItem(it, it->data(0, GroupRole).toULongLong() ? 0 : 1);
+                          },
+                          [this] { m_go->click(); }, [this] { m_delete->click(); }, [this] { duplicateSelected(false); },
+                          [this] { m_newGroup->click(); }});
+    connect(m_name, &QLineEdit::returnPressed, m_list, [this] { m_list->setFocus(); }); // the name typed: back to the list
     connect(m_list, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         QTreeWidgetItem *it = m_list->itemAt(pos);
         if (it && !it->isSelected())
             m_list->setCurrentItem(it);
         const int i = indexOf(it);
-        const quint64 group = it ? it->data(0, GroupRole).toULongLong() : 0;
         QMenu menu;
         menu.addAction(QStringLiteral("Store Current State"), this, &SnapshotPanel::store);
-        menu.addAction(QStringLiteral("New Group"), this, &SnapshotPanel::newGroup);
+        menu.addAction(QStringLiteral("New Group"), this, [this] { m_groups->newGroup(); });
         if (i >= 0) {
             menu.addSeparator();
             menu.addAction(QStringLiteral("Play"), this, [this, i] { recall(i); });
             menu.addAction(QStringLiteral("Update with Current State"), this, [this, i] { updateSnapshot(i); });
             menu.addAction(QStringLiteral("Duplicate Snapshot"), this, [this] { duplicateSelected(false); });
             menu.addAction(QStringLiteral("Rename"), this, [this] {
-                m_name->setFocus();
-                m_name->selectAll();
+                if (QTreeWidgetItem *row = m_list->currentItem()) m_list->editItem(row, 1);
             });
         }
-        if (it) { // Add to Group ▸ every group (not itself, nor one inside it), or back to the top level
-            const QString key = nodeKey(it);
-            std::vector<Engine::SnapshotNode> tree = m_engine->snapshotTree();
-            const Node *self = findNode(tree, key);
-            std::vector<std::pair<quint64, QString>> groups;
-            listGroups(tree, QString(), groups);
-            QMenu *add = menu.addMenu(QStringLiteral("Add to Group"));
-            const bool nested = it->parent() != nullptr;
-            QAction *top = add->addAction(QStringLiteral("Top Level"), this, [this, key] { moveNode(key, QString(), 2); });
-            top->setEnabled(nested);
-            add->addSeparator();
-            for (const auto &[g, name] : groups) {
-                const QString gk = QStringLiteral("g%1").arg(g);
-                std::vector<Node> inside = self && !self->snapshot ? self->children : std::vector<Node>();
-                if (gk == key || (self && !self->snapshot && findNode(inside, gk))) continue;
-                add->addAction(name, this, [this, key, gk] { moveNode(key, gk, 0); });
-            }
-            add->setEnabled(nested || !groups.empty());
-        }
-        if (group) {
-            menu.addSeparator();
-            menu.addAction(QStringLiteral("Rename Group"), this, [this, it] { m_list->editItem(it, 0); });
-            menu.addAction(QStringLiteral("Delete Group (keep its snapshots)"), this, [this, group] { removeGroup(group); });
-        }
+        m_groups->fillMenu(menu, it);
         if (i >= 0) {
             menu.addSeparator();
             menu.addAction(QStringLiteral("Delete"), this, [this, i] { removeSnapshot(i); });
@@ -652,7 +563,11 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     connect(m_store, &QPushButton::clicked, this, &SnapshotPanel::store);
     connect(m_go, &QPushButton::clicked, this, [this] { recall(selected()); });
     connect(m_update, &QPushButton::clicked, this, [this] { updateSnapshot(selected()); });
-    connect(m_delete, &QPushButton::clicked, this, [this] { removeSnapshot(selected()); });
+    connect(m_delete, &QPushButton::clicked, this, [this] {
+        const QTreeWidgetItem *it = m_list->currentItem();
+        if (const quint64 group = it ? it->data(0, GroupRole).toULongLong() : 0) m_groups->removeGroup(group);
+        else removeSnapshot(selected());
+    });
     connect(m_name, &QLineEdit::editingFinished, this, [this] {
         const int i = selected();
         if (i < 0) return;
@@ -741,79 +656,6 @@ QTreeWidgetItem *SnapshotPanel::itemOf(int i) const
 }
 
 // The snapshots' tree changed by `fn`, one undo step (nothing when it is the same)
-void SnapshotPanel::editTree(const QString &text, const std::function<void(std::vector<Engine::SnapshotNode> &)> &fn)
-{
-    const std::vector<Engine::SnapshotNode> before = m_engine->snapshotTree();
-    std::vector<Engine::SnapshotNode> after = before;
-    fn(after);
-    if (after == before) return;
-    m_undo->push(new cmd::SetSnapshotTree(m_engine, before, after, text));
-    emit edited();
-}
-
-// A row moved: where = -1 before `target`, 1 after it, 0 into it (a group), 2 at the end of the top level
-void SnapshotPanel::moveNode(const QString &key, const QString &target, int where)
-{
-    if (key == target) return;
-    editTree(QStringLiteral("Move Snapshot"), [&](std::vector<Engine::SnapshotNode> &t) {
-        const Node *moved = findNode(t, key);
-        if (!moved) return;
-        if (!moved->snapshot && !target.isEmpty()) { // a group never goes inside itself
-            std::vector<Node> inside = moved->children;
-            if (findNode(inside, target)) return;
-        }
-        Node n;
-        takeNode(t, key, &n);
-        Node *into = target.isEmpty() ? nullptr : findNode(t, target);
-        if (target.isEmpty() || where == 2 || !into) {
-            t.push_back(n);
-        } else if (where == 0 && !into->snapshot) {
-            into->children.push_back(n);
-            into->open = true;
-        } else {
-            insertBeside(t, target, n, where >= 0);
-        }
-    });
-}
-
-void SnapshotPanel::newGroup()
-{
-    const quint64 g = m_engine->newSnapshotGroupId();
-    std::vector<std::pair<quint64, QString>> groups;
-    listGroups(m_engine->snapshotTree(), QString(), groups);
-    editTree(QStringLiteral("New Group"), [&](std::vector<Engine::SnapshotNode> &t) {
-        Node n;
-        n.group = g;
-        n.name = QStringLiteral("Group %1").arg(groups.size() + 1);
-        t.push_back(n);
-    });
-    for (QTreeWidgetItemIterator it(m_list); *it; ++it)
-        if ((*it)->data(0, GroupRole).toULongLong() == g) {
-            m_list->setCurrentItem(*it);
-            m_list->editItem(*it, 0);
-        }
-}
-
-// A group taken away: what it holds goes where it was
-void SnapshotPanel::removeGroup(quint64 group)
-{
-    editTree(QStringLiteral("Delete Group"), [&](std::vector<Engine::SnapshotNode> &t) {
-        std::function<bool(std::vector<Node> &)> drop = [&](std::vector<Node> &nodes) {
-            for (size_t k = 0; k < nodes.size(); ++k) {
-                if (!nodes[k].snapshot && nodes[k].group == group) {
-                    std::vector<Node> kids = nodes[k].children;
-                    nodes.erase(nodes.begin() + long(k));
-                    nodes.insert(nodes.begin() + long(k), kids.begin(), kids.end());
-                    return true;
-                }
-                if (!nodes[k].snapshot && drop(nodes[k].children)) return true;
-            }
-            return false;
-        };
-        drop(t);
-    });
-}
-
 QWidget *SnapshotPanel::listPanel() const { return m_modeListStack; }
 
 void SnapshotPanel::setMode(int mode)
@@ -842,7 +684,7 @@ void SnapshotPanel::refresh()
     // The marker follows its snapshot, wherever it went (added before it, moved, undone, removed: none)
     m_active = m_activeId ? m_engine->indexOfSnapshot(m_activeId) : -1;
     if (m_applying) return; // our own edit: the panel already shows it
-    const QString keep = nodeKey(m_list->currentItem());
+    const QString keep = m_list->nodeKey(m_list->currentItem());
     m_filling = true;
     m_list->clear();
     QTreeWidgetItem *current = nullptr;
@@ -850,17 +692,8 @@ void SnapshotPanel::refresh()
         [&](const std::vector<Engine::SnapshotNode> &nodes, QTreeWidgetItem *parent) {
             for (const Engine::SnapshotNode &node : nodes) {
                 QTreeWidgetItem *it = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_list);
-                if (!node.snapshot) { // a group: its name across the row, bold
-                    it->setText(0, node.name);
-                    it->setData(0, GroupRole, node.group);
-                    it->setFirstColumnSpanned(true);
-                    QFont f = it->font(0);
-                    f.setBold(true);
-                    it->setFont(0, f);
-                    it->setForeground(0, QColor(0xc8, 0xc8, 0xd0));
-                    it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled |
-                                 Qt::ItemIsEditable);
-                    it->setToolTip(0, QStringLiteral("Group — drag snapshots into it; double-click to rename"));
+                if (!node.snapshot) {
+                    LibraryGroups::styleGroup(it, node, GroupRole, QStringLiteral("snapshots"));
                     add(node.children, it);
                     it->setExpanded(node.open);
                 } else {
@@ -872,7 +705,7 @@ void SnapshotPanel::refresh()
                     it->setData(0, SnapshotRole, m.id);
                     it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
                     it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
-                    it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
+                    it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
                     if (i == m_active) { // last recalled: ▶, bold, green — not the accent, which is the selection's
                         it->setText(0, QStringLiteral("▶ %1").arg(i + 1));
                         QFont f = it->font(1);
@@ -883,11 +716,12 @@ void SnapshotPanel::refresh()
                         }
                     }
                 }
-                if (nodeKey(it) == keep) current = it;
+                if (m_list->nodeKey(it) == keep) current = it;
             }
         };
     add(m_engine->snapshotTree(), nullptr);
     if (current) m_list->setCurrentItem(current);
+    m_list->applyFilter();
     m_filling = false;
     showInspector(selected());
 }
@@ -1101,6 +935,7 @@ void SnapshotPanel::clearDetail()
 void SnapshotPanel::showDetail(QTreeWidgetItem *it)
 {
     clearDetail();
+    m_detail->show();
     auto hint = [this](const QString &t) {
         auto *l = new QLabel(t);
         l->setWordWrap(true);
@@ -1116,9 +951,8 @@ void SnapshotPanel::showDetail(QTreeWidgetItem *it)
             hint(it->checkState(0) == Qt::Checked
                      ? QStringLiteral("In the snapshot: the recall takes this layer to the values below.")
                      : QStringLiteral("Left out: the recall leaves this layer as it is."));
-        } else {
-            hint(QStringLiteral("Click a value in the snapshot to see it, change it, and choose how it gets there when the "
-                                "snapshot is recalled: CUT (at once), FOLLOW (the snapshot's fade) or a time of its own."));
+        } else { // nothing to show: its room goes to the contents
+            m_detail->hide();
         }
         m_detailLayout->addStretch();
         return;
@@ -2048,8 +1882,6 @@ QWidget *SnapshotPanel::buildPresetView()
     m_presetTitle = new QLabel;
     v->addWidget(m_presetTitle);
     auto *row = new QHBoxLayout;
-    m_presetName = new QLineEdit;
-    m_presetName->setPlaceholderText(QStringLiteral("Name"));
     m_presetFade = new NumberBox;
     m_presetFade->setRange(0, 600);
     m_presetFade->setDecimals(1);
@@ -2057,7 +1889,7 @@ QWidget *SnapshotPanel::buildPresetView()
     m_presetFade->setSuffix(QStringLiteral(" s"));
     m_presetFade->setKeyboardTracking(false);
     m_presetFade->setToolTip(QStringLiteral("Fade: the values set to Follow get to the preset's in this time"));
-    row->addWidget(m_presetName, 2);
+    row->addStretch(2);
     row->addWidget(new ResetLabel(QStringLiteral("Fade"), [this] { m_presetFade->setValue(1.0); }));
     row->addWidget(m_presetFade, 1);
     v->addLayout(row);
@@ -2067,10 +1899,6 @@ QWidget *SnapshotPanel::buildPresetView()
     m_presetDelete = new QPushButton(QStringLiteral("Delete"));
     buttons->addWidget(m_presetUpdate);
     buttons->addWidget(m_presetDelete);
-    auto *duplicatePreset = new QPushButton(QStringLiteral("Duplicate"));
-    duplicatePreset->setObjectName("presetDuplicate");
-    buttons->addWidget(duplicatePreset);
-    connect(duplicatePreset, &QPushButton::clicked, this, [this] { duplicateSelected(true); });
     v->addLayout(buttons);
     m_presetValues = new QTreeWidget;
     m_presetValues->setObjectName(QStringLiteral("presetValues"));
@@ -2100,6 +1928,17 @@ QWidget *SnapshotPanel::buildPresetView()
                 copyContents(true, action == 1);
         });
     }
+    auto *addElements = new QPushButton(QStringLiteral("Add elements"));
+    addElements->setObjectName(QStringLiteral("presetAddElements"));
+    addElements->setToolTip(QStringLiteral("Add any value to this preset: of the composition, a layer or an interaction, as it is now"));
+    contentTools->addWidget(addElements);
+    connect(addElements, &QPushButton::clicked, this, [this, addElements] {
+        PresetEditor *editor = PresetEditor::instance();
+        if (!editor || selectedPreset() < 0) return;
+        QMenu menu;
+        editor->fillAddElements(&menu);
+        menu.exec(addElements->mapToGlobal(QPoint(0, addElements->height())));
+    });
     v->addLayout(contentTools);
     v->addWidget(m_presetValues, 1);
     return w;
@@ -2128,9 +1967,24 @@ void SnapshotPanel::connectPresets()
         emit edited();
     });
     connect(m_presetGo, &QPushButton::clicked, this, [this] { recallPreset(selectedPreset()); });
-    connect(m_presets, &QTreeWidget::itemDoubleClicked, this, [this] { recallPreset(selectedPreset()); });
-    auto *enter = new QShortcut(QKeySequence(Qt::Key_Return), m_presets, nullptr, nullptr, Qt::WidgetShortcut);
-    connect(enter, &QShortcut::activated, this, [this] { recallPreset(selectedPreset()); });
+    connect(m_presets, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it) {
+        m_presets->editItem(it, it->data(0, GroupRole).toULongLong() ? 0 : 1);
+    });
+    connect(m_presets, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *it, int column) {
+        const quint64 id = it->data(0, PresetRole).toULongLong();
+        if (m_filling || column != 1 || !id) return;
+        const QString name = it->text(1).trimmed();
+        QMetaObject::invokeMethod(this, [this, id, name] {
+            const int i = m_engine->indexOfPreset(id);
+            if (i < 0) return;
+            if (name.isEmpty() || m_engine->preset(i).name == name) return refreshPresets();
+            cmd::editPresets(m_undo, m_engine, QStringLiteral("Rename Preset"), [id, name](std::vector<Engine::Preset> &all) {
+                for (Engine::Preset &p : all)
+                    if (p.id == id) p.name = name;
+            });
+            emit edited();
+        }, Qt::QueuedConnection);
+    });
     auto removePreset = [this] {
         const int i = selectedPreset();
         if (i < 0) return;
@@ -2140,11 +1994,17 @@ void SnapshotPanel::connectPresets()
         });
         emit edited();
     };
-    for (auto key : {QKeySequence(QKeySequence::Delete), QKeySequence(Qt::Key_Backspace)}) {
-        auto *del = new QShortcut(key, m_presets, nullptr, nullptr, Qt::WidgetShortcut);
-        connect(del, &QShortcut::activated, this, removePreset);
-    }
-    connect(m_presetDelete, &QPushButton::clicked, this, removePreset);
+    new ListKeys(m_presets, {[this] {
+                                 if (QTreeWidgetItem *it = m_presets->currentItem())
+                                     m_presets->editItem(it, it->data(0, GroupRole).toULongLong() ? 0 : 1);
+                             },
+                             [this] { m_presetGo->click(); }, [this] { m_presetDelete->click(); },
+                             [this] { duplicateSelected(true); }, [this] { m_presetGroup->click(); }});
+    connect(m_presetDelete, &QPushButton::clicked, this, [this, removePreset] {
+        const QTreeWidgetItem *it = m_presets->currentItem();
+        if (const quint64 group = it ? it->data(0, GroupRole).toULongLong() : 0) m_presetGroups->removeGroup(group);
+        else removePreset();
+    });
     connect(m_presetValues, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *it) {
         if (m_filling) return;
         m_presetCurrent = it ? qMakePair(it->data(0, IdRole).toULongLong(), it->data(0, KeyRole).toString())
@@ -2169,13 +2029,15 @@ void SnapshotPanel::connectPresets()
             m_presets->setCurrentItem(item);
         QMenu menu;
         menu.addAction(QStringLiteral("New Preset"), m_presetNew, &QPushButton::click);
-        if (m_presets->itemAt(pos)) {
+        menu.addAction(QStringLiteral("New Group"), this, [this] { m_presetGroups->newGroup(); });
+        QTreeWidgetItem *row = m_presets->itemAt(pos);
+        m_presetGroups->fillMenu(menu, row);
+        if (row && row->data(0, PresetRole).toULongLong()) {
             menu.addSeparator();
             menu.addAction(QStringLiteral("Recall"), this, [this] { recallPreset(selectedPreset()); });
             menu.addAction(QStringLiteral("Duplicate Preset"), this, [this] { duplicateSelected(true); });
             menu.addAction(QStringLiteral("Rename"), this, [this] {
-                m_presetName->setFocus();
-                m_presetName->selectAll();
+                if (QTreeWidgetItem *row = m_presets->currentItem()) m_presets->editItem(row, 1);
             });
             // The views as they are now (how many, what each shows, zoom, fixtures, the layer selected): shown again by it
             menu.addAction(QStringLiteral("Store Current Views in Preset"), this, [this] {
@@ -2219,10 +2081,6 @@ void SnapshotPanel::connectPresets()
             merge);
         emit edited();
     };
-    connect(m_presetName, &QLineEdit::editingFinished, this, [this, edit] {
-        const QString name = m_presetName->text();
-        edit(QStringLiteral("Rename Preset"), QString(), [&](Engine::Preset &p) { p.name = name; });
-    });
     connect(m_presetFade, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit](double v) {
         edit(QStringLiteral("Preset Fade"), QStringLiteral("presetFade"), [&](Engine::Preset &p) { p.fade = v; });
     });
@@ -2299,30 +2157,45 @@ void SnapshotPanel::connectPresets()
 
 void SnapshotPanel::selectPreset(quint64 id)
 {
-    for (int k = 0; k < m_presets->topLevelItemCount(); ++k)
-        if (m_presets->topLevelItem(k)->data(0, PresetRole).toULongLong() == id) {
-            if (m_presets->currentItem() != m_presets->topLevelItem(k)) m_presets->setCurrentItem(m_presets->topLevelItem(k));
+    for (QTreeWidgetItemIterator it(m_presets); *it; ++it)
+        if ((*it)->data(0, PresetRole).toULongLong() == id) {
+            if (m_presets->currentItem() != *it) m_presets->setCurrentItem(*it);
             return;
         }
 }
 
 void SnapshotPanel::refreshPresets()
 {
-    const quint64 keep = m_presets->currentItem() ? m_presets->currentItem()->data(0, PresetRole).toULongLong() : 0;
+    const QString keep = m_presets->nodeKey(m_presets->currentItem());
     m_filling = true;
     m_presets->clear();
     QTreeWidgetItem *current = nullptr;
-    const std::vector<Engine::Preset> all = m_engine->presets();
-    for (size_t i = 0; i < all.size(); ++i) {
-        const Engine::Preset &p = all[i];
-        auto *it = new QTreeWidgetItem(m_presets, {QString::number(i + 1), p.name, QStringLiteral("%1 s").arg(p.fade, 0, 'f', 1)});
-        it->setData(0, PresetRole, p.id);
-        it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
-        it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
-        it->setToolTip(1, QStringLiteral("%1 value(s)").arg(p.values.size()));
-        if (p.id == keep) current = it;
-    }
+    std::function<void(const std::vector<Engine::SnapshotNode> &, QTreeWidgetItem *)> add =
+        [&](const std::vector<Engine::SnapshotNode> &nodes, QTreeWidgetItem *parent) {
+            for (const Engine::SnapshotNode &node : nodes) {
+                QTreeWidgetItem *it = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_presets);
+                if (!node.snapshot) {
+                    LibraryGroups::styleGroup(it, node, GroupRole, QStringLiteral("presets"));
+                    add(node.children, it);
+                    it->setExpanded(node.open);
+                } else {
+                    const int i = m_engine->indexOfPreset(node.snapshot);
+                    const Engine::Preset p = m_engine->preset(i);
+                    it->setText(0, QString::number(i + 1));
+                    it->setText(1, p.name);
+                    it->setText(2, QStringLiteral("%1 s").arg(p.fade, 0, 'f', 1));
+                    it->setData(0, PresetRole, p.id);
+                    it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
+                    it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+                    it->setToolTip(1, QStringLiteral("%1 value(s)").arg(p.values.size()));
+                    it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
+                }
+                if (m_presets->nodeKey(it) == keep) current = it;
+            }
+        };
+    add(m_engine->presetTree(), nullptr);
     if (current) m_presets->setCurrentItem(current);
+    m_presets->applyFilter();
     m_filling = false;
     if (m_middle->currentIndex() == 1) showPreset();
 }
@@ -2333,11 +2206,11 @@ void SnapshotPanel::showPreset()
     m_filling = true;
     m_presetValues->clear();
     const bool valid = i >= 0;
-    for (QWidget *w : std::initializer_list<QWidget *>{m_presetName, m_presetFade, m_presetValues, m_presetGo, m_presetUpdate, m_presetDelete})
+    for (QWidget *w : std::initializer_list<QWidget *>{m_presetFade, m_presetValues, m_presetGo, m_presetUpdate, m_presetDelete})
         w->setEnabled(valid);
+    m_presetDelete->setEnabled(valid || (m_presets->currentItem() && m_presets->currentItem()->data(0, GroupRole).toULongLong())); // − takes a group away too
     if (!valid) {
         m_presetTitle->setText(QStringLiteral("<span style='color:#888'>No preset selected.<br>+ makes one.</span>"));
-        m_presetName->clear();
         m_filling = false;
         return;
     }
@@ -2346,7 +2219,6 @@ void SnapshotPanel::showPreset()
                                           "name in the inspector to add it or take it out.</span>")
                                .arg(i + 1)
                                .arg(p.values.size()));
-    m_presetName->setText(p.name);
     m_presetFade->setValue(p.fade);
     // By layer, in the order of the list; the composition first; an interaction's values under its name
     std::map<QString, QTreeWidgetItem *> layers;
@@ -2501,6 +2373,7 @@ void SnapshotPanel::editPresetValue(quint64 layer, const QString &path, const QS
 void SnapshotPanel::showPresetDetail(QTreeWidgetItem *it)
 {
     clearDetail();
+    m_detail->show();
     auto hint = [this](const QString &t) {
         auto *l = new QLabel(t);
         l->setWordWrap(true);
@@ -2510,8 +2383,7 @@ void SnapshotPanel::showPresetDetail(QTreeWidgetItem *it)
     const int pi = selectedPreset();
     const QString path = it ? it->data(0, KeyRole).toString() : QString();
     if (pi < 0 || path.isEmpty() || path.startsWith(QLatin1Char('@'))) {
-        hint(QStringLiteral("Click a value of the preset to see it, change it, and choose how it gets there when the "
-                            "preset is recalled: CUT (at once), FOLLOW (the preset's fade) or a time of its own."));
+        m_detail->hide(); // nothing to show: its room goes to the values
         m_detailLayout->addStretch();
         return;
     }
@@ -2910,9 +2782,5 @@ void SnapshotPanel::setupContentEditing()
                 shortcut->setContext(Qt::WidgetShortcut);
                 connect(shortcut, &QShortcut::activated, this, [this] { deleteContents(false); });
             }
-        auto *list = preset ? m_presets : m_list;
-        auto *duplicate = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), list);
-        duplicate->setContext(Qt::WidgetShortcut);
-        connect(duplicate, &QShortcut::activated, this, [this, preset] { duplicateSelected(preset); });
     }
 }

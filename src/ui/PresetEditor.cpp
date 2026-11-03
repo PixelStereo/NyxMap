@@ -74,7 +74,7 @@ QStringList PresetEditor::stored(quint64 layer, const QStringList &paths) const
         if (layer && p.startsWith(QLatin1String("category/"))) { out << p; continue; }
         if (layer && p == QLatin1String("geometry/mesh")) { out << p; continue; }
         ParamInfo info;
-        if (m_engine->parameterInfo(layer, p, &info) && info.stored) out << p;
+        if (m_engine->parameterInfo(layer, p, &info) && info.presettable) out << p;
     }
     out.removeDuplicates();
     return out;
@@ -415,7 +415,7 @@ std::vector<std::pair<QString, QStringList>> PresetEditor::layerValues(Engine *e
 {
     std::vector<std::pair<QString, QStringList>> out;
     for (const ParamInfo &i : engine->parameters(layer)) {
-        if (!i.stored) continue; // actions, read-only values, states of the show (Visible, Solo, Blackout)
+        if (!i.presettable) continue; // actions, read-only values
         const int cut = i.label.indexOf(QStringLiteral(" › "));
         const QString cat = cut < 0 ? QStringLiteral("Layer") : i.label.left(cut);
         auto it = std::find_if(out.begin(), out.end(), [&](const auto &c) { return c.first == cat; });
@@ -461,6 +461,51 @@ void PresetEditor::fillLayerMenu(QMenu *menu, quint64 layer)
             a->setCheckable(true);
             a->setChecked(i >= 0 && inSelected(layer, {p}));
         }
+    }
+}
+
+void PresetEditor::fillAddElements(QMenu *menu)
+{
+    const auto addValues = [this](QMenu *into, quint64 layer) {
+        const int selected = m_engine->indexOfPreset(m_selected);
+        const auto add = [this, layer](const QStringList &paths) { addToSelected(layer, paths); };
+        const auto groups = layerValues(m_engine, layer);
+        QStringList all;
+        for (const auto &g : groups) all << g.second;
+        into->addAction(QStringLiteral("All Values"), this, [add, all] { add(all); });
+        into->addSeparator();
+        for (const auto &[category, paths] : groups) {
+            QMenu *c = into->addMenu(category);
+            c->addAction(QStringLiteral("All %1 Values").arg(category), this, [add, paths = paths] { add(paths); });
+            c->addSeparator();
+            for (const QString &path : paths) {
+                ParamInfo info;
+                QString label = path;
+                if (m_engine->parameterInfo(layer, path, &info)) {
+                    const int cut = info.label.indexOf(QStringLiteral(" › "));
+                    label = cut < 0 ? info.label : info.label.mid(cut + 3);
+                }
+                QAction *a = c->addAction(label, this, [add, path] { add({path}); });
+                a->setToolTip(path);
+                a->setCheckable(true);
+                a->setChecked(selected >= 0 && inSelected(layer, {path}));
+            }
+        }
+    };
+    addValues(menu->addMenu(QStringLiteral("Composition")), 0);
+    std::vector<std::pair<quint64, QString>> layers;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        for (int k = 0; k < m_engine->layerCount(); ++k)
+            if (const Layer *l = m_engine->layer(k)) layers.push_back({l->id, l->name});
+    }
+    if (!layers.empty()) menu->addSeparator();
+    for (const auto &[id, name] : layers) addValues(menu->addMenu(name), id);
+    const std::vector<Interaction> interactions = m_engine->interactions();
+    if (!interactions.empty()) {
+        QMenu *sub = menu->addMenu(QStringLiteral("Interactions"));
+        for (const Interaction &it : interactions)
+            sub->addAction(it.name, this, [this, id = it.id] { addInteraction(id, false); });
     }
 }
 

@@ -10,6 +10,7 @@ public:
     explicit TimelineActivity(Engine *engine, QWidget *parent = nullptr);
     void poll();
     void setShowStopped(bool show);
+    void setCompact(bool on); // every timeline, on one line: its name and its run
     const std::vector<Engine::AnimationPlayback> &rows() const { return m_rows; }
     QString describe() const;
 signals:
@@ -29,6 +30,7 @@ private:
     QTimer m_timer;
     std::vector<Engine::AnimationPlayback> m_rows;
     quint64 m_selected = 0;
-    bool m_showStopped = false;
+    bool m_showStopped = false, m_compact = false;
+    int m_rowHeight = 34;
     int m_playing = 0, m_paused = 0, m_total = 0;
 };

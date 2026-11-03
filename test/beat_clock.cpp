@@ -115,6 +115,17 @@ int main(int argc, char **argv)
             runs = sequencer.runs();
             require(runs.size() == 1 && runs[0].preWait > 1.5 && runs[0].preWait < 1.9, "it waits for the next bar (1.875 s at 120 BPM, less what a slow machine took)");
             sequencer.stop();
+            { // A sequence on a timecode clock has no grid: its steps go when the clock says
+                Sequencer::Sequence clocked = sequencer.sequence(0);
+                clocked.clockParam = "playhead";
+                sequencer.setSequence(0, clocked);
+                require(sequencer.goTo(1), "GO on a quantized step of a sequence with a clock");
+                runs = sequencer.runs();
+                require(runs.empty() || near(runs[0].preWait, 0), "a clock: no grid");
+                sequencer.stop();
+                clocked.clockParam.clear();
+                sequencer.setSequence(0, clocked);
+            }
             // Saved and read back
             const auto json = sequencer.toJson();
             Sequencer::Sequence again;
