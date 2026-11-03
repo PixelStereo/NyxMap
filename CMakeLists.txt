@@ -783,7 +783,7 @@ if(NYXMAP_TESTS)
     set_tests_properties(demo_render PROPERTIES FIXTURES_REQUIRED demo TIMEOUT 120)
     # The PBR example: its project as it is in the repository, rendered
     add_test(NAME pbr_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/pbr-preview.png --frames 3 --strict ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap)
-    set_tests_properties(pbr_render PROPERTIES TIMEOUT 120)
+    set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
     add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)

@@ -484,6 +484,8 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "camera/distance", 3.0);
         engine.setParameter(stage, "camera/fov", 60.0);
         engine.setParameter(caster, "enable", false);
+        // Without a graphics card, what costs the most goes (shadows, contact shadows, reflections): the render stays usable
+        const bool lite = Scene3D::lite(engine.glRenderer());
         const auto levels = [&](int x) {
             engine.renderFrame();
             return engine.grabOutput().pixelColor(x, 64).lightness();
@@ -503,7 +505,7 @@ int runScene3dTests(Engine &engine)
         const int without = levels(112);
         engine.setParameter(spot, "light/shadow", true);
         const int with = levels(112);
-        check(with < without - 10, "the cube's shadow on the floor");
+        check(lite || with < without - 10, "the cube's shadow on the floor");
         check(std::abs(levels(80) - aside) < 12, "beside it, the floor as it was");
         // Its shadow maps are only drawn when what they show moves
         const auto renders = [&] {
@@ -515,10 +517,10 @@ int runScene3dTests(Engine &engine)
         const int drawn = renders();
         engine.renderFrame();
         engine.renderFrame();
-        check(drawn > 0 && renders() == drawn, "nothing moved: the shadow maps are not drawn again");
+        check(lite || (drawn > 0 && renders() == drawn), "nothing moved: the shadow maps are not drawn again");
         engine.setParameter(caster, "model/position/z", 0.01);
         engine.renderFrame();
-        check(renders() == drawn + 1, "a model moved: they are");
+        check(lite || renders() == drawn + 1, "a model moved: they are");
         engine.setParameter(caster, "model/position/z", 0.0);
         // A point light's shadows fall on all sides of it
         engine.setParameter(spot, "light/type", QStringLiteral("point"));
@@ -526,7 +528,7 @@ int runScene3dTests(Engine &engine)
         const int pointWithout = levels(112);
         engine.setParameter(spot, "light/shadow", true);
         const int pointWith = levels(112);
-        check(pointWith < pointWithout - 10, "a point light's shadow on the floor");
+        check(lite || pointWith < pointWithout - 10, "a point light's shadow on the floor");
         engine.setParameter(spot, "light/position/y", 0.5);
         engine.setParameter(spot, "light/position/x", 0.6);
         engine.setParameter(caster, "model/position/y", 1.5);
@@ -538,8 +540,6 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(spot, "light/position/x", 0.0);
         engine.setParameter(spot, "light/position/y", 2.0);
         engine.setParameter(caster, "model/position/y", 1.0);
-        // Without a graphics card, they go: the render stays usable
-        const bool lite = Scene3D::lite(engine.glRenderer());
         // Where surfaces meet: darker with the contact shadows; away from them, as it was
         engine.setParameter(spot, "light/intensity", 0.0);
         engine.setParameter(stage, "scene/studio", 1.0);

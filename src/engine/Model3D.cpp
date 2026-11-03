@@ -1139,7 +1139,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const LightSettings &l = lamp.light;
             if (l.intensity * lamp.gain <= 0 || lightIndex >= kMaxLights) continue;
             const int k = lightIndex++;
-            if (!l.shadow || reach <= 0 || !m_shadowProgram) continue;
+            if (m_lite || !l.shadow || reach <= 0 || !m_shadowProgram) continue;
             const QVector3D at(l.position[0], l.position[1], l.position[2]), dir = Camera3D::aim(l.yaw, l.pitch);
             if (l.type == 1) { // a point: the distances all around it
                 if (pointShadows >= kMaxPointShadows || !m_pointProgram) continue;
@@ -1463,7 +1463,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform2f(loc("u_depthRange"), cam.nearPlane, cam.farPlane);
     f->glUniform1f(loc("u_aoAmount"), wantsAo ? s.ao : 0.0f);
     f->glUniform1f(loc("u_reflections"), reflections);
-    f->glUniform1i(loc("u_taps"), m_lite ? 4 : 12);
+    f->glUniform1i(loc("u_taps"), 12);
     f->glUniform1f(loc("u_lastExposure"), s.exposure);
     f->glUniform1i(loc("u_hasLast"), m_hasPicture && reflections > 0 ? 1 : 0);
     f->glUniform1i(loc("u_aoTex"), 12);

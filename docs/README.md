@@ -71,8 +71,8 @@
   `scene/reflections` shows the other models in smooth surfaces. Both work from what
   the camera sees: a reflection only holds what is on screen, and fades on surfaces
   that face the camera. Without a graphics card (a renderer running on the processor),
-  a scene leaves out antialiasing, contact shadows and reflections and samples its
-  shadows less. See `examples/pbr/`.
+  a scene leaves out antialiasing, shadows, contact shadows and reflections. See
+  `examples/pbr/`.
   Lighting is physically based in linear light with ACES tone mapping. A scene's
   environment is a layer's picture (an HDRI, .hdr or .exr, loaded in an image layer
   that can stay hidden; or a video, a generator), equirectangular, taken at any

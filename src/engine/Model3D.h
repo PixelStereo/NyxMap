@@ -188,7 +188,7 @@ public:
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
     // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
-    // no antialiasing, contact shadows or reflections, and shadows sampled less
+    // no antialiasing, shadows, contact shadows or reflections
     static bool lite(const QString &renderer);
 
 private:
