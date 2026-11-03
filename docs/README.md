@@ -62,7 +62,12 @@
   Lights show in that view: a lamp's head and its cone for a spot (down to the
   ground, its falloff dashed inside), a sun with parallel rays for a directional
   light, a bulb for a point light. A spot's `light/falloff` goes from a sharp edge (0)
-  to a gradient from its middle (1). The models cast shadows (`light/shadow`,
+  to a gradient from its middle (1). A light can look at a point or follow a 3D object
+  of its scene (`light/lookat`, instead of its yaw and pitch: a dashed line in that
+  view), and go around a circle or a rectangle in 3D (`light/path/…`, drawn in that
+  view): its position is the shape's middle, `light/path/rotation/…` tilts it,
+  `light/path/position` places it on the way (0 to 1) and `light/path/speed` moves it
+  on its own. The models cast shadows (`light/shadow`,
   `light/softness`) from up to four spots and directional lights and two point lights,
   all around those, except what is far larger than the others (a floor, a wall), which
   only receives them; their maps are drawn again only when something they show moves.

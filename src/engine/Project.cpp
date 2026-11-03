@@ -234,6 +234,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Light:
         src["type"] = "light";
+        if (l.lightLookAt) src["look_at"] = QString::number(l.lightLookAt);
         break;
     case SourceType::Web:
         src = l.web.toJson();
@@ -398,6 +399,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->sourceTap = layerTapFromKey(src.value("tap").toString());
     } else if (type == "light") {
         setLayerLight(index);
+        Lock lk(&m_mutex); // what it looks at: a layer of this project (ids kept), checked when drawn
+        if (Layer *l = layer(index)) l->lightLookAt = src.value("look_at").toString().toULongLong();
     } else if (type == "model") {
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn

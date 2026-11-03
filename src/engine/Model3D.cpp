@@ -821,6 +821,46 @@ bool Model3D::uploadGl()
     return true;
 }
 
+QVector3D LightSettings::pathPoint(double around) const
+{
+    const QVector3D middle(position[0], position[1], position[2]);
+    const double t = around - std::floor(around);
+    const float w = std::abs(pathWidth), d = std::abs(pathDepth);
+    QVector3D local;
+    if (pathShape == 1) {
+        const double a = t * 2 * M_PI;
+        local = QVector3D(float(std::cos(a)) * w / 2, 0, float(std::sin(a)) * d / 2);
+    } else if (pathShape == 2) { // its four sides, at the same pace
+        float left = float(t) * 2 * (w + d);
+        if (left < w) local = QVector3D(left - w / 2, 0, -d / 2);
+        else if ((left -= w) < d) local = QVector3D(w / 2, 0, left - d / 2);
+        else if ((left -= d) < w) local = QVector3D(w / 2 - left, 0, d / 2);
+        else local = QVector3D(-w / 2, 0, d / 2 - (left - w));
+    } else {
+        return middle;
+    }
+    QMatrix4x4 turn;
+    turn.rotate(pathRotation[2], 0, 0, 1);
+    turn.rotate(pathRotation[1], 0, 1, 0);
+    turn.rotate(pathRotation[0], 1, 0, 0);
+    return middle + turn.mapVector(local);
+}
+
+QVector3D LightSettings::located() const { return pathPoint(double(pathPosition) + pathTravel); }
+
+std::vector<QVector3D> LightSettings::pathOutline() const
+{
+    std::vector<QVector3D> points;
+    if (pathShape == 1) {
+        for (int k = 0; k <= 64; ++k) points.push_back(pathPoint(k / 64.0));
+    } else if (pathShape == 2) {
+        const double w = std::abs(pathWidth), d = std::abs(pathDepth), all = std::max(1e-6, 2 * (w + d));
+        for (const double along : {0.0, w, w + d, 2 * w + d}) points.push_back(pathPoint(along / all));
+        points.push_back(points.front());
+    }
+    return points;
+}
+
 QMatrix4x4 ModelPlacement::transform() const
 {
     QMatrix4x4 m;

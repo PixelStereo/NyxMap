@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QThread>
 #include <cmath>
 #include <cstdio>
 #include <tuple>
@@ -717,5 +718,84 @@ int runScene3dTests(Engine &engine)
         engine.newProject();
     }
 
+    // A light's Look At and path
+    {
+        LightSettings l;
+        l.position = {{1, 2, 3}};
+        const auto near = [](const QVector3D &a, const QVector3D &b) { return (a - b).length() < 1e-3f; };
+        check(near(l.located(), QVector3D(1, 2, 3)) && l.pathOutline().empty(), "no path: a light stays at its position");
+        l.pathShape = 1; // a circle, 4 across, around its position
+        check(near(l.pathPoint(0), QVector3D(3, 2, 3)) && near(l.pathPoint(0.25), QVector3D(1, 2, 5)) && near(l.pathPoint(1.5), QVector3D(-1, 2, 3)),
+              "around a circle, in the X Z plane");
+        l.pathRotation = {{90, 0, 0}};
+        check(near(l.pathPoint(0.25), QVector3D(1, 0, 3)), "its path tilted in 3D");
+        l.pathRotation = {{0, 0, 0}};
+        l.pathShape = 2; // a rectangle: 6 by 2
+        l.pathWidth = 6;
+        l.pathDepth = 2;
+        check(near(l.pathPoint(0), QVector3D(-2, 2, 2)) && near(l.pathPoint(6.0 / 16), QVector3D(4, 2, 2)) && near(l.pathPoint(8.0 / 16), QVector3D(4, 2, 4)) &&
+                  near(l.pathPoint(14.0 / 16), QVector3D(-2, 2, 4)) && near(l.pathPoint(3.0 / 16), QVector3D(1, 2, 2)),
+              "along a rectangle's sides, at an even pace");
+        check(l.pathOutline().size() == 5 && near(l.pathOutline().front(), l.pathOutline().back()), "its outline is closed");
+
+        const quint64 stage = engine.layerId(engine.addScene("Light paths"));
+        const int boxAt = engine.addLayer("Box", engine.indexOfId(stage) + 1);
+        const quint64 boxId = engine.layerId(boxAt);
+        QString err;
+        check(engine.setLayerModel(boxAt, Model3D::primitivePath("Cube"), &err), "a cube to look at");
+        const int lampAt = engine.addLayer("Lamp", engine.indexOfId(stage) + 1);
+        const quint64 lampId = engine.layerId(lampAt);
+        check(engine.setLayerLight(lampAt), "a light that looks at it");
+        const quint64 mergeId = engine.layerId(engine.addMerge3d("Carried", engine.indexOfId(stage) + 1));
+        LayerTree tree3d = tree::intoGroup(engine.structure(), {lampId, mergeId}, stage);
+        tree3d = tree::intoGroup(tree3d, {boxId}, mergeId);
+        engine.setStructure(tree3d);
+        engine.setParameter(lampId, "light/type", QStringLiteral("spot"));
+        engine.setParameter(lampId, "light/position/x", 0.0);
+        engine.setParameter(lampId, "light/position/y", 4.0);
+        engine.setParameter(lampId, "light/position/z", 0.0);
+        engine.setParameter(lampId, "light/lookat", true);
+        const auto placed = [&](QVector3D *target = nullptr) {
+            Engine::Lock lk(&engine.mutex());
+            return engine.placedLight(*engine.layer(engine.indexOfId(lampId)), QMatrix4x4(), target);
+        };
+        const auto aimOf = [](const LightSettings &light) { return Camera3D::aim(light.yaw, light.pitch); };
+        check(near(aimOf(placed()), QVector3D(0, -1, 0)), "it looks at its point: straight down at the middle");
+        engine.setParameter(lampId, "light/lookpoint/x", 4.0);
+        engine.setParameter(lampId, "light/lookpoint/y", 4.0);
+        check(near(aimOf(placed()), QVector3D(1, 0, 0)), "and along where the point goes");
+        check(!engine.setLightLookAt(engine.indexOfId(lampId), lampId), "not at itself");
+        check(engine.setLightLookAt(engine.indexOfId(lampId), boxId), "at an object of its scene");
+        engine.setParameter(mergeId, "merge/position/x", 4.0); // the merge carries the cube: the light follows it
+        engine.setParameter(mergeId, "merge/position/y", 4.0);
+        QVector3D target;
+        const LightSettings following = placed(&target);
+        check(near(target, QVector3D(4, 4, 0)) && near(aimOf(following), QVector3D(1, 0, 0)), "it follows the object through its Merge 3D");
+        const QJsonObject kept = engine.layerJson(engine.indexOfId(lampId));
+        check(engine.setLightLookAt(engine.indexOfId(lampId), 0), "back to its point");
+        engine.replaceLayerJson(engine.indexOfId(lampId), kept);
+        {
+            Engine::Lock lk(&engine.mutex());
+            check(engine.layer(engine.indexOfId(lampId))->lightLookAt == boxId, "what it looks at is kept with the layer");
+        }
+        engine.setParameter(lampId, "light/lookat", false);
+        engine.setParameter(lampId, "light/path/shape", QStringLiteral("circle"));
+        const QVector3D start(2, 4, 0);
+        const auto at = [&](const LightSettings &light) { return QVector3D(light.position[0], light.position[1], light.position[2]); };
+        check(near(at(placed()), start), "it goes on its path from its position");
+        engine.setParameter(lampId, "light/path/position", 0.5);
+        check(near(at(placed()), QVector3D(-2, 4, 0)), "the path's position places it");
+        engine.setParameter(lampId, "light/path/position", 0.0);
+        engine.setParameter(lampId, "light/path/speed", 1.0);
+        engine.renderFrame();
+        const QVector3D first = at(placed());
+        QThread::msleep(40);
+        engine.renderFrame();
+        check(!near(at(placed()), first), "its speed takes it along");
+        engine.setParameter(lampId, "light/path/speed", 0.0);
+        engine.removeLayer(engine.indexOfId(mergeId));
+        engine.removeLayer(engine.indexOfId(lampId));
+        engine.removeLayer(engine.indexOfId(stage));
+    }
     return failures;
 }

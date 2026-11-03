@@ -1009,6 +1009,37 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
+QVector3D Engine::placeOf3dObject(const Layer &object)
+{
+    QMatrix4x4 parent;
+    for (quint64 up = object.parent; up;) {
+        const Layer *g = layer(indexOfId(up));
+        if (!g || !g->merge3d) break;
+        parent = g->modelPlacement.transform() * parent;
+        up = g->parent;
+    }
+    if (object.type == SourceType::Light) return parent.map(object.light.located());
+    if (object.model) return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+    const ModelPlacement &p = object.modelPlacement;
+    return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+}
+
+LightSettings Engine::placedLight(const Layer &m, const QMatrix4x4 &parent, QVector3D *target)
+{
+    LightSettings light = m.light;
+    const QVector3D at = parent.map(light.located());
+    for (int a = 0; a < 3; ++a) light.position[size_t(a)] = at[a];
+    QVector3D points = parent.mapVector(Camera3D::aim(light.yaw, light.pitch));
+    if (light.lookAt) {
+        const Layer *object = m.lightLookAt ? layer(indexOfId(m.lightLookAt)) : nullptr;
+        const QVector3D seen = object ? placeOf3dObject(*object) : QVector3D(light.lookPoint[0], light.lookPoint[1], light.lookPoint[2]);
+        if (target) *target = seen;
+        if ((seen - at).lengthSquared() > 1e-8f) points = seen - at; // on its target: as it was
+    }
+    Camera3D::anglesOf(points, &light.yaw, &light.pitch);
+    return light;
+}
+
 void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
                           const QMatrix4x4 &parent)
 {
@@ -1030,11 +1061,7 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
                              disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
                              m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid, parent});
         } else if (m->type == SourceType::Light) {
-            LightSettings light = m->light; // where it is once its Merge 3Ds have moved and turned it
-            const QVector3D at = parent.map(QVector3D(light.position[0], light.position[1], light.position[2]));
-            for (int a = 0; a < 3; ++a) light.position[size_t(a)] = at[a];
-            Camera3D::anglesOf(parent.mapVector(Camera3D::aim(light.yaw, light.pitch)), &light.yaw, &light.pitch);
-            lamps.push_back({light, m->opacity});
+            lamps.push_back({placedLight(*m, parent), m->opacity});
         }
     }
 }

@@ -4145,6 +4145,37 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
     });
 }
 
+// What a light looks at: the other 3D objects of its scene (it follows them), or the point below
+void LayerInspector::addLightLookAt(QFormLayout *form)
+{
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("lightLookAtObject"));
+    pick->addItem(QStringLiteral("The point below"), QVariant(qulonglong(0)));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        current = l->lightLookAt;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o != l && o->is3dObject() && sceneOf(o) == sceneOf(l)) pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("A model, a light or a Merge 3D of its scene: the light follows it wherever it goes"));
+    form->addRow(QStringLiteral("Object"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Light Looks At"), [&] { m_engine->setLightLookAt(m_layer, id); });
+        emit layerChanged();
+    });
+}
+
 // A model's layers: the picture laid on it (over its UVs) and the one whose luminance pushes its points along their
 // normals, each taken at a stage of its own
 QWidget *LayerInspector::buildModelLayers()
@@ -4289,6 +4320,7 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes)
         form->addRow(label, field);
         m_animate->attach({label, field}, {path});
         m_3dFields.push_back({field, path});
+        if (path == QLatin1String("light/lookat")) addLightLookAt(form);
     }
     v->addStretch();
     return w;
