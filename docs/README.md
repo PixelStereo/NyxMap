@@ -53,6 +53,15 @@
   screen), and has its points pushed along their normals by a layer's luminance
   (Surface › Displace; `model/displace/amount`, `model/displace/mid`). A primitive's
   mesh is cut finer with `model/detail` (1–8).
+  A primitive starts with as few triangles as its shape needs (a cube is 12, a plane 2,
+  a sphere 576); `model/detail` cuts it finer, and a bend or a displacement take what
+  they need on their own.
+  `model/shading` shows a model as made, smooth (its normals averaged where faces meet)
+  or flat (its facets show). A scene shows its triangles in the layer list, its inspector
+  and its 3D view, with those its last frame computed in all its passes. What the camera
+  or a light does not see is not drawn, and a scene where nothing moves keeps its picture
+  (not with a layer's picture on a model or around the scene, which can change at any
+  frame).
   A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
   its own camera (drag: turn; Shift or middle button: pan; wheel: distance), the
   ground grid, the scene's lights and camera drawn; a click picks a model or a

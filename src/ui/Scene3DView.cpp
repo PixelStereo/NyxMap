@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QOpenGLContext>
+#include <QLocale>
 #include <QPainter>
 #include <functional>
 #include <QPainterPath>
@@ -582,6 +583,13 @@ void Scene3DView::paintOverlay(QPainter &p)
             }
         }
         break;
+    }
+    if (m_scene) { // what it costs, in a corner
+        const int scene = m_engine->indexOfId(m_scene);
+        const QLocale here;
+        p.setPen(QColor(170, 170, 176));
+        p.drawText(rect().adjusted(10, 0, -10, -8), Qt::AlignLeft | Qt::AlignBottom,
+                   QStringLiteral("%1 triangles").arg(here.toString(m_engine->sceneTriangles(scene))));
     }
     if (!m_scene) {
         p.setPen(QColor(150, 150, 155));

@@ -725,6 +725,13 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("model/scale/all", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
         f3("model/bend", "Model › Bend (°)", -360, 360, 0, &mp->bend).step(0.1);
         flag("model/unlit", "Model › Unlit (its picture as it is)", false, &mp->unlit).ramp(Parameter::Ramp::Cut);
+        static const QStringList kShading{QStringLiteral("as made"), QStringLiteral("smooth"), QStringLiteral("flat")};
+        add("model/shading", "Model › Shading", T::Choice)
+            .choices(kShading)
+            .byDefault(kShading.value(0))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([mp] { return QVariant(kShading.value(mp->shading)); },
+                  [mp](const QVariant &v) { mp->shading = std::max(0, int(kShading.indexOf(v.toString()))); });
         add("model/detail", "Model › Mesh Detail", T::Int)
             .range(1, 8)
             .byDefault(1)

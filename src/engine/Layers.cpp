@@ -6,6 +6,7 @@
 #include "Psd.h"
 
 #include <QFontDatabase>
+#include <functional>
 #include <QFontInfo>
 #include <QDir>
 #include <QFileInfo>
@@ -322,6 +323,30 @@ int Engine::addScene(const QString &name, int at)
     }
     emit layersChanged();
     return indexOfId(id); // where it is now
+}
+
+int Engine::sceneTriangles(int scene) const
+{
+    Lock lk(&m_mutex);
+    const Layer *top = scene >= 0 && scene < int(m_layers.size()) ? m_layers[size_t(scene)].get() : nullptr;
+    if (!top) return 0;
+    int total = 0;
+    const std::function<void(quint64)> walk = [&](quint64 holder) {
+        for (const auto &l : m_layers) {
+            if (l->parent != holder || !l->enabled) continue;
+            if (l->merge3d) walk(l->id);
+            else if (l->model) total += l->model->triangleCount();
+        }
+    };
+    walk(top->id);
+    return total;
+}
+
+int Engine::sceneTrianglesComputed(int scene) const
+{
+    Lock lk(&m_mutex);
+    const Layer *top = scene >= 0 && scene < int(m_layers.size()) ? m_layers[size_t(scene)].get() : nullptr;
+    return top && top->sceneRenderer ? top->sceneRenderer->trianglesComputed() : 0;
 }
 
 int Engine::addMerge3d(const QString &name, int at)

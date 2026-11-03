@@ -17,7 +17,9 @@
 #include <QMatrix4x4>
 #include <QString>
 #include <QVector3D>
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -32,7 +34,10 @@ struct ModelPlacement {
     QMatrix4x4 transform() const;
     float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
-    int detail = 1;      // a primitive's mesh: how finely it is cut (1 to 8)
+    int detail = 1;      // a primitive's mesh: how finely it is cut (1, the least, to 8)
+    int shading = 0;     // 0 as it is made (a sphere smooth, a cube with its edges), 1 smooth, 2 flat: its facets show
+    // What it takes for its shape: a bend or a displacement need points to move, whatever `detail` says
+    int meshDetail(bool displaced) const { return bend != 0 || displaced ? std::max(detail, 6) : detail; }
     // Displacement: its points pushed along their normals by a layer's luminance (Layer::modelDisplace), times this,
     // a luminance of `displaceMid` staying in place
     float displaceAmount = 0.2f, displaceMid = 0;
@@ -110,6 +115,7 @@ public:
     bool isPrimitive() const { return m_primitive; }
     int detail() const { return m_detail; }
     void setDetail(int detail); // a primitive made again, finer or coarser (render thread)
+    void setSmooth(bool on);    // its normals averaged where its faces meet, its edges rounded (render thread)
     float centerX() const { return m_center.x(); }
     QVector3D center() const { return m_center; } // of its bounds, as read
     float radius() const { return m_radius; }     // half its bounds' diagonal, as read
@@ -156,6 +162,7 @@ private:
     int m_detail = 1;
     void releaseMeshes();
     bool m_uploaded = false;
+    bool m_smooth = false;
 };
 
 // Where a camera is and what it sees (aspect: width / height): the scene's renderer and the 3D view's overlays agree
@@ -197,6 +204,10 @@ public:
                 GLuint environment = 0, bool environmentLinear = false, const Scene3DQuality &quality = {});
     void releaseGl();
     int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
+    // Its last frame: the triangles it has, those it had to compute in all its passes (0: nothing moved, it was kept)
+    int triangles() const { return m_triangles.load(); }
+    int trianglesComputed() const { return m_computed.load(); }
+    int framesDrawn() const { return m_framesDrawn; }
     // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
     // no antialiasing, shadows, contact shadows or reflections
     static bool lite(const QString &renderer);
@@ -214,6 +225,10 @@ private:
     GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
     GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
     bool m_lite = false;
+    std::atomic<int> m_triangles{0}, m_computed{0};
+    int m_framesDrawn = 0, m_stillFrames = 0;
+    QByteArray m_frameKey;    // what its picture shows: while it does not change, it is kept
+    GLuint m_envSource = 0;   // an HDR file's picture copied into m_env: it does not change
     int m_samples = 0, m_shadowSize = 0; // of its targets and its shadow maps, as its quality asks
     bool m_hasPicture = false;                              // m_color holds the last frame: what a reflection shows
     GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
