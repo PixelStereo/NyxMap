@@ -6,6 +6,7 @@
 #include "Psd.h"
 
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QDir>
 #include <QFileInfo>
 #include <QImage>
@@ -1828,10 +1829,34 @@ bool Engine::setLayerText(int i)
         if (!l || l->isGroup || l->isViewport) return false;
         g = detachSource(*l);
         l->type = SourceType::Text;
+        l->text.cursive = false;
         l->srcWidth = l->text.width;
         l->srcHeight = l->text.height;
     }
     releaseGarbage(g);
+    return true;
+}
+
+// The first cursive font of this computer; else what the system gives for a cursive style
+static QString cursiveFontFamily()
+{
+    const QStringList families = QFontDatabase::families();
+    for (const char *name : {"Snell Roundhand", "Segoe Script", "Apple Chancery", "Brush Script MT", "URW Chancery L", "Z003", "Zapf Chancery", "Comic Sans MS"})
+        if (families.contains(QLatin1String(name))) return QLatin1String(name);
+    QFont font;
+    font.setStyleHint(QFont::Cursive);
+    return QFontInfo(font).family();
+}
+
+bool Engine::setLayerCursive(int i)
+{
+    if (!setLayerText(i)) return false;
+    Lock lk(&m_mutex);
+    Layer *l = layer(i);
+    if (!l) return false;
+    l->text.cursive = true;
+    l->text.font = cursiveFontFamily();
+    l->text.size = 96;
     return true;
 }
 

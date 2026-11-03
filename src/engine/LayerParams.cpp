@@ -604,6 +604,28 @@ const std::vector<Parameter *> &Layer::parameters()
                     for (int k = 0; k < 3; ++k)
                         if (v.toString() == QLatin1String(kV[k])) t->align = Qt::Alignment((t->align & Qt::AlignHorizontal_Mask) | kVF[k]);
                 });
+        if (!clockGen && !tcClock) { // written as by a pen
+            num("text/write/progress", "Text › Writing", 0, 1, def.writeProgress, [t] { return double(t->writeProgress); },
+                [t](double v) { t->writeProgress = float(std::clamp(v, 0.0, 1.0)); });
+            num("text/write/duration", "Text › Writing Time (s)", 0.05, 120, def.writeDuration, [t] { return double(t->writeDuration); },
+                [t](double v) { t->writeDuration = float(std::clamp(v, 0.05, 3600.0)); })
+                .limits(0.05, 3600)
+                .step(0.1)
+                .animatable(false)
+                .ramp(Parameter::Ramp::Cut);
+            add("text/write/start", "Text › Write", T::Trigger).bind(nullptr, [t](const QVariant &) { // from the start
+                t->writeProgress = 0;
+                t->writePlaying = true;
+            });
+            add("text/write/pause", "Text › Pause Writing", T::Trigger).bind(nullptr, [t](const QVariant &) { t->writePlaying = false; });
+            add("text/write/resume", "Text › Resume Writing", T::Trigger).bind(nullptr, [t](const QVariant &) {
+                if (t->writeProgress < 1.0f) t->writePlaying = true;
+            });
+            add("text/write/reset", "Text › Reset Writing", T::Trigger).bind(nullptr, [t](const QVariant &) { // nothing written, ready
+                t->writePlaying = false;
+                t->writeProgress = 0;
+            });
+        }
         flag("text/bold", "Text › Bold", def.bold, &text.bold);
         flag("text/italic", "Text › Italic", def.italic, &text.italic);
         flag("text/underline", "Text › Underline", def.underline, &text.underline);

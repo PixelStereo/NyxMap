@@ -278,6 +278,7 @@ public:
 
     // Text layer properties
     bool setLayerText(int i); // the layer's source becomes the Text generator
+    bool setLayerCursive(int i); // or the Cursive generator: a text in a cursive font, to be written as by a pen
     // The Timecode generator: a text source that shows its clock (TimecodeClock.h). Setting it again with other
     // settings keeps its text style; its clock (and its devices) start again.
     bool setLayerTimecode(int i, const TimecodeSettings &s);

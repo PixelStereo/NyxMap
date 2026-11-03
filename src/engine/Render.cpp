@@ -38,7 +38,7 @@
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
 // Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
 // stored bottom-up).
-static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill)
+static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly = false)
 {
     const int w = std::max(1, l.text.width), h = std::max(1, l.text.height);
     QImage img(w, h, QImage::Format_RGBA8888_Premultiplied);
@@ -104,6 +104,11 @@ static QImage renderTextLayer(const Layer &l, const QString &text, const QColor 
         }
         if (withFill) draw(fill, dx, dy);
     };
+    if (inkOnly) { // only the letters, top row first: where the pen goes
+        draw(Qt::white, 0, 0);
+        painter.end();
+        return img.convertToFormat(QImage::Format_RGBA8888);
+    }
     if (l.text.shadow) { // the shadow has the shape of the text and its outline, in its own color
         QColor sc = l.text.shadowColor;
         if (l.text.outline > 0.01f) drawOutlined(sc, sc, l.text.shadowX, l.text.shadowY, true);
@@ -576,7 +581,21 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                                          .arg(l.text.strike).arg(l.text.outline).arg(l.text.outlineColor.name(QColor::HexArgb))
                                          .arg(l.text.shadow).arg(l.text.shadowColor.name(QColor::HexArgb))
                                          .arg(QStringLiteral("%1,%2").arg(l.text.shadowX).arg(l.text.shadowY)));
-        if (!l.textTex.tex || key != l.textKey) {
+        const float written = l.tcClock || l.clockGen ? 1.0f : l.text.writeProgress;
+        if (written < 1.0f || l.text.writePlaying) { // being written: the picture revealed along the way of the pen
+            if (!l.textWriting || key != l.textWritingKey) {
+                QFont font(l.text.font);
+                font.setPixelSize(std::max(1, l.text.size));
+                l.textWriting = TextWriting::build(renderTextLayer(l, shown, fill, true), renderTextLayer(l, shown, fill), true,
+                                                   QFontMetricsF(font).lineSpacing() * std::max(0.1f, l.text.lineHeight));
+                l.textWritingKey = key;
+            }
+            l.textWriting->setProgress(written);
+            const QImage &img = l.textWriting->image();
+            l.textTex.upload(img.constBits(), img.width(), img.height());
+            l.textKey.clear(); // written: the whole picture again
+        } else if (!l.textTex.tex || key != l.textKey) {
+            l.textWriting.reset();
             const QImage img = renderTextLayer(l, shown, fill);
             l.textTex.upload(img.constBits(), img.width(), img.height());
             l.textKey = key;

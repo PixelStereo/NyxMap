@@ -211,6 +211,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         if (l.timecode) src["timecode"] = l.timecode->toJson();
         // A Countdown, Stopwatch or Clock: its kind (its settings and its transport come with the values: clock/*)
         if (l.clockGen) src["clock"] = clockKindKey(l.clockGen->kind());
+        if (l.text.cursive) src["cursive"] = true;
         break;
     case SourceType::Input:
         src["type"] = "input";
@@ -456,6 +457,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->type = SourceType::Text;
             l->text = TextSource{};
+            l->text.cursive = src.value("cursive").toBool();
             l->clockGen.reset();
         }
         if (src.contains("timecode")) { // a Timecode generator: its clock (its text style comes with the values)

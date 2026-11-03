@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
+#include <QPushButton>
 #include <functional>
 #include <QTimer>
 #include <QMouseEvent>
@@ -156,5 +157,28 @@ int runClockPresetUiTests(Engine &engine)
     check(engine.saveProject(files.filePath("clocks.nyxmap"), {}, &error) &&
           engine.loadProject(files.filePath("clocks.nyxmap"), nullptr, &error) && engine.preset(pi).indexOf(id, "tc/rate") >= 0,
           "individual Timecode settings survive saving and reopening the project");
+    // A text can be written as by a pen, from its inspector; not a clock
+    {
+        const int cursive = engine.addLayer("Cursive inspector");
+        const quint64 cursiveId = engine.layerId(cursive);
+        check(engine.setLayerCursive(cursive), "the Cursive generator");
+        inspector.setLayer(cursive);
+        inspector.rebuild();
+        pump();
+        auto *write = inspector.findChild<QPushButton *>("textWriteStart");
+        check(write != nullptr, "its Writing box");
+        if (write) write->click();
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() == 0, "Write starts from nothing");
+        auto *pause = inspector.findChild<QPushButton *>("textWritePause");
+        if (pause) pause->click();
+        engine.advanceFades(1);
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() == 0, "the pause holds the pen");
+        if (pause) pause->click();
+        engine.advanceFades(1);
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() > 0, "and lets it go on");
+        engine.setParameter(cursiveId, "text/write/pause", true);
+        engine.removeLayer(cursive);
+        pump();
+    }
     return failures;
 }

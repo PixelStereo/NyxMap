@@ -1314,6 +1314,7 @@ void Engine::stopShowPlayback()
         if (l.hasTransport()) l.playing = false;
         if (l.tcClock) l.tcClock->setPlaying(false);
         if (l.toxPlayer) { l.tox.playing = false; l.applyTox(); }
+        l.text.writePlaying = false; // a text being written: held where the pen is
         if (l.clockGen) l.clockGen->pause(); // a countdown, a stopwatch: held where they are
         if (l.text.typeDur > 0) {
             l.text.content = l.text.shown();
@@ -1430,6 +1431,10 @@ void Engine::stepTypewriters(double dt)
 {
     for (auto &lp : m_layers) {
         TextSource &t = lp->text;
+        if (t.writePlaying) {
+            t.writeProgress = std::min(1.0f, t.writeProgress + float(std::max(0.0, dt) / std::max(0.05f, t.writeDuration)));
+            if (t.writeProgress >= 1.0f) t.writePlaying = false;
+        }
         if (t.typeDur <= 0) continue;
         t.typeElapsed += std::max(0.0, dt);
         if (t.typeElapsed >= t.typeDur) t.stopTyping();

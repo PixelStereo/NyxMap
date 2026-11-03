@@ -4,6 +4,7 @@
 #include "Anim.h"
 #include "AudioStream.h"
 #include "ClockGenerator.h"
+#include "TextWriting.h"
 #include "Gl.h"
 #include "Isf.h"
 #include "LineGenerator.h"
@@ -43,6 +44,9 @@ enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web,
 // dragged onto a layer like any media.
 inline const QString kTextGeneratorPath = QStringLiteral("/NyxMap/Generators/Text");
 inline bool isTextGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTextGeneratorPath); }
+// The Cursive generator: a text layer in a cursive font, ready to be written as by a pen (TextWriting.h)
+inline const QString kCursiveGeneratorPath = QStringLiteral("/NyxMap/Generators/Cursive");
+inline bool isCursiveGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kCursiveGeneratorPath); }
 // The Timecode generator: a text layer that shows a timecode (TimecodeClock.h), from the Media Bin like a file
 inline const QString kTimecodeGeneratorPath = QStringLiteral("/NyxMap/Generators/Timecode");
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
@@ -191,6 +195,14 @@ struct TextSource {
     double typeElapsed = 0, typeDur = 0, typeProgress = 1;
     int typeCurve = 0; // easing of the typing (EasingCurve, Snapshots.cpp)
 
+    // Written as by a pen: `writeProgress` from 0 (nothing) to 1 (all of it, as any text), by its own transport over
+    // `writeDuration` seconds, or driven like any value (a timeline, a snapshot's fade, OSC). Any text can; `cursive`
+    // only says it was made by the Cursive generator
+    bool cursive = false;
+    float writeProgress = 1.0f;
+    float writeDuration = 4.0f;
+    bool writePlaying = false;
+
     QString shown() const
     {
         if (typeDur <= 0) return content;
@@ -214,6 +226,8 @@ struct TextSource {
         width = std::clamp(width, 1, 16384);
         height = std::clamp(height, 1, 16384);
         if (font.isEmpty()) font = QStringLiteral("Arial");
+        writeProgress = std::clamp(writeProgress, 0.0f, 1.0f);
+        writeDuration = std::clamp(writeDuration, 0.05f, 3600.0f);
     }
 };
 
@@ -358,6 +372,8 @@ struct Layer {
 
     // Text generator (type Text): its settings, and the texture they are drawn into (render thread)
     TextSource text;
+    std::shared_ptr<TextWriting> textWriting; // render thread: the text being written
+    QString textWritingKey;
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
 
