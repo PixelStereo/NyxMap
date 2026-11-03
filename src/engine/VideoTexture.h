@@ -33,6 +33,7 @@ private:
         GLuint id = 0;
         GLint tex[4] = {-1, -1, -1, -1}, sel[4] = {-1, -1, -1, -1}, off[4] = {-1, -1, -1, -1};
         GLint scale = -1, mode = -1, alpha = -1, matrix = -1, range = -1, crop = -1, clamp = -1;
+        GLint sampling = -1;
         bool load(bool rect, QString *log);
     };
     Program m_plain, m_rect; // planes in 2D textures; hardware surfaces in rectangle textures

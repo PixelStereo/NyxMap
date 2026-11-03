@@ -201,6 +201,7 @@ private:
     int readVideoPacket(); // demux next packet from the selected video stream
     int decodeHap(VideoFrame &f, double skipBefore);
     bool deliver(AVFrame *src, VideoFrame &f, bool mapped); // decoded picture -> f (upload buffer, or kept)
+    bool transferToStaging(const AVFrame *hw, VideoFrame &f);
     void produceBackwardWindow(); // decode thread, backward leg
     void startLeg(const Timeline::Leg &leg, double position); // decode thread
     void finishLeg();                                          // decode thread: next leg, or end
