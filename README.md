@@ -71,13 +71,15 @@ Structure your artistic intent into flexible cues, timelines, and synchronized m
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.5.1](https://github.com/PixelStereo/NyxMap/releases/tag/v0.5.1)**.
+Latest published build: **[v0.6](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-macos-v0.5.1.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-windows-v0.5.1.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.6/NyxMap-macos-v0.6.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.6/NyxMap-windows-v0.6.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6/NyxMap-linux-x86_64-v0.6.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.5.1/NyxMap-linux-x86_64-v0.5.1.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6/NyxMap-linux-x86_64-v0.6.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+
+**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6/NyxMap-Companion-v0.6.tgz)** — import it in Companion; [setup guide](docs/companion.md).
 <!-- release-downloads:end -->
 
 Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/build.md) and the [known limitations](docs/README.md).
