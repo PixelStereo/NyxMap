@@ -1,4 +1,5 @@
 #include "LayerInspector.h"
+#include "AdsrCurve.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
 #include "ColorPicker.h"
@@ -2839,6 +2840,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     }
 
     m_synthFields.clear();
+    m_adsrCurve = nullptr;
     {
         Engine::Lock lock(&m_engine->mutex());
         const Layer *layer = m_engine->layer(m_layer);
@@ -2853,6 +2855,76 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
                     continue;
                 const auto &p = synth->parameter(i);
                 const QString key = QStringLiteral("synth/") + p.key;
+                if (!synth->external() && i >= AudioGenerator::Envelope) { // above, with the curve; those of this envelope only
+                    const int kind = int(synth->value(AudioGenerator::Envelope));
+                    const bool wanted = (i == AudioGenerator::Hold && AudioGenerator::envelopeHasHold(kind)) ||
+                                        (i == AudioGenerator::FinalLevel && AudioGenerator::envelopeHasFinal(kind)) ||
+                                        (i >= AudioGenerator::BiasAttack && AudioGenerator::envelopeHasBias(kind));
+                    if (!wanted) continue;
+                }
+                if (!synth->external() && i == AudioGenerator::Attack) { // its envelope, in the hand; its values are kept below
+                    const int kind = int(synth->value(AudioGenerator::Envelope));
+                    auto *pickRow = new QHBoxLayout;
+                    auto *pickLabel = new QLabel(QStringLiteral("Envelope"));
+                    auto *pick = new QComboBox;
+                    pick->setObjectName(QStringLiteral("synthEnvelope"));
+                    pick->addItems(AudioGenerator::envelopeNames());
+                    pick->setCurrentIndex(kind);
+                    pick->setEnabled(!m_locked);
+                    pick->setToolTip(QStringLiteral("Which of Faust's envelopes: straight (adsr), exponential (adsre, ahdsre), with a bend on each slope (*_bias), a hold (ahdsr…), a final level (*f_bias)"));
+                    connect(pick, &QComboBox::activated, this, [this, pick] {
+                        setValue(QStringLiteral("synth/envelope"), pick->currentText(), QStringLiteral("Change Envelope"));
+                        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its own values, its own curve
+                    });
+                    m_animate->attach({pickLabel, pick}, {QStringLiteral("synth/envelope")});
+                    pickRow->addWidget(pickLabel);
+                    pickRow->addWidget(pick, 1);
+                    v->addLayout(pickRow);
+                    auto *curve = new AdsrCurve;
+                    curve->shape = kind == 1 || kind == 4 ? AdsrCurve::Shape::Exponential : AudioGenerator::envelopeHasBias(kind) ? AdsrCurve::Shape::Biased : AdsrCurve::Shape::Straight;
+                    curve->hasHold = AudioGenerator::envelopeHasHold(kind);
+                    curve->hasFinal = AudioGenerator::envelopeHasFinal(kind);
+                    AdsrCurve::Values shape;
+                    shape.attack = synth->value(AudioGenerator::Attack);
+                    shape.decay = synth->value(AudioGenerator::Decay);
+                    shape.sustain = synth->value(AudioGenerator::Sustain);
+                    shape.release = synth->value(AudioGenerator::Release);
+                    shape.hold = synth->value(AudioGenerator::Hold);
+                    shape.finalLevel = synth->value(AudioGenerator::FinalLevel);
+                    shape.biasAttack = synth->value(AudioGenerator::BiasAttack);
+                    shape.biasDecay = synth->value(AudioGenerator::BiasDecay);
+                    shape.biasRelease = synth->value(AudioGenerator::BiasRelease);
+                    curve->setValues(shape);
+                    curve->setEnabled(!m_locked);
+                    curve->edited = [this](const AdsrCurve::Values &v) {
+                        QJsonObject values;
+                        values[QStringLiteral("synth/attack")] = v.attack;
+                        values[QStringLiteral("synth/decay")] = v.decay;
+                        values[QStringLiteral("synth/sustain")] = v.sustain;
+                        values[QStringLiteral("synth/release")] = v.release;
+                        values[QStringLiteral("synth/hold")] = v.hold;
+                        values[QStringLiteral("synth/final")] = v.finalLevel;
+                        values[QStringLiteral("synth/biasAttack")] = v.biasAttack;
+                        values[QStringLiteral("synth/biasDecay")] = v.biasDecay;
+                        values[QStringLiteral("synth/biasRelease")] = v.biasRelease;
+                        setValues(values, QStringLiteral("Change Envelope"));
+                    };
+                    m_animate->attach({curve}, {QStringLiteral("synth/attack"), QStringLiteral("synth/decay"), QStringLiteral("synth/sustain"), QStringLiteral("synth/release")});
+                    v->addWidget(curve);
+                    m_adsrCurve = curve;
+                    auto *play = new QPushButton(QStringLiteral("Trigger"));
+                    play->setObjectName(QStringLiteral("adsrTrigger"));
+                    play->setToolTip(QStringLiteral("Its gate, as long as it is held: its envelope heard, and seen on the curve"));
+                    connect(play, &QPushButton::pressed, this, [this, curve] {
+                        m_engine->setParameter(m_layerId, QStringLiteral("synth/gate"), 1.0);
+                        curve->setPlaying(true);
+                    });
+                    connect(play, &QPushButton::released, this, [this, curve] {
+                        m_engine->setParameter(m_layerId, QStringLiteral("synth/gate"), 0.0);
+                        curve->setPlaying(false);
+                    });
+                    v->addWidget(play);
+                }
                 auto *row = new QHBoxLayout;
                 auto *label = new QLabel(QString::fromUtf8(p.label));
                 auto *field = new SliderField;
@@ -4367,6 +4439,19 @@ void LayerInspector::refreshDynamic()
             picker->setProperty("shown", now);
             picker->setColor(now);
         }
+    }
+    if (m_adsrCurve) {
+        AdsrCurve::Values shape;
+        shape.attack = m_engine->parameterValue(m_layerId, QStringLiteral("synth/attack")).toDouble();
+        shape.decay = m_engine->parameterValue(m_layerId, QStringLiteral("synth/decay")).toDouble();
+        shape.sustain = m_engine->parameterValue(m_layerId, QStringLiteral("synth/sustain")).toDouble();
+        shape.release = m_engine->parameterValue(m_layerId, QStringLiteral("synth/release")).toDouble();
+        shape.hold = m_engine->parameterValue(m_layerId, QStringLiteral("synth/hold")).toDouble();
+        shape.finalLevel = m_engine->parameterValue(m_layerId, QStringLiteral("synth/final")).toDouble();
+        shape.biasAttack = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasAttack")).toDouble();
+        shape.biasDecay = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasDecay")).toDouble();
+        shape.biasRelease = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasRelease")).toDouble();
+        m_adsrCurve->setValues(shape);
     }
     for (const auto &[field, key] : m_synthFields) {
         if (field && !field->isDragging() && !field->hasFocus()) {

@@ -94,7 +94,21 @@ const std::array<AudioGenerator::Parameter, AudioGenerator::Count> AudioGenerato
      {"decay", "Decay (s)", .001, 10, .1},
      {"sustain", "Sustain", 0, 1, .8},
      {"release", "Release (s)", .001, 10, .1},
-     {"gate", "Envelope gate", 0, 1, 1}}};
+     {"gate", "Envelope gate", 0, 1, 1},
+     {"envelope", "Envelope", 0, 6, 0},
+     {"hold", "Hold (s)", 0, 10, 0},
+     {"final", "Final level", 0, 1, 0},
+     {"biasAttack", "Attack bias", 0, 1, .5},
+     {"biasDecay", "Decay bias", 0, 1, .5},
+     {"biasRelease", "Release bias", 0, 1, .5},
+     {"legato", "Legato", 0, 1, 0}}};
+
+const QStringList &AudioGenerator::envelopeNames()
+{
+    static const QStringList names{QStringLiteral("adsr"), QStringLiteral("adsre"), QStringLiteral("adsr_bias"), QStringLiteral("adsrf_bias"),
+                                   QStringLiteral("ahdsre"), QStringLiteral("ahdsr_bias"), QStringLiteral("ahdsrf_bias")};
+    return names;
+}
 struct AudioGenerator::Backend : UI {
     std::unique_ptr<dsp> processor;
     AudioGenerator *owner = nullptr;

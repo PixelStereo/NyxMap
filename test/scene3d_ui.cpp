@@ -1,3 +1,7 @@
+#include <QElapsedTimer>
+#include "InteractionPanel.h"
+#include "InteractionPatch.h"
+#include "AdsrCurve.h"
 // 3D scenes in the interface: Layer › New 3D Scene makes one with a light; a model dropped onto a layer goes into a new
 // scene; the list refuses a move that takes a 3D object out of its scene or a 2D layer into one; the inspector shows the
 // scene's camera (Scene tab) and an object's values (3D tab), each edit one undo step.
@@ -115,6 +119,103 @@ int runScene3dUiTests(Engine &engine)
         pump();
         auto *bin = window.findChild<MediaBin *>();
         check(bin && !bin->reveal("/nowhere/such.mov"), "what is not in the bin is said so");
+    }
+    // Envelopes: in the hand on an instrument, in one go on any value, and the interactions as nodes
+    {
+        const QString recipe = dir.path() + "/tone.nyxaudio";
+        {
+            QFile f(recipe);
+            check(f.open(QIODevice::WriteOnly), "write an instrument");
+            f.write(R"({"version":1,"type":"fm","frequency":220,"gain":0.1,"attack":0.1,"decay":0.2,"sustain":0.5,"release":0.3})");
+        }
+        QString why;
+        const int at = engine.addLayer("Tone");
+        check(engine.setLayerAudio(at, recipe, &why), "an instrument on a layer");
+        const quint64 tone = engine.layerId(at);
+        const int second = engine.addLayer("Other");
+        const quint64 other = engine.layerId(second);
+        select(engine.indexOfId(tone));
+        pump();
+        auto *curve = static_cast<AdsrCurve *>(window.findChild<QWidget *>("adsrCurve"));
+        check(curve != nullptr, "an instrument's envelope is a curve");
+        if (curve && curve->isVisible()) {
+            const QPointF from = curve->point(0), to = from + QPointF(30, 0);
+            const auto mouse = [&](QEvent::Type type, const QPointF &p, Qt::MouseButtons buttons) {
+                QMouseEvent ev(type, p, curve->mapToGlobal(p), Qt::LeftButton, buttons, {});
+                QApplication::sendEvent(curve, &ev);
+            };
+            mouse(QEvent::MouseButtonPress, from, Qt::LeftButton);
+            mouse(QEvent::MouseMove, to, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, to, Qt::NoButton);
+            pump();
+            check(engine.parameterValue(tone, "synth/attack").toDouble() > 0.1, "dragging its point lengthens its attack");
+            check(std::abs(engine.parameterValue(tone, "synth/sustain").toDouble() - 0.5) < 1e-3, "and leaves its sustain");
+            // Faust's envelopes, chosen by name: each with what it has
+            auto *envelopes = window.findChild<QComboBox *>("synthEnvelope");
+            check(envelopes && envelopes->count() == 7, "all of Faust's ADSRs to choose from");
+            check(engine.setParameter(tone, "synth/envelope", QStringLiteral("ahdsrf_bias")), "by name");
+            check(engine.parameterValue(tone, "synth/envelope").toString() == "ahdsrf_bias", "and read back");
+            check(engine.setParameter(tone, "synth/envelope", QStringLiteral("adsr")), "and back to the first");
+            auto *trigger = window.findChild<QPushButton *>("adsrTrigger");
+            check(trigger != nullptr, "a button triggers it");
+            if (trigger) {
+                trigger->pressed();
+                pump();
+                check(engine.parameterValue(tone, "synth/gate").toDouble() == 1, "held: its gate is open");
+                QElapsedTimer waited;
+                waited.start();
+                while (curve->playingLevel() <= 0 && waited.elapsed() < 500) pump();
+                check(curve->playingLevel() > 0, "and the curve shows it running");
+                trigger->released();
+                pump();
+                check(engine.parameterValue(tone, "synth/gate").toDouble() == 0, "let go: its gate closes");
+            }
+        }
+        auto *panel = window.findChild<InteractionPanel *>();
+        check(panel != nullptr, "the interactions' panel");
+        if (panel) {
+            engine.setParameter(other, "opacity", 0.25);
+            const quint64 id = panel->addEnvelope(other, "opacity", InteractionPanel::heard(35, 120));
+            pump();
+            const auto find = [&](quint64 wanted) {
+                for (const Interaction &it : engine.interactions())
+                    if (it.id == wanted) return it;
+                return Interaction();
+            };
+            const Interaction made = find(id);
+            check(made.audioFeature == Interaction::AudioFeature::Hit && made.layer == other, "one click: a hit drives the value");
+            check(made.filters.size() == 2 && made.filters[0].kind == InteractionFilter::Envelope, "through an envelope");
+            check(made.filters.size() == 2 && std::abs(made.filters[1].c - 0.25) < 1e-6 && std::abs(made.filters[1].d - 1) < 1e-6, "from the value where it is to the end of its range");
+            const quint64 gate = panel->addEnvelope(tone, "synth/gate", InteractionPanel::heard(35, 120));
+            pump();
+            check(find(gate).filters.empty(), "a gate takes the hit as it is: its instrument has its envelope");
+            auto *nodes = panel->findChild<QToolButton *>("interactionNodes");
+            auto *patch = static_cast<InteractionPatch *>(panel->findChild<QWidget *>("interactionPatch"));
+            check(nodes && patch, "the interactions can be nodes");
+            if (nodes && patch) {
+                nodes->setChecked(true);
+                pump();
+                check(patch->isVisible() && patch->links().size() == 2, "each one a link");
+                check(patch->sourceCount() == 1 && patch->targetCount() == 2, "one source with two cables, two targets");
+                check(std::any_of(patch->links().begin(), patch->links().end(), [](const auto &l) { return l.envelope; }), "its envelope is drawn on its node");
+                const size_t before = engine.interactions().size();
+                patch->onConnect(id, gate);
+                pump();
+                check(engine.interactions().size() == before + 1, "a cable dropped on a target is a new interaction");
+                patch->onToggle(id);
+                pump();
+                check(!find(id).enabled, "a double-click switches it off");
+                if (curve) window.grab().save(qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR", dir.path()) + "/patch.png");
+                patch->onRemove(id);
+                pump();
+                check(find(id).id == 0, "Del removes it");
+                nodes->setChecked(false);
+            }
+        }
+        engine.setInteractions({});
+        engine.removeLayer(engine.indexOfId(other));
+        engine.removeLayer(engine.indexOfId(tone));
+        pump();
     }
     auto roleOf = [&](quint64 id) {
         const LayerTree t = engine.structure();

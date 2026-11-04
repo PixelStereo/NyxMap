@@ -284,6 +284,15 @@ const std::vector<Parameter *> &Layer::parameters()
         if (auto *synth = audio->generator()) {
             for (int i = 0; i < synth->parameterCount(); ++i) {
                 const auto &p = synth->parameter(i);
+                if (!synth->external() && i == AudioGenerator::Envelope) { // Faust's envelopes, by their names
+                    add(QStringLiteral("synth/envelope"), QStringLiteral("Source › Synth › Envelope"), T::Choice)
+                        .choices(AudioGenerator::envelopeNames())
+                        .byDefault(AudioGenerator::envelopeNames().value(0))
+                        .ramp(Parameter::Ramp::Cut)
+                        .bind([synth] { return QVariant(AudioGenerator::envelopeNames().value(int(synth->value(AudioGenerator::Envelope)))); },
+                              [synth](const QVariant &v) { synth->setValue(AudioGenerator::Envelope, std::max(0, int(AudioGenerator::envelopeNames().indexOf(v.toString())))); });
+                    continue;
+                }
                 num(
                     QStringLiteral("synth/") + p.key, QStringLiteral("Source › Synth › ") + p.label, p.low, p.high,
                     p.initial, [synth, i] { return synth->value(i); }, [synth, i](double v) { synth->setValue(i, v); });

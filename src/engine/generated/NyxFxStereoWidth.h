@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------
 name: "StereoWidth"
-Code generated with Faust 2.79.3 (https://faust.grame.fr)
-Compilation options: -lang cpp -ct 1 -cn NyxFxStereoWidth -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0
+Code generated with Faust 2.88.0 (https://faust.grame.fr)
+Compilation options: -lang cpp -fpga-mem-th 4 -ct 1 -cn NyxFxStereoWidth -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0
 ------------------------------------------------------------ */
 
 #ifndef  __NyxFxStereoWidth_H__
@@ -15,6 +15,13 @@ Compilation options: -lang cpp -ct 1 -cn NyxFxStereoWidth -es 1 -mcd 16 -mdd 102
 #include <cmath>
 #include <cstdint>
 #include <math.h>
+#ifndef FAUST_INT_WRAP
+#define FAUST_INT_WRAP
+inline int faust_wrap_add(int a, int b) { return int((unsigned int)a + (unsigned int)b); }
+inline int faust_wrap_sub(int a, int b) { return int((unsigned int)a - (unsigned int)b); }
+inline int faust_wrap_mul(int a, int b) { return int((unsigned int)a * (unsigned int)b); }
+#endif
+
 
 #ifndef FAUSTCLASS
 #define FAUSTCLASS NyxFxStereoWidth
@@ -38,27 +45,33 @@ class NyxFxStereoWidth : public dsp {
 
 	int fSampleRate;
 	float fConst0;
-	float fConst1;
 	FAUSTFLOAT fHslider0;
+	float fConst1;
 	float fRec0[2];
 
  public:
 	NyxFxStereoWidth() {
 	}
 
+	NyxFxStereoWidth(const NyxFxStereoWidth&) = default;
+
+	virtual ~NyxFxStereoWidth() = default;
+
+	NyxFxStereoWidth& operator=(const NyxFxStereoWidth&) = default;
+
 	void metadata(Meta* m) {
-		m->declare("compile_options", "-lang cpp -ct 1 -cn NyxFxStereoWidth -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0");
+		m->declare("compile_options", "-lang cpp -fpga-mem-th 4 -ct 1 -cn NyxFxStereoWidth -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0");
 		m->declare("filename", "StereoWidth.dsp");
 		m->declare("maths.lib/author", "GRAME");
 		m->declare("maths.lib/copyright", "GRAME");
-		m->declare("maths.lib/license", "LGPL with exception");
+		m->declare("maths.lib/license", "LicenseRef-LGPL-2.1-or-later-with-Faust-exception");
 		m->declare("maths.lib/name", "Faust Math Library");
-		m->declare("maths.lib/version", "2.8.1");
+		m->declare("maths.lib/version", "2.9.0");
 		m->declare("name", "StereoWidth");
 		m->declare("platform.lib/name", "Generic Platform Library");
 		m->declare("platform.lib/version", "1.3.0");
-		m->declare("signals.lib/name", "Faust Signal Routing Library");
-		m->declare("signals.lib/version", "1.6.0");
+		m->declare("signals.lib/name", "Faust Routing Library");
+		m->declare("signals.lib/version", "1.7.0");
 	}
 
 	virtual int getNumInputs() {
@@ -73,16 +86,16 @@ class NyxFxStereoWidth : public dsp {
 
 	virtual void instanceConstants(int sample_rate) {
 		fSampleRate = sample_rate;
-		fConst0 = 44.1f / std::min<float>(1.92e+05f, std::max<float>(1.0f, float(fSampleRate)));
+		fConst0 = 44.1f / std::min<float>(1.92e+05f, std::max<float>(1.0f, static_cast<float>(fSampleRate)));
 		fConst1 = 1.0f - fConst0;
 	}
 
 	virtual void instanceResetUserInterface() {
-		fHslider0 = FAUSTFLOAT(1.0f);
+		fHslider0 = static_cast<FAUSTFLOAT>(1.0f);
 	}
 
 	virtual void instanceClear() {
-		for (int l0 = 0; l0 < 2; l0 = l0 + 1) {
+		for (int l0 = 0; l0 < 2; l0 = faust_wrap_add(l0, 1)) {
 			fRec0[l0] = 0.0f;
 		}
 	}
@@ -99,7 +112,7 @@ class NyxFxStereoWidth : public dsp {
 	}
 
 	virtual NyxFxStereoWidth* clone() {
-		return new NyxFxStereoWidth();
+		return new NyxFxStereoWidth(*this);
 	}
 
 	virtual int getSampleRate() {
@@ -117,15 +130,15 @@ class NyxFxStereoWidth : public dsp {
 		FAUSTFLOAT* input1 = inputs[1];
 		FAUSTFLOAT* output0 = outputs[0];
 		FAUSTFLOAT* output1 = outputs[1];
-		float fSlow0 = fConst0 * float(fHslider0);
-		for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+		float fSlow0 = fConst0 * static_cast<float>(fHslider0);
+		for (int i0 = 0; i0 < count; i0 = faust_wrap_add(i0, 1)) {
+			float fTemp0 = static_cast<float>(input0[i0]);
+			float fTemp1 = static_cast<float>(input1[i0]);
+			float fTemp2 = fTemp0 + fTemp1;
 			fRec0[0] = fSlow0 + fConst1 * fRec0[1];
-			float fTemp0 = float(input1[i0]);
-			float fTemp1 = float(input0[i0]);
-			float fTemp2 = (fTemp1 - fTemp0) * fRec0[0];
-			float fTemp3 = fTemp1 + fTemp0;
-			output0[i0] = FAUSTFLOAT(0.5f * (fTemp3 + fTemp2));
-			output1[i0] = FAUSTFLOAT(0.5f * (fTemp3 - fTemp2));
+			float fTemp3 = (fTemp0 - fTemp1) * fRec0[0];
+			output0[i0] = static_cast<FAUSTFLOAT>(0.5f * (fTemp2 + fTemp3));
+			output1[i0] = static_cast<FAUSTFLOAT>(0.5f * (fTemp2 - fTemp3));
 			fRec0[1] = fRec0[0];
 		}
 	}

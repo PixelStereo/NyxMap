@@ -1,4 +1,5 @@
 #pragma once
+#include <QStringList>
 #include <QString>
 #include <array>
 #include <atomic>
@@ -26,6 +27,13 @@ public:
         Sustain,
         Release,
         Gate,
+        Envelope, // which of Faust's envelopes (envelopeNames)
+        Hold,
+        FinalLevel,
+        BiasAttack,
+        BiasDecay,
+        BiasRelease,
+        Legato,
         Count
     };
     struct Parameter {
@@ -33,6 +41,10 @@ public:
         double low, high, initial;
     };
     static const std::array<Parameter, Count> parameters;
+    static const QStringList &envelopeNames(); // Faust's, by their value of Envelope
+    static bool envelopeHasHold(int kind) { return kind >= 4; }
+    static bool envelopeHasFinal(int kind) { return kind == 3 || kind == 6; }
+    static bool envelopeHasBias(int kind) { return kind == 2 || kind == 3 || kind == 5 || kind == 6; }
     static bool isRecipe(const QString &path);
     static std::unique_ptr<AudioGenerator> load(const QString &path, QString *error, int rate = 48000);
     double value(int i) const { return m_values[size_t(i)].load(std::memory_order_relaxed); }

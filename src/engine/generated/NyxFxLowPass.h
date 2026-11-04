@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------
 name: "LowPass"
-Code generated with Faust 2.79.3 (https://faust.grame.fr)
-Compilation options: -lang cpp -ct 1 -cn NyxFxLowPass -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0
+Code generated with Faust 2.88.0 (https://faust.grame.fr)
+Compilation options: -lang cpp -fpga-mem-th 4 -ct 1 -cn NyxFxLowPass -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0
 ------------------------------------------------------------ */
 
 #ifndef  __NyxFxLowPass_H__
@@ -15,6 +15,13 @@ Compilation options: -lang cpp -ct 1 -cn NyxFxLowPass -es 1 -mcd 16 -mdd 1024 -m
 #include <cmath>
 #include <cstdint>
 #include <math.h>
+#ifndef FAUST_INT_WRAP
+#define FAUST_INT_WRAP
+inline int faust_wrap_add(int a, int b) { return int((unsigned int)a + (unsigned int)b); }
+inline int faust_wrap_sub(int a, int b) { return int((unsigned int)a - (unsigned int)b); }
+inline int faust_wrap_mul(int a, int b) { return int((unsigned int)a * (unsigned int)b); }
+#endif
+
 
 #ifndef FAUSTCLASS
 #define FAUSTCLASS NyxFxLowPass
@@ -44,49 +51,54 @@ class NyxFxLowPass : public dsp {
 	float fConst1;
 	float fConst2;
 	FAUSTFLOAT fHslider0;
-	float fRec0[2];
 	float fConst3;
+	float fRec1[2];
 	float fConst4;
 	FAUSTFLOAT fHslider1;
-	float fRec1[2];
-	float fRec2[3];
+	float fRec2[2];
+	float fRec0[3];
 	float fRec3[3];
 
  public:
 	NyxFxLowPass() {
 	}
 
+	NyxFxLowPass(const NyxFxLowPass&) = default;
+
+	virtual ~NyxFxLowPass() = default;
+
+	NyxFxLowPass& operator=(const NyxFxLowPass&) = default;
+
 	void metadata(Meta* m) {
-		m->declare("compile_options", "-lang cpp -ct 1 -cn NyxFxLowPass -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0");
+		m->declare("compile_options", "-lang cpp -fpga-mem-th 4 -ct 1 -cn NyxFxLowPass -es 1 -mcd 16 -mdd 1024 -mdy 33 -single -ftz 0");
 		m->declare("filename", "LowPass.dsp");
 		m->declare("filters.lib/fir:author", "Julius O. Smith III");
 		m->declare("filters.lib/fir:copyright", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
-		m->declare("filters.lib/fir:license", "MIT-style STK-4.3 license");
+		m->declare("filters.lib/fir:license", "LicenseRef-STK-4.3");
 		m->declare("filters.lib/iir:author", "Julius O. Smith III");
 		m->declare("filters.lib/iir:copyright", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
-		m->declare("filters.lib/iir:license", "MIT-style STK-4.3 license");
-		m->declare("filters.lib/lowpass0_highpass1", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
+		m->declare("filters.lib/iir:license", "LicenseRef-STK-4.3");
 		m->declare("filters.lib/name", "Faust Filters Library");
 		m->declare("filters.lib/resonlp:author", "Julius O. Smith III");
 		m->declare("filters.lib/resonlp:copyright", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
-		m->declare("filters.lib/resonlp:license", "MIT-style STK-4.3 license");
+		m->declare("filters.lib/resonlp:license", "LicenseRef-STK-4.3");
 		m->declare("filters.lib/tf2:author", "Julius O. Smith III");
 		m->declare("filters.lib/tf2:copyright", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
-		m->declare("filters.lib/tf2:license", "MIT-style STK-4.3 license");
+		m->declare("filters.lib/tf2:license", "LicenseRef-STK-4.3");
 		m->declare("filters.lib/tf2s:author", "Julius O. Smith III");
 		m->declare("filters.lib/tf2s:copyright", "Copyright (C) 2003-2019 by Julius O. Smith III <jos@ccrma.stanford.edu>");
-		m->declare("filters.lib/tf2s:license", "MIT-style STK-4.3 license");
-		m->declare("filters.lib/version", "1.7.1");
+		m->declare("filters.lib/tf2s:license", "LicenseRef-STK-4.3");
+		m->declare("filters.lib/version", "1.9.0");
 		m->declare("maths.lib/author", "GRAME");
 		m->declare("maths.lib/copyright", "GRAME");
-		m->declare("maths.lib/license", "LGPL with exception");
+		m->declare("maths.lib/license", "LicenseRef-LGPL-2.1-or-later-with-Faust-exception");
 		m->declare("maths.lib/name", "Faust Math Library");
-		m->declare("maths.lib/version", "2.8.1");
+		m->declare("maths.lib/version", "2.9.0");
 		m->declare("name", "LowPass");
 		m->declare("platform.lib/name", "Generic Platform Library");
 		m->declare("platform.lib/version", "1.3.0");
-		m->declare("signals.lib/name", "Faust Signal Routing Library");
-		m->declare("signals.lib/version", "1.6.0");
+		m->declare("signals.lib/name", "Faust Routing Library");
+		m->declare("signals.lib/version", "1.7.0");
 	}
 
 	virtual int getNumInputs() {
@@ -101,29 +113,29 @@ class NyxFxLowPass : public dsp {
 
 	virtual void instanceConstants(int sample_rate) {
 		fSampleRate = sample_rate;
-		fConst0 = std::min<float>(1.92e+05f, std::max<float>(1.0f, float(fSampleRate)));
-		fConst1 = 44.1f / fConst0;
-		fConst2 = 1.0f - fConst1;
-		fConst3 = 0.45f * fConst0;
-		fConst4 = 3.1415927f / fConst0;
+		fConst0 = std::min<float>(1.92e+05f, std::max<float>(1.0f, static_cast<float>(fSampleRate)));
+		fConst1 = 3.1415927f / fConst0;
+		fConst2 = 44.1f / fConst0;
+		fConst3 = 1.0f - fConst2;
+		fConst4 = 0.45f * fConst0;
 	}
 
 	virtual void instanceResetUserInterface() {
-		fHslider0 = FAUSTFLOAT(2e+03f);
-		fHslider1 = FAUSTFLOAT(0.707f);
+		fHslider0 = static_cast<FAUSTFLOAT>(2e+03f);
+		fHslider1 = static_cast<FAUSTFLOAT>(0.707f);
 	}
 
 	virtual void instanceClear() {
-		for (int l0 = 0; l0 < 2; l0 = l0 + 1) {
-			fRec0[l0] = 0.0f;
+		for (int l0 = 0; l0 < 2; l0 = faust_wrap_add(l0, 1)) {
+			fRec1[l0] = 0.0f;
 		}
-		for (int l1 = 0; l1 < 2; l1 = l1 + 1) {
-			fRec1[l1] = 0.0f;
+		for (int l1 = 0; l1 < 2; l1 = faust_wrap_add(l1, 1)) {
+			fRec2[l1] = 0.0f;
 		}
-		for (int l2 = 0; l2 < 3; l2 = l2 + 1) {
-			fRec2[l2] = 0.0f;
+		for (int l2 = 0; l2 < 3; l2 = faust_wrap_add(l2, 1)) {
+			fRec0[l2] = 0.0f;
 		}
-		for (int l3 = 0; l3 < 3; l3 = l3 + 1) {
+		for (int l3 = 0; l3 < 3; l3 = faust_wrap_add(l3, 1)) {
 			fRec3[l3] = 0.0f;
 		}
 	}
@@ -140,7 +152,7 @@ class NyxFxLowPass : public dsp {
 	}
 
 	virtual NyxFxLowPass* clone() {
-		return new NyxFxLowPass();
+		return new NyxFxLowPass(*this);
 	}
 
 	virtual int getSampleRate() {
@@ -159,25 +171,25 @@ class NyxFxLowPass : public dsp {
 		FAUSTFLOAT* input1 = inputs[1];
 		FAUSTFLOAT* output0 = outputs[0];
 		FAUSTFLOAT* output1 = outputs[1];
-		float fSlow0 = fConst1 * float(fHslider0);
-		float fSlow1 = fConst1 * float(fHslider1);
-		for (int i0 = 0; i0 < count; i0 = i0 + 1) {
-			fRec0[0] = fSlow0 + fConst2 * fRec0[1];
-			float fTemp0 = std::tan(fConst4 * std::min<float>(fRec0[0], fConst3));
+		float fSlow0 = fConst2 * static_cast<float>(fHslider0);
+		float fSlow1 = fConst2 * static_cast<float>(fHslider1);
+		for (int i0 = 0; i0 < count; i0 = faust_wrap_add(i0, 1)) {
+			fRec1[0] = fSlow0 + fConst3 * fRec1[1];
+			float fTemp0 = std::tan(fConst1 * std::min<float>(fRec1[0], fConst4));
 			float fTemp1 = 1.0f / fTemp0;
-			fRec1[0] = fSlow1 + fConst2 * fRec1[1];
-			float fTemp2 = 1.0f / fRec1[0];
-			float fTemp3 = (fTemp2 + fTemp1) / fTemp0 + 1.0f;
+			fRec2[0] = fSlow1 + fConst3 * fRec2[1];
+			float fTemp2 = 1.0f / fRec2[0];
+			float fTemp3 = 1.0f + (fTemp1 - fTemp2) / fTemp0;
 			float fTemp4 = 1.0f - 1.0f / NyxFxLowPass_faustpower2_f(fTemp0);
-			float fTemp5 = (fTemp1 - fTemp2) / fTemp0 + 1.0f;
-			fRec2[0] = float(input0[i0]) - (fRec2[2] * fTemp5 + 2.0f * fRec2[1] * fTemp4) / fTemp3;
-			output0[i0] = FAUSTFLOAT((fRec2[2] + fRec2[0] + 2.0f * fRec2[1]) / fTemp3);
-			fRec3[0] = float(input1[i0]) - (fTemp5 * fRec3[2] + 2.0f * fTemp4 * fRec3[1]) / fTemp3;
-			output1[i0] = FAUSTFLOAT((fRec3[2] + fRec3[0] + 2.0f * fRec3[1]) / fTemp3);
-			fRec0[1] = fRec0[0];
+			float fTemp5 = 1.0f + (fTemp1 + fTemp2) / fTemp0;
+			fRec0[0] = static_cast<float>(input0[i0]) - (fRec0[2] * fTemp3 + 2.0f * fRec0[1] * fTemp4) / fTemp5;
+			output0[i0] = static_cast<FAUSTFLOAT>((fRec0[2] + fRec0[0] + 2.0f * fRec0[1]) / fTemp5);
+			fRec3[0] = static_cast<float>(input1[i0]) - (fTemp3 * fRec3[2] + 2.0f * fTemp4 * fRec3[1]) / fTemp5;
+			output1[i0] = static_cast<FAUSTFLOAT>((fRec3[2] + fRec3[0] + 2.0f * fRec3[1]) / fTemp5);
 			fRec1[1] = fRec1[0];
-			fRec2[2] = fRec2[1];
 			fRec2[1] = fRec2[0];
+			fRec0[2] = fRec0[1];
+			fRec0[1] = fRec0[0];
 			fRec3[2] = fRec3[1];
 			fRec3[1] = fRec3[0];
 		}

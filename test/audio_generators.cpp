@@ -78,6 +78,39 @@ int main(int argc, char **argv)
         out.fill(0);
         synth->mix(out.data(), 480, 48000, true, 1, 1);
         require(out != original, "frequency edits change live audio");
+        { // Faust's envelopes, by their value: where each of them is, half way through what makes it differ
+            const auto level = [&](int kind, float bias) {
+                auto noise = load(QJsonObject{{"version", 1}, {"type", "white"}, {"gain", 1}, {"attack", .1}, {"decay", .2}, {"sustain", .5}, {"release", .4}});
+                noise->setValue(AudioGenerator::Envelope, kind);
+                noise->setValue(AudioGenerator::Hold, .15f);
+                noise->setValue(AudioGenerator::FinalLevel, .2f);
+                noise->setValue(AudioGenerator::BiasDecay, bias);
+                const auto run = [&](double seconds) {
+                    float peak = 0;
+                    for (int block = 0; block < int(seconds * 100); ++block) {
+                        out.fill(0);
+                        peak = noise->mix(out.data(), 480, 48000, true, 1, 1);
+                    }
+                    return peak;
+                };
+                noise->setValue(AudioGenerator::Gate, 1);
+                const float atDecay = run(.2);
+                noise->setValue(AudioGenerator::Gate, 0);
+                run(1);
+                return std::pair{atDecay, run(.02)};
+            };
+            require(AudioGenerator::envelopeNames().size() == 7, "all of Faust's ADSRs");
+            const auto near = [](float a, float b) { return std::abs(a - b) < .08f; };
+            require(near(level(0, .5f).first, .75f), "adsr: straight, half way down its decay");
+            require(near(level(1, .5f).first, .52f), "adsre: exponential, nearly at its sustain");
+            require(near(level(2, .5f).first, .75f), "adsr_bias, without a bias: as adsr");
+            require(level(2, .9f).first > .9f, "adsr_bias: a bias bends its decay");
+            require(near(level(4, .5f).first, 1), "ahdsre: still held");
+            require(near(level(5, .5f).first, 1), "ahdsr_bias: still held");
+            require(near(level(0, .5f).second, 0), "adsr ends at nothing");
+            require(near(level(3, .5f).second, .2f), "adsrf_bias ends at its final level");
+            require(near(level(6, .5f).second, .2f), "ahdsrf_bias too");
+        }
         for (int k = 0; k < 30; ++k) {
             out.fill(0);
             synth->mix(out.data(), 480, 48000, false, 1, 1);

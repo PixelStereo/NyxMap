@@ -167,6 +167,7 @@ private:
     // Followed while a snapshot fades them (as temp / tint)
     QPointer<SliderField> m_opacity, m_volume;
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
+    QPointer<class AdsrCurve> m_adsrCurve; // an instrument's envelope
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points

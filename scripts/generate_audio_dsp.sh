@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 # Generated headers and the vendored architecture files use this audited version.
-faust --version | head -1 | grep -q '2.79.3' || { echo 'Faust 2.79.3 is required' >&2; exit 1; }
+faust --version | head -1 | grep -q '2.88.0' || { echo 'Faust 2.88.0 is required' >&2; exit 1; }
 # Prefer the libraries pinned with the source, so generation is reproducible.
 if [ -z "${FAUST_LIB_PATH:-}" ] && [ -f third_party/faust/libraries/stdfaust.lib ]; then
   FAUST_LIB_PATH=third_party/faust/libraries

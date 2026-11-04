@@ -22,6 +22,18 @@ sound's volume, a Faust FX control (`audio_fx/<id>/cutoff`), an instrument's gat
 fixture's intensity. Several interactions can share a trigger, so one hit can flash the picture, open a sound and
 light a fixture. Shape the result with a *Curve* or *Remap* after it.
 
+**In the hand.** An instrument's Source tab and an Envelope filter's settings show the envelope as a curve: drag the top of the
+attack, the end of the decay (it sets the sustain too), the end of the release. An instrument's **Envelope** chooses among Faust's: `adsr` (straight), `adsre` and `ahdsre` (exponential), `adsr_bias`, `ahdsr_bias` (a bend on each slope, dragged on the curve, and legato), `adsrf_bias`, `ahdsrf_bias` (and a final level); `ahdsr*` add a hold. The curve follows their equations. **Trigger** opens its gate as long as it is held, and shows the envelope running on the curve.
+
+**In one click.** Right-click a value › **Animate › Add Envelope**, then what triggers it: a kick, a snare or hats heard in the
+program mix, the gate of another instrument, a key or a MIDI note (learned). It goes from the value where it is now to the far
+end of its range. On an instrument's gate, the trigger goes through as it is: the instrument has its own envelope.
+
+**As nodes.** In the Interactions panel, **Nodes** shows the same interactions as sources, shapes and targets, and their cables
+light up with what goes through them. Click a shape for its settings below, double-click to switch it on or off, Del to remove
+it. Drag from a source onto a target for a new cable, or onto nothing to choose what it drives. Nothing of this is saved apart
+from the interactions: the list stays, and shows the same thing.
+
 ## Hits (an audio trigger)
 
 An Audio interaction's **Measure** can be **Hits (a trigger)**: a pulse at each hit — a kick, a snare — of the chosen
