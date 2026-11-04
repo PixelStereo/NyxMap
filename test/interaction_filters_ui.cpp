@@ -103,6 +103,7 @@ int main(int argc, char **argv)
             InteractionPatch::paintEvent(event);
         }
     } patch;
+    patch.setAttribute(Qt::WA_DontShowOnScreen);
     patch.resize(500, 160);
     patch.show();
     patch.setLevels({{1, 0.25}});
