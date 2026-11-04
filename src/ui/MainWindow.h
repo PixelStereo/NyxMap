@@ -35,6 +35,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 public:
     explicit MainWindow(Engine *engine, QWidget *parent = nullptr);
+    QString layersInUse(const QSet<int> &rows) const; // what refers to these rows, apart from themselves (empty: nothing)
+    QSet<int> sourceUsers(const QSet<int> &rows) const; // the layers made from them, and those made from these... (unlocked)
     ~MainWindow() override;
 
     // autoplay: its startup sequence (Composition) sends GO — not when the project opened is the one already playing

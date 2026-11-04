@@ -168,10 +168,10 @@ private:
     QPointer<SliderField> m_opacity, m_volume;
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
-    QWidget *build3d(const QStringList &prefixes);
+    QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
-    QWidget *buildSceneEnvironment(); // a scene: the layer (an HDRI) around it, lighting it
+    void addSceneEnvironment(class QFormLayout *form); // a scene: the layer (an HDRI) around it, lighting it
     void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
                         const QString &objectName, const QString &tip, const QString &undoText,
                         const std::function<bool(quint64, int, QString *)> &set, bool hdr = false);

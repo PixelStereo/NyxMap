@@ -148,6 +148,14 @@ public:
     bool isLocked(int i) const;            // locked itself, or member of a locked group
     // Solo: by index, the layers another layer's solo leaves out (none when nothing is soloed). Lock held.
     std::vector<bool> soloLeftOut() const;
+    // All that refers to this layer: the layers that take its picture, how (as their source, a mask...), and what acts on it
+    // or reads it (interactions, timelines, presets, a sequence's clock). `layer`: the layer that uses it, 0: not a layer
+    struct LayerUse {
+        quint64 layer = 0;
+        QString what;
+        bool asSource = false; // a layer whose whole picture is this one
+    };
+    std::vector<LayerUse> layerUses(quint64 id) const;
     // A layer's masks (Masks.h), by its id. Setting them redraws them.
     // A Line generator's lines (LineGenerator.h), in its own frame
     std::vector<LinePath> layerLines(quint64 id) const;

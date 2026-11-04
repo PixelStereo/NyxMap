@@ -1,4 +1,5 @@
 #pragma once
+#include <QColor>
 #include <QList>
 #include <QWidget>
 #include <vector>
@@ -21,6 +22,7 @@ class LayerTable : public QWidget
 public:
     struct Row {
         QString name, tag, source, effects, blend, playback;
+        QColor color;               // of its kind
         bool enabled = true, error = false;
         bool noPicture = false; // audio layer: no opacity or blend
         float opacity = 1.f;

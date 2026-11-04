@@ -109,6 +109,12 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
     frame->setToolTip(QStringLiteral("Turn around the selection (F)"));
     connect(frame, &QToolButton::clicked, this, &Scene3DView::frameSelection);
     h2->addWidget(frame);
+    auto *home = new QToolButton;
+    home->setText(QStringLiteral("Home"));
+    home->setObjectName(QStringLiteral("scene3dHome"));
+    home->setToolTip(QStringLiteral("All the scene holds, seen whole (H)"));
+    connect(home, &QToolButton::clicked, this, &Scene3DView::frameAll);
+    h2->addWidget(home);
     h2->addStretch();
     bar->setStyleSheet(QStringLiteral("QToolButton { background:rgba(30,30,34,200); padding:2px 6px; border-radius:3px; } "
                                       "QToolButton:checked { background:#0b5c69; color:white; } "
@@ -117,7 +123,7 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
     setMode(Mode::Move);
     setToolTip(QStringLiteral("Drag: turn around · Shift / middle button + drag: pan · wheel: closer, farther\n"
                               "Click a model or a light to select it; drag its handles (W move, E rotate, R scale) · "
-                              "F: frame the selection"));
+                              "F: frame the selection · H: all of the scene"));
 }
 
 Scene3DView::~Scene3DView()
@@ -206,6 +212,35 @@ void Scene3DView::sceneCameraFromView()
     else
         for (const auto &c : changes) m_engine->setParameter(m_scene, c.path, c.after);
     update();
+}
+
+void Scene3DView::frameAll()
+{
+    QVector3D low(1e9f, 1e9f, 1e9f), high(-1e9f, -1e9f, -1e9f);
+    bool any = false;
+    for (const Object &o : objects()) {
+        if (o.merge) continue;
+        const float r = std::max(o.reach, o.radius);
+        for (int a = 0; a < 3; ++a) {
+            low[a] = std::min(low[a], o.position[a] - r);
+            high[a] = std::max(high[a], o.position[a] + r);
+        }
+        any = true;
+    }
+    if (!any) {
+        frameSelection();
+        return;
+    }
+    const QVector3D middle = (low + high) / 2;
+    const float radius = std::max(0.2f, (high - low).length() / 2);
+    // The narrower way of the view decides
+    const float aspect = float(std::max(1, width())) / float(std::max(1, height()));
+    const float vertical = qDegreesToRadians(std::clamp(m_cam.fov, 1.0f, 170.0f)) / 2;
+    const float narrow = aspect < 1 ? std::atan(std::tan(vertical) * aspect) : vertical;
+    SceneSettings c = m_cam;
+    c.target = {{middle.x(), middle.y(), middle.z()}};
+    c.distance = radius / std::sin(narrow) * 1.05f;
+    setCamera(c);
 }
 
 void Scene3DView::frameSelection()
@@ -302,6 +337,7 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                     const QVector3D c = m.map(l->model->center());
                     o.position = c;
                     o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());
+                    o.reach = l->model->radius() * std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
                 }
             }
             out.push_back(o);
@@ -822,6 +858,7 @@ void Scene3DView::keyPressEvent(QKeyEvent *e)
     case Qt::Key_E: setMode(Mode::Rotate); break;
     case Qt::Key_R: setMode(Mode::Scale); break;
     case Qt::Key_F: frameSelection(); break;
+    case Qt::Key_H: frameAll(); break;
     default: QOpenGLWidget::keyPressEvent(e); return;
     }
     e->accept();

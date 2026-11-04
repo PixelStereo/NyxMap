@@ -1194,6 +1194,32 @@ void MediaBin::rebuild()
     refresh();
 }
 
+bool MediaBin::reveal(const QString &path)
+{
+    const auto find = [&]() -> QTreeWidgetItem * {
+        const QString wanted = QDir::cleanPath(path);
+        for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
+            if (const QString own = (*it)->data(0, PathRole).toString(); !own.isEmpty() && QDir::cleanPath(own) == wanted) return *it;
+        return nullptr;
+    };
+    QTreeWidgetItem *item = find();
+    if (!item) {
+        refresh();
+        item = find();
+    }
+    if (!item) return false;
+    if (item->isHidden()) {
+        if (m_search) m_search->clear();
+        for (QComboBox *filter : {m_usage, m_type, m_kind})
+            if (filter) filter->setCurrentIndex(0);
+        applyFilter();
+    }
+    for (QTreeWidgetItem *up = item->parent(); up; up = up->parent()) up->setExpanded(true);
+    m_tree->setCurrentItem(item);
+    m_tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    return true;
+}
+
 void MediaBin::applyFilter()
 {
     const QString f = m_search ? m_search->text().trimmed() : QString();

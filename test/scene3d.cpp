@@ -1095,6 +1095,34 @@ int runScene3dTests(Engine &engine)
         engine.removeLayer(engine.indexOfId(stage));
     }
 
+    // A solo on a group: all it holds, and nothing else
+    {
+        engine.newProject();
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {64, 64});
+        const auto solid = [&](const char *name, double r, double g, double b, double x) {
+            const int at = engine.addLayer(name);
+            const quint64 id = engine.layerId(at);
+            QString why;
+            check(engine.setLayerIsf(at, QString(TEST_DIR) + "/../isf/generators/SolidColor.fs", &why), "a solid colour");
+            for (const auto &[path, v] : std::initializer_list<std::pair<const char *, double>>{{"param/color/r", r}, {"param/color/g", g}, {"param/color/b", b}, {"param/color/a", 1}, {"scale/x", 30.0}, {"scale/y", 100.0}, {"position/x", x}})
+                engine.setParameter(id, path, v);
+            return id;
+        };
+        const QSize comp = engine.compositionSize();
+        const quint64 a = solid("In A", 1, 0, 0, comp.width() * 0.15), b = solid("In B", 0, 1, 0, comp.width() * 0.5), other = solid("Out", 0, 0, 1, comp.width() * 0.85);
+        const quint64 group = engine.layerId(engine.addGroup("Held"));
+        engine.setStructure(tree::intoGroup(engine.structure(), {a, b}, group));
+        engine.setParameter(group, "solo", true);
+        engine.renderFrame();
+        engine.renderFrame();
+        const QImage held = engine.grabOutput();
+        const auto at = [&](double u) { return QColor(held.pixel(int(u * held.width()), held.height() / 2)); };
+        check(at(0.15).red() > 200, "a soloed group shows its first layer");
+        check(at(0.5).green() > 200, "and its second");
+        check(at(0.85).blue() < 20, "and nothing else");
+        engine.newProject();
+    }
+
     // The look of a picture: its glow, colours and vignette; shadows soft as far as what stops the light; area lights; fog
     {
         engine.renderFrame();

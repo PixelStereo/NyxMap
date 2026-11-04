@@ -297,6 +297,31 @@ protected:
         QTableWidget::paintEvent(e);
         QPainter p(viewport());
         const QColor accent = theme::accent();
+        // Each row a band of its kind's colour; each group a fine line around all it holds
+        if (rows) {
+            const int bandX = columnViewportPosition(ColName), width = viewport()->width();
+            for (int r = 0; r < int(rows->size()); ++r) {
+                const LayerTable::Row &row = (*rows)[size_t(r)];
+                if (isRowHidden(r) || !row.color.isValid()) continue;
+                QColor band = row.color;
+                if (row.soloHidden) band.setAlpha(70);
+                const int indent = row.depth * 10;
+                p.fillRect(bandX + indent, rowViewportPosition(r) + 1, 3, rowHeight(r) - 2, band);
+            }
+            for (int r = 0; r < int(rows->size()); ++r) {
+                const LayerTable::Row &row = (*rows)[size_t(r)];
+                if (!row.group || isRowHidden(r)) continue;
+                int last = r;
+                for (int k = r + 1; k < int(rows->size()) && (*rows)[size_t(k)].depth > row.depth; ++k)
+                    if (!isRowHidden(k)) last = k;
+                QColor line = row.color;
+                line.setAlpha(170);
+                p.setPen(QPen(line, 1));
+                p.setBrush(Qt::NoBrush);
+                const int inset = 1 + row.depth * 3, top = rowViewportPosition(r);
+                p.drawRect(inset, top, width - 2 * inset - 1, rowViewportPosition(last) + rowHeight(last) - top - 1);
+            }
+        }
         // The viewports, a block of their own at the top
         if (rows) {
             int lastVp = -1;
@@ -600,9 +625,8 @@ void LayerTable::updateRow(int r, const Row &row)
     name->setFont(f);
     name->setForeground(row.error        ? QColor(255, 110, 95)
                         : row.soloHidden ? QColor(110, 110, 115) // left out by a solo
-                        : row.viewport   ? QColor(140, 200, 255)
-                        : row.group    ? QColor(255, 200, 140)
-                                       : QColor(230, 230, 233));
+                        : row.color.isValid() ? row.color
+                                              : QColor(230, 230, 233));
     // Effects: their number, the names on hover
     QTableWidgetItem *fx = text(ColEffects, row.effectCount ? QString::number(row.effectCount) : QStringLiteral("—"),
                                 row.effectCount ? (row.effectsOn ? QString() : QStringLiteral("FX off\n")) +

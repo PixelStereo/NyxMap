@@ -294,6 +294,7 @@ struct Layer {
     // Solo: while any layer is soloed, only the soloed ones are drawn (with their groups and members). A setup aid:
     // not saved, not undone, not in snapshots.
     bool solo = false;
+    bool soloMuted = false;  // and its sound: when what is soloed has a sound of its own (render thread)
     bool soloHidden = false; // left out by another layer's solo this frame (render thread)
     bool parentEnabled = true;    // the group containing the layer is visible (updated every frame)
     float opacity = 1.0f;
@@ -508,7 +509,7 @@ struct Layer {
 
     bool hasTransport() const { return video || audio; }
     double duration() const { return video ? video->duration() : audio ? audio->duration() : 0.0; }
-    float audioGain() const { return enabled && parentEnabled && !muted && !ended ? volume * transitionGain : 0.0f; }
+    float audioGain() const { return enabled && parentEnabled && !muted && !ended && !soloMuted ? volume * transitionGain : 0.0f; }
     bool repeats() const { return mode == PlayMode::Loop || mode == PlayMode::PingPong; }
     Timeline timeline() const
     {

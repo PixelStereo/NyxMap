@@ -40,9 +40,14 @@ protected:
     void store(const Animation &before, const Animation &after, const QString &text, const QString &mergeKey) override;
     void control(AnimAction action, double time) override;
     TrackRow *makeRow(int index) override;
+    void showEvent(QShowEvent *e) override;
 
 private:
     friend class TimelineTrackRow;
+    QByteArray targetsKey() const;
+    void rebuildTargets();
+    QByteArray m_targetsKey; // what its rows were last made from
+    bool m_targetsStale = false;
     quint64 m_id = 0, m_currentLayer = 0;
     QPushButton *m_addTrack;
 };

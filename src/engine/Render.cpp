@@ -271,6 +271,49 @@ std::vector<bool> Engine::soloLeftOut() const
     return out;
 }
 
+std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
+{
+    Lock lk(&m_mutex);
+    std::vector<LayerUse> uses;
+    for (const auto &l : m_layers) {
+        if (l->id == id) continue;
+        const auto add = [&](const QString &how, bool source = false) { uses.push_back({l->id, QStringLiteral("%1 of “%2”").arg(how, l->name), source}); };
+        if (l->type == SourceType::Layer && l->sourceLayer == id) add(QStringLiteral("source"), true);
+        if (l->matte.layer == id) add(QStringLiteral("matte"));
+        if (l->color.maskLayer == id) add(QStringLiteral("color mask"));
+        for (const auto &fx : l->effects)
+            if (fx->maskLayer == id) add(QStringLiteral("mask of an effect"));
+        bool shown = false;
+        forEachImageLayer(*l, [&](quint64 used) { shown = shown || used == id; });
+        if (shown) add(QStringLiteral("image in a shader"));
+        if (l->modelPicture == id) add(QStringLiteral("picture on the model"));
+        if (l->modelDisplace == id) add(QStringLiteral("displacement"));
+        if (l->sceneEnvironment == id) add(QStringLiteral("environment"));
+        if (l->lightLookAt == id) add(QStringLiteral("what is looked at by the light"));
+        for (const Animation &a : l->anims)
+            if (std::any_of(a.tracks.begin(), a.tracks.end(), [&](const AnimTrack &t) { return t.layer == id; })) add(QStringLiteral("animated by “%1”").arg(a.name));
+    }
+    const auto other = [&](const QString &what) { uses.push_back({0, what, false}); };
+    const std::function<bool(const Interaction &)> involves = [&](const Interaction &it) {
+        if (it.layer == id || it.sourceLayer == id || it.pixels.layer == id) return true;
+        for (const auto *list : {&it.onTrue, &it.onFalse})
+            for (const InteractionConsequence &c : *list)
+                if (c.layer == id) return true;
+        return std::any_of(it.xyInputs.begin(), it.xyInputs.end(), involves);
+    };
+    for (const Interaction &it : m_interactions)
+        if (involves(it)) other(QStringLiteral("interaction “%1”").arg(it.label()));
+    for (const Animation &a : m_animations)
+        if (std::any_of(a.tracks.begin(), a.tracks.end(), [&](const AnimTrack &t) { return t.layer == id; })) other(QStringLiteral("timeline “%1”").arg(a.name));
+    for (const Preset &p : m_presets)
+        if (std::any_of(p.values.begin(), p.values.end(), [&](const PresetValue &v) { return v.layer == id; })) other(QStringLiteral("preset “%1”").arg(p.name));
+    for (int i = 0; i < m_sequencer->count(); ++i) {
+        const Sequencer::Sequence sequence = m_sequencer->sequence(i);
+        if (sequence.clockLayer == id) other(QStringLiteral("clock of the sequence “%1”").arg(sequence.name));
+    }
+    return uses;
+}
+
 // Which layers are drawn this frame: shown (in a shown group), used as a source or as a mask by another,
 // previewed in the inspector or a preview view while switched on, viewports. The others are neither uploaded nor
 // rendered (their sound plays on). A layer switched off (or in a group switched off) is not computed for a preview:
@@ -343,7 +386,15 @@ void Engine::markNeeded()
     for (auto &l : m_layers) refer(*l);
     for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
     const std::vector<bool> leftOut = soloLeftOut();
-    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloHidden = leftOut[i];
+    // A solo plays all of what it holds, its sound too: the others' sound goes when it has one. A picture soloed under the
+    // music leaves the music on
+    bool soloHasSound = false;
+    for (size_t i = 0; i < m_layers.size(); ++i) {
+        m_layers[i]->soloHidden = leftOut[i];
+        soloHasSound = soloHasSound || (!leftOut[i] && m_layers[i]->audio && !m_layers[i]->isGroup && !m_layers[i]->isViewport);
+    }
+    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
+    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
     // A group comes before its members: its verdict is known when they are reached
     std::map<quint64, bool> groupNeeded;
     for (auto &lp : m_layers) {

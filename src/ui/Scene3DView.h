@@ -31,6 +31,7 @@ public:
     void setCamera(const SceneSettings &c);
     void viewFromSceneCamera();  // the view takes the scene's camera
     void sceneCameraFromView();  // the scene's camera takes the view's (undoable)
+    void frameAll();             // all the scene holds, seen whole, from where the view is turned (H)
     void frameSelection();       // turns around what is selected (the scene's middle when nothing is)
     QJsonObject viewState() const;
     void setViewState(const QJsonObject &o);
@@ -65,6 +66,7 @@ private:
         float areaWidth = 1, areaHeight = 1; // an area's
         QVector3D position, direction; // world; a light's direction (directional, spot)
         float radius = 0.1f;           // world: what a click picks
+        float reach = 0;               // world: how far it goes from its position, whichever way
         QVector3D rotation, axisScale{1, 1, 1};
         float scale = 1;
         std::vector<QVector3D> path;  // a light's, world, closed

@@ -1163,6 +1163,25 @@ void MainWindow::addViewport()
 // Layer list
 // ---------------------------------------------------------------------------
 
+// Each kind of layer its colour in the list
+static QColor layerColor(SourceType t)
+{
+    switch (t) {
+    case SourceType::Video: return QColor(110, 175, 255);
+    case SourceType::Image: return QColor(120, 215, 235);
+    case SourceType::Isf: return QColor(195, 150, 255);
+    case SourceType::Text: return QColor(240, 225, 140);
+    case SourceType::Audio: return QColor(125, 225, 130);
+    case SourceType::Layer: return QColor(190, 190, 200);
+    case SourceType::Input: return QColor(255, 130, 120);
+    case SourceType::Tox: return QColor(255, 130, 200);
+    case SourceType::Web: return QColor(150, 200, 170);
+    case SourceType::Model: return QColor(90, 215, 200);
+    case SourceType::Light: return QColor(255, 225, 90);
+    default: return QColor(230, 230, 233);
+    }
+}
+
 static QString layerTag(SourceType t)
 {
     switch (t) {
@@ -1220,6 +1239,7 @@ void MainWindow::refreshLayerList()
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
+            r.color = l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
             r.group = l->isGroup;
             r.collapsed = l->isGroup && l->collapsed;
             r.locked = l->locked;
@@ -1819,6 +1839,45 @@ void MainWindow::addEmptyLayer()
     selectLayer(i);
 }
 
+QString MainWindow::layersInUse(const QSet<int> &rows) const
+{
+    QSet<quint64> going;
+    for (int r : rows) going.insert(m_engine->layerId(r));
+    QStringList lines;
+    for (int r : rows) {
+        const quint64 id = m_engine->layerId(r);
+        QString name;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(r)) name = l->name;
+        }
+        for (const Engine::LayerUse &use : m_engine->layerUses(id))
+            if (!going.contains(use.layer)) lines << QStringLiteral("“%1”: %2").arg(name, use.what); // what goes with it does not count
+    }
+    if (lines.size() > 12) {
+        const int more = int(lines.size()) - 12;
+        lines = lines.mid(0, 12);
+        lines << QStringLiteral("and %1 more").arg(more);
+    }
+    return lines.join('\n');
+}
+
+QSet<int> MainWindow::sourceUsers(const QSet<int> &rows) const
+{
+    QSet<int> found;
+    QList<int> todo = rows.values();
+    while (!todo.isEmpty()) {
+        const quint64 id = m_engine->layerId(todo.takeLast());
+        for (const Engine::LayerUse &use : m_engine->layerUses(id)) {
+            const int user = m_engine->indexOfId(use.layer);
+            if (!use.asSource || user < 0 || rows.contains(user) || found.contains(user) || m_engine->isLocked(user)) continue;
+            found.insert(user);
+            todo << user;
+        }
+    }
+    return found;
+}
+
 void MainWindow::removeCurrentLayer()
 {
     const bool viewportSelection = m_tabs->currentIndex() == 1;
@@ -1846,6 +1905,18 @@ void MainWindow::removeCurrentLayer()
     }
     if (skipped) statusBar()->showMessage(QStringLiteral("%1 locked layer(s) not deleted.").arg(skipped), 4000);
     if (victims.isEmpty()) return;
+    if (const QString used = layersInUse(victims); !used.isEmpty() && !m_quiet) {
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("Delete"), QStringLiteral("What you are deleting is used elsewhere."), QMessageBox::NoButton, this);
+        box.setInformativeText(used);
+        QPushButton *remove = box.addButton(QStringLiteral("Delete"), QMessageBox::DestructiveRole);
+        const QSet<int> users = sourceUsers(victims);
+        QPushButton *withUsers = users.isEmpty() ? nullptr
+                                                 : box.addButton(QStringLiteral("Delete with the %1 Layer(s) Using It as a Source").arg(users.size()), QMessageBox::DestructiveRole);
+        box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+        box.exec();
+        if (box.clickedButton() == withUsers && withUsers) victims.unite(users);
+        else if (box.clickedButton() != remove) return;
+    }
     QList<int> order = victims.values();
     std::sort(order.begin(), order.end(), std::greater<int>()); // members (below their group) first
     const int first = order.last();
@@ -2025,6 +2096,16 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
         menu.addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
         menu.addAction(locked ? QStringLiteral("Unlock") : QStringLiteral("Lock"), this, &MainWindow::toggleLockCurrent);
         menu.addAction(QStringLiteral("Delete"), this, &MainWindow::removeCurrentLayer)->setEnabled(!locked);
+        QString media;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(row); l && !l->isGroup && !l->isViewport) media = l->sourcePath;
+        }
+        QAction *inBin = menu.addAction(QStringLiteral("Show in Media Bin"), this, [this, media] {
+            m_leftTabs->setCurrentWidget(m_bin);
+            if (!m_bin->reveal(media)) statusBar()->showMessage(QStringLiteral("Not in the Media Bin: %1").arg(media), 4000);
+        });
+        inBin->setEnabled(!media.isEmpty());
         menu.addSeparator();
         // Its picture as the source of another layer: the layers that can take it (not one it already depends on)
         QMenu *into = menu.addMenu(QStringLiteral("Load into Layer"));

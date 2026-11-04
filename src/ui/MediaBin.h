@@ -26,6 +26,7 @@ public:
 
     void refresh();          // re-reads usage from the engine (called after every change)
     void importFiles(const QStringList &paths);
+    bool reveal(const QString &path); // shows and selects it, its filters put aside if they hide it; false: not in the bin
     QString selectedPath() const;
 
 signals:

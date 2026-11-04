@@ -70,7 +70,8 @@
   it is. Glow and fog are in the composition's 3D Quality too; without a graphics card
   they are off, and so are soft shadows' searches.
   A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
-  its own camera (drag: turn; Shift or middle button: pan; wheel: distance), the
+  its own camera (drag: turn; Shift or middle button: pan; wheel: distance; H or Home:
+  all the scene holds; F: around the selection), the
   ground grid, the scene's lights and camera drawn; its models in flat colours with
   their edges, the lightest ("Simple"), or their colours and pictures with no light
   on them ("Unlit"), chosen by its button (the scene's own picture is in the output,

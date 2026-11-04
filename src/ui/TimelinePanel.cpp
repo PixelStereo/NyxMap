@@ -382,11 +382,47 @@ TimelineEditor::TimelineEditor(Engine *engine, QUndoStack *undo, QWidget *parent
     auto refreshTargets = [this] {
         if (QApplication::mouseButtons() & Qt::LeftButton) return;
         forgetParams(); // a layer's numbers (another source, another effect)
-        rebuildRows();  // the names of the layers
-        applyView();
+        if (isVisible()) rebuildTargets();
+        else m_targetsStale = true; // when it is next seen
     };
     connect(m_engine, &Engine::layersChanged, this, refreshTargets);
     connect(m_engine, &Engine::interactionsChanged, this, refreshTargets);
+}
+
+// What its rows show of the rest of the project: the names and the numbers of the layers it moves, the interactions. All its
+// rows made again cost a lot in a long timeline: only when one of these has changed
+QByteArray TimelineEditor::targetsKey() const
+{
+    QByteArray key;
+    QSet<quint64> seen;
+    Engine::Lock lk(&m_engine->mutex());
+    for (const auto &track : m_edit.tracks) {
+        if (seen.contains(track.layer)) continue;
+        seen.insert(track.layer);
+        key += QByteArray::number(track.layer) + ':';
+        if (const Layer *l = m_engine->layer(m_engine->indexOfId(track.layer)))
+            key += l->name.toUtf8() + ':' + QByteArray::number(int(l->type)) + ':' + QByteArray::number(qulonglong(l->effects.size())) + ':' +
+                   l->sourcePath.toUtf8();
+        key += '\n';
+    }
+    for (const Interaction &it : m_engine->interactions()) key += QByteArray::number(it.id) + it.name.toUtf8() + '\n';
+    return key;
+}
+
+void TimelineEditor::rebuildTargets()
+{
+    m_targetsStale = false;
+    const QByteArray key = targetsKey();
+    if (key == m_targetsKey) return;
+    m_targetsKey = key;
+    rebuildRows();
+    applyView();
+}
+
+void TimelineEditor::showEvent(QShowEvent *e)
+{
+    AnimEditor::showEvent(e);
+    if (m_targetsStale) rebuildTargets();
 }
 
 void TimelineEditor::setTimeline(quint64 id)

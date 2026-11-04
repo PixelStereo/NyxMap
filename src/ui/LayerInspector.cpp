@@ -864,8 +864,8 @@ void LayerInspector::rebuild()
         auto *both = new QWidget;
         auto *bv = new QVBoxLayout(both);
         bv->setContentsMargins(0, 0, 0, 0);
-        bv->addWidget(buildSceneEnvironment());
-        bv->addWidget(build3d({QStringLiteral("camera/"), QStringLiteral("scene/")}), 1);
+        bv->addWidget(build3d({QStringLiteral("scene/environment/")}, {}, [this](QFormLayout *form) { addSceneEnvironment(form); })); // its choice and its settings
+        bv->addWidget(build3d({QStringLiteral("camera/"), QStringLiteral("scene/")}, {QStringLiteral("scene/environment/")}), 1);
         const int t = tabs->addTab(page(both), QStringLiteral("Scene"));
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
@@ -4228,17 +4228,14 @@ QWidget *LayerInspector::buildModelLayers()
 
 // A scene's environment: a layer's picture (an HDRI loaded in an image layer, a video…), equirectangular, that surrounds
 // the models and lights them (diffuse and reflections); Environment › Intensity, Rotation, Shown Behind, Blur
-QWidget *LayerInspector::buildSceneEnvironment()
+void LayerInspector::addSceneEnvironment(QFormLayout *form)
 {
-    auto *box = new QGroupBox(QStringLiteral("Environment (HDRI)"));
-    auto *form = new QFormLayout(box);
-    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     quint64 env = 0;
     int stage = -1;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
-        if (!l) return box;
+        if (!l) return;
         env = l->sceneEnvironment;
         stage = l->sceneEnvironmentStage;
     }
@@ -4248,19 +4245,19 @@ QWidget *LayerInspector::buildSceneEnvironment()
                                   "sharp as they are smooth. Shown behind them if asked."),
                    QStringLiteral("Scene Environment"),
                    [this](quint64 id, int st, QString *err) { return m_engine->setSceneEnvironment(m_layer, id, err, st); }, true);
-    return box;
 }
 
 // The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors
 // as pickers, switches, choices; each one undoable, animatable (right-click) and refreshed while it moves
-QWidget *LayerInspector::build3d(const QStringList &prefixes)
+QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList &except, const std::function<void(QFormLayout *)> &first)
 {
     auto *w = new QWidget;
     auto *v = new QVBoxLayout(w);
     v->setContentsMargins(0, 6, 0, 0);
     std::vector<ParamInfo> params;
     for (const ParamInfo &p : m_engine->parameters(m_layerId))
-        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &x) { return p.path.startsWith(x); })) params.push_back(p);
+        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &x) { return p.path.startsWith(x); }) &&
+            std::none_of(except.begin(), except.end(), [&](const QString &x) { return p.path.startsWith(x); })) params.push_back(p);
     QString section;
     QFormLayout *form = nullptr;
     QSet<QString> colorsDone;
@@ -4272,6 +4269,7 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes)
             form = new QFormLayout(box);
             form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
             v->addWidget(box);
+            if (first) first(form);
         }
         if (p.colorComponent >= 0) { // its members together: one picker
             const QString base = p.path.section('/', 0, -2);

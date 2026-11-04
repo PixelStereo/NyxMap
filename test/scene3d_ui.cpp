@@ -69,6 +69,53 @@ int runScene3dUiTests(Engine &engine)
         emit list->currentRowChanged(row);
         pump();
     };
+    // What another layer uses is not deleted without a warning; a source is found in the Media Bin
+    {
+        const int source = engine.addLayer("Used as a source");
+        const quint64 sourceId = engine.layerId(source);
+        const int user = engine.addLayer("Its user");
+        const quint64 userId = engine.layerId(user);
+        check(engine.setLayerSourceLayer(engine.indexOfId(userId), sourceId, LayerTap::PostFx), "a layer as another's source");
+        const QSet<int> alone{engine.indexOfId(sourceId)}, both{engine.indexOfId(sourceId), engine.indexOfId(userId)};
+        const QString used = window.layersInUse(alone);
+        check(used.contains("Its user") && used.contains("source"), "deleting it says who uses it");
+        check(window.layersInUse(both).isEmpty(), "not when they go together");
+        check(window.layersInUse({engine.indexOfId(userId)}).isEmpty(), "nothing uses its user");
+        // Its users' users come with the button; a mask is said, but is not deleted with it
+        const int second = engine.addLayer("Its user's user");
+        const quint64 secondId = engine.layerId(second);
+        check(engine.setLayerSourceLayer(engine.indexOfId(secondId), userId, LayerTap::PostFx), "a layer made from that one");
+        const int masked = engine.addLayer("Masked by it");
+        const quint64 maskedId = engine.layerId(masked);
+        check(engine.setColorMask(engine.indexOfId(maskedId), sourceId, false), "it masks another layer");
+        const QSet<int> only{engine.indexOfId(sourceId)}, users = window.sourceUsers(only);
+        check(users.size() == 2 && users.contains(engine.indexOfId(userId)) && users.contains(engine.indexOfId(secondId)), "the layers made from it, and from those");
+        check(window.layersInUse(only).contains("color mask"), "a mask is said");
+        Interaction reader;
+        reader.source = InteractionSource::Internal;
+        reader.layer = sourceId;
+        reader.param = "opacity";
+        reader.name = "Reads it";
+        engine.addInteraction(reader);
+        Animation moved;
+        moved.name = "Moves it";
+        AnimTrack track;
+        track.layer = sourceId;
+        track.param = "opacity";
+        moved.tracks.push_back(track);
+        const int timeline = engine.addAnimation(moved);
+        const QString everywhere = window.layersInUse(only);
+        check(everywhere.contains("Reads it") && everywhere.contains("Moves it"), "and an interaction and a timeline too");
+        engine.removeAnimation(timeline);
+        engine.setInteractions({});
+        engine.removeLayer(engine.indexOfId(maskedId));
+        engine.removeLayer(engine.indexOfId(secondId));
+        engine.removeLayer(engine.indexOfId(userId));
+        engine.removeLayer(engine.indexOfId(sourceId));
+        pump();
+        auto *bin = window.findChild<MediaBin *>();
+        check(bin && !bin->reveal("/nowhere/such.mov"), "what is not in the bin is said so");
+    }
     auto roleOf = [&](quint64 id) {
         const LayerTree t = engine.structure();
         const int i = tree::indexOf(t, id);
@@ -156,6 +203,11 @@ int runScene3dUiTests(Engine &engine)
     }
     check(inspector && inspector->findChild<QComboBox *>("sceneEnvironmentLayer") && inspector->findChild<QComboBox *>("sceneEnvironmentStage"),
           "its Scene tab chooses its environment (an HDRI's layer) and its stage");
+    if (inspector) {
+        auto *pick = inspector->findChild<QComboBox *>("sceneEnvironmentLayer");
+        auto *strength = inspector->findChild<SliderField *>("param3d:scene/environment/intensity");
+        check(pick && strength && pick->parentWidget() == strength->parentWidget(), "its choice and its settings in one box");
+    }
     for (const char *path : {"param3d:scene/glow", "param3d:scene/glow_threshold", "param3d:scene/vignette", "param3d:scene/saturation", "param3d:scene/fog/density"})
         check(inspector && inspector->findChild<SliderField *>(path), "its look and fog are bars of its Scene tab");
     auto *yaw = inspector ? inspector->findChild<SliderField *>("param3d:camera/yaw") : nullptr;
@@ -322,6 +374,20 @@ int runScene3dUiTests(Engine &engine)
             check(std::abs(engine.parameterValue(scene, "camera/yaw").toDouble() - 30) < 1e-6 &&
                       std::abs(engine.parameterValue(scene, "camera/pitch").toDouble() - 20) < 1e-6,
                   "Camera = View gives the scene the view's camera");
+            // H: all the scene holds, seen whole
+            {
+                engine.setParameter(layer, "model/position/x", 10.0);
+                pump();
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_H, Qt::NoModifier);
+                QApplication::sendEvent(view, &press);
+                pump();
+                const QRectF seen(0, 0, view->width(), view->height());
+                check(seen.contains(view->project({10, 0, 0})) && seen.contains(view->project({0, 0, 0})), "H: what is far away is seen");
+                engine.setParameter(layer, "model/position/x", 0.0);
+                view->setCamera(cam);
+                check(view->findChild<QToolButton *>("scene3dHome") != nullptr, "and a button for it");
+                pump();
+            }
             // The three kinds of light are drawn differently, a spot with its cone
             {
                 const int at = engine.addLayer("Drawn light", engine.indexOfId(scene) + 1);
