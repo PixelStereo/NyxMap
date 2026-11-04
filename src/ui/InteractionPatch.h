@@ -33,7 +33,7 @@ public:
         setFocusPolicy(Qt::ClickFocus);
         setMouseTracking(true);
         setToolTip(QStringLiteral("Click the middle: its settings below · double-click: on / off · Del: remove\n"
-                                  "Drag from a source to a target: a new cable · onto nothing: choose what it drives"));
+                                  "Drag between a source and a target, in either direction: a new cable · onto nothing: choose what it drives"));
     }
     void setLinks(std::vector<Link> links, quint64 selected)
     {
@@ -116,7 +116,7 @@ protected:
         p.drawText(QRectF(columnX(0), 2, columnWidth(), kTop - 2), Qt::AlignCenter, QStringLiteral("Listens to"));
         p.drawText(QRectF(columnX(1), 2, columnWidth(), kTop - 2), Qt::AlignCenter, QStringLiteral("Shape"));
         p.drawText(QRectF(columnX(2), 2, columnWidth(), kTop - 2), Qt::AlignCenter, QStringLiteral("Drives"));
-        if (m_from) cable(sourceRect(linkOf(m_from).source).center(), m_mouse, QColor(255, 255, 255), 2);
+        if (m_from) cable(m_reverse ? targetRect(linkOf(m_from).target).center() : sourceRect(linkOf(m_from).source).center(), m_mouse, QColor(255, 255, 255), 2);
     }
     void mousePressEvent(QMouseEvent *e) override
     {
@@ -133,7 +133,17 @@ protected:
         for (const Link &l : m_links)
             if (sourceRect(l.source).contains(q)) {
                 m_from = l.id; // the first of those from this source: all it is, is its source
+                m_reverse = false;
                 m_mouse = q;
+                update();
+                return;
+            }
+        for (const Link &l : m_links)
+            if (targetRect(l.target).contains(q)) {
+                m_from = l.id;
+                m_reverse = true;
+                m_mouse = q;
+                update();
                 return;
             }
     }
@@ -150,6 +160,14 @@ protected:
         m_from = 0;
         update();
         const QPointF q = e->position();
+        if (m_reverse) {
+            for (const Link &l : m_links)
+                if (sourceRect(l.source).contains(q)) {
+                    if (onConnect) onConnect(l.id, from);
+                    return;
+                }
+            return;
+        }
         if (sourceRect(linkOf(from).source).contains(q)) return; // not moved away
         for (const Link &l : m_links)
             if (targetRect(l.target).contains(q)) {
@@ -168,6 +186,12 @@ protected:
     }
     void keyPressEvent(QKeyEvent *e) override
     {
+        if (e->key() == Qt::Key_Escape && m_from) {
+            m_from = 0;
+            update();
+            e->accept();
+            return;
+        }
         if ((e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) && m_selected && onRemove) {
             onRemove(m_selected);
             return;
@@ -233,4 +257,5 @@ private:
     std::map<quint64, double> m_levels;
     quint64 m_selected = 0, m_from = 0;
     QPointF m_mouse;
+    bool m_reverse = false;
 };

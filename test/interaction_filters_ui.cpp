@@ -117,6 +117,22 @@ int main(int argc, char **argv)
     patch.setLevels({{1, 0.75}});
     settle();
     check(patch.paints > initialPaints, "changed telemetry repaints patch");
+    patch.setLinks({{1, "Source A", "direct", "Target A"}, {2, "Source B", "direct", "Target B"}}, 0);
+    quint64 cableFrom = 0, cableTo = 0;
+    patch.onConnect = [&](quint64 from, quint64 to) { cableFrom = from; cableTo = to; };
+    auto dragCable = [&](QPointF from, QPointF to) {
+        QMouseEvent press(QEvent::MouseButtonPress, from, patch.mapToGlobal(from.toPoint()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&patch, &press);
+        QMouseEvent move(QEvent::MouseMove, to, patch.mapToGlobal(to.toPoint()), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&patch, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, patch.mapToGlobal(to.toPoint()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&patch, &release);
+    };
+    dragCable({30, 35}, {400, 69});
+    check(cableFrom == 1 && cableTo == 2, "mouse drag connects source to target");
+    cableFrom = cableTo = 0;
+    dragCable({400, 69}, {30, 35});
+    check(cableFrom == 1 && cableTo == 2, "reverse mouse drag connects target to source");
     patch.hide();
 
     // Any value: a filter's setting (a number field, no slider and no bounds)
