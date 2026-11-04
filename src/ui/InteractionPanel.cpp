@@ -36,7 +36,7 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
-#include <QTabBar>
+#include <QButtonGroup>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -159,20 +159,23 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     v->setContentsMargins(4, 4, 4, 4);
     v->setSpacing(6);
 
-    m_kinds = new QTabBar;
-    m_kinds->setDrawBase(false);
-    m_kinds->setExpanding(false);
-    m_kinds->setStyleSheet(theme::tabStyle()); // as the inspector's sub-tabs
-    connect(theme::notifier(), &theme::Notifier::changed, m_kinds, [this] { m_kinds->setStyleSheet(theme::tabStyle()); });
-    for (InteractionSource k : kKinds) m_kinds->addTab(interactionSourceName(k));
-    m_kinds->addTab(QStringLiteral("All"));
-    m_kinds->setTabToolTip(3, QStringLiteral("A value of the show driven by another one, with no protocol in between"));
-    v->addWidget(m_kinds);
+    m_kinds = new QButtonGroup(this);
+    auto *filters = new QHBoxLayout;
+    for (int i = 0; i <= kInteractionSourceCount; ++i) {
+        auto *button = new QToolButton;
+        button->setText(i == kInteractionSourceCount ? QStringLiteral("All") : interactionSourceName(kKinds[i]));
+        button->setCheckable(true);
+        m_kinds->addButton(button, i);
+        filters->addWidget(button);
+    }
+    m_kinds->button(kInteractionSourceCount)->setChecked(true);
+    filters->addStretch();
+    v->addLayout(filters);
 
     auto *bar = new QHBoxLayout;
     auto *addButton = new QPushButton(QStringLiteral("+"));
     addButton->setFixedWidth(32);
-    addButton->setToolTip(QStringLiteral("A new interaction of this kind"));
+    addButton->setToolTip(QStringLiteral("A new interaction; choose its category with Source"));
     m_remove = new QPushButton(QStringLiteral("−"));
     m_remove->setFixedWidth(32);
     m_remove->setToolTip(QStringLiteral("Remove the selected interactions"));
@@ -248,7 +251,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     split->setSizes({180, 540}); // the settings get the room
     v->addWidget(split, 1);
 
-    connect(m_kinds, &QTabBar::currentChanged, this, [this] {
+    connect(m_kinds, &QButtonGroup::idClicked, this, [this] {
         const bool audio = shownKind() == InteractionSource::Audio || shownKind() == InteractionSource::Pixels ||
                            shownKind() == InteractionSource::Hands;
         if (audio)
@@ -257,14 +260,9 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         rebuildList();
     });
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildList(); });
-    connect(addButton, &QPushButton::clicked, this, [this, addButton] {
-        if (const std::optional<InteractionSource> k = shownKind()) {
-            add(*k);
-            return;
-        }
-        QMenu menu;
-        for (InteractionSource k : kKinds) menu.addAction(interactionSourceName(k), this, [this, k] { add(k); });
-        menu.exec(addButton->mapToGlobal(QPoint(0, addButton->height())));
+    connect(addButton, &QPushButton::clicked, this, [this] {
+        m_kinds->button(kInteractionSourceCount)->click();
+        add(InteractionSource::Keyboard);
     });
     connect(m_remove, &QPushButton::clicked, this, &InteractionPanel::removeSelected);
     connect(m_learn, &QToolButton::toggled, this, [this](bool on) {
@@ -351,7 +349,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
 
 std::optional<InteractionSource> InteractionPanel::shownKind() const
 {
-    const int i = m_kinds->currentIndex();
+    const int i = m_kinds->checkedId();
     if (i >= 0 && i < kInteractionSourceCount) return kKinds[i];
     return std::nullopt;
 }
@@ -509,7 +507,7 @@ void InteractionPanel::add(InteractionSource kind)
     it.id = id;
     list.push_back(it);
     commitList(list, QStringLiteral("Add Interaction"));
-    if (shownKind() && *shownKind() != kind) m_kinds->setCurrentIndex(int(kind));
+    if (shownKind() && *shownKind() != kind) m_kinds->button(int(kind))->click();
     rebuildList();
     for (int i = 0; i < m_list->topLevelItemCount(); ++i)
         if (m_list->topLevelItem(i)->data(0, Qt::UserRole).toULongLong() == id) {
@@ -625,7 +623,7 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
     }
     if (sel) {
         commit(it, QStringLiteral("Learn Interaction Source"));
-        if (shownKind() && *shownKind() != it.source) m_kinds->setCurrentIndex(int(it.source));
+        if (shownKind() && *shownKind() != it.source) m_kinds->button(int(it.source))->click();
     } else {
         std::vector<Interaction> list = m_engine->interactions();
         quint64 id = 1;
@@ -633,7 +631,7 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
         it.id = id;
         list.push_back(it);
         commitList(list, QStringLiteral("Learn Interaction"));
-        if (shownKind() && *shownKind() != it.source) m_kinds->setCurrentIndex(int(it.source));
+        if (shownKind() && *shownKind() != it.source) m_kinds->button(int(it.source))->click();
         select(id);
     }
     rebuildList();
@@ -664,7 +662,7 @@ void InteractionPanel::learnFor(quint64 layer, const QString &path, InteractionS
     list.push_back(it);
     commitList(list, QStringLiteral("New Interaction"));
     emit showRequested();
-    m_kinds->setCurrentIndex(int(kind));
+    m_kinds->button(int(kind))->click();
     rebuildList();
     select(id);
     rebuildSettings();
@@ -893,19 +891,29 @@ void InteractionPanel::rebuildSettings()
             m_xyAxis = axis;
             rebuildSettings();
         });
-        auto *kind = new QComboBox;
-        kind->setObjectName(QStringLiteral("xyInteractionSource"));
-        for (int k = 0; k < kInteractionSourceCount; ++k) kind->addItem(interactionSourceName(InteractionSource(k)));
-        kind->setCurrentIndex(int(it.source));
-        form->addRow(QStringLiteral("Input type"), kind);
-        attachPreset({kind}, {QStringLiteral("source/kind")});
-        connect(kind, qOverload<int>(&QComboBox::activated), this, [this, edit](int k) {
-            edit(QStringLiteral("Change XY Input Type"), [k](Interaction &x) { x.source = InteractionSource(k); });
-            rebuildSettings();
-            rebuildList();
-        });
         form->addRow(note(QStringLiteral("Each axis has its own input and mapping. For one OSC XY message, use the same address with arguments 0 and 1.")));
     }
+    auto *sourceButton = new QToolButton;
+    sourceButton->setObjectName(QStringLiteral("interactionSource"));
+    sourceButton->setText(interactionSourceName(it.source));
+    sourceButton->setPopupMode(QToolButton::InstantPopup);
+    auto *sourceMenu = new QMenu(sourceButton);
+    sourceButton->setMenu(sourceMenu);
+    for (InteractionSource kind : kKinds) {
+        auto *action = sourceMenu->addAction(interactionSourceName(kind));
+        action->setCheckable(true);
+        action->setChecked(kind == it.source);
+        connect(action, &QAction::triggered, this, [this, edit, kind, id = root.id] {
+            m_learn->setChecked(false);
+            // Reveal all before committing so changing category cannot discard selection.
+            m_kinds->button(kInteractionSourceCount)->click();
+            edit(QStringLiteral("Change Interaction Source"), [kind](Interaction &x) { x.source = kind; });
+            select(id);
+            rebuildSettings();
+        });
+    }
+    form->addRow(QStringLiteral("Source"), sourceButton);
+    attachPreset({sourceButton}, {QStringLiteral("source/kind")});
     // The source
     // What the source gives and the target takes, as they usually go: a Remap added from + starts with them, the
     // In / Out meters show them

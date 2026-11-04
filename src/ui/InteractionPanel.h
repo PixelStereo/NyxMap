@@ -15,7 +15,7 @@
 
 class Engine;
 class QUndoStack;
-class QTabBar;
+class QButtonGroup;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QLineEdit;
@@ -81,7 +81,7 @@ private:
 
     Engine *m_engine;
     QUndoStack *m_undo;
-    QTabBar *m_kinds;
+    QButtonGroup *m_kinds;
     QTreeWidget *m_list;
     QLineEdit *m_search;
     QToolButton *m_learn;
