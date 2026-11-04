@@ -3,6 +3,7 @@
 #include "Engine.h"
 #include "AnimEditor.h"
 #include "InteractionPanel.h"
+#include "InteractionPatch.h"
 #include "PresetEditor.h"
 #include "Widgets.h"
 #include <QApplication>
@@ -93,6 +94,30 @@ int main(int argc, char **argv)
     settle();
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
+
+    // A stationary patch must not repaint at every telemetry poll.
+    struct CountedPatch : InteractionPatch {
+        int paints = 0;
+        void paintEvent(QPaintEvent *event) override {
+            ++paints;
+            InteractionPatch::paintEvent(event);
+        }
+    } patch;
+    patch.resize(500, 160);
+    patch.show();
+    patch.setLevels({{1, 0.25}});
+    settle();
+    patch.repaint();
+    const int initialPaints = patch.paints;
+    for (int i = 0; i < 20; ++i) {
+        patch.setLevels({{1, 0.25}});
+        settle();
+    }
+    check(patch.paints == initialPaints, "unchanged telemetry does not repaint patch");
+    patch.setLevels({{1, 0.75}});
+    settle();
+    check(patch.paints > initialPaints, "changed telemetry repaints patch");
+    patch.hide();
 
     // Any value: a filter's setting (a number field, no slider and no bounds)
     if (auto *clampMax = panel.findChild<QDoubleSpinBox *>("filter1b")) clampMax->setValue(250);
