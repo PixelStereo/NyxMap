@@ -1,0 +1,187 @@
+#pragma once
+#include "Engine.h"
+#include "InteractionGraphView.h"
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QPushButton>
+#include <QSplitter>
+#include <QTimer>
+#include <QToolButton>
+#include <QUndoStack>
+#include <QVBoxLayout>
+
+class SetInteractionGraph : public QUndoCommand {
+public:
+    SetInteractionGraph(Engine *engine, InteractionGraph after, const QString &text)
+        : QUndoCommand(text), m_engine(engine), m_before(engine->interactionGraph()), m_after(std::move(after)) {}
+    void undo() override { m_engine->setInteractionGraph(m_before); }
+    void redo() override { m_engine->setInteractionGraph(m_after); }
+private:
+    Engine *m_engine;
+    InteractionGraph m_before, m_after;
+};
+
+class InteractionGraphWorkspace : public QWidget {
+public:
+    InteractionGraphWorkspace(Engine *engine, QUndoStack *undo, QWidget *parent = nullptr)
+        : QWidget(parent), m_engine(engine), m_undo(undo)
+    {
+        setObjectName(QStringLiteral("interactionGraphWorkspace"));
+        auto *layout = new QVBoxLayout(this);
+        auto *add = new QToolButton;
+        add->setText(QStringLiteral("+ Add block"));
+        add->setPopupMode(QToolButton::InstantPopup);
+        auto *menu = new QMenu(add); add->setMenu(menu);
+        using Kind = InteractionGraph::Kind;
+        for (auto kind : {Kind::Source, Kind::Filter, Kind::Destination, Kind::Add, Kind::Multiply, Kind::Minimum, Kind::Maximum, Kind::Mix, Kind::Select}) {
+            const QString label = QStringList{"Source", "Filter", "Destination", "Add", "Maximum", "Multiply", "Minimum", "Mix", "Select"}.value(int(kind));
+            menu->addAction(label, this, [this, kind] {
+                auto graph = m_engine->interactionGraph();
+                quint64 id = 1;
+                for (const auto &node : graph.nodes) id = std::max(id, node.id + 1);
+                Interaction settings;
+                if (kind == Kind::Filter) settings.filters = {InteractionStage::made(InteractionFilter::Math)};
+                graph.nodes.push_back({id, kind, settings});
+                m_selected = id;
+                commit(std::move(graph), QStringLiteral("Add Graph Block"));
+            });
+        }
+        layout->addWidget(add, 0, Qt::AlignLeft);
+        m_error = new QLabel;
+        m_error->setWordWrap(true); layout->addWidget(m_error);
+        auto *split = new QSplitter;
+        m_canvas = new InteractionGraphView;
+        split->addWidget(m_canvas);
+        m_inspector = new QWidget;
+        m_inspectorLayout = new QVBoxLayout(m_inspector);
+        split->addWidget(m_inspector); split->setStretchFactor(0, 3);
+        layout->addWidget(split);
+        m_canvas->selected = [this](quint64 id) { m_selected = id; rebuildInspector(); };
+        m_canvas->connected = [this](quint64 a, quint64 b) {
+            auto graph = m_engine->interactionGraph(); QString error;
+            if (!graph.connect(a, b, &error)) { m_error->setText(error); return; }
+            commit(std::move(graph), QStringLiteral("Connect Graph Blocks"));
+        };
+        m_canvas->removed = [this](quint64 id) {
+            auto graph = m_engine->interactionGraph();
+            graph.nodes.erase(std::remove_if(graph.nodes.begin(), graph.nodes.end(), [id](const auto &n) { return n.id == id; }), graph.nodes.end());
+            graph.edges.erase(std::remove_if(graph.edges.begin(), graph.edges.end(), [id](const auto &e) { return e.from == id || e.to == id; }), graph.edges.end());
+            commit(std::move(graph), QStringLiteral("Remove Graph Block"));
+        };
+        m_canvas->disconnected = [this](quint64 a, quint64 b) {
+            auto graph = m_engine->interactionGraph();
+            graph.edges.erase(std::remove_if(graph.edges.begin(), graph.edges.end(), [=](const auto &e) { return e.from == a && e.to == b; }), graph.edges.end());
+            commit(std::move(graph), QStringLiteral("Disconnect Graph Blocks"));
+        };
+        connect(engine, &Engine::interactionsChanged, this, [this] {
+            if (m_refreshPending) return;
+            m_refreshPending = true;
+            QTimer::singleShot(0, this, [this] { m_refreshPending = false; refresh(); });
+        });
+        refresh();
+    }
+private:
+    void commit(InteractionGraph graph, const QString &text) {
+        QString error;
+        if (!graph.compile(nullptr, &error)) { m_error->setText(error); return; }
+        m_error->clear();
+        m_undo->push(new SetInteractionGraph(m_engine, std::move(graph), text));
+    }
+    void edit(const std::function<void(InteractionGraph::Node &)> &fn) {
+        auto graph = m_engine->interactionGraph();
+        for (auto &node : graph.nodes) if (node.id == m_selected) { fn(node); break; }
+        commit(std::move(graph), QStringLiteral("Edit Graph Block"));
+    }
+    void refresh() { m_canvas->setGraph(m_engine->interactionGraph()); rebuildInspector(); }
+    void rebuildInspector() {
+        while (auto *item = m_inspectorLayout->takeAt(0)) { if (item->widget()) { item->widget()->hide(); item->widget()->deleteLater(); } delete item; }
+        auto graph = m_engine->interactionGraph();
+        auto at = std::find_if(graph.nodes.begin(), graph.nodes.end(), [this](const auto &n) { return n.id == m_selected; });
+        if (at == graph.nodes.end()) { m_inspectorLayout->addWidget(new QLabel(QStringLiteral("Select a block to edit its settings."))); return; }
+        const auto node = *at;
+        auto *box = new QWidget; auto *form = new QFormLayout(box);
+        m_inspectorLayout->addWidget(box);
+        auto text = [&](const QString &label, QString value, std::function<void(InteractionGraph::Node &, QString)> set) {
+            auto *field = new QLineEdit(value); form->addRow(label, field);
+            connect(field, &QLineEdit::editingFinished, this, [this, field, set] { edit([&](auto &n) { set(n, field->text()); }); });
+        };
+        auto number = [&](const QString &label, double value, std::function<void(InteractionGraph::Node &, double)> set) {
+            auto *field = new QDoubleSpinBox; field->setRange(-1e9, 1e9); field->setDecimals(5); field->setValue(value); form->addRow(label, field);
+            connect(field, &QDoubleSpinBox::editingFinished, this, [this, field, set] { edit([&](auto &n) { set(n, field->value()); }); });
+        };
+        auto parameterPicker = [&](bool input) {
+            auto *picker = new QToolButton;
+            picker->setPopupMode(QToolButton::InstantPopup);
+            picker->setText(input ? node.settings.sourceParam : node.settings.param);
+            if (picker->text().isEmpty()) picker->setText(QStringLiteral("Choose a parameter…"));
+            auto *menu = new QMenu(picker); picker->setMenu(menu);
+            for (int index = -1; index < m_engine->layerCount(); ++index) {
+                quint64 id = 0;
+                QString title = QStringLiteral("Composition");
+                if (index >= 0) {
+                    Engine::Lock lock(&m_engine->mutex());
+                    auto *layer = m_engine->layer(index);
+                    if (!layer) continue;
+                    id = layer->id; title = layer->name;
+                }
+                auto *owner = menu->addMenu(title);
+                for (const auto &parameter : m_engine->parameters(id)) {
+                    if (!parameter.isNumber() || !(parameter.access & (input ? ParamInfo::Read : ParamInfo::Write))) continue;
+                    owner->addAction(parameter.label, this, [this, id, path = parameter.path, input] {
+                        edit([&](auto &n) {
+                            if (input) { n.settings.sourceLayer = id; n.settings.sourceParam = path; }
+                            else { n.settings.layer = id; n.settings.param = path; }
+                        });
+                    });
+                }
+            }
+            form->addRow(input ? QStringLiteral("Value to follow") : QStringLiteral("Destination"), picker);
+        };
+        text("Name", node.settings.name, [](auto &n, QString value) { n.settings.name = value; });
+        using Kind = InteractionGraph::Kind;
+        if (node.kind == Kind::Source) {
+            auto *source = new QComboBox;
+            for (int k = 0; k < kInteractionSourceCount; ++k) source->addItem(interactionSourceName(InteractionSource(k)));
+            source->setCurrentIndex(int(node.settings.source)); form->addRow("Source", source);
+            connect(source, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.source = InteractionSource(k); }); });
+            if (node.settings.source == InteractionSource::Keyboard)
+                text("Key", node.settings.key, [](auto &n, QString v) { n.settings.key = v; });
+            if (node.settings.source == InteractionSource::Osc) {
+                text("OSC address", node.settings.oscAddress, [](auto &n, QString v) { n.settings.oscAddress = v; });
+                number("Argument", node.settings.oscArgument, [](auto &n, double v) { n.settings.oscArgument = std::clamp(int(v), 0, 63); });
+            }
+            if (node.settings.source == InteractionSource::Internal) {
+                parameterPicker(true);
+            }
+        } else if (node.kind == Kind::Destination) {
+            parameterPicker(false);
+        } else if (node.kind == Kind::Filter) {
+            auto *kind = new QComboBox;
+            for (int k = 0; k < kInteractionFilterCount; ++k) kind->addItem(interactionFilterName(InteractionFilter(k)));
+            const auto stage = node.settings.filters.empty() ? InteractionStage::made(InteractionFilter::Math) : node.settings.filters.front();
+            kind->setCurrentIndex(int(stage.kind)); form->addRow("Filter", kind);
+            connect(kind, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.filters = {InteractionStage::made(InteractionFilter(k))}; }); });
+            if (stage.kind == InteractionFilter::Math) {
+                auto *op = new QComboBox;
+                for (int k = 0; k < kMathOpCount; ++k) op->addItem(mathOpName(MathOp(k)));
+                op->setCurrentIndex(int(stage.op)); form->addRow("Operation", op);
+                connect(op, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.filters.front().op = MathOp(k); }); });
+            }
+            for (int k = 0; k < 4; ++k) number(QString(QChar('A' + k)), stage.setting(k), [k](auto &n, double v) { n.settings.filters.front().setting(k) = v; });
+        } else if (node.kind == Kind::Mix) number("Mix (0: A, 1: B)", node.mix, [](auto &n, double v) { n.mix = std::clamp(v, 0., 1.); });
+        else if (node.kind == Kind::Select) number("Input (0: A, 1: B)", node.selectedInput, [](auto &n, double v) { n.selectedInput = v >= .5 ? 1 : 0; });
+        m_inspectorLayout->addStretch();
+    }
+    Engine *m_engine;
+    QUndoStack *m_undo;
+    InteractionGraphView *m_canvas;
+    QWidget *m_inspector;
+    QVBoxLayout *m_inspectorLayout;
+    QLabel *m_error;
+    quint64 m_selected = 0;
+    bool m_refreshPending = false;
+};

@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "InteractionGraphWorkspace.h"
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -49,6 +50,26 @@ int main(int argc, char **argv)
     engine.feedInteraction(event);
     engine.renderFrame();
     check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .4) < 1e-5, "loaded graph executes");
+    QUndoStack undo;
+    {
+        InteractionGraphWorkspace workspace(&engine, &undo);
+        workspace.resize(1000, 600);
+        workspace.show();
+        app.processEvents();
+        auto *canvas = static_cast<InteractionGraphView *>(workspace.findChild<QGraphicsView *>("interactionGraphCanvas"));
+        check(canvas != nullptr, "graph workspace has a canvas");
+        if (canvas) {
+            canvas->disconnected(2, 4);
+            app.processEvents();
+            check(engine.interactionGraph().edges.size() == 2, "disconnect changes engine graph");
+            undo.undo(); app.processEvents();
+            check(engine.interactionGraph().edges.size() == 3, "undo restores cable");
+            canvas->removed(2); app.processEvents();
+            check(engine.interactionGraph().nodes.size() == 3 && engine.interactionGraph().edges.empty(), "remove block removes attached cables");
+            undo.undo(); app.processEvents();
+            check(engine.interactionGraph().nodes.size() == 4, "undo restores block and cables");
+        }
+    }
     engine.shutdown();
     return failures ? 1 : 0;
 }
