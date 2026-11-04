@@ -588,7 +588,7 @@ quint64 InteractionPanel::addEnvelope(quint64 layer, const QString &path, Intera
     list.push_back(source);
     commitList(list, QStringLiteral("Add Envelope"));
     emit showRequested();
-    m_kinds->setCurrentIndex(m_kinds->count() - 1);
+    m_kinds->button(kInteractionSourceCount)->click();
     m_selectedFilter = 0;
     rebuildList();
     select(id);
@@ -879,7 +879,7 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             menu->addAction(QStringLiteral("Go to interaction driver · %1%2")
                                 .arg(it.label(), it.enabled ? QString() : QStringLiteral(" (off)")),
                             panel, [panel, id = it.id] {
-                                panel->m_kinds->setCurrentIndex(panel->m_kinds->count() - 1);
+                                panel->m_kinds->button(kInteractionSourceCount)->click();
                                 panel->rebuildList();
                                 panel->select(id);
                                 emit panel->showRequested();
