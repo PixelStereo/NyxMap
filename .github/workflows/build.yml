@@ -461,6 +461,11 @@ jobs:
 
           test -d "$APP"
           test -f "$EXE"
+          # Faust programs/presets are data; code signing must never encounter
+          # .dsp resources in the bundle's executable directory.
+          test ! -e "$APP/Contents/MacOS/audio"
+          test -f "$APP/Contents/Resources/audio/generators/FM.nyxaudio"
+          test -f "$APP/Contents/Resources/audio/fx/Equalizer.dsp"
 
           # macdeployqt preserves Qt's framework layout and handles its plugin deployment.
           # Supply FFmpeg and every Homebrew runtime dependency as extra search paths,
@@ -530,7 +535,7 @@ jobs:
           done < <(find "$APP/Contents" -type f -print0)
           test -x "$EXE"
           test -d "$APP/Contents/Resources/isf"
-          cp LICENSE THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
+          cp LICENSE LICENSE-EXCEPTION.md THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/" && cp -R licenses "$APP/Contents/Resources/licenses"
           # Only LGPL FFmpeg libraries and no GPL-only one; the notices of every library copied from Homebrew
           python3 scripts/build_ffmpeg_lgpl.py check "$APP"
           python3 scripts/macos_notices.py "$APP"
@@ -653,7 +658,8 @@ jobs:
           Copy-Item build\NyxMap.exe dist\NyxMap.exe -Force
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
-          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md -Destination dist -Force
+          Copy-Item -Recurse -Force build\audio dist\audio
+          Copy-Item LICENSE, LICENSE-EXCEPTION.md, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 
           # Deploy Qt libraries, platform plugins, multimedia plugins and the MSVC runtime.
@@ -772,15 +778,15 @@ jobs:
           path: NyxMap-windows*.zip
 
 
-  open-stage-control:
-    name: Release Open Stage Control remote
+  companion:
+    name: Release Companion module
     if: github.ref_type == 'tag'
-    uses: ./.github/workflows/open-stage-control.yml
+    uses: ./.github/workflows/companion.yml
 
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
-    needs: [linux, macos, windows, validation, open-stage-control]
+    needs: [linux, macos, windows, validation, companion]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -802,6 +808,7 @@ jobs:
             dist/**/*.zip
             dist/**/*.tar.gz
             dist/**/*.AppImage
+            dist/**/*.tgz
 
   # A release published with GITHUB_TOKEN does not trigger another release
   # workflow. Call it explicitly once all package uploads have completed.

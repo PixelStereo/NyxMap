@@ -1,4 +1,5 @@
 #pragma once
+#include "LayerTree.h"
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QTimer>
@@ -15,7 +16,6 @@ class SettingsPanel;
 class FixturePanel;
 class FixtureInspector;
 class SnapshotPanel;
-class SequenceBar;
 class SequenceFeedback;
 class SequenceWindow;
 class TimelineWindow;
@@ -35,6 +35,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 public:
     explicit MainWindow(Engine *engine, QWidget *parent = nullptr);
+    QString layersInUse(const QSet<int> &rows) const; // what refers to these rows, apart from themselves (empty: nothing)
+    QSet<int> sourceUsers(const QSet<int> &rows) const; // the layers made from them, and those made from these... (unlocked)
     ~MainWindow() override;
 
     // autoplay: its startup sequence (Composition) sends GO — not when the project opened is the one already playing
@@ -81,6 +83,8 @@ private:
     bool saveTo(const QString &path);
     bool isDirty() const;
     QJsonObject uiState() const;
+    QJsonObject viewsState() const;          // the views and the layer selected (a project, a preset, a snapshot)
+    void applyViews(const QJsonObject &views); // shown as they were
     void autosave();
     static QString autosavePath();
     void afterProjectLoaded(const QJsonObject &ui);
@@ -91,11 +95,19 @@ private:
     void addEmptyLayer();
     void removeCurrentLayer(); // the selected layers (a group with its layers)
     void createGroup();         // the selected layers go into it
+    void createScene();         // a new 3D Scene with a light
+    void fill3dMenu(QMenu *menu); // the 3D button's and the list's context menu entries
+    void createMerge3d();       // a new Merge 3D, holding the 3D objects selected
+    void addLightToScene();     // a light in the selected 3D scene (or the scene of the selected object)
+    int addLightLayer(int scene); // its index (undoable steps, in the caller's macro)
+    void wrapInScene(int layer);  // a model outside any scene goes into a new one, with a light
     void ungroupCurrent();
     void toggleLockCurrent();
     void moveRows(const QList<int> &rows, int beforeRow, int parentRow);
     void startOsc();
+    void startRemote();
     bool refuseLocked(int layer); // status message if locked
+    bool refuse3d(const LayerTree &after); // status message if a 3D object would leave its scene, or a scene take a 2D layer
     void duplicateCurrentLayer();
     void moveCurrentLayer(int delta);
     void useLayerAsSource(int target, int sourceRow);
@@ -127,7 +139,9 @@ private:
     Engine *m_engine;
     QUndoStack *m_undo = nullptr;
     class InteractionPanel *m_interactions = nullptr;
+    class ControlsPanel *m_controls = nullptr;
     MappingView *m_view = nullptr;
+    class PreviewWorkspace *m_previews = nullptr;
     LayerInspector *m_inspector = nullptr;
     LayerInspector *m_viewportInspector = nullptr;
     class QListWidget *m_viewportList = nullptr;
@@ -141,7 +155,6 @@ private:
     FixtureInspector *m_fixtureInspector = nullptr;
     QWidget *m_fixtureTab = nullptr; // the inspector's scroll area, in the right tabs
     SnapshotPanel *m_snapshots = nullptr;
-    SequenceBar *m_seqBar = nullptr;
     SequenceFeedback *m_feedback = nullptr;
     SequenceWindow *m_seqWindow = nullptr;
     TimelineWindow *m_timelineWindow = nullptr;
@@ -160,11 +173,15 @@ private:
     QLabel *m_status = nullptr;
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
+    class RemoteServer *m_remote = nullptr;
+    class ShowControlPanel *m_showControl = nullptr;
+    QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
             *m_blackoutAction = nullptr;
+    int m_listedRows = 0; // rows the layer list had (0: empty, a layer chosen as it fills)
     int m_lastSelected = -1;
     QJsonObject m_paramClipboard;       // layer parameters copied with the right-click menu
     QString m_paramClipboardName;       // the layer they come from (shown in the menu)

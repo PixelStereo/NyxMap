@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 // Implementation of the ISF format (Interactive Shader Format, Vidvox v2 spec):
 // JSON header parsing, translation to GLSL 330 core, multi-pass rendering,
 // persistent and float buffers, imported images.
@@ -166,6 +167,8 @@ public:
     QString error() const { return m_error; }
     bool isValid() const { return m_program != 0; }
     bool isFilter() const { return m_isFilter; }
+    // Its picture moves with TIME or TIMEDELTA (the compiler drops a uniform the shader never reads): `speed` matters
+    bool usesTime() const { return m_locTime >= 0 || m_locTimeDelta >= 0; }
     bool enabled = true;
     // Pace of TIME and TIMEDELTA (1: real time, 0: stopped): it scales the step, so TIME goes on from where it is
     // and the picture does not jump when it changes
@@ -174,7 +177,12 @@ public:
     // black (or transparent), in proportion in between; the layer's picture is stretched over this one's.
     quint64 maskLayer = 0; // 0: everywhere
     bool maskInvert = false;
-    bool maskPreFx = false; // the mask is the layer's picture before its own effects (false: after them)
+    // The mask layer's picture it takes: -1 its final picture, 0 its source (before its effects), k its picture after its
+    // effect k (1 = the first). Its own layer can mask it, from a stage above it (its source, an effect before it)
+    int maskStage = -1;
+    bool maskOnly = false; // computed (a mask can take its picture), but the layer's picture goes on without it
+    std::array<bool, 4> channels{{true, true, true, true}}; // an effect: the channels it changes (R G B A); the others
+                                                            // keep the picture it was given
 
     std::vector<IsfInput> &inputs() { return m_inputs; }
     const std::vector<IsfInput> &inputs() const { return m_inputs; }

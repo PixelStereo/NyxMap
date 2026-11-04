@@ -5,6 +5,7 @@
 #include "LogModel.h"
 #include "DeckLink.h"
 #include "Engine.h"
+#include "EngineInternal.h"
 #include "ImageFile.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
@@ -53,6 +54,7 @@ int runCueLifecycleTests(Engine &e);
 int runGpuTargetTests(Engine &e); // gpu_targets.cpp
 int runImagePrecisionTests(Engine &engine);
 int runShowHoldTests(Engine &engine);
+int runScene3dTests(Engine &engine); // scene3d.cpp
 int runOutputColorTests(Engine &engine);
 int runRecallIntegrityTests(Engine &engine);
 int runGoldenRenderTests(Engine &e, const QString &root, const QString &tmp); // golden_render.cpp
@@ -64,6 +66,7 @@ int runColorAnimationTests(Engine &engine, const QString &root);
 int runXyControlTests(Engine &engine, const QString &root);
 int runShowControlTests(Engine &engine);
 int runTimelineRepeatTests(Engine &e, const QString &tmp); // timeline_repeat.cpp
+int runTextWritingTests(Engine &e);                         // text_writing.cpp
 int runTimelineEventTests(Engine &e, const QString &root, const QString &tmp); // timeline_events.cpp
 int runMediaPlayheadTests(Engine &e, const QString &root); // media_playhead.cpp
 int runShowActionTests(Engine &e, const QString &root, const QString &tmp); // show_actions.cpp
@@ -192,6 +195,7 @@ int main(int argc, char **argv)
     if (area("show_control")) failures += runShowControlTests(e);
     if (area("output_color")) failures += runOutputColorTests(e);
     if (area("show_hold")) failures += runShowHoldTests(e);
+    if (area("scene3d")) failures += runScene3dTests(e);
     if (area("image_precision")) failures += runImagePrecisionTests(e);
     if (area("gpu_targets")) {
         failures += runGpuTargetTests(e);
@@ -207,6 +211,7 @@ int main(int argc, char **argv)
     if (area("psd")) failures += runPsdLayerTests(e, tmp);
     if (area("live_inputs")) failures += runLiveInputTests(e);
     if (area("clocks")) failures += runClockGeneratorTests(e);
+    if (area("text_writing")) failures += runTextWritingTests(e);
     if (area("tox")) failures += runToxTests(e, tmp);
     if (area("file_sources")) failures += runFileSourceTests(e, tmp);
     if (area("timeline_repeat")) {
@@ -1526,16 +1531,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
               !SequenceFeedback::parseTarget("a:70000", nullptr, nullptr) && !SequenceFeedback::parseTarget(":9000", nullptr, nullptr));
         CHECK(SequenceFeedback::defaultTargets() == QStringList{"127.0.0.1:11111"});
 
+        // UDP delivery pumps the event loop; an automatic cue clock would keep
+        // advancing while this test asserts exact synthetic cue positions.
+        const bool wasManual = e.fadesManual();
+        e.setFadesManual(true);
         QUdpSocket rx;
         CHECK(rx.bind(QHostAddress::LocalHost, 0));
         const int seq = e.sequencer().add([] {
             Sequencer::Sequence s;
             s.name = "Feedback show";
             Sequencer::Step a, b;
-            a.text = "Intro";
             a.description = "Lights first";
             a.preWait = 2;
-            b.text = "Second";
+            b.description = "Second";
             s.steps = {a, b};
             return s;
         }());
@@ -1569,27 +1577,28 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         receive();
         CHECK(got["/sequence/name"].toString() == "Feedback show" && got["/sequence/steps"].toInt() == 2 &&
               got["/sequence/index"].toInt() == seq + 1);
-        CHECK(got["/sequence/cue/current/number"].toInt() == 1 && got["/sequence/cue/current/text"].toString() == "Intro" &&
+        CHECK(got["/sequence/cue/current/number"].toInt() == 1 && got["/sequence/cue/current/description"].toString() == "Lights first" &&
               got["/sequence/cue/current/description"].toString() == "Lights first" &&
               got["/sequence/cue/current/label"].toString().startsWith("1 · "));
         CHECK(got["/sequence/cue/current/phase"].toString() == "pre-wait" && got["/sequence/cue/current/phase_percent"].toInt() == 0 &&
               std::abs(got["/sequence/cue/current/prewait"].toDouble() - 2) < 1e-6 &&
               got["/sequence/cue/current/continue"].toString() == "wait");
-        CHECK(got["/sequence/cue/next/number"].toInt() == 2 && got["/sequence/cue/next/text"].toString() == "Second" &&
+        CHECK(got["/sequence/cue/next/number"].toInt() == 2 && got["/sequence/cue/next/description"].toString() == "Second" &&
               got["/sequence/cue/next/phase"].toString().isEmpty());
         CHECK(got["/sequence/cue/previous/number"].toInt() == 0 && got["/sequence/running"].toInt() == 1);
         // Halfway through its pre-wait: only what changed is sent again
         e.sequencer().advance(1);
         fb.sendNow(false);
         receive();
-        // (the cue clock also counts the wall time the test takes)
+        // Only the explicit one-second step advances this cue.
         const int half = got["/sequence/cue/current/phase_percent"].toInt();
-        CHECK(half >= 50 && half <= 60 && got["/sequence/cue/current/percent"].toInt() == half &&
-              got["/sequence/cue/current/remaining"].toDouble() <= 1.0 && got["/sequence/cue/current/remaining"].toDouble() > 0.7);
-        CHECK(!got.count("/sequence/name") && !got.count("/sequence/cue/next/text"));
+        CHECK(half == 50 && got["/sequence/cue/current/percent"].toInt() == half &&
+              std::abs(got["/sequence/cue/current/remaining"].toDouble() - 1.0) < 1e-6);
+        CHECK(!got.count("/sequence/name") && !got.count("/sequence/cue/next/description"));
         e.sequencer().stopAll();
         fb.setEnabled(false);
         e.sequencer().remove(seq);
+        e.setFadesManual(wasManual);
     }
     // 4c. The Logs panel's events (audit P1): bounded in lines and in cost, whatever the traffic
     {
@@ -2486,7 +2495,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(readJson(tmp + "/sequences.nyxmap").value("startup_sequence").toInt(-1) == 1);
             CHECK(e.loadProject(tmp + "/sequences.nyxmap", nullptr, &err));
             CHECK(e.sequencer().count() == 2 && e.sequencer().current() == 1 && e.sequencer().sequence(0).loop &&
-                  e.sequencer().sequence(0).steps.size() == 3 && e.sequencer().sequence(0).steps[0].text == "Act 1" &&
+                  e.sequencer().sequence(0).steps.size() == 3 && e.sequencer().sequence(0).steps[0].description == "Act 1" &&
                   e.sequencer().sequence(0).steps[0].snapshot == e.snapshot(1).id);
             CHECK(e.sequencer().startupSequence() == 1);
             CHECK(e.sequencer().startupStep() == 0 && e.sequencer().startupGo()); // older projects: GO on the first step
@@ -2621,6 +2630,37 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.advanceFades(5);
             CHECK(close(value("rotation"), -10) && close(value("opacity"), 0.9));
             CHECK(!e.sequencer().toJson().at(si).toObject().value("tracking").toBool(true));
+            // Load as Next: only the step GO plays next changes (the step played and the show stay); its GO is a jump,
+            // with tracking the steps before it played at once first
+            off.tracking = true;
+            e.sequencer().setSequence(si, off);
+            e.setParameter(t, "rotation", -10.0);
+            e.setParameter(t, "position/x", 100.0);
+            e.sequencer().setCurrent(si);
+            e.sequencer().goToStepOf(si, 0); // the snapshot: the step played is the first
+            e.advanceFades(5);
+            e.setParameter(t, "rotation", -10.0);
+            CHECK(e.sequencer().loadAsNext(si, 3));
+            CHECK(e.sequencer().next() == 3 && e.sequencer().positionOf(si) == 0 && close(value("rotation"), -10));
+            CHECK(e.sequencer().go() && e.sequencer().positionOf(si) == 3 && close(value("rotation"), 45));
+            CHECK(e.sequencer().next() != 3 || e.sequencer().sequence(si).loop);
+            e.advanceFades(5);
+            CHECK(close(value("position/x"), 300));
+            // A preset can hold the views: saved with it, handed back when it is recalled
+            {
+                Engine::Preset withViews = e.preset(e.indexOfPreset(show.steps[1].preset));
+                withViews.views = QJsonObject{{"count", 2}};
+                std::vector<Engine::Preset> all = e.presets();
+                for (auto &x : all)
+                    if (x.id == withViews.id) x = withViews;
+                e.setPresets(all);
+                QJsonObject shown;
+                auto c = QObject::connect(&e, &Engine::viewsRecalled, [&](const QJsonObject &v) { shown = v; });
+                e.recallPreset(e.indexOfPreset(withViews.id));
+                QObject::disconnect(c);
+                CHECK(shown.value("count").toInt() == 2);
+                CHECK(presetFromJson(presetToJson(withViews)).views == withViews.views);
+            }
             e.sequencer().remove(si);
             e.removeLayer(e.indexOfId(t));
             e.setFadesManual(false);
@@ -2638,7 +2678,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             a0.snapshot = e.snapshot(0).id;
             a0.preWait = 1.0;
             a0.postWait = 0.5;
-            a0.next = Sequencer::StepContinue::Follow;
+            a0.next = Sequencer::StepContinue::AutoFollow;
             a1.snapshot = e.snapshot(1).id;
             a.steps = {a0, a1};
             b.name = "Editing B";
@@ -2842,7 +2882,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 e.setSnapshot(mB1, m);
             }
 
-            // Pre-wait, post-wait, follow / auto-follow / wait
+            // Pre-wait, post-wait, auto-follow / wait
             std::vector<int> fired;
             e.sequencer().setRecaller([&](int mi) {
                 fired.push_back(mi);
@@ -2854,7 +2894,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             s0.snapshot = e.snapshot(mA1).id;
             s0.preWait = 1.0;
             s0.postWait = 0.5;
-            s0.next = Sequencer::StepContinue::Follow; // the next GO 0.5 s after this one is triggered
+            s0.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after its action
             s1.snapshot = e.snapshot(mB1).id;
             s1.postWait = 0.5;
             s1.next = Sequencer::StepContinue::AutoFollow; // the next GO 0.5 s after its 2 s action
@@ -2867,9 +2907,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(fired.empty());
             e.sequencer().advance(0.5);
             CHECK(fired == std::vector<int>{mA1} && e.sequencer().position() == 0);
-            e.sequencer().advance(0.4);
+            const double firstAction = e.sequencer().stepDuration(s0);
+            e.sequencer().advance(firstAction + 0.4);
             CHECK(e.sequencer().position() == 0);
-            e.sequencer().advance(0.1); // 1.5 s: pre-wait + post-wait, the next one without waiting for the action
+            e.sequencer().advance(0.1); // its action and its post-wait over
             CHECK(fired == (std::vector<int>{mA1, mB1}) && e.sequencer().position() == 1);
             e.sequencer().advance(2.4);
             CHECK(e.sequencer().position() == 1);
@@ -2906,7 +2947,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             {
                 const Sequencer::Sequence w = e.sequencer().sequence(e.sequencer().current());
                 CHECK(w.steps.size() == 3 && near(w.steps[0].preWait, 1.0) && near(w.steps[0].postWait, 0.5) &&
-                      w.steps[0].next == Sequencer::StepContinue::Follow &&
+                      w.steps[0].next == Sequencer::StepContinue::AutoFollow &&
                       w.steps[1].next == Sequencer::StepContinue::AutoFollow && w.steps[2].next == Sequencer::StepContinue::Wait);
             }
             e.sequencer().setRecaller(nullptr);
@@ -4197,18 +4238,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask").toString() ==
               QString::number(maskId));
         // Mask picture before or after the mask layer's effects (no effect on the mask here: same picture)
-        CHECK(e.setEffectMaskTap(e.indexOfId(lid), 0, true));
-        CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask_tap").toString() == "prefx");
+        CHECK(e.setEffectMaskStage(e.indexOfId(lid), 0, 0));
+        CHECK(e.layerJson(e.indexOfId(lid)).value("fx").toArray().at(0).toObject().value("mask_stage").toInt(-1) == 0);
         l = at(0.25);
         CHECK(l.red() > 250 && at(0.75).red() < 5);
-        CHECK(e.setEffectMaskTap(e.indexOfId(lid), 0, false));
+        CHECK(e.setEffectMaskStage(e.indexOfId(lid), 0, -1));
         // Grey: in proportion
         CHECK(e.setLayerImage(e.indexOfId(maskId), tmp + "/mgrey.png", &err));
         CHECK(e.setEffectMask(e.indexOfId(lid), 0, maskId, false, &err));
         l = at(0.5);
         CHECK(l.red() > 100 && l.red() < 160 && l.green() > 100 && l.green() < 160);
-        // Refused: itself, a viewport, a layer that already depends on this one
-        CHECK(!e.setEffectMask(e.indexOfId(lid), 0, lid, false));
+        // Refused: a viewport, a layer that already depends on this one (itself: from a stage above the effect)
+        CHECK(e.setEffectMask(e.indexOfId(lid), 0, lid, false) && e.layer(e.indexOfId(lid))->effects[0]->maskStage == 0); // itself: from its source
+        CHECK(e.setEffectMask(e.indexOfId(lid), 0, maskId, false, &err));
         CHECK(!e.setEffectMask(e.indexOfId(lid), 0, e.mainViewportId(), false));
         CHECK(e.layerDependsOn(lid, maskId)); // a mask is a dependency: the mask layer cannot take this one as source
         CHECK(!e.setLayerSourceLayer(e.indexOfId(maskId), lid, LayerTap::PostFx, &err));
@@ -4219,6 +4261,42 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         // The mask layer gone: the effect applies everywhere again
         e.removeLayer(e.indexOfId(maskId));
         CHECK(at(0.25).red() < 5 && at(0.75).red() < 5);
+        // A mask from this very layer, at a stage above the effect; an effect for the masks only (left white, right
+        // black): Invert, mask only (the picture goes on as it was), then Invert through this layer after the first
+        // (white on the right): only the right half is inverted, all white
+        {
+            const int hi = e.addLayer("Stages", V);
+            CHECK(e.setLayerImage(hi, tmp + "/mhalf.png", &err));
+            e.layer(hi)->mapping.resetCorners();
+            const quint64 hid = e.layerId(hi);
+            CHECK(e.addEffect(e.indexOfId(hid), tmp + "/Invert.fs") == 0 && e.addEffect(e.indexOfId(hid), tmp + "/Invert.fs") == 1);
+            CHECK(e.setParameter(hid, e.shaderPrefix(hid, 0) + "mask_only", true));
+            CHECK(e.setEffectMask(e.indexOfId(hid), 1, hid, false, &err)); // its own layer: allowed, above the effect
+            CHECK(e.layer(e.indexOfId(hid))->effects[1]->maskStage == 1);
+            CHECK(!e.setEffectMaskStage(e.indexOfId(hid), 1, 2) && !e.setEffectMaskStage(e.indexOfId(hid), 1, -1)); // not below
+            QColor left = at(0.25), right = at(0.75);
+            CHECK(left.red() > 250 && right.red() > 250);
+            CHECK(e.setParameter(hid, e.shaderPrefix(hid, 0) + "mask_only", false)); // in the picture: all black
+            left = at(0.25), right = at(0.75);
+            CHECK(left.red() < 5 && right.red() < 5);
+            CHECK(e.setEffectMaskStage(e.indexOfId(hid), 1, 0)); // its source (white on the left): the left inverted again
+            left = at(0.25), right = at(0.75);
+            CHECK(left.red() > 250 && right.red() > 250);
+            CHECK(e.layerJson(e.indexOfId(hid)).value("fx").toArray().at(1).toObject().value("mask_stage").toInt(-1) == 0);
+            e.removeLayer(e.indexOfId(hid));
+        }
+        // Its channels: the ones it changes; a channel off keeps the input (red inverted is cyan)
+        const QString channels = e.shaderPrefix(lid, 0) + "channel/";
+        CHECK(e.setParameter(lid, channels + "r", false));
+        QColor c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() > 250); // red kept, green and blue inverted
+        CHECK(e.setParameter(lid, channels + "b", false));
+        c = at(0.5);
+        CHECK(c.red() > 250 && c.green() > 250 && c.blue() < 5); // only green inverted
+        CHECK(!e.layerJson(e.indexOfId(lid)).value("params").toObject().value(channels + "b").toBool(true)); // saved
+        CHECK(e.setParameter(lid, channels + "r", true) && e.setParameter(lid, channels + "b", true));
+        c = at(0.5);
+        CHECK(c.red() < 5 && c.green() > 250 && c.blue() > 250); // all of them again
         e.removeLayer(e.indexOfId(lid));
     }
     // 4f bis. The color section through a mask: red with all its red removed, only where the mask is white
@@ -4540,11 +4618,21 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.setViewportWindow(vp2, &w2);
             e.setViewportExposed(vp1, true, w1.size() * w1.devicePixelRatio());
             e.setViewportExposed(vp2, true, w2.size() * w2.devicePixelRatio());
-            for (int k = 0; k < 3; ++k) {
+            // The windows show their frames when the system presents them, a little after: rendered and grabbed again
+            // until both show their picture (3 s at most), then checked
+            QImage g1, g2;
+            auto shown = [&] {
+                if (g1.isNull() || g2.isNull()) return false;
+                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
+                return c1.red() > 200 && c1.blue() < 50 && c2.blue() > 200 && c2.red() < 50;
+            };
+            t.restart();
+            do {
                 e.renderFrame();
-                QCoreApplication::processEvents();
-            }
-            const QImage g1 = w1.screen()->grabWindow(w1.winId()).toImage(), g2 = w2.screen()->grabWindow(w2.winId()).toImage();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                g1 = w1.screen()->grabWindow(w1.winId()).toImage();
+                g2 = w2.screen()->grabWindow(w2.winId()).toImage();
+            } while (!shown() && t.elapsed() < 3000);
             CHECK(!g1.isNull() && !g2.isNull());
             if (!g1.isNull() && !g2.isNull()) {
                 const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
@@ -6908,10 +6996,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         fader.filters = {InteractionStage::remap(0, 1, 0, 1)};
         const quint64 f = e.addInteraction(fader);
         const QString master = QStringLiteral("interaction/%1/master").arg(f), on = QStringLiteral("interaction/%1/enable").arg(f);
-        bool inComposition = false; // not among the composition's values: reached by their address
-        for (const ParamInfo &p : e.parameters(0)) inComposition = inComposition || p.path.startsWith("interaction/");
+        // Available in the composition's target picker, while stored under Interactions in snapshots.
+        int masterTargets = 0;
+        for (const ParamInfo &p : e.parameters(0)) if (p.path == master) ++masterTargets;
         ParamInfo mi;
-        CHECK(!inComposition && e.parameterInfo(0, master, &mi) && mi.animatable && mi.label == "Interactions › Interaction 1 › Master Level");
+        CHECK(masterTargets == 1 && e.parameterInfo(0, master, &mi) && mi.animatable &&
+              mi.label == "Interactions › Interaction 1 › Master Level");
+        CHECK(!e.captureComposition().contains(master));
         CHECK(e.parameterValue(0, master).toDouble() == 1.0 && e.parameterValue(0, on).toBool());
         auto value = [&](quint64 id) {
             for (const Interaction &x : e.interactions())

@@ -3,6 +3,14 @@
 
 #include <QString>
 #include <cstddef>
+#include <cstdint>
+
+struct AVFrame;
+struct VideoLayout;
+
+// Synchronous hardware readback into borrowed upload memory. dst must differ from hw.
+// Clears dst on return; never owns ptr.
+bool videoDecoderTransferToUpload(AVFrame *dst, const AVFrame *hw, const VideoLayout &layout, uint8_t *ptr);
 
 extern "C" {
 #include <libavutil/pixfmt.h>

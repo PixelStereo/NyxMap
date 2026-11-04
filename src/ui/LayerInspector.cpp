@@ -1,22 +1,26 @@
 #include "LayerInspector.h"
-#include "PresetEditor.h"
-#include "ColorPicker.h"
-#include <QTabBar>
+#include "AdsrCurve.h"
 #include "AudioOutput.h"
-#include "DeckLink.h"
-#include "LiveInput.h"
-#include "Midi.h"
+#include "AudioStream.h"
+#include "ColorPicker.h"
 #include "Commands.h"
+#include "DeckLink.h"
 #include "Engine.h"
 #include "LayerTable.h"
+#include "LiveInput.h"
 #include "MaskPanel.h"
+#include "Midi.h"
 #include "ParamAnimPanel.h"
 #include "ParamPanel.h"
+#include "PresetEditor.h"
+#include "Psd.h"
 #include "SettingsPanel.h"
+#include "SourceColor.h"
 #include "ViewportOutput.h"
 #include "Widgets.h"
-#include "SourceColor.h"
-#include "Psd.h"
+#include <QFileDialog>
+#include <QGroupBox>
+#include <QTabBar>
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -33,6 +37,8 @@
 #include <QPlainTextEdit>
 #include <QStandardItemModel>
 #include <QTabWidget>
+#include "FxChainPanel.h"
+#include "ImageFile.h"
 #include <QUrl>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
@@ -55,6 +61,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QLocale>
 #include <QTimer>
 #include <QToolButton>
 #include <QUndoStack>
@@ -66,7 +73,7 @@
 struct LayerValues {
     bool valid = false;
     quint64 id = 0;
-    bool isGroup = false, isViewport = false, locked = false, lockedByGroup = false;
+    bool isGroup = false, isViewport = false, locked = false, lockedByGroup = false, merge3d = false;
     int members = 0;
     QSize vpSize;
     // Routing: an item at the top of the list chooses its viewports; inside a group, its top group does
@@ -113,7 +120,7 @@ struct LayerValues {
     std::vector<std::pair<quint64, QString>> candidates;
     struct Fx {
         QString name, error;
-        bool valid = false, enabled = true, masked = false;
+        bool valid = false, enabled = true, masked = false, maskOnly = false;
     };
     std::vector<Fx> effects;
     bool meshMode = false;
@@ -137,6 +144,7 @@ struct LayerValues {
         s.valid = true;
         s.id = l->id;
         s.isGroup = l->isGroup;
+        s.merge3d = l->merge3d;
         s.isViewport = l->isViewport;
         s.vpSize = l->viewportSize();
         s.locked = l->locked;
@@ -201,7 +209,7 @@ struct LayerValues {
                 s.candidates.push_back({o->id, o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
             }
         for (const auto &fx : l->effects)
-            s.effects.push_back({fx->name(), fx->error(), fx->isValid(), fx->enabled, fx->maskLayer != 0});
+            s.effects.push_back({fx->name(), fx->error(), fx->isValid(), fx->enabled, fx->maskLayer != 0, fx->maskOnly});
         s.meshMode = l->mapping.meshMode;
         s.cols = l->mapping.cols;
         s.rows = l->mapping.rows;
@@ -326,7 +334,8 @@ public:
         setAcceptDrops(true);
         setAlignment(Qt::AlignCenter);
         setWordWrap(true);
-        setMinimumHeight(64);
+        setFixedHeight(76); // the same size whatever it shows: the inspector under it does not move
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         setHover(false);
     }
     // Loaded: it stands out (a filled, framed card), empty: a dashed outline; missing: in red
@@ -403,12 +412,19 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
 {
     m_layout = new QVBoxLayout(this);
     m_layout->setContentsMargins(8, 8, 8, 8);
+    m_pinned = new QWidget;
+    m_pinned->setObjectName(QStringLiteral("layerInspectorHeader"));
+    m_pinnedLayout = new QVBoxLayout(m_pinned);
+    m_pinnedLayout->setContentsMargins(8, 8, 8, 4);
+    m_pinnedLayout->setSpacing(6);
+    m_layout->addWidget(m_pinned); // on its own, at its top; the main window lays it above its scroll area
+    buildPicker();
     m_multiNote = new QLabel;
     m_multiNote->setObjectName(QStringLiteral("multiSelectionNote"));
     m_multiNote->setWordWrap(true);
     m_multiNote->setStyleSheet("background:#3a3320; color:#f0d890; border-radius:3px; padding:4px 6px;");
     m_multiNote->hide();
-    m_layout->addWidget(m_multiNote);
+    m_pinnedLayout->addWidget(m_multiNote);
     // A number animated or no longer: the tabs again (the ∿ by its name); an edit of an animation: its card follows
     connect(engine, &Engine::layerAnimsChanged, this, [this](quint64 layer) {
         if (layer != m_layerId) return;
@@ -418,6 +434,103 @@ LayerInspector::LayerInspector(Engine *engine, QUndoStack *undo, QWidget *parent
         if (now != m_animated) QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
     });
     rebuild();
+}
+
+// The menu at the top of the inspector: every layer, group and viewport of the composition, in the order of the Layers list, a group's
+// members indented under it; picking one inspects it (the Layers list and the preview follow). ◀ ▶ step to the one before / after.
+void LayerInspector::buildPicker()
+{
+    auto *row = new QWidget;
+    row->setObjectName(QStringLiteral("layerPickerRow"));
+    auto *h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(4);
+    m_pickerPrev = toolButton(QStringLiteral("◀"), QStringLiteral("The layer before"));
+    m_pickerNext = toolButton(QStringLiteral("▶"), QStringLiteral("The layer after"));
+    m_pickerPrev->setObjectName(QStringLiteral("layerPickerPrev"));
+    m_pickerNext->setObjectName(QStringLiteral("layerPickerNext"));
+    m_picker = new QComboBox;
+    m_picker->setObjectName(QStringLiteral("layerPicker"));
+    m_picker->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_picker->setMinimumContentsLength(12);
+    m_picker->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_picker->setMaxVisibleItems(24);
+    m_picker->setToolTip(QStringLiteral("The layer, group or viewport inspected: pick another (the Layers list follows)"));
+    m_picker->setProperty("allowLocked", true);
+    h->addWidget(m_pickerPrev);
+    h->addWidget(m_picker, 1);
+    h->addWidget(m_pickerNext);
+    m_pinnedLayout->addWidget(row);
+    connect(m_picker, qOverload<int>(&QComboBox::activated), this, [this](int k) {
+        const quint64 id = m_picker->itemData(k).toULongLong();
+        if (id && id != m_layerId) emit layerPickRequested(id);
+    });
+    auto step = [this](int delta) {
+        const int k = m_picker->currentIndex() + delta;
+        if (k < 0 || k >= m_picker->count()) return;
+        const quint64 id = m_picker->itemData(k).toULongLong();
+        if (id) emit layerPickRequested(id);
+    };
+    connect(m_pickerPrev, &QToolButton::clicked, this, [step] { step(-1); });
+    connect(m_pickerNext, &QToolButton::clicked, this, [step] { step(1); });
+    connect(m_engine, &Engine::layersChanged, this, [this] { QMetaObject::invokeMethod(this, &LayerInspector::refreshPicker, Qt::QueuedConnection); });
+    refreshPicker();
+}
+
+void LayerInspector::refreshPicker()
+{
+    if (!m_picker) return;
+    struct Entry {
+        quint64 id;
+        QString text;
+    };
+    std::vector<Entry> entries, viewports;
+    QString key = QString::number(m_layerId) + QLatin1Char('|');
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        std::map<quint64, const Layer *> byId;
+        for (int i = 0; i < m_engine->layerCount(); ++i)
+            if (const Layer *l = m_engine->layer(i)) byId[l->id] = l;
+        auto glyph = [](const Layer &l) -> QString {
+            if (l.isGroup) return QStringLiteral("▾ ");
+            switch (l.type) {
+            case SourceType::Video: return QStringLiteral("▶ ");
+            case SourceType::Image: return QStringLiteral("▣ ");
+            case SourceType::Audio: return QStringLiteral("♪ ");
+            case SourceType::Isf: return QStringLiteral("◇ ");
+            case SourceType::Text: return QStringLiteral("T ");
+            case SourceType::Input: return QStringLiteral("◉ ");
+            case SourceType::Layer: return QStringLiteral("↳ ");
+            default: return QStringLiteral("· ");
+            }
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *l = m_engine->layer(i);
+            if (!l) continue;
+            int depth = 0;
+            for (quint64 p = l->parent; p && depth < 8; ++depth) {
+                const auto up = byId.find(p);
+                p = up == byId.end() ? 0 : up->second->parent;
+            }
+            const QString indent = QString(depth * 2, QChar(0x2003)); // em spaces: a menu does not trim them
+            const Entry e{l->id, indent + (l->isViewport ? QStringLiteral("◫ ") : glyph(*l)) + (l->name.isEmpty() ? QStringLiteral("Untitled") : l->name)};
+            (l->isViewport ? viewports : entries).push_back(e);
+            key += QStringLiteral("%1:%2:%3;").arg(l->id).arg(depth).arg(e.text);
+        }
+    }
+    entries.insert(entries.end(), viewports.begin(), viewports.end()); // the viewports last
+    if (key == m_pickerKey) return;
+    m_pickerKey = key;
+    const QSignalBlocker block(m_picker);
+    m_picker->clear();
+    int current = -1;
+    for (const Entry &e : entries) {
+        if (e.id == m_layerId) current = m_picker->count();
+        m_picker->addItem(e.text, QVariant::fromValue<qulonglong>(e.id));
+    }
+    m_picker->setCurrentIndex(current);
+    m_pickerPrev->setEnabled(current > 0);
+    m_pickerNext->setEnabled(current >= 0 && current + 1 < m_picker->count());
 }
 
 std::pair<double, double> LayerInspector::limitsOf(const QString &path, double lo, double hi) const
@@ -451,6 +564,8 @@ void LayerInspector::setLayer(int index)
     }
     m_layer = index;
     rebuild();
+    m_pickerKey.clear(); // its current one is the layer shown now
+    refreshPicker();
 }
 
 void LayerInspector::setCoTargets(const QList<quint64> &ids)
@@ -603,8 +718,15 @@ void LayerInspector::rebuild()
         m_content->hide();
         m_content->deleteLater();
     }
+    if (m_head) {
+        m_head->hide();
+        m_head->deleteLater();
+        m_head = nullptr;
+    }
     m_content = new QWidget;
     m_textColors.clear();
+    m_3dFields.clear();
+    m_3dColors.clear();
     m_toxFields.clear();
     m_toxColors.clear();
     m_toxStatus = nullptr;
@@ -634,8 +756,11 @@ void LayerInspector::rebuild()
     m_animate = new AnimateMenu(m_engine, m_undo, s.id, [this](const QString &p) { showAnimation(p); }, m_content);
     const QString kind = s.isViewport ? QStringLiteral("Viewport") : s.isGroup ? QStringLiteral("Group") : QStringLiteral("Layer");
     emit kindChanged(kind);
-    // Header: visibility, lock, name
-    auto *head = new QHBoxLayout;
+    // Header: visibility, lock, name (pinned above the part that scrolls)
+    m_head = new QWidget;
+    m_head->setObjectName(QStringLiteral("layerHeadRow"));
+    auto *head = new QHBoxLayout(m_head);
+    head->setContentsMargins(0, 0, 0, 0);
     auto *name = new QLineEdit(s.name);
     name->setStyleSheet("font-weight:bold; font-size:14px;");
     name->setToolTip(kind + QStringLiteral(" name"));
@@ -660,6 +785,10 @@ void LayerInspector::rebuild()
     solo->setStyleSheet("QToolButton { font-weight:bold; min-width:22px; } QToolButton:checked { background:#5a4a1a; color:#ffd65a; }");
     solo->setProperty("allowLocked", true);
     solo->setVisible(!s.isViewport);
+    if (PresetEditor *preset = PresetEditor::instance()) {
+        preset->track(vis, s.id, {QStringLiteral("enable")});
+        if (!s.isViewport) preset->track(solo, s.id, {QStringLiteral("solo")});
+    }
     head->addWidget(vis);
     head->addWidget(lock);
     head->addWidget(solo);
@@ -671,7 +800,7 @@ void LayerInspector::rebuild()
         }
         emit layerChanged();
     });
-    v->addLayout(head);
+    m_pinnedLayout->addWidget(m_head);
     connect(lock, &QToolButton::toggled, this, [this](bool on) {
         setProp(cmd::SetLayerProp::Locked, on);
         emit layerChanged();
@@ -700,7 +829,8 @@ void LayerInspector::rebuild()
         tv->setContentsMargins(0, 0, 0, 0);
         tv->setSpacing(8);
         tv->addWidget(buildSource(s));
-        if (s.type != SourceType::Audio) { // a sound has no picture to composite
+        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && !s.merge3d) { // a sound, a 3D
+                                                                                                           // object: no picture
             tv->addWidget(separator());
             tv->addWidget(buildCompositing(s));
         }
@@ -725,7 +855,37 @@ void LayerInspector::rebuild()
     });
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
     tabs->setStyleSheet(theme::tabStyle());
-    const bool hasSource = !s.isGroup && !s.isViewport;
+    bool scene3d = false, merge3d = false;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d;
+    }
+    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || merge3d;
+    if (scene3d) {
+        auto *both = new QWidget;
+        auto *bv = new QVBoxLayout(both);
+        bv->setContentsMargins(0, 0, 0, 0);
+        bv->addWidget(build3d({QStringLiteral("scene/environment/")}, {}, [this](QFormLayout *form) { addSceneEnvironment(form); })); // its choice and its settings
+        bv->addWidget(build3d({QStringLiteral("camera/"), QStringLiteral("scene/")}, {QStringLiteral("scene/environment/")}), 1);
+        const int t = tabs->addTab(page(both), QStringLiteral("Scene"));
+        tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
+    }
+    if (object3d) {
+        QWidget *values = build3d({merge3d ? QStringLiteral("merge/") : s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")});
+        if (s.type == SourceType::Model) {
+            auto *both = new QWidget;
+            auto *bv = new QVBoxLayout(both);
+            bv->setContentsMargins(0, 0, 0, 0);
+            bv->addWidget(buildModelLayers());
+            bv->addWidget(values, 1);
+            values = both;
+        }
+        const int t = tabs->addTab(page(values), QStringLiteral("3D"));
+        tabs->setTabToolTip(t, merge3d ? QStringLiteral("Where all it holds is in the scene")
+                              : s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
+                                                          : QStringLiteral("The light: its kind, color, level and where it is"));
+    }
+    const bool hasSource = !s.isGroup && !s.isViewport && !object3d;
     if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
     tabs->addTab(page(buildColor(s)), QStringLiteral("Color"));
@@ -749,6 +909,10 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("Shapes that keep or cut its picture (drawn and edited in the preview)"));
     }
     tabs->addTab(page(buildEffects(s)), QStringLiteral("FX"));
+    if (s.hasAudio) { // the sound's own chain, the same mechanism
+        const int t = tabs->addTab(page(buildAudioEffects()), QStringLiteral("Audio FX"));
+        tabs->setTabToolTip(t, QStringLiteral("Real-time Faust effects on the sound of this layer, before its volume"));
+    }
     if (!s.isViewport) tabs->addTab(page(buildViewports(s)), QStringLiteral("Viewports"));
     m_anims = new ParamAnimPanel(m_engine, m_undo, s.id);
     connect(m_anims, &ParamAnimPanel::projectEdited, this, &LayerInspector::projectEdited);
@@ -770,10 +934,12 @@ void LayerInspector::rebuild()
     }
     lockInputs(tabs, m_locked);
     name->setEnabled(!m_locked);
-    if (s.type == SourceType::Audio) { // a sound has no picture: no ROI, color, mapping, masks, effects or routing
+    if (s.type == SourceType::Audio || object3d) { // a sound, a 3D object: no picture of its own (ROI, color, mapping, masks…)
         for (int t = 0; t < tabs->count(); ++t) {
             const QString name = tabs->tabText(t).section(' ', 0, 0);
-            if (name == QLatin1String("Source") || name == QLatin1String("Anim")) continue; // transport, volume, speed
+            if (name == QLatin1String("Source") || name == QLatin1String("Audio") || name == QLatin1String("Anim") ||
+                name == QLatin1String("3D"))
+                continue; // transport, volume, speed, the sound's FX; a 3D object's values
             tabs->setTabEnabled(t, false);
             tabs->setTabVisible(t, false); // not shown at all (kept built: the inspector's fields stay valid)
         }
@@ -841,12 +1007,43 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         return g;
     }
     if (s.isGroup) {
-        auto *info = new QLabel(QStringLiteral("<b>Group</b> of %1 layer(s)<br><span style='font-size:11px; color:#999'>"
-                                               "Its picture is the composite of its layers. Drag layers onto it in the "
-                                               "layer list to add them.</span>")
+        bool scene = false;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_layer)) scene = l->scene3d;
+        }
+        auto *info = new QLabel(
+            s.merge3d ? QStringLiteral("<b>Merge 3D</b> of %1 object(s)<br><span style='font-size:11px; color:#999'>"
+                                       "No picture of its own: its scene draws what it holds, moved, turned and scaled by its "
+                                       "transform (3D tab) and those above it. Drag 3D objects and other Merge 3Ds onto it.</span>")
+                                        .arg(s.members) :
+            scene ? QStringLiteral("<b>3D Scene</b> of %1 object(s)<br><span style='font-size:11px; color:#999'>"
+                                   "Its picture is its models seen by its camera (Scene tab), under its lights. Drop an "
+                                   "FBX, glTF or OBJ onto it to add a model; Layer › Add Light to 3D Scene.</span>")
+                                    .arg(s.members)
+                  : QStringLiteral("<b>Group</b> of %1 layer(s)<br><span style='font-size:11px; color:#999'>"
+                                   "Its picture is the composite of its layers. Drag layers onto it in the "
+                                   "layer list to add them.</span>")
                                     .arg(s.members));
         info->setWordWrap(true);
         v->addWidget(info);
+        if (scene) { // what it costs, as it goes
+            auto *count = new QLabel;
+            count->setObjectName(QStringLiteral("sceneTriangles"));
+            count->setToolTip(QStringLiteral("Its shown models' triangles; those its last frame computed, shadows and depth included "
+                                             "(0: nothing moved, its picture is kept)"));
+            const auto show = [this, count] {
+                const QLocale here;
+                count->setText(QStringLiteral("%1 triangles · %2 computed per frame")
+                                   .arg(here.toString(m_engine->sceneTriangles(m_layer)), here.toString(m_engine->sceneTrianglesComputed(m_layer))));
+            };
+            show();
+            auto *poll = new QTimer(count);
+            poll->setInterval(250);
+            connect(poll, &QTimer::timeout, count, show);
+            poll->start();
+            v->addWidget(count);
+        }
         return g;
     }
 
@@ -869,9 +1066,10 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
           << (s.hasAudio ? QStringLiteral("sound: ") + audioText(s.audio) : QStringLiteral("no sound"));
         break;
     case SourceType::Audio:
-        kind = QStringLiteral("Sound");
+        kind = AudioGenerator::isRecipe(s.sourcePath) ? QStringLiteral("Audio Generator") : QStringLiteral("Sound");
         name = QFileInfo(s.sourcePath).fileName();
-        d << fmtTime(s.duration) << audioText(s.audio);
+        d << (AudioGenerator::isRecipe(s.sourcePath) ? QStringLiteral("Continuous, real time") : fmtTime(s.duration))
+          << audioText(s.audio);
         break;
     case SourceType::Image:
         kind = QStringLiteral("Image");
@@ -894,7 +1092,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         break;
     case SourceType::Text:
         d << QStringLiteral("Color space: Unspecified (generated)");
-        kind = s.clock ? clockKindName(s.clock->kind) : s.timecode ? QStringLiteral("Timecode") : QStringLiteral("Text");
+        kind = s.clock ? clockKindName(s.clock->kind) : s.timecode ? QStringLiteral("Timecode") : s.text.cursive ? QStringLiteral("Cursive") : QStringLiteral("Text");
         name = s.clock      ? clockSummary(*s.clock)
                : s.timecode ? TimecodeSettings::sourceName(s.timecode->source)
                             : s.text.content.section('\n', 0, 0).left(40);
@@ -911,6 +1109,22 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         name = s.web.url.isEmpty() ? QStringLiteral("(blank page)") : s.web.url;
         d << QStringLiteral("%1 × %2 · %3 fps").arg(s.web.width).arg(s.web.height).arg(s.web.fps);
         break;
+    case SourceType::Model: {
+        kind = QStringLiteral("3D Model");
+        name = QFileInfo(s.sourcePath).fileName();
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer); l && l->model)
+            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(l->model->meshCount()).arg(l->model->triangleCount());
+        d << QStringLiteral("drawn by its 3D scene");
+        break;
+    }
+    case SourceType::Light: {
+        kind = QStringLiteral("Light");
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) name = QStringList{"Directional", "Point", "Spot", "Area"}.value(l->light.type);
+        d << QStringLiteral("lights the models of its 3D scene");
+        break;
+    }
     case SourceType::Layer: {
         d << QStringLiteral("Color space: Inherited (not tagged)");
         kind = QStringLiteral("Layer");
@@ -991,8 +1205,9 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         });
     }
 
-    // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose)
-    if (s.type != SourceType::Audio) {
+    // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose; a 3D
+    // object has no picture of its own)
+    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light) {
         auto *row = new QHBoxLayout;
         auto *label = new ResetLabel(QStringLiteral("Transition"), [this] {
             setProp(cmd::SetLayerProp::Transition, QString());
@@ -2160,6 +2375,82 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             });
         }
 
+        if (!s.clock && !s.timecode) { // written as by a pen: over a time, or driven like any value
+            auto *box = new QGroupBox(QStringLiteral("Writing"));
+            box->setObjectName(QStringLiteral("textWriting"));
+            auto *form = new QFormLayout(box);
+            form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            auto *progress = new SliderField;
+            progress->setObjectName(QStringLiteral("textWriteProgress"));
+            progress->setRange(0, 100);
+            progress->setDecimals(0);
+            progress->setSuffix(QStringLiteral(" %"));
+            progress->setValue(s.text.writeProgress * 100);
+            form->addRow(QStringLiteral("Written"), progress);
+            trackRow(form, progress, {QStringLiteral("text/write/progress")});
+            connect(progress, &SliderField::valueEdited, this, [this](double v) {
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/pause"), true);
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/progress"), v / 100);
+            });
+            auto *time = new NumberBox;
+            time->setObjectName(QStringLiteral("textWriteDuration"));
+            time->setRange(0.05, 3600);
+            time->setDecimals(2);
+            time->setSingleStep(0.5);
+            time->setSuffix(QStringLiteral(" s"));
+            time->setValue(s.text.writeDuration);
+            form->addRow(new ResetLabel(QStringLiteral("Time"), [time, def] { time->setValue(def.writeDuration); }), time);
+            trackRow(form, time, {QStringLiteral("text/write/duration")});
+            connect(time, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [style](double v) {
+                style(QStringLiteral("Writing Time"), [v](Layer &l) { l.text.writeDuration = float(v); });
+            });
+            auto *row = new QHBoxLayout;
+            auto *write = new QPushButton(QStringLiteral("▶ Write"));
+            write->setObjectName(QStringLiteral("textWriteStart"));
+            write->setToolTip(QStringLiteral("Write it from the start, over its time"));
+            auto *pause = new QPushButton(QStringLiteral("❚❚"));
+            pause->setObjectName(QStringLiteral("textWritePause"));
+            pause->setToolTip(QStringLiteral("Hold the pen where it is, or go on"));
+            auto *reset = new QPushButton(QStringLiteral("Clear"));
+            reset->setObjectName(QStringLiteral("textWriteReset"));
+            reset->setToolTip(QStringLiteral("Nothing written, ready to start"));
+            auto *whole = new QPushButton(QStringLiteral("All"));
+            whole->setToolTip(QStringLiteral("All of it written: as any text"));
+            for (QPushButton *b : {write, pause, reset, whole}) row->addWidget(b);
+            form->addRow(QString(), row);
+            // An action, not undone, as a clock's transport
+            connect(write, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("text/write/start"), true); });
+            connect(pause, &QPushButton::clicked, this, [this] {
+                bool playing = false;
+                {
+                    Engine::Lock lk(&m_engine->mutex());
+                    if (const Layer *l = m_engine->layer(m_layer)) playing = l->text.writePlaying;
+                }
+                m_engine->setParameter(m_layerId, playing ? QStringLiteral("text/write/pause") : QStringLiteral("text/write/resume"), true);
+            });
+            connect(reset, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("text/write/reset"), true); });
+            connect(whole, &QPushButton::clicked, this, [this] {
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/pause"), true);
+                m_engine->setParameter(m_layerId, QStringLiteral("text/write/progress"), 1.0);
+            });
+            auto *follow = new QTimer(box); // the pen going by
+            follow->setInterval(50);
+            connect(follow, &QTimer::timeout, progress, [this, progress] {
+                if (progress->underMouse() && QApplication::mouseButtons()) return;
+                double now = 1;
+                {
+                    Engine::Lock lk(&m_engine->mutex());
+                    if (const Layer *l = m_engine->layer(m_layer)) now = l->text.writeProgress;
+                }
+                if (std::abs(progress->value() - now * 100) > 0.4) {
+                    const QSignalBlocker blocker(progress);
+                    progress->setValue(now * 100);
+                }
+            });
+            follow->start();
+            v->addWidget(box);
+        }
+
         auto *fmt = new QFormLayout;
         fmt->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
@@ -2548,6 +2839,145 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         });
     }
 
+    m_synthFields.clear();
+    m_adsrCurve = nullptr;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const Layer *layer = m_engine->layer(m_layer);
+        if (layer && layer->audio && layer->audio->generator()) {
+            auto *synth = layer->audio->generator();
+            for (int i = 0; i < synth->parameterCount(); ++i) {
+                if (!synth->external() && synth->noise() && i < AudioGenerator::Attack && i != AudioGenerator::Gain)
+                    continue;
+                if (!synth->external() &&
+                    (synth->granular() ? (i == AudioGenerator::Ratio || i == AudioGenerator::Index)
+                                       : (i >= AudioGenerator::GrainMs && i <= AudioGenerator::Position)))
+                    continue;
+                const auto &p = synth->parameter(i);
+                const QString key = QStringLiteral("synth/") + p.key;
+                if (!synth->external() && i >= AudioGenerator::Envelope) { // above, with the curve; those of this envelope only
+                    const int kind = int(synth->value(AudioGenerator::Envelope));
+                    const bool wanted = (i == AudioGenerator::Hold && AudioGenerator::envelopeHasHold(kind)) ||
+                                        (i == AudioGenerator::FinalLevel && AudioGenerator::envelopeHasFinal(kind)) ||
+                                        (i >= AudioGenerator::BiasAttack && AudioGenerator::envelopeHasBias(kind));
+                    if (!wanted) continue;
+                }
+                if (!synth->external() && i == AudioGenerator::Attack) { // its envelope, in the hand; its values are kept below
+                    const int kind = int(synth->value(AudioGenerator::Envelope));
+                    auto *pickRow = new QHBoxLayout;
+                    auto *pickLabel = new QLabel(QStringLiteral("Envelope"));
+                    auto *pick = new QComboBox;
+                    pick->setObjectName(QStringLiteral("synthEnvelope"));
+                    pick->addItems(AudioGenerator::envelopeNames());
+                    pick->setCurrentIndex(kind);
+                    pick->setEnabled(!m_locked);
+                    pick->setToolTip(QStringLiteral("Which of Faust's envelopes: straight (adsr), exponential (adsre, ahdsre), with a bend on each slope (*_bias), a hold (ahdsr…), a final level (*f_bias)"));
+                    connect(pick, &QComboBox::activated, this, [this, pick] {
+                        setValue(QStringLiteral("synth/envelope"), pick->currentText(), QStringLiteral("Change Envelope"));
+                        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its own values, its own curve
+                    });
+                    m_animate->attach({pickLabel, pick}, {QStringLiteral("synth/envelope")});
+                    pickRow->addWidget(pickLabel);
+                    pickRow->addWidget(pick, 1);
+                    v->addLayout(pickRow);
+                    auto *curve = new AdsrCurve;
+                    curve->shape = kind == 1 || kind == 4 ? AdsrCurve::Shape::Exponential : AudioGenerator::envelopeHasBias(kind) ? AdsrCurve::Shape::Biased : AdsrCurve::Shape::Straight;
+                    curve->hasHold = AudioGenerator::envelopeHasHold(kind);
+                    curve->hasFinal = AudioGenerator::envelopeHasFinal(kind);
+                    AdsrCurve::Values shape;
+                    shape.attack = synth->value(AudioGenerator::Attack);
+                    shape.decay = synth->value(AudioGenerator::Decay);
+                    shape.sustain = synth->value(AudioGenerator::Sustain);
+                    shape.release = synth->value(AudioGenerator::Release);
+                    shape.hold = synth->value(AudioGenerator::Hold);
+                    shape.finalLevel = synth->value(AudioGenerator::FinalLevel);
+                    shape.biasAttack = synth->value(AudioGenerator::BiasAttack);
+                    shape.biasDecay = synth->value(AudioGenerator::BiasDecay);
+                    shape.biasRelease = synth->value(AudioGenerator::BiasRelease);
+                    curve->setValues(shape);
+                    curve->setEnabled(!m_locked);
+                    curve->edited = [this](const AdsrCurve::Values &v) {
+                        QJsonObject values;
+                        values[QStringLiteral("synth/attack")] = v.attack;
+                        values[QStringLiteral("synth/decay")] = v.decay;
+                        values[QStringLiteral("synth/sustain")] = v.sustain;
+                        values[QStringLiteral("synth/release")] = v.release;
+                        values[QStringLiteral("synth/hold")] = v.hold;
+                        values[QStringLiteral("synth/final")] = v.finalLevel;
+                        values[QStringLiteral("synth/biasAttack")] = v.biasAttack;
+                        values[QStringLiteral("synth/biasDecay")] = v.biasDecay;
+                        values[QStringLiteral("synth/biasRelease")] = v.biasRelease;
+                        setValues(values, QStringLiteral("Change Envelope"));
+                    };
+                    m_animate->attach({curve}, {QStringLiteral("synth/attack"), QStringLiteral("synth/decay"), QStringLiteral("synth/sustain"), QStringLiteral("synth/release")});
+                    v->addWidget(curve);
+                    m_adsrCurve = curve;
+                    auto *play = new QPushButton(QStringLiteral("Trigger"));
+                    play->setObjectName(QStringLiteral("adsrTrigger"));
+                    play->setToolTip(QStringLiteral("Its gate, as long as it is held: its envelope heard, and seen on the curve"));
+                    connect(play, &QPushButton::pressed, this, [this, curve] {
+                        m_engine->setParameter(m_layerId, QStringLiteral("synth/gate"), 1.0);
+                        curve->setPlaying(true);
+                    });
+                    connect(play, &QPushButton::released, this, [this, curve] {
+                        m_engine->setParameter(m_layerId, QStringLiteral("synth/gate"), 0.0);
+                        curve->setPlaying(false);
+                    });
+                    v->addWidget(play);
+                }
+                auto *row = new QHBoxLayout;
+                auto *label = new QLabel(QString::fromUtf8(p.label));
+                auto *field = new SliderField;
+                field->setRange(p.low, p.high);
+                field->setDecimals(3);
+                field->setValue(synth->value(i));
+                row->addWidget(label);
+                row->addWidget(field, 1);
+                v->addLayout(row);
+                m_synthFields.push_back({field, key});
+                m_animate->attach({label, field}, {key});
+                connect(field, &SliderField::valueEdited, this, [this, key](double value) {
+                    setValue(key, value, QStringLiteral("Change synthesis parameter"));
+                    emit layerChanged();
+                });
+            }
+            if (synth->sonification()) { // it listens to a picture: which viewport's, and the color it sees
+                std::vector<std::pair<quint64, QString>> viewports;
+                for (int vi : m_engine->viewports())
+                    if (const Layer *vl = m_engine->layer(vi)) viewports.push_back({vl->id, vl->name});
+                auto *row = new QHBoxLayout;
+                auto *label = new QLabel(QStringLiteral("Watches"));
+                auto *pick = new QComboBox;
+                pick->setObjectName(QStringLiteral("sonificationViewport"));
+                pick->addItem(viewports.empty() ? QStringLiteral("The composition (no viewport)")
+                                                : QStringLiteral("First viewport (%1)").arg(viewports.front().second),
+                              QVariant::fromValue<qulonglong>(0));
+                for (const auto &[id, name] : viewports) pick->addItem(name, QVariant::fromValue<qulonglong>(id));
+                if (layer->sonificationViewport && pick->findData(QVariant::fromValue<qulonglong>(layer->sonificationViewport)) < 0)
+                    pick->addItem(QStringLiteral("(viewport gone: the first one)"), QVariant::fromValue<qulonglong>(layer->sonificationViewport));
+                pick->setCurrentIndex(std::max(0, pick->findData(QVariant::fromValue<qulonglong>(layer->sonificationViewport))));
+                pick->setEnabled(!m_locked);
+                pick->setToolTip(QStringLiteral("The viewport whose picture this instrument listens to: its average color, as the "
+                                                "viewport outputs it (its own size, opacity and color space)."));
+                auto *swatch = new QLabel;
+                swatch->setObjectName(QStringLiteral("sonificationColor"));
+                swatch->setFixedSize(28, 18);
+                swatch->setToolTip(QStringLiteral("The average color of that viewport, as the instrument hears it"));
+                m_sonificationSwatch = swatch;
+                row->addWidget(label);
+                row->addWidget(pick, 1);
+                row->addWidget(swatch);
+                v->addLayout(row);
+                connect(pick, &QComboBox::activated, this, [this, pick](int k) {
+                    const quint64 id = pick->itemData(k).toULongLong();
+                    editSource(QStringLiteral("Change Sonification Viewport"),
+                               [this, id] { m_engine->setLayerSonificationViewport(m_layer, id); });
+                    emit layerChanged();
+                });
+            }
+        }
+    }
+
     if (media && s.hasAudio) {
         // Sound: layer volume (undoable), mute, level
         auto *row = new QHBoxLayout;
@@ -2573,11 +3003,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         row->addWidget(mute);
         m_animate->attach({icon, vol}, {QStringLiteral("volume")});
         v->addLayout(row);
-        m_meter = new QProgressBar;
-        m_meter->setRange(0, 600);
-        m_meter->setTextVisible(false);
-        m_meter->setFixedHeight(5);
-        m_meter->setStyleSheet("QProgressBar { background:#1b1b1d; border:none; } QProgressBar::chunk { background:#3fae5a; }");
+        m_meter = new LevelMeter(QStringLiteral("Layer output"));
         v->addWidget(m_meter);
         connect(vol, &SliderField::valueEdited, this, [this](double pct) {
             setValue(QStringLiteral("volume"), pct / 100.0, QStringLiteral("Change Volume"));
@@ -3318,25 +3744,19 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
 
 QWidget *LayerInspector::buildEffects(const LayerValues &s)
 {
-    auto *g = new QWidget; // titled by its sub-tab
-    auto *v = new QVBoxLayout(g);
+    auto *panel = new FxChainPanel(QStringLiteral("FX")); // titled by its sub-tab
 
     // General switch of the chain
-    auto *all = new FlagBox(QStringLiteral("FX Enable"));
+    auto *all = panel->masterSwitch();
     m_animate->attach(all, {QStringLiteral("fx/enable")});
     all->setChecked(s.effectsEnabled);
-    all->setToolTip(QStringLiteral("Turns the whole FX chain on or off (each FX keeps its own switch)"));
-    all->setStyleSheet("QCheckBox { font-weight:bold; }");
-    v->addWidget(all);
     connect(all, &QCheckBox::toggled, this, [this](bool on) {
         setValue(QStringLiteral("fx/enable"), on, QStringLiteral("Enable / Disable FX"));
         emit layerChanged();
     });
 
-    auto *bar = new QHBoxLayout;
-    auto *add = new QPushButton(QStringLiteral("Add FX…"));
-    add->setToolTip(QStringLiteral("Search the ISF library and add an FX to the chain"));
-    connect(add, &QPushButton::clicked, this, [this, add] {
+    panel->addButton()->setToolTip(QStringLiteral("Search the ISF library and add an FX to the chain"));
+    connect(panel, &FxChainPanel::addRequested, this, [this](QWidget *anchor) {
         QList<SearchPicker::Item> items;
         for (const IsfEntry &e : m_engine->library().filters())
             items.append({e.name, e.categories.value(0), e.description, e.path});
@@ -3357,82 +3777,49 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
                                              QStringLiteral("Add FX %1").arg(QFileInfo(p).completeBaseName()), beforeAnimations));
             QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
         });
-        picker->popup(add->mapToGlobal(QPoint(0, add->height())));
+        picker->popup(anchor->mapToGlobal(QPoint(0, anchor->height())));
     });
     auto *rescan = toolButton(QStringLiteral("↻"), QStringLiteral("Rescan ISF Library (shaders added in the Finder)"));
     connect(rescan, &QToolButton::clicked, this, &LayerInspector::rescanLibraryRequested);
-    auto *remove = toolButton(QStringLiteral("−"), QStringLiteral("Remove FX"));
-    auto *up = toolButton(QStringLiteral("▲"), QStringLiteral("Move Up (applied earlier)"));
-    auto *down = toolButton(QStringLiteral("▼"), QStringLiteral("Move Down (applied later)"));
+    panel->addLeading(rescan);
     auto *reload = toolButton(QStringLiteral("⟳"), QStringLiteral("Reload shader from disk"));
-    bar->addWidget(add, 1);
-    bar->addWidget(rescan);
-    bar->addWidget(remove);
-    bar->addWidget(up);
-    bar->addWidget(down);
-    bar->addWidget(reload);
-    v->addLayout(bar);
+    panel->addTrailing(reload);
 
-    if (s.effects.empty()) {
-        auto *none = new QLabel(QStringLiteral("No FX. FX are applied in list order."));
-        none->setWordWrap(true);
-        none->setStyleSheet("color:#888;");
-        v->addWidget(none);
-        for (auto *b : {remove, up, down, reload}) b->setEnabled(false);
-        return g;
-    }
-
-    const int count = int(s.effects.size());
-    m_selectedEffect = std::clamp(m_selectedEffect, 0, count - 1);
-    auto *list = new QListWidget;
+    std::vector<FxChainPanel::Row> rows;
     for (const auto &fx : s.effects) {
-        auto *it = new QListWidgetItem(fx.name + (fx.masked ? QStringLiteral("  ◐") : QString()) +
-                                       (fx.valid ? QString() : QStringLiteral("  ⚠")));
-        if (fx.masked) it->setToolTip(QStringLiteral("Through a mask"));
-        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-        it->setCheckState(fx.enabled ? Qt::Checked : Qt::Unchecked);
-        list->addItem(it);
+        FxChainPanel::Row row;
+        row.label = fx.name;
+        row.enabled = fx.enabled;
+        row.warning = !fx.valid;
+        row.maskOnly = fx.maskOnly;
+        rows.push_back(row);
     }
-    list->setCurrentRow(m_selectedEffect);
-    list->setMaximumHeight(qMin(160, 26 * count + 8));
-    if (!s.effectsEnabled) list->setStyleSheet("QListWidget { color:#777; }");
-    list->setProperty("allowLocked", true); // selecting an effect to see its parameters is not an edit
-    v->addWidget(list);
+    const int count = int(rows.size());
+    m_selectedEffect = count ? std::clamp(m_selectedEffect, 0, count - 1) : 0;
+    panel->setRows(rows, m_selectedEffect, s.effectsEnabled);
+    reload->setEnabled(count > 0);
+    if (!count) return panel;
 
-    connect(list, &QListWidget::itemChanged, this, [this, list](QListWidgetItem *it) {
-        const int r = list->row(it);
-        const bool on = it->checkState() == Qt::Checked;
+    connect(panel, &FxChainPanel::toggled, this, [this](int r, bool on) {
         editEffects(on ? QStringLiteral("Enable FX") : QStringLiteral("Disable FX"), [this, r, on] {
             Engine::Lock lk(&m_engine->mutex());
             Layer *ly = m_engine->layer(m_layer);
             if (ly && r >= 0 && r < int(ly->effects.size())) ly->effects[size_t(r)]->enabled = on;
         });
     });
-    connect(list, &QListWidget::currentRowChanged, this, [this](int r) {
-        // Only the parameters below are swapped. Rebuilding the whole tab here would destroy the list
-        // between the press and the release, and the click that picked the row would never reach its
-        // check box — which is why enabling an effect used to take two clicks.
-        if (r >= 0 && r != m_selectedEffect) {
+    connect(panel, &FxChainPanel::currentChanged, this, [this](int r) {
+        if (r != m_selectedEffect) {
             m_selectedEffect = r;
             showEffectParams();
         }
     });
-    connect(remove, &QToolButton::clicked, this, [this] {
+    connect(panel, &FxChainPanel::removeRequested, this, [this](int) {
         editEffects(QStringLiteral("Remove FX"), [this] { m_engine->removeEffect(m_layer, m_selectedEffect); });
         rebuild();
     });
-    connect(up, &QToolButton::clicked, this, [this] {
-        if (m_selectedEffect <= 0) return;
-        editEffects(QStringLiteral("Reorder FX"),
-                    [this] { m_engine->moveEffect(m_layer, m_selectedEffect, m_selectedEffect - 1); });
-        --m_selectedEffect;
-        rebuild();
-    });
-    connect(down, &QToolButton::clicked, this, [this, count] {
-        if (m_selectedEffect >= count - 1) return;
-        editEffects(QStringLiteral("Reorder FX"),
-                    [this] { m_engine->moveEffect(m_layer, m_selectedEffect, m_selectedEffect + 1); });
-        ++m_selectedEffect;
+    connect(panel, &FxChainPanel::moveRequested, this, [this](int from, int to) {
+        editEffects(QStringLiteral("Reorder FX"), [this, from, to] { m_engine->moveEffect(m_layer, from, to); });
+        m_selectedEffect = to;
         rebuild();
     });
     connect(reload, &QToolButton::clicked, this, [this] {
@@ -3445,85 +3832,179 @@ QWidget *LayerInspector::buildEffects(const LayerValues &s)
         rebuild();
     });
 
+    // Each FX's speed, mask and channels on its row
+    m_fxSpeeds.clear();
+    for (int k = 0; k < count; ++k) panel->setRowWidget(k, effectRowControls(k, panel));
+    lockInputs(panel->list(), m_locked);
+
     // Parameters of the selected effect: their own container, refilled in place
-    m_fxDetail = new QWidget;
-    auto *detail = new QVBoxLayout(m_fxDetail);
-    detail->setContentsMargins(0, 0, 0, 0);
-    v->addWidget(m_fxDetail);
+    m_fxDetail = panel->detail();
     showEffectParams();
-    return g;
+    return panel;
 }
 
-// Name, error and parameters of the selected effect, replaced without touching the list above
 void LayerInspector::showEffectParams()
 {
     if (!m_fxDetail) return;
     auto *lay = static_cast<QVBoxLayout *>(m_fxDetail->layout());
-    clearLayout(lay); // the Speed and Mask rows are layouts of their own
-    QString name, error;
+    clearLayout(lay);
+    QString error;
     bool valid = false;
-    quint64 maskId = 0, selfId = 0;
-    bool invert = false, maskPre = false;
-    std::vector<std::pair<quint64, QString>> masks; // layers that can mask it (no viewport, no feedback)
     {
         Engine::Lock lk(&m_engine->mutex());
         Layer *l = m_engine->layer(m_layer);
         if (!l || l->effects.empty()) return;
         m_selectedEffect = std::clamp(m_selectedEffect, 0, int(l->effects.size()) - 1);
         const IsfInstance *fx = l->effects[size_t(m_selectedEffect)].get();
-        name = fx->name();
         error = fx->error();
         valid = fx->isValid();
+    }
+    // Its name, speed, mask and channels are on its row of the list: here, its own parameters only
+    if (!error.isEmpty()) lay->addWidget(errorLabel(error));
+    if (valid) {
+        auto *params = new ParamPanel(m_engine, m_undo, m_layer, m_selectedEffect, ParamPanel::NoSpeed);
+        params->setCoTargets(coTargets());
+        m_effectParams = params;
+        params->attachAnimate(m_animate);
+        connect(params, &ParamPanel::rebuildRequested, this, &LayerInspector::rebuild, Qt::QueuedConnection);
+        lay->addWidget(params);
+    }
+    lockInputs(m_fxDetail, m_locked);
+}
+
+// An FX's row controls: its speed (dragged sideways), its mask (a chip that opens its settings) and its channels
+QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
+{
+    bool valid = false, usesTime = false, invert = false, maskOnly = false;
+    quint64 maskId = 0, selfId = 0;
+    int maskStage = -1;
+    QString maskName;
+    std::vector<std::pair<quint64, QString>> masks; // layers that can mask it (no viewport, no feedback)
+    QHash<quint64, QStringList> stagesOf;           // each one's effects, by name (its stages after them)
+    QStringList ownEffects;                         // this layer's effects above this one
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        Layer *l = m_engine->layer(m_layer);
+        if (!l || k >= int(l->effects.size())) return new QWidget;
+        const IsfInstance *fx = l->effects[size_t(k)].get();
+        valid = fx->isValid();
+        usesTime = fx->usesTime();
         maskId = fx->maskLayer;
         invert = fx->maskInvert;
-        maskPre = fx->maskPreFx;
+        maskStage = fx->maskStage;
+        maskOnly = fx->maskOnly;
         selfId = l->id;
-        for (int k = 0; k < m_engine->layerCount(); ++k) {
-            const Layer *o = m_engine->layer(k);
+        for (int e = 0; e < k; ++e) ownEffects << l->effects[size_t(e)]->name();
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
             if (!o || o->isViewport || o->id == selfId || m_engine->layerDependsOn(o->id, selfId)) continue;
             masks.push_back({o->id, o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
+            for (const auto &e : o->effects) stagesOf[o->id] << e->name();
+            if (o->id == maskId) maskName = o->name;
         }
+        if (maskId == selfId) maskName = QStringLiteral("Self");
+        else if (maskId && maskName.isEmpty()) maskName = QStringLiteral("(gone)");
     }
-    lay->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(name.toHtmlEscaped())));
-    if (!error.isEmpty()) lay->addWidget(errorLabel(error));
+    auto *box = new QWidget;
+    auto *h = new QHBoxLayout(box);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(6);
+    const QString prefix = m_engine->shaderPrefix(m_layerId, k);
 
-    // Its speed (the pace of its TIME), above its mask
+    // ∿ when one of its numbers is animated: a click opens that animation (the layer's own, or the timeline). Its speed
+    // is that animation's, not the FX's
+    QString localPath;
+    quint64 timeline = 0;
+    QStringList driven;
+    for (const Animation &a : m_engine->layerAnims(m_layerId))
+        for (const AnimTrack &t : a.tracks)
+            if (t.param.startsWith(prefix)) {
+                if (localPath.isEmpty()) localPath = t.param;
+                driven << paramanim::label(m_engine, m_layerId, t.param);
+            }
+    for (int i = 0; i < m_engine->animationCount(); ++i) {
+        const Animation a = m_engine->animation(i);
+        for (const AnimTrack &t : a.tracks)
+            if (t.layer == m_layerId && t.param.startsWith(prefix)) {
+                if (!timeline) timeline = a.id;
+                driven << QStringLiteral("%1 (%2)").arg(paramanim::label(m_engine, m_layerId, t.param), a.name);
+            }
+    }
+    auto *animated = new QToolButton;
+    animated->setObjectName(QStringLiteral("fxAnimated"));
+    animated->setText(QStringLiteral("∿"));
+    animated->setAutoRaise(true);
+    // The amber of the animations (their current-value badge), readable on a selected row as on the others
+    animated->setStyleSheet(QStringLiteral("QToolButton { color:#e0a030; font-size:15px; font-weight:bold; padding:0 2px; border:none; }"));
+    animated->setToolTip(QStringLiteral("Animated: %1\nClick to open its animation (its speed is set there)")
+                             .arg(driven.join(QStringLiteral(", "))));
+    connect(animated, &QToolButton::clicked, this, [this, localPath, timeline] {
+        if (!localPath.isEmpty()) showAnimation(localPath);
+        else if (timeline) emit timelineRequested(timeline);
+    });
+    QSizePolicy keep = animated->sizePolicy();
+    keep.setRetainSizeWhenHidden(true); // the rows' controls stay in columns
+    animated->setSizePolicy(keep);
+    h->addWidget(animated);
+    animated->setVisible(!driven.isEmpty()); // once in the row (shown alone, it would be a window)
+
+    // Speed: the pace of its TIME, a number dragged sideways. Only for a shader that reads TIME (a place kept otherwise)
     if (valid) {
-        const QString path = m_engine->shaderPrefix(m_layerId, m_selectedEffect) + QStringLiteral("speed");
-        auto *speed = new SliderField;
+        const QString path = prefix + QStringLiteral("speed");
+        auto *speed = new NumberBox;
+        speed->setObjectName(QStringLiteral("fxSpeed"));
         speed->setRange(0, 10);
         speed->setDecimals(2);
         speed->setSingleStep(0.05);
-        speed->setTicks(10);
-        speed->setSnaps({1});
+        speed->setPrefix(QStringLiteral("×"));
         speed->setValue(m_engine->parameterValue(m_layerId, path).toDouble(1.0));
-        speed->setToolTip(QStringLiteral("Speed of the FX's time (1 = normal, 0 = stopped)"));
-        m_fxSpeed = speed;
-        m_fxSpeedPath = path;
-        auto *label = new ResetLabel(QStringLiteral("Speed"), [this, speed, path] {
-            speed->setValue(1);
-            setValue(path, 1.0, QStringLiteral("Change Speed"));
+        speed->setToolTip(QStringLiteral("Speed of the FX's time (1 = normal, 0 = stopped): drag sideways"));
+        auto tint = [speed] {
+            speed->setStyleSheet(std::abs(speed->value() - 1) > 1e-6 ? QStringLiteral("color:#ffd27a;") : QString());
+        };
+        tint();
+        connect(speed, &QDoubleSpinBox::valueChanged, this, [this, path, tint](double x) {
+            setValue(path, x, QStringLiteral("Change Speed"));
+            tint();
         });
-        connect(speed, &SliderField::valueEdited, this,
-                [this, path](double x) { setValue(path, x, QStringLiteral("Change Speed")); });
-        m_animate->attach({label, speed}, {path});
-        auto *row = new QHBoxLayout;
-        row->addWidget(label);
-        row->addWidget(speed, 1);
-        lay->addLayout(row);
+        h->addWidget(speed);
+        if (usesTime) {
+            m_animate->attach(speed, {path});
+            m_fxSpeeds.push_back({speed, path});
+        } else {
+            QSizePolicy hold = speed->sizePolicy();
+            hold.setRetainSizeWhenHidden(true);
+            speed->setSizePolicy(hold);
+            speed->setVisible(false);
+        }
     }
 
-    // Mask: where the effect applies, from another layer's picture stretched over this one
-    {
-        auto *row = new QHBoxLayout;
-        auto *label = new ResetLabel(QStringLiteral("Mask"), [this] {
-            const int k = m_selectedEffect;
-            editEffects(QStringLiteral("Remove FX Mask"), [this, k] { m_engine->setEffectMask(m_layer, k, 0, false); });
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // the list shows ◐
-        });
+    // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
+    auto *mask = new QToolButton;
+    mask->setObjectName(QStringLiteral("fxMask"));
+    auto label = [mask](const QString &name, bool inverted) {
+        mask->setText((inverted ? QStringLiteral("◑ ") : QStringLiteral("◐ ")) + (name.isEmpty() ? QStringLiteral("—") : name));
+        mask->setStyleSheet(name.isEmpty() ? QStringLiteral("QToolButton { color:#666; padding:1px 6px; }")
+                                           : QStringLiteral("QToolButton { color:white; background:%1; border-radius:3px; "
+                                                            "padding:1px 6px; }").arg(theme::accent().darker(140).name()));
+    };
+    label(maskName, invert);
+    mask->setMaximumWidth(110);
+    mask->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at all "
+                                    "where it is black or transparent. Click to choose it"));
+    h->addWidget(mask);
+    connect(mask, &QToolButton::clicked, this, [this, mask, label, masks, stagesOf, ownEffects, selfId, maskId, maskStage,
+                                                 invert, maskOnly, valid, prefix, panel, k] {
+        auto *pop = new QFrame(mask, Qt::Popup);
+        pop->setAttribute(Qt::WA_DeleteOnClose);
+        pop->setObjectName(QStringLiteral("fxMaskPopup"));
+        pop->setFrameShape(QFrame::StyledPanel);
+        auto *f = new QFormLayout(pop);
         auto *pick = new QComboBox;
+        pick->setObjectName(QStringLiteral("fxMaskLayer"));
         pick->addItem(QStringLiteral("None — everywhere"), QVariant(qulonglong(0)));
-        int current = 0;
+        pick->addItem(QStringLiteral("This layer"), QVariant(qulonglong(selfId)));
+        int current = maskId == selfId ? 1 : 0;
         for (const auto &[id, n] : masks) {
             pick->addItem(n, QVariant(qulonglong(id)));
             if (id == maskId) current = pick->count() - 1;
@@ -3533,54 +4014,87 @@ void LayerInspector::showEffectParams()
             current = pick->count() - 1;
         }
         pick->setCurrentIndex(current);
-        pick->setToolTip(QStringLiteral("Where this FX applies: fully where the chosen layer's picture is white, not at "
-                                        "all where it is black or transparent, in proportion in between. That picture is "
-                                        "stretched over this layer's, before the mapping. The layer can stay hidden."));
+        f->addRow(QStringLiteral("Mask"), pick);
+        // Its stage: the mask layer's source, its picture after one of its FX, or its final picture (this layer: above
+        // this FX only)
+        auto *stage = new QComboBox;
+        stage->setObjectName(QStringLiteral("fxMaskStage"));
+        stage->addItem(QStringLiteral("Source (before its FX)"), 0);
+        const QStringList effects = maskId == selfId ? ownEffects : stagesOf.value(maskId);
+        for (int e = 0; e < effects.size(); ++e)
+            stage->addItem(QStringLiteral("After %1 · %2").arg(e + 1).arg(effects[e]), e + 1);
+        if (maskId != selfId) stage->addItem(QStringLiteral("Final"), -1);
+        stage->setCurrentIndex(std::max(0, stage->findData(maskStage)));
+        stage->setEnabled(maskId != 0);
+        stage->setToolTip(QStringLiteral("The mask layer's picture taken: its source, after one of its FX, or its final "
+                                         "picture. This layer: its source or an FX above this one"));
+        f->addRow(QStringLiteral("Taken at"), stage);
         auto *inv = new FlagBox(QStringLiteral("Invert"));
         inv->setChecked(invert);
         inv->setEnabled(maskId != 0);
-        row->addWidget(label);
-        row->addWidget(pick, 1);
-        row->addWidget(inv);
-        auto *tap = new QComboBox;
-        tap->addItem(QStringLiteral("Pre-FX"), true);
-        tap->addItem(QStringLiteral("Post-FX"), false);
-        tap->setCurrentIndex(maskPre ? 0 : 1);
-        tap->setEnabled(maskId != 0);
-        tap->setToolTip(QStringLiteral("The mask's picture: before or after the mask layer's own FX"));
-        row->addWidget(tap);
-        lay->addLayout(row);
-        connect(tap, &QComboBox::activated, this, [this, tap](int i) {
-            const bool pre = tap->itemData(i).toBool();
-            const int k = m_selectedEffect;
-            editEffects(QStringLiteral("Set FX Mask Tap"), [&] { m_engine->setEffectMaskTap(m_layer, k, pre); });
-        });
-        connect(pick, &QComboBox::activated, this, [this, pick, inv](int i) {
+        f->addRow(QString(), inv);
+        auto *only = new FlagBox(QStringLiteral("Mask only — not in the picture"));
+        only->setObjectName(QStringLiteral("fxMaskOnly"));
+        only->setChecked(maskOnly);
+        only->setEnabled(valid);
+        only->setToolTip(QStringLiteral("This FX is computed, and a mask can take its picture (an FX below it, another "
+                                        "layer's), but the layer's picture goes on as if it were not there"));
+        f->addRow(QString(), only);
+        lockInputs(pop, m_locked);
+        connect(pick, &QComboBox::activated, this, [this, pick, inv, pop, k](int i) {
             const quint64 id = pick->itemData(i).toULongLong();
-            const int k = m_selectedEffect;
             QString err;
             bool ok = true;
             editEffects(id ? QStringLiteral("Set FX Mask") : QStringLiteral("Remove FX Mask"),
                         [&] { ok = m_engine->setEffectMask(m_layer, k, id, inv->isChecked(), &err); });
+            pop->close();
             if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("Mask"), err);
-            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages, the chip
         });
-        connect(inv, &QCheckBox::toggled, this, [this, pick](bool on) {
+        connect(stage, &QComboBox::activated, this, [this, stage, k](int i) {
+            const int at = stage->itemData(i).toInt();
+            editEffects(QStringLiteral("Set FX Mask Stage"), [&] { m_engine->setEffectMaskStage(m_layer, k, at); });
+        });
+        connect(inv, &QCheckBox::toggled, this, [this, pick, label, k](bool on) {
             const quint64 id = pick->currentData().toULongLong();
-            const int k = m_selectedEffect;
             editEffects(QStringLiteral("Invert FX Mask"), [&] { m_engine->setEffectMask(m_layer, k, id, on); });
+            label(pick->currentIndex() == 1 ? QStringLiteral("Self") : pick->currentText(), on);
         });
-    }
+        connect(only, &QCheckBox::toggled, this, [this, prefix, panel, k](bool on) {
+            setValue(prefix + QStringLiteral("mask_only"), on, QStringLiteral("FX Mask Only"));
+            panel->setRowMaskOnly(k, on); // its outline in the list
+        });
+        m_animate->attach(only, {prefix + QStringLiteral("mask_only")});
+        pop->adjustSize();
+        pop->move(mask->mapToGlobal(QPoint(mask->width() - pop->width(), mask->height())));
+        pop->show();
+    });
+
+    // Channels: the ones it changes (all by default); a channel off keeps the picture the effect was given
     if (valid) {
-        lay->addWidget(accentSeparator());
-        auto *params = new ParamPanel(m_engine, m_undo, m_layer, m_selectedEffect, ParamPanel::NoSpeed);
-        params->setCoTargets(coTargets());
-        m_effectParams = params;
-        params->attachAnimate(m_animate);
-        connect(params, &ParamPanel::rebuildRequested, this, &LayerInspector::rebuild, Qt::QueuedConnection);
-        lay->addWidget(params);
+        static const QColor kTints[] = {QColor(230, 70, 70), QColor(80, 200, 90), QColor(80, 140, 240), QColor(200, 200, 205)};
+        auto *channels = new QHBoxLayout;
+        channels->setSpacing(2);
+        for (int c = 0; c < 4; ++c) {
+            const QString path = prefix + QStringLiteral("channel/") + QChar("rgba"[c]);
+            auto *b = new QToolButton;
+            b->setObjectName(QStringLiteral("fxChannel") + QChar("RGBA"[c]));
+            b->setText(QString(QChar("RGBA"[c])));
+            b->setCheckable(true);
+            b->setChecked(m_engine->parameterValue(m_layerId, path).toBool(true));
+            b->setFixedSize(18, 20);
+            b->setToolTip(QStringLiteral("%1: changed by this FX (off: it keeps the picture the FX was given)")
+                              .arg(QStringLiteral("Red,Green,Blue,Alpha").split(',')[c]));
+            b->setStyleSheet(QStringLiteral("QToolButton { font-size:10px; font-weight:bold; color:#666; padding:0; } "
+                                            "QToolButton:checked { background:%1; color:%2; border-radius:2px; }")
+                                 .arg(kTints[c].name(), c == 3 ? QStringLiteral("#222") : QStringLiteral("white")));
+            connect(b, &QToolButton::toggled, this, [this, path](bool on) { setValue(path, on, QStringLiteral("FX Channel")); });
+            m_animate->attach(b, {path});
+            channels->addWidget(b);
+        }
+        h->addLayout(channels);
     }
-    lockInputs(m_fxDetail, m_locked);
+    return box;
 }
 
 void LayerInspector::refreshSpatial()
@@ -3655,8 +4169,309 @@ void LayerInspector::refreshClock()
     if (u->status) u->status->setText(c->status());
 }
 
+// A layer chosen for this one's 3D use (a model's picture or displacement, a scene's environment), and the stage its
+// picture is taken at (its final picture, its source before its FX, after one of its FX). Any layer, group or scene
+// but the one this layer is in (and what is made from it): no loop
+void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
+                                    const QString &objectName, const QString &tip, const QString &undoText,
+                                    const std::function<bool(quint64, int, QString *)> &set, bool hdr)
+{
+    QSet<quint64> hdrFiles; // HDR images (.hdr, .exr): their file as read, unclipped, offered (and chosen at first)
+    std::vector<quint64> ancestors;
+    std::vector<std::pair<quint64, QString>> candidates;
+    QHash<quint64, QStringList> effectsOf; // each candidate's FX, by name: the stages its picture can be taken at
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        for (quint64 up = l->scene3d ? l->id : l->parent; up;) {
+            ancestors.push_back(up);
+            const Layer *g = m_engine->layer(m_engine->indexOfId(up));
+            up = g ? g->parent : 0;
+        }
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (!o || o->isViewport || o->is3dObject() || std::count(ancestors.begin(), ancestors.end(), o->id)) continue;
+            if (std::any_of(ancestors.begin(), ancestors.end(), [&](quint64 a) { return m_engine->layerDependsOn(o->id, a); })) continue;
+            candidates.push_back({o->id, o->scene3d ? o->name + QStringLiteral(" (3D scene)") : o->isGroup ? o->name + QStringLiteral(" (group)") : o->name});
+            for (const auto &e : o->effects) effectsOf[o->id] << e->name();
+            if (hdr && o->type == SourceType::Image && isHdrImageFile(o->sourcePath)) hdrFiles.insert(o->id);
+        }
+    }
+    auto *pick = new QComboBox;
+    pick->setObjectName(objectName + QStringLiteral("Layer"));
+    pick->addItem(none, QVariant(qulonglong(0)));
+    for (const auto &[id, n] : candidates) pick->addItem(n, QVariant(qulonglong(id)));
+    if (current && pick->findData(QVariant(qulonglong(current))) < 0) pick->addItem(QStringLiteral("(gone)"), QVariant(qulonglong(current)));
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(tip);
+    form->addRow(name, pick);
+    auto *at = new QComboBox;
+    at->setObjectName(objectName + QStringLiteral("Stage"));
+    if (hdrFiles.contains(current)) at->addItem(QStringLiteral("HDR file (linear, unclipped)"), Engine::kStageHdrFile);
+    at->addItem(QStringLiteral("Final (after its FX)"), -1);
+    at->addItem(QStringLiteral("Source (before its FX)"), 0);
+    const QStringList effects = effectsOf.value(current);
+    for (int e = 0; e < effects.size(); ++e) at->addItem(QStringLiteral("After %1 · %2").arg(e + 1).arg(effects[e]), e + 1);
+    at->setCurrentIndex(std::max(0, at->findData(stage)));
+    at->setEnabled(current != 0);
+    at->setToolTip(QStringLiteral("Where the layer's picture is taken: its final picture, its source before its FX, or after "
+                                  "one of its FX"));
+    form->addRow(QStringLiteral("Taken at"), at);
+    connect(pick, &QComboBox::activated, this, [this, pick, set, undoText, hdrFiles](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        QString err;
+        bool ok = true;
+        editSource(undoText, [&] { ok = set(id, hdrFiles.contains(id) ? Engine::kStageHdrFile : -1, &err); });
+        if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("3D"), err);
+        emit layerChanged();
+        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages
+    });
+    connect(at, &QComboBox::activated, this, [this, at, pick, set, undoText](int i) {
+        const quint64 id = pick->currentData().toULongLong();
+        const int st = at->itemData(i).toInt();
+        QString err;
+        editSource(undoText, [&] { set(id, st, &err); });
+    });
+}
+
+// What a light looks at: the other 3D objects of its scene (it follows them), or the point below
+void LayerInspector::addLightLookAt(QFormLayout *form)
+{
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("lightLookAtObject"));
+    pick->addItem(QStringLiteral("The point below"), QVariant(qulonglong(0)));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        current = l->lightLookAt;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o != l && o->is3dObject() && sceneOf(o) == sceneOf(l)) pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("A model, a light or a Merge 3D of its scene: the light follows it wherever it goes"));
+    form->addRow(QStringLiteral("Object"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Light Looks At"), [&] { m_engine->setLightLookAt(m_layer, id); });
+        emit layerChanged();
+    });
+}
+
+// A model's layers: the picture laid on it (over its UVs) and the one whose luminance pushes its points along their
+// normals, each taken at a stage of its own
+QWidget *LayerInspector::buildModelLayers()
+{
+    auto *box = new QGroupBox(QStringLiteral("Surface"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    quint64 picture = 0, displace = 0;
+    int pictureStage = -1, displaceStage = -1;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        picture = l->modelPicture;
+        displace = l->modelDisplace;
+        pictureStage = l->modelPictureStage;
+        displaceStage = l->modelDisplaceStage;
+    }
+    addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, pictureStage,
+                   QStringLiteral("modelPicture"),
+                   QStringLiteral("A layer's picture laid on the model, over its UVs: a video on a screen, a dome. The layer "
+                                  "can stay hidden. Unlit (below): shown as it is."),
+                   QStringLiteral("Show Layer on Model"),
+                   [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, false, err, stage); });
+    addLayerChoice(form, QStringLiteral("Displace"), QStringLiteral("None"), displace, displaceStage, QStringLiteral("modelDisplace"),
+                   QStringLiteral("A layer whose luminance pushes the model's points along their normals (Displace › "
+                                  "Amount): white the most, its neutral level not at all. Mesh Detail cuts a primitive finer."),
+                   QStringLiteral("Displace Model"),
+                   [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, stage); });
+    return box;
+}
+
+// A scene's environment: a layer's picture (an HDRI loaded in an image layer, a video…), equirectangular, that surrounds
+// the models and lights them (diffuse and reflections); Environment › Intensity, Rotation, Shown Behind, Blur
+void LayerInspector::addSceneEnvironment(QFormLayout *form)
+{
+    quint64 env = 0;
+    int stage = -1;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        env = l->sceneEnvironment;
+        stage = l->sceneEnvironmentStage;
+    }
+    addLayerChoice(form, QStringLiteral("Layer"), QStringLiteral("None — its lights only"), env, stage, QStringLiteral("sceneEnvironment"),
+                   QStringLiteral("An equirectangular picture (an HDRI: .hdr, .exr, loaded in a layer that can stay hidden; "
+                                  "a video, a generator) around the scene: it lights the models, its reflections in them as "
+                                  "sharp as they are smooth. Shown behind them if asked."),
+                   QStringLiteral("Scene Environment"),
+                   [this](quint64 id, int st, QString *err) { return m_engine->setSceneEnvironment(m_layer, id, err, st); }, true);
+}
+
+// The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors
+// as pickers, switches, choices; each one undoable, animatable (right-click) and refreshed while it moves
+QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList &except, const std::function<void(QFormLayout *)> &first)
+{
+    auto *w = new QWidget;
+    auto *v = new QVBoxLayout(w);
+    v->setContentsMargins(0, 6, 0, 0);
+    std::vector<ParamInfo> params;
+    for (const ParamInfo &p : m_engine->parameters(m_layerId))
+        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &x) { return p.path.startsWith(x); }) &&
+            std::none_of(except.begin(), except.end(), [&](const QString &x) { return p.path.startsWith(x); })) params.push_back(p);
+    QString section;
+    QFormLayout *form = nullptr;
+    QSet<QString> colorsDone;
+    for (const ParamInfo &p : params) {
+        const QString category = p.label.section(QStringLiteral(" › "), 0, 0), name = p.label.section(QStringLiteral(" › "), 1);
+        if (!form || category != section) {
+            section = category;
+            auto *box = new QGroupBox(category);
+            form = new QFormLayout(box);
+            form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            v->addWidget(box);
+            if (first) first(form);
+        }
+        if (p.colorComponent >= 0) { // its members together: one picker
+            const QString base = p.path.section('/', 0, -2);
+            if (colorsDone.contains(base)) continue;
+            colorsDone.insert(base);
+            QStringList paths;
+            QJsonObject defaults; // a click on its name puts them back
+            for (const ParamInfo &q : params)
+                if (q.colorComponent >= 0 && q.path.section('/', 0, -2) == base) {
+                    paths << q.path;
+                    defaults[q.path] = QJsonValue::fromVariant(q.defaultValue);
+                }
+            auto *picker = new ColorPicker(paths.size() == 4);
+            picker->setSettingsKey(QStringLiteral("ui/colorPickerMode/layer/%1/%2").arg(m_layerId).arg(base));
+            auto *label = new ResetLabel(name.section(' ', 0, 0), [this, defaults, name] {
+                setValues(defaults, QStringLiteral("Reset ") + name.section(' ', 0, 0));
+                refreshDynamic();
+            });
+            form->addRow(label, picker);
+            m_animate->attach({label, picker}, paths);
+            connect(picker, &ColorPicker::colorEdited, this, [this, paths, name](const QColor &c) {
+                QJsonObject values;
+                const double comps[4] = {c.redF(), c.greenF(), c.blueF(), c.alphaF()};
+                for (int k = 0; k < paths.size(); ++k) values[paths[k]] = comps[k];
+                setValues(values, QStringLiteral("Change ") + name.section(' ', 0, 0));
+            });
+            m_3dColors.push_back({picker, paths});
+            continue;
+        }
+        const QString path = p.path, text = QStringLiteral("Change ") + name;
+        // A click on its name: its default back (one undo step)
+        auto *label = new ResetLabel(name, [this, path, name, def = QJsonValue::fromVariant(p.defaultValue)] {
+            setValue(path, def, QStringLiteral("Reset ") + name);
+            refreshDynamic();
+            emit layerChanged(); // a light's kind in the list
+        });
+        QWidget *field = nullptr;
+        const QJsonValue value = m_engine->parameterValue(m_layerId, p.path);
+        if (p.type == ParamInfo::Type::Bool) {
+            auto *flag = new FlagBox;
+            flag->setChecked(value.toBool());
+            connect(flag, &QCheckBox::toggled, this, [this, path, text](bool on) { setValue(path, on, text); });
+            field = flag;
+        } else if (p.type == ParamInfo::Type::Choice) {
+            auto *pick = new QComboBox;
+            for (const QString &c : p.choices) pick->addItem(c, c);
+            pick->setCurrentIndex(std::max(0, pick->findData(value.toString())));
+            connect(pick, &QComboBox::activated, this, [this, pick, path, text](int i) {
+                setValue(path, pick->itemData(i).toString(), text);
+                emit layerChanged(); // the list says its kind
+            });
+            field = pick;
+        } else {
+            auto *bar = new SliderField;
+            bar->setRange(p.min, p.max);
+            bar->setTypedRange(p.lo, p.hi);
+            bar->setDecimals(p.step >= 1 ? 0 : p.step >= 0.1 ? 1 : 2);
+            bar->setSingleStep(p.step);
+            bar->setValue(value.toDouble());
+            connect(bar, &SliderField::valueEdited, this, [this, path, text](double x) { setValue(path, x, text); });
+            field = bar;
+        }
+        field->setObjectName(QStringLiteral("param3d:") + path);
+        form->addRow(label, field);
+        m_animate->attach({label, field}, {path});
+        m_3dFields.push_back({field, path});
+        if (path == QLatin1String("light/lookat")) addLightLookAt(form);
+    }
+    v->addStretch();
+    return w;
+}
+
 void LayerInspector::refreshDynamic()
 {
+    refreshPicker(); // a layer renamed or moved by something else
+    for (const auto &[field, path] : m_3dFields) { // animated, recalled, driven
+        if (!field || field->hasFocus() || field->isAncestorOf(QApplication::focusWidget())) continue;
+        const QJsonValue value = m_engine->parameterValue(m_layerId, path);
+        const QSignalBlocker block(field);
+        if (auto *bar = qobject_cast<SliderField *>(field.data())) {
+            if (!bar->isDragging() && std::abs(bar->value() - value.toDouble()) > 1e-6) bar->setValue(value.toDouble());
+        } else if (auto *flag = qobject_cast<QCheckBox *>(field.data())) {
+            flag->setChecked(value.toBool());
+        } else if (auto *pick = qobject_cast<QComboBox *>(field.data()); pick && !pick->view()->isVisible()) {
+            pick->setCurrentIndex(std::max(0, pick->findData(value.toString())));
+        }
+    }
+    for (const auto &[field, paths] : m_3dColors) {
+        auto *picker = qobject_cast<ColorPicker *>(field.data());
+        if (!picker || picker->isAncestorOf(QApplication::focusWidget())) continue;
+        float c[4] = {0, 0, 0, 1};
+        for (int k = 0; k < paths.size() && k < 4; ++k) c[k] = float(std::clamp(m_engine->parameterValue(m_layerId, paths[k]).toDouble(), 0.0, 1.0));
+        const QColor now = QColor::fromRgbF(c[0], c[1], c[2], c[3]);
+        if (picker->property("shown").value<QColor>() != now) {
+            picker->setProperty("shown", now);
+            picker->setColor(now);
+        }
+    }
+    if (m_adsrCurve) {
+        AdsrCurve::Values shape;
+        shape.attack = m_engine->parameterValue(m_layerId, QStringLiteral("synth/attack")).toDouble();
+        shape.decay = m_engine->parameterValue(m_layerId, QStringLiteral("synth/decay")).toDouble();
+        shape.sustain = m_engine->parameterValue(m_layerId, QStringLiteral("synth/sustain")).toDouble();
+        shape.release = m_engine->parameterValue(m_layerId, QStringLiteral("synth/release")).toDouble();
+        shape.hold = m_engine->parameterValue(m_layerId, QStringLiteral("synth/hold")).toDouble();
+        shape.finalLevel = m_engine->parameterValue(m_layerId, QStringLiteral("synth/final")).toDouble();
+        shape.biasAttack = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasAttack")).toDouble();
+        shape.biasDecay = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasDecay")).toDouble();
+        shape.biasRelease = m_engine->parameterValue(m_layerId, QStringLiteral("synth/biasRelease")).toDouble();
+        m_adsrCurve->setValues(shape);
+    }
+    for (const auto &[field, key] : m_synthFields) {
+        if (field && !field->isDragging() && !field->hasFocus()) {
+            const QSignalBlocker block(field);
+            field->setValue(m_engine->parameterValue(m_layerId, key).toDouble());
+        }
+    }
+    for (const auto *fields : {&m_audioFXFields, &m_audioFxDetail})
+        for (const auto &[field, key] : *fields) {
+            if (!field || field->hasFocus())
+                continue;
+            const auto value = m_engine->parameterValue(m_layerId, key);
+            const QSignalBlocker blocker(field);
+            if (auto *slider = qobject_cast<SliderField *>(field.data())) {
+                if (!slider->isDragging())
+                    slider->setValue(value.toDouble());
+            } else if (auto *flag = qobject_cast<QCheckBox *>(field.data()))
+                flag->setChecked(value.toBool());
+        }
+    refreshAudioMeters();
     if (m_toxStatus) {
         {
             Engine::Lock lock(&m_engine->mutex());
@@ -3805,7 +4620,13 @@ void LayerInspector::refreshDynamic()
             show(m_genSpeed, gs);
         }
         if (m_effectParams) m_effectParams->refresh();
-        if (m_fxSpeed) show(m_fxSpeed, m_engine->parameterValue(m_layerId, m_fxSpeedPath).toDouble(1.0));
+        for (const auto &[box, path] : m_fxSpeeds) {
+            const double v = m_engine->parameterValue(m_layerId, path).toDouble(1.0);
+            if (box && !box->hasFocus() && std::abs(box->value() - v) > 1e-3) {
+                QSignalBlocker block(box);
+                box->setValue(v);
+            }
+        }
         for (size_t k = 0; k < m_routeFields.size(); ++k) {
             const RouteField &r = m_routeFields[k];
             if (!r.field || r.field->isDragging()) continue;
@@ -3821,11 +4642,6 @@ void LayerInspector::refreshDynamic()
         if (!l || (l->type != SourceType::Video && l->type != SourceType::Audio)) return;
         in = l->inPoint;
         out = l->outPoint;
-        if (m_meter) {
-            const float pk = l->audio ? l->audio->peak() : 0.0f;
-            const double db = pk > 1e-6f ? 20.0 * std::log10(pk) : -60.0;
-            m_meter->setValue(int(std::clamp(db + 60.0, 0.0, 60.0) * 10));
-        }
         playing = l->playing;
         speed = l->speed;
         d = l->duration();
@@ -3864,6 +4680,8 @@ QString LayerInspector::layoutKey() const
         QString::number(layer->videoSource.rtspTcp)};
     if (layer->timecode) key << QString::fromUtf8(QJsonDocument(layer->timecode->toJson()).toJson(QJsonDocument::Compact));
     if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
+    if (layer->audioEffects)
+        key << QString::number(layer->audioEffects->revision());
     for (const auto &effect : layer->effects) key << effect->path();
     if (layer->clockGen) { // a Countdown, Stopwatch or Clock: its fields show its settings (changed by a recall: made again)
         const ClockSettings c = layer->clockGen->settings();
@@ -3875,8 +4693,270 @@ QString LayerInspector::layoutKey() const
     return key.join(QChar(0x1f));
 }
 
+// The levels of the sound, where it is watched: the Source tab (the layer's output), the Audio FX tab (the source, the
+// selected FX, the output). Read from the audio thread's atomics, a few times a second.
+void LayerInspector::refreshAudioMeters()
+{
+    if (!m_meter && !m_audioSourceMeter && !m_audioOutputMeter && !m_audioFxMeter && !m_sonificationSwatch)
+        return;
+    std::shared_ptr<AudioStream> stream;
+    std::shared_ptr<AudioEffect> effect;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_engine->indexOfId(m_layerId));
+        if (l) {
+            stream = l->audio;
+            if (l->audioEffects) {
+                const auto effects = l->audioEffects->effects();
+                if (m_selectedAudioFx >= 0 && m_selectedAudioFx < int(effects.size())) effect = effects[size_t(m_selectedAudioFx)];
+            }
+        }
+    }
+    auto show = [](LevelMeter *meter, const AudioMeter *level) {
+        if (meter) meter->setLevels(level ? level->peak(0) : 0.f, level ? level->peak(1) : 0.f);
+    };
+    show(m_meter, stream ? &stream->outputMeter() : nullptr);
+    show(m_audioSourceMeter, stream ? &stream->sourceMeter() : nullptr);
+    show(m_audioOutputMeter, stream ? &stream->outputMeter() : nullptr);
+    show(m_audioFxMeter, effect ? &effect->meter() : nullptr);
+    if (m_sonificationSwatch && stream && stream->generator()) {
+        const auto rgb = stream->generator()->color();
+        const QColor c = QColor::fromRgbF(std::clamp(rgb[0], 0.f, 1.f), std::clamp(rgb[1], 0.f, 1.f), std::clamp(rgb[2], 0.f, 1.f));
+        m_sonificationSwatch->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(c.name()));
+    }
+}
+
 void LayerInspector::refreshAfterRecall()
 {
     if (m_layoutKey != layoutKey()) rebuild();
     else refreshDynamic();
+}
+
+namespace {
+class SetAudioEffectsCommand final : public QUndoCommand {
+    Engine *engine;
+    quint64 layer;
+    QJsonArray before, after;
+    bool first = true;
+    void apply(const QJsonArray &state)
+    {
+        const int index = engine->indexOfId(layer);
+        QString error;
+        if (index >= 0 && !engine->setAudioEffectsJson(index, state, &error, true))
+            qWarning("Audio FX undo: %s", qPrintable(error));
+    }
+
+public:
+    SetAudioEffectsCommand(Engine *e, quint64 id, QJsonArray old, QJsonArray next, const QString &text)
+        : QUndoCommand(text), engine(e), layer(id), before(std::move(old)), after(std::move(next))
+    {
+    }
+    void undo() override { apply(before); }
+    void redo() override
+    {
+        if (first) {
+            first = false;
+            return;
+        }
+        apply(after);
+    }
+};
+} // namespace
+void LayerInspector::editAudioEffects(const QJsonArray &after, const QString &text)
+{
+    const int index = m_engine->indexOfId(m_layerId);
+    if (index < 0)
+        return;
+    const auto before = m_engine->audioEffectsJson(index);
+    QString error;
+    if (!m_engine->setAudioEffectsJson(index, after, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Audio FX"), error);
+        return;
+    }
+    m_undo->push(new SetAudioEffectsCommand(m_engine, m_layerId, before, m_engine->audioEffectsJson(index), text));
+    QTimer::singleShot(0, this, [this] {
+        rebuild();
+        emit layerChanged();
+    });
+}
+// The Audio FX tab: the same mechanism as the FX tab of the pictures (a list with a switch on each row, Add…, − ▲ ▼, the
+// parameters of the selected FX below), with the level of the sound where it is worth watching: what comes in (the
+// source), what leaves the selected FX, what leaves the layer (after the chain and its fader).
+QWidget *LayerInspector::buildAudioEffects()
+{
+    auto *panel = new FxChainPanel(QStringLiteral("Audio FX"));
+    panel->setObjectName(QStringLiteral("audioFXPanel"));
+    m_audioChain = panel;
+    m_audioFXFields.clear();
+    m_audioFxDetail.clear();
+    panel->setMaximum(16);
+    panel->setEmptyText(QStringLiteral("No Audio FX. They are applied in list order, before the layer's volume."));
+
+    bool chainOn = true;
+    std::vector<std::shared_ptr<AudioEffect>> effects;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *layer = m_engine->layer(m_engine->indexOfId(m_layerId));
+        if (layer && layer->audioEffects) {
+            effects = layer->audioEffects->effects();
+            chainOn = layer->audioEffects->enabled();
+        }
+    }
+
+    auto *master = panel->masterSwitch();
+    master->setChecked(chainOn);
+    m_animate->attach(master, {QStringLiteral("audio_fx/enable")});
+    m_audioFXFields.push_back({master, QStringLiteral("audio_fx/enable")});
+    connect(master, &QCheckBox::toggled, this, [this](bool on) {
+        setValue(QStringLiteral("audio_fx/enable"), on, QStringLiteral("Enable / Disable Audio FX"));
+        emit layerChanged();
+    });
+
+    auto addMeter = [this](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(name);
+        label->setStyleSheet("color:#8a8a8e;");
+        label->setMinimumWidth(40);
+        auto *meter = new LevelMeter(name);
+        *keep = meter;
+        row->addWidget(label);
+        row->addWidget(meter, 1);
+        into->addLayout(row);
+    };
+    addMeter(panel->headerLayout(), QStringLiteral("Source"), &m_audioSourceMeter);
+    addMeter(panel->footerLayout(), QStringLiteral("Output"), &m_audioOutputMeter);
+    panel->addButton()->setText(QStringLiteral("Add Audio FX…"));
+    panel->addButton()->setToolTip(QStringLiteral("Search the audio FX (Faust) and add one to the chain"));
+
+    std::vector<FxChainPanel::Row> rows;
+    for (const auto &effect : effects) {
+        FxChainPanel::Row row;
+        row.label = effect->name();
+        row.enabled = effect->enabled();
+        row.warning = !effect->error().isEmpty();
+        row.tooltip = effect->error();
+        rows.push_back(row);
+    }
+    m_selectedAudioFx = rows.empty() ? 0 : std::clamp(m_selectedAudioFx, 0, int(rows.size()) - 1);
+    panel->setRows(rows, m_selectedAudioFx, chainOn);
+
+    // The chain as it is saved, to edit: each request builds the next state and goes through one undo step
+    auto state = [this] { return m_engine->audioEffectsJson(m_engine->indexOfId(m_layerId)); };
+    connect(panel, &FxChainPanel::addRequested, this, [this, state](QWidget *anchor) {
+        QList<SearchPicker::Item> items;
+        for (const auto &preset : AudioEffect::presets)
+            items.append({QString::fromUtf8(preset.label), QStringLiteral("Faust"),
+                          QStringLiteral("Real-time stereo effect, written in Faust"), QStringLiteral("preset:") + QString::fromUtf8(preset.key)});
+        items.append({QStringLiteral("Load Faust stereo FX (.dsp)…"), QStringLiteral("File"),
+                      QStringLiteral("Your own Faust program: two inputs, two outputs; its sliders become parameters"),
+                      QStringLiteral("file:")});
+        auto *picker = new SearchPicker(items, this);
+        connect(picker, &SearchPicker::picked, this, [this, state](const QString &what) {
+            if (m_engine->isLocked(m_layer)) return;
+            auto next = state();
+            if (what == QLatin1String("file:")) {
+                const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Faust Audio FX"), {},
+                                                               QStringLiteral("Faust programs (*.dsp)"));
+                if (path.isEmpty()) return;
+                next.append(QJsonObject{{"kind", "faust"}, {"path", path}});
+                m_selectedAudioFx = next.size() - 1;
+                editAudioEffects(next, QStringLiteral("Load Faust Audio FX"));
+                return;
+            }
+            next.append(QJsonObject{{"kind", what.mid(int(strlen("preset:")))}});
+            m_selectedAudioFx = next.size() - 1;
+            editAudioEffects(next, QStringLiteral("Add Audio FX"));
+        });
+        picker->popup(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
+    connect(panel, &FxChainPanel::removeRequested, this, [this, state](int row) {
+        auto next = state();
+        if (row < 0 || row >= next.size()) return;
+        next.removeAt(row);
+        m_selectedAudioFx = std::max(0, std::min(row, int(next.size()) - 1));
+        editAudioEffects(next, QStringLiteral("Remove Audio FX"));
+    });
+    connect(panel, &FxChainPanel::moveRequested, this, [this, state](int from, int to) {
+        auto next = state();
+        if (from < 0 || from >= next.size() || to < 0 || to >= next.size()) return;
+        const auto entry = next.takeAt(from);
+        next.insert(to, entry);
+        m_selectedAudioFx = to;
+        editAudioEffects(next, QStringLiteral("Reorder Audio FX"));
+    });
+    connect(panel, &FxChainPanel::toggled, this, [this](int row, bool on) {
+        const auto effects = m_engine->audioEffects(m_layerId);
+        if (row < 0 || row >= int(effects.size())) return;
+        setValue(QStringLiteral("audio_fx/") + effects[size_t(row)]->id() + QStringLiteral("/enabled"), on,
+                 on ? QStringLiteral("Enable Audio FX") : QStringLiteral("Bypass Audio FX"));
+    });
+    connect(panel, &FxChainPanel::currentChanged, this, [this](int row) {
+        m_selectedAudioFx = row;
+        showAudioEffectParams();
+    });
+    showAudioEffectParams();
+    return panel;
+}
+
+// The parameters of the selected audio FX: swapped in place, the list is left alone (see FxChainPanel)
+void LayerInspector::showAudioEffectParams()
+{
+    if (!m_audioChain)
+        return;
+    auto *lay = m_audioChain->detailLayout();
+    clearLayout(lay);
+    m_audioFxDetail.clear();
+    m_audioFxMeter = nullptr;
+    const auto effects = m_engine->audioEffects(m_layerId);
+    if (effects.empty())
+        return;
+    m_selectedAudioFx = std::clamp(m_selectedAudioFx, 0, int(effects.size()) - 1);
+    const auto &effect = effects[size_t(m_selectedAudioFx)];
+    const QString prefix = QStringLiteral("audio_fx/") + effect->id() + QStringLiteral("/");
+
+    lay->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(effect->name().toHtmlEscaped())));
+    {
+        auto *row = new QHBoxLayout;
+        auto *label = new QLabel(QStringLiteral("Level"));
+        label->setStyleSheet("color:#8a8a8e;");
+        label->setMinimumWidth(40);
+        auto *meter = new LevelMeter(effect->name());
+        m_audioFxMeter = meter;
+        row->addWidget(label);
+        row->addWidget(meter, 1);
+        lay->addLayout(row);
+    }
+    if (!effect->error().isEmpty())
+        lay->addWidget(errorLabel(effect->error()));
+    lay->addWidget(accentSeparator());
+
+    auto number = [this, lay](const QString &label, const QString &key, double low, double high, double value,
+                              double initial) {
+        auto *row = new QHBoxLayout;
+        auto *field = new SliderField;
+        auto *name = new ResetLabel(label, [this, field, key, initial] {
+            field->setValue(initial);
+            setValue(key, initial, QStringLiteral("Reset Audio FX parameter"));
+        });
+        field->setRange(low, high);
+        field->setDecimals(3);
+        field->setValue(value);
+        row->addWidget(name);
+        row->addWidget(field, 1);
+        lay->addLayout(row);
+        m_audioFxDetail.push_back({field, key});
+        m_animate->attach({name, field}, {key});
+        connect(field, &SliderField::valueEdited, this, [this, key](double v) {
+            setValue(key, v, QStringLiteral("Change Audio FX parameter"));
+            emit layerChanged();
+        });
+    };
+    number(QStringLiteral("Dry / Wet"), prefix + QStringLiteral("wet"), 0, 1, effect->wet(), 1);
+    if (effect->error().isEmpty()) {
+        const auto &controls = effect->parameters();
+        for (size_t i = 0; i < controls.size(); ++i)
+            number(controls[i].label, prefix + controls[i].key, controls[i].low, controls[i].high, effect->value(int(i)),
+                   controls[i].initial);
+    }
+    lockInputs(m_audioChain->detail(), m_locked);
 }

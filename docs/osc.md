@@ -4,7 +4,7 @@
 
 **Discover the show. Drive it. Follow what actually plays.**
 
-[Connect](#connect) · [Show control](#show-control) · [Live feedback](#live-feedback) · [Parameters](#parameters) · [OSCQuery](#oscquery) · [Open Stage Control](../integrations/open-stage-control/README.md)
+[Connect](#connect) · [Show control](#show-control) · [Live feedback](#live-feedback) · [Parameters](#parameters) · [OSCQuery](#oscquery)
 
 </div>
 
@@ -24,7 +24,7 @@ the controller can reach.
 
 ```mermaid
 flowchart LR
-    C["Controller<br/>Open Stage Control · console · script"]
+    C["Controller<br/>Companion · console · script"]
     P["NyxMap<br/>OSC namespace"]
     S["Show state<br/>Sequences · cues · timelines"]
     C -->|"HTTP · discover"| P
@@ -42,9 +42,10 @@ curl 'http://127.0.0.1:5678/show/catalog?VALUE'
 curl 'http://127.0.0.1:5678/sequence'
 ```
 
-The [ready-to-load Open Stage Control desk](../integrations/open-stage-control/README.md)
-uses one WebSocket for commands and live state. Its pages follow the current
-project without manually entering snapshot, preset or timeline numbers.
+The [Stream Deck module for Companion](companion.md) uses one WebSocket for commands
+and live state, and follows the current project without manually entering snapshot,
+preset or timeline numbers. For a desk with nothing to install, see
+[Show Control](controls-and-remote.md#show-control).
 
 ## Address rules
 
@@ -160,7 +161,7 @@ arrays: `sequences`, `snapshots`, `presets`, `timelines`, `layers`.
   "sequences": [{
     "id": "3", "index": 1, "name": "Main", "loop": false,
     "cues": [{
-      "id": "41", "index": 1, "name": "Opening look", "text": "House out",
+      "id": "41", "index": 1, "name": "Opening look",
       "description": "Stand by lighting", "target_type": "snapshot",
       "target_id": "12", "missing": false, "prewait": 0,
       "action_duration": 2, "postwait": 0, "continue": "wait"
@@ -212,9 +213,9 @@ For each role **`previous`**, **`current`**, **`next`**, the base is
 | Suffix | Meaning |
 | :--- | :--- |
 | `/number`, `/name`, `/label` | Cue number, target name, display-ready `number · name`. |
-| `/text`, `/description` | Operator text and advance notice. |
+| `/description` | Advance notice for the operator. |
 | `/prewait`, `/action`, `/postwait` | Timing in seconds; action `-1` means endless. |
-| `/continue` | `wait`, `follow`, `auto-follow`. |
+| `/continue` | `wait`, `auto`. |
 | `/phase` | `pre-wait`, `action`, `post-wait`, `done`, or empty before GO. |
 | `/elapsed`, `/elapsed_text` | Time since GO, as seconds and formatted text. |
 | `/remaining`, `/remaining_text` | Time to the cue's end; `-1` / `∞` when endless. |
@@ -222,8 +223,7 @@ For each role **`previous`**, **`current`**, **`next`**, the base is
 | `/phase_progress`, `/phase_percent` | Completion of the current timing phase. |
 
 `current` means the last cue given GO; it may still be in its pre-wait. `next`
-means the cue a new GO will play. Follow can start another cue before the earlier
-action finishes. A `done` cue's elapsed counter can keep increasing.
+means the cue a new GO will play. A `done` cue's elapsed counter can keep increasing.
 
 Optional UDP feedback is enabled in Settings with one or more target addresses.
 It sends changes at 10 Hz, plus a full refresh every two seconds. Its additional

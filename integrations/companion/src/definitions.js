@@ -1,6 +1,6 @@
 const COLORS = {text: 0xececf0, background: 0x202024, green: 0x4cd964, red: 0xe84c3d, yellow: 0xe0b43a, blue: 0x569ce6};
 const ROLES = ['previous', 'current', 'next'];
-const FIELDS = ['number', 'name', 'label', 'text', 'description', 'phase', 'elapsed', 'remaining', 'elapsed_text', 'remaining_text', 'progress', 'phase_progress'];
+const FIELDS = ['number', 'name', 'label', 'description', 'phase', 'elapsed', 'remaining', 'elapsed_text', 'remaining_text', 'progress', 'phase_progress'];
 const TIMELINE_FIELDS = ['name', 'state', 'position', 'position_text', 'duration', 'duration_text', 'remaining', 'remaining_text', 'progress', 'pass'];
 const dropdown = (id, label, choices, fallback = '') => ({type: 'dropdown', id, label, choices, default: choices[0]?.id ?? fallback});
 const clock = seconds => {
@@ -55,7 +55,7 @@ function actionDefinitions(instance) {
     };
     actions.stop_all_waits = {name: 'Sequence: Stop all waits / follows', options: [{type: 'checkbox', id: 'confirm', label: 'Confirm stopping waits in every sequence', default: false}],
         callback: event => { if (!event.options.confirm) throw Error('Confirmation is required'); instance.client.send('/sequence/stop_all'); }};
-    actions.cue_go = {name: 'Cue: GO directly to cue', options: [dropdown('cue', 'Cue', c.sequences.flatMap(s => s.cues.map(cue => ({id: s.id + ':' + cue.id, label: `${s.name} · ${cue.index} · ${cue.text || cue.name || 'Empty cue'}`}))))],
+    actions.cue_go = {name: 'Cue: GO directly to cue', options: [dropdown('cue', 'Cue', c.sequences.flatMap(s => s.cues.map(cue => ({id: s.id + ':' + cue.id, label: `${s.name} · ${cue.index} · ${cue.description || cue.name || 'Empty cue'}`}))))],
         callback: event => instance.cueCommand(event.options.cue)};
     for (const kind of ['snapshots', 'presets']) actions[kind.slice(0, -1) + '_recall'] = {
         name: (kind === 'snapshots' ? 'Snapshot' : 'Preset') + ': Recall', options: [dropdown('id', 'Target', choices(kind))],
@@ -104,7 +104,7 @@ function feedbackDefinitions(instance) {
             const cue = sequence?.cues.find(cue => sequence.id + ':' + cue.id === event.options.cue);
             return !!cue && String(instance.client.state?.values['/sequence/id']) === sequence.id &&
                 Number(instance.client.state?.values[`/sequence/cue/${event.options.role}/number`]) === cue.index;
-        }, COLORS.green, [role(), dropdown('cue', 'Cue', instance.catalog.sequences.flatMap(s => s.cues.map(c => ({id: s.id + ':' + c.id, label: `${s.name} · ${c.index} · ${c.text || c.name}`}))))]),
+        }, COLORS.green, [role(), dropdown('cue', 'Cue', instance.catalog.sequences.flatMap(s => s.cues.map(c => ({id: s.id + ':' + c.id, label: `${s.name} · ${c.index} · ${c.description || c.name}`}))))]),
         cue_phase: boolean('Cue: Phase', event => instance.client.online && instance.client.state?.values[`/sequence/cue/${event.options.role}/phase`] === event.options.phase, COLORS.yellow,
             [role(), dropdown('phase', 'Phase', ['pre-wait', 'action', 'post-wait', 'done'].map(id => ({id, label: id})))]),
         cue_progress: {type: 'advanced', name: 'Cue: Progress bar', options: [role(), dropdown('basis', 'Progress', [{id: 'phase', label: 'Current phase'}, {id: 'cue', label: 'Whole cue'}])],
@@ -150,7 +150,7 @@ function presetDefinitions(label, catalog, limit = 96) {
     add('refresh', 'Transport', 'Refresh project catalog', 'REFRESH', 'refresh');
     let remaining = Math.floor(Math.max(0, Math.min(512, Number(limit) || 0)));
     const lists = ['sequences', 'snapshots', 'presets', 'timelines'].map(kind => ({kind, items: catalog[kind]}));
-    lists.push({kind: 'cues', items: catalog.sequences.flatMap(sequence => sequence.cues.map(cue => ({...cue, sequence: sequence.id, id: sequence.id + ':' + cue.id, name: cue.text || cue.name || 'Empty cue'})))});
+    lists.push({kind: 'cues', items: catalog.sequences.flatMap(sequence => sequence.cues.map(cue => ({...cue, sequence: sequence.id, id: sequence.id + ':' + cue.id, name: cue.description || cue.name || 'Empty cue'})))});
     // Round-robin keeps every library represented within the configured gallery limit.
     for (let index = 0; remaining && lists.some(list => index < list.items.length); ++index) for (const {kind, items} of lists) {
         if (!remaining || !items[index]) continue;

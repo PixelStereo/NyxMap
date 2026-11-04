@@ -16,8 +16,11 @@
 
 struct TreeNode {
     enum Kind { Item = 0, Group = 1, Viewport = 2 };
+    // 3D (Model3D.h): a 3D Scene holds 3D objects (models, lights, Merge 3Ds) and nothing else; a 3D object is only in a scene
+    enum Role { Plain = 0, Scene3d = 1, Object3d = 2, Merge3d = 3 };
     quint64 id = 0, parent = 0;
     Kind kind = Item;
+    Role role = Plain; // what the layer is, not where it is: a move keeps it
     bool isGroup() const { return kind == Group; }
     bool operator==(const TreeNode &o) const { return id == o.id && parent == o.parent && kind == o.kind; }
     bool operator!=(const TreeNode &o) const { return !(*this == o); }
@@ -25,6 +28,19 @@ struct TreeNode {
 using LayerTree = std::vector<TreeNode>;
 
 namespace tree {
+
+// The 3D rule holds: every 3D object is directly in a 3D Scene or a Merge 3D, and those hold only 3D objects. A Merge 3D is
+// one of them, inside a scene or another Merge 3D
+inline bool valid3d(const LayerTree &t)
+{
+    std::map<quint64, TreeNode::Role> role;
+    for (const TreeNode &n : t) role[n.id] = n.role;
+    for (const TreeNode &n : t) {
+        const bool inScene = n.parent && (role[n.parent] == TreeNode::Scene3d || role[n.parent] == TreeNode::Merge3d);
+        if ((n.role == TreeNode::Object3d || n.role == TreeNode::Merge3d) != inScene) return false;
+    }
+    return true;
+}
 
 inline int indexOf(const LayerTree &t, quint64 id)
 {

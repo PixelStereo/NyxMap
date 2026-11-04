@@ -170,6 +170,18 @@ Assume all four controls still target the same opacity, the recalls have no dela
 
 The interaction produces **0.9 for that frame** and releases the active opacity fade. Without another MIDI message or filter change, the timeline writes again on the next frame and can return opacity to **0.5**. A still-pending delayed recall can execute later. Winning one write does not mean owning the parameter.
 
+## Cursive generator: a text written as by a pen
+
+The Media Bin lists **Cursive** under Generators: a text layer in a cursive font of the computer (Snell Roundhand, Segoe Script…), with all that a text has (any font, size, color, outline, shadow, alignment). Any text layer can be written the same way, from its **Writing** box: **▶ Write**, the pause, **Clear**, **All**, how much is written and in what time.
+
+| Address | Meaning |
+| :--- | :--- |
+| `text/write/progress` | How much is written, `0…1`. At 1 it is a text like any other. A timeline, an interaction, OSC or a snapshot's fade can drive it. |
+| `text/write/duration` | Seconds **Write** takes. |
+| `text/write/start`, `pause`, `resume`, `reset` | Its transport: from the start, hold, go on, nothing written. |
+
+No special font is needed. The letters are thinned down to their skeleton, the pen goes along it at an even pace, one piece of ink after the other in the order of the reading (a dot or an accent after its word), and each pixel, outline and shadow included, shows when the pen passes nearest. A font does not say how its letters are drawn, so this order is worked out from their shapes: at a crossing it can differ from a real hand, and it looks most natural with a connected script font. **STOP ALL** holds the pen where it is. The picture is worked out once per text and style, and sent again at each frame while it is being written: keep the layer's Width and Height near what the text needs.
+
 ## Countdown, chronometer and clock generators
 
 The Media Bin lists **Countdown**, **Chronometer** and **Clock** under Generators, with Text and Timecode. Dropped onto a layer, each one is a text layer (same font, size, color, alignment, outline and shadow controls as Text) that shows a time. Their settings and transport are layer parameters under `clock/`: OSC addresses (`/layer/<name>/clock/...`), interactions, snapshots and presets reach them like any other value.

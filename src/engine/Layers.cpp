@@ -6,6 +6,8 @@
 #include "Psd.h"
 
 #include <QFontDatabase>
+#include <functional>
+#include <QFontInfo>
 #include <QDir>
 #include <QFileInfo>
 #include <QImage>
@@ -97,6 +99,9 @@ void Engine::attachAudio(Layer &l, std::shared_ptr<AudioStream> s)
     releaseAudio(*m_audio, l.audio);
     l.audio = std::move(s);
     if (!l.audio) return;
+    if (!l.audioEffects)
+        l.audioEffects = std::make_shared<AudioEffectChain>();
+    l.audio->setEffects(l.audioEffects);
     l.audio->setTransport(l.clock, l.playing, std::abs(l.speed) * timeScale(), l.timeline(), l.timelineId, l.audioGain());
     m_audio->addStream(l.audio);
 }
@@ -291,6 +296,171 @@ int Engine::addGroup(const QString &name, int at)
     return at;
 }
 
+// A 3D Scene: a group whose picture its 3D objects make (never inside another scene)
+int Engine::addScene(const QString &name, int at)
+{
+    const int i = addGroup(name, at);
+    const quint64 id = layerId(i);
+    {
+        Lock lk(&m_mutex);
+        int scenes = 0;
+        for (const auto &l : m_layers) scenes += l->scene3d;
+        Layer &g = *m_layers[size_t(i)];
+        g.scene3d = true;
+        g.sceneRenderer = std::make_shared<Scene3D>();
+        if (name.isEmpty()) g.name = QStringLiteral("3D Scene %1").arg(scenes + 1);
+        for (quint64 up = g.parent; up;) { // out of any scene it would land in
+            const int pi = indexOfId(up);
+            if (pi < 0) break;
+            if (m_layers[size_t(pi)]->scene3d) {
+                g.parent = m_layers[size_t(pi)]->parent;
+                up = g.parent;
+                continue;
+            }
+            up = m_layers[size_t(pi)]->parent;
+        }
+        normalizeLocked();
+    }
+    emit layersChanged();
+    return indexOfId(id); // where it is now
+}
+
+int Engine::sceneTriangles(int scene) const
+{
+    Lock lk(&m_mutex);
+    const Layer *top = scene >= 0 && scene < int(m_layers.size()) ? m_layers[size_t(scene)].get() : nullptr;
+    if (!top) return 0;
+    int total = 0;
+    const std::function<void(quint64)> walk = [&](quint64 holder) {
+        for (const auto &l : m_layers) {
+            if (l->parent != holder || !l->enabled) continue;
+            if (l->merge3d) walk(l->id);
+            else if (l->model) total += l->model->triangleCount();
+        }
+    };
+    walk(top->id);
+    return total;
+}
+
+int Engine::sceneTrianglesComputed(int scene) const
+{
+    Lock lk(&m_mutex);
+    const Layer *top = scene >= 0 && scene < int(m_layers.size()) ? m_layers[size_t(scene)].get() : nullptr;
+    return top && top->sceneRenderer ? top->sceneRenderer->trianglesComputed() : 0;
+}
+
+int Engine::addMerge3d(const QString &name, int at)
+{
+    const int i = addGroup(name, at);
+    const quint64 id = layerId(i);
+    {
+        Lock lk(&m_mutex);
+        int merges = 0;
+        for (const auto &l : m_layers) merges += l->merge3d;
+        Layer &g = *m_layers[size_t(i)];
+        g.merge3d = true;
+        g.modelPlacement = ModelPlacement();
+        if (name.isEmpty()) g.name = QStringLiteral("Merge 3D %1").arg(merges + 1);
+        normalizeLocked();
+    }
+    emit layersChanged();
+    return indexOfId(id);
+}
+
+// The picture laid on a 3D model: another layer's, after its FX (0: its materials). Refused when that layer is made from
+// the model's scene (a scene shown on itself)
+bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, false, err); }
+bool Engine::setModelDisplace(int i, quint64 layerId, QString *err) { return setModelLayer(i, layerId, true, err); }
+
+bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, int stage)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Model) return false;
+        if (picture) {
+            const Layer *p = layer(indexOfId(picture));
+            if (!p || p->isViewport || p->is3dObject()) {
+                if (err) *err = QStringLiteral("A layer, a group or a 3D scene can be shown on a model.");
+                return false;
+            }
+            for (quint64 up = l->id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
+                if (up == picture || layerDependsOn(picture, up)) {
+                    if (err) *err = QStringLiteral("\"%1\" is made from this model's scene: it cannot be shown on it.").arg(p->name);
+                    return false;
+                }
+        }
+        (displace ? l->modelDisplace : l->modelPicture) = picture;
+        (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
+    }
+    emit layersChanged();
+    return true;
+}
+
+// A 3D scene's environment: a layer's picture (an HDRI, a video…), equirectangular, at a stage (0: none). Refused when
+// that layer is made from the scene itself
+bool Engine::setSceneEnvironment(int i, quint64 env, QString *err, int stage)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !l->scene3d) return false;
+        if (env) {
+            const Layer *p = layer(indexOfId(env));
+            if (!p || p->isViewport || p->is3dObject()) {
+                if (err) *err = QStringLiteral("A layer or a group lights a 3D scene.");
+                return false;
+            }
+            for (quint64 up = l->id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
+                if (up == env || layerDependsOn(env, up)) {
+                    if (err) *err = QStringLiteral("\"%1\" is made from this scene: it cannot light it.").arg(p->name);
+                    return false;
+                }
+        }
+        l->sceneEnvironment = env;
+        l->sceneEnvironmentStage = env ? stage : -1;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setLightLookAt(int i, quint64 object)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Light) return false;
+        if (object) {
+            const auto sceneOf = [this](const Layer *o) {
+                while (o && !o->scene3d) o = o->parent ? layer(indexOfId(o->parent)) : nullptr;
+                return o;
+            };
+            const Layer *o = layer(indexOfId(object));
+            if (!o || o == l || !o->is3dObject() || sceneOf(o) != sceneOf(l)) return false;
+        }
+        l->lightLookAt = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
+// A light of a 3D scene (the layer goes into its scene with setStructure)
+bool Engine::setLayerLight(int i)
+{
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Light;
+        l->light = LightSettings();
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
+}
+
 quint64 Engine::newIdLocked()
 {
     for (const auto &l : m_layers) m_nextId = std::max(m_nextId, l->id + 1);
@@ -319,6 +489,7 @@ static TreeNode nodeOf(const Layer &l)
     n.id = l.id;
     n.parent = l.parent;
     n.kind = l.isViewport ? TreeNode::Viewport : l.isGroup ? TreeNode::Group : TreeNode::Item;
+    n.role = l.scene3d ? TreeNode::Scene3d : l.merge3d ? TreeNode::Merge3d : l.is3dObject() ? TreeNode::Object3d : TreeNode::Plain;
     return n;
 }
 
@@ -466,6 +637,7 @@ void Engine::releaseLayer(Layer &l)
     l.toxPlayer.reset();
     l.sourceTex.destroy();
     l.imageAutoTex.destroy();
+    l.hdrTex.destroy();
     l.sourceColorTarget.destroy();
     l.textTex.destroy();
     if (l.generator) l.generator->releaseGl();
@@ -476,7 +648,11 @@ void Engine::releaseLayer(Layer &l)
     l.fxTarget[0].destroy();
     l.fxTarget[1].destroy();
     l.maskTarget[0].destroy();
+    for (auto &[stage, target] : l.stageTargets) target.destroy();
+    l.stageTargets.clear();
     l.maskTarget[1].destroy();
+    if (l.model) l.model->releaseGl();
+    if (l.sceneRenderer) l.sceneRenderer->releaseGl();
     l.groupTarget.destroy();
     l.prepTarget.destroy();
     l.matteTarget.destroy();
@@ -500,6 +676,7 @@ void Engine::removeLayer(int i)
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_layers.size())) return;
         if (m_layers[size_t(i)]->isViewport && viewportCountLocked() <= 1) return; // there is always one
+        clearAnimationFilterHistory(m_layers[size_t(i)]->id, 0);
         g->layer = std::move(m_layers[size_t(i)]);
         m_layers.erase(m_layers.begin() + i);
         // A source transition running on it ends with it (the id may come back, undo: not the transition)
@@ -877,6 +1054,9 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.sourceTex = Texture2D{};
     g->imageAutoTex = l.imageAutoTex;
     l.imageAutoTex = Texture2D{};
+    g->hdrTex = l.hdrTex;
+    l.hdrTex = Texture2D{};
+    l.pendingHdr.clear();
     l.imageProfile = QColorSpace();
     l.imageColorInfo.clear();
     l.sourceColorSpace = QStringLiteral("auto");
@@ -891,6 +1071,9 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->webPage = std::move(l.webPage);
     g->toxPlayer = std::move(l.toxPlayer);
     l.tox = ToxSettings();
+    g->model = std::move(l.model);
+    l.modelPlacement = ModelPlacement();
+    l.light = LightSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();
@@ -918,8 +1101,10 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
     releaseAudio(*m_audio, g->audio);
     runGl([g] {
         g->toxPlayer.reset();
+        if (g->model) g->model->releaseGl();
         g->tex.destroy();
         g->imageAutoTex.destroy();
+        g->hdrTex.destroy();
         g->textTex.destroy();
         if (g->videoTex) g->videoTex->destroy();
         if (g->generator) g->generator->releaseGl();
@@ -953,6 +1138,9 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
         for (const auto &l : m_layers) {
             if (l->id != cur) continue;
             if (l->type == SourceType::Layer && l->sourceLayer && visit(l->sourceLayer)) return true;
+            if (l->type == SourceType::Model && ((l->modelPicture && visit(l->modelPicture)) || (l->modelDisplace && visit(l->modelDisplace))))
+                return true; // its pictures
+            if (l->scene3d && l->sceneEnvironment && visit(l->sceneEnvironment)) return true; // its environment
             if (l->type == SourceType::Tox)
                 for (quint64 input : l->tox.inputs) if (input && visit(input)) return true;
             for (const auto &fx : l->effects) // the masks of its effects
@@ -1132,13 +1320,20 @@ bool Engine::setColorMask(int layerIndex, quint64 maskId, bool invert, QString *
     return true;
 }
 
-bool Engine::setEffectMaskTap(int layerIndex, int effect, bool preFx)
+bool Engine::setEffectMaskStage(int layerIndex, int effect, int stage)
 {
     {
         Lock lk(&m_mutex);
         Layer *l = layer(layerIndex);
         if (!l || effect < 0 || effect >= int(l->effects.size())) return false;
-        l->effects[size_t(effect)]->maskPreFx = preFx;
+        IsfInstance &fx = *l->effects[size_t(effect)];
+        if (fx.maskLayer == l->id) {
+            if (stage < 0 || stage > effect) return false; // its own layer: its source, or an effect before it
+        } else {
+            const Layer *mask = layer(indexOfId(fx.maskLayer));
+            if (stage < -1 || (mask && stage > int(mask->effects.size()))) return false;
+        }
+        fx.maskStage = stage;
     }
     emit layersChanged();
     return true;
@@ -1158,12 +1353,15 @@ bool Engine::setEffectMask(int layerIndex, int effect, quint64 maskId, bool inve
             const int mi = indexOfId(maskId);
             if (mi < 0) return fail(QStringLiteral("That layer no longer exists."));
             if (m_layers[size_t(mi)]->isViewport) return fail(QStringLiteral("A viewport cannot be a mask."));
-            if (maskId == l->id) return fail(QStringLiteral("A layer cannot mask its own FX."));
-            if (layerDependsOn(maskId, l->id))
+            // Its own layer: from a stage above the effect, never what comes out of it (no feedback)
+            if (maskId != l->id && layerDependsOn(maskId, l->id))
                 return fail(QStringLiteral("\"%1\" already uses this layer: the picture would feed back on itself.")
                                 .arg(m_layers[size_t(mi)]->name));
         }
         IsfInstance &fx = *l->effects[size_t(effect)];
+        // Its own layer: by default the picture the effect is given; another layer: its final picture
+        if (maskId == l->id && (fx.maskLayer != maskId || fx.maskStage < 0 || fx.maskStage > effect)) fx.maskStage = effect;
+        if (maskId != l->id && fx.maskLayer != maskId) fx.maskStage = -1;
         fx.maskLayer = maskId;
         fx.maskInvert = invert;
     }
@@ -1322,13 +1520,41 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
     if (const QString url = streamUrlOfPath(path); !url.isEmpty()) return setLayerStream(i, url, binStreamTcp(url), err);
     if (QFileInfo(path).isDir()) return setLayerVideo(i, path, err); // an image sequence
     if (isToxFile(path)) return setLayerTox(i, path, {}, err);
+    if (Model3D::isModelFile(path)) return setLayerModel(i, path, err);
     if (isImageFile(path)) return setLayerImage(i, path, err);
     if (isAudioFile(path)) return setLayerAudio(i, path, err);
+    if (const QString uri = liveInputUriOfPath(path); isAudioInputUri(uri)) return setLayerAudio(i, uri, err); // a sound card's input
+    if (isAudioInputUri(path)) return setLayerAudio(i, path, err);
     QString e;
     if (setLayerVideo(i, path, &e)) return true; // video and unknown extensions: FFmpeg decides
     if (AudioStream::probe(path, nullptr) && setLayerAudio(i, path, err)) return true; // sound only
     if (err) *err = e;
     return false;
+}
+
+// A 3D model: its file read here (its meshes reach the GPU when it is first drawn); the layer the composition's size
+bool Engine::setLayerModel(int i, const QString &path, QString *err)
+{
+    if (!layer(i)) return false;
+    auto model = std::make_shared<Model3D>();
+    if (!model->load(path, err)) return false;
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Model;
+        l->model = std::move(model);
+        // a primitive keeps its virtual path (made absolute, it would take a drive letter on Windows)
+        l->sourcePath = Model3D::isPrimitivePath(path) ? Model3D::primitivePath(path.section('/', -1))
+                                                       : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->srcWidth = m_compSize.width();
+        l->srcHeight = m_compSize.height();
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
 }
 
 bool Engine::setLayerAudio(int i, const QString &path, QString *err)
@@ -1347,7 +1573,7 @@ bool Engine::setLayerAudio(int i, const QString &path, QString *err)
         if (!l) return false;
         g = detachSource(*l);
         l->type = SourceType::Audio;
-        l->sourcePath = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+        l->sourcePath = isAudioInputUri(path) ? path : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         l->mode = m_defaultPlayMode;
         l->ended = false;
         l->playing = true;
@@ -1421,6 +1647,9 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLaye
     if (psdLayer >= 0 && !decodeImage(path, psdLayer, img, &warning)) psdLayer = -1; // all of them, said so
     const QSize comp = compositionSize();
     if (psdLayer < 0 && !decodeImage(path, -1, img, err, std::max(comp.width(), comp.height()))) return false;
+    std::vector<float> hdr; // an HDR file: also its pixels unclipped (a 3D scene's environment takes them)
+    QSize hdrSize;
+    if (isHdrImageFile(path)) readHdrPixels(path, &hdr, &hdrSize);
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
@@ -1428,6 +1657,8 @@ bool Engine::setLayerImage(int i, const QString &path, QString *err, int psdLaye
         if (!l) return false;
         g = detachSource(*l);
         l->pendingImage = img.image; // uploaded to the GPU by the render thread
+        l->pendingHdr = std::move(hdr);
+        l->pendingHdrSize = hdrSize;
         l->imageColorInfo = img.colorInfo;
         l->imageProfile = img.profile;
         l->pendingAutoImage = img.autoImage;
@@ -1661,10 +1892,34 @@ bool Engine::setLayerText(int i)
         if (!l || l->isGroup || l->isViewport) return false;
         g = detachSource(*l);
         l->type = SourceType::Text;
+        l->text.cursive = false;
         l->srcWidth = l->text.width;
         l->srcHeight = l->text.height;
     }
     releaseGarbage(g);
+    return true;
+}
+
+// The first cursive font of this computer; else what the system gives for a cursive style
+static QString cursiveFontFamily()
+{
+    const QStringList families = QFontDatabase::families();
+    for (const char *name : {"Snell Roundhand", "Segoe Script", "Apple Chancery", "Brush Script MT", "URW Chancery L", "Z003", "Zapf Chancery", "Comic Sans MS"})
+        if (families.contains(QLatin1String(name))) return QLatin1String(name);
+    QFont font;
+    font.setStyleHint(QFont::Cursive);
+    return QFontInfo(font).family();
+}
+
+bool Engine::setLayerCursive(int i)
+{
+    if (!setLayerText(i)) return false;
+    Lock lk(&m_mutex);
+    Layer *l = layer(i);
+    if (!l) return false;
+    l->text.cursive = true;
+    l->text.font = cursiveFontFamily();
+    l->text.size = 96;
     return true;
 }
 

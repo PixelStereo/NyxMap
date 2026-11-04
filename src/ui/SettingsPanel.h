@@ -36,6 +36,11 @@ public:
     static bool gpuShareOneFrameLate(); // Syphon / Spout: the frame before, without waiting for the GPU
     // OSC control and OSCQuery publication (defaults of libossia / score: OSC 1234, OSCQuery 5678)
     static bool oscEnabled();
+    // The remote (RemoteServer.h): off until asked, a port, a PIN made on first use
+    static bool remoteEnabled();
+    static int remotePort();
+    static bool remotePinRequired(); // false: no code is asked
+    static QString remotePin();     // empty when none is asked
     static int oscPort();      // UDP, OSC messages
     static int oscQueryPort(); // TCP, OSCQuery (HTTP + WebSocket)
     static QString oscListen(); // the address OSC and OSCQuery listen on ("": every network interface)
@@ -46,12 +51,14 @@ public:
     // The inspector's fields move with the values while a snapshot fades them (on unless changed); off, they
     // stay still and show the snapshot's values once the fade is over
     static bool followFades();
+    static bool showPreviewFps();
 
     // The project opened at launch instead of an empty one, as a template (untitled): "" when none is chosen or
     // "Empty project" is selected
     static QString startupProject();
 
     void setOscStatus(const QString &s);
+    void setRemoteStatus(const QString &s);
     // Transition used when a snapshot gives a layer another source, for the layers that do not choose one:
     // the path saved on this machine (Crossfade by default), found again by its file name in the library
     static QString defaultTransition(const IsfLibrary &library);
@@ -61,9 +68,11 @@ public:
     static Engine::RenderSettings renderDefaults();
 
 signals:
+    void previewFpsChanged(bool visible);
     void playModeChanged();
     void hardwareDecodingChanged();
     void oscChanged();
+    void remoteChanged();
     void feedbackChanged();
     void transitionChanged(const QString &path);
     void renderDefaultsChanged();
@@ -91,6 +100,9 @@ private:
     QCheckBox *m_osc = nullptr, *m_feedback = nullptr;
     QTableWidget *m_feedbackTargets = nullptr;
     QSpinBox *m_oscPort = nullptr, *m_queryPort = nullptr;
-    QLabel *m_oscStatus = nullptr;
+    QLabel *m_oscStatus = nullptr, *m_remoteStatus = nullptr;
+    QCheckBox *m_remote = nullptr, *m_remotePinUsed = nullptr;
+    QSpinBox *m_remotePort = nullptr;
+    class QLineEdit *m_remotePin = nullptr;
     class QComboBox *m_oscListen = nullptr;
 };

@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "PresetEditor.h"
 #include "Commands.h"
+#include "Model3D.h"
 #ifdef Q_OS_MACOS
 #include "MacPresentation.h"
 #endif
@@ -15,6 +16,9 @@
 #include "Engine.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
+#include "ControlsPanel.h"
+#include "RemoteServer.h"
+#include "ShowControlPanel.h"
 #include "InteractionPanel.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
@@ -62,6 +66,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
+#include <QLocale>
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSplitter>
@@ -131,7 +136,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_composition->setUndoStack(m_undo);
     m_tabs = new QTabWidget;
     m_tabs->setObjectName(QStringLiteral("mainInspectorTabs"));
-    m_tabs->addTab(scrolled(m_inspector), QStringLiteral("Layer"));
+    // The layer's tab: its header pinned at the top (picker, Enable / lock / Solo / name), the rest scrolling under it
+    auto *layerPage = new QWidget;
+    auto *layerColumn = new QVBoxLayout(layerPage);
+    layerColumn->setContentsMargins(0, 0, 0, 0);
+    layerColumn->setSpacing(0);
+    layerColumn->addWidget(m_inspector->pinnedHeader());
+    layerColumn->addWidget(scrolled(m_inspector), 1);
+    m_tabs->addTab(layerPage, QStringLiteral("Layer"));
     auto *viewportPage = new QWidget;
     auto *viewportLayout = new QVBoxLayout(viewportPage);
     viewportLayout->setContentsMargins(0, 0, 0, 0);
@@ -221,6 +233,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     screenRate();
     connect(qApp, &QGuiApplication::primaryScreenChanged, this, screenRate);
     connect(m_settings, &SettingsPanel::oscChanged, this, &MainWindow::startOsc);
+    connect(m_settings, &SettingsPanel::remoteChanged, this, &MainWindow::startRemote);
+    connect(m_settings, &SettingsPanel::oscChanged, this, &MainWindow::startRemote); // it listens where OSC does
     // The sequence's state sent by OSC to a remote interface (Companion, TouchOSC…)
     m_feedback = new SequenceFeedback(m_engine, this);
     auto applyFeedback = [this] {
@@ -261,13 +275,26 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_fixtures, &FixturePanel::projectEdited, this, &MainWindow::markDirty);
     m_interactions = new InteractionPanel(m_engine, m_undo);
     m_leftTabs->addTab(m_interactions, QStringLiteral("Interactions"));
+    m_controls = new ControlsPanel(m_engine, m_undo);
+    m_leftTabs->addTab(m_controls, QStringLiteral("Controls"));
+    connect(m_controls, &ControlsPanel::edited, this, &MainWindow::markDirty);
+    // The menu at the top of the inspector: the layer, group or viewport picked there is selected, as a click in the list does
+    connect(m_inspector, &LayerInspector::layerPickRequested, this, [this](quint64 id) {
+        const int index = m_engine->indexOfId(id);
+        if (index >= 0) selectLayer(index);
+    });
     m_logs = new LogPanel;
     m_leftTabs->addTab(m_logs, QStringLiteral("Logs"));
+    m_showControl = new ShowControlPanel(m_engine);
+    m_leftTabs->addTab(m_showControl, QStringLiteral("Show Control"));
+    connect(m_showControl, &ShowControlPanel::layersRequested, this, [this] { m_leftTabs->setCurrentIndex(1); });
     // The Logs panel reads the events' ring (EventLog) a few times a second: no signal per message
     m_leftTabs->setTabToolTip(0, QStringLiteral("Media Bin (Shift+1)"));
     m_leftTabs->setTabToolTip(1, QStringLiteral("Layers (Shift+2)"));
     m_leftTabs->setTabToolTip(2, QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
     m_leftTabs->setTabToolTip(3, QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_controls), QStringLiteral("Controls: your own sliders, switches, selectors, buttons and colors, for interactions, timelines, OSC and the remote (Shift+5)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_showControl), QStringLiteral("Show Control: GO, the cues and their times, snapshots, presets and timelines. Also a web page: see Settings › OSC › Remote (Shift+6)"));
     connect(m_interactions, &InteractionPanel::edited, this, &MainWindow::markDirty);
     connect(m_interactions, &InteractionPanel::showRequested, this, [this] { m_leftTabs->setCurrentWidget(m_interactions); });
     m_leftTabs->tabBar()->setChangeCurrentOnDrag(true);
@@ -276,16 +303,20 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
 
     auto *top = new QSplitter(Qt::Horizontal);
     top->addWidget(workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll")));
-    // The preview, with the sequences' bar under it
-    m_seqBar = new SequenceBar(m_engine);
     auto *center = new QWidget;
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
     cv->setSpacing(0);
-    auto *previews = new PreviewWorkspace(m_engine, m_view);
+    auto *previews = m_previews = new PreviewWorkspace(m_engine, m_view);
+    previews->setShowFps(SettingsPanel::showPreviewFps());
+    connect(m_settings, &SettingsPanel::previewFpsChanged, previews, &PreviewWorkspace::setShowFps);
+    // The views travel with the project, and with the presets (and the snapshots, as the settings say) that hold them
+    m_engine->setViewProvider([this] { return viewsState(); });
+    connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
     connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
-    cv->addWidget(m_seqBar);
+    previews->setUndoStack(m_undo);
+    connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
     top->setStretchFactor(0, 0);
@@ -309,9 +340,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_workspaceTabs->addTab(QStringLiteral("Timelines"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
-    library->setMinimumWidth(360);
+    library->setMinimumWidth(340);
     auto *libraryLayout = new QVBoxLayout(library);
     libraryLayout->setContentsMargins(0, 0, 0, 0);
+    m_workspaceTabs->setExpanding(true);
+    m_workspaceTabs->setUsesScrollButtons(false);
+    m_workspaceTabs->setElideMode(Qt::ElideNone);
     libraryLayout->addWidget(m_workspaceTabs);
     auto *libraryPages = new QStackedWidget;
     libraryPages->setObjectName(QStringLiteral("showLibraryPages"));
@@ -321,16 +355,16 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *workspacePages = new QStackedWidget;
     workspacePages->setObjectName(QStringLiteral("showWorkspacePages"));
     workspacePages->addWidget(m_snapshots);
-    workspacePages->addWidget(m_timelineWindow->editor());
+    workspacePages->addWidget(m_timelineWindow->workspace());
     m_timelineWindow->hide(); // retains the library/editor controller connections
     auto *librarySplit = new QSplitter(Qt::Horizontal);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
     librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
     librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
-    librarySplit->setStretchFactor(0, 1);
-    librarySplit->setStretchFactor(1, 3);
-    librarySplit->setSizes({360, 700});
+    librarySplit->setStretchFactor(0, 0);
+    librarySplit->setStretchFactor(1, 1);
+    librarySplit->setSizes({355, 825});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -345,14 +379,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     bottom->addWidget(workspace);
     bottom->setStretchFactor(0, 1);
     bottom->setStretchFactor(1, 2);
-    bottom->setSizes({500, 1000});
+    bottom->setSizes({620, 1000});
     auto *split = new QSplitter(Qt::Vertical);
     split->addWidget(top);
     split->addWidget(bottom);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
-    split->setSizes({720, 220});
-    split->setObjectName("mainSplit2"); // (layout changed: earlier saved states are not restored)
+    split->setSizes({620, 340});
+    split->setObjectName("mainSplit3"); // (layout changed: earlier saved states are not restored)
     top->setObjectName("topSplit2");
     connect(m_snapshots, &SnapshotPanel::edited, this, &MainWindow::markDirty);
     connect(m_snapshots, &SnapshotPanel::recalled, this, &MainWindow::scheduleRecallRefresh);
@@ -371,6 +405,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // --- Layers
     connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
         m_view->setLayer(r);
+        m_previews->setCurrentLayer(m_engine->layerId(r));
         m_inspector->setLayer(r);
         updateCoTargets();
         if (r >= 0 && r != m_lastSelected) m_tabs->setCurrentIndex(0);
@@ -398,6 +433,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_layerTable, &LayerTable::removeClicked, this, &MainWindow::removeCurrentLayer);
     connect(m_layerTable, &LayerTable::groupClicked, this, &MainWindow::createGroup);
+    connect(m_layerTable, &LayerTable::scene3dClicked, this, [this](QWidget *anchor) {
+        QMenu menu(this);
+        fill3dMenu(&menu);
+        menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
     connect(m_layerTable, &LayerTable::viewportClicked, this, &MainWindow::addViewport);
     connect(m_layerTable, &LayerTable::lockToggled, this, [this](int row) {
         if (m_engine->groupIndexOf(row) >= 0 && m_engine->isLocked(m_engine->groupIndexOf(row))) { // any group above
@@ -522,6 +562,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_viewportInspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary, Qt::QueuedConnection);
     connect(m_inspector, &LayerInspector::layerChanged, this, &MainWindow::refreshLayerList);
     connect(m_inspector, &LayerInspector::projectEdited, this, &MainWindow::markDirty);
+    connect(m_inspector, &LayerInspector::timelineRequested, this, [this](quint64 id) {
+        openTimelines();
+        m_timelineWindow->selectTimeline(id);
+    });
     connect(m_inspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary,
             Qt::QueuedConnection); // the rebuild destroys the button that emitted it
     connect(m_inspector, &LayerInspector::kindChanged, this, [this](const QString &k) { m_tabs->setTabText(0, k); });
@@ -563,28 +607,23 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(space, &QShortcut::activated, this, &MainWindow::sequenceGo);
     auto *spaceBack = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
     connect(spaceBack, &QShortcut::activated, this, &MainWindow::sequenceBack);
-    connect(m_seqBar, &SequenceBar::goRequested, this, &MainWindow::sequenceGo);
-    connect(m_seqBar, &SequenceBar::backRequested, this, &MainWindow::sequenceBack);
+    connect(m_seqWindow, &SequenceWindow::goRequested, this, &MainWindow::sequenceGo);
+    connect(m_seqWindow, &SequenceWindow::backRequested, this, &MainWindow::sequenceBack);
     connect(m_seqWindow, &SequenceWindow::goToRequested, this, &MainWindow::sequenceGoTo);
     connect(m_seqWindow, &SequenceWindow::edited, this, &MainWindow::markDirty);
-    connect(m_seqBar, &SequenceBar::stopRequested, &m_engine->sequencer(), &Sequencer::stop);
     connect(m_seqWindow, &SequenceWindow::stopRequested, &m_engine->sequencer(), &Sequencer::stop);
-    connect(m_seqBar, &SequenceBar::stopAllRequested, &m_engine->sequencer(), &Sequencer::stopAll);
     connect(m_seqWindow, &SequenceWindow::stopAllRequested, &m_engine->sequencer(), &Sequencer::stopAll);
     m_timelineWindow->addActions({m_undoAction, m_redoAction}); // undo / redo from the Timelines window too
     connect(m_timelineWindow, &TimelineWindow::edited, this, &MainWindow::markDirty);
     connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
-    connect(m_seqWindow, &SequenceWindow::timelinesRequested, this, &MainWindow::openTimelines);
-    connect(m_seqWindow, &SequenceWindow::timelineRequested, this, [this](quint64 id) { openTimelines(); m_timelineWindow->selectTimeline(id); });
     connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
         m_timelineWindow->setCurrentLayer(r >= 0 ? m_engine->layerId(r) : 0);
     });
-    // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the bar
+    // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the panel
     // then shows the step unchanged
     m_engine->sequencer().setRecaller([this](int snapshot) {
         m_snapshots->recall(snapshot);
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
@@ -599,20 +638,17 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
                                                  before.fixtures));
         scheduleRecallRefresh();
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
-    // Played elsewhere (OSC) or another sequence: nothing changed since; any edit afterwards: the bar says so
+    // Played elsewhere (OSC) or another sequence: nothing changed since; any edit afterwards: the panel says so
     connect(&m_engine->sequencer(), &Sequencer::positionChanged, this, [this] {
         m_cueUndoIndex = m_undo->index();
-        m_seqBar->setModified(false);
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
     connect(m_undo, &QUndoStack::indexChanged, this, [this](int i) {
         if (m_engine->sequencer().position() >= 0 && i != m_cueUndoIndex) {
-            m_seqBar->setModified(true);
             m_seqWindow->setModified(true);
             m_feedback->setModified(true);
         }
@@ -666,8 +702,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     syncOutputs();
     updateTitle();
     startOsc();
+    startRemote();
     restoreGeometry(s.value("ui/geometry").toByteArray());
-    split->restoreState(s.value("ui/mainSplit2").toByteArray());
+    split->restoreState(s.value("ui/mainSplit3").toByteArray());
     top->restoreState(s.value("ui/topSplit2").toByteArray());
     fitToAvailableScreen();
 }
@@ -702,6 +739,11 @@ MainWindow::~MainWindow()
     m_engine->sequencer().setRecaller(nullptr);
     m_engine->sequencer().setPresetRecaller(nullptr);
     m_engine->sequencer().setRecallRecorder(nullptr);
+    if (m_remoteThread) {
+        QMetaObject::invokeMethod(m_remote, [this] { m_remote->stop(); }, Qt::BlockingQueuedConnection);
+        m_remoteThread->quit();
+        m_remoteThread->wait();
+    }
     if (m_oscThread) {
         QMetaObject::invokeMethod(m_osc, [this] { m_osc->stop(); }, Qt::BlockingQueuedConnection);
         m_oscThread->quit();
@@ -767,6 +809,8 @@ bool MainWindow::eventFilter(QObject *o, QEvent *e)
             if (k->key() == Qt::Key_2 || k->key() == Qt::Key_At || k->key() == Qt::Key_QuoteDbl) tab = 1;
             if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = 2;
             if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = 3;
+            if (k->key() == Qt::Key_5 || k->key() == Qt::Key_Percent) tab = m_leftTabs->indexOf(m_controls);
+            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) tab = m_leftTabs->indexOf(m_showControl);
             if (tab >= 0 && !k->isAutoRepeat()) {
                 m_leftTabs->setCurrentIndex(tab);
                 return true;
@@ -822,14 +866,14 @@ void MainWindow::buildMenus()
         box.setTextFormat(Qt::RichText);
         box.setTextInteractionFlags(Qt::TextBrowserInteraction);
         box.setText(QStringLiteral("<h2>NYXMAP</h2><p>Pixels In New Optical Languages</p><p>Version %1</p>"
-                                   "<p>© 2025-2026 PIXEL STEREO. Released under the %2.</p>"
+                                   "<p>© 2025-2026 PIXEL STEREO. Released under the %2, without any warranty.</p>"
                                    "<p>Built with Qt and FFmpeg (GNU LGPL) and other open source components: see the %3.</p>"
                                    "<p>TouchEngine and TouchDesigner are products of Derivative Inc. "
                                    "TouchEngine SDK: Shared Use License (licenses/touchengine.txt). "
                                    "Playback requires a separately installed and licensed TouchDesigner or TouchPlayer.</p>"
                                    "<p>NDI® is a registered trademark of Vizrt NDI AB. "
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
-                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("MIT License")),
+                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU GPL v3 or later")),
                              link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
         box.setIconPixmap(QPixmap(QStringLiteral(":/branding/nyxmap.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();
@@ -918,6 +962,10 @@ void MainWindow::buildMenus()
                      &MainWindow::createGroup);
     layer->addAction(QStringLiteral("Ungroup"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G), this,
                      &MainWindow::ungroupCurrent);
+    // 3D: a scene renders its models (FBX, glTF, OBJ: dropped onto a layer) under its lights, seen by its camera
+    layer->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    layer->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
+    layer->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1115,6 +1163,25 @@ void MainWindow::addViewport()
 // Layer list
 // ---------------------------------------------------------------------------
 
+// Each kind of layer its colour in the list
+static QColor layerColor(SourceType t)
+{
+    switch (t) {
+    case SourceType::Video: return QColor(110, 175, 255);
+    case SourceType::Image: return QColor(120, 215, 235);
+    case SourceType::Isf: return QColor(195, 150, 255);
+    case SourceType::Text: return QColor(240, 225, 140);
+    case SourceType::Audio: return QColor(125, 225, 130);
+    case SourceType::Layer: return QColor(190, 190, 200);
+    case SourceType::Input: return QColor(255, 130, 120);
+    case SourceType::Tox: return QColor(255, 130, 200);
+    case SourceType::Web: return QColor(150, 200, 170);
+    case SourceType::Model: return QColor(90, 215, 200);
+    case SourceType::Light: return QColor(255, 225, 90);
+    default: return QColor(230, 230, 233);
+    }
+}
+
 static QString layerTag(SourceType t)
 {
     switch (t) {
@@ -1127,6 +1194,8 @@ static QString layerTag(SourceType t)
     case SourceType::Input: return QStringLiteral("◉");
     case SourceType::Tox: return QStringLiteral("◈");
     case SourceType::Web: return QStringLiteral("◍");
+    case SourceType::Model: return QStringLiteral("⬢");
+    case SourceType::Light: return QStringLiteral("✦");
     default: return QStringLiteral("○");
     }
 }
@@ -1163,10 +1232,14 @@ void MainWindow::refreshLayerList()
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
             r.tag = l->isViewport ? QStringLiteral("▭")
+                    : l->scene3d  ? QStringLiteral("⬡")
+                    : l->merge3d  ? QStringLiteral("◇")
                     : l->isGroup  ? QStringLiteral("▤")
+                                  : l->type == SourceType::Light ? QStringList{QStringLiteral("☀"), QStringLiteral("✦"), QStringLiteral("▽")}.value(l->light.type, QStringLiteral("✦"))
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
+            r.color = l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
             r.group = l->isGroup;
             r.collapsed = l->isGroup && l->collapsed;
             r.locked = l->locked;
@@ -1184,7 +1257,7 @@ void MainWindow::refreshLayerList()
             r.opacity = l->opacity;
             r.blend = blendModeName(l->blend);
             r.error = !l->error.isEmpty();
-            r.noPicture = l->type == SourceType::Audio || (l->type == SourceType::None && l->missingType == SourceType::Audio);
+            r.noPicture = !l->hasPicture(); // a sound, a 3D object (drawn by its scene): no opacity or blend
             if (l->isViewport) {
                 static const QString kShown[] = {QStringLiteral("hidden"), QStringLiteral("window"), QStringLiteral("fullscreen")};
                 const QSize vs = l->viewportSize();
@@ -1197,8 +1270,10 @@ void MainWindow::refreshLayerList()
             case SourceType::Video:
             case SourceType::Audio:
             case SourceType::Image:
-                r.source = l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
-                                      : QFileInfo(l->sourcePath).fileName();
+                r.source = l->merge3d ? QStringLiteral("Merge 3D of %1 object(s)").arg(m_engine->groupMembers(i).size())
+                           : l->scene3d  ? QStringLiteral("3D scene of %1 object(s) · %2 triangles").arg(m_engine->groupMembers(i).size()).arg(QLocale().toString(m_engine->sceneTriangles(i)))
+                           : l->isGroup ? QStringLiteral("group of %1 layer(s)").arg(m_engine->groupMembers(i).size())
+                                        : QFileInfo(l->sourcePath).fileName();
                 break;
             case SourceType::Isf: r.source = QStringLiteral("generator ") + QFileInfo(l->sourcePath).completeBaseName(); break;
             case SourceType::Text: r.source = QStringLiteral("text ") + l->text.content.left(40).replace('\n', ' '); break;
@@ -1208,6 +1283,13 @@ void MainWindow::refreshLayerList()
                 break;
             case SourceType::Tox:
                 r.source = QStringLiteral("TouchDesigner ") + QFileInfo(l->sourcePath).fileName();
+                break;
+            case SourceType::Model:
+                r.source = QStringLiteral("3D model ") + QFileInfo(l->sourcePath).fileName() +
+                           (l->model ? QStringLiteral(" · %1 triangles").arg(l->model->triangleCount()) : QString());
+                break;
+            case SourceType::Light:
+                r.source = QStringLiteral("light · ") + QStringList{"directional", "point", "spot"}.value(l->light.type);
                 break;
             case SourceType::Web:
                 r.source = QStringLiteral("web ") + (l->web.url.isEmpty() ? QStringLiteral("(blank)") : l->web.url.left(60));
@@ -1249,11 +1331,14 @@ void MainWindow::refreshLayerList()
     const int n = int(rows.size());
     int keep = qBound(-1, m_layerTable->currentRow(), n - 1);
     if (keep >= 0 && rows[size_t(keep)].viewport) keep = -1;
+    const bool filled = m_listedRows == 0 && n > 0; // the list was empty (a project opened, the first layer made)
+    m_listedRows = n;
     m_layerTable->setRows(rows);
-    // Nothing selected yet: the first layer below the viewports (or the first viewport)
+    // A list just filled: its first layer below the viewports (or the first viewport). Otherwise what the user chose,
+    // nothing included: a layer deselected stays deselected
     int firstLayer = 0;
     while (firstLayer < n && rows[size_t(firstLayer)].viewport) ++firstLayer;
-    const int sel = keep >= 0 ? keep : n == 0 ? -1 : firstLayer < n ? firstLayer : -1;
+    const int sel = keep >= 0 ? keep : filled && firstLayer < n ? firstLayer : -1;
     if (sel != m_layerTable->currentRow()) m_layerTable->setCurrentRow(sel);
     // By index and by id: an opened project may put another layer at the same index (its edits would be lost)
     if (sel != m_inspector->layerIndex() || (sel >= 0 && m_engine->layerId(sel) != m_inspector->layerId())) {
@@ -1415,6 +1500,29 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         refreshAll();
         return true;
     }
+    if (isCursiveGeneratorPath(path)) { // the built-in Cursive generator, dragged from the Media Bin
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && (l->isGroup || l->isViewport)) {
+                lk.unlock();
+                statusBar()->showMessage(QStringLiteral("A group or a viewport has no source: drop the cursive text onto a layer."), 6000);
+                return false;
+            }
+        }
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        if (!m_engine->setLayerCursive(i)) return false;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            Layer *l = m_engine->layer(i);
+            if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = QStringLiteral("Cursive");
+        }
+        m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load Cursive Generator"), beforeAnimations));
+        selectLayer(i);
+        refreshAll();
+        return true;
+    }
     if (isTextGeneratorPath(path)) { // the built-in Text generator, dragged from the Media Bin
         {
             Engine::Lock lk(&m_engine->mutex());
@@ -1522,7 +1630,9 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         const QJsonObject before = m_engine->layerJson(i);
         const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
         QString err;
-        if (!m_engine->setLayerInput(i, uri, &err)) {
+        // A sound card's input is a sound: the layer has no picture (its volume, its Audio FX, its levels)
+        const bool sound = isAudioInputUri(uri);
+        if (!(sound ? m_engine->setLayerAudio(i, uri, &err) : m_engine->setLayerInput(i, uri, &err))) {
             QMessageBox::warning(this, QStringLiteral("Input"), liveInputName(uri) + QStringLiteral(": ") + err);
             return false;
         }
@@ -1560,6 +1670,31 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     }
     {
         Engine::Lock lk(&m_engine->mutex());
+        if (m_engine->layer(i)->isGroup && (m_engine->layer(i)->scene3d || m_engine->layer(i)->merge3d) && Model3D::isModelFile(path)) {
+            lk.unlock(); // a model dropped onto a 3D scene: a new object of it
+            const quint64 sid = m_engine->layerId(i);
+            m_undo->beginMacro(QStringLiteral("Add \"%1\" to 3D Scene").arg(fi.fileName()));
+            const int li = m_engine->addLayer(fi.completeBaseName(), i + 1);
+            m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("Add Model")));
+            const quint64 id = m_engine->layerId(li);
+            const QJsonObject before = m_engine->layerJson(li);
+            QString err;
+            const bool ok = m_engine->setLayerModel(li, path, &err);
+            if (ok) {
+                m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("Load \"%1\"").arg(fi.fileName())));
+                const LayerTree t = m_engine->structure();
+                const LayerTree after = tree::intoGroup(t, {id}, sid);
+                if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Into 3D Scene")));
+            }
+            m_undo->endMacro();
+            if (!ok) {
+                m_undo->undo();
+                return fail(err);
+            }
+            selectLayer(m_engine->indexOfId(id));
+            refreshAll();
+            return true;
+        }
         if (m_engine->layer(i)->isGroup) {
             lk.unlock();
             statusBar()->showMessage(QStringLiteral("A group has no source: drop the media onto one of its layers."), 6000);
@@ -1571,6 +1706,19 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
                                                     "Drop the media onto a layer."), 6000);
             return false;
         }
+    }
+    // 3D: a model goes into a 3D scene (one is made around it); a scene's objects take models only
+    const bool modelFile = Model3D::isModelFile(path);
+    bool inScene = false;
+    {
+        const LayerTree t = m_engine->structure();
+        const int g = t[size_t(i)].parent ? tree::indexOf(t, t[size_t(i)].parent) : -1;
+        inScene = g >= 0 && (t[size_t(g)].role == TreeNode::Scene3d || t[size_t(g)].role == TreeNode::Merge3d);
+    }
+    if (inScene && !modelFile) {
+        statusBar()->showMessage(QStringLiteral("A 3D scene holds models (FBX, glTF, OBJ) and lights: drop this onto a layer "
+                                                "outside it."), 6000);
+        return false;
     }
     const QJsonObject before = m_engine->layerJson(i);
     const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
@@ -1587,8 +1735,16 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         Layer *l = m_engine->layer(i);
         if (l && l->name.startsWith(QStringLiteral("Layer "))) l->name = shown;
     }
+    const bool wrap = modelFile && !inScene;
+    if (wrap) m_undo->beginMacro(QStringLiteral("Load \"%1\" into a 3D Scene").arg(fi.fileName()));
     m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Load \"%1\"").arg(streamUrl.isEmpty() ? fi.fileName() : shown),
                                        beforeAnimations));
+    if (wrap) {
+        const quint64 id = m_engine->layerId(i);
+        wrapInScene(i);
+        m_undo->endMacro();
+        i = m_engine->indexOfId(id);
+    }
     selectLayer(i);
     refreshAll();
     if (!err.isEmpty()) statusBar()->showMessage(fi.fileName() + QStringLiteral(": ") + err.section('\n', 0, 0), 8000);
@@ -1604,7 +1760,8 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
     for (const QString &p : paths) {
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
-        if (isTextGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
+        if (isTextGeneratorPath(p) || isCursiveGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
+            Model3D::isPrimitivePath(p) ||
             !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
@@ -1671,9 +1828,54 @@ void MainWindow::addEmptyLayer()
     const int cur = currentLayer();
     if (cur >= 0 && m_engine->groupIndexOf(cur) >= 0) at = cur;
     if (cur >= 0 && m_engine->groupIndexOf(cur) >= 0 && m_engine->isLocked(m_engine->groupIndexOf(cur))) at = 0;
+    { // a 3D scene holds no 2D layer: above the scene instead
+        const LayerTree t = m_engine->structure();
+        for (int g = at < int(t.size()) && t[size_t(at)].parent ? tree::indexOf(t, t[size_t(at)].parent) : -1; g >= 0;
+             g = t[size_t(g)].parent ? tree::indexOf(t, t[size_t(g)].parent) : -1)
+            if (t[size_t(g)].role == TreeNode::Scene3d) at = g;
+    }
     int i = m_engine->addLayer(QString(), at);
     m_undo->push(new cmd::AddLayer(m_engine, i, QStringLiteral("Add Layer")));
     selectLayer(i);
+}
+
+QString MainWindow::layersInUse(const QSet<int> &rows) const
+{
+    QSet<quint64> going;
+    for (int r : rows) going.insert(m_engine->layerId(r));
+    QStringList lines;
+    for (int r : rows) {
+        const quint64 id = m_engine->layerId(r);
+        QString name;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(r)) name = l->name;
+        }
+        for (const Engine::LayerUse &use : m_engine->layerUses(id))
+            if (!going.contains(use.layer)) lines << QStringLiteral("“%1”: %2").arg(name, use.what); // what goes with it does not count
+    }
+    if (lines.size() > 12) {
+        const int more = int(lines.size()) - 12;
+        lines = lines.mid(0, 12);
+        lines << QStringLiteral("and %1 more").arg(more);
+    }
+    return lines.join('\n');
+}
+
+QSet<int> MainWindow::sourceUsers(const QSet<int> &rows) const
+{
+    QSet<int> found;
+    QList<int> todo = rows.values();
+    while (!todo.isEmpty()) {
+        const quint64 id = m_engine->layerId(todo.takeLast());
+        for (const Engine::LayerUse &use : m_engine->layerUses(id)) {
+            const int user = m_engine->indexOfId(use.layer);
+            if (!use.asSource || user < 0 || rows.contains(user) || found.contains(user) || m_engine->isLocked(user)) continue;
+            found.insert(user);
+            todo << user;
+        }
+    }
+    return found;
 }
 
 void MainWindow::removeCurrentLayer()
@@ -1703,6 +1905,18 @@ void MainWindow::removeCurrentLayer()
     }
     if (skipped) statusBar()->showMessage(QStringLiteral("%1 locked layer(s) not deleted.").arg(skipped), 4000);
     if (victims.isEmpty()) return;
+    if (const QString used = layersInUse(victims); !used.isEmpty() && !m_quiet) {
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("Delete"), QStringLiteral("What you are deleting is used elsewhere."), QMessageBox::NoButton, this);
+        box.setInformativeText(used);
+        QPushButton *remove = box.addButton(QStringLiteral("Delete"), QMessageBox::DestructiveRole);
+        const QSet<int> users = sourceUsers(victims);
+        QPushButton *withUsers = users.isEmpty() ? nullptr
+                                                 : box.addButton(QStringLiteral("Delete with the %1 Layer(s) Using It as a Source").arg(users.size()), QMessageBox::DestructiveRole);
+        box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+        box.exec();
+        if (box.clickedButton() == withUsers && withUsers) victims.unite(users);
+        else if (box.clickedButton() != remove) return;
+    }
     QList<int> order = victims.values();
     std::sort(order.begin(), order.end(), std::greater<int>()); // members (below their group) first
     const int first = order.last();
@@ -1882,6 +2096,16 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
         menu.addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
         menu.addAction(locked ? QStringLiteral("Unlock") : QStringLiteral("Lock"), this, &MainWindow::toggleLockCurrent);
         menu.addAction(QStringLiteral("Delete"), this, &MainWindow::removeCurrentLayer)->setEnabled(!locked);
+        QString media;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(row); l && !l->isGroup && !l->isViewport) media = l->sourcePath;
+        }
+        QAction *inBin = menu.addAction(QStringLiteral("Show in Media Bin"), this, [this, media] {
+            m_leftTabs->setCurrentWidget(m_bin);
+            if (!m_bin->reveal(media)) statusBar()->showMessage(QStringLiteral("Not in the Media Bin: %1").arg(media), 4000);
+        });
+        inBin->setEnabled(!media.isEmpty());
         menu.addSeparator();
         // Its picture as the source of another layer: the layers that can take it (not one it already depends on)
         QMenu *into = menu.addMenu(QStringLiteral("Load into Layer"));
@@ -1912,6 +2136,8 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
     addPasteMenu(&menu, onLayer && !locked, group);
     menu.addSeparator();
     menu.addAction(QStringLiteral("New Layer"), this, &MainWindow::addEmptyLayer);
+    menu.addSeparator();
+    fill3dMenu(&menu);
     menu.exec(globalPos);
 }
 
@@ -1944,7 +2170,7 @@ void MainWindow::moveCurrentLayer(int delta)
         }
     }
     const LayerTree after = tree::moved(t, {cur.id}, before, cur.parent);
-    if (after == t) return;
+    if (after == t || refuse3d(after)) return;
     m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Reorder Layers")));
     selectLayer(m_engine->indexOfId(cur.id));
 }
@@ -1971,7 +2197,7 @@ void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
     const quint64 before = beforeRow >= 0 && beforeRow < int(t.size()) ? t[size_t(beforeRow)].id : 0;
     const quint64 parent = parentRow >= 0 && parentRow < int(t.size()) ? t[size_t(parentRow)].id : 0;
     const LayerTree after = tree::moved(t, ids, before, parent);
-    if (after == t) return;
+    if (after == t || refuse3d(after)) return;
     const bool into = parent && std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].parent != parent; });
     m_undo->push(new cmd::SetStructure(m_engine, t, after, into ? QStringLiteral("Move into Group") : QStringLiteral("Move Layers")));
     selectLayer(m_engine->indexOfId(ids.front()));
@@ -1989,6 +2215,12 @@ void MainWindow::createGroup()
         if (at < 0 || r < at) at = r; // the new group goes where the first of them is, in the same group
     }
     if (at < 0) at = 0;
+    // A 3D object stays in its scene, and a scene holds no group
+    const bool inScene = at < int(t.size()) && t[size_t(at)].parent && t[size_t(tree::indexOf(t, t[size_t(at)].parent))].role == TreeNode::Scene3d;
+    if (inScene || std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].role == TreeNode::Object3d; })) {
+        statusBar()->showMessage(QStringLiteral("A 3D scene holds models and lights only: its objects cannot be grouped."), 5000);
+        return;
+    }
     m_undo->beginMacro(QStringLiteral("New Group"));
     const int gi = m_engine->addGroup(QString(), at);
     m_undo->push(new cmd::AddLayer(m_engine, gi, QStringLiteral("New Group")));
@@ -2004,6 +2236,161 @@ void MainWindow::createGroup()
                              4000);
 }
 
+// New 3D Scene; Add Light (a scene or one of its objects selected); Import 3D Model… (into the selected scene, or a new
+// one)
+void MainWindow::fill3dMenu(QMenu *menu)
+{
+    menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    const int cur = currentLayer();
+    bool inScene = false;
+    if (cur >= 0) {
+        const LayerTree t = m_engine->structure();
+        const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+        const int g = holds3d(cur) ? cur : t[size_t(cur)].parent ? tree::indexOf(t, t[size_t(cur)].parent) : -1;
+        inScene = g >= 0 && holds3d(g);
+    }
+    QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
+    light->setEnabled(inScene);
+    menu->addAction(QStringLiteral("Import 3D Model…"), this, [this, inScene] {
+        QStringList ext;
+        for (const QString &e : Model3D::extensions()) ext << QStringLiteral("*.") + e;
+        QSettings s;
+        const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("Import 3D Model"), s.value("dirs/model").toString(),
+                                                       QStringLiteral("3D Models (%1)").arg(ext.join(' ')));
+        if (f.isEmpty()) return;
+        s.setValue("dirs/model", QFileInfo(f).absolutePath());
+        m_bin->importFiles({f});
+        int target = currentLayer();
+        if (inScene) {
+            const LayerTree t = m_engine->structure();
+            if (t[size_t(target)].role != TreeNode::Scene3d && t[size_t(target)].role != TreeNode::Merge3d) target = tree::indexOf(t, t[size_t(target)].parent);
+            loadIntoLayer(target, f); // a new object of that scene
+        } else {
+            loadIntoNewLayer(f); // a new scene around it
+        }
+    });
+}
+
+bool MainWindow::refuse3d(const LayerTree &after)
+{
+    if (tree::valid3d(after)) return false;
+    statusBar()->showMessage(QStringLiteral("A 3D scene holds models and lights only, and they stay in it."), 5000);
+    return true;
+}
+
+int MainWindow::addLightLayer(int scene)
+{
+    const quint64 sid = m_engine->layerId(scene);
+    int count = 0;
+    for (int m : m_engine->groupMembers(scene)) {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m); l && l->type == SourceType::Light) ++count;
+    }
+    const int li = m_engine->addLayer(QStringLiteral("Light %1").arg(count + 1), scene + 1);
+    m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("Add Light")));
+    const QJsonObject before = m_engine->layerJson(li);
+    m_engine->setLayerLight(li);
+    m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("Add Light"), {}));
+    const quint64 lid = m_engine->layerId(li);
+    const LayerTree t = m_engine->structure();
+    const LayerTree after = tree::intoGroup(t, {lid}, sid);
+    if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Add Light")));
+    return m_engine->indexOfId(lid);
+}
+
+void MainWindow::createScene()
+{
+    int at = currentLayer();
+    if (at < 0) at = 0;
+    m_undo->beginMacro(QStringLiteral("New 3D Scene"));
+    const int si = m_engine->addScene(QString(), at);
+    m_undo->push(new cmd::AddLayer(m_engine, si, QStringLiteral("New 3D Scene")));
+    const quint64 sid = m_engine->layerId(si);
+    addLightLayer(si);
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(sid));
+    statusBar()->showMessage(QStringLiteral("3D scene created: drop an FBX, glTF or OBJ onto it to add a model."), 5000);
+}
+
+// A new Merge 3D: in the 3D scene or the Merge 3D selected, or beside the 3D objects selected, which go into it
+void MainWindow::createMerge3d()
+{
+    const LayerTree t = m_engine->structure();
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    std::vector<quint64> ids;
+    quint64 holder = 0;
+    int at = -1;
+    for (int r : m_layerTable->selectedRows()) {
+        if (r < 0 || r >= int(t.size())) continue;
+        if (t[size_t(r)].role == TreeNode::Scene3d) {
+            holder = t[size_t(r)].id;
+            continue;
+        }
+        if (t[size_t(r)].role != TreeNode::Object3d && t[size_t(r)].role != TreeNode::Merge3d) continue;
+        if (m_engine->isLocked(r)) continue;
+        if (!holder) holder = t[size_t(r)].parent;
+        if (t[size_t(r)].parent == holder) ids.push_back(t[size_t(r)].id); // those of one place
+        if (at < 0 || r < at) at = r;
+    }
+    if (!holder) {
+        const int cur = currentLayer();
+        if (cur >= 0 && holds3d(cur)) holder = t[size_t(cur)].id;
+        else if (cur >= 0 && t[size_t(cur)].parent) holder = t[size_t(cur)].parent;
+    }
+    if (!holder) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene or some of its objects to make a Merge 3D."), 4000);
+        return;
+    }
+    const int holderRow = tree::indexOf(t, holder);
+    if (holderRow < 0 || !holds3d(holderRow)) {
+        statusBar()->showMessage(QStringLiteral("A Merge 3D is made in a 3D scene or in another Merge 3D."), 4000);
+        return;
+    }
+    if (at < 0) at = holderRow + 1;
+    m_undo->beginMacro(QStringLiteral("New Merge 3D"));
+    const int mi = m_engine->addMerge3d(QString(), at);
+    const quint64 mid = m_engine->layerId(mi);
+    m_undo->push(new cmd::AddLayer(m_engine, mi, QStringLiteral("New Merge 3D")));
+    const LayerTree before = m_engine->structure();
+    LayerTree after = tree::intoGroup(before, {mid}, holder);
+    if (!ids.empty()) after = tree::intoGroup(after, ids, mid);
+    if (after != before) m_undo->push(new cmd::SetStructure(m_engine, before, after, QStringLiteral("Into Merge 3D")));
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(mid));
+    statusBar()->showMessage(ids.empty() ? QStringLiteral("Empty Merge 3D: drag 3D objects onto it, or other Merge 3Ds.")
+                                         : QStringLiteral("Merge 3D of %1 object(s): move it, and they follow.").arg(ids.size()), 4000);
+}
+
+void MainWindow::addLightToScene()
+{
+    int s = currentLayer();
+    if (s < 0) return;
+    const LayerTree t = m_engine->structure();
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    if (!holds3d(s)) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+    if (s < 0 || !holds3d(s)) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene (or one of its objects) to add a light to it."), 4000);
+        return;
+    }
+    if (refuseLocked(s)) return;
+    m_undo->beginMacro(QStringLiteral("Add Light"));
+    const int li = addLightLayer(s);
+    m_undo->endMacro();
+    selectLayer(li);
+}
+
+void MainWindow::wrapInScene(int layer)
+{
+    const quint64 id = m_engine->layerId(layer);
+    const int si = m_engine->addScene(QString(), layer);
+    m_undo->push(new cmd::AddLayer(m_engine, si, QStringLiteral("New 3D Scene")));
+    const quint64 sid = m_engine->layerId(si);
+    const LayerTree t = m_engine->structure();
+    const LayerTree after = tree::intoGroup(t, {id}, sid);
+    if (after != t) m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Into 3D Scene")));
+    addLightLayer(m_engine->indexOfId(sid));
+}
+
 void MainWindow::ungroupCurrent()
 {
     int g = currentLayer();
@@ -2013,6 +2400,7 @@ void MainWindow::ungroupCurrent()
     if (g < 0) return;
     if (!t[size_t(g)].isGroup() || refuseLocked(g)) return;
     const quint64 gid = t[size_t(g)].id;
+    if (refuse3d(tree::ungrouped(t, gid))) return;
     m_undo->beginMacro(QStringLiteral("Ungroup"));
     m_undo->push(new cmd::SetStructure(m_engine, t, tree::ungrouped(t, gid), QStringLiteral("Ungroup")));
     m_undo->push(new cmd::RemoveLayer(m_engine, m_engine->indexOfId(gid)));
@@ -2067,6 +2455,39 @@ void MainWindow::startOsc()
         Qt::BlockingQueuedConnection);
     m_settings->setOscStatus(on ? status : QStringLiteral("OSC off"));
     if (on) statusBar()->showMessage(status, 6000);
+}
+
+// The remote: its own thread, as OSC has, so that a phone is answered while the interface is busy
+void MainWindow::startRemote()
+{
+    if (!m_remoteThread) {
+        m_remoteThread = new QThread(this);
+        m_remoteThread->setObjectName("Remote");
+        m_remote = new RemoteServer(m_engine);
+        m_remote->moveToThread(m_remoteThread);
+        connect(m_remote, &RemoteServer::showDriven, this, [this] {
+            markDirty();
+            refreshLayerList();
+            m_composition->syncFromEngine();
+            m_inspectorTimer.start(); // as OSC: not during a gesture, a bit later
+        });
+        connect(m_remoteThread, &QThread::finished, m_remote, &QObject::deleteLater);
+        m_remoteThread->start();
+    }
+    const bool on = SettingsPanel::remoteEnabled();
+    const int port = SettingsPanel::remotePort();
+    const QString pin = SettingsPanel::remotePin(), listen = SettingsPanel::oscListen();
+    QString status;
+    QMetaObject::invokeMethod(
+        m_remote,
+        [this, on, port, pin, listen, &status] {
+            if (on) m_remote->start(quint16(port), pin, listen);
+            else m_remote->stop();
+            status = on ? m_remote->status() : QString();
+        },
+        Qt::BlockingQueuedConnection);
+    m_settings->setRemoteStatus(on ? status : QStringLiteral("Remote off"));
+    if (on) statusBar()->showMessage(status, 8000);
 }
 
 void MainWindow::setInOutAtPosition(bool in)
@@ -2211,7 +2632,26 @@ QJsonObject MainWindow::uiState() const
 {
     QJsonObject o;
     o["selected_layer"] = currentLayer();
+    o["views"] = viewsState();
     return o;
+}
+
+QJsonObject MainWindow::viewsState() const
+{
+    QJsonObject o = m_previews->state();
+    const int layer = currentLayer();
+    o["layer"] = QString::number(layer >= 0 ? m_engine->layerId(layer) : 0);
+    return o;
+}
+
+void MainWindow::applyViews(const QJsonObject &views)
+{
+    if (views.isEmpty()) return;
+    m_previews->setState(views);
+    if (views.contains("layer")) {
+        const int index = m_engine->indexOfId(views.value("layer").toString().toULongLong());
+        if (index >= 0) selectLayer(index);
+    }
 }
 
 bool MainWindow::maybeSave()
@@ -2237,7 +2677,12 @@ void MainWindow::afterProjectLoaded(const QJsonObject &ui)
     m_composition->syncFromEngine();
     m_bin->refresh();
     m_snapshots->clearActive(); // the "recalled last" marker belonged to the previous project
+    // The list starts afresh: its first layer chosen, then the one the project saved (a viewport leaves that first layer)
+    m_listedRows = 0;
+    m_layerTable->setCurrentRow(-1);
+    refreshLayerList();
     selectLayer(qBound(-1, ui.value("selected_layer").toInt(0), m_engine->layerCount() - 1));
+    applyViews(ui.value("views").toObject()); // how many views, what each shows, their zoom, as saved
     updateTitle();
 }
 
@@ -2466,7 +2911,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
     m_quitting = true;
     QSettings s;
     s.setValue("ui/geometry", saveGeometry());
-    if (auto *split = findChild<QSplitter *>("mainSplit2")) s.setValue("ui/mainSplit2", split->saveState());
+    if (auto *split = findChild<QSplitter *>("mainSplit3")) s.setValue("ui/mainSplit3", split->saveState());
     if (auto *top = findChild<QSplitter *>("topSplit2")) s.setValue("ui/topSplit2", top->saveState());
     for (auto &[id, o] : m_outputs) o.window->hideOutput();
     // Normal exit: no recovery to offer on next launch.

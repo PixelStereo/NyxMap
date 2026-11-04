@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 include(cmake/Version.cmake)
-project(NyxMap VERSION ${NYXMAP_VERSION_NUMERIC} LANGUAGES CXX)
+project(NyxMap VERSION ${NYXMAP_VERSION_NUMERIC} LANGUAGES C CXX) # C: ufbx.c
 configure_file(cmake/Version.h.in generated/NyxMapVersion.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -44,6 +44,8 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(nyxmap_engine STATIC
   src/engine/Gl.cpp
+  src/engine/Model3D.cpp
+  third_party/ufbx/ufbx.c
   src/engine/Isf.cpp
   src/engine/LineGenerator.cpp
   src/engine/ImageFile.cpp
@@ -76,12 +78,22 @@ add_library(nyxmap_engine STATIC
   src/engine/ToxTouchEngine.cpp
   src/engine/WebPage.cpp
   src/engine/Permissions.cpp
+  src/engine/FaustInterpreter.cpp
+  src/engine/AudioEffects.cpp
+  src/engine/AudioEffectEngine.cpp
+  src/engine/AudioGenerator.cpp
+  src/engine/BeatClock.cpp
+  src/engine/Controls.cpp
+  src/engine/RemoteServer.cpp
+  src/engine/AudioCapture.cpp
+  src/engine/AudioCaptureDevice.cpp
   src/engine/AudioStream.cpp
   src/engine/AudioOutput.cpp
   src/engine/AudioInput.cpp
   src/engine/MiniaudioImpl.cpp
   src/engine/Osc.cpp
   src/engine/OscShowControl.cpp
+  src/engine/ShowDesk.cpp
   src/engine/EventLog.cpp
   src/engine/FrameTiming.cpp
   src/engine/OscCodec.cpp
@@ -104,6 +116,7 @@ add_library(nyxmap_engine STATIC
   src/engine/TimecodeIo.cpp
   src/engine/TimecodeOutputs.cpp
   src/engine/ClockGenerator.cpp
+  src/engine/TextWriting.cpp
   src/engine/Interactions.cpp
   src/engine/PixelAnalysis.cpp
   src/engine/HandTracking.cpp
@@ -117,6 +130,23 @@ add_library(nyxmap_engine STATIC
   src/engine/LayerParams.cpp
 )
 target_include_directories(nyxmap_engine PUBLIC src/engine)
+target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/faust/architecture")
+# Built-in Faust instruments use portable generated C++; the optional interpreter
+# enables arbitrary user .dsp files without any compilation in the audio callback.
+option(NYXMAP_FAUST_COMPILER "Compile user Faust .dsp generators with libfaust" ON)
+if(NYXMAP_FAUST_COMPILER)
+  find_path(FAUST_COMPILER_INCLUDE_DIR faust/dsp/interpreter-dsp.h)
+  find_library(FAUST_COMPILER_LIBRARY NAMES faust libfaust)
+  find_path(FAUST_LIBRARY_PATH stdfaust.lib PATH_SUFFIXES share/faust faust)
+  if(FAUST_COMPILER_INCLUDE_DIR AND FAUST_COMPILER_LIBRARY AND FAUST_LIBRARY_PATH)
+    target_include_directories(nyxmap_engine PRIVATE "${FAUST_COMPILER_INCLUDE_DIR}")
+    target_compile_definitions(nyxmap_engine PUBLIC NYXMAP_FAUST_COMPILER)
+    target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_FAUST_LIBRARY_PATH="${FAUST_LIBRARY_PATH}" NYXMAP_FAUST_LIBRARY_FILE="${FAUST_COMPILER_LIBRARY}")
+  else()
+    message(STATUS "libfaust compiler not found: built-in audio instruments available; user .dsp loading disabled")
+  endif()
+endif()
+
 option(NYXMAP_HAND_TRACKING "OpenCV DNN / MediaPipe hand landmark tracking" ON)
 if(NYXMAP_HAND_TRACKING)
   find_package(OpenCV QUIET COMPONENTS core imgproc dnn)
@@ -174,7 +204,12 @@ endfunction()
 # ---------------------------------------------------------------------------
 # Audio output: miniaudio (single header, public domain / MIT-0), compiled in src/engine/MiniaudioImpl.cpp
 # ---------------------------------------------------------------------------
+nyxmap_submodule(faust architecture/faust/dsp/dsp.h)
 nyxmap_submodule(miniaudio miniaudio.h)
+# 3D models: ufbx (FBX, OBJ; MIT / public domain) and cgltf (glTF, GLB; MIT), single files (src/engine/Model3D.cpp)
+nyxmap_submodule(ufbx ufbx.c)
+nyxmap_submodule(cgltf cgltf.h)
+target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/ufbx" "${CMAKE_SOURCE_DIR}/third_party/cgltf")
 target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/miniaudio")
 target_compile_definitions(nyxmap_engine PRIVATE MA_NO_DECODING MA_NO_ENCODING MA_NO_GENERATION MA_NO_ENGINE
   MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH)
@@ -216,7 +251,23 @@ else()
   endif()
 endif()
 if(NYXMAP_MIDI_API)
-  add_library(rtmidi_static STATIC "${rtmidi_SOURCE_DIR}/RtMidi.cpp")
+  # RtMidi declares its CoreMIDI client getters throw() (noexcept), yet reports a failed MIDIClientCreate by throwing
+  # RtMidiError from them: std::terminate, the process aborts before Midi.cpp's catch. MIDIClientCreate does fail now
+  # and then when several processes reach the MIDI server at once (the UI tests under ctest -j). Built from a copy
+  # without those throw(), the error is caught and the port list is empty.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${rtmidi_SOURCE_DIR}/RtMidi.cpp")
+  file(READ "${rtmidi_SOURCE_DIR}/RtMidi.cpp" rtmidi_code)
+  string(REPLACE "getCoreMidiClientSingleton(const std::string& clientName) throw()"
+                 "getCoreMidiClientSingleton(const std::string& clientName)" rtmidi_code "${rtmidi_code}")
+  set(rtmidi_patched "${CMAKE_BINARY_DIR}/generated/rtmidi/RtMidi.cpp")
+  set(rtmidi_previous "")
+  if(EXISTS "${rtmidi_patched}")
+    file(READ "${rtmidi_patched}" rtmidi_previous)
+  endif()
+  if(NOT rtmidi_previous STREQUAL rtmidi_code)
+    file(WRITE "${rtmidi_patched}" "${rtmidi_code}")
+  endif()
+  add_library(rtmidi_static STATIC "${rtmidi_patched}")
   target_include_directories(rtmidi_static PUBLIC "${rtmidi_SOURCE_DIR}")
   target_compile_definitions(rtmidi_static PUBLIC ${NYXMAP_MIDI_API})
   target_link_libraries(rtmidi_static PUBLIC ${NYXMAP_MIDI_LIBS})
@@ -349,11 +400,15 @@ set(APP_SOURCES
   src/ui/MainWindow.cpp
   src/ui/LogPanel.cpp
   src/ui/LogModel.cpp
+  src/ui/ControlsPanel.cpp
+  src/ui/ShowControlPanel.cpp
+  src/ui/FxChainPanel.cpp
   src/ui/LayerInspector.cpp
   src/ui/ParamPanel.cpp
   src/ui/PresetEditor.cpp
   src/ui/MappingView.cpp src/ui/MappingViewLines.cpp
   src/ui/PreviewWorkspace.cpp
+  src/ui/Scene3DView.cpp
   src/ui/FixtureOverlay.cpp
   src/ui/FixturePanel.cpp
   src/ui/FixtureInspector.cpp
@@ -412,13 +467,16 @@ if(APPLE)
     MACOSX_BUNDLE_LONG_VERSION_STRING "${NYXMAP_VERSION}"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in") # with the camera's usage text
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/../Resources/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/../Resources/audio")
 elseif(WIN32)
   add_executable(NyxMap WIN32 ${APP_SOURCES} assets/NyxMap.rc)
   target_include_directories(NyxMap PRIVATE "${CMAKE_SOURCE_DIR}/assets")
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/audio")
 else()
   add_executable(NyxMap ${APP_SOURCES})
   set(ISF_DEST "$<TARGET_FILE_DIR:NyxMap>/isf")
+  set(AUDIO_DEST "$<TARGET_FILE_DIR:NyxMap>/audio")
 endif()
 
 # The source revision, for endurance-session comparison: regenerated at every build (cmake/BuildSha.cmake), not
@@ -460,9 +518,16 @@ endif()
 
 # Copy the bundled ISF shaders next to the executable (or into the macOS bundle).
 # The folder is emptied first so renamed or deleted shaders do not linger in the build.
+if(APPLE)
+  # Remove legacy copies from incremental bundles: codesign treats .dsp files
+  # under Contents/MacOS as nested code rather than data.
+  add_custom_command(TARGET NyxMap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:NyxMap>/audio")
+endif()
 add_custom_command(TARGET NyxMap POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}")
+  COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}" "${AUDIO_DEST}"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/audio" "${AUDIO_DEST}")
 
 # Windows: the FFmpeg DLLs must be next to NyxMap.exe
 if(WIN32 AND FFMPEG_ROOT)
@@ -581,7 +646,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NYXMAP_TESTS "Build the engine tests" ON)
 if(NYXMAP_TESTS)
-  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/scene3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(nyxmap_tests PRIVATE src/ui)
   target_link_libraries(nyxmap_tests PRIVATE nyxmap_engine)
   target_compile_options(nyxmap_tests PRIVATE ${NYXMAP_WARNINGS})
@@ -589,6 +654,46 @@ if(NYXMAP_TESTS)
   # CTest: each targeted area in a process of its own (a new engine).
   # Test media first: sh test/make_media.sh
   enable_testing()
+  add_executable(nyxmap_audio_resources_test test/audio_resources.cpp)
+  target_include_directories(nyxmap_audio_resources_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_audio_resources_test PRIVATE Qt6::Core)
+  add_test(NAME audio_resources COMMAND nyxmap_audio_resources_test)
+  add_executable(nyxmap_audio_generators_test test/audio_generators.cpp)
+  target_link_libraries(nyxmap_audio_generators_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_generators COMMAND nyxmap_audio_generators_test)
+  # Test the dependency-free generated backend even on hosts with libfaust installed.
+  add_executable(nyxmap_audio_generators_portable_test test/audio_generators.cpp src/engine/AudioGenerator.cpp src/engine/FaustInterpreter.cpp src/engine/AudioEffects.cpp src/engine/AudioStream.cpp src/engine/AudioCapture.cpp test/portable_audio_capture.cpp)
+  target_include_directories(nyxmap_audio_generators_portable_test PRIVATE src/engine third_party/faust/architecture)
+  target_link_libraries(nyxmap_audio_generators_portable_test PRIVATE Qt6::Core ffmpeg)
+  add_test(NAME audio_generators_portable COMMAND nyxmap_audio_generators_portable_test)
+  add_executable(nyxmap_audio_generator_engine_test test/audio_generator_engine.cpp)
+  target_link_libraries(nyxmap_audio_generator_engine_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_generator_engine COMMAND nyxmap_audio_generator_engine_test)
+  add_executable(nyxmap_remote_server_test test/remote_server.cpp)
+  target_link_libraries(nyxmap_remote_server_test PRIVATE nyxmap_engine)
+  add_test(NAME remote_server COMMAND nyxmap_remote_server_test)
+  set_tests_properties(remote_server PROPERTIES TIMEOUT 120)
+  add_executable(nyxmap_show_controls_test test/show_controls.cpp)
+  target_link_libraries(nyxmap_show_controls_test PRIVATE nyxmap_engine)
+  add_test(NAME show_controls COMMAND nyxmap_show_controls_test)
+  set_tests_properties(show_controls PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_beat_clock_test test/beat_clock.cpp)
+  target_link_libraries(nyxmap_beat_clock_test PRIVATE nyxmap_engine)
+  add_test(NAME beat_clock COMMAND nyxmap_beat_clock_test)
+  set_tests_properties(beat_clock PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_audio_hits_test test/audio_hits.cpp)
+  target_include_directories(nyxmap_audio_hits_test PRIVATE src/engine)
+  add_test(NAME audio_hits COMMAND nyxmap_audio_hits_test)
+  set_tests_properties(audio_hits PROPERTIES TIMEOUT 120)
+  add_executable(nyxmap_audio_levels_test test/audio_levels.cpp)
+  target_link_libraries(nyxmap_audio_levels_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_levels COMMAND nyxmap_audio_levels_test)
+  set_tests_properties(audio_levels PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_audio_effects_test test/audio_effects.cpp)
+  target_link_libraries(nyxmap_audio_effects_test PRIVATE nyxmap_engine)
+  add_test(NAME audio_effects COMMAND nyxmap_audio_effects_test)
+  set_tests_properties(audio_effects PROPERTIES TIMEOUT 60)
+  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_show_editing_test test/show_editing.cpp)
   target_link_libraries(nyxmap_show_editing_test PRIVATE nyxmap_engine)
   add_test(NAME show_editing COMMAND nyxmap_show_editing_test)
@@ -607,13 +712,13 @@ if(NYXMAP_TESTS)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)
   add_test(NAME isf_library COMMAND nyxmap_isf_library_test)
-  add_executable(nyxmap_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp
+  add_executable(nyxmap_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_color_timeline_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_color_timeline_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME color_timeline_ui COMMAND nyxmap_color_timeline_ui_test)
   set_tests_properties(color_timeline_ui PROPERTIES TIMEOUT 30)
-  add_executable(nyxmap_timeline_events_ui_test test/timeline_events_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp
+  add_executable(nyxmap_timeline_events_ui_test test/timeline_events_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_timeline_events_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_timeline_events_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
@@ -659,6 +764,10 @@ if(NYXMAP_TESTS)
   # GNU-compatible Linux linkers inject failures at our FFmpeg call sites only.
   # No test hooks or extra branches are compiled into the production decoder.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(nyxmap_video_transfer_test test/video_transfer.cpp)
+    target_link_libraries(nyxmap_video_transfer_test PRIVATE nyxmap_engine)
+    target_link_options(nyxmap_video_transfer_test PRIVATE -Wl,--wrap=av_hwframe_transfer_data)
+    add_test(NAME video_transfer COMMAND nyxmap_video_transfer_test)
     add_executable(nyxmap_decoder_allocations_test test/decoder_allocations.cpp)
     target_link_libraries(nyxmap_decoder_allocations_test PRIVATE nyxmap_engine)
     target_compile_options(nyxmap_decoder_allocations_test PRIVATE ${NYXMAP_WARNINGS})
@@ -677,6 +786,9 @@ if(NYXMAP_TESTS)
     set_tests_properties(demo_fixture PROPERTIES FIXTURES_SETUP demo)
     add_test(NAME demo_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/demo-fixture/preview.png --frames 3 --strict ${CMAKE_BINARY_DIR}/demo-fixture/Demo.nyxmap)
     set_tests_properties(demo_render PROPERTIES FIXTURES_REQUIRED demo TIMEOUT 120)
+    # The PBR example: its project as it is in the repository, rendered
+    add_test(NAME pbr_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/pbr-preview.png --frames 3 --strict ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap)
+    set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
     add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
@@ -705,20 +817,27 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_analysis_concurrency_test PRIVATE Threads::Threads)
   add_test(NAME audio_analysis_concurrency COMMAND nyxmap_audio_analysis_concurrency_test)
   set_tests_properties(audio_analysis_concurrency PROPERTIES TIMEOUT 60)
-  add_executable(nyxmap_vision_interaction_ui_test test/vision_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  add_executable(nyxmap_vision_interaction_ui_test test/vision_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_vision_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_vision_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME vision_interaction_ui COMMAND nyxmap_vision_interaction_ui_test)
   set_tests_properties(vision_interaction_ui PROPERTIES TIMEOUT 60)
-  add_executable(nyxmap_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  add_executable(nyxmap_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_audio_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_audio_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME audio_interaction_ui COMMAND nyxmap_audio_interaction_ui_test)
-  add_executable(nyxmap_interaction_actions_ui_test test/interaction_actions_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  add_executable(nyxmap_interaction_actions_ui_test test/interaction_actions_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_interaction_actions_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_actions_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME interaction_actions_ui COMMAND nyxmap_interaction_actions_ui_test)
-  add_executable(nyxmap_interaction_filters_ui_test test/interaction_filters_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp)
+  add_executable(nyxmap_animation_drivers_test test/animation_drivers.cpp src/ui/ParamAnimPanel.cpp
+    src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp
+    src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+  target_include_directories(nyxmap_animation_drivers_test PRIVATE src/ui)
+  target_link_libraries(nyxmap_animation_drivers_test PRIVATE nyxmap_engine Qt6::Widgets)
+  add_test(NAME animation_drivers COMMAND nyxmap_animation_drivers_test)
+  set_tests_properties(animation_drivers PROPERTIES TIMEOUT 60)
+  add_executable(nyxmap_interaction_filters_ui_test test/interaction_filters_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_interaction_filters_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_filters_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME interaction_filters_ui COMMAND nyxmap_interaction_filters_ui_test)
@@ -750,8 +869,8 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_cue_dispatch_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND nyxmap_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 60)
-  foreach(area show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
-          media sound layersource timecode interactions psd live_inputs clocks file_sources tox)
+  foreach(area scene3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+          media sound layersource timecode interactions psd live_inputs clocks text_writing file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
   endforeach()
   # Areas depending on real time (sound clocks, threads, waits, publishers): label "timing".
@@ -777,7 +896,7 @@ if(NYXMAP_TESTS)
   add_test(NAME line_ui COMMAND nyxmap_line_ui_test)
   set(WORKSPACE_TEST_SOURCES ${APP_SOURCES})
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
-  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp ${WORKSPACE_TEST_SOURCES})
+  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/scene3d_ui.cpp test/audio_fx_ui.cpp test/controls_ui.cpp test/show_control_ui.cpp ${WORKSPACE_TEST_SOURCES})
   target_include_directories(nyxmap_workspace_ui_test PRIVATE src src/ui "${CMAKE_BINARY_DIR}/generated")
   # Without Qt WebEngine (WebPageQt.cpp compiled empty): the Media Bin then does not offer the Web Page generator
   target_link_libraries(nyxmap_workspace_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -788,6 +907,13 @@ if(NYXMAP_TESTS)
   add_test(NAME workspace_ui COMMAND nyxmap_workspace_ui_test)
   add_test(NAME clock_preset_ui COMMAND nyxmap_workspace_ui_test --clock-presets)
   add_test(NAME layer_source_ui COMMAND nyxmap_workspace_ui_test --layer-source)
+  add_test(NAME scene3d_ui COMMAND nyxmap_workspace_ui_test --scene3d)
+  add_test(NAME controls_ui COMMAND nyxmap_workspace_ui_test --controls)
+  add_test(NAME show_control_ui COMMAND nyxmap_workspace_ui_test --show-control)
+  set_tests_properties(show_control_ui PROPERTIES TIMEOUT 60)
+  set_tests_properties(controls_ui PROPERTIES TIMEOUT 60)
+  add_test(NAME audio_fx_ui COMMAND nyxmap_workspace_ui_test --audio-fx)
+  set_tests_properties(audio_fx_ui PROPERTIES TIMEOUT 60)
   add_test(NAME system_isf_ui COMMAND nyxmap_workspace_ui_test --system-isf)
   set_tests_properties(clock_preset_ui PROPERTIES TIMEOUT 60)
   add_test(NAME xy_parameter_ui COMMAND nyxmap_workspace_ui_test --xy)
@@ -795,14 +921,14 @@ if(NYXMAP_TESTS)
   add_test(NAME color_parameter_ui COMMAND nyxmap_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)
   add_test(NAME selection_ui COMMAND nyxmap_workspace_ui_test --selection) # not in the Valgrind job: see the test
-  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
+  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
                  src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_preview_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_preview_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND nyxmap_preview_ui_test)
   add_executable(nyxmap_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
-                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
+                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
                  src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_fixture_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_fixture_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -828,6 +954,17 @@ if(NYXMAP_TESTS)
     add_test(NAME render_cli COMMAND ${CMAKE_COMMAND} -DNYXMAP=$<TARGET_FILE:NyxMap> -DOUT=${CMAKE_BINARY_DIR}/render_cli
              -P "${CMAKE_SOURCE_DIR}/test/render_cli.cmake")
   endif()
+  # The tests that show real windows share the one desktop. Side by side (ctest -j), one takes the key window from
+  # another, whose menus and dialogs macOS then closes as they open: a check finds no menu, or Qt's Cocoa plugin frees
+  # a menu's window inside its own show and the test crashes. They take turns; the headless tests still run beside them.
+  get_property(nyxmap_all_tests DIRECTORY PROPERTY TESTS)
+  set(nyxmap_window_tests "")
+  foreach(test ${nyxmap_all_tests})
+    if(test MATCHES "_ui$" OR test MATCHES "^(rendering|animation_drivers|timeline_activity|number_widgets)$")
+      list(APPEND nyxmap_window_tests ${test})
+    endif()
+  endforeach()
+  set_tests_properties(${nyxmap_window_tests} PROPERTIES RESOURCE_LOCK desktop)
   # Several videos played together: cmake --build build --target nyxmap_bench
   add_executable(nyxmap_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(nyxmap_bench PRIVATE nyxmap_engine)

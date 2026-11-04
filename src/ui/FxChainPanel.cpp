@@ -1,0 +1,265 @@
+#include "FxChainPanel.h"
+#include "Widgets.h"
+
+#include <QApplication>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QListWidget>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QStyledItemDelegate>
+#include <QPushButton>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <algorithm>
+
+namespace {
+QToolButton *button(const QString &text, const QString &tip)
+{
+    auto *b = new QToolButton;
+    b->setText(text);
+    b->setToolTip(tip);
+    b->setMinimumWidth(28);
+    return b;
+}
+} // namespace
+
+namespace {
+constexpr int kOutlineRole = Qt::UserRole + 40; // 0: off, 1: on, 2: on, for the masks only
+constexpr int kReserveRole = Qt::UserRole + 41; // width of the controls at the row's right end
+constexpr int kRowHeight = 34;
+
+// An FX's row outlined by what it does: none when off, a thin line when on, dashes when only a mask takes it
+class OutlineDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
+    {
+        const int reserve = idx.data(kReserveRole).toInt();
+        if (reserve > 0) { // the row's background across its width, its name stopping before the controls
+            QStyleOptionViewItem full(opt);
+            initStyleOption(&full, idx);
+            const QStyle *style = full.widget ? full.widget->style() : QApplication::style();
+            style->drawPrimitive(QStyle::PE_PanelItemViewItem, &full, p, full.widget);
+            QStyleOptionViewItem cut(opt);
+            cut.rect.setRight(cut.rect.right() - reserve);
+            QStyledItemDelegate::paint(p, cut, idx);
+        } else {
+            QStyledItemDelegate::paint(p, opt, idx);
+        }
+        const int state = idx.data(kOutlineRole).toInt();
+        if (!state) return;
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        QPen pen(theme::accent(), 1);
+        if (state == 2) pen.setStyle(Qt::DashLine);
+        p->setPen(pen);
+        p->setBrush(Qt::NoBrush);
+        p->drawRoundedRect(QRectF(opt.rect).adjusted(1.5, 1.5, -1.5, -1.5), 3, 3);
+        p->restore();
+    }
+};
+} // namespace
+
+namespace {
+// Takes the clicks over its controls only: masked to them, the list under it gets the others (the row's switch)
+class RowHolder : public QWidget
+{
+public:
+    explicit RowHolder(QWidget *controls) : m_controls(controls) {}
+
+protected:
+    void resizeEvent(QResizeEvent *e) override
+    {
+        QWidget::resizeEvent(e);
+        setMask(QRegion(m_controls->geometry()));
+    }
+
+private:
+    QWidget *m_controls;
+};
+} // namespace
+
+FxChainPanel::FxChainPanel(const QString &chain, QWidget *parent) : QWidget(parent), m_chain(chain)
+{
+    setObjectName(QStringLiteral("fxChainPanel"));
+    auto *v = new QVBoxLayout(this);
+    v->setContentsMargins(0, 0, 0, 0);
+
+    m_master = new FlagBox(chain + QStringLiteral(" Enable"));
+    m_master->setObjectName(QStringLiteral("fxChainMaster"));
+    m_master->setToolTip(QStringLiteral("Turns the whole %1 chain on or off (each FX keeps its own switch)").arg(chain));
+    m_master->setStyleSheet("QCheckBox { font-weight:bold; }");
+    v->addWidget(m_master);
+
+    m_header = new QVBoxLayout;
+    m_header->setContentsMargins(0, 0, 0, 0);
+    v->addLayout(m_header);
+
+    m_bar = new QHBoxLayout;
+    m_add = new QPushButton(QStringLiteral("Add FX…"));
+    m_add->setObjectName(QStringLiteral("fxChainAdd"));
+    m_remove = button(QStringLiteral("−"), QStringLiteral("Remove FX"));
+    m_remove->setObjectName(QStringLiteral("fxChainRemove"));
+    m_up = button(QStringLiteral("▲"), QStringLiteral("Move Up (applied earlier)"));
+    m_up->setObjectName(QStringLiteral("fxChainUp"));
+    m_down = button(QStringLiteral("▼"), QStringLiteral("Move Down (applied later)"));
+    m_down->setObjectName(QStringLiteral("fxChainDown"));
+    m_bar->addWidget(m_add, 1);
+    m_bar->addWidget(m_remove);
+    m_bar->addWidget(m_up);
+    m_bar->addWidget(m_down);
+    m_trailingAt = m_bar->count();
+    v->addLayout(m_bar);
+
+    m_empty = new QLabel(QStringLiteral("No FX. FX are applied in list order."));
+    static_cast<QLabel *>(m_empty)->setWordWrap(true);
+    m_empty->setStyleSheet("color:#888;");
+    v->addWidget(m_empty);
+
+    m_list = new QListWidget;
+    m_list->setObjectName(QStringLiteral("fxChainList"));
+    m_list->setProperty("allowLocked", true); // selecting an FX to see its parameters is not an edit
+    m_list->setItemDelegate(new OutlineDelegate(m_list));
+    m_list->viewport()->installEventFilter(this); // the switches of the rows that carry controls (eventFilter)
+    v->addWidget(m_list);
+
+    m_detail = new QWidget;
+    auto *detail = new QVBoxLayout(m_detail);
+    detail->setContentsMargins(0, 0, 0, 0);
+    m_detail->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    v->addWidget(m_detail);
+    m_footer = new QVBoxLayout;
+    m_footer->setContentsMargins(0, 0, 0, 0);
+    v->addLayout(m_footer);
+    v->addStretch(1); // the room left goes below, not between the rows
+
+    connect(m_add, &QPushButton::clicked, this, [this] { emit addRequested(m_add); });
+    connect(m_remove, &QToolButton::clicked, this, [this] {
+        if (selected() >= 0) emit removeRequested(selected());
+    });
+    connect(m_up, &QToolButton::clicked, this, [this] {
+        if (selected() > 0) emit moveRequested(selected(), selected() - 1);
+    });
+    connect(m_down, &QToolButton::clicked, this, [this] {
+        if (selected() >= 0 && selected() < m_count - 1) emit moveRequested(selected(), selected() + 1);
+    });
+    connect(m_list, &QListWidget::itemChanged, this, [this](QListWidgetItem *item) {
+        if (!m_filling) emit toggled(m_list->row(item), item->checkState() == Qt::Checked);
+    });
+    // Only the owner's parameters below are swapped on a pick. Rebuilding the whole list here would destroy it between
+    // the press and the release, and the click that picked the row would never reach its check box (enabling an FX would
+    // take two clicks).
+    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
+        if (m_filling) return;
+        updateButtons();
+        if (row >= 0) emit currentChanged(row);
+    });
+    setRows({}, 0);
+}
+
+QVBoxLayout *FxChainPanel::detailLayout() const { return static_cast<QVBoxLayout *>(m_detail->layout()); }
+
+void FxChainPanel::addLeading(QWidget *w)
+{
+    m_bar->insertWidget(1, w);
+    ++m_trailingAt;
+}
+
+void FxChainPanel::addTrailing(QWidget *w)
+{
+    m_bar->insertWidget(m_trailingAt++, w);
+}
+
+int FxChainPanel::selected() const { return m_count ? m_list->currentRow() : -1; }
+
+void FxChainPanel::setMaximum(int maximum)
+{
+    m_maximum = maximum;
+    updateButtons();
+}
+
+// A row with controls (setRowWidget) is an index widget, and a view sends no click to the delegate of such a row: its
+// switch is toggled here
+bool FxChainPanel::eventFilter(QObject *o, QEvent *e)
+{
+    if (o == m_list->viewport() && e->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(e);
+        const QModelIndex index = m_list->indexAt(me->position().toPoint());
+        QListWidgetItem *item = m_list->item(index.row());
+        if (me->button() == Qt::LeftButton && item && m_list->indexWidget(index)) {
+            QStyleOptionViewItem opt;
+            opt.initFrom(m_list->viewport());
+            opt.rect = m_list->visualRect(index);
+            opt.features |= QStyleOptionViewItem::HasCheckIndicator;
+            const QRect box = m_list->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, m_list);
+            if (box.adjusted(-3, -3, 3, 3).contains(me->position().toPoint()))
+                item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked); // → toggled
+        }
+    }
+    return QWidget::eventFilter(o, e);
+}
+
+void FxChainPanel::setRowWidget(int row, QWidget *w)
+{
+    QListWidgetItem *item = m_list->item(row);
+    if (!item) return;
+    // Right-aligned, and masked to the controls: the rest of the row (its switch, its name) is the list's own
+    auto *holder = new RowHolder(w);
+    holder->setAttribute(Qt::WA_TranslucentBackground);
+    auto *h = new QHBoxLayout(holder);
+    h->setContentsMargins(0, 0, 6, 0);
+    h->addStretch(1);
+    h->addWidget(w);
+    m_filling = true; // a change of the item's data is not a click on its switch
+    item->setData(kReserveRole, w->sizeHint().width() + 12);
+    m_filling = false;
+    m_list->setItemWidget(item, holder);
+}
+
+void FxChainPanel::setRowMaskOnly(int row, bool maskOnly)
+{
+    QListWidgetItem *item = m_list->item(row);
+    if (!item || !item->data(kOutlineRole).toInt()) return;
+    m_filling = true;
+    item->setData(kOutlineRole, maskOnly ? 2 : 1);
+    m_filling = false;
+}
+
+void FxChainPanel::setEmptyText(const QString &text) { static_cast<QLabel *>(m_empty)->setText(text); }
+
+void FxChainPanel::updateButtons()
+{
+    const int row = selected();
+    m_remove->setEnabled(row >= 0);
+    m_up->setEnabled(row > 0);
+    m_down->setEnabled(row >= 0 && row < m_count - 1);
+    m_add->setEnabled(m_maximum <= 0 || m_count < m_maximum);
+}
+
+void FxChainPanel::setRows(const std::vector<Row> &rows, int selected, bool chainEnabled)
+{
+    m_filling = true;
+    m_list->clear();
+    for (const Row &r : rows) {
+        auto *item = new QListWidgetItem(r.label + r.suffix + (r.warning ? QStringLiteral("  ⚠") : QString()));
+        if (!r.tooltip.isEmpty()) item->setToolTip(r.tooltip);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
+        item->setData(kOutlineRole, !r.enabled ? 0 : r.maskOnly ? 2 : 1);
+        item->setSizeHint(QSize(0, kRowHeight));
+        if (r.maskOnly && r.tooltip.isEmpty()) item->setToolTip(QStringLiteral("Mask only: computed for the masks, not in the picture"));
+        m_list->addItem(item);
+    }
+    m_count = int(rows.size());
+    m_empty->setVisible(m_count == 0);
+    m_list->setVisible(m_count > 0);
+    if (m_count) {
+        m_list->setCurrentRow(std::clamp(selected, 0, m_count - 1));
+        m_list->setMaximumHeight(qMin(6 * kRowHeight + 8, kRowHeight * m_count + 8));
+    }
+    m_list->setStyleSheet(chainEnabled ? QString() : QStringLiteral("QListWidget { color:#777; }"));
+    m_filling = false;
+    updateButtons();
+}

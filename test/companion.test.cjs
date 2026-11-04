@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {once} = require('node:events');
 const {NyxMapClient} = require('../integrations/companion/src/client');
 const {presetDefinitions, variableValues, progressImage, COLORS} = require('../integrations/companion/src/definitions');
-const fixture = require('./open_stage_control_fixture.cjs');
+const fixture = require('./oscquery_fixture.cjs');
 const until = async condition => {
     const end = Date.now() + 6000;
     while (!condition()) { if (Date.now() > end) assert.fail('Timed out waiting for NyxMap'); await new Promise(r => setTimeout(r, 10)); }

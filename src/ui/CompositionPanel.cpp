@@ -55,6 +55,7 @@ CompositionPanel::CompositionPanel(Engine *engine, QWidget *parent) : QWidget(pa
     v->addWidget(buildCompositionLevel());
     v->addWidget(buildAudio());
     v->addWidget(buildComposition());
+    v->addWidget(buildQuality3d());
     v->addWidget(buildStartup());
     v->addWidget(buildTimecodePatch());
     v->addStretch();
@@ -325,6 +326,46 @@ QWidget *CompositionPanel::buildComposition()
 // Startup Sequence: what the project does once it is open
 // ---------------------------------------------------------------------------
 
+// What a frame of 3D may cost, for all the 3D scenes of the project
+QWidget *CompositionPanel::buildQuality3d()
+{
+    auto *g = new QGroupBox(QStringLiteral("3D Quality"));
+    g->setObjectName(QStringLiteral("quality3d"));
+    g->setToolTip(QStringLiteral("For all the 3D scenes: lower what a scene does not need when frames are late. Without a "
+                                 "graphics card these effects are all off."));
+    auto *form = new QFormLayout(g);
+    const QStringList levels{QStringLiteral("off"), QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")};
+    const auto row = [&](const QString &label, const QString &path, int Scene3DQuality::*level, const QStringList &choices) {
+        auto *box = new QComboBox;
+        box->setObjectName(path);
+        box->addItems(choices);
+        form->addRow(label, box);
+        const auto show = [this, box, level] {
+            const int now = m_engine->quality3d().*level;
+            if (box->currentIndex() != now && !box->view()->isVisible()) {
+                const QSignalBlocker blocker(box);
+                box->setCurrentIndex(now);
+            }
+        };
+        show();
+        connect(box, &QComboBox::currentTextChanged, this, [this, path](const QString &text) {
+            m_engine->setParameter(0, path, text);
+            emit compositionEdited();
+        });
+        auto *follow = new QTimer(box); // a project opened, OSC
+        follow->setInterval(500);
+        connect(follow, &QTimer::timeout, box, show);
+        follow->start();
+    };
+    row(QStringLiteral("Antialiasing"), QStringLiteral("quality3d/antialiasing"), &Scene3DQuality::antialiasing, {QStringLiteral("off"), QStringLiteral("2x"), QStringLiteral("4x"), QStringLiteral("8x")});
+    row(QStringLiteral("Shadows"), QStringLiteral("quality3d/shadows"), &Scene3DQuality::shadows, levels);
+    row(QStringLiteral("Contact Shadows"), QStringLiteral("quality3d/contact"), &Scene3DQuality::contact, levels);
+    row(QStringLiteral("Reflections"), QStringLiteral("quality3d/reflections"), &Scene3DQuality::reflections, levels);
+    row(QStringLiteral("Glow"), QStringLiteral("quality3d/glow"), &Scene3DQuality::glow, levels);
+    row(QStringLiteral("Fog"), QStringLiteral("quality3d/atmosphere"), &Scene3DQuality::atmosphere, levels);
+    return g;
+}
+
 QWidget *CompositionPanel::buildStartup()
 {
     auto *g = new QGroupBox(QStringLiteral("Startup Sequence"));
@@ -402,8 +443,8 @@ void CompositionPanel::syncStartupSequence()
     if (shown >= 0) {
         const auto steps = seq.sequence(shown).steps;
         for (int i = 0; i < int(steps.size()); ++i)
-            m_startupStep->addItem(steps[size_t(i)].text.isEmpty() ? QStringLiteral("%1").arg(i + 1)
-                                                                  : QStringLiteral("%1 · %2").arg(i + 1).arg(steps[size_t(i)].text));
+            m_startupStep->addItem(steps[size_t(i)].description.isEmpty() ? QStringLiteral("%1").arg(i + 1)
+                                                                         : QStringLiteral("%1 · %2").arg(i + 1).arg(steps[size_t(i)].description));
     }
     m_startupStep->setCurrentIndex(m_startupStep->count() ? std::clamp(seq.startupStep(), 0, m_startupStep->count() - 1) : -1);
     m_startupStep->setEnabled(selected && m_startupStep->count() > 0);

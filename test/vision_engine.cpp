@@ -3,10 +3,24 @@
 #include <QGuiApplication>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
+#include <QElapsedTimer>
 #include <QThread>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+
+// Frames rendered until the asynchronous analysis has reached what is expected (on a slow software renderer it takes
+// many more frames than on a GPU), then checked as before; 10 s at most
+template <class Done> static bool renderUntilDone(Engine &engine, Done done)
+{
+    QElapsedTimer waited;
+    waited.start();
+    do {
+        engine.renderFrame();
+        QThread::msleep(3);
+    } while (!done() && waited.elapsed() < 10000);
+    return done();
+}
 
 static void require(bool ok, const QString &why)
 {
@@ -173,16 +187,10 @@ int main(int argc, char **argv)
         input.filters.clear();
         const auto interactionId = engine.addInteraction(input);
         require(engine.setParameter(sourceId, "enable", false), "hide analyzed source");
-        for (int i = 0; i < 12; ++i) {
-            engine.renderFrame();
-            QThread::msleep(3);
-        }
+        renderUntilDone(engine, [&] { return engine.parameterValue(targetId, "opacity").toDouble() > .95; });
         require(engine.parameterValue(targetId, "opacity").toDouble() > .95, "async pixel interaction drives target");
         engine.setLayerImage(engine.indexOfId(sourceId), black, &error);
-        for (int i = 0; i < 12; ++i) {
-            engine.renderFrame();
-            QThread::msleep(3);
-        }
+        renderUntilDone(engine, [&] { return engine.parameterValue(targetId, "opacity").toDouble() < .01; });
         require(engine.parameterValue(targetId, "opacity").toDouble() < .01, "pixel interaction follows image changes");
         auto interactions = engine.interactions();
         auto &vision = interactions[0];
@@ -198,10 +206,7 @@ int main(int argc, char **argv)
                     engine.interactions()[0].pixelFeature == PixelAnalysis::Feature::Energy &&
                     engine.interactions()[0].pixels.roi == QRectF(.1, .2, .3, .4),
                 "vision settings participate in interaction snapshot restore");
-        for (int i = 0; i < 12; ++i) {
-            engine.renderFrame();
-            QThread::msleep(3);
-        }
+        renderUntilDone(engine, [&] { return engine.parameterValue(targetId, "opacity").toDouble() > .95; });
         require(engine.parameterValue(targetId, "opacity").toDouble() > .95,
                 "alpha sampler preserves opaque black image alpha");
         const auto project = dir.filePath("vision.nyxmap");
@@ -234,10 +239,8 @@ int main(int argc, char **argv)
         post.layer = afterId;
         engine.addInteraction(post);
         engine.setParameter(visualId, "enable", false);
-        for (int i = 0; i < 12; ++i) {
-            engine.renderFrame();
-            QThread::msleep(3);
-        }
+        renderUntilDone(engine, [&] { return engine.parameterValue(beforeId, "opacity").toDouble() > .95 &&
+                                   engine.parameterValue(afterId, "opacity").toDouble() < .01; });
         require(engine.parameterValue(beforeId, "opacity").toDouble() > .95 &&
                     engine.parameterValue(afterId, "opacity").toDouble() < .01,
                 "same layer analyzed independently before/after FX");

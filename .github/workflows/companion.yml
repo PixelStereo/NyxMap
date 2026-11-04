@@ -1,10 +1,11 @@
 name: Companion module
 on:
+  workflow_call:
   pull_request:
-    paths: ['integrations/companion/**', 'test/companion*', 'test/open_stage_control_fixture.cjs', '.github/workflows/companion.yml']
+    paths: ['integrations/companion/**', 'test/companion*', 'test/oscquery_fixture.cjs', '.github/workflows/companion.yml']
   push:
     branches: [main]
-    paths: ['integrations/companion/**', 'test/companion*', 'test/open_stage_control_fixture.cjs', '.github/workflows/companion.yml']
+    paths: ['integrations/companion/**', 'test/companion*', 'test/oscquery_fixture.cjs', '.github/workflows/companion.yml']
   workflow_dispatch:
 concurrency:
   group: companion-${{ github.event.pull_request.number || github.ref }}
@@ -26,6 +27,12 @@ jobs:
       - name: Protocol, presets and actual SDK runtime
         run: |
           node --test test/companion.test.cjs test/companion_runtime.cjs
+      - name: A release's module carries its version
+        if: github.ref_type == 'tag'
+        working-directory: integrations/companion
+        run: |
+          version="$(node -e "const [core, ...rest] = process.argv[1].replace(/^v/, '').split('-'); const n = core.split('.'); while (n.length < 3) n.push('0'); console.log([n.join('.'), ...rest].join('-'))" "$GITHUB_REF_NAME")"
+          npm pkg set version="$version"
       - name: Validate metadata and package the module
         working-directory: integrations/companion
         run: |
@@ -35,6 +42,10 @@ jobs:
         env:
           NYXMAP_COMPANION_PACKED: '1'
         run: node --test test/companion_runtime.cjs
+      - name: Name a release's module after its tag
+        if: github.ref_type == 'tag'
+        working-directory: integrations/companion
+        run: mv ./*.tgz "NyxMap-Companion-$GITHUB_REF_NAME.tgz"
       - uses: actions/upload-artifact@v4
         with:
           name: NyxMap-Companion

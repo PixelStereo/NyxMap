@@ -1,7 +1,8 @@
 // The parameters a layer instantiates (Layer::parameters)
+#include "AnimationDrivers.h"
+#include "ColorInfo.h"
 #include "EngineInternal.h"
 #include "Osc.h"
-#include "ColorInfo.h"
 
 #include <QHash>
 #include <cmath>
@@ -25,16 +26,20 @@ quint64 keyOf(const Layer &l)
         h *= 1099511628211ULL;
     };
     const QSize c = l.compSize ? *l.compSize : QSize(1920, 1080);
-    for (quint64 v : {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
-                      quint64(l.isGroup), quint64(c.width()), quint64(c.height()), quint64(quintptr(l.generator.get())),
-                      quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)), quint64(l.hasPicture()),
-                      quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
-                      // the played range: the playhead's (an Internal interaction takes its range from it)
-                      quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000))})
+    for (quint64 v :
+         {quint64(l.type), quint64(l.hasTransport()), quint64(bool(l.audio)), quint64(l.isViewport),
+          quint64(quintptr(l.audio.get())), quint64(l.isGroup), quint64(c.width()), quint64(c.height()),
+          quint64(quintptr(l.generator.get())), quint64(l.effects.size()), quint64(std::llround(l.duration() * 1000)),
+          quint64(l.hasPicture()), quint64(bool(l.tcClock)), quint64(quintptr(l.clockGen.get())),
+          // the played range: the playhead's (an Internal interaction takes its range from it)
+          quint64(std::llround(l.inPoint * 1000)), quint64(std::llround(l.outPoint * 1000)), quint64(l.scene3d), quint64(l.merge3d),
+          quint64(quintptr(l.model.get()))}) // another model: a primitive has its material
         mix(v);
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
     if (l.clockGen) mix(quint64(l.clockGen->kind()));
+    if (l.audioEffects)
+        mix(l.audioEffects->revision());
     auto inputs = [&mix](const IsfInstance *i) {
         if (!i) return;
         mix(quint64(i->isValid()));
@@ -48,6 +53,20 @@ quint64 keyOf(const Layer &l)
         mix(qHash(fx->name()));
         inputs(fx.get());
     }
+    for (const auto &a : l.anims)
+        if (!a.tracks.empty()) {
+            const auto &t = a.tracks.front();
+            mix(qHash(t.param));
+            mix(t.axes.size());
+            auto filters = [&](const AnimTrack &track) {
+                mix(track.dataFilters.size());
+                for (const auto &v : track.dataFilters)
+                    mix(qHash(v.toObject().value("type").toString()));
+            };
+            filters(t);
+            for (const auto &axis : t.axes)
+                filters(axis);
+        }
     return h;
 }
 
@@ -237,6 +256,48 @@ const std::vector<Parameter *> &Layer::parameters()
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME
     if (audio) {
+        if (audioEffects)
+            for (const auto &effect : audioEffects->effects()) {
+                const QString prefix = QStringLiteral("audio_fx/") + effect->id() + QStringLiteral("/");
+                const QString label = QStringLiteral("Audio FX › ") + effect->name() + QStringLiteral(" › ");
+                add(prefix + QStringLiteral("enabled"), label + QStringLiteral("Enabled"), T::Bool)
+                    .byDefault(true)
+                    .bind([effect] { return QVariant(effect->enabled()); },
+                          [effect](const QVariant &v) { effect->setEnabled(v.toBool()); });
+                num(
+                    prefix + QStringLiteral("wet"), label + QStringLiteral("Dry/Wet"), 0, 1, 1,
+                    [effect] { return effect->wet(); }, [effect](double v) { effect->setWet(v); });
+                const auto &controls = effect->parameters();
+                for (size_t i = 0; i < controls.size(); ++i) {
+                    const auto &p = controls[i];
+                    num(
+                        prefix + p.key, label + p.label, p.low, p.high, p.initial,
+                        [effect, i] { return effect->value(int(i)); },
+                        [effect, i](double v) { effect->setValue(int(i), v); });
+                }
+            }
+        if (audioEffects)
+            add(QStringLiteral("audio_fx/enable"), QStringLiteral("Audio FX › Enable"), T::Bool)
+                .byDefault(true)
+                .bind([chain = audioEffects] { return QVariant(chain->enabled()); },
+                      [chain = audioEffects](const QVariant &v) { chain->setEnabled(v.toBool()); });
+        if (auto *synth = audio->generator()) {
+            for (int i = 0; i < synth->parameterCount(); ++i) {
+                const auto &p = synth->parameter(i);
+                if (!synth->external() && i == AudioGenerator::Envelope) { // Faust's envelopes, by their names
+                    add(QStringLiteral("synth/envelope"), QStringLiteral("Source › Synth › Envelope"), T::Choice)
+                        .choices(AudioGenerator::envelopeNames())
+                        .byDefault(AudioGenerator::envelopeNames().value(0))
+                        .ramp(Parameter::Ramp::Cut)
+                        .bind([synth] { return QVariant(AudioGenerator::envelopeNames().value(int(synth->value(AudioGenerator::Envelope)))); },
+                              [synth](const QVariant &v) { synth->setValue(AudioGenerator::Envelope, std::max(0, int(AudioGenerator::envelopeNames().indexOf(v.toString())))); });
+                    continue;
+                }
+                num(
+                    QStringLiteral("synth/") + p.key, QStringLiteral("Source › Synth › ") + p.label, p.low, p.high,
+                    p.initial, [synth, i] { return synth->value(i); }, [synth, i](double v) { synth->setValue(i, v); });
+            }
+        }
         num("volume", "Source › Volume", 0, 2, 1.0, [self] { return double(self->volume); },
             [self](double v) { self->volume = float(v); });
         flag("mute", "Source › Mute", false, &muted);
@@ -552,6 +613,28 @@ const std::vector<Parameter *> &Layer::parameters()
                     for (int k = 0; k < 3; ++k)
                         if (v.toString() == QLatin1String(kV[k])) t->align = Qt::Alignment((t->align & Qt::AlignHorizontal_Mask) | kVF[k]);
                 });
+        if (!clockGen && !tcClock) { // written as by a pen
+            num("text/write/progress", "Text › Writing", 0, 1, def.writeProgress, [t] { return double(t->writeProgress); },
+                [t](double v) { t->writeProgress = float(std::clamp(v, 0.0, 1.0)); });
+            num("text/write/duration", "Text › Writing Time (s)", 0.05, 120, def.writeDuration, [t] { return double(t->writeDuration); },
+                [t](double v) { t->writeDuration = float(std::clamp(v, 0.05, 3600.0)); })
+                .limits(0.05, 3600)
+                .step(0.1)
+                .animatable(false)
+                .ramp(Parameter::Ramp::Cut);
+            add("text/write/start", "Text › Write", T::Trigger).bind(nullptr, [t](const QVariant &) { // from the start
+                t->writeProgress = 0;
+                t->writePlaying = true;
+            });
+            add("text/write/pause", "Text › Pause Writing", T::Trigger).bind(nullptr, [t](const QVariant &) { t->writePlaying = false; });
+            add("text/write/resume", "Text › Resume Writing", T::Trigger).bind(nullptr, [t](const QVariant &) {
+                if (t->writeProgress < 1.0f) t->writePlaying = true;
+            });
+            add("text/write/reset", "Text › Reset Writing", T::Trigger).bind(nullptr, [t](const QVariant &) { // nothing written, ready
+                t->writePlaying = false;
+                t->writeProgress = 0;
+            });
+        }
         flag("text/bold", "Text › Bold", def.bold, &text.bold);
         flag("text/italic", "Text › Italic", def.italic, &text.italic);
         flag("text/underline", "Text › Underline", def.underline, &text.underline);
@@ -596,6 +679,145 @@ const std::vector<Parameter *> &Layer::parameters()
                         else q.setAlphaF(float(v));
                     }).colorComponent(k);
             }
+    }
+
+    // 3D (Model3D.h): a scene's camera, ambient light, background and exposure; a model's place; a light
+    auto f3 = [&](const QString &path, const QString &label, double lo, double hi, double def, float *field) -> Parameter & {
+        return num(path, label, lo, hi, def, [field] { return double(*field); }, [field](double v) { *field = float(v); });
+    };
+    const QStringList xyz{QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")}, XYZ{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+    if (scene3d) {
+        SceneSettings *sc = &scene;
+        const SceneSettings d;
+        f3("camera/distance", "Camera › Distance", 0.1, 50, d.distance, &sc->distance).step(0.01);
+        f3("camera/yaw", "Camera › Yaw (°)", -180, 180, d.yaw, &sc->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("camera/pitch", "Camera › Pitch (°)", -89, 89, d.pitch, &sc->pitch).step(0.1);
+        f3("camera/fov", "Camera › Field of View (°)", 5, 150, d.fov, &sc->fov).step(0.1);
+        for (int a = 0; a < 3; ++a)
+            f3("camera/target/" + xyz[a], "Camera › Target " + XYZ[a], -10, 10, 0, &sc->target[size_t(a)]).step(0.01);
+        for (int c = 0; c < 3; ++c)
+            f3(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
+               &sc->ambient[size_t(c)]).colorComponent(c);
+        f3("scene/ambient_intensity", "Scene › Ambient Intensity", 0, 5, d.ambientIntensity, &sc->ambientIntensity).step(0.01);
+        f3("scene/exposure", "Scene › Exposure", 0, 10, d.exposure, &sc->exposure).step(0.01);
+        f3("scene/studio", "Scene › Studio Light", 0, 5, d.studio, &sc->studio).step(0.01);
+        f3("scene/ao", "Scene › Contact Shadows", 0, 3, d.ao, &sc->ao).step(0.01);
+        f3("scene/ao_radius", "Scene › Contact Shadows Reach", 0.01, 5, d.aoRadius, &sc->aoRadius).step(0.01);
+        f3("scene/reflections", "Scene › Reflections", 0, 1, d.reflections, &sc->reflections).step(0.01);
+        f3("scene/glow", "Look › Glow", 0, 5, d.glow, &sc->glow).step(0.01);
+        f3("scene/glow_threshold", "Look › Glow Threshold", 0, 10, d.glowThreshold, &sc->glowThreshold).step(0.01);
+        f3("scene/glow_size", "Look › Glow Size", 0, 1, d.glowSize, &sc->glowSize).step(0.01);
+        f3("scene/contrast", "Look › Contrast", 0, 2, d.contrast, &sc->contrast).step(0.01);
+        f3("scene/saturation", "Look › Saturation", 0, 2, d.saturation, &sc->saturation).step(0.01);
+        f3("scene/temperature", "Look › Temperature", -1, 1, d.temperature, &sc->temperature).step(0.01);
+        f3("scene/vignette", "Look › Vignette", 0, 1, d.vignette, &sc->vignette).step(0.01);
+        f3("scene/fog/density", "Fog › Density", 0, 2, d.fogDensity, &sc->fogDensity).step(0.001);
+        f3("scene/fog/base", "Fog › Height", -20, 20, d.fogBase, &sc->fogBase).step(0.01);
+        f3("scene/fog/falloff", "Fog › Thinning Above", 0, 5, d.fogFalloff, &sc->fogFalloff).step(0.01);
+        f3("scene/fog/reach", "Fog › Reach", 0.1, 200, d.fogReach, &sc->fogReach).step(0.1);
+        for (int c = 0; c < 3; ++c)
+            f3(QStringLiteral("scene/fog/color/") + QChar("rgb"[c]), QStringLiteral("Fog › Color ") + QChar("RGB"[c]), 0, 1,
+               d.fogColor[size_t(c)], &sc->fogColor[size_t(c)]).colorComponent(c);
+        for (int c = 0; c < 4; ++c)
+            f3(QStringLiteral("scene/background/") + QChar("rgba"[c]), QStringLiteral("Scene › Background ") + QChar("RGBA"[c]), 0, 1, 0,
+               &sc->background[size_t(c)]).colorComponent(c);
+        f3("scene/environment/intensity", "Environment › Intensity", 0, 10, d.envIntensity, &sc->envIntensity).step(0.01);
+        f3("scene/environment/rotation", "Environment › Rotation (°)", -180, 180, 0, &sc->envRotation).step(0.1).ramp(Parameter::Ramp::Angle);
+        flag("scene/environment/show", "Environment › Shown Behind", false, &sc->envShow).ramp(Parameter::Ramp::Cut);
+        f3("scene/environment/blur", "Environment › Blur", 0, 1, 0, &sc->envBlur).step(0.01);
+    }
+    if (merge3d) { // where all it holds is in the scene
+        ModelPlacement *mp = &modelPlacement;
+        for (int a = 0; a < 3; ++a)
+            f3("merge/position/" + xyz[a], "Merge 3D › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
+        for (int a = 0; a < 3; ++a)
+            f3("merge/rotation/" + xyz[a], "Merge 3D › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("merge/scale/all", "Merge 3D › Scale", 0.01, 10, 1, &mp->scale).step(0.01).limits(0.001, 1000);
+        for (int a = 0; a < 3; ++a)
+            f3("merge/scale/" + xyz[a], "Merge 3D › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(0.001, 1000);
+    }
+    if (type == SourceType::Model) {
+        ModelPlacement *mp = &modelPlacement;
+        flag("model/fit", "Model › Fit (centered, unit size)", true, &mp->fit).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("model/position/" + xyz[a], "Model › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("model/rotation/" + xyz[a], "Model › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)])
+                .step(0.1)
+                .ramp(Parameter::Ramp::Angle);
+        f3("model/scale/all", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
+        f3("model/bend", "Model › Bend (°)", -360, 360, 0, &mp->bend).step(0.1);
+        flag("model/unlit", "Model › Unlit (its picture as it is)", false, &mp->unlit).ramp(Parameter::Ramp::Cut);
+        static const QStringList kShading{QStringLiteral("as made"), QStringLiteral("smooth"), QStringLiteral("flat")};
+        add("model/shading", "Model › Shading", T::Choice)
+            .choices(kShading)
+            .byDefault(kShading.value(0))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([mp] { return QVariant(kShading.value(mp->shading)); },
+                  [mp](const QVariant &v) { mp->shading = std::max(0, int(kShading.indexOf(v.toString()))); });
+        add("model/detail", "Model › Mesh Detail", T::Int)
+            .range(1, 8)
+            .byDefault(1)
+            .ramp(Parameter::Ramp::Cut)
+            .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
+        if (model && model->isPrimitive()) { // a primitive's material (a file keeps its own)
+            for (int c = 0; c < 3; ++c)
+                f3(QStringLiteral("model/material/color/") + QChar("rgb"[c]), QStringLiteral("Material › Color ") + QChar("RGB"[c]), 0, 1,
+                   0.8, &mp->color[size_t(c)]).colorComponent(c);
+            f3("model/material/metal", "Material › Metal", 0, 1, 0, &mp->metal).step(0.01);
+            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, &mp->rough).step(0.01);
+        }
+        f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
+        f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
+    }
+    if (type == SourceType::Light) {
+        LightSettings *lt = &light;
+        const LightSettings d;
+        static const QStringList kinds{QStringLiteral("directional"), QStringLiteral("point"), QStringLiteral("spot"), QStringLiteral("area")};
+        add("light/type", "Light › Type", T::Choice)
+            .choices(kinds)
+            .byDefault(kinds.value(d.type))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([lt] { return QVariant(kinds.value(lt->type)); },
+                  [lt](const QVariant &v) { lt->type = std::max(0, int(kinds.indexOf(v.toString()))); });
+        for (int c = 0; c < 3; ++c)
+            f3(QStringLiteral("light/color/") + QChar("rgb"[c]), QStringLiteral("Light › Color ") + QChar("RGB"[c]), 0, 1,
+               d.color[size_t(c)], &lt->color[size_t(c)]).colorComponent(c);
+        f3("light/intensity", "Light › Intensity", 0, 200, d.intensity, &lt->intensity).step(0.1);
+        for (int a = 0; a < 3; ++a)
+            f3("light/position/" + xyz[a], "Light › Position " + XYZ[a], -20, 20, d.position[size_t(a)], &lt->position[size_t(a)])
+                .step(0.01);
+        f3("light/yaw", "Light › Yaw (°)", -180, 180, d.yaw, &lt->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("light/pitch", "Light › Pitch (°)", -90, 90, d.pitch, &lt->pitch).step(0.1);
+        f3("light/angle", "Light › Spot Angle (°)", 1, 89, d.angle, &lt->angle).step(0.1);
+        f3("light/falloff", "Light › Spot Falloff", 0, 1, d.falloff, &lt->falloff).step(0.01);
+        flag("light/shadow", "Light › Shadows", d.shadow, &lt->shadow).ramp(Parameter::Ramp::Cut);
+        f3("light/softness", "Light › Shadow Softness", 0, 16, d.softness, &lt->softness).step(0.1);
+        f3("light/width", "Light › Area Width", 0.01, 40, d.width, &lt->width).step(0.01);
+        f3("light/height", "Light › Area Height", 0.01, 40, d.height, &lt->height).step(0.01);
+        f3("light/rays", "Light › In the Fog", 0, 10, d.rays, &lt->rays).step(0.01);
+        num("light/level", "Light › Level", 0, 1, 1.0, [self] { return double(self->opacity); },
+            [self](double v) { self->opacity = float(v); });
+        flag("light/lookat", "Look At › On", d.lookAt, &lt->lookAt).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("light/lookpoint/" + xyz[a], "Look At › Point " + XYZ[a], -20, 20, d.lookPoint[size_t(a)], &lt->lookPoint[size_t(a)]).step(0.01);
+        static const QStringList kPaths{QStringLiteral("none"), QStringLiteral("circle"), QStringLiteral("rectangle")};
+        add("light/path/shape", "Path › Shape", T::Choice)
+            .choices(kPaths)
+            .byDefault(kPaths.value(d.pathShape))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([lt] { return QVariant(kPaths.value(lt->pathShape)); },
+                  [lt](const QVariant &v) { lt->pathShape = std::max(0, int(kPaths.indexOf(v.toString()))); });
+        f3("light/path/width", "Path › Width", 0, 40, d.pathWidth, &lt->pathWidth).step(0.01);
+        f3("light/path/depth", "Path › Depth", 0, 40, d.pathDepth, &lt->pathDepth).step(0.01);
+        for (int a = 0; a < 3; ++a)
+            f3("light/path/rotation/" + xyz[a], "Path › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &lt->pathRotation[size_t(a)])
+                .step(0.1)
+                .ramp(Parameter::Ramp::Angle);
+        f3("light/path/position", "Path › Position", 0, 1, d.pathPosition, &lt->pathPosition).step(0.001);
+        f3("light/path/speed", "Path › Speed (turns/s)", -2, 2, d.pathSpeed, &lt->pathSpeed).step(0.001);
     }
 
     if (type == SourceType::Tox && toxPlayer) {
@@ -679,7 +901,8 @@ const std::vector<Parameter *> &Layer::parameters()
     // The shaders: the generator's at the layer's top (its speed: the pace of its TIME), each effect under fx/<fx>/
     auto shader = [&](const IsfInstance &inst, const QString &prefix, const QString &title, bool effect) {
         for (Parameter p : inst.parameters(title)) {
-            if (!effect && (p.path() == "enable" || p.path() == "mask/invert")) continue; // an effect's
+            if (!effect && (p.path() == "enable" || p.path() == "mask/invert" || p.path() == "mask_only" || p.path().startsWith("channel/")))
+                continue; // an effect's
             if (!effect && p.path() == "speed" && hasTransport()) continue;              // the media's speed instead
             paramStore.push_back(std::make_unique<Parameter>(p.prefixed(prefix)));
         }
@@ -690,6 +913,123 @@ const std::vector<Parameter *> &Layer::parameters()
     const QStringList segs = osc::uniqueSegments(names);
     for (size_t k = 0; k < effects.size(); ++k)
         shader(*effects[k], QStringLiteral("fx/%1/").arg(segs[int(k)]), QStringLiteral("FX › %1").arg(effects[k]->name()), true);
+
+    // Look up the owner each time: editing a card can reallocate the animation vector.
+    for (const auto &animation : anims)
+        if (!animation.tracks.empty()) {
+            const auto &root = animation.tracks.front();
+            const QString target = root.param;
+            auto findAnimation = [self, target]() -> Animation * {
+                for (auto &a : self->anims)
+                    if (!a.tracks.empty() && a.tracks.front().param == target) return &a;
+                return nullptr;
+            };
+            const QString transport = animationDriverPrefix(target);
+            for (bool speed : {false, true}) {
+                num(
+                    transport + (speed ? "speed" : "duration"),
+                    QStringLiteral("Animation › %1 › %2").arg(target, speed ? "Speed" : "Duration (s)"),
+                    speed ? 0 : .05, speed ? 10 : 60, speed ? 1 : 4,
+                    [findAnimation, speed] {
+                        auto *a = findAnimation();
+                        return a ? (speed ? a->speed : a->duration) : 0;
+                    },
+                    [findAnimation, speed](double v) {
+                        if (auto *a = findAnimation()) (speed ? a->speed : a->duration) = v;
+                    })
+                    .limits(speed ? 0 : .05, speed ? 10 : 3600)
+                    .animatable();
+            }
+            for (int axis = -1; axis < int(root.axes.size()); ++axis) {
+                if (root.isPoint() && axis < 0) continue;
+                const auto &track = axis < 0 ? root : root.axes[size_t(axis)];
+                if (track.event) continue;
+                const QString prefix = animationDriverPrefix(target, axis);
+                const QString title =
+                    QStringLiteral("Animation › %1%2 › ").arg(target, axis < 0 ? QString() : (axis ? " Y" : " X"));
+                auto find = [self, target, axis] { return animationDriverTrack(self->anims, target, axis); };
+                double lo = 0, hi = 1;
+                const QString driven = axis < 0 ? target : target + (axis ? "/y" : "/x");
+                for (const auto &p : paramStore)
+                    if (p->path() == driven) {
+                        lo = p->info().min;
+                        hi = p->info().max;
+                        break;
+                    }
+                const double span = std::max(1e-6, hi - lo);
+                struct Field {
+                    const char *key;
+                    const char *label;
+                    double AnimTrack::*member;
+                    double lo, hi, def;
+                };
+                const Field fields[] = {{"period", "Period (s)", &AnimTrack::period, .01, 10, 1},
+                                        {"center", "Center", &AnimTrack::center, lo, hi, (lo + hi) / 2},
+                                        {"amplitude", "Amplitude", &AnimTrack::amplitude, 0, span, span / 2},
+                                        {"phase", "Phase", &AnimTrack::phase, 0, 1, 0}};
+                for (const auto &field : fields)
+                    num(
+                        prefix + "wave/" + field.key, title + field.label, field.lo, field.hi, field.def,
+                        [find, field] {
+                            auto *t = find();
+                            return t ? t->*(field.member) : field.def;
+                        },
+                        [find, field](double v) {
+                            if (auto *t = find()) t->*(field.member) = v;
+                        })
+                        .limits(field.member == &AnimTrack::period ? .001 : -1e9, 1e9)
+                        .animatable();
+                for (int k = 0; k < track.dataFilters.size(); ++k) {
+                    const auto stage = InteractionStage::fromJson(track.dataFilters[k].toObject());
+                    const QString fp = prefix + QStringLiteral("filters/%1/").arg(k + 1);
+                    const QString label =
+                        title + QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(interactionFilterName(stage.kind));
+                    auto get = [find, k] {
+                        auto *t = find();
+                        return t && k < t->dataFilters.size() ? t->dataFilters[k].toObject() : QJsonObject();
+                    };
+                    auto set = [find, k](const QString &key, const QJsonValue &value) {
+                        if (auto *t = find(); t && k < t->dataFilters.size()) {
+                            auto o = t->dataFilters[k].toObject();
+                            o[key] = value;
+                            t->dataFilters[k] = o;
+                        }
+                    };
+                    add(fp + "enable", label + "On", T::Bool)
+                        .byDefault(true)
+                        .bind([get] { return QVariant(get().value("enabled").toBool(true)); },
+                              [set](const QVariant &v) { set("enabled", v.toBool()); });
+                    if (stage.kind == InteractionFilter::Math) {
+                        QStringList ops;
+                        for (int n = 0; n < kMathOpCount; ++n)
+                            ops << mathOpName(MathOp(n));
+                        add(fp + "operation", label + "Operation", T::Choice)
+                            .choices(ops)
+                            .byDefault(ops[int(MathOp::Multiply)])
+                            .bind([get, ops] { return QVariant(ops[int(InteractionStage::fromJson(get()).op)]); },
+                                  [find, k, ops](const QVariant &value) {
+                                      auto *t = find();
+                                      const int op = ops.indexOf(value.toString());
+                                      if (!t || k >= t->dataFilters.size() || op < 0) return;
+                                      auto f = InteractionStage::fromJson(t->dataFilters[k].toObject());
+                                      f.op = MathOp(op);
+                                      t->dataFilters[k] = f.toJson();
+                                  });
+                    }
+                    for (int w = 0; w < kFilterSettingCount; ++w) {
+                        const auto setting = interactionFilterSetting(stage.kind, w);
+                        if (setting.name.isEmpty()) continue;
+                        const QString key(QChar('a' + w));
+                        num(
+                            fp + key, label + setting.name, setting.min, setting.max, setting.def,
+                            [get, key, setting] { return get().value(key).toDouble(setting.def); },
+                            [set, key](double v) { set(key, v); })
+                            .limits(-1e9, 1e9)
+                            .animatable();
+                    }
+                }
+            }
+        }
 
     paramIndex.clear();
     for (auto &p : paramStore) {

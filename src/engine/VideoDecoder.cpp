@@ -938,6 +938,14 @@ int VideoDecoder::decodeNext(VideoFrame &f, double skipBefore)
                 mapped = mr >= 0;
                 if (mr < 0) {
                     av_frame_unref(m_swFrame);
+                    // Download directly into the mapped upload buffer when the hardware's allocation
+                    // matches the picture. Avoid downloading to an intermediate AVFrame and packing it
+                    // a second time. Padded surfaces and unsupported transfers retain the normal path.
+                    if (transferToStaging(m_frame, f)) {
+                        m_hwActive = true;
+                        av_frame_unref(m_frame);
+                        return 1;
+                    }
                     mr = av_hwframe_transfer_data(m_swFrame, m_frame, 0);
                 }
                 if (mr < 0) {

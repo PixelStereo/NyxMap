@@ -1,7 +1,10 @@
 #pragma once
+#include <set>
+#include "Model3D.h"
 #include "Anim.h"
 #include "AudioStream.h"
 #include "ClockGenerator.h"
+#include "TextWriting.h"
 #include "Gl.h"
 #include "Isf.h"
 #include "LineGenerator.h"
@@ -35,12 +38,15 @@
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
 // `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox };
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
 inline const QString kTextGeneratorPath = QStringLiteral("/NyxMap/Generators/Text");
 inline bool isTextGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTextGeneratorPath); }
+// The Cursive generator: a text layer in a cursive font, ready to be written as by a pen (TextWriting.h)
+inline const QString kCursiveGeneratorPath = QStringLiteral("/NyxMap/Generators/Cursive");
+inline bool isCursiveGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kCursiveGeneratorPath); }
 // The Timecode generator: a text layer that shows a timecode (TimecodeClock.h), from the Media Bin like a file
 inline const QString kTimecodeGeneratorPath = QStringLiteral("/NyxMap/Generators/Timecode");
 inline bool isTimecodeGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kTimecodeGeneratorPath); }
@@ -189,6 +195,14 @@ struct TextSource {
     double typeElapsed = 0, typeDur = 0, typeProgress = 1;
     int typeCurve = 0; // easing of the typing (EasingCurve, Snapshots.cpp)
 
+    // Written as by a pen: `writeProgress` from 0 (nothing) to 1 (all of it, as any text), by its own transport over
+    // `writeDuration` seconds, or driven like any value (a timeline, a snapshot's fade, OSC). Any text can; `cursive`
+    // only says it was made by the Cursive generator
+    bool cursive = false;
+    float writeProgress = 1.0f;
+    float writeDuration = 4.0f;
+    bool writePlaying = false;
+
     QString shown() const
     {
         if (typeDur <= 0) return content;
@@ -212,6 +226,8 @@ struct TextSource {
         width = std::clamp(width, 1, 16384);
         height = std::clamp(height, 1, 16384);
         if (font.isEmpty()) font = QStringLiteral("Arial");
+        writeProgress = std::clamp(writeProgress, 0.0f, 1.0f);
+        writeDuration = std::clamp(writeDuration, 0.05f, 3600.0f);
     }
 };
 
@@ -243,6 +259,7 @@ inline QString imageSourceDepth(QImage::Format f)
 }
 
 class Engine;
+class AudioEffectChain;
 
 struct Layer {
     // Identity and structure. A group is a layer without source whose picture is the composite of its members;
@@ -277,6 +294,7 @@ struct Layer {
     // Solo: while any layer is soloed, only the soloed ones are drawn (with their groups and members). A setup aid:
     // not saved, not undone, not in snapshots.
     bool solo = false;
+    bool soloMuted = false;  // and its sound: when what is soloed has a sound of its own (render thread)
     bool soloHidden = false; // left out by another layer's solo this frame (render thread)
     bool parentEnabled = true;    // the group containing the layer is visible (updated every frame)
     float opacity = 1.0f;
@@ -326,6 +344,10 @@ struct Layer {
 
     // Sound: audio layer, or audio track of a video layer (null if the file has none)
     std::shared_ptr<AudioStream> audio;
+    std::shared_ptr<AudioEffectChain> audioEffects;
+    // A sound instrument that listens to the picture (Video Sonification): the viewport whose output it analyses, by id
+    // (0: the first viewport). Its own setting, not the composition's: each viewport is a picture of its own
+    quint64 sonificationViewport = 0;
     float volume = 1.0f; // linear gain, 0..2
     bool muted = false;
 
@@ -338,6 +360,11 @@ struct Layer {
     // the source shader. Original pixels remain available for manual overrides.
     Texture2D imageAutoTex;
     QImage pendingAutoImage;
+    // An HDR image (.hdr, .exr): its pixels as read, linear floats not clipped, for what needs them (a 3D scene's
+    // environment: its "HDR file" stage). The layer's own picture is the clipped one, as any image's
+    Texture2D hdrTex;
+    std::vector<float> pendingHdr;
+    QSize pendingHdrSize;
     RenderTarget sourceColorTarget;
     QString sourceColorCachedKey;
     std::unique_ptr<LiveInput> input; // a live input (its URI in sourcePath): frames come in on its own thread
@@ -346,8 +373,33 @@ struct Layer {
 
     // Text generator (type Text): its settings, and the texture they are drawn into (render thread)
     TextSource text;
+    std::shared_ptr<TextWriting> textWriting; // render thread: the text being written
+    QString textWritingKey;
     Texture2D textTex;
     QString textKey; // what textTex shows (text and style): redrawn only when it changes
+
+    // 3D (Model3D.h). A 3D Scene is a group (isGroup) whose picture is its objects rendered by its camera; its members
+    // are 3D objects only: models (type Model: its file, read; its meshes reach the GPU on the render thread) and lights
+    // (type Light)
+    bool scene3d = false;
+    // A Merge 3D (only in a 3D scene or another Merge 3D): a transform for what it holds, models, lights and other Merge
+    // 3Ds. It is not rendered: its scene draws what it holds. Its transform is modelPlacement's
+    bool merge3d = false;
+    SceneSettings scene;
+    std::shared_ptr<Scene3D> sceneRenderer; // render thread
+    std::shared_ptr<Model3D> model;
+    ModelPlacement modelPlacement;
+    quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
+    quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
+    quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)
+    // Where those layers' pictures are taken (as an FX mask's): -1 their final picture, 0 their source (before their
+    // FX), k after their FX k
+    int modelPictureStage = -1, modelDisplaceStage = -1;
+    // A 3D scene: the layer whose picture (equirectangular: an HDRI, a video…) surrounds it and lights it, at a stage
+    quint64 sceneEnvironment = 0;
+    int sceneEnvironmentStage = -1;
+    LightSettings light;
+    bool is3dObject() const { return type == SourceType::Model || type == SourceType::Light || merge3d; }
 
     // TouchDesigner component: native SDK access stays on the render thread.
     ToxSettings tox;
@@ -422,6 +474,11 @@ struct Layer {
     float transitionGain = 1.0f; // sound during such a transition: the incoming source rises, the outgoing one falls
 
     RenderTarget maskTarget[2]; // an effect's result through its mask
+    // Its pictures along its effects that a mask takes (stage k: after its effect k), kept: the effects after them
+    // write their targets again. stageTex[k]: this frame's (0: its source), valid for the stages wanted only
+    std::set<int> stagesWanted;          // made each frame (Engine::markNeeded)
+    std::map<int, RenderTarget> stageTargets;
+    std::vector<GLuint> stageTex;
 
     // Frame render result
     GLuint finalTex = 0;
@@ -452,7 +509,7 @@ struct Layer {
 
     bool hasTransport() const { return video || audio; }
     double duration() const { return video ? video->duration() : audio ? audio->duration() : 0.0; }
-    float audioGain() const { return enabled && parentEnabled && !muted && !ended ? volume * transitionGain : 0.0f; }
+    float audioGain() const { return enabled && parentEnabled && !muted && !ended && !soloMuted ? volume * transitionGain : 0.0f; }
     bool repeats() const { return mode == PlayMode::Loop || mode == PlayMode::PingPong; }
     Timeline timeline() const
     {
@@ -475,7 +532,11 @@ struct Layer {
     {
         return type == SourceType::Isf ? genHeight : type == SourceType::Text ? text.height : type == SourceType::Web ? web.height : srcHeight;
     }
-    bool hasPicture() const { return isGroup || isViewport || (type != SourceType::Audio && !(type == SourceType::None && missingType == SourceType::Audio)); }
+    bool hasPicture() const
+    {
+        return isGroup || isViewport ||
+               (type != SourceType::Audio && !is3dObject() && !(type == SourceType::None && missingType == SourceType::Audio));
+    }
     bool isText() const { return type == SourceType::Text; }
     QSize viewportSize() const { return QSize(std::max(1, vpWidth), std::max(1, vpHeight)); }
     float opacityIn(quint64 viewport) const

@@ -37,6 +37,88 @@
   has TLS (Secure Transport) but no SRT; Linux has TLS (OpenSSL) and SRT (libsrt);
   Windows (BtbN builds) has TLS and SRT.
 - **TouchDesigner:** `.tox` playback needs an installed, paid TouchDesigner/TouchPlayer on Windows/macOS. Licensed GPU playback remains to be verified on hardware. CHOP/DAT/audio are not connected; Collect Files cannot discover external component resources.
+- **3D scenes:** a 3D Scene (Layer › New 3D Scene, or a model dropped onto a layer)
+  is a group whose picture is its models seen by its camera, under its lights. It
+  holds only 3D objects, and they stay in it: models (FBX, glTF/GLB, OBJ; read with
+  ufbx and cgltf; or a built-in primitive from Media Bin › 3D Primitives: cube, open
+  cube, plane, disc, cylinder, open cylinder, cone, pyramid, sphere, dome, torus,
+  capsule, all unwrapped) and up to 8 lights (directional, point, spot). Each object is a
+  layer: shown, soloed, animated and recalled like any other; its values are
+  parameters (`model/…`, `light/…`; the scene's `camera/…`, `scene/…`). Materials:
+  base color and its texture, metal, roughness, emission (no normal maps). Not yet:
+  shadows, the file's animations (skeletons, keyframes) and cameras, sorting of
+  transparent surfaces, editing a mesh's points by hand.
+  A model shows another layer's picture over its UVs (its 3D tab › Surface ›
+  Picture; lit, or unlit: as it is), bends across its width (`model/bend`: a curved
+  screen), and has its points pushed along their normals by a layer's luminance
+  (Surface › Displace; `model/displace/amount`, `model/displace/mid`). A primitive's
+  mesh is cut finer with `model/detail` (1–8).
+  A primitive starts with as few triangles as its shape needs (a cube is 12, a plane 2,
+  a sphere 576); `model/detail` cuts it finer, and a bend or a displacement take what
+  they need on their own.
+  `model/shading` shows a model as made, smooth (its normals averaged where faces meet)
+  or flat (its facets show). A scene shows its triangles in the layer list, its inspector
+  and its 3D view, with those its last frame computed in all its passes. What the camera
+  or a light does not see is not drawn, and a scene where nothing moves keeps its picture
+  (not with a layer's picture on a model or around the scene, which can change at any
+  frame).
+  Each scene has a look (Scene tab): a glow around what shines above its threshold,
+  contrast, saturation, temperature and a vignette; and fog, with its density, height
+  and reach, in which its lights show as beams stopped by the models (each light's
+  "In the Fog"). Shadows are sharp where what stops the light is near, soft where it is
+  far. An area light is a rectangle lit on the side it faces, soft-shadowed as wide as
+  it is. Glow and fog are in the composition's 3D Quality too; without a graphics card
+  they are off, and so are soft shadows' searches.
+  A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D view:
+  its own camera (drag: turn; Shift or middle button: pan; wheel: distance; H or Home:
+  all the scene holds; F: around the selection), the
+  ground grid, the scene's lights and camera drawn; its models in flat colours with
+  their edges, the lightest ("Simple"), or their colours and pictures with no light
+  on them ("Unlit"), chosen by its button (the scene's own picture is in the output,
+  as it will be seen); a click picks a model or a
+  light; its handles move, turn or scale it along X, Y, Z (W, E, R; one undo step
+  each). "View from Camera" and "Camera = View" exchange the view's and the scene's
+  cameras. Not yet: moving a mesh's points by hand in that view.
+  Lights show in that view: a lamp's head and its cone for a spot (down to the
+  ground, its falloff dashed inside), a sun with parallel rays for a directional
+  light, a bulb for a point light. A spot's `light/falloff` goes from a sharp edge (0)
+  to a gradient from its middle (1). A light can look at a point or follow a 3D object
+  of its scene (`light/lookat`, instead of its yaw and pitch: a dashed line in that
+  view), and go around a circle or a rectangle in 3D (`light/path/…`, drawn in that
+  view): its position is the shape's middle, `light/path/rotation/…` tilts it,
+  `light/path/position` places it on the way (0 to 1) and `light/path/speed` moves it
+  on its own. The models cast shadows (`light/shadow`,
+  `light/softness`) from up to four spots and directional lights and two point lights,
+  all around those, except what is far larger than the others (a floor, a wall), which
+  only receives them; their maps are drawn again only when something they show moves.
+  Without an environment, a scene's `scene/studio` gives the models a photo studio's
+  panels to reflect. `scene/ao` and `scene/ao_radius` darken where surfaces meet, and
+  `scene/reflections` shows the other models in smooth surfaces. Both work from what
+  the camera sees: a reflection only holds what is on screen, and fades on surfaces
+  that face the camera. Without a graphics card (a renderer running on the processor),
+  a scene leaves out antialiasing, shadows, contact shadows and reflections. The
+  Composition tab's **3D Quality** lightens all the scenes of a project when needed:
+  `quality3d/antialiasing` (off, 2x, 4x, 8x), `shadows`, `contact` and `reflections`
+  (off, low, medium, high). See `examples/pbr/`.
+  A **Merge 3D** (Layer › New Merge 3D) is a transform for what it holds, as in a node
+  graph: models, lights and other Merge 3Ds, in a 3D scene only. It is not rendered: its
+  scene draws what it holds, moved, turned and scaled by `merge/position`, `rotation`
+  and `scale`, its own and those above it. A hidden one hides all it holds. In the 3D
+  view it is a diamond with a line to each thing it holds, and its handles move it.
+  Lighting is physically based in linear light with ACES tone mapping. A scene's
+  environment is a layer's picture (an HDRI, .hdr or .exr, loaded in an image layer
+  that can stay hidden; or a video, a generator), equirectangular, taken at any
+  stage of its FX (Scene tab › Environment): it lights the models (diffuse, and
+  reflections as sharp as the surfaces are smooth) and can be shown behind them
+  (`scene/environment/intensity`, `rotation`, `show`, `blur`). An HDR image layer
+  (.hdr, .exr, half or float) also keeps its file as read, linear and unclipped:
+  its "HDR file" stage (chosen by default) lights the scene with its full range (a
+  sun far above 1), while its own picture in the composition stays clipped to 0–1
+  like any layer's (8 or 16-bit normalized). Approximation: the environment's
+  levels are blurred copies, not convolved. glTF and FBX materials use their metal,
+  roughness, normal, occlusion and emission maps, alpha cut-out and blending
+  (blended surfaces are not sorted). A primitive's material is set by
+  `model/material/color`, `metal`, `rough`. Not yet: shadows.
 - **Distribution:** macOS packages lack Developer ID signing and notarization.
 
 ## Roadmap

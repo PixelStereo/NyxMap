@@ -6,7 +6,7 @@
 #include <cmath>
 
 namespace {
-constexpr int header = 48, rowHeight = 34;
+constexpr int header = 28; // the LIVE line, then one row per timeline
 QColor ink(Engine::AnimState state) {
     return state == Engine::AnimState::Playing ? QColor("#6fe3bc") : state == Engine::AnimState::Paused ? QColor("#efc374") : QColor("#8c91a0");
 }
@@ -31,12 +31,17 @@ TimelineActivity::TimelineActivity(Engine *engine, QWidget *parent) : QAbstractS
     poll();
 }
 void TimelineActivity::setShowStopped(bool show) { m_showStopped=show; poll(); }
+void TimelineActivity::setCompact(bool on) {
+    m_compact=on; m_rowHeight=on?22:34; m_showStopped=on||m_showStopped;
+    setMaximumHeight(on?QWIDGETSIZE_MAX:230);
+    poll();
+}
 void TimelineActivity::showEvent(QShowEvent *e) { QAbstractScrollArea::showEvent(e); poll(); }
 void TimelineActivity::resizeEvent(QResizeEvent *e) { QAbstractScrollArea::resizeEvent(e); updateRange(); }
 void TimelineActivity::updateRange() {
     verticalScrollBar()->setPageStep(std::max(1,viewport()->height()-header));
-    verticalScrollBar()->setSingleStep(rowHeight);
-    verticalScrollBar()->setRange(0,std::max(0,int(m_rows.size())*rowHeight - (viewport()->height()-header)));
+    verticalScrollBar()->setSingleStep(m_rowHeight);
+    verticalScrollBar()->setRange(0,std::max(0,int(m_rows.size())*m_rowHeight - (viewport()->height()-header)));
 }
 void TimelineActivity::poll() {
     std::vector<Engine::AnimationPlayback> sample;
@@ -66,22 +71,28 @@ void TimelineActivity::paintEvent(QPaintEvent *) {
     p.drawText(QRect(10,3,w-85,20),Qt::AlignVCenter,QStringLiteral("LIVE   %1 playing   ·   %2 paused").arg(m_playing).arg(m_paused));
     p.setFont(font()); p.setPen(QColor("#a1b3ca"));
     p.drawText(QRect(w-82,3,72,20),Qt::AlignRight|Qt::AlignVCenter,m_showStopped?QStringLiteral("ALL ▾"):QStringLiteral("ACTIVE ▾"));
-    if (!m_rows.empty()) {
-        const double cell=double(w-20)/m_rows.size();
-        for (size_t i=0;i<m_rows.size();++i) {
-            const auto &a=m_rows[i]; const QRectF tile(10+i*cell,28,std::max(1.,cell-3),12);
-            p.fillRect(tile,QColor("#2b3442"));
-            p.fillRect(QRectF(tile.left(),tile.top(),tile.width()*std::clamp(a.position/std::max(.001,a.duration),0.,1.),tile.height()),ink(a.state));
-            if (a.id==m_selected) { p.setPen(QColor("#ffffff")); p.drawRect(tile); }
-        }
-    }
     p.save(); p.setClipRect(QRect(0,header,w,viewport()->height()-header));
     if (m_rows.empty()) { p.setPen(QColor("#8e9bae")); p.drawText(QRect(10,header,w-20,48),Qt::AlignVCenter|Qt::TextWordWrap,QStringLiteral("No active timeline. Start one from a cue or the timeline editor. Choose ALL to inspect stopped timelines.")); }
     for (int i=0;i<int(m_rows.size());++i) {
-        const auto &a=m_rows[size_t(i)]; const int y=header+i*rowHeight-verticalScrollBar()->value();
-        if (y+rowHeight<header || y>viewport()->height()) continue;
-        if (a.id==m_selected) p.fillRect(QRect(0,y,w,rowHeight),QColor("#283647"));
+        const auto &a=m_rows[size_t(i)]; const int y=header+i*m_rowHeight-verticalScrollBar()->value();
+        if (y+m_rowHeight<header || y>viewport()->height()) continue;
+        if (a.id==m_selected) p.fillRect(QRect(0,y,w,m_rowHeight),QColor("#283647"));
         const QColor color=ink(a.state); p.setPen(color);
+        if (m_compact) { // number and name, the line of its run, its time, its transport
+            const int nameWidth=std::min(180,w/3), line=34+nameWidth+8, end=w-218;
+            p.drawText(QRect(10,y,20,m_rowHeight),Qt::AlignVCenter,QString::number(i+1));
+            p.setPen(QColor("#e0e7f0"));
+            p.drawText(QRect(34,y,nameWidth,m_rowHeight),Qt::AlignVCenter,p.fontMetrics().elidedText(a.name,Qt::ElideRight,nameWidth));
+            if (end>line) {
+                p.fillRect(QRect(line,y+m_rowHeight/2-1,end-line,3),QColor("#303a48"));
+                p.fillRect(QRectF(line,y+m_rowHeight/2-1,(end-line)*std::clamp(a.position/std::max(.001,a.duration),0.,1.),3),color);
+            }
+            p.setPen(color);
+            p.drawText(QRect(std::max(line,w-210),y,146,m_rowHeight),Qt::AlignRight|Qt::AlignVCenter,QStringLiteral("%1 / %2").arg(timeText(a.position),timeText(a.duration)));
+            p.drawText(QRect(w-57,y,25,m_rowHeight),Qt::AlignCenter,a.state==Engine::AnimState::Playing?QStringLiteral("Ⅱ"):QStringLiteral("▶"));
+            p.drawText(QRect(w-29,y,24,m_rowHeight),Qt::AlignCenter,QStringLiteral("■"));
+            continue;
+        }
         p.drawText(QRect(10,y+1,20,18),Qt::AlignVCenter,QString::number(i+1));
         p.setPen(QColor("#e0e7f0"));
         p.drawText(QRect(34,y+1,std::max(10,w-260),18),Qt::AlignVCenter,p.fontMetrics().elidedText(a.name,Qt::ElideRight,std::max(10,w-260)));
@@ -95,22 +106,19 @@ void TimelineActivity::paintEvent(QPaintEvent *) {
     }
     p.restore();
 }
-int TimelineActivity::rowAt(const QPoint &point) const { return point.y()<header?-1:(point.y()-header+verticalScrollBar()->value())/rowHeight; }
+int TimelineActivity::rowAt(const QPoint &point) const { return point.y()<header?-1:(point.y()-header+verticalScrollBar()->value())/m_rowHeight; }
 void TimelineActivity::select(int row) {
     if (row<0 || row>=int(m_rows.size())) return;
     m_selected=m_rows[size_t(row)].id;
-    const int top=row*rowHeight, value=verticalScrollBar()->value(), page=verticalScrollBar()->pageStep();
+    const int top=row*m_rowHeight, value=verticalScrollBar()->value(), page=verticalScrollBar()->pageStep();
     if (top<value) verticalScrollBar()->setValue(top);
-    else if (top+rowHeight>value+page) verticalScrollBar()->setValue(top+rowHeight-page);
+    else if (top+m_rowHeight>value+page) verticalScrollBar()->setValue(top+m_rowHeight-page);
     viewport()->update();
 }
 void TimelineActivity::mousePressEvent(QMouseEvent *event) {
     if (event->button()!=Qt::LeftButton) return;
     const auto point=event->pos();
     if (point.y()<25 && point.x()>viewport()->width()-85) { setShowStopped(!m_showStopped); return; }
-    if (point.y()>=26 && point.y()<header && !m_rows.empty()) {
-        select(std::clamp(int(double(point.x()-10)/std::max(1,viewport()->width()-20)*m_rows.size()),0,int(m_rows.size())-1)); return;
-    }
     const int row=rowAt(point); if (row<0 || row>=int(m_rows.size())) return;
     select(row); const auto a=m_rows[size_t(row)];
     if (point.x()>viewport()->width()-30) m_engine->controlAnimation(a.id,Engine::AnimAction::Stop);

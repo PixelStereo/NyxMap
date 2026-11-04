@@ -1,4 +1,7 @@
 #include "InteractionPanel.h"
+#include "AdsrCurve.h"
+#include "InteractionPatch.h"
+#include <QStackedWidget>
 #include "TimelinePanel.h"
 #include "AudioSpectrum.h"
 #include <QDoubleSpinBox>
@@ -195,6 +198,12 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     bar->addWidget(addButton);
     bar->addWidget(m_remove);
     bar->addWidget(m_learn);
+    auto *nodes = new QToolButton;
+    nodes->setObjectName(QStringLiteral("interactionNodes"));
+    nodes->setText(QStringLiteral("Nodes"));
+    nodes->setCheckable(true);
+    nodes->setToolTip(QStringLiteral("The same interactions as nodes and cables"));
+    bar->addWidget(nodes);
     bar->addWidget(m_search, 1);
     v->addLayout(bar);
 
@@ -243,8 +252,45 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_scroll = scroll;
     sv->addWidget(scroll, 1);
 
+    m_patch = new InteractionPatch;
+    m_patch->onSelect = [this](quint64 id) { select(id); };
+    m_patch->onToggle = [this](quint64 id) {
+        for (Interaction it : m_engine->interactions())
+            if (it.id == id) {
+                it.enabled = !it.enabled;
+                commit(it, it.enabled ? QStringLiteral("Enable Interaction") : QStringLiteral("Disable Interaction"));
+                rebuildList();
+                return;
+            }
+    };
+    m_patch->onRemove = [this](quint64 id) {
+        std::vector<Interaction> list = m_engine->interactions();
+        list.erase(std::remove_if(list.begin(), list.end(), [id](const Interaction &it) { return it.id == id; }), list.end());
+        commitList(list, QStringLiteral("Remove Interaction"));
+        rebuildList();
+    };
+    m_patch->onMenu = [this](quint64 id, const QPoint &at) { patchMenu(id, at); };
+    m_patch->onConnect = [this](quint64 from, quint64 to) {
+        for (const Interaction &it : m_engine->interactions())
+            if (it.id == to) {
+                connectSource(from, it.layer, it.param);
+                return;
+            }
+    };
+    m_patch->onConnectElsewhere = [this](quint64 from, const QPoint &at) { patchConnectElsewhere(from, at); };
+    auto *patchScroll = new QScrollArea;
+    patchScroll->setWidgetResizable(true);
+    patchScroll->setFrameShape(QFrame::NoFrame);
+    patchScroll->setWidget(m_patch);
+    m_views = new QStackedWidget;
+    m_views->addWidget(m_list);
+    m_views->addWidget(patchScroll);
+    connect(nodes, &QToolButton::toggled, this, [this](bool on) {
+        m_views->setCurrentIndex(on ? 1 : 0);
+        if (on) refreshPatch();
+    });
     auto *split = new QSplitter(Qt::Vertical);
-    split->addWidget(m_list);
+    split->addWidget(m_views);
     split->addWidget(settingsBox);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 3);
@@ -471,6 +517,134 @@ void InteractionPanel::rebuildList()
     m_filling = false;
     m_remove->setEnabled(!m_list->selectedItems().isEmpty());
     if (selectedId() != m_shown) rebuildSettings();
+    refreshPatch();
+}
+
+void InteractionPanel::refreshPatch()
+{
+    if (!m_patch) return;
+    std::vector<InteractionPatch::Link> links;
+    const std::optional<InteractionSource> kind = shownKind();
+    for (const Interaction &it : m_engine->interactions()) {
+        if (kind && it.source != *kind) continue;
+        InteractionPatch::Link link;
+        link.id = it.id;
+        link.source = describe(it);
+        link.target = it.isAction() ? QStringLiteral("Action · %1").arg(it.label()) : targetLabel(it.layer, it.param);
+        link.enabled = it.enabled;
+        link.action = it.isAction();
+        QStringList names;
+        for (const InteractionStage &f : it.filters) {
+            if (!f.enabled) continue;
+            if (f.kind == InteractionFilter::Envelope && !link.envelope) {
+                link.envelope = true;
+                link.attack = f.a;
+                link.decay = f.b;
+                link.sustain = f.c;
+                link.release = f.d;
+            }
+            names << interactionFilterName(f.kind);
+        }
+        link.chain = names.isEmpty() ? QStringLiteral("direct") : names.join(QStringLiteral(" · "));
+        links.push_back(link);
+    }
+    m_patch->setLinks(std::move(links), selectedId());
+}
+
+Interaction InteractionPanel::heard(double low, double high)
+{
+    Interaction it = Interaction::made(InteractionSource::Audio);
+    it.filters.clear();
+    it.audioFeature = Interaction::AudioFeature::Hit;
+    it.audioLow = low;
+    it.audioHigh = high;
+    it.takeover = Takeover::Jump;
+    return it;
+}
+
+// What goes from the source to a value: an envelope from where the value is now to the far end of its range. A gate takes the
+// trigger as it is: its instrument has its own envelope
+static std::vector<InteractionStage> envelopeChain(Engine *e, quint64 layer, const QString &path)
+{
+    if (path.endsWith(QLatin1String("synth/gate"))) return {};
+    ParamInfo info;
+    double low = e->parameterValue(layer, path).toDouble(), high = low + 1;
+    if (e->parameterInfo(layer, path, &info)) {
+        const double top = info.max, bottom = info.min;
+        high = top - low >= low - bottom ? top : bottom;
+    }
+    return {InteractionStage::made(InteractionFilter::Envelope), InteractionStage::remap(0, 1, low, high)};
+}
+
+quint64 InteractionPanel::addEnvelope(quint64 layer, const QString &path, Interaction source)
+{
+    std::vector<Interaction> list = m_engine->interactions();
+    quint64 id = 1;
+    for (const Interaction &x : list) id = std::max(id, x.id + 1);
+    source.id = id;
+    source.filters = envelopeChain(m_engine, layer, path);
+    source.takeover = Takeover::Jump;
+    m_engine->configureInteractionTarget(source, layer, path);
+    list.push_back(source);
+    commitList(list, QStringLiteral("Add Envelope"));
+    emit showRequested();
+    m_kinds->setCurrentIndex(m_kinds->count() - 1);
+    m_selectedFilter = 0;
+    rebuildList();
+    select(id);
+    rebuildSettings();
+    return id;
+}
+
+void InteractionPanel::connectSource(quint64 from, quint64 layer, const QString &path)
+{
+    std::vector<Interaction> list = m_engine->interactions();
+    const auto found = std::find_if(list.begin(), list.end(), [from](const Interaction &it) { return it.id == from; });
+    if (found == list.end()) return;
+    Interaction copy = *found;
+    quint64 id = 1;
+    for (const Interaction &x : list) id = std::max(id, x.id + 1);
+    copy.id = id;
+    copy.name.clear();
+    copy.mode = InteractionMode::Mapping;
+    copy.onTrue.clear();
+    copy.onFalse.clear();
+    copy.xyInputs.clear();
+    copy.filters = envelopeChain(m_engine, layer, path);
+    copy.takeover = Takeover::Jump;
+    m_engine->configureInteractionTarget(copy, layer, path);
+    list.push_back(copy);
+    commitList(list, QStringLiteral("Add Cable"));
+    rebuildList();
+    select(id);
+}
+
+void InteractionPanel::patchMenu(quint64 id, const QPoint &at)
+{
+    QMenu menu(this);
+    menu.addAction(QStringLiteral("On / Off"), this, [this, id] { m_patch->onToggle(id); });
+    menu.addAction(QStringLiteral("Remove"), this, [this, id] { m_patch->onRemove(id); });
+    if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, id);
+    menu.exec(at);
+}
+
+void InteractionPanel::patchConnectElsewhere(quint64 from, const QPoint &at)
+{
+    QMenu menu(this);
+    for (int i = 0; i < m_engine->layerCount(); ++i) {
+        const quint64 layer = m_engine->layerId(i);
+        QString name;
+        {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(i)) name = l->name;
+        }
+        const std::vector<ParamInfo> params = m_engine->animatableParams(layer);
+        if (params.empty()) continue;
+        QMenu *sub = menu.addMenu(name);
+        for (const ParamInfo &p : params)
+            sub->addAction(p.label, this, [this, from, layer, path = p.path] { connectSource(from, layer, path); });
+    }
+    menu.exec(at);
 }
 
 void InteractionPanel::commitList(const std::vector<Interaction> &list, const QString &text)
@@ -558,6 +732,11 @@ void InteractionPanel::refreshLevels()
         const QString state = !value || value->met < 0 ? QStringLiteral("— (no value yet)")
                             : value->met ? QStringLiteral("TRUE") : QStringLiteral("FALSE");
         if (m_actionState->text() != state) m_actionState->setText(state);
+    }
+    if (m_patch && m_views->currentIndex() == 1) { // the cables light up with what goes through them
+        std::map<quint64, double> levels;
+        for (const auto &level : m_levelSample) levels[level.id] = std::abs(level.input);
+        m_patch->setLevels(levels);
     }
     if (m_copy) m_copy->setEnabled(m_shown != 0);
     if (m_paste) m_paste->setEnabled(QApplication::clipboard()->mimeData() && QApplication::clipboard()->mimeData()->hasFormat(kMime) &&
@@ -693,6 +872,19 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             params.insert(params.begin(), point);
     if (params.empty()) return;
     if (auto *panel = instance()) {
+        for (const auto &it : e->interactions()) {
+            if (it.isAction() || it.layer != layer ||
+                std::none_of(paths.begin(), paths.end(), [&](const auto &p) { return it.drives(p); }))
+                continue;
+            menu->addAction(QStringLiteral("Go to interaction driver · %1%2")
+                                .arg(it.label(), it.enabled ? QString() : QStringLiteral(" (off)")),
+                            panel, [panel, id = it.id] {
+                                panel->m_kinds->setCurrentIndex(panel->m_kinds->count() - 1);
+                                panel->rebuildList();
+                                panel->select(id);
+                                emit panel->showRequested();
+                            });
+        }
         QMenu *animate = nullptr;
         for (auto *action : menu->actions()) if (action->text() == QLatin1String("Animate")) animate = action->menu();
         QMenu *interaction = nullptr;
@@ -700,6 +892,48 @@ void InteractionPanel::fillValueMenu(QMenu *menu, Engine *e, quint64 layer, cons
             if (!(param.access & ParamInfo::Write) || param.type == ParamInfo::Type::Text) continue;
             if (!interaction) {
                 if (!animate) animate = menu->addMenu(QStringLiteral("Animate"));
+                // An envelope in one go: on what it is triggered by, from the value where it is now
+                QMenu *envelopes = animate->addMenu(QStringLiteral("Add Envelope"));
+                const auto addEach = [&](const ParamInfo &target, QMenu *to) {
+                    const auto add = [&](const QString &label, const Interaction &source) {
+                        to->addAction(label, panel, [panel, layer, path = target.path, source] { panel->addEnvelope(layer, path, source); });
+                    };
+                    add(QStringLiteral("Kick heard (35–120 Hz)"), heard(35, 120));
+                    add(QStringLiteral("Snare heard (1.4–4.5 kHz)"), heard(1400, 4500));
+                    add(QStringLiteral("Hats heard (8–16 kHz)"), heard(8000, 16000));
+                    QMenu *gates = nullptr;
+                    for (int i = 0; i < e->layerCount(); ++i) {
+                        quint64 other = 0;
+                        QString otherName;
+                        {
+                            Engine::Lock lk(&e->mutex());
+                            if (const Layer *l = e->layer(i); l && l->id != layer && l->audio && l->audio->generator()) {
+                                other = l->id;
+                                otherName = l->name;
+                            }
+                        }
+                        if (!other) continue;
+                        if (!gates) gates = to->addMenu(QStringLiteral("Gate of an instrument"));
+                        Interaction source = Interaction::made(InteractionSource::Internal);
+                        source.sourceLayer = other;
+                        source.sourceParam = QStringLiteral("synth/gate");
+                        gates->addAction(otherName, panel, [panel, layer, path = target.path, source] { panel->addEnvelope(layer, path, source); });
+                    }
+                    to->addAction(QStringLiteral("A key… (learned)"), panel, [panel, layer, path = target.path] {
+                        panel->addEnvelope(layer, path, Interaction::made(InteractionSource::Keyboard));
+                        panel->m_learnKind = InteractionSource::Keyboard;
+                        panel->m_learn->setChecked(true);
+                    });
+                    to->addAction(QStringLiteral("A MIDI note… (learned)"), panel, [panel, layer, path = target.path] {
+                        panel->addEnvelope(layer, path, Interaction::made(InteractionSource::Midi));
+                        panel->m_learnKind = InteractionSource::Midi;
+                        panel->m_learn->setChecked(true);
+                    });
+                };
+                if (params.size() == 1) addEach(param, envelopes);
+                else
+                    for (const auto &each : params)
+                        if ((each.access & ParamInfo::Write) && each.type != ParamInfo::Type::Text) addEach(each, envelopes->addMenu(each.name()));
                 interaction = animate->addMenu(QStringLiteral("Interaction"));
                 for (InteractionSource kind : kKinds) {
                     if (params.size() == 1)
@@ -1027,11 +1261,11 @@ void InteractionPanel::rebuildSettings()
                                                          :QStringLiteral("No live input open: choose one in Settings › Audio Input")));
         }
         auto *feature=new QComboBox;feature->setObjectName("audioFeature");
-        feature->addItems({QStringLiteral("Selected frequency band"),QStringLiteral("Overall level"),QStringLiteral("Attacks / onset")});feature->setCurrentIndex(int(it.audioFeature));
+        feature->addItems({QStringLiteral("Selected frequency band"),QStringLiteral("Overall level"),QStringLiteral("Attacks / onset"),QStringLiteral("Hits (a trigger)")});feature->setToolTip(QStringLiteral("Hits: a trigger at each hit (a kick, a snare) in the frequency region, at the hit's velocity — feed it an Envelope filter for a flash or an impact"));feature->setCurrentIndex(int(it.audioFeature));
         form->addRow(QStringLiteral("Measure"),feature);
         connect(feature,qOverload<int>(&QComboBox::activated),this,[this,edit](int k){edit(QStringLiteral("Change Audio Measure"),[k](Interaction &x){x.audioFeature=Interaction::AudioFeature(k);});rebuildSettings();});
         attachPreset({feature},{QStringLiteral("source/audio/feature")});
-        if(it.audioFeature==Interaction::AudioFeature::Band){
+        if(it.audioFeature==Interaction::AudioFeature::Band||it.audioFeature==Interaction::AudioFeature::Hit){
             Engine *engine=m_engine;const bool live=it.audioInput;
             auto *spectrum=new AudioSpectrum([engine,live]{return live?engine->audioInput().spectrum():engine->audioOutput().spectrum();});spectrum->setBand(it.audioLow,it.audioHigh);
             form->addRow(spectrum);
@@ -1050,6 +1284,20 @@ void InteractionPanel::rebuildSettings()
             regions->addItems({QStringLiteral("Sub · 20–80 Hz"),QStringLiteral("Bass · 80–250 Hz"),QStringLiteral("Body · 250–2000 Hz"),QStringLiteral("Presence · 2000–6000 Hz"),QStringLiteral("Air · 6000–20000 Hz"),QStringLiteral("Full spectrum")});
             form->addRow(QStringLiteral("Regions"),regions);
             connect(regions,qOverload<int>(&QComboBox::activated),this,[setBand](int k){const double bands[][2]={{20,20000},{20,80},{80,250},{250,2000},{2000,6000},{6000,20000},{20,20000}};if(k>=0&&k<7)setBand(bands[k][0],bands[k][1]);});
+        }
+        if(it.audioFeature==Interaction::AudioFeature::Hit){
+            // How faint a hit it hears, and how soon after one it may hear the next (a kick's tail is not a second kick)
+            auto *sens=new SliderField;sens->setObjectName("audioHitSensitivity");sens->setRange(0,100);sens->setDecimals(0);sens->setSuffix(QStringLiteral(" %"));sens->setValue(it.audioSensitivity*100);
+            sens->setToolTip(QStringLiteral("How faint a hit it hears: high catches soft hits (and some noise), low only the hard ones. The detector learns the usual level of the sound by itself."));
+            form->addRow(QStringLiteral("Sensitivity"),sens);
+            connect(sens,&SliderField::valueEdited,this,[edit](double v){edit(QStringLiteral("Change Hit Sensitivity"),[v](Interaction &x){x.audioSensitivity=std::clamp(v/100.,0.,1.);},QStringLiteral("audio_hit_sensitivity"));});
+            attachPreset({sens},{QStringLiteral("source/audio/sensitivity")});
+            auto *gap=new SliderField;gap->setObjectName("audioHitGap");gap->setRange(40,1000);gap->setDecimals(0);gap->setSuffix(QStringLiteral(" ms"));gap->setValue(it.audioGap*1000);
+            gap->setToolTip(QStringLiteral("The shortest time between two hits. 80 ms follows fast patterns; raise it to ignore a kick's rebound or a hi-hat's ring."));
+            form->addRow(QStringLiteral("Minimum gap"),gap);
+            connect(gap,&SliderField::valueEdited,this,[edit](double v){edit(QStringLiteral("Change Hit Gap"),[v](Interaction &x){x.audioGap=std::clamp(v/1000.,0.04,2.);},QStringLiteral("audio_hit_gap"));});
+            attachPreset({gap},{QStringLiteral("source/audio/gap")});
+            form->addRow(QString(),note(QStringLiteral("A pulse of 40 ms at the hit's velocity: add an Envelope filter for a flash or an impact.")));
         }
         break;
     }
@@ -1427,7 +1675,7 @@ void InteractionPanel::rebuildSettings()
     addFilter->setMenu(addMenu);
     const InteractionFilter overTime[] = {InteractionFilter::Average, InteractionFilter::WeightedAverage, InteractionFilter::AttackRelease,
                                           InteractionFilter::Damper, InteractionFilter::PulseDetection, InteractionFilter::Delay,
-                                          InteractionFilter::Speed};
+                                          InteractionFilter::Speed, InteractionFilter::Envelope};
     const InteractionFilter onValue[] = {InteractionFilter::Remap, InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
                                          InteractionFilter::Steps, InteractionFilter::Threshold, InteractionFilter::Toggle};
     auto offer = [this, edit, addMenu, count, srcLo, srcHi, tgtLo, tgtHi](InteractionFilter kind) {
@@ -1487,6 +1735,7 @@ void InteractionPanel::rebuildSettings()
         case InteractionFilter::Threshold:
         case InteractionFilter::Toggle:
         case InteractionFilter::PulseDetection:
+        case InteractionFilter::Envelope:
         case InteractionFilter::Speed: span = {0.0, 1.0}; break;
         default: break;
         }
@@ -1566,6 +1815,31 @@ void InteractionPanel::rebuildSettings()
                 editStage(k, QStringLiteral("Change Filter"), [which, v](InteractionStage &s) { s.setting(which) = v; },
                           QStringLiteral("filter%1/%2").arg(k).arg(which));
             });
+        }
+        if (f.kind == InteractionFilter::Envelope) { // in the hand: its fields below follow
+            auto *curve = new AdsrCurve;
+            curve->longest = 5;
+            AdsrCurve::Values shape;
+            shape.attack = f.a;
+            shape.decay = f.b;
+            shape.sustain = f.c;
+            shape.release = f.d;
+            curve->setValues(shape);
+            curve->edited = [editStage, block, k](const AdsrCurve::Values &v) {
+                const double values[4] = {v.attack, v.decay, v.sustain, v.release};
+                for (int which = 0; which < 4; ++which)
+                    if (auto *field = block->findChild<QDoubleSpinBox *>(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)))) {
+                        const QSignalBlocker quiet(field);
+                        field->setValue(values[which]);
+                    }
+                editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) {
+                    s.a = v.attack;
+                    s.b = v.decay;
+                    s.c = v.sustain;
+                    s.d = v.release;
+                }, QStringLiteral("filter%1/curve").arg(k));
+            };
+            bf->addRow(curve);
         }
         if (f.kind == InteractionFilter::Curve) {
             // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first

@@ -38,7 +38,7 @@
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
 // Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
 // stored bottom-up).
-static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill)
+static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly = false)
 {
     const int w = std::max(1, l.text.width), h = std::max(1, l.text.height);
     QImage img(w, h, QImage::Format_RGBA8888_Premultiplied);
@@ -104,6 +104,11 @@ static QImage renderTextLayer(const Layer &l, const QString &text, const QColor 
         }
         if (withFill) draw(fill, dx, dy);
     };
+    if (inkOnly) { // only the letters, top row first: where the pen goes
+        draw(Qt::white, 0, 0);
+        painter.end();
+        return img.convertToFormat(QImage::Format_RGBA8888);
+    }
     if (l.text.shadow) { // the shadow has the shape of the text and its outline, in its own color
         QColor sc = l.text.shadowColor;
         if (l.text.outline > 0.01f) drawOutlined(sc, sc, l.text.shadowX, l.text.shadowY, true);
@@ -207,6 +212,11 @@ void Engine::updateSource(Layer &l, double dt)
             l.imageAutoTex.uploadImage(l.pendingAutoImage);
             l.pendingAutoImage = QImage();
         }
+        if (!l.pendingHdr.empty()) { // an HDR file's unclipped pixels
+            l.hdrTex.uploadFloat(l.pendingHdr.data(), l.pendingHdrSize.width(), l.pendingHdrSize.height());
+            l.pendingHdr.clear();
+            l.pendingHdr.shrink_to_fit();
+        }
     }
     if (l.toxPlayer && l.tox.playing) l.toxPlayer->advance(m_realDt * timeScale());
     (void)dt;
@@ -261,13 +271,75 @@ std::vector<bool> Engine::soloLeftOut() const
     return out;
 }
 
+std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
+{
+    Lock lk(&m_mutex);
+    std::vector<LayerUse> uses;
+    for (const auto &l : m_layers) {
+        if (l->id == id) continue;
+        const auto add = [&](const QString &how, bool source = false) { uses.push_back({l->id, QStringLiteral("%1 of “%2”").arg(how, l->name), source}); };
+        if (l->type == SourceType::Layer && l->sourceLayer == id) add(QStringLiteral("source"), true);
+        if (l->matte.layer == id) add(QStringLiteral("matte"));
+        if (l->color.maskLayer == id) add(QStringLiteral("color mask"));
+        for (const auto &fx : l->effects)
+            if (fx->maskLayer == id) add(QStringLiteral("mask of an effect"));
+        bool shown = false;
+        forEachImageLayer(*l, [&](quint64 used) { shown = shown || used == id; });
+        if (shown) add(QStringLiteral("image in a shader"));
+        if (l->modelPicture == id) add(QStringLiteral("picture on the model"));
+        if (l->modelDisplace == id) add(QStringLiteral("displacement"));
+        if (l->sceneEnvironment == id) add(QStringLiteral("environment"));
+        if (l->lightLookAt == id) add(QStringLiteral("what is looked at by the light"));
+        for (const Animation &a : l->anims)
+            if (std::any_of(a.tracks.begin(), a.tracks.end(), [&](const AnimTrack &t) { return t.layer == id; })) add(QStringLiteral("animated by “%1”").arg(a.name));
+    }
+    const auto other = [&](const QString &what) { uses.push_back({0, what, false}); };
+    const std::function<bool(const Interaction &)> involves = [&](const Interaction &it) {
+        if (it.layer == id || it.sourceLayer == id || it.pixels.layer == id) return true;
+        for (const auto *list : {&it.onTrue, &it.onFalse})
+            for (const InteractionConsequence &c : *list)
+                if (c.layer == id) return true;
+        return std::any_of(it.xyInputs.begin(), it.xyInputs.end(), involves);
+    };
+    for (const Interaction &it : m_interactions)
+        if (involves(it)) other(QStringLiteral("interaction “%1”").arg(it.label()));
+    for (const Animation &a : m_animations)
+        if (std::any_of(a.tracks.begin(), a.tracks.end(), [&](const AnimTrack &t) { return t.layer == id; })) other(QStringLiteral("timeline “%1”").arg(a.name));
+    for (const Preset &p : m_presets)
+        if (std::any_of(p.values.begin(), p.values.end(), [&](const PresetValue &v) { return v.layer == id; })) other(QStringLiteral("preset “%1”").arg(p.name));
+    for (int i = 0; i < m_sequencer->count(); ++i) {
+        const Sequencer::Sequence sequence = m_sequencer->sequence(i);
+        if (sequence.clockLayer == id) other(QStringLiteral("clock of the sequence “%1”").arg(sequence.name));
+    }
+    return uses;
+}
+
 // Which layers are drawn this frame: shown (in a shown group), used as a source or as a mask by another,
 // previewed in the inspector or a preview view while switched on, viewports. The others are neither uploaded nor
 // rendered (their sound plays on). A layer switched off (or in a group switched off) is not computed for a preview:
 // only another layer that uses it keeps it rendered.
 void Engine::markNeeded()
 {
-    for (auto &l : m_layers) l->referenced = false;
+    for (auto &l : m_layers) {
+        l->referenced = false;
+        l->stagesWanted.clear();
+    }
+    // The stages of the layers' effects their masks take (after an effect: kept as it is made)
+    for (auto &l : m_layers)
+        for (const auto &fx : l->effects)
+            if (fx->enabled && fx->maskLayer && fx->maskStage > 0) {
+                const int mi = indexOfId(fx->maskLayer);
+                if (mi >= 0) m_layers[size_t(mi)]->stagesWanted.insert(fx->maskStage);
+            }
+    for (auto &l : m_layers) // the stages no mask takes any more: their targets go
+        for (auto it = l->stageTargets.begin(); it != l->stageTargets.end();) {
+            if (l->stagesWanted.count(it->first)) {
+                ++it;
+                continue;
+            }
+            it->second.destroy();
+            it = l->stageTargets.erase(it);
+        }
     auto refer = [this](const Layer &l) { // the layers its picture is made from
         if (l.type == SourceType::Layer && l.sourceLayer) {
             const int si = indexOfId(l.sourceLayer);
@@ -290,6 +362,13 @@ void Engine::markNeeded()
             const int si = indexOfId(id);
             if (si >= 0) m_layers[size_t(si)]->referenced = true;
         });
+        if (l.type == SourceType::Model || l.scene3d) // a 3D model's pictures, a scene's environment, at their stages
+            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage},
+                                            std::pair{l.sceneEnvironment, l.sceneEnvironmentStage}})
+                if (const int si = indexOfId(id); id && si >= 0) {
+                    m_layers[size_t(si)]->referenced = true;
+                    if (stage > 0) m_layers[size_t(si)]->stagesWanted.insert(stage);
+                }
     };
     auto visionReference = [this](const Interaction &input) {
         if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
@@ -307,7 +386,15 @@ void Engine::markNeeded()
     for (auto &l : m_layers) refer(*l);
     for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
     const std::vector<bool> leftOut = soloLeftOut();
-    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloHidden = leftOut[i];
+    // A solo plays all of what it holds, its sound too: the others' sound goes when it has one. A picture soloed under the
+    // music leaves the music on
+    bool soloHasSound = false;
+    for (size_t i = 0; i < m_layers.size(); ++i) {
+        m_layers[i]->soloHidden = leftOut[i];
+        soloHasSound = soloHasSound || (!leftOut[i] && m_layers[i]->audio && !m_layers[i]->isGroup && !m_layers[i]->isViewport);
+    }
+    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
+    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
     // A group comes before its members: its verdict is known when they are reached
     std::map<quint64, bool> groupNeeded;
     for (auto &lp : m_layers) {
@@ -349,6 +436,9 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                 const int si = indexOfId(d.sourceLayer);
                 if (si >= 0) render(size_t(si));
             }
+            if (d.type == SourceType::Model || d.scene3d) // a 3D model's pictures, a scene's environment
+                for (quint64 id : {d.modelPicture, d.modelDisplace, d.sceneEnvironment})
+                    if (const int si = indexOfId(id); id && si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
             for (const auto &fx : d.effects) // the masks of its effects
                 if (fx->enabled && fx->maskLayer) {
                     const int mi = indexOfId(fx->maskLayer);
@@ -388,7 +478,9 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
                     render(k);
                     members.push_back(m_layers[k].get());
                 }
-            if (l.needed) renderGroup(l, members, rc);
+            if (l.merge3d) l.finalTex = l.rawTex = l.preFxTex = 0; // no picture: its scene draws what it holds
+            else if (l.needed && l.scene3d) renderScene(l, members, rc);
+            else if (l.needed) renderGroup(l, members, rc);
             else l.finalTex = l.rawTex = l.preFxTex = 0;
         } else {
             renderLayer(l, rc);
@@ -428,6 +520,7 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     l.rawTex = 0;
     l.preFxTex = 0;
     if (l.isGroup) return;  // rendered from its members (renderGroup)
+    if (l.is3dObject()) return; // drawn by its 3D scene (renderScene)
     if (l.ended) return; // Stop mode, after the end: nothing
     if (!l.needed) return; // hidden, and used by no other layer
     GLuint tex = 0;
@@ -540,7 +633,21 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                                          .arg(l.text.strike).arg(l.text.outline).arg(l.text.outlineColor.name(QColor::HexArgb))
                                          .arg(l.text.shadow).arg(l.text.shadowColor.name(QColor::HexArgb))
                                          .arg(QStringLiteral("%1,%2").arg(l.text.shadowX).arg(l.text.shadowY)));
-        if (!l.textTex.tex || key != l.textKey) {
+        const float written = l.tcClock || l.clockGen ? 1.0f : l.text.writeProgress;
+        if (written < 1.0f || l.text.writePlaying) { // being written: the picture revealed along the way of the pen
+            if (!l.textWriting || key != l.textWritingKey) {
+                QFont font(l.text.font);
+                font.setPixelSize(std::max(1, l.text.size));
+                l.textWriting = TextWriting::build(renderTextLayer(l, shown, fill, true), renderTextLayer(l, shown, fill), true,
+                                                   QFontMetricsF(font).lineSpacing() * std::max(0.1f, l.text.lineHeight));
+                l.textWritingKey = key;
+            }
+            l.textWriting->setProgress(written);
+            const QImage &img = l.textWriting->image();
+            l.textTex.upload(img.constBits(), img.width(), img.height());
+            l.textKey.clear(); // written: the whole picture again
+        } else if (!l.textTex.tex || key != l.textKey) {
+            l.textWriting.reset();
             const QImage img = renderTextLayer(l, shown, fill);
             l.textTex.upload(img.constBits(), img.width(), img.height());
             l.textKey = key;
@@ -694,8 +801,15 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
 
     if (l.effectsEnabled) {
         int ping = 0;
-        for (auto &fx : l.effects) {
-            if (!fx->enabled) continue;
+        l.stageTex.assign(l.effects.size() + 1, 0);
+        l.stageTex[0] = tex;
+        for (size_t k = 0; k < l.effects.size(); ++k) {
+            auto &fx = l.effects[k];
+            if (!fx->enabled) {
+                l.stageTex[k + 1] = tex;
+                continue;
+            }
+            const GLuint input = tex;
             RenderTarget &dst = l.fxTarget[ping];
             bindLayerImages(*fx);
             feedAudio(*fx);
@@ -705,10 +819,23 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                 l.finalTex = 0;
                 return;
             }
-            // Through its mask: the effect where the mask is white, the input where it is black
+            // Through its mask: the effect where the mask is white, the input where it is black; on the channels it
+            // changes only
+            // The mask's picture at its stage: its own layer's from above this effect, another's as chosen
             const Layer *mask = fx->maskLayer ? layer(indexOfId(fx->maskLayer)) : nullptr;
-            const GLuint maskTex = !mask ? 0 : fx->maskPreFx && mask->preFxTex ? mask->preFxTex : mask->finalTex;
-            if (mask && maskTex && mask != &l) {
+            GLuint maskTex = 0;
+            if (mask == &l) {
+                if (fx->maskStage >= 0 && size_t(fx->maskStage) <= k) maskTex = l.stageTex[size_t(fx->maskStage)];
+            } else if (mask) {
+                const int s = fx->maskStage;
+                maskTex = s == 0 && mask->preFxTex ? mask->preFxTex
+                        : s > 0 && size_t(s) < mask->stageTex.size() && mask->stagesWanted.count(s) && mask->stageTex[size_t(s)]
+                            ? mask->stageTex[size_t(s)]
+                            : mask->finalTex;
+            }
+            const bool masked = mask && maskTex;
+            const bool someChannels = !std::all_of(fx->channels.begin(), fx->channels.end(), [](bool on) { return on; });
+            if (masked || someChannels) {
                 RenderTarget &mixed = l.maskTarget[ping];
                 mixed.ensure(w, h);
                 if (!mixed.ready(w, h)) {
@@ -720,7 +847,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                 auto f = gl();
                 f->glDisable(GL_BLEND);
                 f->glUseProgram(m_maskProgram);
-                const GLuint texs[3] = {tex, dst.tex, maskTex};
+                const GLuint texs[3] = {tex, dst.tex, masked ? maskTex : dst.tex};
                 const GLint locs[3] = {m_maskInLoc, m_maskFxLoc, m_maskMaskLoc};
                 for (int k = 0; k < 3; ++k) {
                     f->glActiveTexture(GL_TEXTURE0 + k);
@@ -728,13 +855,30 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                     f->glUniform1i(locs[k], k);
                 }
                 f->glUniform1i(m_maskInvertLoc, fx->maskInvert ? 1 : 0);
+                f->glUniform1i(m_maskHasLoc, masked ? 1 : 0);
+                f->glUniform4f(m_maskChannelsLoc, fx->channels[0] ? 1.f : 0.f, fx->channels[1] ? 1.f : 0.f,
+                               fx->channels[2] ? 1.f : 0.f, fx->channels[3] ? 1.f : 0.f);
                 drawQuad();
                 f->glActiveTexture(GL_TEXTURE0);
                 tex = mixed.tex;
             } else {
                 tex = dst.tex;
             }
-            ping = 1 - ping;
+            // A stage a mask takes: kept as it is now
+            if (l.stagesWanted.count(int(k) + 1)) {
+                RenderTarget &kept = l.stageTargets[int(k) + 1];
+                kept.ensure(w, h);
+                if (kept.ready(w, h)) {
+                    blit(tex, kept);
+                    l.stageTex[k + 1] = kept.tex;
+                }
+            } else {
+                l.stageTex[k + 1] = tex;
+            }
+            // Mask only: its picture is for the masks; the layer's goes on from what it was given (its targets free
+            // again for the next effect)
+            if (fx->maskOnly) tex = input;
+            else ping = 1 - ping;
         }
     }
     applySurfaceMasks(l, tex, w, h);
@@ -887,6 +1031,91 @@ void Engine::renderGroup(Layer &g, const std::vector<Layer *> &members, const Is
     if (!g.groupTarget.ready(m_compSize.width(), m_compSize.height())) return;
     compositeLayers(g.groupTarget, members);
     processLayer(g, g.groupTarget.tex, g.groupTarget.w, g.groupTarget.h, true, rc);
+}
+
+// A 3D Scene's picture: its models drawn by its camera under its lights (its members shown, Model3D.h), the composition's
+// size, then its own ROI, color and effects as a group's
+void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc)
+{
+    g.finalTex = 0;
+    g.rawTex = 0;
+    if (!g.sceneRenderer) g.sceneRenderer = std::make_shared<Scene3D>();
+    std::vector<Scene3D::Item> items;
+    std::vector<Scene3D::Lamp> lamps;
+    collectScene(members, items, lamps);
+    const int w = m_compSize.width(), h = m_compSize.height();
+    const Layer *env = g.sceneEnvironment ? layer(indexOfId(g.sceneEnvironment)) : nullptr;
+    const bool linear = env && g.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex; // an HDR file as read
+    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear, m_quality3d);
+    if (!tex) return;
+    processLayer(g, tex, w, h, true, rc);
+}
+
+GLuint Engine::stagePicture(const Layer &l, int stage) const
+{
+    if (stage == kStageHdrFile) return l.hdrTex.tex ? l.hdrTex.tex : l.finalTex; // the HDR file as read
+    if (stage == 0 && l.preFxTex) return l.preFxTex; // its source, before its FX
+    if (stage > 0 && size_t(stage) < l.stageTex.size() && l.stagesWanted.count(stage) && l.stageTex[size_t(stage)])
+        return l.stageTex[size_t(stage)]; // after its FX `stage`, kept for this
+    return l.finalTex;
+}
+
+QVector3D Engine::placeOf3dObject(const Layer &object)
+{
+    QMatrix4x4 parent;
+    for (quint64 up = object.parent; up;) {
+        const Layer *g = layer(indexOfId(up));
+        if (!g || !g->merge3d) break;
+        parent = g->modelPlacement.transform() * parent;
+        up = g->parent;
+    }
+    if (object.type == SourceType::Light) return parent.map(object.light.located());
+    if (object.model) return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+    const ModelPlacement &p = object.modelPlacement;
+    return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+}
+
+LightSettings Engine::placedLight(const Layer &m, const QMatrix4x4 &parent, QVector3D *target)
+{
+    LightSettings light = m.light;
+    const QVector3D at = parent.map(light.located());
+    for (int a = 0; a < 3; ++a) light.position[size_t(a)] = at[a];
+    QVector3D points = parent.mapVector(Camera3D::aim(light.yaw, light.pitch));
+    if (light.lookAt) {
+        const Layer *object = m.lightLookAt ? layer(indexOfId(m.lightLookAt)) : nullptr;
+        const QVector3D seen = object ? placeOf3dObject(*object) : QVector3D(light.lookPoint[0], light.lookPoint[1], light.lookPoint[2]);
+        if (target) *target = seen;
+        if ((seen - at).lengthSquared() > 1e-8f) points = seen - at; // on its target: as it was
+    }
+    Camera3D::anglesOf(points, &light.yaw, &light.pitch);
+    return light;
+}
+
+void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
+                          const QMatrix4x4 &parent)
+{
+    for (Layer *m : members) {
+        if (m->merge3d) { // what it holds, under its transform and those above it; hidden, all of it
+            if (!m->enabled) continue;
+            std::vector<Layer *> inside;
+            for (auto &o : m_layers)
+                if (o->parent == m->id) inside.push_back(o.get());
+            collectScene(inside, items, lamps, parent * m->modelPlacement.transform());
+            continue;
+        }
+        if (!m->enabled || m->soloHidden) continue;
+        if (m->type == SourceType::Model && m->model) {
+            m->model->setDetail(m->modelPlacement.meshDetail(m->modelDisplace != 0));
+            m->model->setSmooth(m->modelPlacement.shading == 1);
+            const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
+            const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
+            items.push_back({m->model, m->modelPlacement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
+                             disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
+                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid, parent});
+        } else if (m->type == SourceType::Light) {
+            lamps.push_back({placedLight(*m, parent), m->opacity});
+        }
+    }
 }
 
 // A viewport's picture: the part of the composition its Spatial places it on, drawn at its own size, then
@@ -1280,6 +1509,55 @@ void Engine::frame(double dt)
         renderPausedSources(rc);
     }
     composite();
+    // Only a tiny visual tap crosses to the audio engine. All GL work stays on this thread; the device callback only reads
+    // atomics and performs DSP. An instrument that listens to the picture listens to one viewport's output (its own
+    // setting; the first viewport by default, the composition when the project has none): one read per viewport watched.
+    {
+        std::map<const RenderTarget *, std::array<float, 3>> seen;
+        auto watched = [this](const Layer &l) -> const RenderTarget * {
+            const Layer *viewport = nullptr;
+            for (const auto &candidate : m_layers) {
+                if (!candidate->isViewport) continue;
+                if (!viewport) viewport = candidate.get(); // the first
+                if (l.sonificationViewport && candidate->id == l.sonificationViewport) {
+                    viewport = candidate.get();
+                    break;
+                }
+            }
+            return viewport ? &viewport->vpOut[viewport->vpBack] : &m_output[m_back];
+        };
+        for (const auto &layer : m_layers)
+            if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification()) seen[watched(*layer)] = {};
+        if (!seen.empty()) {
+            auto *f = gl();
+            GLint read = 0, draw = 0, pack = 0;
+            f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+            f->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+            f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
+            m_audioVisual.ensure(16, 16);
+            for (auto &[picture, rgb] : seen) {
+                if (!m_audioVisual.ready(16, 16) || !picture->fbo || picture->w <= 0 || picture->h <= 0) continue;
+                f->glBindFramebuffer(GL_READ_FRAMEBUFFER, picture->fbo);
+                f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_audioVisual.fbo);
+                f->glBlitFramebuffer(0, 0, picture->w, picture->h, 0, 0, 16, 16, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                f->glBindFramebuffer(GL_READ_FRAMEBUFFER, m_audioVisual.fbo);
+                f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                std::array<unsigned char, 16 * 16 * 4> pixels{};
+                f->glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                for (size_t i = 0; i < pixels.size(); i += 4)
+                    for (int c = 0; c < 3; ++c)
+                        rgb[size_t(c)] += pixels[i + size_t(c)] / (255.f * 16 * 16);
+            }
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack));
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(read));
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(draw));
+            for (const auto &layer : m_layers)
+                if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification()) {
+                    const auto &rgb = seen[watched(*layer)];
+                    layer->audio->generator()->setColor(rgb[0], rgb[1], rgb[2]);
+                }
+        }
+    }
     stepVision();
     stepPixelMapping(); // the fixtures read the composition as it goes out (opacity and blackout included)
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
@@ -1306,6 +1584,25 @@ void Engine::frame(double dt)
         const int index = indexOfId(slot.id);
         if (index < 0) { slot.target[m_back].destroy(); continue; }
         const Layer &layer = *m_layers[size_t(index)];
+        if (slot.sceneView && layer.scene3d) { // a 3D view: the scene from the view's own camera
+            std::vector<Layer *> members;
+            for (auto &m : m_layers)
+                if (m->parent == layer.id) members.push_back(m.get());
+            std::vector<Scene3D::Item> items;
+            std::vector<Scene3D::Lamp> lamps;
+            collectScene(members, items, lamps);
+            if (!slot.editor[m_back]) slot.editor[m_back] = std::make_shared<Scene3D>();
+            SceneSettings view = layer.scene; // the view's camera and background
+            for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
+            view.distance = slot.camera.distance;
+            view.yaw = slot.camera.yaw;
+            view.pitch = slot.camera.pitch;
+            view.fov = slot.camera.fov;
+            view.background = slot.camera.background;
+            slot.editorTex[m_back] = slot.editor[m_back]->drawView(view, items, slot.sceneSize.width(), slot.sceneSize.height(), slot.sceneLook);
+            if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
+            continue;
+        }
         const RenderTarget *vp = layer.isViewport ? &layer.vpOut[layer.vpBack] : nullptr;
         const GLuint texture = vp ? vp->tex : layer.finalTex;
         QSize size = vp ? QSize(vp->w, vp->h) : QSize(layer.finalW, layer.finalH);

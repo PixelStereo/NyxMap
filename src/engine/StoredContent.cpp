@@ -187,6 +187,7 @@ Engine::Preset StoredContent::select(const Engine::Preset &preset, const std::ve
             if (preset.categories.contains(key))
                 result.categories[key] = preset.categories.value(key);
         }
+        if (item.key == "@views") result.views = preset.views;
         if (item.key.startsWith("@geometry/")) {
             const auto key = item.key.mid(10);
             if (preset.geometry.contains(key))
@@ -214,6 +215,7 @@ void StoredContent::remove(Engine::Preset &preset, const std::vector<PresetSelec
         preset.categories.remove(it.key());
     for (auto it = removed.geometry.begin(); it != removed.geometry.end(); ++it)
         preset.geometry.remove(it.key());
+    if (!removed.views.isEmpty()) preset.views = QJsonObject();
     preset.animations.erase(
         std::remove_if(preset.animations.begin(), preset.animations.end(),
                        [&](const auto &a) {
@@ -246,6 +248,7 @@ void StoredContent::merge(Engine::Preset &preset, const Engine::Preset &added)
         preset.categories[it.key()] = it.value();
     for (auto it = added.geometry.begin(); it != added.geometry.end(); ++it)
         preset.geometry[it.key()] = it.value();
+    if (!added.views.isEmpty()) preset.views = added.views;
     for (const auto &a : added.animations) {
         if (a.tracks.empty())
             continue;

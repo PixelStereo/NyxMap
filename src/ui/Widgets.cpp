@@ -1,5 +1,6 @@
 #include "Widgets.h"
 #include "ColorPicker.h"
+#include <QDateTime>
 #include <QSpinBox>
 #include <QPointer>
 
@@ -17,6 +18,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QProxyStyle>
+#include <QStyleOption>
 #include <QRegularExpression>
 #include <QPixmap>
 #include <QWheelEvent>
@@ -35,6 +38,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+
+QStyle *checkStyle(QStyle *base); // Fusion with the application's check boxes (below)
 
 // ---------------------------------------------------------------------------
 // Accent color
@@ -214,7 +219,7 @@ namespace theme {
 // Dark interface, with the accent wherever a selection or an active control is shown
 void applyToApplication(QApplication &app)
 {
-    app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     QPalette p;
     const QColor base(30, 30, 33), window(40, 40, 44), text(225, 225, 228), a = accent();
     p.setColor(QPalette::Window, window);
@@ -714,6 +719,48 @@ QColor flagEdge(bool hover, bool enabled)
 }
 } // namespace
 
+// A check box as a square: its edge, and when it is on, a square of the accent inside it (no tick)
+void theme::paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled)
+{
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    QColor accent = theme::accent();
+    if (!enabled) accent.setAlphaF(0.45f);
+    p.setPen(QPen(on || partial ? accent : flagEdge(hover, enabled), 1.2));
+    p.setBrush(QColor(24, 24, 27));
+    p.drawRoundedRect(box.adjusted(0.6, 0.6, -0.6, -0.6), 3, 3);
+    if (on || partial) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(accent);
+        const QRectF inner = box.adjusted(3.2, 3.2, -3.2, -3.2);
+        p.drawRoundedRect(partial && !on ? QRectF(inner.left(), inner.center().y() - 1.5, inner.width(), 3) : inner, 1.5, 1.5);
+    }
+    p.restore();
+}
+
+namespace {
+// The application's style: Fusion, its check boxes drawn as theme::paintCheck (the ones of the lists and the trees too)
+class CheckStyle : public QProxyStyle
+{
+public:
+    using QProxyStyle::QProxyStyle;
+    void drawPrimitive(PrimitiveElement pe, const QStyleOption *o, QPainter *p, const QWidget *w = nullptr) const override
+    {
+        if (pe == PE_IndicatorCheckBox || pe == PE_IndicatorItemViewItemCheck) {
+            const QRectF r(o->rect);
+            const double side = std::min(r.width(), r.height());
+            const QRectF box(r.center().x() - side / 2, r.center().y() - side / 2, side, side);
+            theme::paintCheck(*p, box, o->state & State_On, o->state & State_NoChange, o->state & State_MouseOver,
+                              o->state & State_Enabled);
+            return;
+        }
+        QProxyStyle::drawPrimitive(pe, o, p, w);
+    }
+};
+} // namespace
+
+QStyle *checkStyle(QStyle *base) { return new CheckStyle(base); }
+
 FlagBox::FlagBox(QWidget *parent) : FlagBox(QString(), parent) {}
 FlagBox::FlagBox(const QString &text, QWidget *parent) : QCheckBox(text, parent)
 {
@@ -748,26 +795,7 @@ void FlagBox::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     const bool on = isChecked(), en = isEnabled();
     const QRectF box(1.5, (height() - 14) / 2.0, 14, 14);
-    if (on) {
-        QColor a = theme::accent();
-        if (!en) a.setAlphaF(0.4f);
-        p.setPen(Qt::NoPen);
-        p.setBrush(a);
-        p.drawRoundedRect(box, 3, 3);
-        QColor tick = theme::onAccent();
-        if (!en) tick.setAlphaF(0.6f);
-        p.setPen(QPen(tick, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.setBrush(Qt::NoBrush);
-        QPainterPath path;
-        path.moveTo(box.left() + 3.2, box.center().y() + 0.3);
-        path.lineTo(box.left() + 5.8, box.bottom() - 3.6);
-        path.lineTo(box.right() - 3, box.top() + 3.6);
-        p.drawPath(path);
-    } else {
-        p.setPen(QPen(flagEdge(m_hover, en), 1.2));
-        p.setBrush(QColor(24, 24, 27));
-        p.drawRoundedRect(box, 3, 3);
-    }
+    theme::paintCheck(p, box, on, checkState() == Qt::PartiallyChecked, m_hover, en);
     if (!text().isEmpty()) {
         p.setPen(palette().color(en ? QPalette::Active : QPalette::Disabled, QPalette::WindowText));
         p.setFont(font());
@@ -1461,3 +1489,67 @@ QIcon playModeIcon(int mode)
     });
 }
 
+
+// ---------------------------------------------------------------------------
+// LevelMeter
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr double kMeterFloor = -60, kMeterCeiling = 6;
+double toDb(float linear) { return linear > 1e-6f ? std::max(kMeterFloor, 20.0 * std::log10(double(linear))) : kMeterFloor; }
+} // namespace
+
+LevelMeter::LevelMeter(const QString &name, QWidget *parent) : QWidget(parent), m_name(name)
+{
+    setObjectName(QStringLiteral("levelMeter"));
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); // a thin strip, as wide as it is given
+}
+
+double LevelMeter::position(double db) { return std::clamp((db - kMeterFloor) / (kMeterCeiling - kMeterFloor), 0.0, 1.0); }
+
+void LevelMeter::setLevels(float left, float right)
+{
+    const float now[2] = {std::isfinite(left) ? std::max(0.f, left) : 0.f, std::isfinite(right) ? std::max(0.f, right) : 0.f};
+    const qint64 t = QDateTime::currentMSecsSinceEpoch();
+    bool changed = false;
+    for (int c = 0; c < 2; ++c) {
+        changed |= std::abs(toDb(now[c]) - toDb(m_level[c])) > 0.2;
+        m_level[c] = now[c];
+        if (now[c] >= m_hold[c] || t - m_holdSince[c] > 1200) {
+            changed |= m_hold[c] != now[c];
+            m_hold[c] = now[c];
+            m_holdSince[c] = t;
+        }
+    }
+    if (!changed) return;
+    setToolTip(QStringLiteral("%1L %2 dB   R %3 dB").arg(m_name.isEmpty() ? QString() : m_name + QStringLiteral(": "))
+                   .arg(toDb(m_level[0]) <= kMeterFloor ? QStringLiteral("−∞") : QString::number(toDb(m_level[0]), 'f', 1))
+                   .arg(toDb(m_level[1]) <= kMeterFloor ? QStringLiteral("−∞") : QString::number(toDb(m_level[1]), 'f', 1)));
+    update();
+}
+
+void LevelMeter::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    const QRectF area = QRectF(rect()).adjusted(0.5, 1, -0.5, -1);
+    const double gap = 1.5, bar = std::max(2.0, (area.height() - gap) / 2);
+    for (int c = 0; c < 2; ++c) {
+        const QRectF track(area.left(), area.top() + c * (bar + gap), area.width(), bar);
+        p.fillRect(track, QColor(27, 27, 29));
+        const double w = track.width() * position(toDb(m_level[c]));
+        const double amber = track.width() * position(-18), red = track.width() * position(-3);
+        auto segment = [&](double from, double to, const QColor &color) {
+            if (to > from) p.fillRect(QRectF(track.left() + from, track.top(), to - from, track.height()), color);
+        };
+        segment(0, std::min(w, amber), QColor(63, 174, 90));
+        segment(amber, std::min(w, red), QColor(222, 178, 56));
+        segment(red, w, QColor(232, 82, 70));
+        const double h = track.width() * position(toDb(m_hold[c]));
+        if (m_hold[c] > 0.001f) p.fillRect(QRectF(track.left() + std::min(h, track.width() - 1.5), track.top(), 1.5, track.height()),
+                                           m_hold[c] > 1.0f ? QColor(232, 82, 70) : QColor(205, 205, 210));
+    }
+    // Where 0 dBFS is
+    const double zero = area.left() + area.width() * position(0);
+    p.setPen(QColor(90, 90, 96));
+    p.drawLine(QPointF(zero, area.top()), QPointF(zero, area.bottom()));
+}

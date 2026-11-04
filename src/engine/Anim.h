@@ -8,6 +8,7 @@
 // absolute. An event track drives no number: as the playhead reaches each of its keys, it fires an action (a Trigger
 // parameter: Source › Rewind, Show › GO…) or sets a switch, a choice or a number to the key's value.
 
+#include <QJsonArray>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -50,6 +51,7 @@ struct AnimTrack {
     std::vector<AnimKey> keys; // curve: sorted by time
     AnimWave wave = AnimWave::Sine;
     double period = 1, center = 0.5, amplitude = 0.5, phase = 0; // oscillator (phase: 0..1 of a period)
+    QJsonArray dataFilters; // Same ordered filter definitions as interaction chains; runtime history lives in Engine.
     quint32 seed = 1;                                          // Random waves
     double valueAt(double position, double played) const; // nan: no value (a curve without keys)
     double keyValue(size_t k) const; // a key's value (the one captured for a "current value" key)

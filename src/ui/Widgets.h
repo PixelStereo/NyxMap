@@ -1,6 +1,8 @@
 #pragma once
+class QPainter;
 // Small interface building blocks shared by the inspector and the parameter panels.
 
+#include <QPushButton>
 #include <QBrush>
 #include <QCheckBox>
 #include <QToolButton>
@@ -17,6 +19,14 @@
 #include <functional>
 #include <vector>
 
+// A button of one symbol (+, −, ⧉) in a tight bar: narrow, as high as the words beside it
+inline void symbolButton(QPushButton *button)
+{
+    button->setFixedWidth(28);
+    button->setStyleSheet(QStringLiteral("QPushButton { padding:3px 0; }"));
+    button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+}
+
 class QDoubleSpinBox;
 class QSlider;
 class QLineEdit;
@@ -25,6 +35,8 @@ class ColorPicker;
 // Accent color of the interface: the selection, the bars, the buttons that are on, the links.
 // A very light grey by default, changed in the Settings tab and kept for this machine.
 namespace theme {
+// A check box, as the application draws them all: a square edge, the accent's square inside it when on
+void paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled);
 class Notifier : public QObject
 {
     Q_OBJECT
@@ -308,6 +320,32 @@ private:
     void filter(const QString &text);
     class QLineEdit *m_search;
     class QTreeWidget *m_tree;
+};
+
+// A small stereo level meter (VU): two thin bars, left over right, from -60 to +6 dBFS (green, then amber from -18,
+// red from -3, over full scale clipped), with a peak that holds for a moment. Fed with linear peaks (AudioMeter) a few
+// times a second; the tooltip tells the values. `compact` is for rows of a list.
+class LevelMeter : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit LevelMeter(const QString &name = QString(), QWidget *parent = nullptr);
+    void setLevels(float left, float right); // linear peaks (1 = full scale)
+    float left() const { return m_level[0]; }
+    float right() const { return m_level[1]; }
+    // The scale as a fraction of the width, for a level in dBFS (tests, drawing)
+    static double position(double db);
+    QSize sizeHint() const override { return QSize(160, 14); }
+    QSize minimumSizeHint() const override { return QSize(40, 14); }
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    QString m_name;
+    float m_level[2] = {0, 0};
+    float m_hold[2] = {0, 0};
+    qint64 m_holdSince[2] = {0, 0};
 };
 
 // Disables every input widget below `root` (locked layer), except those with the "allowLocked" property.

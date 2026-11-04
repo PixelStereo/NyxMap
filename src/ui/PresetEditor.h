@@ -44,6 +44,9 @@ public:
     // The stored values of `layer` grouped by category ("Source", "Spatial"…), in the layer's order (tests)
     static std::vector<std::pair<QString, QStringList>> layerValues(Engine *engine, quint64 layer);
     void fillCategoryMenu(QMenu *menu, quint64 layer, const QString &category);
+    // Everything that can go in the selected preset, whether the inspector shows it or not: the composition, each layer, the
+    // interactions (a value already in it is ticked)
+    void fillAddElements(QMenu *menu);
     void fillInteractionMenu(QMenu *menu, quint64 interaction);
     void addInteraction(quint64 id, bool newPreset);
     void capturePresetDrivers(Engine::Preset &preset, quint64 layer, const QStringList &paths) const;

@@ -82,14 +82,21 @@ void Engine::clearProject()
         m_snapshotTree.clear();
         m_nextSnapshotGroupId = 1;
         m_presets.clear();
+        m_presetTree.clear();
+        m_timelineTree.clear();
         m_nextPresetId = 1;
         m_render = RenderSettings(); // the machine's defaults
         m_paused = false;
         m_emergencyHeld = false;
         m_compositionSpeed = 1.0;
+        m_quality3d = Scene3DQuality();
         updateTimeScale();
         m_sequencer->clear();
+        m_controls.clear();
+        m_nextControlId = 1;
+        ++m_controlsRevision;
         m_animations.clear();
+        m_animationFilters.clear();
         m_nextAnimationId = 1;
         m_fades.clear();
         m_deferredRecall.clear();
@@ -136,7 +143,8 @@ void Engine::clearProject()
 QString Engine::resolvePath(const QJsonObject &o, const QString &projectDir) const
 {
     const QString abs = o.value("path").toString();
-    if (!abs.isEmpty() && (QFile::exists(abs) || !builtInIsfSource(abs).isEmpty())) return abs; // a file, or built in
+    if (!abs.isEmpty() && (QFile::exists(abs) || !builtInIsfSource(abs).isEmpty() || Model3D::isPrimitivePath(abs)))
+        return abs; // a file, or built in
     if (!projectDir.isEmpty()) {
         const QString rel = o.value("relative_path").toString();
         if (!rel.isEmpty()) {
@@ -163,6 +171,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
+        if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
+        if (l.merge3d) o["merge3d"] = true; // its transform: its params
+        if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
+            o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
     }
     if (l.isViewport) {
         o["viewport"] = true;
@@ -203,6 +215,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         if (l.timecode) src["timecode"] = l.timecode->toJson();
         // A Countdown, Stopwatch or Clock: its kind (its settings and its transport come with the values: clock/*)
         if (l.clockGen) src["clock"] = clockKindKey(l.clockGen->kind());
+        if (l.text.cursive) src["cursive"] = true;
         break;
     case SourceType::Input:
         src["type"] = "input";
@@ -211,6 +224,17 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Tox:
         src = l.tox.toJson();
         src["type"] = "tox";
+        break;
+    case SourceType::Model:
+        src["type"] = "model";
+        if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
+        if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
+        if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where their pictures are taken
+        if (l.modelDisplace) src["displace_stage"] = l.modelDisplaceStage;
+        break;
+    case SourceType::Light:
+        src["type"] = "light";
+        if (l.lightLookAt) src["look_at"] = QString::number(l.lightLookAt);
         break;
     case SourceType::Web:
         src = l.web.toJson();
@@ -223,9 +247,12 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["path"] = l.sourcePath;
         src["live"] = true;
         src["rtsp_tcp"] = l.videoSource.rtspTcp;
-    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox) {
+    } else if (type == SourceType::Video || type == SourceType::Audio || type == SourceType::Image || type == SourceType::Isf || type == SourceType::Tox ||
+               type == SourceType::Model) {
         src["path"] = l.sourcePath;
-        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty()) src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
+        if (!projectDir.isEmpty() && builtInIsfSource(l.sourcePath).isEmpty() && !isAudioInputUri(l.sourcePath) &&
+            !Model3D::isPrimitivePath(l.sourcePath))
+            src["relative_path"] = QDir(projectDir).relativeFilePath(l.sourcePath);
     }
     if (type == SourceType::Video && l.videoSource.isSequence()) // an image sequence: the folder is the path
         src["sequence"] = QJsonObject{{"pattern", l.videoSource.pattern}, {"start", l.videoSource.start},
@@ -247,7 +274,27 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     QJsonObject params = parametersToJson(l.parameters());
     for (auto it = l.extraParams.constBegin(); it != l.extraParams.constEnd(); ++it)
         if (!params.contains(it.key())) params.insert(it.key(), it.value());
+    // Animation definitions below are authoritative. Their virtual control addresses remain writable by
+    // presets/OSC, but capturing them twice would overwrite edited snapshot animation settings on recall.
+    for (auto it = params.begin(); it != params.end();) {
+        if (it.key().startsWith("animation/"))
+            it = params.erase(it);
+        else
+            ++it;
+    }
     o["params"] = params;
+    if (l.audioEffects) {
+        QJsonArray effects;
+        for (const auto &value : l.audioEffects->toJson()) {
+            auto entry = value.toObject();
+            if (!projectDir.isEmpty() && !entry.value("path").toString().isEmpty())
+                entry["relative_path"] = QDir(projectDir).relativeFilePath(entry.value("path").toString());
+            effects.append(entry);
+        }
+        if (!effects.isEmpty())
+            o["audio_fx"] = effects;
+    }
+    if (l.sonificationViewport) o["sonification_viewport"] = QString::number(l.sonificationViewport);
     if (!l.anims.empty()) {
         QJsonArray anims;
         for (const Animation &a : l.anims) anims.append(layerAnimToJson(a));
@@ -270,6 +317,14 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         ++l->masksRevision;
         l->matte = LayerMatte::fromJson(o.value("matte").toObject());
         l->isGroup = o.value("group").toBool(false);
+        l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
+        l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
+        if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
+        if (l->scene3d) {
+            const QJsonObject env = o.value("environment").toObject();
+            l->sceneEnvironment = env.value("layer").toString().toULongLong();
+            l->sceneEnvironmentStage = env.value("stage").toInt(-1);
+        }
         l->collapsed = o.value("collapsed").toBool(false);
         l->isViewport = o.value("viewport").toBool(false);
         if (l->isViewport) {
@@ -307,7 +362,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     const QString type = src.value("type").toString();
     const VideoSource videoSource = videoSourceFromJson(src);
     // A stream's URL is used as it is (no file to look for)
-    const QString path = videoSource.live ? src.value("path").toString().trimmed()
+    const QString path = videoSource.live || isAudioInputUri(src.value("path").toString()) ? src.value("path").toString().trimmed()
                          : type != "none"  ? resolvePath(src, projectDir)
                                            : QString();
     QString err;
@@ -342,6 +397,26 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->type = SourceType::Layer;
         l->sourceLayer = src.value("layer").toString().toULongLong();
         l->sourceTap = layerTapFromKey(src.value("tap").toString());
+    } else if (type == "light") {
+        setLayerLight(index);
+        Lock lk(&m_mutex); // what it looks at: a layer of this project (ids kept), checked when drawn
+        if (Layer *l = layer(index)) l->lightLookAt = src.value("look_at").toString().toULongLong();
+    } else if (type == "model") {
+        {
+            Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
+            if (Layer *l = layer(index)) {
+                l->modelPicture = src.value("picture").toString().toULongLong();
+                l->modelDisplace = src.value("displace").toString().toULongLong();
+                l->modelPictureStage = src.value("picture_stage").toInt(-1);
+                l->modelDisplaceStage = src.value("displace_stage").toInt(-1);
+            }
+        }
+        const bool ok = setLayerModel(index, path, &err);
+        if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
+        if (!ok) {
+            Lock lk(&m_mutex);
+            markMissing(*layer(index), SourceType::Model, path, err);
+        }
     } else if (type == "isf") {
         {
             Lock lk(&m_mutex);
@@ -390,6 +465,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
             Layer *l = layer(index);
             l->type = SourceType::Text;
             l->text = TextSource{};
+            l->text.cursive = src.value("cursive").toBool();
             l->clockGen.reset();
         }
         if (src.contains("timecode")) { // a Timecode generator: its clock (its text style comes with the values)
@@ -415,6 +491,29 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         }
     }
 
+    if (o.contains("sonification_viewport")) { // kept as saved: a viewport not (yet) there falls back to the first one
+        Lock lk(&m_mutex);
+        if (Layer *l = layer(index)) l->sonificationViewport = o.value("sonification_viewport").toString().toULongLong();
+    }
+    if (o.contains("audio_fx")) {
+        QJsonArray effects;
+        for (const auto &value : o.value("audio_fx").toArray()) {
+            auto entry = value.toObject();
+            if (entry.contains("path"))
+                entry["path"] = resolvePath(entry, projectDir);
+            effects.append(entry);
+        }
+        QString why;
+        if (!setAudioEffectsJson(index, effects, &why, true) && warnings)
+            *warnings << name + QStringLiteral(" / Audio FX: ") + why;
+        if (warnings) {
+            Lock lock(&m_mutex);
+            if (auto *l = layer(index); l && l->audioEffects)
+                for (const auto &effect : l->audioEffects->effects())
+                    if (!effect->error().isEmpty())
+                        *warnings << name + QStringLiteral(" / Audio FX: ") + effect->error();
+        }
+    }
     for (const QJsonValue &v : o.value("fx").toArray()) {
         const QJsonObject e = v.toObject();
         const QString p = resolvePath(e, projectDir);
@@ -483,7 +582,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         root["app"] = "NyxMap";
         root["format_version"] = kProjectFormat;
         root["composition"] = QJsonObject{{"width", m_compSize.width()}, {"height", m_compSize.height()},
-                                    {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()}};
+                                    {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()},
+                                    {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections, m_quality3d.glow, m_quality3d.atmosphere}}};
         QJsonArray layers;
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
@@ -500,6 +600,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray presets;
         for (const Preset &p : m_presets) presets.append(presetToJson(p));
         root["presets"] = presets;
+        root["preset_tree"] = snapshotTreeToJson(m_presetTree);
+        root["timeline_tree"] = snapshotTreeToJson(m_timelineTree);
         root["timelines"] = animationsToJson();
         QJsonArray tcOutputs, midiOutputs;
         for (const TimecodeOutput &t : m_tcOutputs) tcOutputs.append(t.toJson());
@@ -513,6 +615,8 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         for (const Interaction &it : m_interactions) interactions.append(it.toJson());
         root["interactions"] = interactions;
         root["sequences"] = m_sequencer->toJson();
+        root["clock"] = m_beatClock.toJson();
+        if (!m_controls.empty()) root["controls"] = controlsJson();
         root["current_sequence"] = m_sequencer->current();
         root["startup_sequence"] = m_sequencer->startupSequence();
         root["startup_step"] = m_sequencer->startupStep();
@@ -630,8 +734,8 @@ static QString projectPreflightError(const QJsonObject &root)
             const QString error = optionalObject(l, key, where);
             if (!error.isEmpty()) return error;
         }
-        for (const QString &key : {QStringLiteral("fx"), QStringLiteral("masks"),
-                                   QStringLiteral("anims")}) {
+        for (const QString &key :
+             {QStringLiteral("audio_fx"), QStringLiteral("fx"), QStringLiteral("masks"), QStringLiteral("anims")}) {
             const QString error = optionalArray(l, key, where);
             if (!error.isEmpty()) return error;
             const QJsonArray list = l.value(key).toArray();
@@ -647,7 +751,8 @@ static QString projectPreflightError(const QJsonObject &root)
                 (type != QLatin1String("none") && type != QLatin1String("video") &&
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
-                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox")))
+                 type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox") &&
+                 type != QLatin1String("model") && type != QLatin1String("light")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {
@@ -706,6 +811,14 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     const QJsonObject comp = root.value("composition").toObject();
     setCompositionSize(QSize(comp.value("width").toInt(1920), comp.value("height").toInt(1080)));
     setCompositionSpeed(comp.value("speed").toDouble(1.0));
+    {
+        const QJsonArray q = comp.value("quality_3d").toArray();
+        m_quality3d = Scene3DQuality();
+        if (q.size() == 6) {
+            const auto level = [&](int k) { return std::clamp(q[k].toInt(2), 0, 3); };
+            m_quality3d = {level(0), level(1), level(2), level(3), level(4), level(5)};
+        }
+    }
     {
         RenderSettings rs;
         rs.frameRate = comp.value("fps").toDouble(-1); // -1: the machine's default
@@ -773,6 +886,19 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         for (Snapshot &m : m_snapshots)
             if (!m.id) m.id = m_nextSnapshotId++;
         m_snapshotTree = snapshotTreeFromJson(root.value("snapshot_tree").toArray());
+        m_presetTree = snapshotTreeFromJson(root.value("preset_tree").toArray());
+        m_timelineTree = snapshotTreeFromJson(root.value("timeline_tree").toArray());
+        {
+            std::function<void(const std::vector<SnapshotNode> &)> bump = [&](const std::vector<SnapshotNode> &nodes) {
+                for (const SnapshotNode &n : nodes)
+                    if (!n.snapshot) {
+                        m_nextSnapshotGroupId = std::max(m_nextSnapshotGroupId, n.group + 1);
+                        bump(n.children);
+                    }
+            };
+            bump(m_presetTree);
+            bump(m_timelineTree);
+        }
         normalizeSnapshotTree();
         for (const QJsonValue &v : root.value("presets").toArray()) {
             Preset p = presetFromJson(v.toObject());
@@ -786,10 +912,12 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             if (!p.id) p.id = m_nextPresetId++;
         animationsFromJson(root.value("timelines").toArray());
         m_sequencer->fromJson(root.value("sequences").toArray(), root.value("current_sequence").toInt(0));
+        m_beatClock.fromJson(root.value("clock").toObject());
         m_sequencer->setStartupSequence(root.value("startup_sequence").toInt(-1));
         m_sequencer->setStartupStep(root.value("startup_step").toInt(0));
         m_sequencer->setStartupGo(root.value("startup_go").toBool(true));
     }
+    setControlsJson(root.value("controls").toArray()); // before the interactions below: they follow and drive its parameters
     emit snapshotsChanged();
     emit presetsChanged();
     emit animationsChanged();

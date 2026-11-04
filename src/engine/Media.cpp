@@ -1,5 +1,6 @@
 // Engine: the media used by the project — the file types read, what each layer uses, the Media Bin,
 // and relinking a file that moved.
+#include "Model3D.h"
 #include "EngineInternal.h"
 
 #include <QDir>
@@ -19,7 +20,7 @@ QStringList Engine::videoExtensions()
 
 QStringList Engine::imageExtensions()
 {
-    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "psd", "psb"
+    static const QStringList e = {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "gif", "webp", "tga", "exr", "hdr", "psd", "psb"
 #ifdef NYXMAP_HAS_SVG
                                   , "svg", "svgz"
 #endif
@@ -123,9 +124,17 @@ QString Engine::streamName(const QString &url)
     return name;
 }
 
+std::vector<LiveInputInfo> Engine::audioInputs()
+{
+    std::vector<LiveInputInfo> found;
+    for (const QString &device : AudioCapture::devices())
+        found.push_back({audioInputUri(device), device, QStringLiteral("Audio")});
+    return found;
+}
+
 QStringList Engine::audioExtensions()
 {
-    static const QStringList e = {"wav", "aif", "aiff", "aifc", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "caf", "w64"};
+    static const QStringList e = {"dsp", "nyxaudio", "wav", "aif", "aiff", "aifc", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "caf", "w64"};
     return e;
 }
 
@@ -146,9 +155,12 @@ bool Engine::isIsfFile(const QString &path)
 std::vector<Engine::MediaRef> Engine::mediaUsage() const
 {
     std::vector<MediaRef> out;
-    enum Kind { ImageKind, VideoKind, AudioKind };
+    enum Kind { ImageKind, VideoKind, AudioKind, ModelKind };
     auto kindOf = [](const QString &p) {
-        return isVideoFile(p) || isToxFile(p) || isStreamUrl(p) || QFileInfo(p).isDir() ? VideoKind : isAudioFile(p) ? AudioKind : ImageKind;
+        return Model3D::isModelFile(p)                                                   ? ModelKind
+               : isVideoFile(p) || isToxFile(p) || isStreamUrl(p) || QFileInfo(p).isDir() ? VideoKind
+               : isAudioFile(p)                                                          ? AudioKind
+                                                                                         : ImageKind;
     };
     auto add = [&](const QString &path, Kind kind, const QString &user, bool imported) {
         if (path.isEmpty()) return;
@@ -163,6 +175,7 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
         r.path = path;
         r.video = kind == VideoKind;
         r.audio = kind == AudioKind;
+        r.model = kind == ModelKind;
         r.imported = imported;
         if (!user.isEmpty()) r.users << user;
         out.push_back(r);
@@ -171,8 +184,15 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
         Lock lk(&m_mutex);
         for (const auto &l : m_layers) {
             const SourceType t = l->type != SourceType::None ? l->type : l->missingType;
-            if (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox)
-                add(l->sourcePath, (t == SourceType::Video || t == SourceType::Tox) ? VideoKind : t == SourceType::Audio ? AudioKind : ImageKind,
+            const bool listed = t != SourceType::Audio || (!isAudioInputUri(l->sourcePath) && !AudioGenerator::isRecipe(l->sourcePath));
+            if (listed && !Model3D::isPrimitivePath(l->sourcePath) && // a built-in primitive: no file
+                (t == SourceType::Video || t == SourceType::Image || t == SourceType::Audio || t == SourceType::Tox ||
+                 t == SourceType::Model))
+                add(l->sourcePath,
+                    t == SourceType::Model                                ? ModelKind
+                    : (t == SourceType::Video || t == SourceType::Tox) ? VideoKind
+                    : t == SourceType::Audio                           ? AudioKind
+                                                                       : ImageKind,
                     l->name, false);
             auto scan = [&](const IsfInstance *inst, const QString &user) {
                 if (!inst) return;

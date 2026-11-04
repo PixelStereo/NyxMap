@@ -6,12 +6,31 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
+#include <QPushButton>
+#include <functional>
+#include <QTimer>
 #include <QMouseEvent>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <cmath>
 #include <cstdio>
+
+// Sees each menu as it is shown
+class MenuWatch : public QObject
+{
+public:
+    explicit MenuWatch(std::function<void(QMenu *)> seen) : m_seen(std::move(seen)) {}
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() == QEvent::Show)
+            if (auto *menu = qobject_cast<QMenu *>(o)) m_seen(menu);
+        return false;
+    }
+
+private:
+    std::function<void(QMenu *)> m_seen;
+};
 
 int runClockPresetUiTests(Engine &engine)
 {
@@ -35,6 +54,8 @@ int runClockPresetUiTests(Engine &engine)
     presets.select(engine.preset(pi).id);
     presets.setEditing(true);
     LayerInspector inspector(&engine, &undo);
+    // The menu at the top is not what this test is about: without its row the fields sit where they do on a small CI screen
+    if (auto *pickerRow = inspector.findChild<QWidget *>("layerPickerRow")) pickerRow->hide();
     inspector.resize(700, 1600); inspector.setLayer(row); inspector.show();
     auto showSource = [&] {
         inspector.rebuild();
@@ -69,13 +90,20 @@ int runClockPresetUiTests(Engine &engine)
         undo.redo(); check(presets.inSelected(id, {path}), qPrintable(path + ": Redo restores the setting"));
         click(label ? label : field, label ? Qt::NoModifier : Qt::AltModifier);
         check(!presets.inSelected(id, {path}), qPrintable(path + ": click removes the setting from the selected preset"));
+        // The menu caught as it is shown (whether it is popped up or run in a loop of its own), then closed: what it
+        // offers is read there, whatever the focus and the speed of the machine
+        bool hasPreset = false, shown = false;
+        MenuWatch watch([&](QMenu *menu) {
+            shown = true;
+            for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
+            QTimer::singleShot(0, menu, &QMenu::close);
+        });
+        qApp->installEventFilter(&watch);
         QContextMenuEvent event(QContextMenuEvent::Mouse, {3, 3}, field->mapToGlobal(QPoint(3, 3)));
         QApplication::sendEvent(field, &event);
-        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-        bool hasPreset = false;
-        if (menu) for (auto *a : menu->actions()) hasPreset |= a->text() == "Preset";
+        for (int k = 0; k < 50 && !shown; ++k) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        qApp->removeEventFilter(&watch);
         check(hasPreset, qPrintable(path + ": the field exposes the standard Preset context menu"));
-        if (menu) menu->close();
         pump();
     };
     check(clockKindName(ClockKind::Stopwatch) == "Chronometer", "the public generator name is Chronometer");
@@ -129,5 +157,28 @@ int runClockPresetUiTests(Engine &engine)
     check(engine.saveProject(files.filePath("clocks.nyxmap"), {}, &error) &&
           engine.loadProject(files.filePath("clocks.nyxmap"), nullptr, &error) && engine.preset(pi).indexOf(id, "tc/rate") >= 0,
           "individual Timecode settings survive saving and reopening the project");
+    // A text can be written as by a pen, from its inspector; not a clock
+    {
+        const int cursive = engine.addLayer("Cursive inspector");
+        const quint64 cursiveId = engine.layerId(cursive);
+        check(engine.setLayerCursive(cursive), "the Cursive generator");
+        inspector.setLayer(cursive);
+        inspector.rebuild();
+        pump();
+        auto *write = inspector.findChild<QPushButton *>("textWriteStart");
+        check(write != nullptr, "its Writing box");
+        if (write) write->click();
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() == 0, "Write starts from nothing");
+        auto *pause = inspector.findChild<QPushButton *>("textWritePause");
+        if (pause) pause->click();
+        engine.advanceFades(1);
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() == 0, "the pause holds the pen");
+        if (pause) pause->click();
+        engine.advanceFades(1);
+        check(engine.parameterValue(cursiveId, "text/write/progress").toDouble() > 0, "and lets it go on");
+        engine.setParameter(cursiveId, "text/write/pause", true);
+        engine.removeLayer(cursive);
+        pump();
+    }
     return failures;
 }

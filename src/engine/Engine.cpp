@@ -255,14 +255,17 @@ bool Engine::initialize(QString *err)
         if (err) *err = QStringLiteral("Internal shaders: ") + log;
         return false;
     }
-    // Mask of an effect: input and result mixed by the mask's luminance (times its alpha), the mask stretched
+    // Mask of an effect: input and result mixed by the mask's luminance (times its alpha), the mask stretched; then
+    // only the channels the effect changes (the others: the input's)
     m_maskProgram = compileProgram(quadVs,
                                    "#version 330 core\nuniform sampler2D u_in; uniform sampler2D u_fx; uniform sampler2D u_mask;\n"
-                                   "uniform int u_invert; in vec2 v_uv; out vec4 o;\n"
-                                   "void main(){ vec4 m = texture(u_mask, v_uv);\n"
-                                   "  float k = clamp(dot(m.rgb, vec3(0.2126, 0.7152, 0.0722)) * m.a, 0.0, 1.0);\n"
-                                   "  if (u_invert != 0) k = 1.0 - k;\n"
-                                   "  o = mix(texture(u_in, v_uv), texture(u_fx, v_uv), k); }\n",
+                                   "uniform int u_invert; uniform int u_hasMask; uniform vec4 u_channels; in vec2 v_uv; out vec4 o;\n"
+                                   "void main(){ float k = 1.0;\n"
+                                   "  if (u_hasMask != 0) { vec4 m = texture(u_mask, v_uv);\n"
+                                   "    k = clamp(dot(m.rgb, vec3(0.2126, 0.7152, 0.0722)) * m.a, 0.0, 1.0);\n"
+                                   "    if (u_invert != 0) k = 1.0 - k; }\n"
+                                   "  vec4 a = texture(u_in, v_uv);\n"
+                                   "  o = mix(a, mix(a, texture(u_fx, v_uv), k), u_channels); }\n",
                                    &log);
     if (!m_maskProgram) {
         if (err) *err = QStringLiteral("Internal shaders: ") + log;
@@ -317,6 +320,8 @@ bool Engine::initialize(QString *err)
     m_maskFxLoc = f->glGetUniformLocation(m_maskProgram, "u_fx");
     m_maskMaskLoc = f->glGetUniformLocation(m_maskProgram, "u_mask");
     m_maskInvertLoc = f->glGetUniformLocation(m_maskProgram, "u_invert");
+    m_maskHasLoc = f->glGetUniformLocation(m_maskProgram, "u_hasMask");
+    m_maskChannelsLoc = f->glGetUniformLocation(m_maskProgram, "u_channels");
     m_prepTexLoc = f->glGetUniformLocation(m_prepProgram, "u_tex");
     m_prepRoiLoc = f->glGetUniformLocation(m_prepProgram, "u_roi");
     m_prepAddLoc = f->glGetUniformLocation(m_prepProgram, "u_add");
@@ -564,9 +569,11 @@ void Engine::releaseAll()
     }
     auto f = gl();
     for (RenderTarget &o : m_output) o.destroy();
+    m_audioVisual.destroy();
     m_previewTarget.destroy();
     for (auto &slot : m_previewSlots) {
         for (auto &target : slot.target) target.destroy();
+        for (auto &editor : slot.editor) if (editor) editor->releaseGl();
         for (auto &reader : slot.reader) if (reader) { gl()->glDeleteSync(reader); reader = nullptr; }
     }
     if (m_previewPbo) f->glDeleteBuffers(1, &m_previewPbo);
@@ -787,12 +794,28 @@ void Engine::setPreviewSource(int slot, quint64 id)
     if (slot >= 0 && slot < int(m_previewSlots.size())) m_previewSlots[size_t(slot)].id = id;
 }
 
+void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSize size, Scene3D::ViewLook look)
+{
+    Lock lk(&m_mutex);
+    if (slot < 0 || slot >= int(m_previewSlots.size())) return;
+    auto &p = m_previewSlots[size_t(slot)];
+    p.sceneView = on;
+    p.camera = camera;
+    p.sceneSize = size.boundedTo(QSize(2048, 2048)).expandedTo(QSize(1, 1));
+    p.sceneLook = look;
+}
+
 GLuint Engine::previewTexture(int slot, QSize *size, int *buffer) const
 {
     if (slot < 0 || slot >= int(m_previewSlots.size())) return 0;
     const auto &preview = m_previewSlots[size_t(slot)];
     const int front = m_published.load();
     if (buffer) *buffer = front;
+    if (preview.sceneView && preview.id) { // its 3D view
+        if (preview.renderedId[front] != preview.id) return 0;
+        if (size) *size = preview.sceneSize;
+        return preview.editorTex[front];
+    }
     if (!preview.id) {
         if (size) *size = QSize(m_output[front].w, m_output[front].h);
         return m_output[front].tex;

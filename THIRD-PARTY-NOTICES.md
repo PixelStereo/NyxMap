@@ -1,6 +1,7 @@
 # Third-party notices
 
-NyxMap's own code is under the MIT licence (see LICENSE). It uses the following third-party components, each under its
+NyxMap's own code is under the GNU GPL v3 or later, with an additional permission for the NDI runtime and the TouchEngine
+SDK (see LICENSE and LICENSE-EXCEPTION.md). It uses the following third-party components, each under its
 own licence; their full texts are in the `licenses` folder (and, for those fetched at packaging time, next to the
 library).
 
@@ -23,10 +24,17 @@ library).
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
-**NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's MIT licence: it is provided by Vizrt NDI AB
-under the NDI SDK License Agreement. You may not modify, disassemble, decompile or separately distribute the NDI
-components, nor use them outside NyxMap. Vizrt NDI AB and its licensors provide them "as is", without warranty of any
-kind, and disclaim all liability for them to the extent permitted by law.
+**NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's GPL licence: it is provided by Vizrt NDI AB
+under the NDI SDK License Agreement. These terms apply to the NDI components only, never to NyxMap's own code, which
+stays under the GPL with or without them. You may not modify the NDI components, reverse engineer, disassemble or
+recompile them or the protocols they use (nor attempt to), circumvent their technical limitations, remove or alter their
+proprietary notices, separately distribute them, or use them outside NyxMap. They may not be exported in violation of
+United States export laws. Vizrt NDI AB (NDI, Inc.) owns their copyright. Vizrt NDI AB and its licensors provide them
+"as is", without warranty of any kind, and disclaim all liability, direct, indirect, incidental or consequential, arising
+from their use or from NyxMap's, to the extent permitted by law. If you develop your own product with NyxMap and the NDI
+components, you must comply with the NDI SDK License Agreement, and carry these terms in your own licence. A version of
+NyxMap without the NDI components (no `NYXMAP_ACCEPT_NDI_SDK_LICENSE`, and no NDI library installed) is not subject to
+any of this.
 
 **LGPL components (Qt, FFmpeg).** They are dynamically linked: you may replace the libraries shipped with NyxMap by
 compatible modified versions (in `NyxMap.app/Contents/Frameworks` on macOS, next to `NyxMap.exe` on Windows, in
@@ -57,17 +65,27 @@ parts, and records that licence in `DEPENDENCIES.txt`. Those builds include Open
 inside the FFmpeg DLLs, for TLS and SRT streams; their sources are linked from the BtbN/FFmpeg-Builds repository. Microsoft's `vc_redist.x64.exe` is included unmodified, under
 its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.
 
-TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by NyxMap's MIT licence.
+TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by NyxMap's GPL licence.
 See `licenses/touchengine.txt` for the full Shared Use License. NyxMap is an independent integration; Derivative does
 not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
 Commercial or Pro licence. NyxMap neither installs nor activates that licence. Builders must explicitly opt in with
 `NYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
 
-**Open Stage Control remote.** The ready-to-load integration includes pure
-JavaScript dependencies in `integrations/open-stage-control/nyxmap-dependencies.cjs`:
-[ws](https://github.com/websockets/ws) (MIT),
-[osc.js](https://github.com/colinbdclark/osc.js) (MIT option) and
-[long.js](https://github.com/dcodeIO/long.js) (Apache-2.0).
-Their versions and full license texts are preserved beside the bundle in
-`nyxmap-dependencies.LICENSE.txt`. Open Stage Control itself remains a separate
-GPL-3.0 application, installed by the user; it is not included in the remote ZIP.
+## Faust (GRAME)
+
+Built-in audio instruments are generated with Faust 2.79.3 and use its standard
+noise, envelope, oscillator and delay/pitch-shifting libraries. See
+`third_party/FAUST-NOTICE.md` and the generated DSP metadata for origins.
+The four unmodified Faust architecture headers retain LGPL-2.1-or-later notices
+and their larger-work exception. Faust's libraries permit distributing generated
+code under the enclosing work's terms through their compiled-code exception.
+Optional user `.dsp` compilation dynamically loads the installed libfaust
+(LGPL-2.1-or-later). It is not required for built-in presets. Redistributors must
+supply that library's license materials and honor its LGPL obligations when enabled.
+Upstream: https://github.com/grame-cncm/faust
+
+The layer audio FX additionally use Faust's resonant filters, EQ, delay, Freeverb,
+compressor, gate, distortion and modulation functions. The upstream STK-style
+notice applicable to the relevant library sections is included in
+`licenses/faust-stk-4.3.0.md`. Instrument/effect source and generated metadata
+retain the upstream provenance; no new audio DSP backend is introduced.

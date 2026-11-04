@@ -95,8 +95,7 @@ static QString clockText(double t)
 static QString continueWord(Sequencer::StepContinue c)
 {
     switch (c) {
-    case Sequencer::StepContinue::Follow: return QStringLiteral("follow");
-    case Sequencer::StepContinue::AutoFollow: return QStringLiteral("auto-follow");
+    case Sequencer::StepContinue::AutoFollow: return QStringLiteral("auto");
     default: return QStringLiteral("wait");
     }
 }
@@ -164,11 +163,10 @@ std::vector<osc::Message> SequenceFeedback::stateFor(Engine *engine, bool modifi
             const int m = engine->indexOfSnapshot(st.snapshot);
             name = m >= 0 ? engine->snapshot(m).name : QStringLiteral("(snapshot gone)");
         }
-        const double duration = valid ? sq.stepDuration(st) : 0.0;
+        const double duration = valid ? sq.stepDuration(st, s.beats ? engine->beatClock().secondsPerBeat() : 1.0) : 0.0;
         i(base + QStringLiteral("/number"), valid ? k + 1 : 0);
         str(base + QStringLiteral("/name"), name);
         str(base + QStringLiteral("/label"), valid ? QStringLiteral("%1 · %2").arg(k + 1).arg(name) : QString());
-        str(base + QStringLiteral("/text"), st.text);
         str(base + QStringLiteral("/description"), st.description);
         f(base + QStringLiteral("/prewait"), st.preWait);
         f(base + QStringLiteral("/action"), std::isfinite(duration) ? duration : -1.0);

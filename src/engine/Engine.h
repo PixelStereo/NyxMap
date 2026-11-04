@@ -17,6 +17,8 @@
 
 #include "TestCard.h"
 #include "PresentMetal.h"
+#include "BeatClock.h"
+#include "ShowControl.h"
 #include "Sequencer.h"
 #include "FrameTiming.h"
 #include "AudioInput.h"
@@ -109,6 +111,27 @@ public:
 
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
+    int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
+    Scene3DQuality quality3d() const { Lock lk(&m_mutex); return m_quality3d; } // the composition's, for all its 3D scenes
+    // A 3D scene's triangles, in all its shown models; those its last frame computed in all its passes (shadows too)
+    int sceneTriangles(int scene) const;
+    int sceneTrianglesComputed(int scene) const;
+    int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
+    bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
+    bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
+    bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
+    bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
+    // The 3D object of its scene a light looks at (0: its Look At's point); refused: itself, or what is not in its scene
+    bool setLightLookAt(int index, quint64 object);
+    // A light as its scene sees it (lock held): where its path and its Merge 3Ds put it, where it points; `target`: the
+    // point it looks at, when it looks at one
+    LightSettings placedLight(const Layer &light, const QMatrix4x4 &parent, QVector3D *target = nullptr);
+    QVector3D placeOf3dObject(const Layer &object); // in its scene, through its Merge 3Ds (lock held)
+    bool setSceneEnvironment(int index, quint64 layer, QString *err = nullptr, int stage = -1); // a 3D scene's HDRI
+    // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k, kStageHdrFile an HDR
+    // image's file as read (linear, unclipped; its final picture when it has none) (render thread, lock held)
+    static constexpr int kStageHdrFile = -2;
+    GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     void moveLayer(int from, int to);
@@ -125,6 +148,14 @@ public:
     bool isLocked(int i) const;            // locked itself, or member of a locked group
     // Solo: by index, the layers another layer's solo leaves out (none when nothing is soloed). Lock held.
     std::vector<bool> soloLeftOut() const;
+    // All that refers to this layer: the layers that take its picture, how (as their source, a mask...), and what acts on it
+    // or reads it (interactions, timelines, presets, a sequence's clock). `layer`: the layer that uses it, 0: not a layer
+    struct LayerUse {
+        quint64 layer = 0;
+        QString what;
+        bool asSource = false; // a layer whose whole picture is this one
+    };
+    std::vector<LayerUse> layerUses(quint64 id) const;
     // A layer's masks (Masks.h), by its id. Setting them redraws them.
     // A Line generator's lines (LineGenerator.h), in its own frame
     std::vector<LinePath> layerLines(quint64 id) const;
@@ -151,6 +182,13 @@ public:
     QJsonObject layerJson(int i) const;
     int insertLayerJson(int at, const QJsonObject &o);
     void replaceLayerJson(int i, const QJsonObject &o);
+    // The viewport a Video Sonification instrument analyses: its id (0: the first viewport). False for a layer that is not
+    // a sound, or an id that is not a viewport
+    bool setLayerSonificationViewport(int i, quint64 viewportId);
+    quint64 layerSonificationViewport(int i) const;
+    QJsonArray audioEffectsJson(int i) const;
+    std::vector<std::shared_ptr<class AudioEffect>> audioEffects(quint64 layerId) const; // the chain of a layer, in order
+    bool setAudioEffectsJson(int i, const QJsonArray &state, QString *error = nullptr, bool keepUnavailable = false);
     QJsonArray effectsJson(int i) const;
     void setEffectsJson(int i, const QJsonArray &a);
 
@@ -248,7 +286,8 @@ public:
     // A layer's matte (Layer.h): another layer's picture that sets where it shows (layer 0: none). Refused: a
     // viewport (either side), the layer itself, or a layer that already uses it (the picture would feed back).
     bool setLayerMatte(int layer, const LayerMatte &matte, QString *err = nullptr);
-    bool setEffectMaskTap(int layer, int effect, bool preFx); // the mask's picture: before or after its own effects
+    // The mask's picture: -1 its final one, 0 its source, k after its effect k (its own layer: a stage above the effect)
+    bool setEffectMaskStage(int layer, int effect, int stage);
     // Where the color section applies: another layer's picture (0: everywhere). Same rules as an effect's mask.
     bool setColorMask(int layer, quint64 maskLayer, bool invert, QString *err = nullptr);
     PlayMode defaultPlayMode() const { return m_defaultPlayMode; }
@@ -258,6 +297,7 @@ public:
 
     // Text layer properties
     bool setLayerText(int i); // the layer's source becomes the Text generator
+    bool setLayerCursive(int i); // or the Cursive generator: a text in a cursive font, to be written as by a pen
     // The Timecode generator: a text source that shows its clock (TimecodeClock.h). Setting it again with other
     // settings keeps its text style; its clock (and its devices) start again.
     bool setLayerTimecode(int i, const TimecodeSettings &s);
@@ -335,6 +375,9 @@ public:
     void reloadLayerWeb(int i);
     QString layerWebStatus(int i) const; // what its page is doing (loading, failed…); empty: it is shown
     static std::vector<LiveInputInfo> liveInputs(const QString &libraryFolder = QString()) { return listLiveInputs(libraryFolder); }
+    // The sound inputs (microphones, sound card inputs), the default one first: Audio > Inputs of the Media Bin.
+    // Their URIs are input:audio:<device> (AudioCapture.h); kind "Audio"
+    static std::vector<LiveInputInfo> audioInputs();
     void setLayerTextContent(int i, const QString &text);
     void editLayerText(int i, const std::function<void(Layer &)> &edit); // style (bold, outline, shadow…), under the lock
 
@@ -372,6 +415,9 @@ public:
         // "included", "timing", "easing" and "delay" as an interaction's: [{"id", "name", "included", "params"}]
         // (one made since, or one it leaves out, is left alone; one removed since is not made again)
         QJsonArray fixtures;
+        // The interface's views (how many, what each shows, zoom, fixtures, the layer selected), held only when the
+        // settings say snapshots hold them; empty: the views are left as they are
+        QJsonObject views;
     };
     QJsonObject captureComposition() const;
     void applyComposition(const QJsonObject &c, double fade); // the recall's part for the composition
@@ -427,6 +473,12 @@ public:
     // it does not have is dropped; the snapshots' order follows
     void setSnapshotTree(const std::vector<SnapshotNode> &tree);
     quint64 newSnapshotGroupId(); // for a group about to be put in the tree
+    // The presets and the timelines in their groups, as the snapshots' (a node's `snapshot` holds the member's id). A member
+    // missing from a tree comes at the end, one it does not have is left out. The presets' order follows theirs.
+    std::vector<SnapshotNode> presetTree() const;
+    void setPresetTree(const std::vector<SnapshotNode> &tree);
+    std::vector<SnapshotNode> timelineTree() const;
+    void setTimelineTree(const std::vector<SnapshotNode> &tree);
 
     // --- Presets: a few values of the layers (and of the composition), chosen one by one, recalled with a fade as a
     // snapshot's values are. By layer id (0: the composition) and address; each with its own time (< 0: the preset's
@@ -449,6 +501,7 @@ public:
         std::vector<Interaction> interactions;
         QJsonObject categories; // layer:part -> structural source/FX/mask/routing state
         QJsonObject geometry; // layer id -> mesh topology/offsets; corner/position values are in values
+        QJsonObject views;    // the interface's views it shows (how many, what each shows, zoom…); empty: none
         int indexOf(quint64 layer, const QString &path) const; // -1: not in it
     };
     int presetCount() const;
@@ -572,6 +625,22 @@ public:
     void waveAround(quint64 layer, const QString &param, double *center, double *amplitude) const;
 
     // --- Sequences (the cue lists): Sequencer.h
+    // The show's controls (ShowControl.h): sliders, switches, selectors, buttons and colors of the operator, each a parameter
+    // of the show (control/<key>) that interactions, timelines, OSC and a remote reach. Saved with the project
+    std::vector<ShowControl> controls() const;
+    std::optional<ShowControl> control(quint64 id) const;
+    QJsonArray controlsJson() const;
+    bool setControlsJson(const QJsonArray &a, QString *error = nullptr); // replaces them all (undo, project, a remote)
+    quint64 controlsRevision() const { return m_controlsRevision; } // changes with the list or a definition, not a value
+    quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
+    bool updateControl(quint64 id, const ShowControl &change); // its address (key) stays
+    bool removeControl(quint64 id);
+    bool moveControl(quint64 id, int to);
+    bool setControlValue(quint64 id, double value); // a number, a switch, an index; any thread
+    bool setControlColor(quint64 id, double r, double g, double b);
+    // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
+    BeatClock &beatClock() { return m_beatClock; }
+    const BeatClock &beatClock() const { return m_beatClock; }
     Sequencer &sequencer() { return *m_sequencer; }
     const Sequencer &sequencer() const { return *m_sequencer; }
     // A snapshot's action: its longest time (the fade, and the times of its own values)
@@ -617,6 +686,7 @@ public:
         QString path;
         bool video = false;      // video file
         bool audio = false;      // audio file (neither: image)
+        bool model = false;      // 3D model (FBX, glTF, GLB, OBJ)
         bool missing = false;
         bool imported = false;   // added to the media bin by the user
         QStringList users;       // "Layer" or "Layer › FX"
@@ -633,6 +703,7 @@ public:
     static bool isVideoFile(const QString &path);
     static bool isToxFile(const QString &path);
     bool setLayerTox(int index, const QString &path, const ToxSettings &settings = {}, QString *error = nullptr);
+    bool setLayerModel(int index, const QString &path, QString *error = nullptr); // a 3D model (FBX, glTF, GLB, OBJ)
     bool setLayerToxInput(int index, const QString &input, quint64 layerId, QString *error = nullptr);
     static bool isImageFile(const QString &path);
     static bool isAudioFile(const QString &path);
@@ -728,6 +799,9 @@ public:
     // --- Rendering
     void renderFrame();                  // manual mode only
     void setPreviewSource(int slot, quint64 id); // 0: composition; four bounded GPU-only preview slots
+    // The slot's source, a 3D scene, drawn from this camera (its framing, its distance) at this size: a 3D view. Off:
+    // the slot shows the source's picture again
+    void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {}, Scene3D::ViewLook look = Scene3D::ViewLook::Simple);
     GLuint previewTexture(int slot, QSize *size, int *buffer = nullptr) const; // caller holds mutex(), shared GL context current
     void finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f); // mutex held
     GLuint outputTexture() const;        // last published frame (readable from a shared context)
@@ -806,7 +880,13 @@ public:
 
     IsfLibrary &library() { return m_library; }
 
+    // The interface's views as they are now (the interface gives them: a snapshot or a preset stores them); a recall
+    // that holds some hands them back (viewsRecalled)
+    void setViewProvider(std::function<QJsonObject()> f) { m_viewProvider = std::move(f); }
+    QJsonObject currentViews() const { return m_viewProvider ? m_viewProvider() : QJsonObject(); }
+
 signals:
+    void viewsRecalled(const QJsonObject &views); // a snapshot or a preset recalled with views: the interface shows them
     void layersChanged();
     void fixturesChanged(); // the pixel mapping (setFixturePatch, a project loaded or cleared)
     void layerLinesChanged(quint64 layer); // a Line generator's lines (setLayerLines)
@@ -814,6 +894,7 @@ signals:
     void snapshotsChanged();
     void presetsChanged();
     void animationsChanged();       // the timelines' contents (not their transport)
+    void controlsChanged();         // the list or the definition of a control (not its value)
     void layerAnimsChanged(quint64 layer); // the animations of a layer's numbers (their contents, not their transport)
     void snapshotRecalled(int index);
     void timecodeRoutingChanged(); // timecode / MIDI outputs, their patch, or which layer drives which output
@@ -853,6 +934,7 @@ private:
     void renderLayer(Layer &l, const IsfRenderContext &rc);
     void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
     void renderGroup(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
+    void renderScene(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
     // `view`: the part of the composition the target shows (normalized, origin top left)
     // The target is cleared to `clear` first (through a multisampled buffer when antialiasing is on)
     void compositeLayers(const RenderTarget &target, const std::vector<Layer *> &topToBottom,
@@ -995,13 +1077,25 @@ private:
         quint64 renderedId[2] = {0, 0};
         RenderTarget target[2];
         GLsync reader[2] = {nullptr, nullptr};
+        // A 3D scene seen from the view's own camera (its 3D view), not its picture
+        bool sceneView = false;
+        SceneSettings camera;
+        QSize sceneSize;
+        Scene3D::ViewLook sceneLook = Scene3D::ViewLook::Simple;
+        std::shared_ptr<Scene3D> editor[2];
+        GLuint editorTex[2] = {0, 0};
     };
+    // A scene's objects as its renderer takes them (shown ones only; render thread, lock held)
+    void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
+                      const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
+    RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
     std::atomic<int> m_published{0};
     int m_back = 1;
 
     QSize m_compSize{1920, 1080};
+    Scene3DQuality m_quality3d;
     std::vector<std::unique_ptr<Layer>> m_layers;
     quint64 m_nextId = 1;
     std::vector<float> m_meshScratch;
@@ -1052,6 +1146,7 @@ private:
     quint64 m_nextSnapshotGroupId = 1;
     void normalizeSnapshotTree(); // lock held: every snapshot once, their order the tree's
     std::vector<Preset> m_presets;
+    std::vector<SnapshotNode> m_presetTree, m_timelineTree;
     quint64 m_nextPresetId = 1;
     std::vector<std::shared_ptr<FadeJob>> m_fades;
     QString m_glRenderer, m_glVersion, m_glVendor;
@@ -1092,17 +1187,35 @@ private:
     double m_screenHz = 60;
     std::vector<Animation> m_animations;
     quint64 m_nextAnimationId = 1;
-    void applyAnimation(Animation &a); // sets its values where it is (lock held)
+    std::function<QJsonObject()> m_viewProvider;
+    struct AnimationFilterRuntime {
+        QJsonArray definition;
+        Interaction config;
+        InteractionProcessor processor;
+        double played = -1;
+    };
+    QHash<QString, AnimationFilterRuntime> m_animationFilters;
+    void clearAnimationFilterHistory(quint64 layer, quint64 animation);
+public:
+    // A filtered animated value's signal, as last computed: what came in, then the value after each filter (an animation
+    // of a timeline: its id; a layer's own: 0). false: not computed yet
+    bool animationFilterSignal(quint64 layer, quint64 animation, const QString &path, double *input,
+                               std::vector<double> *stages) const;
+private:
+    double filterAnimationValue(quint64 layer, quint64 animation, const QString &path, const AnimTrack &track,
+                                double raw, double dt, double played);
+    void applyAnimation(Animation &a, double dt = 0); // sets its values where it is (lock held)
     // Fires the event keys its clock crosses in (from, to] — and those at `from` too when `fromIncluded` (lock held)
     void fireAnimationEvents(const Animation &a, double from, double to, bool fromIncluded);
     // owner: the layer of one of its own animations (its values are set on it even when it is locked)
     void controlLocked(Animation *a, AnimAction action, double time, AnimLoop loop, int repeat, Layer *owner = nullptr);
-    void applyLayerAnim(Layer &l, Animation &a); // sets its value where it is (lock held)
+    void applyLayerAnim(Layer &l, Animation &a, double dt = 0); // sets its value where it is (lock held)
     // A number of a layer an animation sets: the snapshots' fades running leave it to it from now on (lock held)
     void releaseFromFades(quint64 layer, const QString &path);
     bool setAnimParam(quint64 layer, const QString &path, double v); // lock held
     bool setAnimColor(quint64 layer, const QString &path, const std::array<double, 3> &value); // lock held
-    bool setAnimPoint(const AnimTrack &track, double position, double played); // lock held; validate both axes first
+    bool setAnimPoint(const AnimTrack &track, double position, double played, quint64 animation = 0,
+                      double dt = 0); // lock held; validate both axes first
     void remapAnimationTargets(quint64 layer, const std::vector<std::pair<QString, QString>> &prefixes); // empty replacement removes
     void removeSourceAnimations(Layer &layer); // lock held, before detaching the source
     const std::vector<Parameter *> &compositionParameters(); // its opacity, volume, speed (lock held)
@@ -1115,6 +1228,11 @@ private:
     void assignLayerAnims(Layer &l, const std::vector<Animation> &anims); // see setLayerAnims (lock held)
     void recallLayerAnims(Layer &l, const QJsonArray &stored);            // a snapshot's (lock held)
     void recallSnapshotCopy(const Snapshot &m, int index);                 // recallSnapshot, its copy taken
+    BeatClock m_beatClock;
+    std::vector<ShowControl> m_controls;
+    quint64 m_nextControlId = 1;
+    std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
+    ShowControl *controlLocked(quint64 id);
     Sequencer *m_sequencer = nullptr; // a child QObject
     std::atomic<bool> m_fadesManual{false};
     void attachAudio(Layer &l, std::shared_ptr<AudioStream> s);
@@ -1272,6 +1390,7 @@ private:
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
+    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
     GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
     GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)

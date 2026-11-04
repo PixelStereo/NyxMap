@@ -124,6 +124,7 @@ ParamInfo Parameter::info() const
     ParamInfo i = m_info;
     if (m_default) i.defaultValue = m_default();
     i.stored = isStored();
+    i.presettable = i.stored || m_transient;
     return i;
 }
 

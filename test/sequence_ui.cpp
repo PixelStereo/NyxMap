@@ -1,11 +1,11 @@
-// Deterministic widget regression: poll the actual mini sequencer (its steps from top to bottom) at synthetic cue times.
+// The panel of the steps: a cue edited while it runs, the continuations and the timecodes typed in their cells.
 #include "SequencePanel.h"
 #include <QApplication>
-#include <QLabel>
-#include <QPushButton>
-#include <QTimer>
 #include <QJsonArray>
 #include <QThread>
+#include <QDoubleSpinBox>
+#include <QFrame>
+#include <QKeyEvent>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <cstdio>
@@ -20,80 +20,72 @@ int main(int argc, char **argv)
     first.postWait = 4;
     first.next = Sequencer::StepContinue::AutoFollow;
     second.description = QString(2000, QChar('A'));
-    second.text = QString(2000, QChar('B'));
     sequence.steps = {first, second, third};
     engine.sequencer().add(sequence);
     engine.sequencer().setCurrent(0);
-    SequenceBar bar(&engine);
-    auto *stack = bar.findChild<CueStack *>("sequenceCueStack");
-    auto *poller = bar.findChild<QTimer *>("sequenceWaitPoller");
     int failures = 0;
     auto check = [&](bool ok, const char *reason) { if (!ok) { ++failures; std::printf("FAIL sequence_ui: %s\n", reason); } };
-    check(stack && poller, "mini wait controls present");
-    if (!stack || !poller) return 1;
-    // The row of a role: what it shows
-    auto row = [&](CueStack::Role role) {
-        for (const CueStack::Row &r : stack->rows())
-            if (r.role == role) return r;
-        return CueStack::Row();
-    };
-    poller->stop();
-    auto poll = [&] { QMetaObject::invokeMethod(poller, "timeout", Qt::DirectConnection); };
-    bar.resize(650, bar.height()); bar.show(); app.processEvents();
-    const QSize fixedSize = bar.size();
-    check(bar.minimumHeight() == bar.maximumHeight(), "mini sequencer height is fixed");
-    check(engine.sequencer().toJson()[0].toObject()["steps"].toArray()[1].toObject()["description"].toString() == second.description, "description serialized independently of comment");
-    engine.sequencer().go(); poll();
-    check(stack->describe().contains("PRE-WAIT") && stack->describe().contains("0%"), "pre-wait starts at zero");
+    check(engine.sequencer().toJson()[0].toObject()["steps"].toArray()[1].toObject()["description"].toString() == second.description, "description serialized");
+    engine.sequencer().go();
     const double elapsedBeforeEdit = engine.sequencer().stepElapsed(0);
     auto editedSequence = engine.sequencer().sequence(0);
     editedSequence.steps[0].description = "Edited while running";
     engine.sequencer().setSequence(0, editedSequence);
     check(engine.sequencer().stepElapsed(0) >= elapsedBeforeEdit, "editing a cue preserves its elapsed clock");
-    engine.sequencer().advance(1); poll();
-    check(stack->describe().contains("PRE-WAIT") && stack->describe().contains("50%"), "pre-wait progress halfway");
-    engine.sequencer().advance(1); poll();
-    check(stack->describe().contains("POST-WAIT") && stack->describe().contains("0%"), "post-wait starts after trigger");
-    engine.sequencer().advance(2); poll();
-    check(stack->describe().contains("POST-WAIT") && stack->describe().contains("50%"), "post-wait progress halfway");
-    engine.sequencer().advance(2); poll();
-    check(stack->describe().contains("press GO"), "manual wait asks for GO after follow");
-    for (auto *button : bar.findChildren<QPushButton *>())
-        check(button->text() != "Sequences…" && button->text() != "Timelines…", "no editor launcher below preview");
-    app.processEvents();
-    check(bar.size() == fixedSize, "long comments and waits do not resize mini sequencer");
-    check(row(CueStack::Current).step == 1 && row(CueStack::Next).step == 2, "steps from top to bottom: played, then next");
-    check(row(CueStack::Current).note == second.description, "the played step shows its description");
-    check(row(CueStack::Previous).step == 0, "the step before is shown above");
-    check(row(CueStack::Next).timing.contains("PRE") && row(CueStack::Next).timing.contains("POST"), "next cue action and wait durations shown");
-    for (auto *button : bar.findChildren<QPushButton *>())
-        check(button->width() <= 124 + 1 && button->x() < 140, "buttons on the left, one above the other");
+    for (double dt : {1.0, 1.0, 2.0, 2.0}) engine.sequencer().advance(dt);
     QThread::msleep(20); check(engine.sequencer().stepElapsed(0) > 0, "elapsed clock survives cue completion");
-    engine.sequencer().stopAll(); poll();
-    check(!stack->describe().contains("POST-WAIT") && !stack->describe().contains("PRE-WAIT"), "stop removes old wait progress");
-    // All outgoing modes remain visible before GO, including the compact later rows.
+    engine.sequencer().stopAll();
     Sequencer::Sequence overview;
     overview.steps.resize(3);
-    overview.steps[1].next = Sequencer::StepContinue::Follow;
+    overview.steps[1].next = Sequencer::StepContinue::AutoFollow;
     overview.steps[2].next = Sequencer::StepContinue::AutoFollow;
     engine.sequencer().setCurrent(engine.sequencer().add(overview));
-    CueStack overviewStack(&engine);
-    overviewStack.resize(650, 220);
-    overviewStack.rebuild();
-    check(overviewStack.describe().contains("WAIT · GO") && overviewStack.describe().contains("FOLLOW") &&
-          overviewStack.describe().contains("AUTO-FOLLOW"), "overview describes every outgoing mode");
     SequenceWindow editor(&engine);
     auto *steps = editor.findChild<QTableWidget *>("sequenceSteps");
-    check(steps && steps->horizontalHeader()->visualIndex(5) == 3 && steps->horizontalHeader()->visualIndex(1) == 2,
+    if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty()) { // a picture of the window, for a look
+        editor.show();
+        editor.resize(1100, 420);
+        QCoreApplication::processEvents();
+        editor.grab().save(QString::fromLocal8Bit(shots) + "/sequences.png");
+    }
+    check(steps && steps->horizontalHeader()->visualIndex(6) == 4 && steps->horizontalHeader()->visualIndex(1) == 3,
           "continuation sits beside the target before timing columns");
     if (steps) {
-        check(steps->item(1, 5)->toolTip().contains("overlap"), "Follow explains that actions may overlap");
-        check(steps->item(2, 5)->toolTip().contains("endless"), "Auto-follow explains a non-terminating action");
-        steps->item(1, 5)->setData(Qt::EditRole, int(Sequencer::StepContinue::Wait));
-        check(steps->item(1, 5)->data(Qt::AccessibleTextRole).toString() == "WAIT · GO" &&
-              steps->item(1, 5)->toolTip().contains("manual"), "edited mode updates its accessible label and help");
+        check(steps->item(2, 6)->toolTip().contains("endless"), "AUTO explains a non-terminating action");
+        steps->item(1, 6)->setData(Qt::EditRole, int(Sequencer::StepContinue::Wait));
+        check(steps->item(1, 6)->data(Qt::AccessibleTextRole).toString() == "GO" &&
+              steps->item(1, 6)->toolTip().contains("manual"), "edited mode updates its accessible label and help");
+        // The waits on one Time cell, changed together in its small window: Return keeps them, Esc does not
+        auto waits = [&] { const auto st = engine.sequencer().sequence(engine.sequencer().current()).steps[2]; return std::pair(st.preWait, st.postWait); };
+        check(steps->isColumnHidden(2) && steps->isColumnHidden(3) && steps->isColumnHidden(4) && !steps->isColumnHidden(9), "one Time column");
+        check(steps->item(2, 9)->toolTip().contains("Pre-wait") && steps->item(2, 9)->toolTip().contains("Post-wait"), "its tooltip tells the times");
+        editor.show();
+        auto timeBox = [&](const char *name) {
+            auto *window = editor.findChild<QFrame *>("stepTimeEditor");
+            return window ? window->findChild<QDoubleSpinBox *>(name) : nullptr;
+        };
+        auto key = [&](QWidget *to, int code) {
+            QKeyEvent down(QEvent::KeyPress, code, Qt::NoModifier);
+            QApplication::sendEvent(to, &down);
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        };
+        editor.openTimeEditor(2);
+        check(timeBox("stepPre") && timeBox("stepPost") && timeBox("stepPost")->isEnabled(), "an AUTO step's post-wait can be changed");
+        if (timeBox("stepPre")) {
+            timeBox("stepPre")->setValue(1.5);
+            timeBox("stepPost")->setValue(2.5);
+            key(timeBox("stepPre"), Qt::Key_Return);
+            check(waits() == std::pair(1.5, 2.5), "Return keeps the waits");
+        }
+        check(!editor.findChild<QFrame *>("stepTimeEditor"), "and the window goes");
+        editor.openTimeEditor(2);
+        if (timeBox("stepPre")) {
+            timeBox("stepPre")->setValue(9);
+            key(timeBox("stepPre"), Qt::Key_Escape);
+            check(waits() == std::pair(1.5, 2.5), "Esc does not");
+        }
         // The timecode, first: typed in seconds or minutes:seconds; an empty cell offers the time of the step before
-        const int at = 8;
+        const int at = 8; // ColAt
         auto edited = [&] { return engine.sequencer().sequence(engine.sequencer().current()); };
         check(steps->horizontalHeader()->visualIndex(at) == 1, "the timecode comes first");
         check(editor.proposedTimecode(0) == "0:00.00", "an empty cell offers 0 with nothing before it");

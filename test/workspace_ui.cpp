@@ -54,6 +54,10 @@ int runColorParameterUiTests(Engine &engine, const QString &root);
 int runXyParameterUiTests(Engine &engine, const QString &root);
 int runClockPresetUiTests(Engine &engine);
 int runLayerSourceUiTests(Engine &engine); // layer_source_ui.cpp
+int runScene3dUiTests(Engine &engine);     // scene3d_ui.cpp
+int runAudioFxUiTests(Engine &engine);     // audio_fx_ui.cpp
+int runControlsUiTests(Engine &engine);    // controls_ui.cpp
+int runShowControlUiTests(Engine &engine); // show_control_ui.cpp
 
 static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, const char *)> &check)
 {
@@ -96,6 +100,7 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                 auto *group = a->parent();
                 QList<QTreeWidgetItem *> groups;
                 for (int i = 0; i < tree->topLevelItemCount(); ++i) groups << tree->topLevelItem(i);
+                for (int i = 0; i < group->parent()->childCount(); ++i) groups << group->parent()->child(i);
                 auto orderIs = [group](QTreeWidgetItem *first, QTreeWidgetItem *second, QTreeWidgetItem *third) {
                     return group->childCount() == 3 && group->child(0) == first && group->child(1) == second && group->child(2) == third;
                 };
@@ -131,8 +136,10 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                     check(tree->sortColumn() == column, "every column header selects its sort key");
                     bin.refresh();
                     check(tree->sortColumn() == column, "refresh preserves the selected sort key");
-                    for (int i = 0; i < groups.size(); ++i)
-                        check(tree->topLevelItem(i) == groups[i], "sorting keeps media type groups in place");
+                    check(tree->topLevelItemCount() == 2 && tree->topLevelItem(0) == groups[0] && tree->topLevelItem(1) == groups[1],
+                          "sorting keeps the Video and Audio roots in place");
+                    for (int i = 0; i < group->parent()->childCount(); ++i)
+                        check(group->parent()->child(i) == groups[2 + i], "sorting keeps media type groups in place");
                 }
                 tree->sortItems(2, Qt::AscendingOrder);
                 check(orderIs(c, b, a), "Layers sorts zero, two and ten numerically");
@@ -270,7 +277,8 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false;
+    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false;
+    bool showControlUi = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
         const QString arg = QString::fromLocal8Bit(argv[k]);
@@ -279,11 +287,35 @@ int main(int argc, char **argv)
         else if (arg == QLatin1String("--color-animation")) colorAnimation = true;
         else if (arg == QLatin1String("--clock-presets")) clockPresets = true;
         else if (arg == QLatin1String("--layer-source")) layerSource = true;
+        else if (arg == QLatin1String("--scene3d")) scene3dUi = true;
+        else if (arg == QLatin1String("--audio-fx")) audioFx = true;
+        else if (arg == QLatin1String("--controls")) controlsUi = true;
+        else if (arg == QLatin1String("--show-control")) showControlUi = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
         else capture = arg;
     }
     if (xy) {
         const int failures = runXyParameterUiTests(engine, QStringLiteral(TEST_DIR));
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (showControlUi) {
+        const int failures = runShowControlUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (controlsUi) {
+        const int failures = runControlsUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (audioFx) {
+        const int failures = runAudioFxUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (scene3dUi) {
+        const int failures = runScene3dUiTests(engine);
         engine.shutdown();
         return failures ? 1 : 0;
     }
@@ -514,13 +546,28 @@ int main(int argc, char **argv)
                     check(gen && !shown(gen), "Unused hides a generator a layer uses");
                     usage->setCurrentIndex(1); // Used
                     check(gen && shown(gen), "Used shows it");
-                    QTreeWidgetItem *videos = tree->topLevelItem(0), *isfTop = nullptr;
-                    for (int t = 0; t < tree->topLevelItemCount(); ++t)
-                        if (tree->topLevelItem(t)->text(0) == "ISF") isfTop = tree->topLevelItem(t);
-                    type->setCurrentIndex(type->findText("ISF"));
-                    check(videos->isHidden() && isfTop && !isfTop->isHidden() && shown(gen), "type filter ISF shows only ISF");
-                    type->setCurrentIndex(type->findText("Videos"));
-                    check(!videos->isHidden() && isfTop && isfTop->isHidden(), "type filter Videos hides the ISF");
+                    // Two roots, Video and Audio; the kind filter picks Files, Generators, Inputs or ISF in them
+                    QTreeWidgetItem *videoRoot = tree->topLevelItem(0), *audioRoot = tree->topLevelItem(1), *videos = nullptr, *isfTop = nullptr;
+                    check(tree->topLevelItemCount() == 2 && videoRoot->text(0) == "Video" && audioRoot->text(0) == "Audio",
+                          "the media bin has a Video root and an Audio root");
+                    for (int c = 0; c < videoRoot->childCount(); ++c) {
+                        if (videoRoot->child(c)->text(0).startsWith("Videos")) videos = videoRoot->child(c);
+                        if (videoRoot->child(c)->text(0) == "ISF") isfTop = videoRoot->child(c);
+                    }
+                    auto *kind = bin->findChild<QComboBox *>("kindFilter");
+                    check(videos && isfTop && kind, "Video holds Videos and ISF; the bin has a kind filter");
+                    if (videos && isfTop && kind) {
+                        usage->setCurrentIndex(0); // the use filter hides what is empty: not what these checks are about
+                        kind->setCurrentIndex(kind->findText("ISF"));
+                        check(videos->isHidden() && !isfTop->isHidden() && shown(gen), "kind filter ISF shows only ISF");
+                        kind->setCurrentIndex(kind->findText("Files"));
+                        check(!videos->isHidden() && isfTop->isHidden(), "kind filter Files hides the ISF");
+                        kind->setCurrentIndex(0);
+                        type->setCurrentIndex(type->findText("Audio"));
+                        check(videoRoot->isHidden() && !audioRoot->isHidden(), "media filter Audio hides the Video root");
+                        type->setCurrentIndex(type->findText("Video"));
+                        check(!videoRoot->isHidden() && audioRoot->isHidden(), "media filter Video hides the Audio root");
+                    }
                     type->setCurrentIndex(0);
                     usage->setCurrentIndex(0);
                     rebuild->click();
@@ -680,12 +727,13 @@ int main(int argc, char **argv)
         if (table && undo && inspector) {
             const int a = engine.indexOfId(ids[0]), b = engine.indexOfId(ids[1]), c = engine.indexOfId(ids[2]);
             table->clearSelection();
-            table->setCurrentCell(a, 3);
+            table->setCurrentCell(a, 4);
             table->selectionModel()->select(table->model()->index(c, 0),
                                             QItemSelectionModel::Select | QItemSelectionModel::Rows);
             app.processEvents();
             check(inspector->coTargets() == QList<quint64>{ids[2]}, "inspector knows the other selected layer");
-            auto *note = inspector->findChild<QLabel *>("multiSelectionNote");
+            // In the header pinned above the inspector's scroll area
+            auto *note = inspector->pinnedHeader()->findChild<QLabel *>("multiSelectionNote");
             check(note && note->isVisible(), "inspector says the edit applies to the whole selection");
             auto *sourceSpace = inspector->findChild<QComboBox *>("sourceColorSpace");
             check(sourceSpace && sourceSpace->findData("displayp3") >= 0, "source interpretation control is present");
@@ -717,7 +765,7 @@ int main(int argc, char **argv)
                       "undo restores every selected layer");
             }
             // The list's own opacity bar on a selected row
-            if (auto *cell = table->cellWidget(c, 5); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
+            if (auto *cell = table->cellWidget(c, 6); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
                 emit bar->valueEdited(25);
                 check(std::abs(opacityOf(ids[0]) - .25) < 1e-6 && std::abs(opacityOf(ids[2]) - .25) < 1e-6,
                       "list opacity bar of a selected row sets the whole selection");
@@ -735,10 +783,10 @@ int main(int argc, char **argv)
             check(copy && pasteAll, "Copy / Paste All Attributes actions present");
             if (copy && pasteAll) {
                 table->clearSelection();
-                table->setCurrentCell(b, 3); app.processEvents();
+                table->setCurrentCell(b, 4); app.processEvents();
                 copy->trigger();
                 table->clearSelection();
-                table->setCurrentCell(a, 3);
+                table->setCurrentCell(a, 4);
                 table->selectionModel()->select(table->model()->index(c, 0),
                                                 QItemSelectionModel::Select | QItemSelectionModel::Rows);
                 app.processEvents();
@@ -746,6 +794,24 @@ int main(int argc, char **argv)
                 check(std::abs(opacityOf(ids[0]) - .6) < 1e-6 && std::abs(opacityOf(ids[2]) - .6) < 1e-6,
                       "paste reaches every selected layer");
             }
+            // Deselecting: Cmd / Ctrl + click on the current row moves the current one to the row still selected,
+            // and an empty selection survives the list refreshing
+            table->clearSelection();
+            table->setCurrentCell(a, 4);
+            table->selectionModel()->select(table->model()->index(c, 0),
+                                            QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            table->selectionModel()->select(table->model()->index(a, 0),
+                                            QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+            app.processEvents();
+            check(table->currentRow() == c, "deselecting the current row makes the selected one current");
+            table->selectionModel()->select(table->model()->index(c, 0),
+                                            QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+            app.processEvents();
+            check(table->currentRow() == -1, "deselecting the last row leaves no current layer");
+            emit engine.layersChanged();
+            app.processEvents();
+            check(table->currentRow() == -1 && table->selectionModel()->selectedRows().isEmpty(),
+                  "a deselected list stays empty after a refresh");
             // Viewports: several selected in their list, pasted onto together and edited together
             auto *tabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *viewportList = window.findChild<QListWidget *>("viewportList");

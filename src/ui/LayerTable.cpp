@@ -26,7 +26,7 @@
 #include <cmath>
 #include <functional>
 
-enum Col { ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
@@ -188,6 +188,10 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *e) override
     {
+        if (!e->buttons()) { // over a handle: a hand, it can be dragged
+            const QPoint p = e->position().toPoint();
+            viewport()->setCursor(rowAt(p.y()) >= 0 && columnAt(p.x()) == ColHandle ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        }
         if (m_pressRow >= 0 && (e->buttons() & Qt::LeftButton) &&
             (e->position().toPoint() - m_pressPos).manhattanLength() >= QApplication::startDragDistance()) {
             QList<int> dragged;
@@ -293,6 +297,31 @@ protected:
         QTableWidget::paintEvent(e);
         QPainter p(viewport());
         const QColor accent = theme::accent();
+        // Each row a band of its kind's colour; each group a fine line around all it holds
+        if (rows) {
+            const int bandX = columnViewportPosition(ColName), width = viewport()->width();
+            for (int r = 0; r < int(rows->size()); ++r) {
+                const LayerTable::Row &row = (*rows)[size_t(r)];
+                if (isRowHidden(r) || !row.color.isValid()) continue;
+                QColor band = row.color;
+                if (row.soloHidden) band.setAlpha(70);
+                const int indent = row.depth * 10;
+                p.fillRect(bandX + indent, rowViewportPosition(r) + 1, 3, rowHeight(r) - 2, band);
+            }
+            for (int r = 0; r < int(rows->size()); ++r) {
+                const LayerTable::Row &row = (*rows)[size_t(r)];
+                if (!row.group || isRowHidden(r)) continue;
+                int last = r;
+                for (int k = r + 1; k < int(rows->size()) && (*rows)[size_t(k)].depth > row.depth; ++k)
+                    if (!isRowHidden(k)) last = k;
+                QColor line = row.color;
+                line.setAlpha(170);
+                p.setPen(QPen(line, 1));
+                p.setBrush(Qt::NoBrush);
+                const int inset = 1 + row.depth * 3, top = rowViewportPosition(r);
+                p.drawRect(inset, top, width - 2 * inset - 1, rowViewportPosition(last) + rowHeight(last) - top - 1);
+            }
+        }
         // The viewports, a block of their own at the top
         if (rows) {
             int lastVp = -1;
@@ -356,13 +385,16 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     auto *group = barButton(QStringLiteral("⊞"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
     auto *vp = barButton(QStringLiteral("▭"), QStringLiteral("New Viewport: another window onto the composition, "
                                                              "with its own size, screen and publishing"));
+    auto *scene = barButton(QStringLiteral("3D"), QStringLiteral("3D: a new 3D scene (with a light), or a light in the selected "
+                                                                 "scene. Models: drop an FBX, glTF or OBJ onto a layer or a scene"));
+    scene->setObjectName(QStringLiteral("layer3dButton"));
     auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected layers (Del)"));
     auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
     auto *up = barButton(QStringLiteral("▲"), QStringLiteral("Move Up (Ctrl+])"));
     auto *down = barButton(QStringLiteral("▼"), QStringLiteral("Move Down (Ctrl+[)"));
     (void)title;
     bar->setSpacing(2);
-    for (auto *b : {add, group, vp, remove, dup, up, down}) bar->addWidget(b);
+    for (auto *b : {add, group, vp, scene, remove, dup, up, down}) bar->addWidget(b);
     bar->addStretch();
     v->addLayout(bar);
 
@@ -379,11 +411,12 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onCollapse = [this](int row) { emit collapseToggled(row); };
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
-    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
                                         QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
+    m_table->horizontalHeaderItem(ColHandle)->setToolTip(QStringLiteral("Drag to reorder"));
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
@@ -396,8 +429,11 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);
     m_table->setIconSize(QSize(16, 16));
+    m_table->setMouseTracking(true); // the handles' hand
     auto *h = m_table->horizontalHeader();
     h->setHighlightSections(false);
+    h->setSectionResizeMode(ColHandle, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColHandle, 16);
     h->setSectionResizeMode(ColVisible, QHeaderView::Fixed);
     m_table->setColumnWidth(ColVisible, 30);
     h->setSectionResizeMode(ColLock, QHeaderView::Fixed);
@@ -422,7 +458,20 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         if (!m_updating && row != prev) emit currentRowChanged(row);
     });
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this] {
-        if (!m_updating) emit selectionChanged();
+        if (m_updating) return;
+        // The current row deselected (Cmd / Ctrl + click): another selected row becomes the current one, or none —
+        // the inspector and the mapping view follow, not a row left highlighted nowhere
+        const int current = m_table->currentRow();
+        if (current >= 0 && !m_table->selectionModel()->isRowSelected(current, QModelIndex())) {
+            const QModelIndexList selected = m_table->selectionModel()->selectedRows();
+            const int next = selected.isEmpty() ? -1 : selected.front().row();
+            m_updating = true;
+            m_table->selectionModel()->setCurrentIndex(next < 0 ? QModelIndex() : m_table->model()->index(next, ColName),
+                                                       QItemSelectionModel::NoUpdate);
+            m_updating = false;
+            emit currentRowChanged(next);
+        }
+        emit selectionChanged();
     });
     connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
         if (m_updating || it->column() != ColVisible) return;
@@ -447,6 +496,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     connect(add, &QToolButton::clicked, this, &LayerTable::addClicked);
     connect(group, &QToolButton::clicked, this, &LayerTable::groupClicked);
     connect(vp, &QToolButton::clicked, this, &LayerTable::viewportClicked);
+    connect(scene, &QToolButton::clicked, this, [this, scene] { emit scene3dClicked(scene); });
     connect(remove, &QToolButton::clicked, this, &LayerTable::removeClicked);
     connect(dup, &QToolButton::clicked, this, &LayerTable::duplicateClicked);
     connect(up, &QToolButton::clicked, this, [this] { emit moveClicked(-1); });
@@ -514,6 +564,16 @@ void LayerTable::updateRow(int r, const Row &row)
         it->setToolTip(tip.isEmpty() ? t : tip);
         return it;
     };
+    // Its handle: dragged, the layer moves (in the list, into a group)
+    QTableWidgetItem *handle = m_table->item(r, ColHandle);
+    if (!handle) {
+        handle = new QTableWidgetItem(QStringLiteral("⠿"));
+        handle->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        handle->setTextAlignment(Qt::AlignCenter);
+        handle->setForeground(QColor(130, 130, 138));
+        handle->setToolTip(QStringLiteral("Drag to reorder, or onto a group"));
+        m_table->setItem(r, ColHandle, handle);
+    }
     QTableWidgetItem *vis = m_table->item(r, ColVisible);
     if (!vis) {
         vis = new QTableWidgetItem;
@@ -565,9 +625,8 @@ void LayerTable::updateRow(int r, const Row &row)
     name->setFont(f);
     name->setForeground(row.error        ? QColor(255, 110, 95)
                         : row.soloHidden ? QColor(110, 110, 115) // left out by a solo
-                        : row.viewport   ? QColor(140, 200, 255)
-                        : row.group    ? QColor(255, 200, 140)
-                                       : QColor(230, 230, 233));
+                        : row.color.isValid() ? row.color
+                                              : QColor(230, 230, 233));
     // Effects: their number, the names on hover
     QTableWidgetItem *fx = text(ColEffects, row.effectCount ? QString::number(row.effectCount) : QStringLiteral("—"),
                                 row.effectCount ? (row.effectsOn ? QString() : QStringLiteral("FX off\n")) +

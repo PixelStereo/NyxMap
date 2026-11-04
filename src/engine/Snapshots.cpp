@@ -327,9 +327,10 @@ void Engine::applyParams(Layer &layer, const QJsonObject &params, const QJsonObj
                 }
                 continue;
             }
-            // A timecode that plays here and plays already goes on: not sent back to where it was when stored
+            // A timecode that plays here and plays already goes on: not sent back to where it was when stored. Except to 0: a
+            // position of 0 in a snapshot or a preset is a rewind, asked for
             if (path == QLatin1String("tc/position") && params.value("tc/play").toBool(true) && l->tcClock &&
-                l->tcClock->playing())
+                l->tcClock->playing() && it.value().toDouble() > 1e-9)
                 continue;
             // A countdown or a stopwatch likewise: one that runs here and runs already goes on
             if (path == QLatin1String("clock/elapsed") && params.value("clock/play").toBool(false) && l->clockGen &&
@@ -442,6 +443,7 @@ void Engine::recallPreset(int i)
 {
     const Preset p = preset(i);
     if (!p.id) return;
+    if (!p.views.isEmpty()) emit viewsRecalled(p.views);
     resumeAfterStop();
     const double fade = std::max(0.0, p.fade);
     std::map<quint64, QJsonObject> meshes; // the meshes it holds, by layer: moved there below, not set at once
@@ -556,6 +558,7 @@ void Engine::recallPreset(int i)
                 l->enabled = params.value("enable").toBool();
             }
         }
+        if (params.contains("solo")) l->solo = params.value("solo").toBool();
         applyParams(*l, params, timing, easing, fade, *job, false, false, false, delays);
         if (!job->done()) m_fades.push_back(std::move(job));
     }
@@ -924,6 +927,7 @@ void Engine::recallSnapshotCopy(const Snapshot &m, int i)
     if (!m.id) return;
     resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
+    if (!m.views.isEmpty()) emit viewsRecalled(m.views);
     if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && m.fixtures.isEmpty() &&
         interactions().empty())
         return;
@@ -1194,7 +1198,7 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         for (size_t k = 0; k < l->effects.size() && int(k) < fx.size(); ++k) { // their masks
             const QJsonObject e = fx[int(k)].toObject();
             l->effects[k]->maskLayer = e.value("mask").toString().toULongLong();
-            l->effects[k]->maskPreFx = e.value("mask_tap").toString() == "prefx";
+            l->effects[k]->maskStage = e.value("mask_stage").toInt(-1);
         }
         // Visibility: shown at once and faded in from 0, or faded out then hidden
         const bool visible = o.value("enable").toBool(l->enabled);
@@ -1311,6 +1315,7 @@ void Engine::stopShowPlayback()
         if (l.hasTransport()) l.playing = false;
         if (l.tcClock) l.tcClock->setPlaying(false);
         if (l.toxPlayer) { l.tox.playing = false; l.applyTox(); }
+        l.text.writePlaying = false; // a text being written: held where the pen is
         if (l.clockGen) l.clockGen->pause(); // a countdown, a stopwatch: held where they are
         if (l.text.typeDur > 0) {
             l.text.content = l.text.shown();
@@ -1427,6 +1432,10 @@ void Engine::stepTypewriters(double dt)
 {
     for (auto &lp : m_layers) {
         TextSource &t = lp->text;
+        if (t.writePlaying) {
+            t.writeProgress = std::min(1.0f, t.writeProgress + float(std::max(0.0, dt) / std::max(0.05f, t.writeDuration)));
+            if (t.writeProgress >= 1.0f) t.writePlaying = false;
+        }
         if (t.typeDur <= 0) continue;
         t.typeElapsed += std::max(0.0, dt);
         if (t.typeElapsed >= t.typeDur) t.stopTyping();
@@ -1615,6 +1624,7 @@ QJsonObject Engine::snapshotToJson(const Snapshot &m, const QString &dir) const
     if (!m.composition.isEmpty()) out["composition"] = m.composition;
     if (!m.interactions.isEmpty()) out["interactions"] = m.interactions;
     if (!m.fixtures.isEmpty()) out["fixtures"] = m.fixtures;
+    if (!m.views.isEmpty()) out["views"] = m.views;
     if (!m.thumbnail.isNull()) {
         QByteArray png;
         QBuffer buf(&png);
@@ -1636,6 +1646,7 @@ Engine::Snapshot Engine::snapshotFromJson(const QJsonObject &o, const QString &d
     m.composition = o.value("composition").toObject();
     m.interactions = o.value("interactions").toArray();
     m.fixtures = o.value("fixtures").toArray();
+    m.views = o.value("views").toObject();
     for (const QJsonValue &v : o.value("layers").toArray()) {
         QJsonObject l = v.toObject();
         auto resolve = [&](QJsonObject x) {

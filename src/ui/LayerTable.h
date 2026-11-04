@@ -1,4 +1,5 @@
 #pragma once
+#include <QColor>
 #include <QList>
 #include <QWidget>
 #include <vector>
@@ -21,6 +22,7 @@ class LayerTable : public QWidget
 public:
     struct Row {
         QString name, tag, source, effects, blend, playback;
+        QColor color;               // of its kind
         bool enabled = true, error = false;
         bool noPicture = false; // audio layer: no opacity or blend
         float opacity = 1.f;
@@ -49,6 +51,7 @@ signals:
     void addClicked();
     void groupClicked();
     void viewportClicked();
+    void scene3dClicked(QWidget *anchor); // the 3D button: New 3D Scene, Add Light (a menu below it)
     void filesDropped(int row, const QStringList &paths); // row -1: below the last layer
     void visibilityToggled(int row, bool visible);
     void lockToggled(int row);

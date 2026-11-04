@@ -40,6 +40,10 @@ public:
     // A new interaction driving this value (a layer's id, 0: the composition), its source learnt of that kind (Internal:
     // chosen in its settings); the tab is shown
     void learnFor(quint64 layer, const QString &path, InteractionSource kind);
+    // An envelope on a value, in one go: what `source` hears (a hit, a key, a gate) shapes it from where it is now
+    quint64 addEnvelope(quint64 layer, const QString &path, Interaction source);
+    static Interaction heard(double low, double high); // the hits of a region of the program's sound
+    void connectSource(quint64 from, quint64 layer, const QString &path); // the same source, to drive another value
     // The end of any value's right-click menu: its OSC address (copied when chosen), and Learn Interaction ▸ a kind of
     // source. `paths`: the values the widget shows (x and y: one sub-menu each)
     static void fillValueMenu(QMenu *menu, Engine *e, quint64 layer, const QStringList &paths);
@@ -56,6 +60,9 @@ private:
     void attachPreset(std::initializer_list<QWidget *> ws, const QStringList &paths);
     std::optional<InteractionSource> shownKind() const; // the sub-tab's (none: All)
     void rebuildList();
+    void refreshPatch();
+    void patchMenu(quint64 id, const QPoint &at);
+    void patchConnectElsewhere(quint64 from, const QPoint &at);
     void rebuildSettings();
     // A menu of the show's values by owner: the composition's, then each layer's (not the groups'), each sub-menu filled
     void fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill);
@@ -106,6 +113,8 @@ private:
     class QScrollArea *m_scroll = nullptr;
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;
+    class InteractionPatch *m_patch = nullptr; // the nodes, in place of the list
+    class QStackedWidget *m_views = nullptr;
     quint64 m_shown = 0;        // the interaction whose settings are shown
     int m_xyAxis = 0; // source/chain currently edited in an XY interaction
     bool m_committing = false;  // its own edit going to the engine: the settings are not made again

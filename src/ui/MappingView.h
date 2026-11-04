@@ -1,4 +1,5 @@
 #pragma once
+#include <QJsonObject>
 #include "GlDraw.h"
 #include "Mapping.h"
 #include "Masks.h"
@@ -37,6 +38,9 @@ public:
     void zoomBy(double factor);           // around the center of the view
     void zoomToFit();
     double zoom() const { return m_zoom; }
+    // How it is seen: zoom and pan, the fixtures shown, mask points or layer geometry selected (a project, a preset)
+    QJsonObject viewState() const;
+    void setViewState(const QJsonObject &o);
     // Masks (Masks.h): the current layer's mask edited here (its points, its handles, dragged whole), and a new one
     // drawn point by point (click; drag to curve; the first point, a double-click or Enter closes it; Esc cancels)
     void setMaskIndex(int index); // -1: none

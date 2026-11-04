@@ -1,9 +1,10 @@
 #pragma once
+#include "Tox.h"
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPointer>
 #include <QVariant>
-#include <QJsonObject>
 #include <QWidget>
-#include "Tox.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -27,11 +28,15 @@ class QLineEdit;
 class RoiEditor;
 class ColorEditor;
 class QComboBox;
+class QToolButton;
 class QGroupBox;
 class ParamPanel;
 class ParamAnimPanel;
 class AnimateMenu;
 class QTabWidget;
+class FxChainPanel;
+class NumberBox;
+class LevelMeter;
 class ViewportOutputPanel;
 
 // Inspector for the selected layer, group or viewport: at the top, always shown, its source (drop zone, transport,
@@ -71,15 +76,32 @@ signals:
     void projectEdited();                  // saved interface state of the layer changed (not undoable)
     void kindChanged(const QString &kind); // "Layer", "Group" or "Viewport": the title of the tab
     void maskSelected(int index);          // the mask the preview edits (-1: none)
+    void layerPickRequested(quint64 id);   // the menu at the top: inspect this layer, group or viewport
     void maskDrawRequested();              // the preview draws a new mask point by point
     void lineDrawRequested();              // a Line generator: the preview draws a new line point by point
     // A Line generator: a pixel mapping fixture of that type on each of its lines, its pixels along it
     void lineFixturesRequested(const QString &typeId, int pixels);
+    void timelineRequested(quint64 id); // a timeline drives one of its numbers: open it
 
 private:
+    void buildPicker();   // the menu at the top (made once)
+    void refreshPicker(); // its items follow the layers (added, renamed, moved), its current one the layer shown
+    QString m_pickerKey;
+    QPointer<QComboBox> m_picker;
+    QPointer<QToolButton> m_pickerPrev, m_pickerNext;
     QString layoutKey() const;
     QString m_layoutKey;
     QWidget *buildSource(const LayerValues &s);    // above the tabs: the drop zone, the transition, the speed
+    QWidget *buildAudioEffects();   // the Audio FX tab (the FX tab's mechanism, for the sound)
+    void showAudioEffectParams();  // the parameters of the selected audio FX, swapped without rebuilding the list
+    void editAudioEffects(const QJsonArray &after, const QString &text);
+    void refreshAudioMeters();
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFXFields; // the chain's (master switch)
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_audioFxDetail; // the selected FX's parameters
+    QPointer<FxChainPanel> m_audioChain;
+    int m_selectedAudioFx = 0;
+    QPointer<QLabel> m_sonificationSwatch; // the color a Video Sonification instrument sees
+    QPointer<LevelMeter> m_audioSourceMeter, m_audioOutputMeter, m_audioFxMeter;
     QWidget *buildSourceTab(const LayerValues &s); // the Source tab
     QWidget *buildViewports(const LayerValues &s); // the Viewports tab: how much of it each one shows
     void useLayer(int row, const std::vector<std::pair<quint64, QString>> &candidates); // a layer dropped on the source
@@ -95,6 +117,7 @@ private:
     unsigned m_masksRev = 0; // the masks' revision the panel shows
     int m_maskIndex = -1; // the mask selected (kept while the inspector is rebuilt for the same layer)
     QWidget *buildEffects(const LayerValues &s);
+    QWidget *effectRowControls(int k, FxChainPanel *panel); // its speed, mask and channels, on its row
     void showEffectParams(); // parameters of the selected effect, swapped without rebuilding the list
     void editMapping(const QString &text, const std::function<void(Mapping &)> &fn, bool merge = false);
     void refreshSpatial(); // position / scale fields follow the mapping (handles dragged in the preview)
@@ -118,11 +141,18 @@ private:
     int m_selectedEffect = 0;
     QString m_subTab = QStringLiteral("Source"); // the tab shown, by its name: kept from one layer to the next
     quint64 m_layerId = 0;
-    QPointer<SliderField> m_fxSpeed; // the selected FX's speed
-    QString m_fxSpeedPath;
+    std::vector<std::pair<QPointer<NumberBox>, QString>> m_fxSpeeds; // each FX row's speed, and its parameter
+
     bool m_locked = false;
     QVBoxLayout *m_layout = nullptr;
     QWidget *m_content = nullptr;
+    // Above the part that scrolls, always shown: the layer picker, the selection note, Enable / lock / Solo / name
+    QWidget *m_pinned = nullptr;
+    QVBoxLayout *m_pinnedLayout = nullptr;
+    QWidget *m_head = nullptr; // its Enable / lock / Solo / name row, made again with the rest
+public:
+    QWidget *pinnedHeader() const { return m_pinned; } // laid out by the window above the inspector's scroll area
+private:
 
     QPointer<QWidget> m_fxDetail;
     QPointer<SliderField> m_position, m_speed;
@@ -136,6 +166,18 @@ private:
     QPointer<SliderField> m_temp, m_tint;
     // Followed while a snapshot fades them (as temp / tint)
     QPointer<SliderField> m_opacity, m_volume;
+    std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
+    QPointer<class AdsrCurve> m_adsrCurve; // an instrument's envelope
+    // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
+    QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
+    QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
+    void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
+    void addSceneEnvironment(class QFormLayout *form); // a scene: the layer (an HDRI) around it, lighting it
+    void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
+                        const QString &objectName, const QString &tip, const QString &undoText,
+                        const std::function<bool(quint64, int, QString *)> &set, bool hdr = false);
+    std::vector<std::pair<QPointer<QWidget>, QString>> m_3dFields;
+    std::vector<std::pair<QPointer<QWidget>, QStringList>> m_3dColors;
     QPointer<ParamPanel> m_generatorParams, m_effectParams;
     struct RouteField {
         quint64 viewport;
@@ -144,7 +186,7 @@ private:
     };
     std::vector<RouteField> m_routeFields;
     bool m_previewing = false;
-    QPointer<QProgressBar> m_meter;
+    QPointer<LevelMeter> m_meter; // the layer's output level, in the Source tab
     QPointer<QLabel> m_pictureFact; // known once frames are decoded: kept up to date
     QPointer<QLabel> m_streamState; // a live stream: connecting, live, reconnecting (and why)
     QPointer<QLabel> m_timecodeStatus; // a Timecode generator: where its timecode comes from, kept up to date
