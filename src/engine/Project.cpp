@@ -111,6 +111,9 @@ void Engine::clearProject()
         m_midiOutputs.clear();
         m_audioOutputs.clear();
         m_atc.clear();
+        m_interactionGraph = {};
+        m_graphProcessor.configure({});
+        m_graphTargets.clear();
         m_interactions.clear();
         m_interactionRun.clear();
         m_interactionFades.clear();
@@ -614,6 +617,7 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray interactions;
         for (const Interaction &it : m_interactions) interactions.append(it.toJson());
         root["interactions"] = interactions;
+        root["interaction_graph"] = m_interactionGraph.toJson();
         root["sequences"] = m_sequencer->toJson();
         root["clock"] = m_beatClock.toJson();
         if (!m_controls.empty()) root["controls"] = controlsJson();
@@ -934,6 +938,13 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             interactions.push_back(it);
         }
         setInteractions(interactions);
+    }
+    if (root.contains("interaction_graph")) {
+        InteractionGraph graph;
+        QString graphError;
+        if (InteractionGraph::fromJson(root.value("interaction_graph").toObject(), &graph, &graphError))
+            setInteractionGraph(graph, &graphError);
+        if (!graphError.isEmpty()) warnings << QStringLiteral("Interaction graph: ") + graphError;
     }
     setFixturePatch(FixturePatch::fromJson(root.value("pixel_mapping").toObject()));
     emit layersChanged();

@@ -68,6 +68,67 @@ void Engine::configureInteractionTarget(Interaction &it, quint64 layer, const QS
     }
 }
 
+InteractionGraph Engine::interactionGraph() const
+{
+    Lock lk(&m_mutex);
+    return m_interactionGraph;
+}
+
+bool Engine::setInteractionGraph(const InteractionGraph &graph, QString *error)
+{
+    {
+        Lock lk(&m_mutex);
+        if (!m_graphProcessor.configure(graph, error)) return false;
+        for (auto at = m_graphTargets.begin(); at != m_graphTargets.end();) {
+            const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto &n) { return n.id == at->first; });
+            const auto old = std::find_if(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [&](const auto &n) { return n.id == at->first; });
+            if (node == graph.nodes.end() || old == m_interactionGraph.nodes.end() || node->settings.toJson() != old->settings.toJson())
+                at = m_graphTargets.erase(at);
+            else ++at;
+        }
+        m_interactionGraph = graph;
+    }
+    emit interactionsChanged();
+    return true;
+}
+
+// Continuous scalar graph path. Event/action and compound-value support is
+// deliberately kept separate until its edge-preservation tests are complete.
+void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events)
+{
+    using Kind = InteractionGraph::Kind;
+    for (const auto &node : m_interactionGraph.nodes) {
+        if (node.kind != Kind::Source || !node.settings.enabled) continue;
+        const auto &source = node.settings;
+        if (source.source == InteractionSource::Internal) {
+            if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
+                m_graphProcessor.input(node.id, parameter->asNumber());
+        } else if (source.source == InteractionSource::Pixels || source.source == InteractionSource::Hands) {
+            m_graphProcessor.input(node.id, visionValue(source));
+        } else if (source.source != InteractionSource::Audio) {
+            for (const auto &event : events)
+                if (source.matches(event) && event.colorComponents == 0) m_graphProcessor.input(node.id, event.value);
+        }
+    }
+    m_graphProcessor.step(dt);
+    for (const auto &node : m_interactionGraph.nodes) {
+        if (node.kind != Kind::Destination || !node.settings.enabled) continue;
+        const auto &target = node.settings;
+        const auto value = m_graphProcessor.value(node.id);
+        if (!value) continue;
+        if (target.layer) {
+            const int index = indexOfId(target.layer);
+            if (index < 0 || m_layers[size_t(index)]->locked) continue;
+        }
+        auto *parameter = findParameter(target.layer, target.param);
+        if (!parameter || !(parameter->info().access & ParamInfo::Write) || !parameter->isNumber()) continue;
+        const auto info = parameter->info();
+        const auto write = m_graphTargets[node.id].numberToWrite(target, *value, parameter->number(),
+            std::max(info.step, .01 * std::abs(info.max - info.min)));
+        if (write && parameter->setNumber(*write) && target.layer) releaseFromFades(target.layer, target.param);
+    }
+}
+
 std::vector<Interaction> Engine::interactions() const
 {
     Lock lk(&m_mutex);
@@ -396,6 +457,7 @@ void Engine::stepInteractions(double dt)
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
         events.swap(m_interactionEvents);
     }
+    if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
     if (m_interactions.empty()) return;
     // The program mix and the live input, each read only when an Audio interaction measures its bands
     auto needsSpectrum = [this](bool input) {
