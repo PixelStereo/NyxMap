@@ -383,6 +383,8 @@ void Engine::markNeeded()
             for (const auto &axis : input.xyInputs)
                 visionReference(axis);
         }
+    for (const auto &node : m_interactionGraph.nodes)
+        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
     for (auto &l : m_layers) refer(*l);
     for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
     const std::vector<bool> leftOut = soloLeftOut();

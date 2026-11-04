@@ -1256,6 +1256,7 @@ private:
 
     // Interactions
     InteractionGraph m_interactionGraph;
+    quint64 m_graphRevision = 0;
     InteractionGraphProcessor m_graphProcessor;
     std::map<quint64, InteractionTargetState> m_graphTargets;
     void stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events);

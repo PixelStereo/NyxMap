@@ -112,6 +112,7 @@ void Engine::clearProject()
         m_audioOutputs.clear();
         m_atc.clear();
         m_interactionGraph = {};
+        ++m_graphRevision;
         m_graphProcessor.configure({});
         m_graphTargets.clear();
         m_interactions.clear();

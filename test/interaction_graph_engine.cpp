@@ -64,6 +64,22 @@ int main(int argc, char **argv)
             check(engine.interactionGraph().edges.size() == 2, "disconnect changes engine graph");
             undo.undo(); app.processEvents();
             check(engine.interactionGraph().edges.size() == 3, "undo restores cable");
+            canvas->disconnected(2, 4); app.processEvents();
+            auto port = [&](quint64 id, bool output) {
+                for (auto *item : canvas->scene()->items())
+                    if (item->data(0).toULongLong() == id && item->data(1).isValid() && item->data(1).toBool() == output)
+                        return canvas->mapFromScene(item->sceneBoundingRect().center());
+                return QPoint(-1000, -1000);
+            };
+            const QPoint from = port(2, true), to = port(4, false);
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(from), QPointF(canvas->viewport()->mapToGlobal(from)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(canvas->viewport(), &press);
+            QMouseEvent move(QEvent::MouseMove, QPointF(to), QPointF(canvas->viewport()->mapToGlobal(to)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(canvas->viewport(), &move);
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(to), QPointF(canvas->viewport()->mapToGlobal(to)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(canvas->viewport(), &release);
+            app.processEvents();
+            check(engine.interactionGraph().edges.size() == 3, "mouse drag connects actual canvas ports");
             canvas->removed(2); app.processEvents();
             check(engine.interactionGraph().nodes.size() == 3 && engine.interactionGraph().edges.empty(), "remove block removes attached cables");
             undo.undo(); app.processEvents();

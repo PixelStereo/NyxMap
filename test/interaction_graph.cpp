@@ -62,5 +62,21 @@ int main()
         const double expected = kind == Kind::Add ? 6 : kind == Kind::Multiply ? 8 : kind == Kind::Maximum ? 4 : kind == Kind::Mix ? 2.5 : 2;
         check(processor.value(3) == expected, "combiner output uses raw units");
     }
+    mixGraph.nodes[2].kind = Kind::Select;
+    mixGraph.nodes[2].selectedInput = 1;
+    mixGraph.edges.erase(mixGraph.edges.begin());
+    check(processor.configure(mixGraph), "disconnected input retains port identity");
+    processor.input(2, 4); processor.step(.01);
+    check(processor.value(3) == 4, "B remains B after removing A");
+    InteractionGraph toggle;
+    Interaction toggleSettings;
+    toggleSettings.filters = {InteractionStage::made(InteractionFilter::Toggle)};
+    toggle.nodes = {{1, Kind::Source, {}}, {2, Kind::Filter, toggleSettings}, {3, Kind::Destination, {}}};
+    check(toggle.connect(1, 2) && toggle.connect(2, 3) && processor.configure(toggle), "event graph compiles");
+    for (double value : {1., 0., 1., 0.}) {
+        processor.clearEvent(); processor.input(1, value); processor.step(0, true);
+    }
+    processor.step(1. / 60);
+    check(processor.value(3) == 0., "two presses in one frame toggle twice");
     return failures ? 1 : 0;
 }

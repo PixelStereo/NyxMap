@@ -17,7 +17,7 @@ struct InteractionGraph {
         double mix = 0.5;
         int selectedInput = 0;
     };
-    struct Edge { quint64 from = 0, to = 0; };
+    struct Edge { quint64 from = 0, to = 0; int port = 0; };
     std::vector<Node> nodes;
     std::vector<Edge> edges;
 
@@ -32,11 +32,14 @@ struct InteractionGraph {
         std::vector<size_t> degree(nodes.size());
         std::vector<std::vector<size_t>> next(nodes.size());
         std::set<std::pair<quint64, quint64>> unique;
+        std::set<std::pair<quint64, int>> ports;
         for (const Edge &edge : edges) {
             auto a = index.find(edge.from), b = index.find(edge.to);
             if (a == index.end() || b == index.end()) return fail("Missing cable endpoint");
+            if (edge.port < 0 || edge.port >= 1024 || !ports.emplace(edge.to, edge.port).second) return fail("Invalid or occupied input port");
             if (!unique.emplace(edge.from, edge.to).second) return fail("Duplicate cable");
             const auto from = nodes[a->second].kind, to = nodes[b->second].kind;
+            if ((int(to) < int(Kind::Add) && edge.port != 0) || ((to == Kind::Mix || to == Kind::Select) && edge.port > 1)) return fail("Invalid input port");
             if (from == Kind::Destination || to == Kind::Source) return fail("Invalid cable direction");
             if (++degree[b->second] > 1 && int(to) < int(Kind::Add))
                 return fail("Multiple inputs require a combiner");
@@ -60,7 +63,7 @@ struct InteractionGraph {
             ns.append(QJsonObject{{"id", QString::number(node.id)}, {"kind", int(node.kind)},
                                   {"settings", node.settings.toJson()}, {"mix", node.mix}, {"selected_input", node.selectedInput}});
         for (const auto &edge : edges)
-            es.append(QJsonObject{{"from", QString::number(edge.from)}, {"to", QString::number(edge.to)}});
+            es.append(QJsonObject{{"from", QString::number(edge.from)}, {"to", QString::number(edge.to)}, {"port", edge.port}});
         return {{"version", 1}, {"nodes", ns}, {"edges", es}};
     }
     static bool fromJson(const QJsonObject &json, InteractionGraph *result, QString *error = nullptr)
@@ -80,15 +83,19 @@ struct InteractionGraph {
         for (const auto &value : json.value("edges").toArray()) {
             const auto object = value.toObject();
             candidate.edges.push_back({object.value("from").toString().toULongLong(),
-                                       object.value("to").toString().toULongLong()});
+                                       object.value("to").toString().toULongLong(), object.value("port").toInt()});
         }
         if (!candidate.compile(nullptr, error)) return false;
         *result = std::move(candidate);
         return true;
     }
-    bool connect(quint64 from, quint64 to, QString *error = nullptr)
+    bool connect(quint64 from, quint64 to, QString *error = nullptr, int port = -1)
     {
-        edges.push_back({from, to});
+        if (port < 0) {
+            port = 0;
+            while (std::any_of(edges.begin(), edges.end(), [&](const auto &e) { return e.to == to && e.port == port; })) ++port;
+        }
+        edges.push_back({from, to, port});
         if (compile(nullptr, error)) return true;
         edges.pop_back();
         return false;
@@ -108,7 +115,11 @@ public:
         std::map<quint64, size_t> index;
         std::vector<std::vector<size_t>> inputs(graph.nodes.size());
         for (size_t i = 0; i < graph.nodes.size(); ++i) index.emplace(graph.nodes[i].id, i);
-        for (const auto &edge : graph.edges) inputs[index.at(edge.to)].push_back(index.at(edge.from));
+        for (const auto &edge : graph.edges) {
+            auto &ports = inputs[index.at(edge.to)];
+            ports.resize(std::max(ports.size(), size_t(edge.port + 1)), missing);
+            ports[size_t(edge.port)] = index.at(edge.from);
+        }
         std::vector<InteractionProcessor> processors(graph.nodes.size());
         std::vector<std::optional<double>> values(graph.nodes.size());
         std::vector<bool> kept(graph.nodes.size());
@@ -122,7 +133,9 @@ public:
                         node.mix == before.mix && node.selectedInput == before.selectedInput &&
                         inputs[i].size() == m_inputs[j].size();
             for (size_t k = 0; same && k < inputs[i].size(); ++k)
-                same = kept[inputs[i][k]] && graph.nodes[inputs[i][k]].id == m_graph.nodes[m_inputs[j][k]].id;
+                same = inputs[i][k] == missing || m_inputs[j][k] == missing
+                    ? inputs[i][k] == m_inputs[j][k]
+                    : kept[inputs[i][k]] && graph.nodes[inputs[i][k]].id == m_graph.nodes[m_inputs[j][k]].id;
             if (!same) continue;
             kept[i] = true;
             processors[i] = m_processors[j];
@@ -134,24 +147,50 @@ public:
         m_inputs = std::move(inputs);
         m_values = std::move(values);
         m_processors = std::move(processors);
+        m_eventDirty.assign(graph.nodes.size(), false);
         return true;
     }
     void input(quint64 id, double value)
     {
         auto at = m_index.find(id);
         if (at != m_index.end() && m_graph.nodes[at->second].kind == InteractionGraph::Kind::Source && std::isfinite(value))
+        {
             m_values[at->second] = value;
+            m_eventDirty[at->second] = true;
+        }
     }
-    void step(double dt)
+    double hit(quint64 id, const OnsetFlux &flux, double dt)
+    {
+        auto at = m_index.find(id);
+        if (at == m_index.end()) return 0;
+        return m_processors[at->second].hit(flux, m_graph.nodes[at->second].settings, dt);
+    }
+    void step(double dt, bool eventOnly = false)
     {
         using Kind = InteractionGraph::Kind;
         for (size_t i : m_order) {
             const auto &node = m_graph.nodes[i];
-            if (node.kind == Kind::Source) continue;
+            if (node.kind == Kind::Source) {
+                if (!node.settings.enabled) m_values[i].reset();
+                continue;
+            }
+            bool fresh = false;
+            for (size_t parent : m_inputs[i]) if (parent != missing) fresh = fresh || m_eventDirty[parent];
+            m_eventDirty[i] = fresh;
+            if (eventOnly && !fresh) continue;
+            if (eventOnly && node.kind == Kind::Filter) {
+                const bool timed = std::any_of(node.settings.filters.begin(), node.settings.filters.end(), [](const auto &f) {
+                    return f.enabled && f.kind != InteractionFilter::Toggle &&
+                           f.kind != InteractionFilter::Curve && f.kind != InteractionFilter::Math &&
+                           f.kind != InteractionFilter::Clamp && f.kind != InteractionFilter::Steps && f.kind != InteractionFilter::Threshold;
+                });
+                if (timed) { m_eventDirty[i] = false; continue; }
+            }
             std::optional<double> value;
             if (node.kind == Kind::Mix || node.kind == Kind::Select) {
                 if (m_inputs[i].size() == 2) {
-                    auto a = m_values[m_inputs[i][0]], b = m_values[m_inputs[i][1]];
+                    auto a = m_inputs[i][0] == missing ? std::nullopt : m_values[m_inputs[i][0]];
+                    auto b = m_inputs[i][1] == missing ? std::nullopt : m_values[m_inputs[i][1]];
                     if (node.kind == Kind::Select) value = node.selectedInput == 0 ? a : b;
                     else if (a && b) value = *a * (1 - std::clamp(node.mix, 0.0, 1.0)) + *b * std::clamp(node.mix, 0.0, 1.0);
                 }
@@ -159,30 +198,37 @@ public:
                 continue;
             }
             for (size_t parent : m_inputs[i]) {
-                if (!m_values[parent]) continue;
+                if (parent == missing || !m_values[parent]) continue;
                 if (!value) value = m_values[parent];
                 else if (node.kind == Kind::Add) *value += *m_values[parent];
                 else if (node.kind == Kind::Maximum) *value = std::max(*value, *m_values[parent]);
                 else if (node.kind == Kind::Minimum) *value = std::min(*value, *m_values[parent]);
                 else if (node.kind == Kind::Multiply) *value *= *m_values[parent];
             }
-            if (node.kind == Kind::Filter && value) {
+            if (node.kind == Kind::Filter && node.settings.enabled && value) {
                 m_processors[i].input(node.settings, *value);
                 value = m_processors[i].step(node.settings, dt);
             }
             m_values[i] = value && std::isfinite(*value) ? value : std::nullopt;
         }
     }
+    bool eventOutput(quint64 id) const {
+        auto at = m_index.find(id);
+        return at != m_index.end() && m_eventDirty[at->second];
+    }
+    void clearEvent() { std::fill(m_eventDirty.begin(), m_eventDirty.end(), false); }
     std::optional<double> value(quint64 id) const
     {
         auto at = m_index.find(id);
         return at == m_index.end() ? std::nullopt : m_values[at->second];
     }
 private:
+    static constexpr size_t missing = size_t(-1);
     InteractionGraph m_graph;
     std::map<quint64, size_t> m_index;
     std::vector<size_t> m_order;
     std::vector<std::vector<size_t>> m_inputs;
     std::vector<std::optional<double>> m_values;
     std::vector<InteractionProcessor> m_processors;
+    std::vector<bool> m_eventDirty;
 };

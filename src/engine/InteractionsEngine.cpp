@@ -87,7 +87,9 @@ bool Engine::setInteractionGraph(const InteractionGraph &graph, QString *error)
             else ++at;
         }
         m_interactionGraph = graph;
+        ++m_graphRevision;
     }
+    updateMidiInputs();
     emit interactionsChanged();
     return true;
 }
@@ -97,6 +99,7 @@ bool Engine::setInteractionGraph(const InteractionGraph &graph, QString *error)
 void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events)
 {
     using Kind = InteractionGraph::Kind;
+    std::optional<AudioAnalysis::Spectrum> spectra[2];
     for (const auto &node : m_interactionGraph.nodes) {
         if (node.kind != Kind::Source || !node.settings.enabled) continue;
         const auto &source = node.settings;
@@ -105,28 +108,67 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
                 m_graphProcessor.input(node.id, parameter->asNumber());
         } else if (source.source == InteractionSource::Pixels || source.source == InteractionSource::Hands) {
             m_graphProcessor.input(node.id, visionValue(source));
-        } else if (source.source != InteractionSource::Audio) {
-            for (const auto &event : events)
-                if (source.matches(event) && event.colorComponents == 0) m_graphProcessor.input(node.id, event.value);
+        } else if (source.source == InteractionSource::Audio) {
+            const bool input = source.audioInput;
+            const auto audio = input ? m_audioInput->analysis() : m_audio->analysis();
+            double value = 0;
+            if (source.audioFeature == Interaction::AudioFeature::Band) {
+                if (!spectra[input]) spectra[input] = input ? m_audioInput->spectrum() : m_audio->spectrum();
+                value = spectra[input]->band(float(source.audioLow), float(source.audioHigh));
+            } else if (source.audioFeature == Interaction::AudioFeature::Level) value = audio.level;
+            else if (source.audioFeature == Interaction::AudioFeature::Onset) value = audio.onset;
+            else value = m_graphProcessor.hit(node.id, input ? m_audioInput->onsetFlux() : m_audio->onsetFlux(), dt);
+            m_graphProcessor.input(node.id, value);
         }
     }
+    const auto revision = m_graphRevision;
+    auto write = [&](bool eventOnly) {
+        for (const auto &node : m_interactionGraph.nodes) {
+            if (node.kind != Kind::Destination || !node.settings.enabled || (eventOnly && !m_graphProcessor.eventOutput(node.id))) continue;
+            const Interaction target = node.settings;
+            const auto value = m_graphProcessor.value(node.id);
+            if (!value) continue;
+            if (target.layer) {
+                const int index = indexOfId(target.layer);
+                if (index < 0 || m_layers[size_t(index)]->locked) continue;
+            }
+            auto *parameter = findParameter(target.layer, target.param);
+            if (!parameter || !(parameter->info().access & ParamInfo::Write)) continue;
+            const auto info = parameter->info();
+            auto &state = m_graphTargets[node.id];
+            bool wrote = false;
+            if (parameter->isNumber()) {
+                const auto wanted = state.numberToWrite(target, *value, parameter->number(), std::max(info.step, .01 * std::abs(info.max - info.min)));
+                if (wanted) wrote = parameter->setNumber(*wanted);
+            } else if (info.type == ParamInfo::Type::Bool) {
+                if (parameter->value().toBool() != (*value >= .5)) wrote = parameter->setValue(*value >= .5);
+            } else if (info.type == ParamInfo::Type::Choice && !info.choices.empty()) {
+                const auto choice = info.choices[std::clamp(int(std::round(std::clamp(*value, 0., double(info.choices.size() - 1)))), 0, int(info.choices.size() - 1))];
+                if (parameter->value().toString() != choice) wrote = parameter->setValue(choice);
+            } else if (info.type == ParamInfo::Type::Trigger) {
+                const bool above = *value > .5, fire = above && !state.above;
+                state.above = above;
+                if (fire) wrote = parameter->setValue(QVariant());
+            }
+            if (revision != m_graphRevision) return false;
+            if (wrote && target.layer) releaseFromFades(target.layer, target.param);
+        }
+        return true;
+    };
+    // Preserve every external edge through stateless paths. Timed filters advance
+    // once below, using the frame duration rather than one duration per event.
+    for (const auto &event : events) {
+        m_graphProcessor.clearEvent();
+        for (const auto &node : m_interactionGraph.nodes)
+            if (node.kind == Kind::Source && node.settings.enabled && node.settings.matches(event) && event.colorComponents == 0)
+                m_graphProcessor.input(node.id, event.value);
+        m_graphProcessor.step(0, true);
+        if (!write(true)) return;
+    }
+    m_graphProcessor.clearEvent();
     m_graphProcessor.step(dt);
-    for (const auto &node : m_interactionGraph.nodes) {
-        if (node.kind != Kind::Destination || !node.settings.enabled) continue;
-        const auto &target = node.settings;
-        const auto value = m_graphProcessor.value(node.id);
-        if (!value) continue;
-        if (target.layer) {
-            const int index = indexOfId(target.layer);
-            if (index < 0 || m_layers[size_t(index)]->locked) continue;
-        }
-        auto *parameter = findParameter(target.layer, target.param);
-        if (!parameter || !(parameter->info().access & ParamInfo::Write) || !parameter->isNumber()) continue;
-        const auto info = parameter->info();
-        const auto write = m_graphTargets[node.id].numberToWrite(target, *value, parameter->number(),
-            std::max(info.step, .01 * std::abs(info.max - info.min)));
-        if (write && parameter->setNumber(*write) && target.layer) releaseFromFades(target.layer, target.param);
-    }
+    write(false);
+
 }
 
 std::vector<Interaction> Engine::interactions() const
@@ -262,7 +304,10 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
 bool Engine::oscAddressClaimed(const QString &address) const
 {
     Lock lk(&m_mutex);
-    return std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
+    return std::any_of(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [&](const auto &node) {
+        return node.kind == InteractionGraph::Kind::Source && node.settings.enabled && node.settings.source == InteractionSource::Osc &&
+               !node.settings.oscAddress.isEmpty() && node.settings.oscAddress == address;
+    }) || std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
         const auto listens = [&](const Interaction &input) {
             return input.enabled && input.source == InteractionSource::Osc && !input.oscAddress.isEmpty() && input.oscAddress == address;
         };
@@ -384,7 +429,9 @@ void Engine::updateMidiInputs()
     bool wanted;
     {
         Lock lk(&m_mutex);
-        wanted = std::any_of(m_interactions.begin(), m_interactions.end(),
+        wanted = std::any_of(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [](const auto &node) {
+            return node.kind == InteractionGraph::Kind::Source && node.settings.enabled && node.settings.source == InteractionSource::Midi;
+        }) || std::any_of(m_interactions.begin(), m_interactions.end(),
                              [](const Interaction &it) { return it.enabled && (it.source == InteractionSource::Midi ||
                                  (!it.xyInputs.empty() && it.xyInputs.front().source == InteractionSource::Midi)); });
     }

@@ -61,9 +61,9 @@ public:
         split->addWidget(m_inspector); split->setStretchFactor(0, 3);
         layout->addWidget(split);
         m_canvas->selected = [this](quint64 id) { m_selected = id; rebuildInspector(); };
-        m_canvas->connected = [this](quint64 a, quint64 b) {
+        m_canvas->connected = [this](quint64 a, quint64 b, int port) {
             auto graph = m_engine->interactionGraph(); QString error;
-            if (!graph.connect(a, b, &error)) { m_error->setText(error); return; }
+            if (!graph.connect(a, b, &error, port)) { m_error->setText(error); return; }
             commit(std::move(graph), QStringLiteral("Connect Graph Blocks"));
         };
         m_canvas->removed = [this](quint64 id) {
@@ -130,7 +130,7 @@ private:
                 }
                 auto *owner = menu->addMenu(title);
                 for (const auto &parameter : m_engine->parameters(id)) {
-                    if (!parameter.isNumber() || !(parameter.access & (input ? ParamInfo::Read : ParamInfo::Write))) continue;
+                    if (parameter.type == ParamInfo::Type::Text || !(parameter.access & (input ? ParamInfo::Read : ParamInfo::Write))) continue;
                     owner->addAction(parameter.label, this, [this, id, path = parameter.path, input] {
                         edit([&](auto &n) {
                             if (input) { n.settings.sourceLayer = id; n.settings.sourceParam = path; }
@@ -154,6 +154,25 @@ private:
                 text("OSC address", node.settings.oscAddress, [](auto &n, QString v) { n.settings.oscAddress = v; });
                 number("Argument", node.settings.oscArgument, [](auto &n, double v) { n.settings.oscArgument = std::clamp(int(v), 0, 63); });
             }
+            if (node.settings.source == InteractionSource::Midi) {
+                text("MIDI input (empty: all)", node.settings.midiPort, [](auto &n, QString v) { n.settings.midiPort = v; });
+                number("Channel (0: all)", node.settings.midiChannel, [](auto &n, double v) { n.settings.midiChannel = std::clamp(int(v), 0, 16); });
+                auto *message = new QComboBox;
+                for (int k = 0; k < 4; ++k) message->addItem(midiMessageName(MidiMessageKind(k)));
+                message->setCurrentIndex(int(node.settings.midiMessage)); form->addRow("Message", message);
+                connect(message, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.midiMessage = MidiMessageKind(k); }); });
+                number("Number", node.settings.midiNumber, [](auto &n, double v) { n.settings.midiNumber = std::clamp(int(v), 0, 127); });
+            }
+            if (node.settings.source == InteractionSource::Audio) {
+                auto *input = new QComboBox; input->addItems({"Program mix", "Audio input"});
+                input->setCurrentIndex(node.settings.audioInput ? 1 : 0); form->addRow("Listen to", input);
+                connect(input, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.audioInput = k != 0; }); });
+                auto *feature = new QComboBox; feature->addItems({"Frequency band", "Level", "Onset", "Hit"});
+                feature->setCurrentIndex(int(node.settings.audioFeature)); form->addRow("Measure", feature);
+                connect(feature, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.audioFeature = Interaction::AudioFeature(k); }); });
+                number("Low frequency (Hz)", node.settings.audioLow, [](auto &n, double v) { n.settings.audioLow = std::clamp(v, 0., 24000.); });
+                number("High frequency (Hz)", node.settings.audioHigh, [](auto &n, double v) { n.settings.audioHigh = std::clamp(v, 0., 24000.); });
+            }
             if (node.settings.source == InteractionSource::Internal) {
                 parameterPicker(true);
             }
@@ -171,7 +190,10 @@ private:
                 op->setCurrentIndex(int(stage.op)); form->addRow("Operation", op);
                 connect(op, qOverload<int>(&QComboBox::activated), this, [this](int k) { edit([=](auto &n) { n.settings.filters.front().op = MathOp(k); }); });
             }
-            for (int k = 0; k < 4; ++k) number(QString(QChar('A' + k)), stage.setting(k), [k](auto &n, double v) { n.settings.filters.front().setting(k) = v; });
+            for (int k = 0; k < 4; ++k) {
+                const auto setting = interactionFilterSetting(stage.kind, k);
+                if (!setting.name.isEmpty()) number(setting.name + setting.suffix, stage.setting(k), [k](auto &n, double v) { n.settings.filters.front().setting(k) = v; });
+            }
         } else if (node.kind == Kind::Mix) number("Mix (0: A, 1: B)", node.mix, [](auto &n, double v) { n.mix = std::clamp(v, 0., 1.); });
         else if (node.kind == Kind::Select) number("Input (0: A, 1: B)", node.selectedInput, [](auto &n, double v) { n.selectedInput = v >= .5 ? 1 : 0; });
         m_inspectorLayout->addStretch();
