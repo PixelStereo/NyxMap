@@ -49,5 +49,18 @@ int main()
         processor.step(1.0 / 60);
         check(processor.value(3) == expected && processor.value(4) == expected, "shared filter advances exactly once");
     }
+    const auto held = processor.value(3);
+    graph.nodes.push_back({100, Kind::Source, {}});
+    check(processor.configure(graph) && processor.value(3) == held, "unrelated edit preserves history");
+    InteractionGraph mixGraph;
+    mixGraph.nodes = {{1, Kind::Source, {}}, {2, Kind::Source, {}}, {3, Kind::Mix, {}, .25}};
+    check(mixGraph.connect(1, 3) && mixGraph.connect(2, 3), "mix accepts two inputs");
+    for (auto kind : {Kind::Add, Kind::Multiply, Kind::Minimum, Kind::Maximum, Kind::Mix, Kind::Select}) {
+        mixGraph.nodes[2].kind = kind;
+        check(processor.configure(mixGraph), "combiner compiles");
+        processor.input(1, 2); processor.input(2, 4); processor.step(.01);
+        const double expected = kind == Kind::Add ? 6 : kind == Kind::Multiply ? 8 : kind == Kind::Maximum ? 4 : kind == Kind::Mix ? 2.5 : 2;
+        check(processor.value(3) == expected, "combiner output uses raw units");
+    }
     return failures ? 1 : 0;
 }

@@ -9,11 +9,13 @@
 // Edited off the render path. Stable node IDs identify state independently of
 // layout and fan-out. Only explicit combiners may have more than one input.
 struct InteractionGraph {
-    enum class Kind { Source, Filter, Destination, Add, Maximum };
+    enum class Kind { Source, Filter, Destination, Add, Maximum, Multiply, Minimum, Mix, Select };
     struct Node {
         quint64 id = 0;
         Kind kind = Kind::Source;
         Interaction settings;
+        double mix = 0.5;
+        int selectedInput = 0;
     };
     struct Edge { quint64 from = 0, to = 0; };
     std::vector<Node> nodes;
@@ -25,7 +27,7 @@ struct InteractionGraph {
         std::map<quint64, size_t> index;
         for (size_t i = 0; i < nodes.size(); ++i) {
             if (!nodes[i].id || !index.emplace(nodes[i].id, i).second) return fail("Duplicate or zero node ID");
-            if (int(nodes[i].kind) < 0 || int(nodes[i].kind) > int(Kind::Maximum)) return fail("Invalid node kind");
+            if (int(nodes[i].kind) < 0 || int(nodes[i].kind) > int(Kind::Select)) return fail("Invalid node kind");
         }
         std::vector<size_t> degree(nodes.size());
         std::vector<std::vector<size_t>> next(nodes.size());
@@ -36,8 +38,10 @@ struct InteractionGraph {
             if (!unique.emplace(edge.from, edge.to).second) return fail("Duplicate cable");
             const auto from = nodes[a->second].kind, to = nodes[b->second].kind;
             if (from == Kind::Destination || to == Kind::Source) return fail("Invalid cable direction");
-            if (++degree[b->second] > 1 && to != Kind::Add && to != Kind::Maximum)
+            if (++degree[b->second] > 1 && int(to) < int(Kind::Add))
                 return fail("Multiple inputs require a combiner");
+            if ((to == Kind::Mix || to == Kind::Select) && degree[b->second] > 2)
+                return fail("This combiner accepts two inputs");
             next[a->second].push_back(b->second);
         }
         std::vector<size_t> result;
@@ -54,7 +58,7 @@ struct InteractionGraph {
         QJsonArray ns, es;
         for (const auto &node : nodes)
             ns.append(QJsonObject{{"id", QString::number(node.id)}, {"kind", int(node.kind)},
-                                  {"settings", node.settings.toJson()}});
+                                  {"settings", node.settings.toJson()}, {"mix", node.mix}, {"selected_input", node.selectedInput}});
         for (const auto &edge : edges)
             es.append(QJsonObject{{"from", QString::number(edge.from)}, {"to", QString::number(edge.to)}});
         return {{"version", 1}, {"nodes", ns}, {"edges", es}};
@@ -70,7 +74,8 @@ struct InteractionGraph {
         for (const auto &value : json.value("nodes").toArray()) {
             const auto object = value.toObject();
             candidate.nodes.push_back({object.value("id").toString().toULongLong(),
-                Kind(object.value("kind").toInt(-1)), Interaction::fromJson(object.value("settings").toObject())});
+                Kind(object.value("kind").toInt(-1)), Interaction::fromJson(object.value("settings").toObject()),
+                object.value("mix").toDouble(.5), object.value("selected_input").toInt()});
         }
         for (const auto &value : json.value("edges").toArray()) {
             const auto object = value.toObject();
@@ -98,14 +103,37 @@ public:
     {
         std::vector<size_t> order;
         if (!graph.compile(&order, error)) return false;
+        // Preserve unaffected signal histories across edits; rewiring or changing
+        // a source resets its descendants. Layout is kept outside this signature.
+        std::map<quint64, size_t> index;
+        std::vector<std::vector<size_t>> inputs(graph.nodes.size());
+        for (size_t i = 0; i < graph.nodes.size(); ++i) index.emplace(graph.nodes[i].id, i);
+        for (const auto &edge : graph.edges) inputs[index.at(edge.to)].push_back(index.at(edge.from));
+        std::vector<InteractionProcessor> processors(graph.nodes.size());
+        std::vector<std::optional<double>> values(graph.nodes.size());
+        std::vector<bool> kept(graph.nodes.size());
+        for (size_t i : order) {
+            const auto &node = graph.nodes[i];
+            auto old = m_index.find(node.id);
+            if (old == m_index.end()) continue;
+            size_t j = old->second;
+            const auto &before = m_graph.nodes[j];
+            bool same = node.kind == before.kind && node.settings.toJson() == before.settings.toJson() &&
+                        node.mix == before.mix && node.selectedInput == before.selectedInput &&
+                        inputs[i].size() == m_inputs[j].size();
+            for (size_t k = 0; same && k < inputs[i].size(); ++k)
+                same = kept[inputs[i][k]] && graph.nodes[inputs[i][k]].id == m_graph.nodes[m_inputs[j][k]].id;
+            if (!same) continue;
+            kept[i] = true;
+            processors[i] = m_processors[j];
+            values[i] = m_values[j];
+        }
         m_graph = graph;
         m_order = std::move(order);
-        m_index.clear();
-        m_inputs.assign(graph.nodes.size(), {});
-        m_values.assign(graph.nodes.size(), std::nullopt);
-        m_processors.assign(graph.nodes.size(), {});
-        for (size_t i = 0; i < graph.nodes.size(); ++i) m_index.emplace(graph.nodes[i].id, i);
-        for (const auto &edge : graph.edges) m_inputs[m_index.at(edge.to)].push_back(m_index.at(edge.from));
+        m_index = std::move(index);
+        m_inputs = std::move(inputs);
+        m_values = std::move(values);
+        m_processors = std::move(processors);
         return true;
     }
     void input(quint64 id, double value)
@@ -121,11 +149,22 @@ public:
             const auto &node = m_graph.nodes[i];
             if (node.kind == Kind::Source) continue;
             std::optional<double> value;
+            if (node.kind == Kind::Mix || node.kind == Kind::Select) {
+                if (m_inputs[i].size() == 2) {
+                    auto a = m_values[m_inputs[i][0]], b = m_values[m_inputs[i][1]];
+                    if (node.kind == Kind::Select) value = node.selectedInput == 0 ? a : b;
+                    else if (a && b) value = *a * (1 - std::clamp(node.mix, 0.0, 1.0)) + *b * std::clamp(node.mix, 0.0, 1.0);
+                }
+                m_values[i] = value;
+                continue;
+            }
             for (size_t parent : m_inputs[i]) {
                 if (!m_values[parent]) continue;
                 if (!value) value = m_values[parent];
                 else if (node.kind == Kind::Add) *value += *m_values[parent];
                 else if (node.kind == Kind::Maximum) *value = std::max(*value, *m_values[parent]);
+                else if (node.kind == Kind::Minimum) *value = std::min(*value, *m_values[parent]);
+                else if (node.kind == Kind::Multiply) *value *= *m_values[parent];
             }
             if (node.kind == Kind::Filter && value) {
                 m_processors[i].input(node.settings, *value);
