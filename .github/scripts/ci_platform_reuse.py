@@ -8,7 +8,7 @@ import urllib.request
 LINUX_FILES = {
     'scripts/package_linux.py', 'scripts/smoke_linux_package.py', 'scripts/linux_qt_plugins.py',
     'scripts/test_linux_qt_plugins.py', 'scripts/build_ffmpeg_linux.py', 'scripts/build_tiff_linux.py',
-    'scripts/package_linux_baseline.sh',
+    'scripts/package_linux_baseline.sh', 'scripts/linux_package_policy.py', 'scripts/test_linux_package_policy.py',
     '.github/scripts/ci_scope.py', '.github/scripts/ci_platform_reuse.py',
     '.github/scripts/test_ci_platform_reuse.py', '.github/workflows/build.yml',
 }
