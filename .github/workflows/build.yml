@@ -47,8 +47,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
       - name: Test selective CI provenance
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_platform_reuse.py'
-      - name: Test Linux plugin requirements
-        run: python3 -m unittest discover -s scripts -p 'test_linux_qt_plugins.py'
+      - name: Test Linux package policy
+        run: python3 -m unittest discover -s scripts -p 'test_linux_*.py'
       - name: Test release metadata and tag versions
         run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
