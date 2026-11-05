@@ -4284,6 +4284,58 @@ QWidget *LayerInspector::buildModelLayers()
         pictureStage = l->modelPictureStage;
         displaceStage = l->modelDisplaceStage;
     }
+    auto *materials = new QComboBox;
+    materials->setObjectName(QStringLiteral("modelMaterial"));
+    const int scene = m_engine->sceneOfObject(m_layer);
+    if (scene >= 0) {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *object = m_engine->layer(m_layer);
+        const auto *owner = m_engine->layer(scene);
+        for (const auto &[id, material] : owner->sceneMaterials)
+            materials->addItem(material->name, QString::number(id));
+        materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
+    }
+    materials->addItem(QStringLiteral("+ New Material…"), QStringLiteral("new"));
+    materials->setEnabled(scene >= 0);
+    form->addRow(QStringLiteral("Material"), materials);
+    connect(materials, qOverload<int>(&QComboBox::activated), this, [this, materials, objectId = m_layerId](int row) {
+        const auto value = materials->itemData(row).toString();
+        const int object = m_engine->indexOfId(objectId), scene = m_engine->sceneOfObject(object);
+        if (scene < 0) return;
+        quint64 previous = 0, sceneId = m_engine->layerId(scene);
+        { Engine::Lock lock(&m_engine->mutex()); previous = m_engine->layer(object)->modelMaterial; }
+        quint64 id = value.toULongLong();
+        bool created = value == QLatin1String("new");
+        if (created) id = m_engine->addSceneMaterial(scene);
+        if (!id || id == previous) return;
+        class AssignMaterial : public QUndoCommand {
+        public:
+            AssignMaterial(Engine *e, quint64 object, quint64 scene, quint64 before, quint64 after, bool created)
+                : QUndoCommand(QStringLiteral("Assign 3D Material")), e(e), object(object), scene(scene), before(before), after(after), created(created) {
+                if (created) { Engine::Lock lock(&e->mutex()); stored = *e->layer(e->indexOfId(scene))->sceneMaterials.at(after); }
+            }
+            void undo() override {
+                e->setModelMaterial(e->indexOfId(object), before);
+                if (created) {
+                    Engine::Lock lock(&e->mutex());
+                    if (auto *owner = e->layer(e->indexOfId(scene))) owner->sceneMaterials.erase(after);
+                }
+            }
+            void redo() override {
+                if (created) {
+                    Engine::Lock lock(&e->mutex());
+                    if (auto *owner = e->layer(e->indexOfId(scene)); owner && !owner->sceneMaterials.count(after))
+                        owner->sceneMaterials[after] = std::make_shared<SceneMaterial>(stored);
+                }
+                e->setModelMaterial(e->indexOfId(object), after);
+            }
+        private:
+            Engine *e; quint64 object, scene, before, after; bool created; SceneMaterial stored;
+        };
+        auto *command = new AssignMaterial(m_engine, objectId, sceneId, previous, id, created);
+        if (m_undo) m_undo->push(command); else { command->redo(); delete command; }
+        emit layerChanged();
+    });
     addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, pictureStage,
                    QStringLiteral("modelPicture"),
                    QStringLiteral("A layer's picture laid on the model, over its UVs: a video on a screen, a dome. The layer "

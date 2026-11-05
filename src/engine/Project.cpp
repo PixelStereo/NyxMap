@@ -176,6 +176,11 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
+        if (l.scene3d) {
+            QJsonArray materials;
+            for (const auto &[id, material] : l.sceneMaterials) materials.append(material->toJson());
+            o["materials"] = materials;
+        }
         if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
@@ -232,6 +237,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
         if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
         if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
         if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where their pictures are taken
@@ -326,6 +332,11 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
+            l->sceneMaterials.clear();
+            for (const auto &value : o.value("materials").toArray()) {
+                auto material = std::make_shared<SceneMaterial>(SceneMaterial::fromJson(value.toObject()));
+                if (material->id) l->sceneMaterials[material->id] = material;
+            }
             const QJsonObject env = o.value("environment").toObject();
             l->sceneEnvironment = env.value("layer").toString().toULongLong();
             l->sceneEnvironmentStage = env.value("stage").toInt(-1);
@@ -410,6 +421,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
             if (Layer *l = layer(index)) {
+                l->modelMaterial = src.value("material").toString().toULongLong();
+                l->material.reset();
                 l->modelPicture = src.value("picture").toString().toULongLong();
                 l->modelDisplace = src.value("displace").toString().toULongLong();
                 l->modelPictureStage = src.value("picture_stage").toInt(-1);

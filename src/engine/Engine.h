@@ -112,6 +112,10 @@ public:
 
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
+    int sceneOfObject(int index) const;
+    quint64 addSceneMaterial(int scene, const QString &name = {});
+    bool setModelMaterial(int object, quint64 material);
+    void resolveSceneMaterials(); // lock-safe, called after hierarchy / project edits
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
     Scene3DQuality quality3d() const { Lock lk(&m_mutex); return m_quality3d; } // the composition's, for all its 3D scenes
     // A 3D scene's triangles, in all its shown models; those its last frame computed in all its passes (shadows too)

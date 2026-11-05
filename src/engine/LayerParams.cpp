@@ -45,6 +45,7 @@ quint64 keyOf(const Layer &l)
         mix(quint64(i->isValid()));
         for (const IsfInput &in : i->inputs()) mix(qHash(in.name) ^ (quint64(in.type) << 40));
     };
+    mix(quint64(quintptr(l.material.get())));
     mix(quint64(quintptr(l.toxPlayer.get())));
     if (l.toxPlayer) mix(l.toxPlayer->revision());
     inputs(l.generator.get());
@@ -760,12 +761,13 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
-        if (model && model->isPrimitive()) { // a primitive's material (a file keeps its own)
+        if (material || (model && model->isPrimitive())) {
+            auto *shared = material.get();
             for (int c = 0; c < 3; ++c)
                 f3(QStringLiteral("model/material/color/") + QChar("rgb"[c]), QStringLiteral("Material › Color ") + QChar("RGB"[c]), 0, 1,
-                   0.8, &mp->color[size_t(c)]).colorComponent(c);
-            f3("model/material/metal", "Material › Metal", 0, 1, 0, &mp->metal).step(0.01);
-            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, &mp->rough).step(0.01);
+                   0.8, shared ? &shared->color[size_t(c)] : &mp->color[size_t(c)]).colorComponent(c);
+            f3("model/material/metal", "Material › Metal", 0, 1, 0, shared ? &shared->metal : &mp->metal).step(0.01);
+            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, shared ? &shared->rough : &mp->rough).step(0.01);
         }
         f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);

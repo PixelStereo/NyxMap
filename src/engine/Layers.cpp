@@ -297,6 +297,75 @@ int Engine::addGroup(const QString &name, int at)
 }
 
 // A 3D Scene: a group whose picture its 3D objects make (never inside another scene)
+int Engine::sceneOfObject(int index) const
+{
+    Lock lock(&m_mutex);
+    for (int i = index; i >= 0 && i < int(m_layers.size());) {
+        const auto &layer = m_layers[size_t(i)];
+        if (layer->scene3d) return i;
+        i = layer->parent ? indexOfId(layer->parent) : -1;
+    }
+    return -1;
+}
+
+quint64 Engine::addSceneMaterial(int scene, const QString &name)
+{
+    Lock lock(&m_mutex);
+    if (scene < 0 || scene >= int(m_layers.size()) || !m_layers[size_t(scene)]->scene3d) return 0;
+    auto material = std::make_shared<SceneMaterial>();
+    material->id = newIdLocked();
+    material->name = name.isEmpty() ? QStringLiteral("Material %1").arg(m_layers[size_t(scene)]->sceneMaterials.size() + 1) : name;
+    m_layers[size_t(scene)]->sceneMaterials.emplace(material->id, material);
+    return material->id;
+}
+
+bool Engine::setModelMaterial(int object, quint64 id)
+{
+    {
+        Lock lock(&m_mutex);
+        const int scene = sceneOfObject(object);
+        if (scene < 0 || !layer(object) || layer(object)->type != SourceType::Model) return false;
+        const auto found = layer(scene)->sceneMaterials.find(id);
+        if (found == layer(scene)->sceneMaterials.end()) return false;
+        auto *model = layer(object);
+        model->modelMaterial = id;
+        model->material = found->second;
+        model->paramKey = 0;
+    }
+    emit layersChanged();
+    return true;
+}
+
+void Engine::resolveSceneMaterials()
+{
+    Lock lock(&m_mutex);
+    for (int i = 0; i < int(m_layers.size()); ++i) {
+        auto &object = m_layers[size_t(i)];
+        if (object->type != SourceType::Model) continue;
+        const int owner = sceneOfObject(i);
+        if (owner < 0) { object->material.reset(); continue; }
+        auto &materials = m_layers[size_t(owner)]->sceneMaterials;
+        if (materials.empty()) addSceneMaterial(owner);
+        auto found = materials.find(object->modelMaterial);
+        if (found == materials.end()) {
+            auto candidate = materials.begin();
+            const bool used = std::any_of(m_layers.begin(), m_layers.end(), [&](const auto &other) {
+                return other.get() != object.get() && other->type == SourceType::Model && other->material == candidate->second;
+            });
+            const auto id = used ? addSceneMaterial(owner) : candidate->first;
+            found = materials.find(id);
+            found->second->color = object->material ? object->material->color : object->modelPlacement.color;
+            found->second->metal = object->material ? object->material->metal : object->modelPlacement.metal;
+            found->second->rough = object->material ? object->material->rough : object->modelPlacement.rough;
+        }
+        if (object->material != found->second) {
+            object->modelMaterial = found->first;
+            object->material = found->second;
+            object->paramKey = 0;
+        }
+    }
+}
+
 int Engine::addScene(const QString &name, int at)
 {
     const int i = addGroup(name, at);
@@ -307,6 +376,7 @@ int Engine::addScene(const QString &name, int at)
         for (const auto &l : m_layers) scenes += l->scene3d;
         Layer &g = *m_layers[size_t(i)];
         g.scene3d = true;
+        addSceneMaterial(i);
         g.sceneRenderer = std::make_shared<Scene3D>();
         if (name.isEmpty()) g.name = QStringLiteral("3D Scene %1").arg(scenes + 1);
         for (quint64 up = g.parent; up;) { // out of any scene it would land in
@@ -463,7 +533,10 @@ bool Engine::setLayerLight(int i)
 
 quint64 Engine::newIdLocked()
 {
-    for (const auto &l : m_layers) m_nextId = std::max(m_nextId, l->id + 1);
+    for (const auto &l : m_layers) {
+        m_nextId = std::max(m_nextId, l->id + 1);
+        for (const auto &[id, material] : l->sceneMaterials) m_nextId = std::max(m_nextId, id + 1);
+    }
     return m_nextId++;
 }
 
@@ -541,6 +614,7 @@ void Engine::setStructure(const LayerTree &t)
             if (l) out.push_back(std::move(l));
         m_layers.swap(out);
         normalizeLocked();
+        resolveSceneMaterials();
     }
     emit layersChanged();
 }
@@ -1172,6 +1246,7 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
 void Engine::fixLayerReferences(QStringList *warnings)
 {
     Lock lk(&m_mutex);
+    resolveSceneMaterials();
     for (auto &l : m_layers) {
         if (l->type != SourceType::Layer) continue;
         const bool exists = indexOfId(l->sourceLayer) >= 0;

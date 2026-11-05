@@ -1290,7 +1290,7 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
     for (const Mesh &m : m_meshes) {
         if (!m.vao) continue;
         Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
-        if (m_primitive && look) { // a primitive: the material its parameters give it
+        if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
             // A colour chosen as it looks; the materials are in linear light
             mat.baseColor = {{std::pow(look->color[0], 2.2f), std::pow(look->color[1], 2.2f), std::pow(look->color[2], 2.2f), 1}};
             mat.metallic = look->metal;
@@ -1600,7 +1600,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             const ModelPlacement &p = item.placement;
             add(p.color.data(), sizeof(float) * 3);
             for (float v : {p.metal, p.rough, p.bend}) add(&v, sizeof v);
-            for (int v : {p.detail, p.shading, int(p.unlit)}) add(&v, sizeof v);
+            for (int v : {p.detail, p.shading, int(p.unlit), int(p.sharedMaterial)}) add(&v, sizeof v);
         }
         for (const Lamp &lamp : lamps) {
             const LightSettings &l = lamp.light;
