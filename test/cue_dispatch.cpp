@@ -21,6 +21,7 @@ int main(int argc,char **argv) {
     QElapsedTimer wait;wait.start();while(!recorded&&wait.elapsed()<5000){app.processEvents();QThread::msleep(1);}
     int failures=0;
     auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL cue_dispatch: %s\n",why);}};
+    std::printf("cue dispatch diagnostics: accepted=%d recorded=%d owner=%d heartbeat=%d slow=%d frames=%llu threaded=%d failed=%d elapsed=%lld ms\n", int(accepted), recorded, int(correctThread), heartbeats, int(inSlowRecall.load()), (unsigned long long)engine.frameCount(), int(engine.isThreaded()), int(engine.renderFailed()), (long long)wait.elapsed());
     check(accepted,"snapshot dispatched to cue clock");check(recorded==1&&correctThread,"one undo record delivered on GUI thread");check(heartbeats>0,"GUI handles events during a slow recall");
     // A stale queued undo must not be delivered into a newly opened/cleared show.
     engine.sequencer().requestSnapshot(id);wait.restart();while(!inSlowRecall&&wait.elapsed()<5000){app.processEvents();QThread::msleep(1);}
