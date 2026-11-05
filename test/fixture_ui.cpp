@@ -200,6 +200,13 @@ int main(int argc, char **argv)
                     static_cast<unsigned long long>(id), static_cast<unsigned long long>(centerHit),
                     c.width(), c.height(), view.width(), view.height(), origin.x(), origin.y(), corner.x(), corner.y());
         std::printf("fixture patch: %s\n", QJsonDocument(engine.fixturePatch().toJson()).toJson(QJsonDocument::Compact).constData());
+        for (const auto &f : engine.fixturePatch().fixtures) {
+            const auto corners = fixtureCorners(f, c);
+            const auto polygon = fixtureview::outline(f, c, toWidget);
+            for (int k = 0; k < 4; ++k)
+                std::printf("fixture %llu corner %d: normalized=(%.9f,%.9f) widget=(%.9f,%.9f)\n",
+                    (unsigned long long)f.id, k, corners[k].x(), corners[k].y(), polygon[k].x(), polygon[k].y());
+        }
     }
     check(centerHit == id, "fixture hit geometry matches the view transform");
     drag(at(0.5, 0.5), at(0.6, 0.55));
