@@ -38,6 +38,8 @@ jobs:
         run: shellcheck .github/scripts/configure_linux_apt.sh
       - name: Test change routing
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
+      - name: Test Linux plugin requirements
+        run: python3 -m unittest discover -s scripts -p 'test_linux_qt_plugins.py'
       - name: Test release metadata and tag versions
         run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
@@ -113,6 +115,8 @@ jobs:
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
+      - name: Check Qt package plugins before compiling
+        run: python3 scripts/linux_qt_plugins.py "$(/usr/lib/qt6/bin/qmake -query QT_INSTALL_PLUGINS)"
       - name: Prepare clean Ubuntu runtime images
         timeout-minutes: 15
         run: |
@@ -186,7 +190,7 @@ jobs:
           # Only distribution files, fixtures and the test harness cross this boundary.
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
           cp dist/NyxMap-linux-x86_64*.AppImage dist/NyxMap-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
-          cp scripts/smoke_package.py scripts/smoke_linux_package.py "$RUNNER_TEMP/linux-smoke-scripts/"
+          cp scripts/smoke_package.py scripts/smoke_linux_package.py scripts/linux_qt_plugins.py "$RUNNER_TEMP/linux-smoke-scripts/"
           for ubuntu_version in 24.04 26.04; do
             docker run --rm --init --network none \
               -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
