@@ -53,9 +53,11 @@ struct SceneMaterial {
     QString name;
     std::array<float, 3> color{{.8f, .8f, .8f}};
     float metal = 0, rough = .6f;
+    quint64 picture = 0;
+    int pictureStage = -1;
     QJsonObject toJson() const {
         return {{"id", QString::number(id)}, {"name", name},
-                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}};
+                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage}};
     }
     static SceneMaterial fromJson(const QJsonObject &json) {
         SceneMaterial material;
@@ -65,6 +67,8 @@ struct SceneMaterial {
             material.color[c] = float(std::clamp(json.value(QString(QChar("rgb"[c]))).toDouble(.8), 0., 1.));
         material.metal = float(std::clamp(json.value("metal").toDouble(), 0., 1.));
         material.rough = float(std::clamp(json.value("rough").toDouble(.6), 0., 1.));
+        material.picture = json.value("picture").toString().toULongLong();
+        material.pictureStage = json.value("picture_stage").toInt(-1);
         return material;
     }
 };

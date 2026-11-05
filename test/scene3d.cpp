@@ -1390,5 +1390,36 @@ int runScene3dTests(Engine &engine)
         }
     }
 
+    {
+        engine.newProject();
+        const auto scene = engine.layerId(engine.addScene("Material scene"));
+        const auto a = engine.layerId(engine.addLayer("Material A"));
+        const auto b = engine.layerId(engine.addLayer("Material B"));
+        check(engine.setLayerModel(engine.indexOfId(a), Model3D::primitivePath("Cube"), &error), "material cube");
+        check(engine.setLayerModel(engine.indexOfId(b), Model3D::primitivePath("Sphere"), &error), "material sphere");
+        engine.setStructure(tree::intoGroup(engine.structure(), {a, b}, scene));
+        quint64 material = 0;
+        {
+            Engine::Lock lock(&engine.mutex());
+            material = engine.layer(engine.indexOfId(a))->modelMaterial;
+            check(material != 0 && engine.layer(engine.indexOfId(b))->modelMaterial != material,
+                  "new objects have explicit independent material references");
+        }
+        check(engine.setModelMaterial(engine.indexOfId(b), material), "share a material within the scene");
+        check(engine.setParameter(a, "model/material/color/r", .25), "edit shared material color");
+        check(std::abs(engine.parameterValue(b, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material updates both objects");
+        const auto otherScene = engine.layerId(engine.addScene("Other scene"));
+        const auto other = engine.layerId(engine.addLayer("Other object"));
+        check(engine.setLayerModel(engine.indexOfId(other), Model3D::primitivePath("Cube"), &error), "other scene model");
+        engine.setStructure(tree::intoGroup(engine.structure(), {other}, otherScene));
+        check(!engine.setModelMaterial(engine.indexOfId(other), material), "cross-scene material assignment rejected");
+        const QString project = dir.filePath("materials.nyxmap");
+        check(engine.saveProject(project, {}, &error), "save shared materials");
+        check(engine.loadProject(project, nullptr, &error), "load shared materials");
+        check(std::abs(engine.parameterValue(a, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material value persists");
+        check(engine.setParameter(b, "model/material/rough", .33), "edit restored shared material");
+        check(std::abs(engine.parameterValue(a, "model/material/rough").toDouble() - .33) < 1e-6, "restored objects still share one resource");
+        engine.newProject();
+    }
     return failures;
 }

@@ -330,6 +330,8 @@ bool Engine::setModelMaterial(int object, quint64 id)
         auto *model = layer(object);
         model->modelMaterial = id;
         model->material = found->second;
+        model->modelPicture = model->material->picture;
+        model->modelPictureStage = model->material->pictureStage;
         model->paramKey = 0;
     }
     emit layersChanged();
@@ -357,10 +359,14 @@ void Engine::resolveSceneMaterials()
             found->second->color = object->material ? object->material->color : object->modelPlacement.color;
             found->second->metal = object->material ? object->material->metal : object->modelPlacement.metal;
             found->second->rough = object->material ? object->material->rough : object->modelPlacement.rough;
+            found->second->picture = object->material ? object->material->picture : object->modelPicture;
+            found->second->pictureStage = object->material ? object->material->pictureStage : object->modelPictureStage;
         }
         if (object->material != found->second) {
             object->modelMaterial = found->first;
             object->material = found->second;
+            object->modelPicture = object->material->picture;
+            object->modelPictureStage = object->material->pictureStage;
             object->paramKey = 0;
         }
     }
@@ -459,6 +465,14 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, 
                     if (err) *err = QStringLiteral("\"%1\" is made from this model's scene: it cannot be shown on it.").arg(p->name);
                     return false;
                 }
+        }
+        if (!displace && l->material) {
+            l->material->picture = picture;
+            l->material->pictureStage = picture ? stage : -1;
+            for (auto &object : m_layers) if (object->material == l->material) {
+                object->modelPicture = picture;
+                object->modelPictureStage = picture ? stage : -1;
+            }
         }
         (displace ? l->modelDisplace : l->modelPicture) = picture;
         (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
@@ -1027,6 +1041,13 @@ int Engine::duplicateLayer(int i)
             source["inputs"] = inputs;
         }
         state["source"] = source;
+        QJsonArray materials;
+        for (const auto &value : state.value("materials").toArray()) {
+            auto material = value.toObject();
+            material["picture"] = remap(material.value("picture"));
+            materials.append(material);
+        }
+        if (state.contains("materials")) state["materials"] = materials;
         QJsonArray effects;
         for (const auto &effect : state.value("fx").toArray()) effects.append(remapShader(effect.toObject()));
         state["fx"] = effects;
@@ -1621,6 +1642,7 @@ bool Engine::setLayerModel(int i, const QString &path, QString *err)
         g = detachSource(*l);
         l->type = SourceType::Model;
         l->model = std::move(model);
+        resolveSceneMaterials();
         // a primitive keeps its virtual path (made absolute, it would take a drive letter on Windows)
         l->sourcePath = Model3D::isPrimitivePath(path) ? Model3D::primitivePath(path.section('/', -1))
                                                        : QDir::cleanPath(QFileInfo(path).absoluteFilePath());
