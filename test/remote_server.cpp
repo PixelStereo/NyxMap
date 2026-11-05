@@ -47,7 +47,26 @@ struct Client {
         socket.write(text);
         socket.flush();
         in.clear();
-        pump(800);
+        QElapsedTimer deadline;
+        deadline.start();
+        while (deadline.elapsed() < 5000) {
+            pump(10);
+            const int headerEnd = in.indexOf("\r\n\r\n");
+            if (headerEnd < 0) continue;
+            // Wait for the HTTP response, rather than assuming the runner
+            // delivered it within a fixed sleep. WebSocket upgrades end here.
+            if (in.startsWith("HTTP/1.1 101")) break;
+            const QByteArray header = in.left(headerEnd).toLower();
+            const int lengthAt = header.indexOf("\r\ncontent-length:");
+            if (lengthAt >= 0) {
+                const int valueAt = lengthAt + int(sizeof("\r\ncontent-length:") - 1);
+                const int lineEnd = header.indexOf("\r\n", valueAt);
+                bool valid = false;
+                const auto size = header.mid(valueAt, lineEnd < 0 ? -1 : lineEnd - valueAt).trimmed().toLongLong(&valid);
+                if (valid && size >= 0 && in.size() - headerEnd - 4 >= size) break;
+            }
+            if (socket.state() == QAbstractSocket::UnconnectedState) break;
+        }
         return in;
     }
     QByteArray upgrade(const QByteArray &path, const QByteArray &origin = {}, const QByteArray &host = "127.0.0.1")

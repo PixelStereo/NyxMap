@@ -5,6 +5,7 @@ Usage: smoke_linux_package.py PACKAGE_DIR MEDIA_DIR WORK_DIR
 The container gets only these files and smoke_package.py, never the build tree.
 """
 import os
+from linux_qt_plugins import missing_plugin_groups
 from pathlib import Path
 import re
 import subprocess
@@ -33,9 +34,8 @@ def check_tree(tree):
         for name, location in re.findall(r"^\s*(\S+) => (/.+?)\s+\(0x[0-9a-fA-F]+\)", output, re.M):
             if not Path(location).is_relative_to(tree) and not HOST.match(name):
                 sys.exit(f"Unbundled dependency: {path}: {name} => {location}")
-    for plugin in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
-        if not (tree / "usr/plugins" / plugin).is_file():
-            sys.exit(f"Missing plugin: {plugin}")
+    for plugin in missing_plugin_groups(tree / "usr/plugins"):
+        sys.exit(f"Missing plugin: {plugin}")
     # Qt WebEngine in the package (the Web Page generator): its helper process and data next to it, where AppRun says
     if any((tree / "usr/lib").glob("libQt6WebEngineCore.so*")):
         for required in ("libexec/QtWebEngineProcess", "resources/qtwebengine_resources.pak",

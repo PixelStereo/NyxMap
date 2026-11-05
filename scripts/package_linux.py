@@ -9,6 +9,7 @@ Fails when a bundled library comes from a Debian package whose copyright file is
 import hashlib
 import json
 import os
+from linux_qt_plugins import missing_plugin_groups
 from pathlib import Path
 import re
 import shutil
@@ -156,9 +157,8 @@ def package(build, ffmpeg, omt, ndi, output):
         for source in (plugins / category).glob("*.so"):
             if not QT_PLUGIN_EXCLUDED.search(source.name):
                 copy(source, app / "usr/plugins" / category / source.name)
-    for required in ("platforms/libqxcb.so", "platforms/libqwayland-egl.so", "multimedia/libgstreamermediaplugin.so"):
-        if not (app / "usr/plugins" / required).is_file():
-            sys.exit(f"Required Qt plugin missing: {required}")
+    for required in missing_plugin_groups(app / "usr/plugins"):
+        sys.exit(f"Required Qt plugin missing: {required}")
     (binary / "qt.conf").write_text("[Paths]\nPrefix=..\nPlugins=plugins\n")
     # Only the listed plugins, each from its package: never arbitrary plugins preinstalled on a CI runner (bad/ugly,
     # libav or x264 plugins could bring GPL code or the system FFmpeg along).
