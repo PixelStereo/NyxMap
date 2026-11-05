@@ -12,6 +12,8 @@
 #include <QJsonDocument>
 #include <QSurfaceFormat>
 #include <QTcpSocket>
+#include <QTcpServer>
+#include <QTimer>
 #include <QThread>
 #include <cstdio>
 #include <iostream>
@@ -116,6 +118,26 @@ int main(int argc, char **argv)
     QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
     try {
+        // A valid HTTP response may arrive in several packets, including a
+        // body delivered after the old client's fixed 800 ms collection window.
+        {
+            QTcpServer delayed;
+            require(delayed.listen(QHostAddress::LocalHost, 0), "start delayed HTTP fixture");
+            QObject::connect(&delayed, &QTcpServer::newConnection, &delayed, [&] {
+                auto *peer = delayed.nextPendingConnection();
+                const QByteArray body("delayed remote page");
+                peer->write("HTTP/1.1 200 OK\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body.left(4));
+                QTimer::singleShot(1000, peer, [peer, body] {
+                    peer->write(body.mid(4));
+                    peer->disconnectFromHost();
+                });
+                QObject::connect(peer, &QTcpSocket::disconnected, peer, &QObject::deleteLater);
+            });
+            Client client;
+            require(client.connectTo(delayed.serverPort()), "connect delayed HTTP fixture");
+            require(client.request("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").endsWith("delayed remote page"),
+                    "HTTP collection waits for the complete delayed body");
+        }
         Engine engine;
         QString error;
         require(engine.initialize(&error), qPrintable(error));
