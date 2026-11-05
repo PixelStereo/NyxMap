@@ -278,13 +278,15 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
+          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb
       - name: Build
         run: |
-          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang-18 \
-            -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
+          /usr/bin/clang --version
+          ldd --version | head -1
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
             -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
           cmake --build build-tsan --target nyxmap_tests nyxmap_audio_analysis_concurrency_test nyxmap_publishing_concurrency_test nyxmap_cue_dispatch_test -j4
       - name: Tests under ThreadSanitizer
@@ -379,12 +381,12 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang-18 libclang-rt-18-dev qt6-base-dev libqt6opengl6-dev \
+          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |
-          cmake -S . -B build-fuzz -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DNYXMAP_FUZZ=ON
+          cmake -S . -B build-fuzz -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DNYXMAP_FUZZ=ON
           cmake --build build-fuzz --target fuzz_hap fuzz_osc -j4
       - name: Fuzz (2 minutes)
         run: |
