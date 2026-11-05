@@ -9,7 +9,7 @@ Fails when a bundled library comes from a Debian package whose copyright file is
 import hashlib
 import json
 import os
-from linux_qt_plugins import missing_plugin_groups
+from linux_qt_plugins import missing_plugin_groups, multimedia_backend
 from pathlib import Path
 import re
 import shutil
@@ -43,7 +43,7 @@ GST_PLUGINS = {
     "gstreamer1.0-plugins-good": ["video4linux2", "jpeg", "autodetect", "videofilter"],
 }
 # Qt plugins left out: libqtiff needs Ubuntu's libtiff, which links libjbig (GPL-2+)
-QT_PLUGIN_EXCLUDED = re.compile(r"ffmpeg|virtualkeyboard|^libqtiff\.so$")
+QT_PLUGIN_EXCLUDED = re.compile(r"virtualkeyboard|^libqtiff\.so$")
 # Libraries the package may never contain, whatever their package's copyright file also lists (readline's has an ISC
 # stanza for one example file): GPL-only on Debian/Ubuntu
 GPL_ONLY_LINUX = re.compile(r"^lib(gpm|slang|readline|history|jbig|lzo2|cdio\w*|fftw3\w*)\.so")
@@ -148,13 +148,32 @@ def package(build, ffmpeg, omt, ndi, output):
         + "\nPackaging tools:\n" + (ROOT / "packaging/linux/tools.json").read_text()
         + "\nBuild machine packages (not shipped):\n" + (ROOT / "deps-linux.txt").read_text())
 
-    # Camera capture uses Qt's GStreamer backend. Never ship Ubuntu's GPL FFmpeg via
-    # an optional Qt FFmpeg backend. Only the LGPL Qt modules/plugins needed here.
+    # Older Qt packages provide GStreamer; current desktop Qt provides FFmpeg.
+    # Ship one available backend. FFmpeg must resolve to our LGPL build below.
     plugins = Path(subprocess.check_output(["/usr/lib/qt6/bin/qmake", "-query", "QT_INSTALL_PLUGINS"], text=True).strip())
+    backend = multimedia_backend(plugins)
+    if not backend:
+        sys.exit("Qt Multimedia has neither a GStreamer nor an FFmpeg backend")
+    if backend == "ffmpeg":
+        plugin = plugins / "multimedia/libffmpegmediaplugin.so"
+        dependencies = subprocess.check_output(["ldd", str(plugin)], text=True,
+            env={**os.environ, "LD_LIBRARY_PATH": str(ffmpeg / "lib")})
+        ffmpeg_dependencies = re.findall(r"^\s*(lib(?:avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.so\.\d+) => (\S+)", dependencies, re.M)
+        if not ffmpeg_dependencies:
+            sys.exit("Cannot resolve the Qt FFmpeg backend's FFmpeg libraries")
+        for name, source in ffmpeg_dependencies:
+            dependency = Path(source).resolve()
+            if not dependency.is_relative_to(ffmpeg.resolve() / "lib"):
+                sys.exit(f"Qt FFmpeg backend ABI does not match bundled LGPL FFmpeg: {name} => {source}")
+            if problem := licence_problem(dependency):
+                sys.exit(f"Qt FFmpeg backend dependency {dependency}: {problem}")
+    print(f"Qt Multimedia backend in package: {backend}", flush=True)
     for category in ("platforms", "imageformats", "multimedia", "xcbglintegrations", "egldeviceintegrations",
                      "wayland-graphics-integration-client", "wayland-decoration-client", "wayland-shell-integration",
                      "platforminputcontexts", "networkinformation", "tls"):
         for source in (plugins / category).glob("*.so"):
+            if category == "multimedia" and source.name != f"lib{backend}mediaplugin.so":
+                continue
             if not QT_PLUGIN_EXCLUDED.search(source.name):
                 copy(source, app / "usr/plugins" / category / source.name)
     for required in missing_plugin_groups(app / "usr/plugins"):
@@ -162,15 +181,16 @@ def package(build, ffmpeg, omt, ndi, output):
     (binary / "qt.conf").write_text("[Paths]\nPrefix=..\nPlugins=plugins\n")
     # Only the listed plugins, each from its package: never arbitrary plugins preinstalled on a CI runner (bad/ugly,
     # libav or x264 plugins could bring GPL code or the system FFmpeg along).
-    for package_name, names in GST_PLUGINS.items():
-        files = set(subprocess.check_output(["dpkg-query", "-L", package_name], text=True).splitlines())
-        for name in names:
-            source = GST_DIR / f"libgst{name}.so"
-            if str(source) not in files:
-                sys.exit(f"GStreamer plugin {name} not found in {package_name} ({source})")
-            copy(source, library / "gstreamer-1.0" / source.name)
-    scanner = Path("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner")
-    copy(scanner, app / "usr/libexec/gst-plugin-scanner")
+    if backend == "gstreamer":
+        for package_name, names in GST_PLUGINS.items():
+            files = set(subprocess.check_output(["dpkg-query", "-L", package_name], text=True).splitlines())
+            for name in names:
+                source = GST_DIR / f"libgst{name}.so"
+                if str(source) not in files:
+                    sys.exit(f"GStreamer plugin {name} not found in {package_name} ({source})")
+                copy(source, library / "gstreamer-1.0" / source.name)
+        scanner = Path("/usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner")
+        copy(scanner, app / "usr/libexec/gst-plugin-scanner")
     # Child processes (xdg-open: the browser, the file manager) get the environment NyxMap was started with, not the
     # one AppRun made for NyxMap's own libraries
     copy(ROOT / "packaging/linux/xdg-open", app / "usr/libexec/nyxmap-path/xdg-open")
