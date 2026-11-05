@@ -479,7 +479,7 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     auto *lb = new QHBoxLayout; // as the snapshots' and the presets'
     lb->setSpacing(4);
     lb->addStretch();
-    m_overview = new QPushButton(QStringLiteral("≡ All"));
+    m_overview = new QPushButton(QStringLiteral("Fold all"));
     m_overview->setObjectName(QStringLiteral("timelinesOverview"));
     m_overview->setCheckable(true);
     m_overview->setToolTip(QStringLiteral("Fold all the timelines: each one's run on a line, with its time and its transport. "
@@ -574,6 +574,29 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_workspace->setObjectName(QStringLiteral("timelineWorkspace"));
     m_workspace->addWidget(m_editor);
     m_workspace->addWidget(m_activity);
+
+    m_activity->setSummary(true);
+    m_foldedPage = new QWidget;
+    auto *foldedLayout = new QVBoxLayout(m_foldedPage);
+    auto *expand = new QPushButton(QStringLiteral("Expand timeline"));
+    expand->setObjectName(QStringLiteral("timelineExpand"));
+    foldedLayout->addWidget(expand, 0, Qt::AlignLeft);
+    m_foldedActivity = new TimelineActivity(engine);
+    m_foldedActivity->setCompact(true);
+    m_foldedActivity->setSummary(true);
+    foldedLayout->addWidget(m_foldedActivity, 1);
+    m_workspace->addWidget(m_foldedPage);
+    auto *fold = new QPushButton(QStringLiteral("Fold timeline"));
+    fold->setObjectName(QStringLiteral("timelineFold"));
+    if (auto *editorLayout = dynamic_cast<QVBoxLayout *>(m_editor->QWidget::layout()))
+        editorLayout->insertWidget(0, fold, 0, Qt::AlignLeft);
+    connect(fold, &QPushButton::clicked, this, [this] {
+        if (!m_current) return;
+        m_foldedActivity->setOnlyTimeline(m_current);
+        m_workspace->setCurrentWidget(m_foldedPage);
+    });
+    connect(expand, &QPushButton::clicked, this, [this] { m_workspace->setCurrentWidget(m_editor); });
+    connect(m_foldedActivity, &TimelineActivity::editRequested, this, [this](quint64) { m_workspace->setCurrentWidget(m_editor); });
     h->addWidget(m_workspace, 4);
     connect(m_overview, &QPushButton::toggled, this, [this](bool all) { m_workspace->setCurrentWidget(all ? static_cast<QWidget *>(m_activity) : m_editor); });
     connect(m_activity, &TimelineActivity::editRequested, this, [this](quint64 id) {
@@ -697,6 +720,7 @@ void TimelineWindow::showCurrent()
     m_go->setEnabled(has);
     m_del->setEnabled(has || (row && row->data(0, TimelineList::GroupRole).toULongLong()));
     m_editor->setTimeline(has ? m_current : 0);
+    if (m_foldedActivity) m_foldedActivity->setOnlyTimeline(has ? m_current : 0);
 }
 
 void TimelineWindow::pollList()
