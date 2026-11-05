@@ -40,6 +40,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -948,6 +949,17 @@ void MainWindow::buildMenus()
         layer->addAction(QStringLiteral("Load Web Page…"), this, [this] { loadIntoLayer(currentLayer(), kWebGeneratorPath); });
     QAction *dup = layer->addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
     dup->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    for (auto entry : {std::pair<const char *, QKeySequence::StandardKey>{"Copy Layers", QKeySequence::Copy},
+                       {"Cut Layers", QKeySequence::Cut}, {"Paste Layers", QKeySequence::Paste}}) {
+        auto *action = new QAction(QString::fromLatin1(entry.first), m_layerTable->table());
+        action->setShortcut(QKeySequence(entry.second));
+        action->setShortcutContext(Qt::WidgetShortcut);
+        m_layerTable->table()->addAction(action);
+        layer->addAction(action);
+        connect(action, &QAction::triggered, this, [this, key = entry.second] {
+            if (key == QKeySequence::Paste) pasteLayers(); else copyLayers(key == QKeySequence::Cut);
+        });
+    }
     // Copy a layer, then paste all of it or some of its parts onto others (as DaVinci Resolve's Paste Attributes)
     layer->addAction(QStringLiteral("Copy Attributes"), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C), this, [this] {
         if (currentLayer() >= 0) copyLayerParams(currentLayer());
@@ -2027,6 +2039,45 @@ void MainWindow::pasteAttributesDialog()
     if (parts) pasteLayerParams(parts, parts == Engine::PartAll ? QStringLiteral("Attributes") : names.join(QStringLiteral(", ")));
 }
 
+void MainWindow::copyLayers(bool cut)
+{
+    const auto selected = m_layerTable->selectedRows();
+    if (selected.isEmpty()) return;
+    QSet<int> rows;
+    for (int row : selected) {
+        if (cut && m_engine->isLocked(row)) return;
+        rows.insert(row);
+        for (auto id : tree::descendants(m_engine->structure(), m_engine->layerId(row)))
+            rows.insert(m_engine->indexOfId(id));
+    }
+    QList<int> ordered = rows.values(); std::sort(ordered.begin(), ordered.end());
+    QJsonArray states;
+    for (int row : ordered) if (row >= 0) states.append(m_engine->layerJson(row));
+    auto *mime = new QMimeData;
+    mime->setData("application/x-nyxmap-layers", QJsonDocument(states).toJson(QJsonDocument::Compact));
+    QApplication::clipboard()->setMimeData(mime);
+    if (cut) removeCurrentLayer();
+}
+
+void MainWindow::pasteLayers()
+{
+    const auto *mime = QApplication::clipboard()->mimeData();
+    if (!mime || !mime->hasFormat("application/x-nyxmap-layers")) return;
+    const auto document = QJsonDocument::fromJson(mime->data("application/x-nyxmap-layers"));
+    if (!document.isArray()) return;
+    std::vector<QJsonObject> states;
+    for (const auto &value : document.array()) {
+        if (!value.isObject()) return;
+        states.push_back(value.toObject());
+    }
+    const int at = m_engine->insertLayerCopies(std::max(0, currentLayer()), states);
+    if (at < 0) return;
+    m_undo->beginMacro(QStringLiteral("Paste Layers"));
+    for (int k = 0; k < int(states.size()); ++k) m_undo->push(new cmd::AddLayer(m_engine, at + k, QStringLiteral("Paste Layer")));
+    m_undo->endMacro();
+    selectLayer(at);
+}
+
 void MainWindow::copyLayerParams(int row)
 {
     const QJsonObject o = m_engine->layerJson(row);
@@ -2133,6 +2184,10 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
             pe->fillLayerMenu(&menu, m_engine->layerId(row));
         }
     }
+    menu.addAction(QStringLiteral("Copy Layers"), this, [this] { copyLayers(false); })->setEnabled(onLayer);
+    menu.addAction(QStringLiteral("Cut Layers"), this, [this] { copyLayers(true); })->setEnabled(onLayer && !locked);
+    const auto *layerMime = QApplication::clipboard()->mimeData();
+    menu.addAction(QStringLiteral("Paste Layers"), this, &MainWindow::pasteLayers)->setEnabled(layerMime && layerMime->hasFormat("application/x-nyxmap-layers"));
     addPasteMenu(&menu, onLayer && !locked, group);
     menu.addSeparator();
     menu.addAction(QStringLiteral("New Layer"), this, &MainWindow::addEmptyLayer);

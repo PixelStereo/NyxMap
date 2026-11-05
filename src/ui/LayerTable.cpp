@@ -58,6 +58,7 @@ class LayerGrid : public QTableWidget
 {
 public:
     using QTableWidget::QTableWidget;
+    void setAnchor(int row) { m_anchor = row; }
     const std::vector<LayerTable::Row> *rows = nullptr;
     std::function<void(int, const QStringList &)> onDrop;
     std::function<void(const QList<int> &, int, int)> onMove;
@@ -169,6 +170,23 @@ protected:
             setCurrentCell(-1, -1);
             return;
         }
+        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ShiftModifier)) {
+            const int anchor = m_anchor >= 0 && m_anchor < rowCount() ? m_anchor : std::max(0, currentRow());
+            const int previous = currentRow(), previousColumn = currentColumn();
+            {
+                QSignalBlocker block(this);
+                QItemSelection range;
+                for (int r = std::min(anchor, row); r <= std::max(anchor, row); ++r)
+                    if (!isRowHidden(r)) range.select(model()->index(r, 0), model()->index(r, columnCount() - 1));
+                selectionModel()->setCurrentIndex(model()->index(row, std::max(0, col)), QItemSelectionModel::NoUpdate);
+                selectionModel()->select(range, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            }
+            m_rangePress = true;
+            emit currentCellChanged(row, col, previous, previousColumn);
+            emit itemSelectionChanged();
+            emit clicked(model()->index(row, std::max(0, col)));
+            return;
+        }
         if (e->button() == Qt::LeftButton && col == ColName && rows && row < int(rows->size()) && onArrow(row, p.x())) {
             if (onCollapse) onCollapse(row);
             return;
@@ -183,6 +201,7 @@ protected:
                 return;
             }
         }
+        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::ShiftModifier)) m_anchor = row;
         QTableWidget::mousePressEvent(e);
     }
 
@@ -215,14 +234,14 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override
     {
         m_pressRow = -1;
+        if (m_rangePress) { m_rangePress = false; return; }
         if (m_pendingPress) { // a plain click, not a drag: that row alone, selected now
-            const QPoint p = m_pendingPress->position().toPoint();
-            m_pendingPress.reset();
-            const int row = rowAt(p.y()), col = columnAt(p.x());
-            if (row >= 0) {
-                setCurrentCell(row, std::max(0, col), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-                emit clicked(model()->index(row, std::max(0, col)));
-            }
+            // Feed Qt the original press as well as the release: setCurrentCell
+            // alone does not update QAbstractItemView's Shift selection anchor.
+            m_anchor = rowAt(m_pendingPress->position().toPoint().y());
+            auto press = std::move(m_pendingPress);
+            QTableWidget::mousePressEvent(press.get());
+            QTableWidget::mouseReleaseEvent(e);
             return;
         }
         QTableWidget::mouseReleaseEvent(e);
@@ -360,6 +379,8 @@ private:
     Target m_target;
     int m_pressRow = -1;
     QPoint m_pressPos;
+    int m_anchor = -1;
+    bool m_rangePress = false;
     std::unique_ptr<QMouseEvent> m_pendingPress; // a plain click, selecting on release unless it became a drag
 };
 } // namespace
@@ -517,6 +538,7 @@ QList<int> LayerTable::selectedRows() const
 
 void LayerTable::setCurrentRow(int row)
 {
+    if (row != m_table->currentRow()) static_cast<LayerGrid *>(m_table)->setAnchor(row);
     m_updating = true;
     if (row < 0) {
         m_table->setCurrentCell(-1, -1);

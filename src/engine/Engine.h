@@ -138,6 +138,7 @@ public:
     void moveLayer(int from, int to);
     // Duplicates a layer before itself (a group with its members); returns the index of the copy (the group's).
     int duplicateLayer(int i);
+    int insertLayerCopies(int at, const std::vector<QJsonObject> &states);
 
     // --- Structure: order and groups (see LayerTree.h). Members immediately follow their group.
     quint64 layerId(int i) const;
