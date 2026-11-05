@@ -172,7 +172,11 @@ int main(int argc, char **argv)
     check(show != nullptr, "the view's Fixtures switch");
     if (!show) return 1;
     show->setChecked(true);
-    auto at = [](double x, double y) { return QPointF(24 + x * 552, 24 + y * 552); };
+    view.setShowFixtures(true);
+    view.setMaskEditMode(false);
+    view.raise(); view.activateWindow(); view.setFocus(); wait(100);
+    view.zoomToFit();
+    auto at = [&](double x, double y) { return view.compositionToWidget(QPointF(x, y)); };
     auto toWidget = [&](QPointF n) { return at(n.x(), n.y()); };
     auto send = [&](QEvent::Type t, QPointF pos, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier) {
         QMouseEvent e(t, pos, view.mapToGlobal(pos.toPoint()), t == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
@@ -186,6 +190,8 @@ int main(int argc, char **argv)
         send(QEvent::MouseButtonRelease, to, Qt::NoButton, mods);
     };
     auto fixture = [&] { return engine.fixturePatch().fixtures[0]; };
+    check(view.showFixtures(), "fixture interaction tool is active");
+    check(fixtureview::hit(engine.fixturePatch(), engine.compositionSize(), toWidget, at(.5, .5)) == id, "fixture hit geometry matches the view transform");
     drag(at(0.5, 0.5), at(0.6, 0.55));
     check(view.fixture() == id && std::abs(fixture().center.x() - 0.5) < 1e-6, "a locked fixture is picked, not moved");
     emit table->cellClicked(0, 1); // unlocked
