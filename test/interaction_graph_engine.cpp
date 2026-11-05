@@ -67,6 +67,18 @@ int main(int argc, char **argv)
     QUndoStack undo;
     {
         InteractionGraphWorkspace workspace(&engine, &undo);
+        QWidget host;
+        auto *dockLayout = new QVBoxLayout(&host);
+        workspace.setDockHost(&host);
+        dockLayout->addWidget(&workspace);
+        workspace.setDetached(true);
+        check(workspace.isDetached() && workspace.isWindow(), "graph and inspector detach together");
+        auto *onTop = workspace.findChild<QCheckBox *>("interactionGraphOnTop");
+        onTop->setChecked(true);
+        check(workspace.windowFlags().testFlag(Qt::WindowStaysOnTopHint), "floating graph supports always on top");
+        workspace.close();
+        check(!workspace.isDetached() && workspace.parentWidget() == &host, "closing floating graph docks it");
+        workspace.setParent(nullptr); // stack workspace must outlive its temporary host safely
         workspace.resize(1000, 600);
         workspace.show();
         app.processEvents();
@@ -128,6 +140,19 @@ int main(int argc, char **argv)
         check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .7) < 1e-5, "original destination remains active");
         check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .7) < 1e-5, "direct branch uses original filtered value in same frame");
         check(std::abs(engine.parameterValue(cid, "opacity").toDouble() - .35) < 1e-5, "extra filter affects only its own destination");
+    }
+    {
+        InteractionGraphWorkspace workspace(&engine, &undo);
+        auto graph = engine.interactionGraph();
+        quint64 shared = 0;
+        for (const auto &node : graph.nodes) if (node.kind == Kind::Filter) { shared = node.id; break; }
+        const auto count = graph.nodes.size();
+        const auto child = workspace.addFilterAfter(shared);
+        check(child != 0 && engine.interactionGraph().nodes.size() == count + 1, "append a filter without creating a destination");
+        graph = engine.interactionGraph();
+        check(std::any_of(graph.edges.begin(), graph.edges.end(), [=](const auto &edge) { return edge.from == shared && edge.to == child; }), "shared filter can feed another filter");
+        undo.undo(); app.processEvents();
+        check(engine.interactionGraph().nodes.size() == count, "branch filter creation is undoable");
     }
     engine.shutdown();
     return failures ? 1 : 0;
