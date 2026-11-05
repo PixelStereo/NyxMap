@@ -103,7 +103,13 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
     for (const auto &node : m_interactionGraph.nodes) {
         if (node.kind != Kind::Source || !node.settings.enabled) continue;
         const auto &source = node.settings;
-        if (source.source == InteractionSource::Internal) {
+        if (node.mapping) {
+            const auto definition = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const auto &it) { return it.id == node.mapping; });
+            const auto run = m_interactionRun.find(node.mapping);
+            if (definition != m_interactions.end() && definition->enabled && run != m_interactionRun.end() && run->second.lastOut)
+                m_graphProcessor.input(node.id, *run->second.lastOut);
+            else m_graphProcessor.clearInput(node.id);
+        } else if (source.source == InteractionSource::Internal) {
             if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
                 m_graphProcessor.input(node.id, parameter->asNumber());
         } else if (source.source == InteractionSource::Pixels || source.source == InteractionSource::Hands) {
@@ -160,7 +166,7 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
     for (const auto &event : events) {
         m_graphProcessor.clearEvent();
         for (const auto &node : m_interactionGraph.nodes)
-            if (node.kind == Kind::Source && node.settings.enabled && node.settings.matches(event) && event.colorComponents == 0)
+            if (node.kind == Kind::Source && !node.mapping && node.settings.enabled && node.settings.matches(event) && event.colorComponents == 0)
                 m_graphProcessor.input(node.id, event.value);
         m_graphProcessor.step(0, true);
         if (!write(true)) return;
@@ -504,8 +510,10 @@ void Engine::stepInteractions(double dt)
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
         events.swap(m_interactionEvents);
     }
-    if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
-    if (m_interactions.empty()) return;
+    if (m_interactions.empty()) {
+        if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
+        return;
+    }
     // The program mix and the live input, each read only when an Audio interaction measures its bands
     auto needsSpectrum = [this](bool input) {
         const auto needs = [input](const Interaction &it) {
@@ -814,6 +822,7 @@ void Engine::stepInteractions(double dt)
         }
         if (wrote && it.layer) releaseFromFades(it.layer, it.param); // a fade running on it lets go
     }
+    if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
 }
 
 // ---------------------------------------------------------------------------
@@ -835,6 +844,14 @@ void Engine::makeInteractionParams()
 {
     m_interactionParams.clear();
     using T = Parameter::Type;
+    auto graph = std::make_unique<Parameter>(QStringLiteral("interaction/0/graph"), QStringLiteral("Interactions › Graph"), T::Text);
+    graph->bind([this] { return QVariant(QString::fromUtf8(QJsonDocument(m_interactionGraph.toJson()).toJson(QJsonDocument::Compact))); },
+        [this](const QVariant &value) {
+            InteractionGraph next;
+            const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+            if (InteractionGraph::fromJson(document.object(), &next)) setInteractionGraph(next);
+        });
+    m_interactionParams.push_back(std::move(graph));
     for (const Interaction &root : m_interactions) for (int axis = 0; axis < (root.xyInputs.empty() ? 1 : 2); ++axis) {
         const Interaction &it = axis ? root.xyInputs.front() : root;
         const quint64 id = root.id;

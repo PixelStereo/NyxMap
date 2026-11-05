@@ -50,21 +50,30 @@ int main(int argc, char **argv)
     engine.feedInteraction(event);
     engine.renderFrame();
     check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .4) < 1e-5, "loaded graph executes");
+    const auto stored = engine.captureInteractions();
+    engine.setInteractionGraph({});
+    engine.applyInteractions(stored, 0);
+    check(engine.interactionGraph().nodes.size() == 4, "snapshot interaction capture restores graph");
+    const auto definition = engine.parameterValue(0, "interaction/0/graph");
+    engine.setInteractionGraph({});
+    check(engine.setParameter(0, "interaction/0/graph", definition), "graph can be recalled as preset parameter");
+    check(engine.interactionGraph().nodes.size() == 4, "preset graph definition restores topology");
     QUndoStack undo;
     {
         InteractionGraphWorkspace workspace(&engine, &undo);
         workspace.resize(1000, 600);
         workspace.show();
         app.processEvents();
+        if (argc > 1) workspace.grab().save(QString::fromLocal8Bit(argv[1]));
         auto *canvas = static_cast<InteractionGraphView *>(workspace.findChild<QGraphicsView *>("interactionGraphCanvas"));
         check(canvas != nullptr, "graph workspace has a canvas");
         if (canvas) {
-            canvas->disconnected(2, 4);
+            canvas->disconnected(2, 4, 0);
             app.processEvents();
             check(engine.interactionGraph().edges.size() == 2, "disconnect changes engine graph");
             undo.undo(); app.processEvents();
             check(engine.interactionGraph().edges.size() == 3, "undo restores cable");
-            canvas->disconnected(2, 4); app.processEvents();
+            canvas->disconnected(2, 4, 0); app.processEvents();
             auto port = [&](quint64 id, bool output) {
                 for (auto *item : canvas->scene()->items())
                     if (item->data(0).toULongLong() == id && item->data(1).isValid() && item->data(1).toBool() == output)
@@ -85,6 +94,34 @@ int main(int argc, char **argv)
             undo.undo(); app.processEvents();
             check(engine.interactionGraph().nodes.size() == 4, "undo restores block and cables");
         }
+    }
+    engine.setInteractionGraph({});
+    Interaction original = source;
+    original.layer = aid; original.param = "opacity"; original.filters = {multiply}; original.takeover = Takeover::Jump;
+    const auto mapping = engine.addInteraction(original);
+    const auto cid = engine.layerId(engine.addLayer("Graph C"));
+    {
+        InteractionGraphWorkspace workspace(&engine, &undo);
+        workspace.addBranch(mapping, false);
+        workspace.addBranch(mapping, true);
+        auto routes = engine.interactionGraph();
+        int sources = 0, destinations = 0;
+        for (auto &node : routes.nodes) {
+            if (node.kind == Kind::Source) ++sources;
+            if (node.kind == Kind::Destination) {
+                node.settings.layer = destinations++ ? cid : bid;
+                node.settings.param = "opacity";
+                node.settings.takeover = Takeover::Jump;
+            }
+            if (node.kind == Kind::Filter) node.settings.filters.front().a = .5;
+        }
+        check(sources == 1 && destinations == 2, "both routes share the same mapping output");
+        check(engine.setInteractionGraph(routes), "assign branch destinations");
+        event.value = .35;
+        engine.feedInteraction(event); engine.renderFrame();
+        check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .7) < 1e-5, "original destination remains active");
+        check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .7) < 1e-5, "direct branch uses original filtered value in same frame");
+        check(std::abs(engine.parameterValue(cid, "opacity").toDouble() - .35) < 1e-5, "extra filter affects only its own destination");
     }
     engine.shutdown();
     return failures ? 1 : 0;

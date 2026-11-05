@@ -4,6 +4,7 @@
 #include <cmath>
 #include <QJsonArray>
 #include <set>
+#include <tuple>
 #include <vector>
 
 // Edited off the render path. Stable node IDs identify state independently of
@@ -16,6 +17,9 @@ struct InteractionGraph {
         Interaction settings;
         double mix = 0.5;
         int selectedInput = 0;
+        double x = 0, y = 0;
+        bool positioned = false;
+        quint64 mapping = 0; // reuse the already computed scalar mapping output
     };
     struct Edge { quint64 from = 0, to = 0; int port = 0; };
     std::vector<Node> nodes;
@@ -31,13 +35,13 @@ struct InteractionGraph {
         }
         std::vector<size_t> degree(nodes.size());
         std::vector<std::vector<size_t>> next(nodes.size());
-        std::set<std::pair<quint64, quint64>> unique;
+        std::set<std::tuple<quint64, quint64, int>> unique;
         std::set<std::pair<quint64, int>> ports;
         for (const Edge &edge : edges) {
             auto a = index.find(edge.from), b = index.find(edge.to);
             if (a == index.end() || b == index.end()) return fail("Missing cable endpoint");
             if (edge.port < 0 || edge.port >= 1024 || !ports.emplace(edge.to, edge.port).second) return fail("Invalid or occupied input port");
-            if (!unique.emplace(edge.from, edge.to).second) return fail("Duplicate cable");
+            if (!unique.emplace(edge.from, edge.to, edge.port).second) return fail("Duplicate cable");
             const auto from = nodes[a->second].kind, to = nodes[b->second].kind;
             if ((int(to) < int(Kind::Add) && edge.port != 0) || ((to == Kind::Mix || to == Kind::Select) && edge.port > 1)) return fail("Invalid input port");
             if (from == Kind::Destination || to == Kind::Source) return fail("Invalid cable direction");
@@ -61,7 +65,7 @@ struct InteractionGraph {
         QJsonArray ns, es;
         for (const auto &node : nodes)
             ns.append(QJsonObject{{"id", QString::number(node.id)}, {"kind", int(node.kind)},
-                                  {"settings", node.settings.toJson()}, {"mix", node.mix}, {"selected_input", node.selectedInput}});
+                                  {"settings", node.settings.toJson()}, {"mix", node.mix}, {"selected_input", node.selectedInput}, {"x", node.x}, {"y", node.y}, {"positioned", node.positioned}, {"mapping", QString::number(node.mapping)}});
         for (const auto &edge : edges)
             es.append(QJsonObject{{"from", QString::number(edge.from)}, {"to", QString::number(edge.to)}, {"port", edge.port}});
         return {{"version", 1}, {"nodes", ns}, {"edges", es}};
@@ -78,7 +82,7 @@ struct InteractionGraph {
             const auto object = value.toObject();
             candidate.nodes.push_back({object.value("id").toString().toULongLong(),
                 Kind(object.value("kind").toInt(-1)), Interaction::fromJson(object.value("settings").toObject()),
-                object.value("mix").toDouble(.5), object.value("selected_input").toInt()});
+                object.value("mix").toDouble(.5), object.value("selected_input").toInt(), object.value("x").toDouble(), object.value("y").toDouble(), object.value("positioned").toBool(), object.value("mapping").toString().toULongLong()});
         }
         for (const auto &value : json.value("edges").toArray()) {
             const auto object = value.toObject();
@@ -129,9 +133,12 @@ public:
             if (old == m_index.end()) continue;
             size_t j = old->second;
             const auto &before = m_graph.nodes[j];
-            bool same = node.kind == before.kind && node.settings.toJson() == before.settings.toJson() &&
-                        node.mix == before.mix && node.selectedInput == before.selectedInput &&
-                        inputs[i].size() == m_inputs[j].size();
+            auto binding = [](const Interaction &settings) {
+                auto json = settings.toJson(); json.remove("name"); json.remove("id"); return json;
+            };
+            bool same = node.kind == before.kind && inputs[i].size() == m_inputs[j].size();
+            if (node.kind == InteractionGraph::Kind::Source)
+                same = same && node.mapping == before.mapping && binding(node.settings) == binding(before.settings);
             for (size_t k = 0; same && k < inputs[i].size(); ++k)
                 same = inputs[i][k] == missing || m_inputs[j][k] == missing
                     ? inputs[i][k] == m_inputs[j][k]
@@ -158,6 +165,10 @@ public:
             m_values[at->second] = value;
             m_eventDirty[at->second] = true;
         }
+    }
+    void clearInput(quint64 id) {
+        auto it = m_index.find(id);
+        if (it != m_index.end()) m_values[it->second].reset();
     }
     double hit(quint64 id, const OnsetFlux &flux, double dt)
     {

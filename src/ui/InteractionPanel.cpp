@@ -1,4 +1,5 @@
 #include "InteractionPanel.h"
+#include "InteractionGraphWorkspace.h"
 #include "AdsrCurve.h"
 #include "InteractionPatch.h"
 #include <QStackedWidget>
@@ -282,6 +283,26 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_views = new QStackedWidget;
     m_views->addWidget(m_list);
     m_views->addWidget(patchScroll);
+    auto *branches = new InteractionGraphWorkspace(engine, undo);
+    m_views->addWidget(branches);
+    auto *routing = new QToolButton;
+    routing->setText(QStringLiteral("Routing"));
+    routing->setPopupMode(QToolButton::InstantPopup);
+    auto *routes = new QMenu(routing);
+    routing->setMenu(routes);
+    routes->addAction(QStringLiteral("Show routing graph"), this, [this] { m_views->setCurrentIndex(2); });
+    for (bool filter : {false, true}) {
+        auto *action = routes->addAction(filter ? QStringLiteral("Add filtered destination") : QStringLiteral("Add destination"));
+        connect(routes, &QMenu::aboutToShow, action, [this, action] {
+            auto it = selected(); action->setEnabled(it && !it->isAction() && it->xyInputs.empty());
+        });
+        connect(action, &QAction::triggered, this, [this, branches, filter] {
+            branches->addBranch(selectedId(), filter);
+            m_views->setCurrentIndex(2);
+        });
+    }
+    bar->insertWidget(bar->count() - 1, routing);
+
     connect(nodes, &QToolButton::toggled, this, [this](bool on) {
         m_views->setCurrentIndex(on ? 1 : 0);
         if (on) refreshPatch();

@@ -1770,6 +1770,8 @@ QJsonArray Engine::captureInteractions() const
     Lock lk(&m_mutex);
     auto *self = const_cast<Engine *>(this);
     QJsonArray out;
+    out.append(QJsonObject{{"id", QStringLiteral("0")}, {"name", QStringLiteral("Interaction graph")}, {"included", true},
+        {"params", QJsonObject{{"graph", QString::fromUtf8(QJsonDocument(m_interactionGraph.toJson()).toJson(QJsonDocument::Compact))}}}});
     for (const Interaction &it : m_interactions) {
         QJsonObject params;
         const QString prefix = QStringLiteral("interaction/%1/").arg(it.id);
@@ -1813,7 +1815,10 @@ void Engine::applyInteractions(const QJsonArray &states, double fade)
 void Engine::applyInteractionValues(quint64 id, const QJsonObject &params, const QJsonObject &timing, const QJsonObject &easing,
                                     double fade, const QJsonObject &delays)
 {
-    if (!id) return;
+    if (!id) {
+        if (params.contains("graph")) applyStoredValues(QStringLiteral("interaction/0/"), {QStringLiteral("graph")}, params, timing, easing, fade, delays);
+        return;
+    }
     const QString prefix = QStringLiteral("interaction/%1/").arg(id);
     if (std::none_of(m_interactions.begin(), m_interactions.end(), [id](const Interaction &x) { return x.id == id; })) {
         // Removed since: made again, with its id (what the snapshot or the preset holds of it sets it below)

@@ -15,7 +15,8 @@ public:
     std::function<void(quint64)> selected;
     std::function<void(quint64, quint64, int)> connected;
     std::function<void(quint64)> removed;
-    std::function<void(quint64, quint64)> disconnected;
+    std::function<void(quint64, QPointF)> moved;
+    std::function<void(quint64, quint64, int)> disconnected;
     explicit InteractionGraphView(QWidget *parent = nullptr) : QGraphicsView(parent)
     {
         setScene(new QGraphicsScene(this));
@@ -51,6 +52,7 @@ public:
             const int height = std::max(64, 24 + ports * 20);
             QPointF at(column * 230, rows[column]);
             rows[column] += height + 40;
+            if (node.positioned) at = QPointF(node.x, node.y);
             m_points[node.id] = at;
             auto *box = scene()->addRect(QRectF(at, QSizeF(180, height)), QPen(QColor(120, 155, 180)), QBrush(QColor(42, 45, 52)));
             box->setData(0, QVariant::fromValue(node.id));
@@ -78,6 +80,7 @@ public:
             line->setZValue(-1);
             line->setData(2, QVariant::fromValue(edge.from));
             line->setData(3, QVariant::fromValue(edge.to));
+            line->setData(4, edge.port);
             line->setFlag(QGraphicsItem::ItemIsSelectable);
         }
         scene()->setSceneRect(scene()->itemsBoundingRect().adjusted(-50, -50, 100, 100));
@@ -98,12 +101,35 @@ protected:
         if (item && item->data(0).toULongLong()) {
             m_selected = item->data(0).toULongLong();
             if (selected) selected(m_selected);
+            if (event->button() == Qt::LeftButton) {
+                m_moveId = m_selected;
+                m_moveStart = mapToScene(event->pos());
+                m_moved = false;
+                event->accept(); return;
+            }
         }
         if (!item || item->data(2).isValid()) m_selected = 0;
         QGraphicsView::mousePressEvent(event);
     }
     void mouseMoveEvent(QMouseEvent *event) override
     {
+        if (m_moveId) {
+            const QPointF position = mapToScene(event->pos()), delta = position - m_moveStart;
+            if (delta.manhattanLength() > 0) {
+                m_moved = true;
+                m_moveStart = position;
+                m_points[m_moveId] += delta;
+                for (auto &[key, point] : m_inputPoints) if (key.first == m_moveId) point += delta;
+                for (auto *item : scene()->items())
+                    if (item->data(0).toULongLong() == m_moveId) item->moveBy(delta.x(), delta.y());
+                for (auto *item : scene()->items())
+                    if (item->data(2).isValid()) {
+                        const auto from = item->data(2).toULongLong(), to = item->data(3).toULongLong();
+                        static_cast<QGraphicsPathItem *>(item)->setPath(path(m_points[from] + QPointF(180, 32), m_inputPoints[{to, item->data(4).toInt()}]));
+                    }
+            }
+            event->accept(); return;
+        }
         if (m_from && m_preview) {
             m_preview->setPath(path(m_start, mapToScene(event->pos())));
             event->accept();
@@ -111,6 +137,12 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *event) override
     {
+        if (m_moveId) {
+            const auto id = m_moveId;
+            m_moveId = 0;
+            if (m_moved && moved) moved(id, m_points[id]);
+            event->accept(); return;
+        }
         if (!m_from) { QGraphicsView::mouseReleaseEvent(event); return; }
         delete m_preview; m_preview = nullptr;
         auto *item = itemAt(event->pos());
@@ -130,7 +162,7 @@ protected:
         if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
             auto items = scene()->selectedItems();
             if (!items.empty() && items.front()->data(2).isValid() && disconnected) {
-                disconnected(items.front()->data(2).toULongLong(), items.front()->data(3).toULongLong());
+                disconnected(items.front()->data(2).toULongLong(), items.front()->data(3).toULongLong(), items.front()->data(4).toInt());
             } else if (m_selected && removed) removed(m_selected);
             event->accept(); return;
         }
@@ -160,7 +192,9 @@ private:
     }
     InteractionGraph m_graph;
     std::map<quint64, QPointF> m_points;
-    quint64 m_from = 0, m_selected = 0;
+    quint64 m_from = 0, m_selected = 0, m_moveId = 0;
+    QPointF m_moveStart;
+    bool m_moved = false;
     bool m_reverse = false;
     int m_port = 0;
     std::map<std::pair<quint64, int>, QPointF> m_inputPoints;

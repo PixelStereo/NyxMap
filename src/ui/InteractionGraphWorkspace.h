@@ -52,15 +52,18 @@ public:
         }
         layout->addWidget(add, 0, Qt::AlignLeft);
         m_error = new QLabel;
-        m_error->setWordWrap(true); layout->addWidget(m_error);
+        m_error->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum); m_error->setWordWrap(true); layout->addWidget(m_error);
         auto *split = new QSplitter;
         m_canvas = new InteractionGraphView;
         split->addWidget(m_canvas);
         m_inspector = new QWidget;
         m_inspectorLayout = new QVBoxLayout(m_inspector);
         split->addWidget(m_inspector); split->setStretchFactor(0, 3);
-        layout->addWidget(split);
+        layout->addWidget(split, 1);
         m_canvas->selected = [this](quint64 id) { m_selected = id; rebuildInspector(); };
+        m_canvas->moved = [this](quint64 id, QPointF position) {
+            edit([&](auto &node) { node.x = position.x(); node.y = position.y(); node.positioned = true; }, id);
+        };
         m_canvas->connected = [this](quint64 a, quint64 b, int port) {
             auto graph = m_engine->interactionGraph(); QString error;
             if (!graph.connect(a, b, &error, port)) { m_error->setText(error); return; }
@@ -72,9 +75,9 @@ public:
             graph.edges.erase(std::remove_if(graph.edges.begin(), graph.edges.end(), [id](const auto &e) { return e.from == id || e.to == id; }), graph.edges.end());
             commit(std::move(graph), QStringLiteral("Remove Graph Block"));
         };
-        m_canvas->disconnected = [this](quint64 a, quint64 b) {
+        m_canvas->disconnected = [this](quint64 a, quint64 b, int port) {
             auto graph = m_engine->interactionGraph();
-            graph.edges.erase(std::remove_if(graph.edges.begin(), graph.edges.end(), [=](const auto &e) { return e.from == a && e.to == b; }), graph.edges.end());
+            graph.edges.erase(std::remove_if(graph.edges.begin(), graph.edges.end(), [=](const auto &e) { return e.from == a && e.to == b && e.port == port; }), graph.edges.end());
             commit(std::move(graph), QStringLiteral("Disconnect Graph Blocks"));
         };
         connect(engine, &Engine::interactionsChanged, this, [this] {
@@ -84,6 +87,42 @@ public:
         });
         refresh();
     }
+    void addBranch(quint64 mapping, bool filtered) {
+        auto graph = m_engine->interactionGraph();
+        quint64 next = 1, from = 0;
+        for (const auto &n : graph.nodes) {
+            next = std::max(next, n.id + 1);
+            if (n.mapping == mapping && n.kind == InteractionGraph::Kind::Source) from = n.id;
+        }
+        if (!from) {
+            const auto definitions = m_engine->interactions();
+            const auto it = std::find_if(definitions.begin(), definitions.end(), [=](const auto &x) { return x.id == mapping; });
+            if (it == definitions.end() || it->isAction() || !it->xyInputs.empty()) return;
+            Interaction settings;
+            settings.name = it->name;
+            from = next++;
+            graph.nodes.push_back({from, InteractionGraph::Kind::Source, settings});
+            graph.nodes.back().mapping = mapping;
+        }
+        appendBranch(std::move(graph), from, next, filtered);
+    }
+private:
+    void appendBranch(InteractionGraph graph, quint64 from, quint64 next, bool filtered) {
+        if (filtered) {
+            Interaction settings;
+            settings.filters = {InteractionStage::made(InteractionFilter::Math)};
+            settings.filters.front().op = MathOp::Multiply;
+            settings.filters.front().a = 1;
+            graph.nodes.push_back({next, InteractionGraph::Kind::Filter, settings});
+            graph.edges.push_back({from, next});
+            from = next++;
+        }
+        graph.nodes.push_back({next, InteractionGraph::Kind::Destination, {}});
+        graph.edges.push_back({from, next});
+        m_selected = next;
+        commit(std::move(graph), QStringLiteral("Add mapping destination"));
+    }
+
 private:
     void commit(InteractionGraph graph, const QString &text) {
         QString error;
@@ -91,9 +130,9 @@ private:
         m_error->clear();
         m_undo->push(new SetInteractionGraph(m_engine, std::move(graph), text));
     }
-    void edit(const std::function<void(InteractionGraph::Node &)> &fn) {
+    void edit(const std::function<void(InteractionGraph::Node &)> &fn, quint64 id = 0) {
         auto graph = m_engine->interactionGraph();
-        for (auto &node : graph.nodes) if (node.id == m_selected) { fn(node); break; }
+        for (auto &node : graph.nodes) if (node.id == (id ? id : m_selected)) { fn(node); break; }
         commit(std::move(graph), QStringLiteral("Edit Graph Block"));
     }
     void refresh() { m_canvas->setGraph(m_engine->interactionGraph()); rebuildInspector(); }
@@ -107,11 +146,11 @@ private:
         m_inspectorLayout->addWidget(box);
         auto text = [&](const QString &label, QString value, std::function<void(InteractionGraph::Node &, QString)> set) {
             auto *field = new QLineEdit(value); form->addRow(label, field);
-            connect(field, &QLineEdit::editingFinished, this, [this, field, set] { edit([&](auto &n) { set(n, field->text()); }); });
+            connect(field, &QLineEdit::editingFinished, this, [this, field, set, id = node.id] { edit([&](auto &n) { set(n, field->text()); }, id); });
         };
         auto number = [&](const QString &label, double value, std::function<void(InteractionGraph::Node &, double)> set) {
             auto *field = new QDoubleSpinBox; field->setRange(-1e9, 1e9); field->setDecimals(5); field->setValue(value); form->addRow(label, field);
-            connect(field, &QDoubleSpinBox::editingFinished, this, [this, field, set] { edit([&](auto &n) { set(n, field->value()); }); });
+            connect(field, &QDoubleSpinBox::editingFinished, this, [this, field, set, id = node.id] { edit([&](auto &n) { set(n, field->value()); }, id); });
         };
         auto parameterPicker = [&](bool input) {
             auto *picker = new QToolButton;
@@ -143,7 +182,20 @@ private:
         };
         text("Name", node.settings.name, [](auto &n, QString value) { n.settings.name = value; });
         using Kind = InteractionGraph::Kind;
-        if (node.kind == Kind::Source) {
+        if (node.kind != Kind::Destination) {
+            for (bool filtered : {false, true}) {
+                auto *branch = new QPushButton(filtered ? QStringLiteral("+ Filter → destination") : QStringLiteral("+ Destination"));
+                form->addRow(branch);
+                connect(branch, &QPushButton::clicked, this, [this, id = node.id, filtered] {
+                    auto graph = m_engine->interactionGraph();
+                    quint64 next = 1;
+                    for (const auto &n : graph.nodes) next = std::max(next, n.id + 1);
+                    appendBranch(std::move(graph), id, next, filtered);
+                });
+            }
+        }
+        if (node.mapping) form->addRow(new QLabel(QStringLiteral("Output of the original mapping")));
+        else if (node.kind == Kind::Source) {
             auto *source = new QComboBox;
             for (int k = 0; k < kInteractionSourceCount; ++k) source->addItem(interactionSourceName(InteractionSource(k)));
             source->setCurrentIndex(int(node.settings.source)); form->addRow("Source", source);
