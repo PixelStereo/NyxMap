@@ -68,6 +68,15 @@ int main()
     check(processor.configure(mixGraph), "disconnected input retains port identity");
     processor.input(2, 4); processor.step(.01);
     check(processor.value(3) == 4, "B remains B after removing A");
+    mixGraph.edges = {{1, 3, 0}};
+    mixGraph.nodes[2].selectedInput = 0;
+    check(processor.configure(mixGraph), "selector with A only compiles");
+    processor.input(1, 7); processor.step(.01);
+    check(processor.value(3) == 7, "A does not require a connected B");
+    mixGraph.nodes[2].selectedInput = 1;
+    check(processor.configure(mixGraph), "select disconnected B");
+    processor.step(.01);
+    check(!processor.value(3), "unconnected selection produces no stale signal");
     InteractionGraph toggle;
     Interaction toggleSettings;
     toggleSettings.filters = {InteractionStage::made(InteractionFilter::Toggle)};
