@@ -112,6 +112,8 @@ private:
     void moveCurrentLayer(int delta);
     void useLayerAsSource(int target, int sourceRow);
     void layerContextMenu(int row, const QPoint &globalPos);
+    void copyLayers(bool cut);
+    void pasteLayers();
     void copyLayerParams(int row);                             // into m_paramClipboard
     void pasteAttributesDialog(); // Paste Attributes…: the parts chosen (as last time) onto the selected layers
     void pasteLayerParams(int parts, const QString &what);     // Engine::LayerParts, onto the selected layers

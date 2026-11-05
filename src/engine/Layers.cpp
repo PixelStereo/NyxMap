@@ -910,18 +910,30 @@ bool Engine::applyLayerParts(int i, const QJsonObject &o, int parts)
 int Engine::duplicateLayer(int i)
 {
     std::vector<QJsonObject> states;
-    std::map<QString, quint64> copies;
-    quint64 original = 0;
     {
         Lock lock(&m_mutex);
-        original = layerId(i);
+        const auto original = layerId(i);
         if (!original) return -1;
         states.push_back(layerJson(i));
         for (quint64 id : tree::descendants(structure(), original)) states.push_back(layerJson(indexOfId(id)));
-        // Allocate the entire identity map before restoring any state: references may
-        // point forward to siblings as well as backward to a source or mask.
-        for (const auto &state : states) copies[state.value("id").toString()] = newIdLocked();
     }
+    return insertLayerCopies(i, states);
+}
+
+int Engine::insertLayerCopies(int at, const std::vector<QJsonObject> &states)
+{
+    if (states.empty()) return -1;
+    std::map<QString, quint64> copies;
+    {
+        Lock lock(&m_mutex);
+        for (const auto &state : states) {
+            const auto id = state.value("id").toString();
+            if (id.isEmpty() || copies.count(id)) return -1;
+            copies[id] = newIdLocked();
+        }
+        at = std::clamp(at, 0, int(m_layers.size()));
+    }
+    const QString original = states.front().value("id").toString();
     auto remap = [&](QJsonValue value) -> QJsonValue {
         const auto found = copies.find(value.toString());
         return found == copies.end() ? value : QJsonValue(QString::number(found->second));
@@ -933,7 +945,6 @@ int Engine::duplicateLayer(int i)
         if (!images.isEmpty()) shader["image_layers"] = images;
         return shader;
     };
-    int at = i;
     for (size_t k = 0; k < states.size(); ++k) {
         QJsonObject state = states[k];
         state["id"] = remap(state.value("id"));
@@ -961,7 +972,7 @@ int Engine::duplicateLayer(int i)
         at = inserted + 1;
     }
     fixLayerReferences();
-    return indexOfId(copies[QString::number(original)]);
+    return indexOfId(copies[original]);
 }
 
 QJsonArray Engine::effectsJson(int i) const

@@ -35,6 +35,8 @@
 #include <QTabWidget>
 #include <QPushButton>
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include <QCheckBox>
 #include <QMenuBar>
 #include <QSettings>
@@ -338,6 +340,58 @@ int main(int argc, char **argv)
     auto check = [&](bool ok, const char *reason) {
         if (!ok) { ++failures; std::printf("FAIL %s: %s\n", selection ? "selection_ui" : "workspace_ui", reason); }
     };
+    {
+        LayerTable list;
+        std::vector<LayerTable::Row> rows(16);
+        for (int i = 0; i < 16; ++i) rows[i].name = QStringLiteral("Layer %1").arg(i);
+        list.setRows(rows); list.resize(1000, 650); list.show(); app.processEvents();
+        auto *table = static_cast<QTableWidget *>(list.table());
+        auto click = [&](int row, Qt::KeyboardModifiers modifiers) {
+            table->scrollToItem(table->item(row, 4));
+            app.processEvents();
+            const QPoint point = table->visualItemRect(table->item(row, 4)).center();
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)), Qt::LeftButton, Qt::LeftButton, modifiers);
+            QApplication::sendEvent(table->viewport(), &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)), Qt::LeftButton, Qt::NoButton, modifiers);
+            QApplication::sendEvent(table->viewport(), &release);
+        };
+        click(13, Qt::NoModifier); click(3, Qt::ShiftModifier);
+        QList<int> wanted; for (int i = 3; i <= 13; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "Shift click selects the exact upward layer range");
+        click(1, Qt::NoModifier); click(11, Qt::ShiftModifier);
+        wanted.clear(); for (int i = 1; i <= 11; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "a new plain click resets the Shift range anchor");
+        click(5, Qt::ShiftModifier);
+        wanted.clear(); for (int i = 1; i <= 5; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "repeated Shift click retains the original anchor");
+    }
+    {
+        auto *saved = new QMimeData;
+        const auto *before = QApplication::clipboard()->mimeData();
+        if (before) for (const auto &format : before->formats()) saved->setData(format, before->data(format));
+        engine.newProject();
+        engine.addLayer("Clipboard fixture");
+        MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
+        window.show(); app.processEvents();
+        auto *layers = window.findChild<LayerTable *>();
+        layers->setCurrentRow(0);
+        auto action = [&](const QString &name) {
+            for (auto *a : window.findChildren<QAction *>()) if (a->text() == name) { a->trigger(); return true; }
+            return false;
+        };
+        const int count = engine.layerCount();
+        const auto original = engine.layerId(0);
+        check(action("Copy Layers") && action("Paste Layers"), "layer copy and paste actions are available");
+        check(engine.layerCount() == count + 1 && engine.layerId(0) != original, "paste creates a new layer identity");
+        auto *undo = window.findChild<QUndoStack *>();
+        undo->undo(); check(engine.layerCount() == count, "layer paste is undoable");
+        undo->redo(); check(engine.layerCount() == count + 1, "layer paste can be redone");
+        layers->setCurrentRow(0);
+        check(action("Cut Layers") && engine.layerCount() == count, "cut removes the selected layer");
+        undo->undo(); check(engine.layerCount() == count + 1, "layer cut is undoable");
+        QApplication::clipboard()->setMimeData(saved);
+    }
+    engine.newProject();
     if (systemIsf) {
         systemIsfVisibilityTests(engine, check);
         engine.shutdown();
