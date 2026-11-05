@@ -1418,6 +1418,17 @@ int runScene3dTests(Engine &engine)
         check(!engine.removeUnusedMaterial(material), "cannot delete a material referenced in several scenes");
         const int clone = engine.duplicateLayer(engine.indexOfId(a));
         check(clone >= 0 && engine.layer(clone)->modelMaterial == material, "duplicating an object preserves its material reference");
+        Engine::Snapshot materialLook;
+        materialLook.name = "Material references";
+        materialLook.fade = 0;
+        materialLook.layers = engine.captureLayers();
+        const int materialSnapshot = engine.addSnapshot(materialLook);
+        const auto temporaryMaterial = engine.addMaterial("Temporary");
+        check(engine.setModelMaterial(engine.indexOfId(b), temporaryMaterial), "change material before snapshot recall");
+        engine.recallSnapshot(materialSnapshot);
+        check(engine.layer(engine.indexOfId(b))->modelMaterial == material &&
+              engine.layer(engine.indexOfId(b))->material == engine.layer(engine.indexOfId(other))->material,
+              "snapshot restores shared material identity across scenes");
         const auto unused = engine.addMaterial("Unused");
         check(engine.removeUnusedMaterial(unused), "unused project material can be removed");
         const QString project = dir.filePath("materials.nyxmap");
