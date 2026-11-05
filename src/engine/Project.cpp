@@ -115,6 +115,7 @@ void Engine::clearProject()
         ++m_graphRevision;
         m_graphProcessor.configure({});
         m_graphTargets.clear();
+        m_graphLastOutputs.clear();
         m_interactions.clear();
         m_interactionRun.clear();
         m_interactionFades.clear();

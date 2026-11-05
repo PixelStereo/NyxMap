@@ -88,6 +88,7 @@ bool Engine::setInteractionGraph(const InteractionGraph &graph, QString *error)
         }
         m_interactionGraph = graph;
         ++m_graphRevision;
+        m_graphLastOutputs.clear();
     }
     updateMidiInputs();
     emit interactionsChanged();
@@ -112,6 +113,7 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
         } else if (source.source == InteractionSource::Internal) {
             if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
                 m_graphProcessor.input(node.id, parameter->asNumber());
+            else m_graphProcessor.clearInput(node.id);
         } else if (source.source == InteractionSource::Pixels || source.source == InteractionSource::Hands) {
             m_graphProcessor.input(node.id, visionValue(source));
         } else if (source.source == InteractionSource::Audio) {
@@ -133,7 +135,14 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
             if (node.kind != Kind::Destination || !node.settings.enabled || (eventOnly && !m_graphProcessor.eventOutput(node.id))) continue;
             const Interaction target = node.settings;
             const auto value = m_graphProcessor.value(node.id);
-            if (!value) continue;
+            if (!value) {
+                m_graphLastOutputs.erase(node.id);
+                m_graphTargets.erase(node.id);
+                continue;
+            }
+            const auto last = m_graphLastOutputs.find(node.id);
+            if (!eventOnly && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            m_graphLastOutputs[node.id] = *value;
             if (target.layer) {
                 const int index = indexOfId(target.layer);
                 if (index < 0 || m_layers[size_t(index)]->locked) continue;

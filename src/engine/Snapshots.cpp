@@ -1770,7 +1770,7 @@ QJsonArray Engine::captureInteractions() const
     Lock lk(&m_mutex);
     auto *self = const_cast<Engine *>(this);
     QJsonArray out;
-    out.append(QJsonObject{{"id", QStringLiteral("0")}, {"name", QStringLiteral("Interaction graph")}, {"included", true},
+    if (!m_interactionGraph.nodes.empty()) out.append(QJsonObject{{"id", QStringLiteral("0")}, {"name", QStringLiteral("Interaction graph")}, {"included", true},
         {"params", QJsonObject{{"graph", QString::fromUtf8(QJsonDocument(m_interactionGraph.toJson()).toJson(QJsonDocument::Compact))}}}});
     for (const Interaction &it : m_interactions) {
         QJsonObject params;

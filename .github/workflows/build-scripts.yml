@@ -39,7 +39,7 @@ concurrency:
 jobs:
   lint:
     name: Script checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-ubuntu
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck and PowerShell syntax
@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -81,8 +81,8 @@ jobs:
           ./build/NyxMap.app/Contents/MacOS/NyxMap --help
 
   windows:
-    name: build.sh (windows-2022, Git Bash)
-    runs-on: windows-2022
+    name: build.sh (windows-2025, Git Bash)
+    runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

@@ -40,6 +40,12 @@ int main(int argc, char **argv)
     engine.renderFrame();
     check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .6) < 1e-5, "graph writes first layer");
     check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .6) < 1e-5, "graph writes second layer");
+    check(engine.setParameter(bid, "opacity", .9), "manual edit after graph input");
+    engine.renderFrame();
+    check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .9) < 1e-5, "stationary graph leaves a manual edit alone");
+    engine.feedInteraction(event);
+    engine.renderFrame();
+    check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .6) < 1e-5, "fresh input reclaims its destination");
     QTemporaryDir dir;
     check(engine.saveProject(dir.filePath("graph.nyxmap"), {}, &error), "save graph project");
     engine.newProject();

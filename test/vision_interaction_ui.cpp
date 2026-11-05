@@ -4,7 +4,8 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QTabBar>
+#include <QButtonGroup>
+#include <QAbstractButton>
 #include <QToolButton>
 #include <QUndoStack>
 #include <iostream>
@@ -33,8 +34,8 @@ int main(int argc, char **argv)
         require(tapChoice && tapChoice->count() == 2 && tapChoice->itemData(0).toInt() == 1 &&
                     tapChoice->itemData(1).toInt() == 2,
                 "pre/post FX are the only two analysis taps");
-        auto *tabs = panel.findChild<QTabBar *>();
-        require(tabs && tabs->tabText(tabs->currentIndex()) == "Pixels", "Pixels tab selected");
+        auto *tabs = panel.findChild<QButtonGroup *>();
+        require(tabs && tabs->checkedButton()->text() == "Pixels", "Pixels tab selected");
         auto *learn = panel.findChild<QToolButton *>("interactionLearn");
         require(learn && !learn->isChecked() && !learn->isEnabled(), "Pixels does not start external Learn");
         auto *channel = panel.findChild<QComboBox *>("pixelChannel");
@@ -54,7 +55,7 @@ int main(int argc, char **argv)
         require(engine.interactions()[0].pixels.roi.width() == 1, "ROI change undoes");
         panel.learnFor(0, "opacity", InteractionSource::Hands);
         app.processEvents();
-        require(tabs->tabText(tabs->currentIndex()) == "Hands", "Hands tab selected");
+        require(tabs->checkedButton()->text() == "Hands", "Hands tab selected");
         require(panel.findChild<QComboBox *>("trackedHand") && panel.findChild<QComboBox *>("handFeature"),
                 "hand selection and gesture features");
         require(!learn->isChecked() && !learn->isEnabled(), "Hands does not start external Learn");
