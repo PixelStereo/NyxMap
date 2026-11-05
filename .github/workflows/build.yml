@@ -46,6 +46,26 @@ jobs:
           FULL_VALIDATION: ${{ inputs.full_validation || false }}
         run: python3 .github/scripts/ci_scope.py
 
+  fixture-geometry:
+    name: Fixture picking geometry (Linux, no GPU)
+    runs-on: ubuntu-latest
+    needs: scope
+    if: needs.scope.outputs.build == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Qt geometry dependencies
+        run: |
+          bash .github/scripts/configure_linux_apt.sh
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev pkg-config
+      - name: Compile and test fixture geometry
+        run: |
+          c++ --version
+          c++ -std=c++17 -O3 -DNDEBUG -fPIC -Isrc/engine -Isrc/ui \
+            test/fixture_geometry.cpp src/engine/Fixtures.cpp src/engine/LineGenerator.cpp src/ui/FixtureOverlay.cpp \
+            $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
+          /tmp/fixture-geometry
+
   # The test media, made once with Ubuntu's ffmpeg program (it has every encoder the tests need: x264, HAP…) and
   # handed to the three platforms
   media:
