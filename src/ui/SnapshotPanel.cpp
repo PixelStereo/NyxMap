@@ -1643,7 +1643,7 @@ void SnapshotPanel::fillInteractions(const QJsonArray &interactions)
     bold.setBold(true);
     top->setFont(0, bold);
     top->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-    QHash<quint64, QString> names; // their names now (renamed since: the new one)
+    QHash<quint64, QString> names{{0, QStringLiteral("Interaction graph")}}; // their names now (renamed since: the new one)
     for (const Interaction &x : m_engine->interactions()) names.insert(x.id, x.name);
     for (int k = 0; k < interactions.size(); ++k) {
         const QJsonObject o = interactions[k].toObject();

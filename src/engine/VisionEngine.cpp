@@ -22,6 +22,8 @@ void Engine::stepVision()
             for (const auto &axis : input.xyInputs)
                 add(axis);
         }
+    for (const auto &node : m_interactionGraph.nodes)
+        if (node.kind == InteractionGraph::Kind::Source) add(node.settings);
     if (!m_vision && !requests.empty())
         m_vision = std::make_unique<VisionRuntime>([this] { drawQuad(); }, handModelsDirectory());
     if (!m_vision)

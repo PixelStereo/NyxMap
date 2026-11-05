@@ -68,6 +68,124 @@ void Engine::configureInteractionTarget(Interaction &it, quint64 layer, const QS
     }
 }
 
+InteractionGraph Engine::interactionGraph() const
+{
+    Lock lk(&m_mutex);
+    return m_interactionGraph;
+}
+
+bool Engine::setInteractionGraph(const InteractionGraph &graph, QString *error)
+{
+    {
+        Lock lk(&m_mutex);
+        if (!m_graphProcessor.configure(graph, error)) return false;
+        for (auto at = m_graphTargets.begin(); at != m_graphTargets.end();) {
+            const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto &n) { return n.id == at->first; });
+            const auto old = std::find_if(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [&](const auto &n) { return n.id == at->first; });
+            if (node == graph.nodes.end() || old == m_interactionGraph.nodes.end() || node->settings.toJson() != old->settings.toJson())
+                at = m_graphTargets.erase(at);
+            else ++at;
+        }
+        m_interactionGraph = graph;
+        ++m_graphRevision;
+        m_graphLastOutputs.clear();
+    }
+    updateMidiInputs();
+    emit interactionsChanged();
+    return true;
+}
+
+// Continuous scalar graph path. Event/action and compound-value support is
+// deliberately kept separate until its edge-preservation tests are complete.
+void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events)
+{
+    using Kind = InteractionGraph::Kind;
+    std::optional<AudioAnalysis::Spectrum> spectra[2];
+    for (const auto &node : m_interactionGraph.nodes) {
+        if (node.kind != Kind::Source || !node.settings.enabled) continue;
+        const auto &source = node.settings;
+        if (node.mapping) {
+            const auto definition = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const auto &it) { return it.id == node.mapping; });
+            const auto run = m_interactionRun.find(node.mapping);
+            if (definition != m_interactions.end() && definition->enabled && run != m_interactionRun.end() && run->second.lastOut)
+                m_graphProcessor.input(node.id, *run->second.lastOut);
+            else m_graphProcessor.clearInput(node.id);
+        } else if (source.source == InteractionSource::Internal) {
+            if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
+                m_graphProcessor.input(node.id, parameter->asNumber());
+            else m_graphProcessor.clearInput(node.id);
+        } else if (source.source == InteractionSource::Pixels || source.source == InteractionSource::Hands) {
+            m_graphProcessor.input(node.id, visionValue(source));
+        } else if (source.source == InteractionSource::Audio) {
+            const bool input = source.audioInput;
+            const auto audio = input ? m_audioInput->analysis() : m_audio->analysis();
+            double value = 0;
+            if (source.audioFeature == Interaction::AudioFeature::Band) {
+                if (!spectra[input]) spectra[input] = input ? m_audioInput->spectrum() : m_audio->spectrum();
+                value = spectra[input]->band(float(source.audioLow), float(source.audioHigh));
+            } else if (source.audioFeature == Interaction::AudioFeature::Level) value = audio.level;
+            else if (source.audioFeature == Interaction::AudioFeature::Onset) value = audio.onset;
+            else value = m_graphProcessor.hit(node.id, input ? m_audioInput->onsetFlux() : m_audio->onsetFlux(), dt);
+            m_graphProcessor.input(node.id, value);
+        }
+    }
+    const auto revision = m_graphRevision;
+    auto write = [&](bool eventOnly) {
+        for (const auto &node : m_interactionGraph.nodes) {
+            if (node.kind != Kind::Destination || !node.settings.enabled || (eventOnly && !m_graphProcessor.eventOutput(node.id))) continue;
+            const Interaction target = node.settings;
+            const auto value = m_graphProcessor.value(node.id);
+            if (!value) {
+                m_graphLastOutputs.erase(node.id);
+                m_graphTargets.erase(node.id);
+                continue;
+            }
+            const auto last = m_graphLastOutputs.find(node.id);
+            if (!eventOnly && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            m_graphLastOutputs[node.id] = *value;
+            if (target.layer) {
+                const int index = indexOfId(target.layer);
+                if (index < 0 || m_layers[size_t(index)]->locked) continue;
+            }
+            auto *parameter = findParameter(target.layer, target.param);
+            if (!parameter || !(parameter->info().access & ParamInfo::Write)) continue;
+            const auto info = parameter->info();
+            auto &state = m_graphTargets[node.id];
+            bool wrote = false;
+            if (parameter->isNumber()) {
+                const auto wanted = state.numberToWrite(target, *value, parameter->number(), std::max(info.step, .01 * std::abs(info.max - info.min)));
+                if (wanted) wrote = parameter->setNumber(*wanted);
+            } else if (info.type == ParamInfo::Type::Bool) {
+                if (parameter->value().toBool() != (*value >= .5)) wrote = parameter->setValue(*value >= .5);
+            } else if (info.type == ParamInfo::Type::Choice && !info.choices.empty()) {
+                const auto choice = info.choices[std::clamp(int(std::round(std::clamp(*value, 0., double(info.choices.size() - 1)))), 0, int(info.choices.size() - 1))];
+                if (parameter->value().toString() != choice) wrote = parameter->setValue(choice);
+            } else if (info.type == ParamInfo::Type::Trigger) {
+                const bool above = *value > .5, fire = above && !state.above;
+                state.above = above;
+                if (fire) wrote = parameter->setValue(QVariant());
+            }
+            if (revision != m_graphRevision) return false;
+            if (wrote && target.layer) releaseFromFades(target.layer, target.param);
+        }
+        return true;
+    };
+    // Preserve every external edge through stateless paths. Timed filters advance
+    // once below, using the frame duration rather than one duration per event.
+    for (const auto &event : events) {
+        m_graphProcessor.clearEvent();
+        for (const auto &node : m_interactionGraph.nodes)
+            if (node.kind == Kind::Source && !node.mapping && node.settings.enabled && node.settings.matches(event) && event.colorComponents == 0)
+                m_graphProcessor.input(node.id, event.value);
+        m_graphProcessor.step(0, true);
+        if (!write(true)) return;
+    }
+    m_graphProcessor.clearEvent();
+    m_graphProcessor.step(dt);
+    write(false);
+
+}
+
 std::vector<Interaction> Engine::interactions() const
 {
     Lock lk(&m_mutex);
@@ -201,7 +319,10 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
 bool Engine::oscAddressClaimed(const QString &address) const
 {
     Lock lk(&m_mutex);
-    return std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
+    return std::any_of(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [&](const auto &node) {
+        return node.kind == InteractionGraph::Kind::Source && node.settings.enabled && node.settings.source == InteractionSource::Osc &&
+               !node.settings.oscAddress.isEmpty() && node.settings.oscAddress == address;
+    }) || std::any_of(m_interactions.cbegin(), m_interactions.cend(), [&](const Interaction &it) {
         const auto listens = [&](const Interaction &input) {
             return input.enabled && input.source == InteractionSource::Osc && !input.oscAddress.isEmpty() && input.oscAddress == address;
         };
@@ -323,7 +444,9 @@ void Engine::updateMidiInputs()
     bool wanted;
     {
         Lock lk(&m_mutex);
-        wanted = std::any_of(m_interactions.begin(), m_interactions.end(),
+        wanted = std::any_of(m_interactionGraph.nodes.begin(), m_interactionGraph.nodes.end(), [](const auto &node) {
+            return node.kind == InteractionGraph::Kind::Source && node.settings.enabled && node.settings.source == InteractionSource::Midi;
+        }) || std::any_of(m_interactions.begin(), m_interactions.end(),
                              [](const Interaction &it) { return it.enabled && (it.source == InteractionSource::Midi ||
                                  (!it.xyInputs.empty() && it.xyInputs.front().source == InteractionSource::Midi)); });
     }
@@ -396,7 +519,10 @@ void Engine::stepInteractions(double dt)
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
         events.swap(m_interactionEvents);
     }
-    if (m_interactions.empty()) return;
+    if (m_interactions.empty()) {
+        if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
+        return;
+    }
     // The program mix and the live input, each read only when an Audio interaction measures its bands
     auto needsSpectrum = [this](bool input) {
         const auto needs = [input](const Interaction &it) {
@@ -705,6 +831,7 @@ void Engine::stepInteractions(double dt)
         }
         if (wrote && it.layer) releaseFromFades(it.layer, it.param); // a fade running on it lets go
     }
+    if (!m_interactionGraph.nodes.empty()) stepInteractionGraph(dt, events);
 }
 
 // ---------------------------------------------------------------------------
@@ -726,6 +853,14 @@ void Engine::makeInteractionParams()
 {
     m_interactionParams.clear();
     using T = Parameter::Type;
+    auto graph = std::make_unique<Parameter>(QStringLiteral("interaction/0/graph"), QStringLiteral("Interactions › Graph"), T::Text);
+    graph->bind([this] { return QVariant(QString::fromUtf8(QJsonDocument(m_interactionGraph.toJson()).toJson(QJsonDocument::Compact))); },
+        [this](const QVariant &value) {
+            InteractionGraph next;
+            const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+            if (InteractionGraph::fromJson(document.object(), &next)) setInteractionGraph(next);
+        });
+    m_interactionParams.push_back(std::move(graph));
     for (const Interaction &root : m_interactions) for (int axis = 0; axis < (root.xyInputs.empty() ? 1 : 2); ++axis) {
         const Interaction &it = axis ? root.xyInputs.front() : root;
         const quint64 id = root.id;

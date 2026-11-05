@@ -33,6 +33,7 @@
 #include "PixelSampler.h"
 #include "TimecodeOutputs.h"
 #include "Interactions.h"
+#include "InteractionGraph.h"
 
 #include <QColor>
 #include <QElapsedTimer>
@@ -334,6 +335,8 @@ public:
     QString audioChannelOutputStatus(quint64 id) const;        // "Sending LTC", "Channel 3: … has 2"…
     // --- Interactions (Interactions.h): values of the show driven by a key, a MIDI controller, an OSC message, or
     // another value of the show. Run each frame after the animations (they win over the snapshots' fades)
+    InteractionGraph interactionGraph() const;
+    bool setInteractionGraph(const InteractionGraph &graph, QString *error = nullptr);
     std::vector<Interaction> interactions() const;
     void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one
     quint64 addInteraction(const Interaction &it);              // its id
@@ -1252,6 +1255,12 @@ private:
     bool m_initialized = false;
 
     // Interactions
+    InteractionGraph m_interactionGraph;
+    quint64 m_graphRevision = 0;
+    InteractionGraphProcessor m_graphProcessor;
+    std::map<quint64, InteractionTargetState> m_graphTargets;
+    std::map<quint64, double> m_graphLastOutputs;
+    void stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events);
     std::vector<Interaction> m_interactions; // under m_mutex
     quint64 m_nextInteractionId = 1;
     struct InteractionRun {
