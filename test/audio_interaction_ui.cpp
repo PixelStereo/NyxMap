@@ -3,7 +3,8 @@
 #include "AudioSpectrum.h"
 #include "Widgets.h"
 #include <QApplication>
-#include <QTabBar>
+#include <QButtonGroup>
+#include <QAbstractButton>
 #include <QTreeWidget>
 #include <QDoubleSpinBox>
 #include <QComboBox>
@@ -22,7 +23,7 @@ int main(int argc,char **argv){
     check(roundtrip.source==InteractionSource::Audio && roundtrip.audioLow==340 && roundtrip.audioHigh==1240 && roundtrip.name=="Metal","custom frequency interval survives project serialization");
     InteractionPanel panel(&engine,&undo);panel.resize(720,1000);panel.show();
     panel.learnFor(0,"opacity",InteractionSource::Audio);app.processEvents();
-    auto *tabs=panel.findChild<QTabBar*>();check(tabs&&tabs->tabText(tabs->currentIndex())=="Audio","Audio has its own selected tab");
+    auto *tabs=panel.findChild<QButtonGroup*>();check(tabs&&tabs->checkedButton()->text()=="Audio","Audio has its own selected tab");
     auto *spectrum=panel.findChild<AudioSpectrum*>();auto *lo=panel.findChild<QDoubleSpinBox*>("audioLowHz");auto *hi=panel.findChild<QDoubleSpinBox*>("audioHighHz");
     check(spectrum&&lo&&hi,"spectrum and numeric frequency selection shown before target mapping");
     if(lo&&hi){lo->setValue(500);hi->setValue(1500);auto list=engine.interactions();check(list.size()==1&&list[0].audioLow==500&&list[0].audioHigh==1500,"frequency widgets update engine interaction");undo.undo();check(engine.interactions()[0].audioHigh==20000,"band drag/number edits undo together");undo.redo();}

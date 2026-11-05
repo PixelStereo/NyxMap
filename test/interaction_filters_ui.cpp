@@ -94,6 +94,33 @@ int main(int argc, char **argv)
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
 
+    // Switching protocols preserves the complete mapping and remains undoable.
+    auto changeSource = [&](InteractionSource kind) {
+        auto *button = panel.findChild<QToolButton *>("interactionSource");
+        if (!button || !button->menu()) return false;
+        for (auto *action : button->menu()->actions()) {
+            if (action->text() == interactionSourceName(kind)) {
+                action->trigger();
+                settle();
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto original = engine.interactions().back();
+    check(changeSource(InteractionSource::Keyboard), "OSC can become keyboard");
+    check(changeSource(InteractionSource::Osc), "keyboard can become OSC");
+    const auto changed = engine.interactions().back();
+    check(changed.id == original.id && changed.layer == original.layer && changed.param == original.param &&
+              changed.filters.size() == original.filters.size() && changed.filters[0].kind == original.filters[0].kind,
+          "source switch preserves identity, destination and filters");
+    undo.undo();
+    settle();
+    check(engine.interactions().back().source == InteractionSource::Keyboard, "source switch undoes");
+    undo.redo();
+    settle();
+    check(engine.interactions().back().source == InteractionSource::Osc, "source switch redoes");
+
     // Any value: a filter's setting (a number field, no slider and no bounds)
     if (auto *clampMax = panel.findChild<QDoubleSpinBox *>("filter1b")) clampMax->setValue(250);
     settle();
