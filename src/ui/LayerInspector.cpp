@@ -4291,22 +4291,23 @@ QWidget *LayerInspector::buildModelLayers()
     if (scene >= 0) {
         Engine::Lock lock(&m_engine->mutex());
         const auto *object = m_engine->layer(m_layer);
-        const auto *owner = m_engine->layer(scene);
-        for (const auto &[id, material] : owner->sceneMaterials)
+        for (const auto &[id, material] : m_engine->materials())
             materials->addItem(material->name, QString::number(id));
         materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
     }
     materials->addItem(QStringLiteral("+ New Material…"), QStringLiteral("new"));
+    materials->addItem(QStringLiteral("Duplicate Material…"), QStringLiteral("duplicate"));
     materials->setEnabled(scene >= 0);
     form->addRow(QStringLiteral("Material"), materials);
     connect(materials, qOverload<int>(&QComboBox::activated), this, [this, materials, objectId = m_layerId](int row) {
         const auto value = materials->itemData(row).toString();
         const int object = m_engine->indexOfId(objectId), scene = m_engine->sceneOfObject(object);
         if (scene < 0) return;
-        quint64 previous = 0, sceneId = m_engine->layerId(scene);
+        quint64 previous = 0;
         { Engine::Lock lock(&m_engine->mutex()); previous = m_engine->layer(object)->modelMaterial; }
         quint64 id = value.toULongLong();
-        bool created = value == QLatin1String("new");
+        const bool duplicate = value == QLatin1String("duplicate");
+        bool created = value == QLatin1String("new") || duplicate;
         if (created) {
             bool accepted = false;
             const auto name = QInputDialog::getText(this, QStringLiteral("New Material"), QStringLiteral("Name"),
@@ -4316,34 +4317,44 @@ QWidget *LayerInspector::buildModelLayers()
                 materials->setCurrentIndex(materials->findData(QString::number(previous)));
                 return;
             }
-            id = m_engine->addSceneMaterial(scene, name);
+            SceneMaterial copy;
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                const auto found = m_engine->materials().find(previous);
+                if (found == m_engine->materials().end()) return;
+                copy = *found->second;
+            }
+            id = m_engine->addMaterial(name);
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                copy.id = id;
+                copy.name = name;
+                *m_engine->materials().at(id) = copy;
+            }
         }
         if (!id || id == previous) return;
         class AssignMaterial : public QUndoCommand {
         public:
-            AssignMaterial(Engine *e, quint64 object, quint64 scene, quint64 before, quint64 after, bool created)
-                : QUndoCommand(QStringLiteral("Assign 3D Material")), e(e), object(object), scene(scene), before(before), after(after), created(created) {
-                if (created) { Engine::Lock lock(&e->mutex()); stored = *e->layer(e->indexOfId(scene))->sceneMaterials.at(after); }
+            AssignMaterial(Engine *e, quint64 object, quint64 before, quint64 after, bool created)
+                : QUndoCommand(QStringLiteral("Assign 3D Material")), e(e), object(object), before(before), after(after), created(created) {
+                if (created) { Engine::Lock lock(&e->mutex()); stored = *e->materials().at(after); }
             }
             void undo() override {
                 e->setModelMaterial(e->indexOfId(object), before);
                 if (created) {
-                    Engine::Lock lock(&e->mutex());
-                    if (auto *owner = e->layer(e->indexOfId(scene))) owner->sceneMaterials.erase(after);
+                    e->removeUnusedMaterial(after);
                 }
             }
             void redo() override {
                 if (created) {
-                    Engine::Lock lock(&e->mutex());
-                    if (auto *owner = e->layer(e->indexOfId(scene)); owner && !owner->sceneMaterials.count(after))
-                        owner->sceneMaterials[after] = std::make_shared<SceneMaterial>(stored);
+                    e->restoreMaterial(stored);
                 }
                 e->setModelMaterial(e->indexOfId(object), after);
             }
         private:
-            Engine *e; quint64 object, scene, before, after; bool created; SceneMaterial stored;
+            Engine *e; quint64 object, before, after; bool created; SceneMaterial stored;
         };
-        auto *command = new AssignMaterial(m_engine, objectId, sceneId, previous, id, created);
+        auto *command = new AssignMaterial(m_engine, objectId, previous, id, created);
         if (m_undo) m_undo->push(command); else { command->redo(); delete command; }
         emit layerChanged();
     });

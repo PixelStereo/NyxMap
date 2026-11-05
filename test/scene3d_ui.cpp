@@ -713,10 +713,17 @@ int runScene3dUiTests(Engine &engine)
         originalMaterial = engine.layer(engine.indexOfId(materialB))->modelMaterial;
     }
     select(engine.indexOfId(materialB)); pump();
-    auto *materialInspector = window.findChild<LayerInspector *>();
+    LayerInspector *materialInspector = nullptr;
+    for (auto *candidate : window.findChildren<LayerInspector *>())
+        if (candidate->layerId() == materialB) materialInspector = candidate;
     if (materialInspector) { materialInspector->rebuild(); pump(); }
     auto *materialMenu = materialInspector ? materialInspector->findChild<QComboBox *>("modelMaterial") : nullptr;
-    check(materialMenu && materialMenu->findData(QString::number(materialId)) >= 0, "material selector lists this scene resources");
+    if (!materialMenu || materialMenu->findData(QString::number(materialId)) < 0)
+        std::printf("material UI diagnostics: target=%llu inspector=%llu menu=%d choices=%d material=%llu resources=%zu scene=%d\n",
+            (unsigned long long)materialB, (unsigned long long)(materialInspector ? materialInspector->layerId() : 0),
+            int(materialMenu != nullptr), materialMenu ? materialMenu->count() : 0, (unsigned long long)materialId,
+            engine.materials().size(), engine.sceneOfObject(engine.indexOfId(materialB)));
+    check(materialMenu && materialMenu->findData(QString::number(materialId)) >= 0, "material selector lists project resources");
     if (materialMenu) {
         const int choice = materialMenu->findData(QString::number(materialId));
         materialMenu->setCurrentIndex(choice);

@@ -1412,13 +1412,21 @@ int runScene3dTests(Engine &engine)
         const auto other = engine.layerId(engine.addLayer("Other object"));
         check(engine.setLayerModel(engine.indexOfId(other), Model3D::primitivePath("Cube"), &error), "other scene model");
         engine.setStructure(tree::intoGroup(engine.structure(), {other}, otherScene));
-        check(!engine.setModelMaterial(engine.indexOfId(other), material), "cross-scene material assignment rejected");
+        check(engine.setModelMaterial(engine.indexOfId(other), material), "project material can be shared across scenes");
+        check(engine.layer(engine.indexOfId(other))->material == engine.layer(engine.indexOfId(a))->material, "cross-scene objects share the same resource");
+        check(!engine.setModelPicture(engine.indexOfId(a), otherScene, &error), "shared material texture cannot feed back through another scene");
+        check(!engine.removeUnusedMaterial(material), "cannot delete a material referenced in several scenes");
+        const int clone = engine.duplicateLayer(engine.indexOfId(a));
+        check(clone >= 0 && engine.layer(clone)->modelMaterial == material, "duplicating an object preserves its material reference");
+        const auto unused = engine.addMaterial("Unused");
+        check(engine.removeUnusedMaterial(unused), "unused project material can be removed");
         const QString project = dir.filePath("materials.nyxmap");
         check(engine.saveProject(project, {}, &error), "save shared materials");
         check(engine.loadProject(project, nullptr, &error), "load shared materials");
         check(std::abs(engine.parameterValue(a, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material value persists");
         check(engine.setParameter(b, "model/material/rough", .33), "edit restored shared material");
         check(std::abs(engine.parameterValue(a, "model/material/rough").toDouble() - .33) < 1e-6, "restored objects still share one resource");
+        check(std::abs(engine.parameterValue(other, "model/material/rough").toDouble() - .33) < 1e-6, "restored cross-scene reference remains shared");
         engine.newProject();
     }
     return failures;

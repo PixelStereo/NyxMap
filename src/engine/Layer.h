@@ -389,7 +389,7 @@ struct Layer {
     std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
     ModelPlacement modelPlacement;
-    std::map<quint64, std::shared_ptr<SceneMaterial>> sceneMaterials;
+
     quint64 modelMaterial = 0;
     std::shared_ptr<SceneMaterial> material;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)

@@ -113,7 +113,10 @@ public:
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
     int sceneOfObject(int index) const;
-    quint64 addSceneMaterial(int scene, const QString &name = {});
+    quint64 addMaterial(const QString &name = {});
+    const std::map<quint64, std::shared_ptr<SceneMaterial>> &materials() const { return m_materials; }
+    void restoreMaterial(const SceneMaterial &material);
+    bool removeUnusedMaterial(quint64 id);
     bool setModelMaterial(int object, quint64 material);
     void resolveSceneMaterials(); // lock-safe, called after hierarchy / project edits
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
@@ -1105,6 +1108,7 @@ private:
     Scene3DQuality m_quality3d;
     std::vector<std::unique_ptr<Layer>> m_layers;
     quint64 m_nextId = 1;
+    std::map<quint64, std::shared_ptr<SceneMaterial>> m_materials;
     std::vector<float> m_meshScratch;
     std::vector<uint8_t> m_renderMark; // render pass: layer already rendered this frame (reused, no allocation)
 

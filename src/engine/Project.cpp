@@ -73,6 +73,7 @@ void Engine::clearProject()
     {
         Lock lk(&m_mutex);
         old.swap(m_layers);
+        m_materials.clear();
         m_visionReset = true;
         m_projectPath.clear();
         m_binItems.clear();
@@ -176,11 +177,6 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
-        if (l.scene3d) {
-            QJsonArray materials;
-            for (const auto &[id, material] : l.sceneMaterials) materials.append(material->toJson());
-            o["materials"] = materials;
-        }
         if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
@@ -332,11 +328,6 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
-            l->sceneMaterials.clear();
-            for (const auto &value : o.value("materials").toArray()) {
-                auto material = std::make_shared<SceneMaterial>(SceneMaterial::fromJson(value.toObject()));
-                if (material->id) l->sceneMaterials[material->id] = material;
-            }
             const QJsonObject env = o.value("environment").toObject();
             l->sceneEnvironment = env.value("layer").toString().toULongLong();
             l->sceneEnvironmentStage = env.value("stage").toInt(-1);
@@ -605,6 +596,9 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray layers;
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
+        QJsonArray materials;
+        for (const auto &[id, material] : m_materials) materials.append(material->toJson());
+        root["materials"] = materials;
         QJsonArray bin;
         for (const QString &p : m_binItems)
             bin.append(isStreamUrl(p) ? QJsonObject{{"path", p}, {"live", true}, {"rtsp_tcp", !m_binStreamsUdp.contains(p)}}
@@ -863,6 +857,8 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     }
     const QString dir = QFileInfo(path).absolutePath();
     QStringList warnings;
+    for (const auto &value : root.value("materials").toArray())
+        restoreMaterial(SceneMaterial::fromJson(value.toObject()));
     const QJsonArray layers = root.value("layers").toArray();
     for (int i = 0; i < layers.size(); ++i) {
         int idx = addLayer(QString(), layerCount());
