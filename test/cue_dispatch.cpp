@@ -10,7 +10,15 @@
 int main(int argc,char **argv) {
     QSurfaceFormat format;format.setVersion(3,3);format.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(format);
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);QApplication app(argc,argv);
-    Engine engine;QString error;if(!engine.initialize(&error)||!engine.start())return 1;
+    Engine engine;
+    QString error;
+    if (!engine.initialize(&error)) return 1;
+    const QSize dispatchSize(64, 32);
+    engine.setCompositionSize(dispatchSize);
+    // Viewport outputs have independent dimensions. Reducing only the
+    // composition still leaves a full-HD software-GPU blit on every frame.
+    for (int viewport : engine.viewports()) engine.setViewportSize(viewport, dispatchSize);
+    if (!engine.start()) return 1;
     const auto surfaceId=engine.layerId(engine.addLayer("Surface"));Engine::Snapshot snapshot;snapshot.name="Slow cue";snapshot.layers=engine.captureLayers();snapshot.fade=0;
     const int index=engine.addSnapshot(snapshot);const auto id=engine.snapshot(index).id;
     std::atomic<bool> inSlowRecall{false};int recorded=0,heartbeats=0;bool correctThread=false;
@@ -21,6 +29,7 @@ int main(int argc,char **argv) {
     QElapsedTimer wait;wait.start();while(!recorded&&wait.elapsed()<5000){app.processEvents();QThread::msleep(1);}
     int failures=0;
     auto check=[&](bool ok,const char *why){if(!ok){++failures;std::printf("FAIL cue_dispatch: %s\n",why);}};
+    std::printf("cue dispatch diagnostics: accepted=%d recorded=%d owner=%d heartbeat=%d slow=%d frames=%llu threaded=%d failed=%d elapsed=%lld ms\n", int(accepted), recorded, int(correctThread), heartbeats, int(inSlowRecall.load()), (unsigned long long)engine.frameCount(), int(engine.isThreaded()), int(engine.renderFailed()), (long long)wait.elapsed());
     check(accepted,"snapshot dispatched to cue clock");check(recorded==1&&correctThread,"one undo record delivered on GUI thread");check(heartbeats>0,"GUI handles events during a slow recall");
     // A stale queued undo must not be delivered into a newly opened/cleared show.
     engine.sequencer().requestSnapshot(id);wait.restart();while(!inSlowRecall&&wait.elapsed()<5000){app.processEvents();QThread::msleep(1);}

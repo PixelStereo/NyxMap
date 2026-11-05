@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import urllib.request
 
 VERSION = "8.1.3"
 SHA256 = "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3"
@@ -39,7 +38,14 @@ def main():
         shutil.rmtree(work)
     work.mkdir(parents=True)
     archive = work / "ffmpeg.tar.xz"
-    urllib.request.urlretrieve(url, archive)
+    # Bound network failures and avoid broken IPv6 routes on hosted runners.
+    # The pinned SHA-256 below still authenticates the complete source archive.
+    partial = archive.with_suffix(".part")
+    subprocess.run(["curl", "--ipv4", "--fail", "--location",
+                    "--connect-timeout", "20", "--max-time", "240",
+                    "--retry", "3", "--retry-delay", "3", "--retry-all-errors",
+                    "--retry-max-time", "600", "--output", str(partial), url], check=True)
+    partial.replace(archive)
     if hashlib.sha256(archive.read_bytes()).hexdigest() != SHA256:
         sys.exit("FFmpeg source checksum mismatch")
     with tarfile.open(archive) as src:

@@ -86,6 +86,8 @@ private:
     TimelineEditor *m_editor;
     QStackedWidget *m_workspace;
     TimelineActivity *m_activity;
+    TimelineActivity *m_foldedActivity = nullptr;
+    QWidget *m_foldedPage = nullptr;
     quint64 m_current = 0;
     bool m_filling = false, m_renaming = false;
 };

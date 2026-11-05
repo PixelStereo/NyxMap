@@ -36,11 +36,25 @@ def main():
     paths = [] if unknown else subprocess.check_output(["git", "diff", "--name-only", base, "HEAD"], text=True).splitlines()
     full = unknown or os.environ.get("FULL_VALIDATION", "false").lower() == "true"
     scope = classify(paths, event, os.environ.get("GITHUB_REF_TYPE", "branch"), full)
+    scope['linux'] = scope['macos'] = scope['windows'] = scope['build']
+    reused, previous_run = set(), None
+    if event == 'pull_request' and not full:
+        from ci_platform_reuse import previous_successes
+        try:
+            reused, previous_run = previous_successes(payload)
+        except Exception as error:
+            # No verified provenance: keep the normal complete checks.
+            print(f'Cannot reuse previous checks ({type(error).__name__}); running the normal scope')
+        for key in reused:
+            scope[key] = False
     with open(os.environ["GITHUB_OUTPUT"], "a") as out:
         for key, value in scope.items():
             out.write(f"{key}={str(value).lower()}\n")
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
-        out.write("### Validation scope\n\n| Check | Selected |\n|---|---|\n")
+        out.write("### Validation scope\n\n")
+        if reused:
+            out.write(f"\nLinux packaging-only change; reused successful checks from {previous_run}: {', '.join(sorted(reused))}.\n\n")
+        out.write("| Check | Selected |\n|---|---|\n")
         for key, value in scope.items():
             out.write(f"| {key} | {'yes' if value else 'no'} |\n")
 
