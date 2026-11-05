@@ -128,12 +128,19 @@ def package(build, ffmpeg, omt, ndi, output):
     binary = app / "usr/bin"
     library = app / "usr/lib"
     library.mkdir(parents=True)
+    tiff_prefix = Path(os.environ['NYXMAP_TIFF_PREFIX']).resolve()
+    for source in (tiff_prefix / 'lib').glob('libtiff*.so*'):
+        copy(source, library / source.name)
+    if not (library / 'libtiff.so.6').is_file():
+        sys.exit('Rebuilt libtiff.so.6 missing; run build_tiff_linux.py first')
     copy(build / "NyxMap", binary / "NyxMap")
     shutil.copytree(build / "isf", binary / "isf")
     shutil.copytree(build / "audio", binary / "audio")
     for name in ("LICENSE", "LICENSE-EXCEPTION.md", "THIRD-PARTY-NOTICES.md"):
         copy(ROOT / name, binary / name)
     shutil.copytree(ROOT / "licenses", binary / "licenses")
+    copy(tiff_prefix / 'TIFF-LICENSE.md', binary / 'licenses/libtiff/LICENSE.md')
+    copy(tiff_prefix / 'VERSION', binary / 'licenses/libtiff/BUILD.txt')
     for folder, names in ((omt, ["libomt.so", "libvmx.so", "OMT-LICENSES.txt"]),
                           (ndi, ["libndi.so.6", "Processing.NDI.Lib.Licenses.txt", "NDI-NOTICE.txt"])):
         for name in names:
@@ -239,7 +246,7 @@ def package(build, ffmpeg, omt, ndi, output):
     with Image.open(ROOT / "assets/nyxmap-app.png") as artwork:
         artwork.resize((512, 512), Image.Resampling.LANCZOS).save(icon)
     env = {**os.environ, "APPIMAGE_EXTRACT_AND_RUN": "1", "NO_STRIP": "1",
-           "LD_LIBRARY_PATH": f"{ffmpeg}/lib:{library}:{binary}"}
+           "LD_LIBRARY_PATH": f"{library}:{ffmpeg}/lib:{binary}"}
     # linuxdeploy handles desktop metadata and ELF rpaths; the closure below also
     # includes libraries its portable-baseline exclusion list would leave out.
     run([tool["linuxdeploy"], "--appdir", app, "--executable", binary / "NyxMap",
@@ -287,6 +294,15 @@ def package(build, ffmpeg, omt, ndi, output):
     for path in sorted(p for p in app.rglob("*") if elf(p)):
         if GPL_ONLY.match(path.name) or GPL_ONLY_LINUX.match(path.name):
             sys.exit(f"GPL-only library in package: {path}")
+        if re.match(r'^libtiff(?:xx)?\.so\.', path.name):
+            original = tiff_prefix / 'lib' / path.name
+            if not original.is_file():
+                sys.exit(f'Rebuilt libtiff origin missing: {path}')
+            needed = subprocess.check_output(['readelf', '-d', path], text=True)
+            if 'libjbig' in needed:
+                sys.exit(f'Rebuilt libtiff was replaced by a JBIG-linked library: {path}')
+            notices.append(f'| {path.relative_to(app)} | {(tiff_prefix / "VERSION").read_text().splitlines()[0]} | libtiff permissive licence, JBIG disabled |')
+            continue
         if FFMPEG_LIB.match(path.name):
             if problem := licence_problem(path):
                 sys.exit(f"{path}: {problem}")
