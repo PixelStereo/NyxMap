@@ -65,6 +65,27 @@ class PlatformReuseTest(unittest.TestCase):
              patch('urllib.request.urlopen', return_value=io.StringIO(json.dumps({'workflow_runs': [run]}))):
             self.assertEqual(previous_successes(payload), (set(), None))
 
+    def test_inherited_successes_are_proved_at_the_original_revision(self):
+        with patch('ci_platform_reuse._revision_successes', side_effect=[
+                (set(), 'newer-run', True), ({'macos', 'windows'}, 'original-run', False)]) as inspect, \
+             patch('subprocess.check_output', return_value='newer\noriginal\n'):
+            self.assertEqual(previous_successes({'before': 'newer'}), ({'macos', 'windows'}, 'original-run'))
+            self.assertEqual(inspect.call_args.args[0]['before'], 'original')
+
+    def test_actual_failure_never_inherits_an_older_success(self):
+        with patch('ci_platform_reuse._revision_successes', return_value=(set(), 'failed-run', False)), \
+             patch('subprocess.check_output') as history:
+            self.assertEqual(previous_successes({'before': 'failed'}), (set(), 'failed-run'))
+            history.assert_not_called()
+
+    def test_successful_linux_engine_steps_survive_a_packaging_failure(self):
+        job = {'name': 'Linux (latest) + tests', 'conclusion': 'failure', 'steps': [
+            {'name': 'Build', 'conclusion': 'success'}, {'name': 'Engine tests', 'conclusion': 'success'},
+            {'name': 'Package autonomous Linux distributions', 'conclusion': 'failure'}]}
+        self.assertEqual(successful_jobs([job]), {'linux_engine'})
+        job['steps'][1]['conclusion'] = 'failure'
+        self.assertEqual(successful_jobs([job]), set())
+
 
 if __name__ == '__main__':
     unittest.main()

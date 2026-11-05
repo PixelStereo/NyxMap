@@ -8,6 +8,7 @@ import urllib.request
 LINUX_FILES = {
     'scripts/package_linux.py', 'scripts/smoke_linux_package.py', 'scripts/linux_qt_plugins.py',
     'scripts/test_linux_qt_plugins.py', 'scripts/build_ffmpeg_linux.py', 'scripts/build_tiff_linux.py',
+    'scripts/package_linux_baseline.sh',
     '.github/scripts/ci_scope.py', '.github/scripts/ci_platform_reuse.py',
     '.github/scripts/test_ci_platform_reuse.py', '.github/workflows/build.yml',
 }
@@ -34,23 +35,29 @@ def other_workflow_jobs_unchanged(before, after):
 
 
 def successful_jobs(jobs):
-    return {key for key, name in JOB_NAMES.items()
-            if any(job['name'] == name and job.get('conclusion') == 'success' for job in jobs)}
+    reused = {key for key, name in JOB_NAMES.items()
+              if any(job['name'] == name and job.get('conclusion') == 'success' for job in jobs)}
+    for job in jobs:
+        if job['name'] == 'Linux (latest) + tests':
+            steps = {step['name']: step.get('conclusion') for step in job.get('steps', [])}
+            if steps.get('Build') == 'success' and steps.get('Engine tests') == 'success':
+                reused.add('linux_engine')
+    return reused
 
 
-def previous_successes(payload):
+def _revision_successes(payload):
     before = payload.get('before', '')
     head = payload.get('pull_request', {}).get('head', {}).get('sha', '')
     if not all(re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (before, head)):
-        return set(), None
+        return set(), None, False
     paths = subprocess.check_output(['git', 'diff', '--name-only', before, head], text=True).splitlines()
     if not linux_packaging_only(paths):
-        return set(), None
+        return set(), None, False
     workflow = '.github/workflows/build.yml'
     old = subprocess.check_output(['git', 'show', f'{before}:{workflow}'], text=True)
     new = subprocess.check_output(['git', 'show', f'{head}:{workflow}'], text=True)
     if not other_workflow_jobs_unchanged(old, new):
-        return set(), None
+        return set(), None, False
     api = os.environ.get('GITHUB_API_URL', 'https://api.github.com')
     repo = os.environ['GITHUB_REPOSITORY']
     headers = {'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN']}
@@ -83,5 +90,22 @@ def previous_successes(payload):
             jobs.extend(batch)
             if len(batch) < 100:
                 break
-        return successful_jobs(jobs), run['html_url']
+        relevant = [job for job in jobs if job['name'] in JOB_NAMES.values()]
+        inherited = bool(relevant) and all(job.get('conclusion') == 'skipped' for job in relevant)
+        return successful_jobs(jobs), run['html_url'], inherited
+    return set(), None, False
+
+
+def previous_successes(payload):
+    reused, url, inherited = _revision_successes(payload)
+    if not inherited:
+        return reused, url
+    # A previous Linux-only run may itself have reused successful checks. Walk
+    # its source ancestors, proving the complete diff again at every revision.
+    # An actual failure or missing provenance stops inheritance immediately.
+    revisions = subprocess.check_output(['git', 'rev-list', '--first-parent', '--max-count=5', payload['before']], text=True).splitlines()
+    for revision in revisions[1:]:
+        reused, url, inherited = _revision_successes({**payload, 'before': revision})
+        if not inherited:
+            return reused, url
     return set(), None

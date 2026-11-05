@@ -2,7 +2,8 @@
 """Create the Linux x86_64 AppImage and a FUSE-free portable archive from the same AppDir.
 
 Usage: package_linux.py BUILD_DIR FFMPEG_PREFIX OMT_DIR NDI_DIR OUTPUT_DIR
-Run on Ubuntu 24.04 after building NyxMap with build_ffmpeg_linux.py's FFmpeg.
+Run inside packaging/linux/build.Dockerfile via package_linux_baseline.sh.
+NYXMAP_TIFF_PREFIX must point to the source-built libtiff without JBIG.
 Only glibc and the host's graphics driver stack are intentionally external.
 Fails when a bundled library comes from a Debian package whose copyright file is GPL only (see package_licence).
 """
