@@ -23,6 +23,7 @@
 #include <QTableWidget>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QJsonDocument>
 #include <QToolButton>
 #include <QUndoStack>
 #include <cmath>
@@ -191,7 +192,23 @@ int main(int argc, char **argv)
     };
     auto fixture = [&] { return engine.fixturePatch().fixtures[0]; };
     check(view.showFixtures(), "fixture interaction tool is active");
-    check(fixtureview::hit(engine.fixturePatch(), engine.compositionSize(), toWidget, at(.5, .5)) == id, "fixture hit geometry matches the view transform");
+    const quint64 centerHit = fixtureview::hit(engine.fixturePatch(), engine.compositionSize(), toWidget, at(.5, .5));
+    if (centerHit != id) {
+        const QSize c = engine.compositionSize();
+        const QPointF origin = at(0, 0), corner = at(1, 1);
+        std::printf("fixture geometry: expected=%llu hit=%llu comp=%dx%d view=%dx%d origin=(%.3f,%.3f) corner=(%.3f,%.3f)\n",
+                    static_cast<unsigned long long>(id), static_cast<unsigned long long>(centerHit),
+                    c.width(), c.height(), view.width(), view.height(), origin.x(), origin.y(), corner.x(), corner.y());
+        std::printf("fixture patch: %s\n", QJsonDocument(engine.fixturePatch().toJson()).toJson(QJsonDocument::Compact).constData());
+        for (const auto &f : engine.fixturePatch().fixtures) {
+            const auto corners = fixtureCorners(f, c);
+            const auto polygon = fixtureview::outline(f, c, toWidget);
+            for (int k = 0; k < 4; ++k)
+                std::printf("fixture %llu corner %d: normalized=(%.9f,%.9f) widget=(%.9f,%.9f)\n",
+                    (unsigned long long)f.id, k, corners[k].x(), corners[k].y(), polygon[k].x(), polygon[k].y());
+        }
+    }
+    check(centerHit == id, "fixture hit geometry matches the view transform");
     drag(at(0.5, 0.5), at(0.6, 0.55));
     check(view.fixture() == id && std::abs(fixture().center.x() - 0.5) < 1e-6, "a locked fixture is picked, not moved");
     emit table->cellClicked(0, 1); // unlocked
