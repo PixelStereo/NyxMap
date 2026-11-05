@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   module:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       NODE_PATH: ${{ github.workspace }}/integrations/companion/node_modules
