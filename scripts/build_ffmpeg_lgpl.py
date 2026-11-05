@@ -58,7 +58,10 @@ def build(prefix: Path):
     work.mkdir(parents=True)
     url = f"https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz"
     archive = work / f"ffmpeg-{version}.tar.xz"
-    run(["curl", "-fsSL", "--retry", "3", "-o", archive, url])
+    partial = archive.with_suffix(archive.suffix + ".part")
+    run(["curl", "--ipv4", "-fsSL", "--connect-timeout", "20", "--max-time", "240",
+         "--retry", "3", "--retry-all-errors", "--retry-max-time", "600", "-o", partial, url])
+    partial.replace(archive)
     sha = hashlib.sha256(archive.read_bytes()).hexdigest()
     run(["tar", "-xf", archive, "-C", work])
     src = work / f"ffmpeg-{version}"
