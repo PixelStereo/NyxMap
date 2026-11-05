@@ -28,6 +28,7 @@ jobs:
     outputs:
       build: ${{ steps.scope.outputs.build }}
       linux: ${{ steps.scope.outputs.linux }}
+      linux_engine: ${{ steps.scope.outputs.linux_engine }}
       macos: ${{ steps.scope.outputs.macos }}
       windows: ${{ steps.scope.outputs.windows }}
       ui: ${{ steps.scope.outputs.ui }}
@@ -147,31 +148,36 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - name: Identify Linux cache ABI
+        if: needs.scope.outputs.linux_engine == 'true'
         id: linux-abi
         run: |
           . /etc/os-release
           echo "key=$ID-$VERSION_ID-$(uname -m)-$(getconf GNU_LIBC_VERSION | tr ' ' '-')" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
+        if: needs.scope.outputs.linux_engine == 'true'
         id: ffmpeg-cache
         with:
           path: ~/ffmpeg-lgpl-linux
           key: ffmpeg-lgpl-linux-${{ steps.linux-abi.outputs.key }}-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
       - name: Shared LGPL FFmpeg
+        if: needs.scope.outputs.linux_engine == 'true'
         run: |
           python3 scripts/build_ffmpeg_linux.py "$HOME/ffmpeg-lgpl-linux"
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-lgpl-linux/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$HOME/ffmpeg-lgpl-linux/lib" >> "$GITHUB_ENV"
       - uses: actions/cache/save@v4
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: needs.scope.outputs.linux_engine == 'true' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         with:
           path: ~/ffmpeg-lgpl-linux
           key: ffmpeg-lgpl-linux-${{ steps.linux-abi.outputs.key }}-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
       - name: Build
+        if: needs.scope.outputs.linux_engine == 'true'
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
       - name: Engine tests
+        if: needs.scope.outputs.linux_engine == 'true'
         run: |
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
           xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing
@@ -196,10 +202,19 @@ jobs:
             dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
+        timeout-minutes: 45
         run: |
-          python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
-          python3 scripts/fetch_ndi.py "$RUNNER_TEMP/ndi"
-          python3 scripts/package_linux.py build "$HOME/ffmpeg-lgpl-linux" "$RUNNER_TEMP/omt" "$RUNNER_TEMP/ndi" "$PWD/dist"
+          # latest remains the test host. Release libraries target the oldest
+          # supported glibc; newer distro libraries cannot run on Ubuntu 24.04.
+          docker build --progress=plain -t nyxmap-build:24.04 \
+            --secret id=ubuntu-ca,src=/etc/ssl/certs/ca-certificates.crt \
+            --build-arg "BUILDER_UID=$(id -u)" --build-arg "BUILDER_GID=$(id -g)" \
+            -f packaging/linux/build.Dockerfile packaging/linux
+          mkdir -p "$RUNNER_TEMP/linux-baseline"
+          docker run --rm \
+            -v "$PWD:/workspace" -v "$RUNNER_TEMP/linux-baseline:/work" \
+            -v "$DOTNET_ROOT:/dotnet:ro" \
+            nyxmap-build:24.04 sh scripts/package_linux_baseline.sh
       - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
         timeout-minutes: 15
         run: |

@@ -3,6 +3,10 @@
 #include "Engine.h"
 #include "AnimEditor.h"
 #include "InteractionPanel.h"
+#include "TimelinePanel.h"
+#include "TimelineActivity.h"
+#include <QPushButton>
+#include <QStackedWidget>
 #include "InteractionPatch.h"
 #include "PresetEditor.h"
 #include "Widgets.h"
@@ -232,5 +236,27 @@ int main(int argc, char **argv)
 
     if (argc > 1) panel.grab().save(QString::fromLocal8Bit(argv[1]));
     std::printf("interaction_filters_ui: %d failures\n", failures);
+
+    {
+        Animation a; a.name = "Fold test";
+        const int index = engine.addAnimation(a);
+        TimelineWindow timelines(&engine, &undo);
+        timelines.selectTimeline(engine.animation(index).id);
+        auto *fold = timelines.editor()->findChild<QPushButton *>("timelineFold");
+        auto *pages = timelines.findChild<QStackedWidget *>("timelineWorkspace");
+        check(fold && pages, "timeline fold control exists");
+        if (fold && pages) {
+            fold->click();
+            check(pages->currentWidget() != timelines.editor(), "individual timeline folds");
+            auto *expand = pages->currentWidget()->findChild<QPushButton *>("timelineExpand");
+            check(expand != nullptr, "folded timeline can expand");
+            if (expand) expand->click();
+            check(pages->currentWidget() == timelines.editor(), "timeline expands without replacement");
+            auto *all = timelines.listPanel()->findChild<QPushButton *>("timelinesOverview");
+            all->click();
+            auto *activity = qobject_cast<TimelineActivity *>(pages->currentWidget());
+            check(activity && !activity->rows().empty(), "fold all retains timeline overview");
+        }
+    }
     return failures ? 1 : 0;
 }

@@ -48,6 +48,7 @@ void TimelineActivity::poll() {
     if (!m_engine->sampleAnimations(&sample)) return; // transport display must never wait for a scene load
     m_rows.clear(); m_playing=m_paused=0; m_total=int(sample.size());
     for (auto &a : sample) {
+        if (m_only && a.id != m_only) continue;
         m_playing += a.state==Engine::AnimState::Playing;
         m_paused += a.state==Engine::AnimState::Paused;
         if (m_showStopped || a.state!=Engine::AnimState::Stopped) m_rows.push_back(std::move(a));
@@ -79,7 +80,7 @@ void TimelineActivity::paintEvent(QPaintEvent *) {
         if (a.id==m_selected) p.fillRect(QRect(0,y,w,m_rowHeight),QColor("#283647"));
         const QColor color=ink(a.state); p.setPen(color);
         if (m_compact) { // number and name, the line of its run, its time, its transport
-            const int nameWidth=std::min(180,w/3), line=34+nameWidth+8, end=w-218;
+            const int nameWidth=std::min(180,w/3), line=34+nameWidth+8, end=w-(m_summary?160:218);
             p.drawText(QRect(10,y,20,m_rowHeight),Qt::AlignVCenter,QString::number(i+1));
             p.setPen(QColor("#e0e7f0"));
             p.drawText(QRect(34,y,nameWidth,m_rowHeight),Qt::AlignVCenter,p.fontMetrics().elidedText(a.name,Qt::ElideRight,nameWidth));
@@ -89,8 +90,8 @@ void TimelineActivity::paintEvent(QPaintEvent *) {
             }
             p.setPen(color);
             p.drawText(QRect(std::max(line,w-210),y,146,m_rowHeight),Qt::AlignRight|Qt::AlignVCenter,QStringLiteral("%1 / %2").arg(timeText(a.position),timeText(a.duration)));
-            p.drawText(QRect(w-57,y,25,m_rowHeight),Qt::AlignCenter,a.state==Engine::AnimState::Playing?QStringLiteral("Ⅱ"):QStringLiteral("▶"));
-            p.drawText(QRect(w-29,y,24,m_rowHeight),Qt::AlignCenter,QStringLiteral("■"));
+            if (!m_summary) p.drawText(QRect(w-57,y,25,m_rowHeight),Qt::AlignCenter,a.state==Engine::AnimState::Playing?QStringLiteral("Ⅱ"):QStringLiteral("▶"));
+            if (!m_summary) p.drawText(QRect(w-29,y,24,m_rowHeight),Qt::AlignCenter,QStringLiteral("■"));
             continue;
         }
         p.drawText(QRect(10,y+1,20,18),Qt::AlignVCenter,QString::number(i+1));
@@ -121,8 +122,8 @@ void TimelineActivity::mousePressEvent(QMouseEvent *event) {
     if (point.y()<25 && point.x()>viewport()->width()-85) { setShowStopped(!m_showStopped); return; }
     const int row=rowAt(point); if (row<0 || row>=int(m_rows.size())) return;
     select(row); const auto a=m_rows[size_t(row)];
-    if (point.x()>viewport()->width()-30) m_engine->controlAnimation(a.id,Engine::AnimAction::Stop);
-    else if (point.x()>viewport()->width()-60) m_engine->controlAnimation(a.id,a.state==Engine::AnimState::Playing?Engine::AnimAction::Pause:Engine::AnimAction::Play);
+    if (!m_summary && point.x()>viewport()->width()-30) m_engine->controlAnimation(a.id,Engine::AnimAction::Stop);
+    else if (!m_summary && point.x()>viewport()->width()-60) m_engine->controlAnimation(a.id,a.state==Engine::AnimState::Playing?Engine::AnimAction::Pause:Engine::AnimAction::Play);
     poll();
 }
 void TimelineActivity::mouseDoubleClickEvent(QMouseEvent *event) {

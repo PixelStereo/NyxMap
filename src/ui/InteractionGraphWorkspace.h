@@ -2,6 +2,9 @@
 #include "Engine.h"
 #include "InteractionGraphView.h"
 #include <QComboBox>
+#include <QCloseEvent>
+#include <QCheckBox>
+#include <QPointer>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -50,7 +53,23 @@ public:
                 commit(std::move(graph), QStringLiteral("Add Graph Block"));
             });
         }
-        layout->addWidget(add, 0, Qt::AlignLeft);
+        auto *toolbar = new QHBoxLayout;
+        toolbar->addWidget(add);
+        m_detach = new QPushButton(QStringLiteral("Detach"));
+        m_detach->setObjectName(QStringLiteral("interactionGraphDetach"));
+        toolbar->addWidget(m_detach);
+        m_onTop = new QCheckBox(QStringLiteral("Always on top"));
+        m_onTop->setObjectName(QStringLiteral("interactionGraphOnTop"));
+        m_onTop->setEnabled(false);
+        toolbar->addWidget(m_onTop); toolbar->addStretch();
+        layout->addLayout(toolbar);
+        connect(m_detach, &QPushButton::clicked, this, [this] { setDetached(!m_detached); });
+        connect(m_onTop, &QCheckBox::toggled, this, [this](bool on) {
+            if (!m_detached) return;
+            const auto bounds = geometry();
+            setWindowFlag(Qt::WindowStaysOnTopHint, on);
+            setGeometry(bounds); show(); raise();
+        });
         m_error = new QLabel;
         m_error->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum); m_error->setWordWrap(true); layout->addWidget(m_error);
         auto *split = new QSplitter;
@@ -86,6 +105,49 @@ public:
             QTimer::singleShot(0, this, [this] { m_refreshPending = false; refresh(); });
         });
         refresh();
+    }
+    void setDockHost(QWidget *host) { m_dockHost = host; }
+    bool isDetached() const { return m_detached; }
+    void setDetached(bool detached) {
+        if (detached == m_detached || !m_dockHost) return;
+        m_detached = detached;
+        if (detached) {
+            if (m_dockHost->layout()) m_dockHost->layout()->removeWidget(this);
+            setParent(m_dockHost, Qt::Window);
+            setWindowTitle(QStringLiteral("Interactions — Nodes and Parameters"));
+            setWindowFlag(Qt::WindowStaysOnTopHint, m_onTop->isChecked());
+            if (m_floatingGeometry.isValid()) setGeometry(m_floatingGeometry);
+            else resize(1100, 700);
+        } else {
+            m_floatingGeometry = geometry();
+            setParent(m_dockHost, Qt::Widget);
+            m_dockHost->layout()->addWidget(this);
+        }
+        m_detach->setText(detached ? QStringLiteral("Dock") : QStringLiteral("Detach"));
+        m_onTop->setEnabled(detached);
+        show();
+        if (detached) raise();
+    }
+protected:
+    void closeEvent(QCloseEvent *event) override {
+        if (m_detached && m_dockHost) { event->ignore(); setDetached(false); }
+        else QWidget::closeEvent(event);
+    }
+public:
+    quint64 addFilterAfter(quint64 from) {
+        auto graph = m_engine->interactionGraph();
+        const auto parent = std::find_if(graph.nodes.begin(), graph.nodes.end(), [=](const auto &node) { return node.id == from; });
+        if (parent == graph.nodes.end() || parent->kind == InteractionGraph::Kind::Destination) return 0;
+        quint64 id = 1;
+        for (const auto &node : graph.nodes) id = std::max(id, node.id + 1);
+        Interaction settings;
+        settings.filters = {InteractionStage::made(InteractionFilter::Math)};
+        settings.filters.front().a = 1;
+        graph.nodes.push_back({id, InteractionGraph::Kind::Filter, settings});
+        if (!graph.connect(from, id)) return 0;
+        m_selected = id;
+        commit(std::move(graph), QStringLiteral("Add branch filter"));
+        return id;
     }
     void addBranch(quint64 mapping, bool filtered) {
         auto graph = m_engine->interactionGraph();
@@ -183,6 +245,10 @@ private:
         text("Name", node.settings.name, [](auto &n, QString value) { n.settings.name = value; });
         using Kind = InteractionGraph::Kind;
         if (node.kind != Kind::Destination) {
+            auto *filter = new QPushButton(QStringLiteral("+ Filter"));
+            filter->setObjectName(QStringLiteral("interactionGraphAddFilter"));
+            form->addRow(filter);
+            connect(filter, &QPushButton::clicked, this, [this, id = node.id] { addFilterAfter(id); });
             for (bool filtered : {false, true}) {
                 auto *branch = new QPushButton(filtered ? QStringLiteral("+ Filter → destination") : QStringLiteral("+ Destination"));
                 form->addRow(branch);
@@ -250,6 +316,11 @@ private:
         else if (node.kind == Kind::Select) number("Input (0: A, 1: B)", node.selectedInput, [](auto &n, double v) { n.selectedInput = v >= .5 ? 1 : 0; });
         m_inspectorLayout->addStretch();
     }
+    QPointer<QWidget> m_dockHost;
+    QPushButton *m_detach = nullptr;
+    QCheckBox *m_onTop = nullptr;
+    bool m_detached = false;
+    QRect m_floatingGeometry;
     Engine *m_engine;
     QUndoStack *m_undo;
     InteractionGraphView *m_canvas;
