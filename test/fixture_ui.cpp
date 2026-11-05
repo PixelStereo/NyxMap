@@ -172,7 +172,8 @@ int main(int argc, char **argv)
     check(show != nullptr, "the view's Fixtures switch");
     if (!show) return 1;
     show->setChecked(true);
-    auto at = [](double x, double y) { return QPointF(24 + x * 552, 24 + y * 552); };
+    view.zoomToFit();
+    auto at = [&](double x, double y) { return view.compositionToWidget(QPointF(x, y)); };
     auto toWidget = [&](QPointF n) { return at(n.x(), n.y()); };
     auto send = [&](QEvent::Type t, QPointF pos, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier) {
         QMouseEvent e(t, pos, view.mapToGlobal(pos.toPoint()), t == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
