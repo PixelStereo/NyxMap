@@ -21,9 +21,15 @@ concurrency:
 jobs:
   scope:
     name: Validation scope
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.scope.outputs.build }}
+      linux: ${{ steps.scope.outputs.linux }}
+      macos: ${{ steps.scope.outputs.macos }}
+      windows: ${{ steps.scope.outputs.windows }}
       ui: ${{ steps.scope.outputs.ui }}
       memory: ${{ steps.scope.outputs.memory }}
       tsan: ${{ steps.scope.outputs.tsan }}
@@ -38,6 +44,8 @@ jobs:
         run: shellcheck .github/scripts/configure_linux_apt.sh
       - name: Test change routing
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py'
+      - name: Test selective CI provenance
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_platform_reuse.py'
       - name: Test Linux plugin requirements
         run: python3 -m unittest discover -s scripts -p 'test_linux_qt_plugins.py'
       - name: Test release metadata and tag versions
@@ -46,6 +54,7 @@ jobs:
         id: scope
         env:
           FULL_VALIDATION: ${{ inputs.full_validation || false }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/ci_scope.py
 
   fixture-geometry:
@@ -93,7 +102,7 @@ jobs:
           retention-days: 1
 
   linux:
-    if: needs.scope.outputs.build == 'true'
+    if: needs.scope.outputs.linux == 'true'
     name: Linux (latest) + tests
     runs-on: ubuntu-latest
     needs: [scope, media]
@@ -115,6 +124,13 @@ jobs:
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
+      - name: Rebuild libtiff without JBIG
+        run: |
+          sed 's/^Types:.*/Types: deb-src/' /etc/apt/sources.list.d/ubuntu.sources | sudo tee /etc/apt/sources.list.d/nyxmap-source.sources >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y libtiff-dev libjpeg-dev zlib1g-dev liblzma-dev libdeflate-dev libzstd-dev libwebp-dev liblerc-dev
+          python3 scripts/build_tiff_linux.py "$RUNNER_TEMP/tiff-no-jbig"
+          echo "NYXMAP_TIFF_PREFIX=$RUNNER_TEMP/tiff-no-jbig" >> "$GITHUB_ENV"
       - name: Check Qt package plugins before compiling
         run: python3 scripts/linux_qt_plugins.py "$(/usr/lib/qt6/bin/qmake -query QT_INSTALL_PLUGINS)"
       - name: Prepare clean Ubuntu runtime images
@@ -436,7 +452,7 @@ jobs:
           path: fuzz_crashes
 
   macos:
-    if: needs.scope.outputs.build == 'true'
+    if: needs.scope.outputs.macos == 'true'
     name: macOS (Apple Silicon) + tests
     runs-on: macos-latest
     needs: [scope, media]
@@ -629,7 +645,7 @@ jobs:
           path: NyxMap-macos*.zip
 
   windows:
-    if: needs.scope.outputs.build == 'true'
+    if: needs.scope.outputs.windows == 'true'
     name: Windows (latest, Qt MSVC 2022) + tests
     runs-on: windows-latest
     needs: [scope, media]
