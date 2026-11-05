@@ -46,7 +46,8 @@ def successful_jobs(jobs):
 
 
 def _revision_successes(payload):
-    before = payload.get('before', '')
+    from_base = not payload.get('before')
+    before = payload.get('before') or payload.get('pull_request', {}).get('base', {}).get('sha', '')
     head = payload.get('pull_request', {}).get('head', {}).get('sha', '')
     if not all(re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (before, head)):
         return set(), None, False
@@ -66,24 +67,26 @@ def _revision_successes(payload):
         with urllib.request.urlopen(urllib.request.Request(f'{api}/repos/{repo}/{path}', headers=headers), timeout=20) as response:
             return json.load(response)
 
-    runs = read(f'actions/runs?head_sha={before}&event=pull_request&per_page=20')['workflow_runs']
+    event = 'push' if from_base else 'pull_request'
+    runs = read(f'actions/runs?head_sha={before}&event={event}&per_page=20')['workflow_runs']
     for run in runs:
         if run['name'] != os.environ.get('GITHUB_WORKFLOW', 'Build') or run['head_sha'] != before:
             continue
-        base = payload.get('pull_request', {}).get('base', {}).get('sha')
-        prior_pr = next((pr for pr in run.get('pull_requests', [])
-                         if pr.get('number') == payload.get('number')), None)
-        prior_base = prior_pr.get('base', {}).get('sha') if prior_pr else None
-        if not prior_base or not base:
-            continue
-        if prior_base != base:
-            changed_base = subprocess.check_output(['git', 'diff', '--name-only', prior_base, base], text=True).splitlines()
-            if not linux_packaging_only(changed_base):
+        if not from_base:
+            base = payload.get('pull_request', {}).get('base', {}).get('sha')
+            prior_pr = next((pr for pr in run.get('pull_requests', [])
+                             if pr.get('number') == payload.get('number')), None)
+            prior_base = prior_pr.get('base', {}).get('sha') if prior_pr else None
+            if not prior_base or not base:
                 continue
-            prior_workflow = subprocess.check_output(['git', 'show', f'{prior_base}:{workflow}'], text=True)
-            current_workflow = subprocess.check_output(['git', 'show', f'{base}:{workflow}'], text=True)
-            if not other_workflow_jobs_unchanged(prior_workflow, current_workflow):
-                continue
+            if prior_base != base:
+                changed_base = subprocess.check_output(['git', 'diff', '--name-only', prior_base, base], text=True).splitlines()
+                if not linux_packaging_only(changed_base):
+                    continue
+                prior_workflow = subprocess.check_output(['git', 'show', f'{prior_base}:{workflow}'], text=True)
+                current_workflow = subprocess.check_output(['git', 'show', f'{base}:{workflow}'], text=True)
+                if not other_workflow_jobs_unchanged(prior_workflow, current_workflow):
+                    continue
         jobs = []
         for page in range(1, 5):
             batch = read(f'actions/runs/{run["id"]}/jobs?per_page=100&page={page}')['jobs']
@@ -103,7 +106,8 @@ def previous_successes(payload):
     # A previous Linux-only run may itself have reused successful checks. Walk
     # its source ancestors, proving the complete diff again at every revision.
     # An actual failure or missing provenance stops inheritance immediately.
-    revisions = subprocess.check_output(['git', 'rev-list', '--first-parent', '--max-count=5', payload['before']], text=True).splitlines()
+    before = payload.get('before') or payload.get('pull_request', {}).get('base', {}).get('sha')
+    revisions = subprocess.check_output(['git', 'rev-list', '--first-parent', '--max-count=5', before], text=True).splitlines()
     for revision in revisions[1:]:
         reused, url, inherited = _revision_successes({**payload, 'before': revision})
         if not inherited:

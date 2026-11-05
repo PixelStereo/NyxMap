@@ -86,6 +86,18 @@ class PlatformReuseTest(unittest.TestCase):
         job['steps'][1]['conclusion'] = 'failure'
         self.assertEqual(successful_jobs([job]), set())
 
+    def test_new_linux_only_pr_can_reuse_exact_base_push_checks(self):
+        base, head = 'a' * 40, 'b' * 40
+        payload = {'number': 342, 'pull_request': {'head': {'sha': head}, 'base': {'sha': base}}}
+        run = {'id': 123, 'name': 'Build', 'head_sha': base, 'html_url': 'https://github.com/example/main-run', 'pull_requests': []}
+        responses = [io.StringIO(json.dumps({'workflow_runs': [run]})), io.StringIO(json.dumps({'jobs': [
+            {'name': 'macOS (Apple Silicon) + tests', 'conclusion': 'success'}]}))]
+        with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'example/repo', 'GITHUB_TOKEN': 'test-placeholder', 'GITHUB_WORKFLOW': 'Build'}), \
+             patch('subprocess.check_output', side_effect=['scripts/package_linux.py\n', WORKFLOW, WORKFLOW]), \
+             patch('urllib.request.urlopen', side_effect=responses) as request:
+            self.assertEqual(previous_successes(payload), ({'macos'}, run['html_url']))
+            self.assertIn('event=push', request.call_args_list[0].args[0].full_url)
+
 
 if __name__ == '__main__':
     unittest.main()
