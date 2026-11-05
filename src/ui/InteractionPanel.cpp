@@ -287,7 +287,12 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_views->addWidget(m_list);
     m_views->addWidget(patchScroll);
     auto *branches = new InteractionGraphWorkspace(engine, undo);
-    m_views->addWidget(branches);
+    auto *routingHost = new QWidget;
+    auto *routingLayout = new QVBoxLayout(routingHost);
+    routingLayout->setContentsMargins(0, 0, 0, 0);
+    routingLayout->addWidget(branches);
+    branches->setDockHost(routingHost);
+    m_views->addWidget(routingHost);
     auto *routing = new QToolButton;
     routing->setText(QStringLiteral("Routing"));
     routing->setPopupMode(QToolButton::InstantPopup);
