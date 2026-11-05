@@ -4,13 +4,20 @@ REQUIRED_PLUGIN_GROUPS = (
     ("platforms/libqxcb.so",),
     # Qt 6.10 consolidates the older Wayland platform plugins into this one.
     ("platforms/libqwayland.so", "platforms/libqwayland-egl.so"),
-    ("multimedia/libgstreamermediaplugin.so",),
+    ("multimedia/libgstreamermediaplugin.so", "multimedia/libffmpegmediaplugin.so"),
 )
 
 
 def missing_plugin_groups(plugin_root):
     return [" or ".join(group) for group in REQUIRED_PLUGIN_GROUPS
             if not any((plugin_root / name).is_file() for name in group)]
+
+
+def multimedia_backend(plugin_root):
+    for backend in ("gstreamer", "ffmpeg"):
+        if (plugin_root / "multimedia" / f"lib{backend}mediaplugin.so").is_file():
+            return backend
+    return None
 
 
 if __name__ == "__main__":
