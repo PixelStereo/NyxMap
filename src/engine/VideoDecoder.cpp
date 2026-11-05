@@ -902,6 +902,36 @@ std::shared_ptr<const VideoLayout> VideoDecoder::hapLayout(int count, int f0, in
 // ---------------------------------------------------------------------------
 // Packed planes, at the layout's offsets
 // mapped: src is the hardware's memory seen in place (m_frame being the hardware frame)
+bool VideoDecoder::fallbackStartupSoftware()
+{
+    if (!m_hwDevice || m_hwActive || m_live || !m_fmt || !m_codec || m_stream < 0) return false;
+    AVCodecContext *software = avcodec_alloc_context3(m_codec->codec);
+    if (!software) return false;
+    int result = avcodec_parameters_to_context(software, m_fmt->streams[m_stream]->codecpar);
+    software->pkt_timebase = m_fmt->streams[m_stream]->time_base;
+    software->thread_count = softwareThreads();
+    software->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    if (result >= 0) result = avcodec_open2(software, m_codec->codec, nullptr);
+    if (result >= 0)
+        result = av_seek_frame(m_fmt, m_stream, int64_t(m_startTime / m_timeBase), AVSEEK_FLAG_BACKWARD);
+    if (result < 0) { avcodec_free_context(&software); return false; }
+    avcodec_free_context(&m_codec);
+    m_codec = software;
+    av_buffer_unref(&m_hwDevice);
+    m_hwPixFmt = -1;
+    m_hwName.clear();
+    m_softwareThreads = std::max(1, m_codec->thread_count);
+    s_softwareThreadsInUse += m_softwareThreads;
+    ++s_softwareDecodersOpen;
+    av_frame_unref(m_frame);
+    av_frame_unref(m_swFrame);
+    av_packet_unref(m_packet);
+    m_draining = m_resendPacket = false;
+    m_consecutiveCodecErrors = 0;
+    qWarning("NyxMap decoder: hardware failed before the first frame; retrying in software");
+    return true;
+}
+
 int VideoDecoder::decodeNext(VideoFrame &f, double skipBefore)
 {
     if (m_hapTag) return decodeHap(f, skipBefore);
@@ -967,6 +997,7 @@ int VideoDecoder::decodeNext(VideoFrame &f, double skipBefore)
         }
         if (r == AVERROR_EOF) return 0;
         if (r != AVERROR(EAGAIN)) {
+            if (r != AVERROR(ENOMEM) && fallbackStartupSoftware()) continue;
             // A damaged picture: counted and skipped, the stream goes on (as the ffmpeg program does without
             // -xerror). Only an unusable decoder, or an unbroken run of failures, stops playback.
             if (codecFailure(r)) return -1;
@@ -1003,6 +1034,7 @@ int VideoDecoder::decodeNext(VideoFrame &f, double skipBefore)
         m_resendPacket = false;
         av_packet_unref(m_packet);
         if (sent == AVERROR_EOF) return 0; // already flushed: nothing more comes from it
+        if (sent < 0 && sent != AVERROR(ENOMEM) && fallbackStartupSoftware()) continue;
         if (sent < 0 && codecFailure(sent)) return -1;
     }
 }
