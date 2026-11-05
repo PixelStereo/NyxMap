@@ -10,7 +10,15 @@
 int main(int argc,char **argv) {
     QSurfaceFormat format;format.setVersion(3,3);format.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(format);
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);QApplication app(argc,argv);
-    Engine engine;QString error;if(!engine.initialize(&error))return 1;engine.setCompositionSize(QSize(64,32));if(!engine.start())return 1;
+    Engine engine;
+    QString error;
+    if (!engine.initialize(&error)) return 1;
+    const QSize dispatchSize(64, 32);
+    engine.setCompositionSize(dispatchSize);
+    // Viewport outputs have independent dimensions. Reducing only the
+    // composition still leaves a full-HD software-GPU blit on every frame.
+    for (int viewport : engine.viewports()) engine.setViewportSize(viewport, dispatchSize);
+    if (!engine.start()) return 1;
     const auto surfaceId=engine.layerId(engine.addLayer("Surface"));Engine::Snapshot snapshot;snapshot.name="Slow cue";snapshot.layers=engine.captureLayers();snapshot.fade=0;
     const int index=engine.addSnapshot(snapshot);const auto id=engine.snapshot(index).id;
     std::atomic<bool> inSlowRecall{false};int recorded=0,heartbeats=0;bool correctThread=false;
