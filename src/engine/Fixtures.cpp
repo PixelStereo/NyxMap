@@ -511,8 +511,11 @@ std::array<QPointF, 4> fixtureCorners(const Fixture &f, QSize comp)
         }
         return {QPointF(x0, y0), QPointF(x1, y0), QPointF(x1, y1), QPointF(x0, y1)};
     }
-    return {onComposition(f, comp, -0.5, -0.5), onComposition(f, comp, 0.5, -0.5), onComposition(f, comp, 0.5, 0.5),
-            onComposition(f, comp, -0.5, 0.5)};
+    std::array<QPointF, 4> corners;
+    constexpr double x[] = {-0.5, 0.5, 0.5, -0.5};
+    constexpr double y[] = {-0.5, -0.5, 0.5, 0.5};
+    for (int k = 0; k < 4; ++k) corners[k] = onComposition(f, comp, x[k], y[k]);
+    return corners;
 }
 
 std::vector<QPointF> fixtureSamplePoints(const FixturePatch &p, QSize comp)

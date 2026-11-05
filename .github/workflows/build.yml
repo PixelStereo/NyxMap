@@ -61,10 +61,12 @@ jobs:
       - name: Compile and test fixture geometry
         run: |
           c++ --version
-          c++ -std=c++17 -O3 -DNDEBUG -fPIC -Isrc/engine -Isrc/ui \
-            test/fixture_geometry.cpp src/engine/Fixtures.cpp src/engine/LineGenerator.cpp src/ui/FixtureOverlay.cpp \
-            $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
-          /tmp/fixture-geometry
+          for optimization in 0 3; do
+            c++ -std=c++17 -O$optimization -DNDEBUG -fPIC -Isrc/engine -Isrc/ui \
+              test/fixture_geometry.cpp src/engine/Fixtures.cpp src/engine/LineGenerator.cpp src/ui/FixtureOverlay.cpp \
+              $(pkg-config --cflags --libs Qt6Widgets Qt6Network) -o /tmp/fixture-geometry
+            /tmp/fixture-geometry
+          done
 
   # The test media, made once with Ubuntu's ffmpeg program (it has every encoder the tests need: x264, HAP…) and
   # handed to the three platforms
