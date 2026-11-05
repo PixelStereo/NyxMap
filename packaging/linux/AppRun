@@ -19,20 +19,27 @@ export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/bin${LD_LIBRARY_PATH:+:$LD_L
 export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
 export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
 export QML2_IMPORT_PATH="$APPDIR/usr/qml"
-export GST_PLUGIN_SYSTEM_PATH_1_0="$APPDIR/usr/lib/gstreamer-1.0"
-export GST_PLUGIN_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
-export GST_PLUGIN_SCANNER="$APPDIR/usr/libexec/gst-plugin-scanner"
-# A registry of its own: the bundled plugins neither replace nor are mixed with the host's in its registry
-GST_CACHE="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/nyxmap"
-mkdir -p "$GST_CACHE" 2>/dev/null || true
-export GST_REGISTRY_1_0="$GST_CACHE/gstreamer-1.0-registry.bin"
+if [ -f "$APPDIR/usr/plugins/multimedia/libgstreamermediaplugin.so" ]; then
+  export QT_MEDIA_BACKEND=gstreamer
+  export GST_PLUGIN_SYSTEM_PATH_1_0="$APPDIR/usr/lib/gstreamer-1.0"
+  export GST_PLUGIN_PATH_1_0="$GST_PLUGIN_SYSTEM_PATH_1_0"
+  export GST_PLUGIN_SCANNER="$APPDIR/usr/libexec/gst-plugin-scanner"
+  # A registry of its own: the bundled plugins neither replace nor are mixed with the host's in its registry
+  GST_CACHE="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/nyxmap"
+  mkdir -p "$GST_CACHE" 2>/dev/null || true
+  export GST_REGISTRY_1_0="$GST_CACHE/gstreamer-1.0-registry.bin"
+elif [ -f "$APPDIR/usr/plugins/multimedia/libffmpegmediaplugin.so" ]; then
+  export QT_MEDIA_BACKEND=ffmpeg
+else
+  echo "NyxMap: packaged Qt Multimedia backend missing" >&2
+  exit 1
+fi
 export ALSA_CONFIG_DIR="$APPDIR/usr/share/alsa"
 export ALSA_CONFIG_PATH="$ALSA_CONFIG_DIR/alsa.conf"
 export ALSA_PLUGIN_DIR="$APPDIR/usr/lib/alsa-lib"
 # Keep system fonts available, with a bundled fallback on minimal desktops.
 export QT_QPA_FONTDIR="$APPDIR/usr/share/fonts"
 export FONTCONFIG_FILE="$APPDIR/usr/share/fontconfig/fonts.conf"
-export QT_MEDIA_BACKEND=gstreamer
 # Qt WebEngine (the Web Page generator): its helper process, resources and locales, when the package has them
 if [ -x "$APPDIR/usr/libexec/QtWebEngineProcess" ]; then
   export QTWEBENGINEPROCESS_PATH="$APPDIR/usr/libexec/QtWebEngineProcess"
