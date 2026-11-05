@@ -698,6 +698,36 @@ int runScene3dUiTests(Engine &engine)
         }
         window.grab().save(captures + "/scene3d-window.png");
     }
+    engine.newProject();
+    const auto materialScene = engine.layerId(engine.addScene("Shared material UI"));
+    const auto materialA = engine.layerId(engine.addLayer("Material A"));
+    const auto materialB = engine.layerId(engine.addLayer("Material B"));
+    QString materialError;
+    check(engine.setLayerModel(engine.indexOfId(materialA), Model3D::primitivePath("Cube"), &materialError), "create first material object");
+    check(engine.setLayerModel(engine.indexOfId(materialB), Model3D::primitivePath("Sphere"), &materialError), "create second material object");
+    engine.setStructure(tree::intoGroup(engine.structure(), {materialA, materialB}, materialScene));
+    quint64 materialId = 0, originalMaterial = 0;
+    {
+        Engine::Lock lock(&engine.mutex());
+        materialId = engine.layer(engine.indexOfId(materialA))->modelMaterial;
+        originalMaterial = engine.layer(engine.indexOfId(materialB))->modelMaterial;
+    }
+    select(engine.indexOfId(materialB)); pump();
+    auto *materialInspector = window.findChild<LayerInspector *>();
+    if (materialInspector) { materialInspector->rebuild(); pump(); }
+    auto *materialMenu = materialInspector ? materialInspector->findChild<QComboBox *>("modelMaterial") : nullptr;
+    check(materialMenu && materialMenu->findData(QString::number(materialId)) >= 0, "material selector lists this scene resources");
+    if (materialMenu) {
+        const int choice = materialMenu->findData(QString::number(materialId));
+        materialMenu->setCurrentIndex(choice);
+        emit materialMenu->activated(choice); pump();
+        check(engine.setParameter(materialA, "model/material/color/r", .15), "edit shared material from first object");
+        check(std::abs(engine.parameterValue(materialB, "model/material/color/r").toDouble() - .15) < 1e-6, "assigned material is shared through the inspector");
+        undo->undo(); pump();
+        { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == originalMaterial, "material assignment undo"); }
+        undo->redo(); pump();
+        { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == materialId, "material assignment redo"); }
+    }
     window.hide();
     return failures;
 }

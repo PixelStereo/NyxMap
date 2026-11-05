@@ -26,6 +26,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
@@ -4306,7 +4307,17 @@ QWidget *LayerInspector::buildModelLayers()
         { Engine::Lock lock(&m_engine->mutex()); previous = m_engine->layer(object)->modelMaterial; }
         quint64 id = value.toULongLong();
         bool created = value == QLatin1String("new");
-        if (created) id = m_engine->addSceneMaterial(scene);
+        if (created) {
+            bool accepted = false;
+            const auto name = QInputDialog::getText(this, QStringLiteral("New Material"), QStringLiteral("Name"),
+                QLineEdit::Normal, QStringLiteral("Material"), &accepted).trimmed();
+            if (!accepted || name.isEmpty()) {
+                QSignalBlocker block(materials);
+                materials->setCurrentIndex(materials->findData(QString::number(previous)));
+                return;
+            }
+            id = m_engine->addSceneMaterial(scene, name);
+        }
         if (!id || id == previous) return;
         class AssignMaterial : public QUndoCommand {
         public:
