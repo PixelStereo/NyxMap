@@ -48,7 +48,7 @@ struct ModelPlacement {
     float metal = 0, rough = 0.6f;
 };
 
-struct SceneMaterial {
+struct Material3D {
     quint64 id = 0;
     QString name;
     std::array<float, 3> color{{.8f, .8f, .8f}};
@@ -59,8 +59,8 @@ struct SceneMaterial {
         return {{"id", QString::number(id)}, {"name", name},
                 {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage}};
     }
-    static SceneMaterial fromJson(const QJsonObject &json) {
-        SceneMaterial material;
+    static Material3D fromJson(const QJsonObject &json) {
+        Material3D material;
         material.id = json.value("id").toString().toULongLong();
         material.name = json.value("name").toString();
         for (int c = 0; c < 3; ++c)

@@ -4317,7 +4317,7 @@ QWidget *LayerInspector::buildModelLayers()
                 materials->setCurrentIndex(materials->findData(QString::number(previous)));
                 return;
             }
-            SceneMaterial copy;
+            Material3D copy;
             if (duplicate) {
                 Engine::Lock lock(&m_engine->mutex());
                 const auto found = m_engine->materials().find(previous);
@@ -4352,7 +4352,7 @@ QWidget *LayerInspector::buildModelLayers()
                 e->setModelMaterial(e->indexOfId(object), after);
             }
         private:
-            Engine *e; quint64 object, before, after; bool created; SceneMaterial stored;
+            Engine *e; quint64 object, before, after; bool created; Material3D stored;
         };
         auto *command = new AssignMaterial(m_engine, objectId, previous, id, created);
         if (m_undo) m_undo->push(command); else { command->redo(); delete command; }

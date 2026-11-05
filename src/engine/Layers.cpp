@@ -311,18 +311,18 @@ int Engine::sceneOfObject(int index) const
 quint64 Engine::addMaterial(const QString &name)
 {
     Lock lock(&m_mutex);
-    auto material = std::make_shared<SceneMaterial>();
+    auto material = std::make_shared<Material3D>();
     material->id = newIdLocked();
     material->name = name.isEmpty() ? QStringLiteral("Material %1").arg(m_materials.size() + 1) : name;
     m_materials.emplace(material->id, material);
     return material->id;
 }
 
-void Engine::restoreMaterial(const SceneMaterial &material)
+void Engine::restoreMaterial(const Material3D &material)
 {
     Lock lock(&m_mutex);
     if (material.id && !m_materials.count(material.id))
-        m_materials[material.id] = std::make_shared<SceneMaterial>(material);
+        m_materials[material.id] = std::make_shared<Material3D>(material);
 }
 
 bool Engine::removeUnusedMaterial(quint64 id)
@@ -353,7 +353,7 @@ bool Engine::setModelMaterial(int object, quint64 id)
     return true;
 }
 
-void Engine::resolveSceneMaterials()
+void Engine::resolveMaterials()
 {
     Lock lock(&m_mutex);
     for (int i = 0; i < int(m_layers.size()); ++i) {
@@ -642,7 +642,7 @@ void Engine::setStructure(const LayerTree &t)
             if (l) out.push_back(std::move(l));
         m_layers.swap(out);
         normalizeLocked();
-        resolveSceneMaterials();
+        resolveMaterials();
     }
     emit layersChanged();
 }
@@ -1291,7 +1291,7 @@ void Engine::fixLayerReferences(QStringList *warnings)
             if (warnings) *warnings << material->name + QStringLiteral(": invalid material picture dropped.");
         }
     }
-    resolveSceneMaterials();
+    resolveMaterials();
     for (auto &l : m_layers) {
         if (l->type != SourceType::Layer) continue;
         const bool exists = indexOfId(l->sourceLayer) >= 0;
@@ -1666,7 +1666,7 @@ bool Engine::setLayerModel(int i, const QString &path, QString *err)
         g = detachSource(*l);
         l->type = SourceType::Model;
         l->model = std::move(model);
-        resolveSceneMaterials();
+        resolveMaterials();
         // a primitive keeps its virtual path (made absolute, it would take a drive letter on Windows)
         l->sourcePath = Model3D::isPrimitivePath(path) ? Model3D::primitivePath(path.section('/', -1))
                                                        : QDir::cleanPath(QFileInfo(path).absoluteFilePath());

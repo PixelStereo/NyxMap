@@ -858,7 +858,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     const QString dir = QFileInfo(path).absolutePath();
     QStringList warnings;
     for (const auto &value : root.value("materials").toArray())
-        restoreMaterial(SceneMaterial::fromJson(value.toObject()));
+        restoreMaterial(Material3D::fromJson(value.toObject()));
     const QJsonArray layers = root.value("layers").toArray();
     for (int i = 0; i < layers.size(); ++i) {
         int idx = addLayer(QString(), layerCount());
