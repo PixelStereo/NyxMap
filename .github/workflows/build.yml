@@ -289,9 +289,15 @@ jobs:
             -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
             -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
           cmake --build build-tsan --target nyxmap_tests nyxmap_audio_analysis_concurrency_test nyxmap_publishing_concurrency_test nyxmap_cue_dispatch_test -j4
+      - name: Bridge Qt clock joins for ThreadSanitizer
+        run: |
+          cc -shared -fPIC -Wall -Wextra -Werror .github/scripts/tsan_qt_join.c -o build-tsan/libnyxmap-tsan-qt-join.so -pthread
+          /usr/bin/clang -fsanitize=thread -g -Wall -Wextra -Werror .github/scripts/tsan_qt_join_test.c -o build-tsan/tsan-qt-join-test -pthread
       - name: Tests under ThreadSanitizer
         run: |
+          export LD_PRELOAD="$PWD/build-tsan/libnyxmap-tsan-qt-join.so"
           export TSAN_OPTIONS="halt_on_error=1 exitcode=66 suppressions=$PWD/test/tsan.supp"
+          ./build-tsan/tsan-qt-join-test
           ctest --test-dir build-tsan -R '^audio_analysis_concurrency$' --output-on-failure
           xvfb-run -a ctest --test-dir build-tsan -R '^(publishing_concurrency|cue_dispatch)$' --output-on-failure
           timeout 120 xvfb-run -a ./build-tsan/nyxmap_tests --area cue_lifecycle
