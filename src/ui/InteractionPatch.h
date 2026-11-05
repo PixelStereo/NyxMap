@@ -48,6 +48,7 @@ public:
     }
     void setLevels(const std::map<quint64, double> &levels)
     {
+        if (m_levels == levels) return;
         m_levels = levels;
         if (isVisible()) update();
     }
