@@ -598,14 +598,21 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "scene/studio", 0.0);
         engine.setParameter(caster, "model/position/x", 0.6);
         engine.setParameter(caster, "model/position/y", 1.0);
+        // The reflection test changed the camera and material. Compare shadow
+        // quality against a fresh unshadowed image of this same configuration.
+        engine.setParameter(stage, "camera/pitch", 89.0);
+        engine.setParameter(spot, "light/shadow", false);
+        const int qualityWithout = levels(112);
+        check(qualityWithout > 40, "shadow quality reference is lit");
+        engine.setParameter(spot, "light/shadow", true);
         for (const char *level : {"low", "high", "medium"}) {
             engine.setParameter(0, "quality3d/shadows", QString::fromLatin1(level));
-            check(lite || levels(112) < without - 10, "shadows at each level of quality");
+            check(lite || levels(112) < qualityWithout - 10, "shadows at each level of quality");
         }
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("off"));
         const int shadowsOff = levels(112);
-        check(std::abs(shadowsOff - without) < 12, "shadows off: none");
-        if (std::abs(shadowsOff - without) >= 12) std::printf("  off %d, without %d, aside %d\n", shadowsOff, without, levels(100));
+        check(std::abs(shadowsOff - qualityWithout) < 12, "shadows off: none");
+        if (std::abs(shadowsOff - qualityWithout) >= 12) std::printf("  off %d, reference %d, aside %d\n", shadowsOff, qualityWithout, levels(100));
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
         for (const char *level : {"off", "2x", "8x", "4x"}) {
             engine.setParameter(0, "quality3d/antialiasing", QString::fromLatin1(level));
