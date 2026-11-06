@@ -46,6 +46,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName("NyxMap");
     QApplication::setOrganizationName("NyxMap");
     QApplication::setApplicationVersion(NYXMAP_VERSION);
+    QApplication::setApplicationDisplayName(NYXMAP_APP_NAME);
 #ifdef Q_OS_MACOS
     app.setWindowIcon(QIcon(QStringLiteral(":/branding/nyxmap-app.png")));
 #else

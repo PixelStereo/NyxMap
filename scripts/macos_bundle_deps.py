@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -17,7 +18,8 @@ from pathlib import Path
 
 APP = Path(sys.argv[1]).resolve()
 APP_CONTENTS = APP / "Contents"
-APP_EXE = APP_CONTENTS / "MacOS" / "NyxMap"
+with (APP_CONTENTS / "Info.plist").open("rb") as info:
+    APP_EXE = APP_CONTENTS / "MacOS" / plistlib.load(info)["CFBundleExecutable"]
 FRAMEWORKS = APP_CONTENTS / "Frameworks"
 DEPS_DIR = FRAMEWORKS / "NyxMapDeps"
 

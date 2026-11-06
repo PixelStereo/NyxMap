@@ -172,11 +172,12 @@ cmake @cmakeArgs; Native "CMake configure"
 Step "Building"
 cmake --build build; Native "Build"
 # Qt's libraries and plugins next to the program (FFmpeg's are copied by the build)
-$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\NyxMap.exe")
+$appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
+$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\${appName}.exe")
 & "$qtDir\bin\windeployqt.exe" @deployArgs | Out-Null; Native "windeployqt"
 
 # --- Open
-$exe = Join-Path $PSScriptRoot "build\NyxMap.exe"
-if (-not (Test-Path $exe)) { Fail "build\NyxMap.exe was not built" }
+$exe = Join-Path $PSScriptRoot "build\${appName}.exe"
+if (-not (Test-Path $exe)) { Fail "build\${appName}.exe was not built" }
 Write-Host "`nNyxMap is built: $exe" -ForegroundColor Green
 if ($Run) { Start-Process $exe -WorkingDirectory (Join-Path $PSScriptRoot "build") }

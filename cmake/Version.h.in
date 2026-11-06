@@ -1,2 +1,3 @@
 #pragma once
 #define NYXMAP_VERSION "@NYXMAP_VERSION@"
+#define NYXMAP_APP_NAME "@NYXMAP_APP_NAME@"

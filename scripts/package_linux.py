@@ -121,6 +121,8 @@ def tools(folder):
 
 def package(build, ffmpeg, omt, ndi, output):
     output.mkdir(parents=True, exist_ok=True)
+    metadata = json.loads((build / "application.json").read_text())
+    executable = build / metadata["executable"]
     app = output / "NyxMap.AppDir"
     if app.exists():
         shutil.rmtree(app)
@@ -132,7 +134,7 @@ def package(build, ffmpeg, omt, ndi, output):
         copy(source, library / source.name)
     if not (library / 'libtiff.so.6').is_file():
         sys.exit('Rebuilt libtiff.so.6 missing; run build_tiff_linux.py first')
-    copy(build / "NyxMap", binary / "NyxMap")
+    copy(executable, binary / "NyxMap")
     shutil.copytree(build / "isf", binary / "isf")
     shutil.copytree(build / "audio", binary / "audio")
     for name in ("LICENSE", "LICENSE-EXCEPTION.md", "THIRD-PARTY-NOTICES.md"):
@@ -222,7 +224,7 @@ def package(build, ffmpeg, omt, ndi, output):
     # Qt WebEngine (the Web Page generator), when NyxMap is built with it: Chromium's helper process, its resources
     # and locales, where qt.conf (Prefix=..) and AppRun's QTWEBENGINE* variables point; the NSS modules Chromium's
     # certificate checks load with dlopen()
-    if "libQt6WebEngineCore" in subprocess.check_output(["ldd", str(build / "NyxMap")], text=True):
+    if "libQt6WebEngineCore" in subprocess.check_output(["ldd", str(executable)], text=True):
         webengine_process = Path("/usr/lib/qt6/libexec/QtWebEngineProcess")
         webengine_data = Path("/usr/share/qt6")
         copy(webengine_process, app / "usr/libexec/QtWebEngineProcess")
@@ -248,8 +250,10 @@ def package(build, ffmpeg, omt, ndi, output):
            "LD_LIBRARY_PATH": f"{library}:{ffmpeg}/lib:{binary}"}
     # linuxdeploy handles desktop metadata and ELF rpaths; the closure below also
     # includes libraries its portable-baseline exclusion list would leave out.
+    desktop = output / "nyxmap.desktop"
+    desktop.write_text((ROOT / "packaging/linux/nyxmap.desktop").read_text().replace("Name=NyxMap\n", "Name=" + metadata["name"] + "\n"))
     run([tool["linuxdeploy"], "--appdir", app, "--executable", binary / "NyxMap",
-         "--desktop-file", ROOT / "packaging/linux/nyxmap.desktop", "--icon-file", icon,
+         "--desktop-file", desktop, "--icon-file", icon,
          "--icon-filename", "nyxmap"], env=env)
 
     origins = {}

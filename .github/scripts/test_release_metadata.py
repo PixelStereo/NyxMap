@@ -95,17 +95,28 @@ class ReleaseMetadataTests(unittest.TestCase):
                 self.assertEqual((root / "README.md").read_text(), text)
                 self.assertFalse((root / "VERSION").exists())
 
-    def cmake_version(self, tag=None, override=None):
+    def cmake_version(self, tag=None, override=None, git_repo=False, release=False, exact_tag=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "cmake").mkdir()
             (root / "cmake/Version.cmake").write_text((ROOT / "cmake/Version.cmake").read_text())
             (root / "VERSION").write_text("0.2.1\n")
+            if git_repo:
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+                commit = ["git", "-C", str(root), "-c", "user.name=Version Test", "-c", "user.email=version@example.invalid", "commit", "-qm"]
+                subprocess.run(commit + ["Release"], check=True)
+                subprocess.run(["git", "-C", str(root), "tag", "v0.5.2"], check=True)
+                if not exact_tag:
+                    (root / "change").write_text("new build")
+                    subprocess.run(["git", "-C", str(root), "add", "change"], check=True)
+                    subprocess.run(commit + ["Development"], check=True)
+                self.version_commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "--short=8", "HEAD"], text=True).strip()
             script = root / "check.cmake"
             script.write_text('include("${CMAKE_CURRENT_LIST_DIR}/cmake/Version.cmake")\n'
                               'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/result" "${NYXMAP_VERSION}|${NYXMAP_VERSION_NUMERIC}")\n')
             env = {**os.environ, "GITHUB_REF_TYPE": "tag" if tag else "branch", "GITHUB_REF_NAME": tag or "main"}
-            cmd = ["cmake"] + ([f"-DNYXMAP_VERSION={override}"] if override else []) + ["-P", str(script)]
+            cmd = ["cmake"] + ([f"-DNYXMAP_VERSION={override}"] if override else []) + (["-DNYXMAP_RELEASE_BUILD=ON"] if release else []) + ["-P", str(script)]
             result = subprocess.run(cmd, env=env, capture_output=True, text=True)
             if result.returncode:
                 raise ValueError(result.stdout + result.stderr)
@@ -115,10 +126,18 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(self.cmake_version("v4.5.6"), "4.5.6|4.5.6")
         self.assertEqual(self.cmake_version("0.3"), "0.3|0.3.0")
         self.assertEqual(self.cmake_version("v1.2.3-rc.1"), "1.2.3-rc.1|1.2.3")
-        self.assertEqual(self.cmake_version(), "0.2.1|0.2.1")
-        self.assertEqual(self.cmake_version(override="v9.8.7"), "9.8.7|9.8.7")
+        self.assertEqual(self.cmake_version(), "0.2.1_unknown|0.2.1")
+        self.assertEqual(self.cmake_version(override="v9.8.7"), "9.8.7_unknown|9.8.7")
+        self.assertEqual(self.cmake_version(override="v9.8.7", release=True), "9.8.7|9.8.7")
         with self.assertRaises(ValueError):
             self.cmake_version("vnot-a-version")
+
+    def test_personal_build_uses_previous_tag_and_commit(self):
+        version = self.cmake_version(git_repo=True)
+        self.assertEqual(version, f"0.5.2_{self.version_commit}|0.5.2")
+        self.assertEqual(self.cmake_version(tag="v0.7.1", git_repo=True), "0.7.1|0.7.1")
+        personal_tag = self.cmake_version(git_repo=True, exact_tag=True)
+        self.assertEqual(personal_tag, f"0.5.2_{self.version_commit}|0.5.2")
 
 
 if __name__ == "__main__":

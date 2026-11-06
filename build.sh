@@ -143,15 +143,16 @@ else
 fi
 
 # --- Open
+APP_NAME=$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')
 if [[ $OS == Darwin ]]; then
-  APP=build/NyxMap.app
+  APP="build/$APP_NAME.app"
   [[ -d $APP ]] || fail "$APP was not built"
   echo; echo "NyxMap is built: $(pwd)/$APP"
   if [[ $RUN == 1 ]]; then open "$APP"; fi
 else
-  APP=build/NyxMap
+  APP="build/$APP_NAME"
   [[ -x $APP ]] || fail "$APP was not built"
   echo; echo "NyxMap is built: $(pwd)/$APP"
-  if [[ $RUN == 1 ]]; then (cd build && nohup ./NyxMap >/dev/null 2>&1 &); fi
+  if [[ $RUN == 1 ]]; then (cd build && nohup "./$APP_NAME" >/dev/null 2>&1 &); fi
 fi
 exit 0

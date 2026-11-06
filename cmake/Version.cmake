@@ -1,20 +1,25 @@
-# One version for About, --version, and the native bundle. Tags override the
-# last published version stored in source archives and ordinary checkouts.
-if(NOT DEFINED NYXMAP_VERSION OR NYXMAP_VERSION STREQUAL "")
-  if("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
-    set(NYXMAP_VERSION "$ENV{GITHUB_REF_NAME}")
-  else()
-    execute_process(COMMAND git describe --tags --exact-match HEAD
-      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
-      OUTPUT_VARIABLE NYXMAP_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NYXMAP_VERSION STREQUAL "")
-      file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../VERSION" NYXMAP_VERSION LIMIT_COUNT 1)
-    endif()
+# Published tag builds identify releases; local builds always carry a revision.
+# Ordinary builds identify the preceding release and the exact source commit.
+set(_nyxmap_root "${CMAKE_CURRENT_LIST_DIR}/..")
+set(_nyxmap_release FALSE)
+if("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag" OR NYXMAP_RELEASE_BUILD)
+  set(_nyxmap_release TRUE)
+endif()
+if(DEFINED NYXMAP_VERSION AND NOT NYXMAP_VERSION STREQUAL "")
+  set(NYXMAP_BASE_VERSION "${NYXMAP_VERSION}")
+elseif("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
+  set(NYXMAP_BASE_VERSION "$ENV{GITHUB_REF_NAME}")
+else()
+  execute_process(COMMAND git describe --tags --abbrev=0 --match "v[0-9]*" --match "[0-9]*" HEAD
+    WORKING_DIRECTORY "${_nyxmap_root}" OUTPUT_VARIABLE NYXMAP_BASE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(NYXMAP_BASE_VERSION STREQUAL "")
+    file(STRINGS "${_nyxmap_root}/VERSION" NYXMAP_BASE_VERSION LIMIT_COUNT 1)
   endif()
 endif()
-string(REGEX REPLACE "^v" "" NYXMAP_VERSION "${NYXMAP_VERSION}")
-if(NOT NYXMAP_VERSION MATCHES "^([0-9]+)[.]([0-9]+)([.]([0-9]+))?([-+][0-9A-Za-z.-]+)?$")
-  message(FATAL_ERROR "Invalid release version: ${NYXMAP_VERSION}")
+string(REGEX REPLACE "^v" "" NYXMAP_BASE_VERSION "${NYXMAP_BASE_VERSION}")
+if(NOT NYXMAP_BASE_VERSION MATCHES "^([0-9]+)[.]([0-9]+)([.]([0-9]+))?([-+][0-9A-Za-z.-]+)?$")
+  message(FATAL_ERROR "Invalid release version: ${NYXMAP_BASE_VERSION}")
 endif()
 set(NYXMAP_VERSION_NUMERIC "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
 if("${CMAKE_MATCH_4}" STREQUAL "")
@@ -22,4 +27,28 @@ if("${CMAKE_MATCH_4}" STREQUAL "")
 else()
   string(APPEND NYXMAP_VERSION_NUMERIC ".${CMAKE_MATCH_4}")
 endif()
-message(STATUS "NyxMap version: ${NYXMAP_VERSION}")
+set(NYXMAP_VERSION "${NYXMAP_BASE_VERSION}")
+if(NOT _nyxmap_release)
+  execute_process(COMMAND git rev-parse --short=8 HEAD WORKING_DIRECTORY "${_nyxmap_root}"
+    OUTPUT_VARIABLE _nyxmap_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(NOT _nyxmap_commit MATCHES "^[0-9a-f]+$")
+    set(_nyxmap_commit "unknown") # source archive without Git metadata
+  endif()
+  string(APPEND NYXMAP_VERSION "_${_nyxmap_commit}")
+endif()
+set(NYXMAP_APP_NAME "NyxMap ${NYXMAP_VERSION}")
+# Reconfigure incremental builds after a checkout or commit, including worktrees.
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+  execute_process(COMMAND git symbolic-ref -q HEAD WORKING_DIRECTORY "${_nyxmap_root}"
+    OUTPUT_VARIABLE _nyxmap_ref OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  foreach(_ref HEAD "${_nyxmap_ref}" packed-refs)
+    if(NOT _ref STREQUAL "")
+      execute_process(COMMAND git rev-parse --path-format=absolute --git-path "${_ref}"
+        WORKING_DIRECTORY "${_nyxmap_root}" OUTPUT_VARIABLE _path OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+      if(EXISTS "${_path}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
+      endif()
+    endif()
+  endforeach()
+endif()
+message(STATUS "Application: ${NYXMAP_APP_NAME}")
