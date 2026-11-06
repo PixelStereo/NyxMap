@@ -212,6 +212,7 @@ jobs:
             -f packaging/linux/build.Dockerfile packaging/linux
           mkdir -p "$RUNNER_TEMP/linux-baseline"
           docker run --rm \
+            -e GITHUB_REF_TYPE -e GITHUB_REF_NAME \
             -v "$PWD:/workspace" -v "$RUNNER_TEMP/linux-baseline:/work" \
             -v "$DOTNET_ROOT:/dotnet:ro" \
             nyxmap-build:24.04 sh scripts/package_linux_baseline.sh
@@ -408,6 +409,8 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target NyxMap -j4
+      - name: Check UI scenario helpers
+        run: python3 .github/scripts/test_ui_scenario.py
       - name: Scenario
         timeout-minutes: 5
         run: |
@@ -495,8 +498,9 @@ jobs:
       - name: macOS source build starts before packaging
         run: |
           codesign --verify --deep --strict build/runtimes/touchengine/TouchEngine.framework
-          codesign --verify --deep --strict build/NyxMap.app/Contents/Frameworks/TouchEngine.framework
-          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
+          APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
+          codesign --verify --deep --strict "build/$APP_NAME.app/Contents/Frameworks/TouchEngine.framework"
+          "./build/$APP_NAME.app/Contents/MacOS/$APP_NAME" --help
       - name: Engine tests
         run: |
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing
@@ -527,8 +531,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="build/NyxMap.app"
-          EXE="$APP/Contents/MacOS/NyxMap"
+          APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
+          APP="build/$APP_NAME.app"
+          EXE="$APP/Contents/MacOS/$APP_NAME"
           QT_PREFIX="$(brew --prefix qt)"
 
           test -d "$APP"
@@ -633,11 +638,11 @@ jobs:
           This build is not signed with an Apple Developer ID certificate and is not notarized.
           macOS may block the app when it is downloaded from the Internet.
 
-          First try: in Finder, Control-click NyxMap.app, choose Open, then confirm Open.
+          First try: in Finder, Control-click the versioned NyxMap .app, choose Open, then confirm Open.
           If macOS still says the app is damaged, only if you trust this build, open Terminal
           and run the following command on the extracted app:
-            xattr -dr com.apple.quarantine "/path/to/NyxMap.app"
-          Replace /path/to/NyxMap.app with the actual path to NyxMap.app, then open it again.
+            xattr -dr com.apple.quarantine "/path/to/NyxMap VERSION.app"
+          Replace /path/to/NyxMap VERSION.app with the actual path to your app, then open it again.
 
           This removes the download quarantine flag; it does not repair a genuinely corrupted
           application. Do not run this command on software from an untrusted source.
@@ -650,9 +655,10 @@ jobs:
       - name: Smoke test of the extracted app
         run: |
           mkdir -p "$RUNNER_TEMP/clean" && ditto -x -k NyxMap-macos*.zip "$RUNNER_TEMP/clean"
-          APP="$RUNNER_TEMP/clean/NyxMap.app"
+          APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
+          APP="$RUNNER_TEMP/clean/$APP_NAME.app"
           codesign --verify --deep --strict "$APP"
-          python3 scripts/smoke_package.py "$APP/Contents/MacOS/NyxMap" "$APP/Contents/Resources/isf" \
+          python3 scripts/smoke_package.py "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Resources/isf" \
             "$PWD/test/media" "$RUNNER_TEMP/smoke"
       - uses: actions/upload-artifact@v4
         with:
@@ -729,7 +735,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force dist | Out-Null
 
-          Copy-Item build\NyxMap.exe dist\NyxMap.exe -Force
+          $appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
+          Copy-Item "build\$appName.exe" "dist\$appName.exe" -Force
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
           Copy-Item -Recurse -Force build\audio dist\audio
@@ -740,7 +747,7 @@ jobs:
           # Use NyxMap's FFmpeg DLLs, not Qt Multimedia's private FFmpeg build.
           # Keep the official MSVC redistributable installer in the archive instead of copying
           # compiler-runtime DLLs individually.
-          windeployqt --release --no-compiler-runtime --no-ffmpeg -multimedia dist\NyxMap.exe
+          windeployqt --release --no-compiler-runtime --no-ffmpeg -multimedia "dist\$appName.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
           # Bundle the FFmpeg DLL set used by this build, including companion DLLs.
@@ -783,7 +790,7 @@ jobs:
           "vc_redist.x64.exe $vcVersion, SHA-256 $vcSha, signed by $($vcSignature.SignerCertificate.Subject)"
 
           # Basic packaging assertions.
-          if (-not (Test-Path dist\NyxMap.exe)) { throw "NyxMap.exe missing" }
+          if (-not (Test-Path "dist\$appName.exe")) { throw "NyxMap.exe missing" }
           if (-not (Test-Path dist\isf)) { throw "ISF assets missing" }
           if (-not (Test-Path dist\platforms\qwindows.dll)) {
             throw "Qt Windows platform plugin missing after windeployqt"
@@ -802,10 +809,10 @@ jobs:
           @'
           NyxMap Windows x64 runtime notes
 
-          This archive bundles NyxMap.exe, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
+          This archive bundles the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
           and Microsoft's official vc_redist.x64.exe installer.
-          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe, then start NyxMap.exe.
-          Run NyxMap.exe from this extracted directory.
+          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe, then start the NyxMap executable.
+          Run the versioned NyxMap executable from this extracted directory.
 
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
@@ -840,11 +847,12 @@ jobs:
         shell: pwsh
         run: |
           # Extracted elsewhere, with neither FFmpeg's nor Qt's folders in PATH: only what the archive holds
+          $appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
           $clean = Join-Path $env:RUNNER_TEMP "clean"
           Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
           # OpenGL comes from Mesa installed on the runner; without it the program still has to start (exit code 1)
-          python scripts/smoke_package.py "$clean\NyxMap.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
+          python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

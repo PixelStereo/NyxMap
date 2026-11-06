@@ -224,3 +224,9 @@ open a component with two input TOPs and two output TOPs, route two differently 
 animate its color, switch outputs, save/reopen, reload, pause/resume, resize the inputs and delete a connected layer.
 Check orientation and channels with an asymmetric RGBA test image. Verify the missing-runtime/licence error on an
 unlicensed machine. CHOP, DAT, TouchDesigner audio and feedback between layers are not implemented.
+
+### Application names and versions
+
+Release tag builds produce names such as `NyxMap 0.5.2` (`NyxMap 0.5.2.app` on macOS, `NyxMap 0.5.2.exe` on Windows). Personal builds use the nearest preceding version tag plus the eight-character Git commit, for example `NyxMap 0.5.2_a1b2c3d4`. The name is also shown in the window and About dialog. Preferences retain the same application identity.
+
+Without Git metadata, the base version comes from `VERSION` and the revision is `unknown`. `-DNYXMAP_VERSION=0.5.2` overrides the base version; `-DNYXMAP_RELEASE_BUILD=ON` explicitly builds an unsuffixed release from a source archive. Normal release CI uses the tag automatically. `build/application.json` records the generated name and executable for build and packaging scripts.

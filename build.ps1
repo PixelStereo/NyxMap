@@ -105,8 +105,8 @@ function FromWorkflow($pattern, $what) {
     if (-not $m.Success) { Fail "$what not found in .github/workflows/build.yml" }
     $m.Groups[1].Value
 }
-$qtVersion = FromWorkflow "install-qt-action@v\d+\s+with:\s+version:\s*'([^']+)'" "Qt version"
-$qtArch = FromWorkflow "arch:\s*'(win64_msvc[^']+)'" "Qt architecture"
+$qtVersion = FromWorkflow "QT_VERSION:\s*'([^']+)'" "Qt version"
+$qtArch = FromWorkflow "QT_ARCH:\s*'(win64_msvc[^']+)'" "Qt architecture"
 $ffZip = FromWorkflow "FFMPEG_ZIP:\s*(\S+)" "FFmpeg archive"
 $ffRelease = FromWorkflow "FFMPEG_RELEASE:\s*(\S+)" "FFmpeg release"
 $ffSha = FromWorkflow "FFMPEG_SHA256:\s*(\S+)" "FFmpeg checksum"
@@ -172,11 +172,12 @@ cmake @cmakeArgs; Native "CMake configure"
 Step "Building"
 cmake --build build; Native "Build"
 # Qt's libraries and plugins next to the program (FFmpeg's are copied by the build)
-$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\NyxMap.exe")
+$appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
+$deployArgs = @(if ($Type -eq "Debug") { "--debug" } else { "--release" }) + @("--no-compiler-runtime", "--no-ffmpeg", "-multimedia", "build\${appName}.exe")
 & "$qtDir\bin\windeployqt.exe" @deployArgs | Out-Null; Native "windeployqt"
 
 # --- Open
-$exe = Join-Path $PSScriptRoot "build\NyxMap.exe"
-if (-not (Test-Path $exe)) { Fail "build\NyxMap.exe was not built" }
+$exe = Join-Path $PSScriptRoot "build\${appName}.exe"
+if (-not (Test-Path $exe)) { Fail "build\${appName}.exe was not built" }
 Write-Host "`nNyxMap is built: $exe" -ForegroundColor Green
 if ($Run) { Start-Process $exe -WorkingDirectory (Join-Path $PSScriptRoot "build") }

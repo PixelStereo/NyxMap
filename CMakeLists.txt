@@ -460,7 +460,7 @@ if(APPLE)
     message(WARNING "Qt microphone permission plugin not found: the microphone will not be asked for on macOS")
   endif()
   set_target_properties(NyxMap PROPERTIES
-    MACOSX_BUNDLE_BUNDLE_NAME "NyxMap"
+    MACOSX_BUNDLE_BUNDLE_NAME "${NYXMAP_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER "fr.nyxmap.app"
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
@@ -528,6 +528,11 @@ add_custom_command(TARGET NyxMap POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E rm -rf "${ISF_DEST}" "${AUDIO_DEST}"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/isf" "${ISF_DEST}"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/audio" "${AUDIO_DEST}")
+
+# Versioned public program/bundle name; the target and settings identity stay stable.
+set_target_properties(NyxMap PROPERTIES OUTPUT_NAME "${NYXMAP_APP_NAME}")
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/application.json" CONTENT
+  "{\"name\":\"${NYXMAP_APP_NAME}\",\"version\":\"${NYXMAP_VERSION}\",\"executable\":\"$<TARGET_FILE_NAME:NyxMap>\"}\n")
 
 # Windows: the FFmpeg DLLs must be next to NyxMap.exe
 if(WIN32 AND FFMPEG_ROOT)

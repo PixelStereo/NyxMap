@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "NyxMapVersion.h"
 #include "PresetEditor.h"
 #include "Commands.h"
 #include "Model3D.h"
@@ -851,9 +852,9 @@ void MainWindow::setBlackout(bool on)
 void MainWindow::buildMenus()
 {
     QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
-    auto *about = help->addAction(QStringLiteral("About NYXMAP"), this, [this] {
+    auto *about = help->addAction(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME), this, [this] {
         QMessageBox box(this);
-        box.setWindowTitle(QStringLiteral("About NYXMAP"));
+        box.setWindowTitle(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME));
         // The licence files travel with the program: Contents/Resources on macOS, next to it elsewhere
 #ifdef Q_OS_MACOS
         const QString docs = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../Resources"));
@@ -2699,7 +2700,7 @@ void MainWindow::markDirty()
 void MainWindow::updateTitle()
 {
     const QString p = m_engine->projectPath();
-    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — NyxMap"));
+    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — ") + QStringLiteral(NYXMAP_APP_NAME));
     setWindowModified(isDirty());
 }
 

@@ -1,4 +1,4 @@
-"""Reuse successful checks only for an incremental, Linux-packaging-only change."""
+"""Reuse verified successes for incremental platform-specific CI changes."""
 import json
 import os
 import re
@@ -12,6 +12,16 @@ LINUX_FILES = {
     '.github/scripts/ci_scope.py', '.github/scripts/ci_platform_reuse.py',
     '.github/scripts/test_ci_platform_reuse.py', '.github/workflows/build.yml',
 }
+UI_SCENARIO_FILES = {'test/ui_test.sh', 'test/ui_test_helpers.sh', '.github/scripts/test_ui_scenario.py'}
+SELECTION_FILES = {'.github/scripts/ci_scope.py', '.github/scripts/ci_platform_reuse.py',
+                   '.github/scripts/test_ci_platform_reuse.py'}
+
+
+def ui_scenario_only(paths):
+    return any(path in UI_SCENARIO_FILES for path in paths) and all(
+        path in UI_SCENARIO_FILES or path in SELECTION_FILES for path in paths)
+
+
 JOB_NAMES = {
     'macos': 'macOS (Apple Silicon) + tests', 'windows': 'Windows (latest, Qt MSVC 2022) + tests',
     'memory': 'Workspace memory safety (Linux)', 'valgrind': 'Workspace allocation lifetime (Linux)',
@@ -52,7 +62,8 @@ def _revision_successes(payload):
     if not all(re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (before, head)):
         return set(), None, False
     paths = subprocess.check_output(['git', 'diff', '--name-only', before, head], text=True).splitlines()
-    if not linux_packaging_only(paths):
+    ui_only = ui_scenario_only(paths)
+    if not ui_only and not linux_packaging_only(paths):
         return set(), None, False
     workflow = '.github/workflows/build.yml'
     old = subprocess.check_output(['git', 'show', f'{before}:{workflow}'], text=True)
@@ -81,7 +92,7 @@ def _revision_successes(payload):
                 continue
             if prior_base != base:
                 changed_base = subprocess.check_output(['git', 'diff', '--name-only', prior_base, base], text=True).splitlines()
-                if not linux_packaging_only(changed_base):
+                if not (ui_scenario_only(changed_base) if ui_only else linux_packaging_only(changed_base)):
                     continue
                 prior_workflow = subprocess.check_output(['git', 'show', f'{prior_base}:{workflow}'], text=True)
                 current_workflow = subprocess.check_output(['git', 'show', f'{base}:{workflow}'], text=True)
@@ -95,7 +106,14 @@ def _revision_successes(payload):
                 break
         relevant = [job for job in jobs if job['name'] in JOB_NAMES.values()]
         inherited = bool(relevant) and all(job.get('conclusion') == 'skipped' for job in relevant)
-        return successful_jobs(jobs), run['html_url'], inherited
+        reused = successful_jobs(jobs)
+        if ui_only:
+            # Always execute the changed scenario, even if its previous revision
+            # passed. Reuse Linux's whole job only when packaging also succeeded.
+            reused.discard('ui')
+            if any(job['name'] == 'Linux (latest) + tests' and job.get('conclusion') == 'success' for job in jobs):
+                reused.add('linux')
+        return reused, run['html_url'], inherited
     return set(), None, False
 
 
