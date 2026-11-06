@@ -9,6 +9,7 @@
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "MediaBin.h"
+#include "MaterialPanel.h"
 #include "PreviewWorkspace.h"
 #include "Scene3DView.h"
 #include <QCheckBox>
@@ -781,5 +782,43 @@ int runScene3dUiTests(Engine &engine)
         { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == materialId, "material assignment redo"); }
     }
     window.hide();
+    {
+        QUndoStack materialUndo;
+        MaterialPanel materials(&engine, &materialUndo, [&] { return engine.indexOfId(materialB); }, [] {});
+        materials.resize(380, 900);
+        materials.show();
+        pump();
+        auto *add = materials.findChild<QPushButton *>("addMaterial");
+        auto *items = materials.findChild<QListWidget *>("materialList");
+        const int count = int(engine.materials().size());
+        check(add && items, "material browser exposes creation and list");
+        if (add && items) {
+            add->click(); pump();
+            check(int(engine.materials().size()) == count + 1, "material browser creates project material");
+            const quint64 id = items->currentItem()->data(Qt::UserRole).toULongLong();
+            auto *metal = materials.findChild<QDoubleSpinBox *>("materialMetal");
+            auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
+            auto *color = materials.findChild<ColorPicker *>();
+            const QImage before = preview ? preview->grabFramebuffer() : QImage();
+            if (metal) metal->setValue(.9);
+            if (color) emit color->colorEdited(QColor(Qt::red));
+            pump();
+            const QImage after = preview ? preview->grabFramebuffer() : QImage();
+            check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
+            check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
+            if (const QString file = qEnvironmentVariable("NYXMAP_MATERIAL_CAPTURE"); !file.isEmpty()) materials.grab().save(file);
+            materialUndo.undo(); pump();
+            check(engine.materials().at(id)->color[1] > .7f, "material color edit undoes");
+            auto *assign = materials.findChild<QPushButton *>("assignMaterial");
+            if (assign) assign->click();
+            pump();
+            check(engine.layer(engine.indexOfId(materialB))->modelMaterial == id, "browser assigns material to selected object");
+            auto *remove = materials.findChild<QPushButton *>("removeMaterial");
+            check(remove && !remove->isEnabled(), "used material cannot be removed");
+            materialUndo.undo(); pump();
+            check(engine.layer(engine.indexOfId(materialB))->modelMaterial != id, "material assignment undoes");
+        }
+        materials.hide();
+    }
     return failures;
 }
