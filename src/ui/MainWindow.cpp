@@ -24,6 +24,7 @@
 #include "PreviewWorkspace.h"
 #include "CompositionPanel.h" // CompositionPanel
 #include "MediaBin.h"
+#include "MaterialPanel.h"
 #include "LogPanel.h"
 #include "SnapshotPanel.h"
 #include "SequencePanel.h"
@@ -220,6 +221,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(dmxOutputs, &DmxOutputsPanel::projectEdited, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
     m_tabs->addTab(scrolled(m_settings), QStringLiteral("Settings"));
+    m_tabs->addTab(scrolled(new MaterialPanel(m_engine, m_undo, [this] { return currentLayer(); }, [this] { markDirty(); })), QStringLiteral("Materials"));
     connect(m_settings, &SettingsPanel::playModeChanged, this,
             [this] { m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode()); });
     VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding());
@@ -2296,6 +2298,13 @@ void MainWindow::createGroup()
 void MainWindow::fill3dMenu(QMenu *menu)
 {
     menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    menu->addAction(QStringLiteral("Materials…"), this, [this] {
+        for (int i = 0; i < m_tabs->count(); ++i)
+            if (m_tabs->widget(i)->findChild<QWidget *>(QStringLiteral("materialPanel"))) {
+                m_tabs->setCurrentIndex(i);
+                break;
+            }
+    });
     const int cur = currentLayer();
     bool inScene = false;
     if (cur >= 0) {
