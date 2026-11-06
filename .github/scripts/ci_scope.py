@@ -55,7 +55,7 @@ def main():
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
         out.write("### Validation scope\n\n")
         if reused:
-            out.write(f"\nLinux packaging-only change; reused successful checks from {previous_run}: {', '.join(sorted(reused))}.\n\n")
+            out.write(f"\nPlatform-specific CI change; reused unchanged successful checks from {previous_run}: {', '.join(sorted(reused))}.\n\n")
         out.write("| Check | Selected |\n|---|---|\n")
         for key, value in scope.items():
             out.write(f"| {key} | {'yes' if value else 'no'} |\n")

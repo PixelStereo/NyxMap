@@ -42,6 +42,44 @@ class UiScenarioTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, '--endurance-csv\npath with spaces.csv\n')
 
+    def window_tools(self, root, delayed=False):
+        tools = root / 'tools'
+        tools.mkdir()
+        search = tools / 'xdotool'
+        search.write_text('#!/bin/bash\n'
+                          '[[ "$*" != *--pid* ]] || exit 2\n'
+                          'count=$(cat "$OUT/search-count" 2>/dev/null || echo 0)\n'
+                          'echo $((count+1)) > "$OUT/search-count"\n'
+                          + ('[ "$count" -ge 2 ] || exit 1\n' if delayed else 'exit 1\n')
+                          + 'printf "11\\n22\\n"\n')
+        info = tools / 'xwininfo'
+        info.write_text('#!/bin/bash\n'
+                        'if [ "$2" = 11 ]; then x=1; y=2; w=200; h=100; else x=30; y=40; w=1200; h=800; fi\n'
+                        'printf "Absolute upper-left X: %s\\nAbsolute upper-left Y: %s\\nWidth: %s\\nHeight: %s\\n" "$x" "$y" "$w" "$h"\n')
+        search.chmod(0o755)
+        info.chmod(0o755)
+        return 'export OUT; PATH="$OUT/tools:$PATH"; '
+
+    def test_waits_for_late_window_without_pid_property(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            setup = self.window_tools(root, delayed=True)
+            result = self.shell(setup + 'ui_wait_for_window "$$" 3 NyxMap && printf "%s,%s" "$X0" "$Y0"', root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, '30,40')
+            self.assertGreaterEqual(int((root / 'search-count').read_text()), 3)
+
+    def test_startup_wait_is_bounded_and_detects_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            setup = self.window_tools(root)
+            timed = self.shell(setup + 'ui_wait_for_window "$$" 0 NyxMap', root)
+            self.assertNotEqual(timed.returncode, 0)
+            self.assertIn('Timed out', timed.stderr)
+            dead = self.shell(setup + 'sleep 0.01 & dead=$!; wait "$dead"; ui_wait_for_window "$dead" 3 NyxMap', root)
+            self.assertNotEqual(dead.returncode, 0)
+            self.assertIn('Application exited', dead.stderr)
+
     @unittest.skipUnless(shutil.which('convert') and shutil.which('compare'), 'ImageMagick required')
     def test_crop_metrics_and_missing_capture(self):
         with tempfile.TemporaryDirectory() as directory:

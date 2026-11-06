@@ -2,7 +2,7 @@ import io
 import json
 import unittest
 from unittest.mock import patch
-from ci_platform_reuse import linux_packaging_only, other_workflow_jobs_unchanged, successful_jobs, previous_successes
+from ci_platform_reuse import ui_scenario_only, linux_packaging_only, other_workflow_jobs_unchanged, successful_jobs, previous_successes
 
 WORKFLOW = '''name: Build
 jobs:
@@ -25,6 +25,31 @@ class PlatformReuseTest(unittest.TestCase):
         for path in ('src/engine/Model3D.cpp', 'src/ui/MainWindow.cpp', 'test/scene3d.cpp', 'VERSION', 'licenses/LGPL-3.0.txt'):
             self.assertFalse(linux_packaging_only(['scripts/package_linux.py', path]))
         self.assertFalse(linux_packaging_only([]))
+
+    def test_ui_scenario_scope_excludes_application_and_build_changes(self):
+        self.assertTrue(ui_scenario_only(['test/ui_test.sh', '.github/scripts/ci_platform_reuse.py']))
+        for path in ('src/main.cpp', 'CMakeLists.txt', 'test/engine_test.cpp', 'scripts/package_linux.py', '.github/workflows/build.yml'):
+            self.assertFalse(ui_scenario_only(['test/ui_test_helpers.sh', path]))
+        self.assertFalse(ui_scenario_only([]))
+        self.assertFalse(ui_scenario_only(['.github/scripts/ci_platform_reuse.py']))
+
+    def test_ui_change_reuses_successful_platforms_but_always_runs_ui(self):
+        before, head, base = 'a' * 40, 'b' * 40, 'c' * 40
+        payload = {'before': before, 'number': 348, 'pull_request': {'head': {'sha': head}, 'base': {'sha': base}}}
+        run = {'id': 123, 'name': 'Build', 'head_sha': before, 'html_url': 'https://github.com/example/run/123',
+               'pull_requests': [{'number': 348, 'base': {'sha': base}}]}
+        for linux_result in ('success', 'failure'):
+            jobs = [{'name': 'Linux (latest) + tests', 'conclusion': linux_result},
+                    {'name': 'Windows (latest, Qt MSVC 2022) + tests', 'conclusion': 'success'},
+                    {'name': 'macOS (Apple Silicon) + tests', 'conclusion': 'failure'},
+                    {'name': 'Interface scenario (Linux)', 'conclusion': 'success'}]
+            responses = [io.StringIO(json.dumps({'workflow_runs': [run]})), io.StringIO(json.dumps({'jobs': jobs}))]
+            with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'example/repo', 'GITHUB_TOKEN': 'test-placeholder', 'GITHUB_WORKFLOW': 'Build'}), \
+                 patch('subprocess.check_output', side_effect=['test/ui_test_helpers.sh\n', WORKFLOW, WORKFLOW]), \
+                 patch('urllib.request.urlopen', side_effect=responses):
+                reused, url = previous_successes(payload)
+            self.assertEqual(reused, {'linux', 'windows'} if linux_result == 'success' else {'windows'})
+            self.assertEqual(url, run['html_url'])
 
     def test_only_linux_and_selection_workflow_changes(self):
         newer = WORKFLOW.replace('old-linux', 'new-linux').replace('outputs: {}', 'outputs: expanded')

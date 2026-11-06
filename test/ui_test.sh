@@ -24,18 +24,15 @@ cp media/h264.mp4 "$OUT/act2_found.mov"
 shot() { xwd -root -silent | convert xwd:- "$OUT/$1.png"; }
 # Coordinates relative to the main window
 X0=0; Y0=0
-origin() { # the largest visible application window (versioned title)
-    local best=0 w
-    for w in $(xdotool search --all --onlyvisible --pid "$APP" --name "NyxMap [0-9]"); do
-        local info ax ay ww hh
-        info=$(xwininfo -id "$w")
-        ax=$(echo "$info" | awk '/Absolute upper-left X/ {print $4}')
-        ay=$(echo "$info" | awk '/Absolute upper-left Y/ {print $4}')
-        ww=$(echo "$info" | awk '/Width:/ {print $2}')
-        hh=$(echo "$info" | awk '/Height:/ {print $2}')
-        if [ $((ww * hh)) -gt $best ]; then best=$((ww * hh)); X0=$ax; Y0=$ay; fi
-    done
-    [ "$best" -gt 0 ] || { fail "main application window not found"; return 1; }
+origin() { ui_origin "NyxMap"; }
+wait_for_main_window() {
+    if ! ui_wait_for_window "$APP" 30 "NyxMap"; then
+        fail "main application window not found (log: $OUT/log1.txt)"
+        xwininfo -root -tree > "$OUT/windows.txt" 2>&1
+        cat "$OUT/log1.txt"
+        kill "$APP" "$XV" 2>/dev/null
+        return 1
+    fi
     echo "main window at $X0,$Y0"
 }
 at() { xdotool mousemove $((X0 + $1)) $((Y0 + $2)); }
@@ -43,9 +40,9 @@ roi() { echo "$3x$4+$((X0 + $1))+$((Y0 + $2))"; }
 PREVIEW=""
 
 "$APP_BIN" --endurance-csv "$OUT/endurance.csv" projects/demo.nyxmap >"$OUT/log1.txt" 2>&1 & APP=$!
-sleep 5
+wait_for_main_window || exit 1
 xdotool key Return; sleep 1                      # "file not found" warning
-origin || { kill "$APP" "$XV" 2>/dev/null; exit 1; }; PREVIEW=$(roi 400 180 700 380)
+origin || { fail "main window disappeared after project open"; exit 1; }; PREVIEW=$(roi 400 180 700 380)
 shot 01_opened; sleep 0.7; shot 01b
 echo "animated preview (pixels changed in 0.7 s): $(same 01_opened 01b "$PREVIEW")"
 
