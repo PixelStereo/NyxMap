@@ -262,7 +262,7 @@ int runAudioFxUiTests(Engine &engine)
         engine.removeLayer(engine.indexOfId(member));
     }
 
-    // Media Bin: Video and Audio roots
+    // Media Bin: separate Video, Audio and 3D roots
     {
         MediaBin bin(&engine);
         bin.resize(900, 500);
@@ -272,8 +272,8 @@ int runAudioFxUiTests(Engine &engine)
         auto *tree = bin.findChild<QTreeWidget *>("mediaBinTree");
         if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty())
             bin.grab().save(QString::fromLocal8Bit(shots) + "/media-bin.png");
-        check(tree && tree->topLevelItemCount() == 2 && tree->topLevelItem(0)->text(0) == "Video" && tree->topLevelItem(1)->text(0) == "Audio",
-              "the bin has a Video root and an Audio root");
+        check(tree && tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->text(0) == "Video" && tree->topLevelItem(1)->text(0) == "Audio" && tree->topLevelItem(2)->text(0) == "3D",
+              "the bin has separate Video, Audio and 3D roots");
         QTreeWidgetItem *audio = tree ? tree->topLevelItem(1) : nullptr, *generators = nullptr, *inputs = nullptr, *sounds = nullptr;
         for (int c = 0; audio && c < audio->childCount(); ++c) {
             const QString t = audio->child(c)->text(0);
@@ -295,10 +295,10 @@ int runAudioFxUiTests(Engine &engine)
         check(kind && media, "kind and media filters");
         if (kind && media && audio && inputs && generators) {
             kind->setCurrentIndex(kind->findText("Inputs"));
-            check(!inputs->isHidden() && generators->isHidden(), "kind Inputs shows the inputs of both roots only");
+            check(!inputs->isHidden() && generators->isHidden(), "kind Inputs shows only the input categories");
             kind->setCurrentIndex(0);
             media->setCurrentIndex(media->findText("Audio"));
-            check(tree->topLevelItem(0)->isHidden() && !audio->isHidden(), "media Audio shows the Audio root only");
+            check(tree->topLevelItem(0)->isHidden() && !audio->isHidden() && tree->topLevelItem(2)->isHidden(), "media Audio shows the Audio root only");
             media->setCurrentIndex(0);
         }
     }
