@@ -2306,6 +2306,17 @@ void MainWindow::fill3dMenu(QMenu *menu)
     }
     QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
     light->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d)->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Primitive 3D"), this, [this, inScene] {
+        const QString path = Model3D::primitivePath(QStringLiteral("Cube"));
+        int target = currentLayer();
+        if (inScene) {
+            const LayerTree t = m_engine->structure();
+            if (t[size_t(target)].role != TreeNode::Scene3d && t[size_t(target)].role != TreeNode::Merge3d)
+                target = tree::indexOf(t, t[size_t(target)].parent);
+            loadIntoLayer(target, path);
+        } else loadIntoNewLayer(path);
+    });
     menu->addAction(QStringLiteral("Import 3D Model…"), this, [this, inScene] {
         QStringList ext;
         for (const QString &e : Model3D::extensions()) ext << QStringLiteral("*.") + e;

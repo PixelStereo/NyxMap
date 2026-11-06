@@ -390,14 +390,59 @@ int runScene3dUiTests(Engine &engine)
         }
         check(models && models->text(0) == "3D Models (1)", "the Media Bin has a 3D Models category holding the cube");
         check(item && item->text(1).contains("12 triangles"), "the Media Bin reads the model");
+        if (item) {
+            QMenu loadMenu;
+            bin->fillLoadMenu(&loadMenu, cube);
+            bool newScene = false, targets = false;
+            for (auto *action : loadMenu.actions()) {
+                newScene |= action->text() == "Load into New 3D Scene";
+                check(action->text() != "Load into Selected Layer" && action->text() != "Load into New Layer", "3D context has no video loading actions");
+                if (!action->menu() || action->text() != "Load into 3D Scene / Merge 3D") continue;
+                targets = true;
+                for (auto *target : action->menu()->actions()) {
+                    bool holder = false;
+                    for (int i = 0; i < engine.layerCount(); ++i) {
+                        const Layer *l = engine.layer(i);
+                        if (l && l->name == target->text().trimmed() && (l->scene3d || l->merge3d)) holder = true;
+                    }
+                    check(holder, "3D Load into only offers scene and Merge holders");
+                }
+            }
+            check(newScene && targets, "model context offers a new scene and existing 3D holders");
+        }
+
         int primitives = 0;
         for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>())
             for (QTreeWidgetItem *found : tree->findItems("3D Primitives", Qt::MatchStartsWith | Qt::MatchRecursive))
                 primitives = found->childCount();
-        check(primitives == int(Model3D::primitives().size()), "the Media Bin offers the 3D primitives");
+        check(primitives == 1, "the Media Bin offers a single configurable 3D primitive");
+        check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
     } else {
         check(false, "the Media Bin");
     }
+    {
+        QUndoStack primitiveUndo;
+        LayerInspector inspector(&engine, &primitiveUndo);
+        inspector.setLayer(engine.indexOfId(plain));
+        inspector.rebuild();
+        auto *shape = inspector.findChild<QComboBox *>("primitive3dShape");
+        check(shape && shape->count() == Model3D::primitives().size(), "Source offers every primitive shape");
+        engine.setParameter(plain, "model/position/x", 2.0);
+        const quint64 parent = parentOf(plain);
+        if (shape) {
+            const int cubeIndex = shape->findData(Model3D::primitivePath("Cube"));
+            shape->setCurrentIndex(cubeIndex);
+            emit shape->activated(cubeIndex);
+            pump();
+            check(engine.layer(engine.indexOfId(plain))->sourcePath == Model3D::primitivePath("Cube"), "Source changes primitive shape");
+            check(parentOf(plain) == parent && engine.parameterValue(plain, "model/position/x").toDouble() == 2.0, "shape change preserves parent and placement");
+            primitiveUndo.undo();
+            pump();
+            check(engine.layer(engine.indexOfId(plain))->sourcePath == Model3D::primitivePath("Sphere"), "primitive shape change undoes");
+            engine.setParameter(plain, "model/position/x", 0.0);
+        }
+    }
+
     // A 3D view: the scene chosen in a preview cell is seen from the view's own camera; the cube is picked and moved
     auto *previews = window.findChild<PreviewWorkspace *>();
     check(previews != nullptr, "the preview workspace");

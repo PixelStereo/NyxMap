@@ -886,7 +886,7 @@ void LayerInspector::rebuild()
                               : s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
                                                           : QStringLiteral("The light: its kind, color, level and where it is"));
     }
-    const bool hasSource = !s.isGroup && !s.isViewport && !object3d;
+    const bool hasSource = !s.isGroup && !s.isViewport && (!object3d || s.type == SourceType::Model);
     if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
     tabs->addTab(page(buildColor(s)), QStringLiteral("Color"));
@@ -1297,6 +1297,35 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     auto *g = new QWidget;
     auto *v = new QVBoxLayout(g);
     v->setContentsMargins(0, 0, 0, 0);
+
+    if (s.type == SourceType::Model) {
+        if (Model3D::isPrimitivePath(s.sourcePath)) {
+            auto *shape = new QComboBox;
+            shape->setObjectName(QStringLiteral("primitive3dShape"));
+            for (const QString &name : Model3D::primitives()) shape->addItem(name, Model3D::primitivePath(name));
+            shape->setCurrentIndex(shape->findData(s.sourcePath));
+            shape->setEnabled(!m_locked);
+            auto *form = new QFormLayout;
+            form->addRow(QStringLiteral("Primitive 3D"), shape);
+            v->addLayout(form);
+            connect(shape, &QComboBox::activated, this, [this, shape, id = s.id](int index) {
+                const QString path = shape->itemData(index).toString();
+                QTimer::singleShot(0, this, [this, path, id] {
+                    if (m_engine->layerId(m_layer) != id) return;
+                    editSource(QStringLiteral("Change 3D Primitive"), [this, path] { m_engine->setLayerPrimitive(m_layer, path); });
+                    emit layerChanged();
+                    rebuild();
+                });
+            });
+        } else {
+            auto *file = new QLabel(s.sourcePath);
+            file->setTextFormat(Qt::PlainText);
+            file->setWordWrap(true);
+            v->addWidget(file);
+        }
+        v->addStretch();
+        return g;
+    }
 
     // Another layer's picture as this one's source, already made this frame (nothing decoded, generated or computed
     // again): which layer, and where in it — its source as it is, before its FX, after them
