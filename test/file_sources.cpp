@@ -44,6 +44,7 @@ QColor frameColor(int k) { return QColor(40 * k + 20, 100, 200 - 30 * k); }
 QImage frameAt(VideoDecoder &d, double c)
 {
     d.seek(c);
+    if (d.finished()) check(false, "a pending seek is not the previous playback EOF");
     std::vector<uint8_t> rgba;
     int w = 0, h = 0;
     QElapsedTimer t;
@@ -113,6 +114,20 @@ void sequenceTests(Engine &e, const QString &tmp)
         std::printf("      frame %d: %s\n", k, img.isNull() ? "none" : qPrintable(img.pixelColor(8, 8).name()));
         check(!img.isNull() && img.size() == QSize(32, 16) && near(img.pixelColor(8, 8), c.red(), c.green(), c.blue()),
               "frame k shows picture k");
+    }
+    // Fetching the last picture lets the worker finish the old leg while the
+    // next seek is posted. Repeated requests must not get stuck behind that
+    // old EOF, and must still return the exact last image.
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const QImage image = frameAt(d, 4 / 25.0);
+        const QColor expected = frameColor(4);
+        const bool ok = !image.isNull() && near(image.pixelColor(8, 8), expected.red(), expected.green(), expected.blue());
+        if (!ok) {
+            std::printf("      end-of-sequence seek attempt %d failed\n", attempt);
+            check(false, "repeated final-frame seeks survive the previous leg's EOF");
+            break;
+        }
+        if (attempt == 31) check(true, "repeated final-frame seeks survive the previous leg's EOF");
     }
     d.close();
 
