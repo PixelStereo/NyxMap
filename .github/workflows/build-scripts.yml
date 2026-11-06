@@ -39,7 +39,7 @@ concurrency:
 jobs:
   lint:
     name: Script checks
-    runs-on: ubuntu-ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck and PowerShell syntax
@@ -64,21 +64,23 @@ jobs:
         run: ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
       - name: The program, NDI and OMT are there
         run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then dir=build/NyxMap.app/Contents/Frameworks; test -x build/NyxMap.app/Contents/MacOS/NyxMap
-          else dir=build; test -x build/NyxMap; fi
+          APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
+          if [[ "$RUNNER_OS" == macOS ]]; then dir="build/$APP_NAME.app/Contents/Frameworks"; test -x "build/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          else dir=build; test -x "build/$APP_NAME"; fi
           ls "$dir" | grep -E '^lib(ndi|omt|vmx)'
           for lib in ndi omt vmx; do ls "$dir" | grep -q "^lib$lib" || { echo "lib$lib missing"; exit 1; }; done
       - name: macOS source build starts before packaging
         if: runner.os == 'macOS'
         run: |
-          for framework in build/runtimes/touchengine/TouchEngine.framework build/NyxMap.app/Contents/Frameworks/TouchEngine.framework; do
+          APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
+          for framework in build/runtimes/touchengine/TouchEngine.framework "build/$APP_NAME.app/Contents/Frameworks/TouchEngine.framework"; do
             codesign --verify --deep --strict --verbose=2 "$framework"
           done
-          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
+          "./build/$APP_NAME.app/Contents/MacOS/$APP_NAME" --help
           # Reuse the build directory as build.sh does on subsequent invocations.
           ./build.sh --no-run --accept-ndi-license --accept-touchengine-license
-          codesign --verify --deep --strict build/NyxMap.app/Contents/Frameworks/TouchEngine.framework
-          ./build/NyxMap.app/Contents/MacOS/NyxMap --help
+          codesign --verify --deep --strict "build/$APP_NAME.app/Contents/Frameworks/TouchEngine.framework"
+          "./build/$APP_NAME.app/Contents/MacOS/$APP_NAME" --help
 
   windows:
     name: build.sh (windows-2025, Git Bash)
@@ -92,7 +94,8 @@ jobs:
       - name: The program, Qt, FFmpeg, NDI and OMT are there
         shell: pwsh
         run: |
-          foreach ($f in "NyxMap.exe", "TouchEngine.dll", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
+          $appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
+          foreach ($f in "$appName.exe", "TouchEngine.dll", "Qt6Core.dll", "platforms\qwindows.dll", "Processing.NDI.Lib.x64.dll", "libomt.dll", "libvmx.dll") {
             if (-not (Test-Path "build\$f")) { throw "build\$f missing" }
           }
           if (-not (Get-ChildItem build\avcodec-*.dll)) { throw "FFmpeg DLLs missing" }

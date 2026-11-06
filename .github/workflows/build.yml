@@ -409,6 +409,8 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target NyxMap -j4
+      - name: Check UI scenario helpers
+        run: python3 .github/scripts/test_ui_scenario.py
       - name: Scenario
         timeout-minutes: 5
         run: |
