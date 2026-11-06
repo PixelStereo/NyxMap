@@ -1,5 +1,6 @@
 """Exercise the UI harness with real versioned executables and ImageMagick crops."""
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,10 +10,25 @@ import unittest
 HELPERS = Path(__file__).resolve().parents[2] / 'test/ui_test_helpers.sh'
 
 
+def absolute_error(output):
+    # ImageMagick 6 prints the count; 7 also includes its normalized value.
+    metric = re.fullmatch(r'\s*(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?:\s+\([0-9.eE+-]+\))?\s*', output)
+    if not metric:
+        raise ValueError(f'Invalid ImageMagick AE metric: {output!r}')
+    return float(metric.group(1))
+
+
 class UiScenarioTest(unittest.TestCase):
     def shell(self, command, root):
         return subprocess.run(['bash', '-c', 'source "$1"; OUT="$2"; ' + command,
                                'ui-helper-test', str(HELPERS), str(root)], text=True, capture_output=True)
+
+    def test_imagemagick_metric_formats(self):
+        for text, expected in [('0', 0), ('0 (0)', 0), ('50', 50), ('50 (1)', 50), ('1e+03 (0.5)\n', 1000)]:
+            self.assertEqual(absolute_error(text), expected)
+        for text in ['', 'compare: unable to open image', '0 trailing error']:
+            with self.assertRaises(ValueError):
+                absolute_error(text)
 
     def test_versioned_program_and_arguments_with_spaces(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -38,9 +54,9 @@ class UiScenarioTest(unittest.TestCase):
             unchanged = self.shell('same white white 10x5+0+0', root)
             changed = self.shell('same white black 10x5+0+0', root)
             self.assertEqual(unchanged.returncode, 0, unchanged.stdout + unchanged.stderr)
-            self.assertEqual(float(unchanged.stdout), 0)
+            self.assertEqual(absolute_error(unchanged.stdout), 0)
             self.assertEqual(changed.returncode, 1, changed.stdout + changed.stderr)
-            self.assertEqual(float(changed.stdout), 50)
+            self.assertEqual(absolute_error(changed.stdout), 50)
             missing = self.shell('same missing white 10x5+0+0', root)
             self.assertNotEqual(missing.returncode, 0)
 
