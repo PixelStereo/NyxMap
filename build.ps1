@@ -105,8 +105,8 @@ function FromWorkflow($pattern, $what) {
     if (-not $m.Success) { Fail "$what not found in .github/workflows/build.yml" }
     $m.Groups[1].Value
 }
-$qtVersion = FromWorkflow "install-qt-action@v\d+\s+with:\s+version:\s*'([^']+)'" "Qt version"
-$qtArch = FromWorkflow "arch:\s*'(win64_msvc[^']+)'" "Qt architecture"
+$qtVersion = FromWorkflow "QT_VERSION:\s*'([^']+)'" "Qt version"
+$qtArch = FromWorkflow "QT_ARCH:\s*'(win64_msvc[^']+)'" "Qt architecture"
 $ffZip = FromWorkflow "FFMPEG_ZIP:\s*(\S+)" "FFmpeg archive"
 $ffRelease = FromWorkflow "FFMPEG_RELEASE:\s*(\S+)" "FFmpeg release"
 $ffSha = FromWorkflow "FFMPEG_SHA256:\s*(\S+)" "FFmpeg checksum"

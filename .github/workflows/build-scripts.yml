@@ -10,6 +10,7 @@ on:
       - build.cmd
       - CMakeLists.txt
       - .github/scripts/configure_linux_apt.sh
+      - .github/scripts/test_windows_build_config.py
       - cmake/**
       - scripts/build_omt.py
       - scripts/fetch_ndi.py
@@ -23,6 +24,7 @@ on:
       - build.cmd
       - CMakeLists.txt
       - .github/scripts/configure_linux_apt.sh
+      - .github/scripts/test_windows_build_config.py
       - cmake/**
       - scripts/build_omt.py
       - scripts/fetch_ndi.py
@@ -44,6 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck and PowerShell syntax
         run: |
+          python3 .github/scripts/test_windows_build_config.py
           shellcheck build.sh .github/scripts/configure_linux_apt.sh
           pwsh -NoProfile -Command '$e = $null; [System.Management.Automation.Language.Parser]::ParseFile("build.ps1", [ref]$null, [ref]$e) | Out-Null; if ($e) { $e; exit 1 }'
 
