@@ -11,6 +11,7 @@
 // lights, their shadows, and its environment or a studio's light.
 
 #include "Gl.h"
+#include <QJsonObject>
 
 #include <QByteArray>
 #include <QImage>
@@ -33,6 +34,7 @@ struct ModelPlacement {
     // A Merge 3D's own transform, around its position: all it holds moves with it
     QMatrix4x4 transform() const;
     float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
+    bool sharedMaterial = false;
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
     int detail = 1;      // a primitive's mesh: how finely it is cut (1, the least, to 8)
     int shading = 0;     // 0 as it is made (a sphere smooth, a cube with its edges), 1 smooth, 2 flat: its facets show
@@ -44,6 +46,31 @@ struct ModelPlacement {
     // A built-in primitive's material (a file keeps its own)
     std::array<float, 3> color{{0.8f, 0.8f, 0.8f}};
     float metal = 0, rough = 0.6f;
+};
+
+struct Material3D {
+    quint64 id = 0;
+    QString name;
+    std::array<float, 3> color{{.8f, .8f, .8f}};
+    float metal = 0, rough = .6f;
+    quint64 picture = 0;
+    int pictureStage = -1;
+    QJsonObject toJson() const {
+        return {{"id", QString::number(id)}, {"name", name},
+                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage}};
+    }
+    static Material3D fromJson(const QJsonObject &json) {
+        Material3D material;
+        material.id = json.value("id").toString().toULongLong();
+        material.name = json.value("name").toString();
+        for (int c = 0; c < 3; ++c)
+            material.color[c] = float(std::clamp(json.value(QString(QChar("rgb"[c]))).toDouble(.8), 0., 1.));
+        material.metal = float(std::clamp(json.value("metal").toDouble(), 0., 1.));
+        material.rough = float(std::clamp(json.value("rough").toDouble(.6), 0., 1.));
+        material.picture = json.value("picture").toString().toULongLong();
+        material.pictureStage = json.value("picture_stage").toInt(-1);
+        return material;
+    }
 };
 
 // A light of a scene

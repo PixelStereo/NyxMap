@@ -65,6 +65,39 @@ class PlatformReuseTest(unittest.TestCase):
              patch('urllib.request.urlopen', return_value=io.StringIO(json.dumps({'workflow_runs': [run]}))):
             self.assertEqual(previous_successes(payload), (set(), None))
 
+    def test_inherited_successes_are_proved_at_the_original_revision(self):
+        with patch('ci_platform_reuse._revision_successes', side_effect=[
+                (set(), 'newer-run', True), ({'macos', 'windows'}, 'original-run', False)]) as inspect, \
+             patch('subprocess.check_output', return_value='newer\noriginal\n'):
+            self.assertEqual(previous_successes({'before': 'newer'}), ({'macos', 'windows'}, 'original-run'))
+            self.assertEqual(inspect.call_args.args[0]['before'], 'original')
+
+    def test_actual_failure_never_inherits_an_older_success(self):
+        with patch('ci_platform_reuse._revision_successes', return_value=(set(), 'failed-run', False)), \
+             patch('subprocess.check_output') as history:
+            self.assertEqual(previous_successes({'before': 'failed'}), (set(), 'failed-run'))
+            history.assert_not_called()
+
+    def test_successful_linux_engine_steps_survive_a_packaging_failure(self):
+        job = {'name': 'Linux (latest) + tests', 'conclusion': 'failure', 'steps': [
+            {'name': 'Build', 'conclusion': 'success'}, {'name': 'Engine tests', 'conclusion': 'success'},
+            {'name': 'Package autonomous Linux distributions', 'conclusion': 'failure'}]}
+        self.assertEqual(successful_jobs([job]), {'linux_engine'})
+        job['steps'][1]['conclusion'] = 'failure'
+        self.assertEqual(successful_jobs([job]), set())
+
+    def test_new_linux_only_pr_can_reuse_exact_base_push_checks(self):
+        base, head = 'a' * 40, 'b' * 40
+        payload = {'number': 342, 'pull_request': {'head': {'sha': head}, 'base': {'sha': base}}}
+        run = {'id': 123, 'name': 'Build', 'head_sha': base, 'html_url': 'https://github.com/example/main-run', 'pull_requests': []}
+        responses = [io.StringIO(json.dumps({'workflow_runs': [run]})), io.StringIO(json.dumps({'jobs': [
+            {'name': 'macOS (Apple Silicon) + tests', 'conclusion': 'success'}]}))]
+        with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'example/repo', 'GITHUB_TOKEN': 'test-placeholder', 'GITHUB_WORKFLOW': 'Build'}), \
+             patch('subprocess.check_output', side_effect=['scripts/package_linux.py\n', WORKFLOW, WORKFLOW]), \
+             patch('urllib.request.urlopen', side_effect=responses) as request:
+            self.assertEqual(previous_successes(payload), ({'macos'}, run['html_url']))
+            self.assertIn('event=push', request.call_args_list[0].args[0].full_url)
+
 
 if __name__ == '__main__':
     unittest.main()

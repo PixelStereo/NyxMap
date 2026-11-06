@@ -49,7 +49,8 @@ def main():
     loaded.TIFFIsCODECConfigured.restype = ctypes.c_int
     if loaded.TIFFIsCODECConfigured(34661) or not all(loaded.TIFFIsCODECConfigured(codec) for codec in (1, 5, 7, 8, 32773)):
         sys.exit('Unexpected TIFF codec configuration (require baseline, LZW, JPEG, Deflate and PackBits; no JBIG)')
-    shutil.copyfile(source / 'LICENSE.md', prefix / 'TIFF-LICENSE.md')
+    licence = next(path for path in (source / 'LICENSE.md', source / 'COPYRIGHT') if path.is_file())
+    shutil.copyfile(licence, prefix / 'TIFF-LICENSE.md')
     (prefix / 'VERSION').write_text(f'Ubuntu source tiff {version}\nJBIG disabled; upstream tests passed\n')
 
 

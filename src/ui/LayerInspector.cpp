@@ -26,6 +26,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
@@ -4284,6 +4285,79 @@ QWidget *LayerInspector::buildModelLayers()
         pictureStage = l->modelPictureStage;
         displaceStage = l->modelDisplaceStage;
     }
+    auto *materials = new QComboBox;
+    materials->setObjectName(QStringLiteral("modelMaterial"));
+    const int scene = m_engine->sceneOfObject(m_layer);
+    if (scene >= 0) {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *object = m_engine->layer(m_layer);
+        for (const auto &[id, material] : m_engine->materials())
+            materials->addItem(material->name, QString::number(id));
+        materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
+    }
+    materials->addItem(QStringLiteral("+ New Material…"), QStringLiteral("new"));
+    materials->addItem(QStringLiteral("Duplicate Material…"), QStringLiteral("duplicate"));
+    materials->setEnabled(scene >= 0);
+    form->addRow(QStringLiteral("Material"), materials);
+    connect(materials, qOverload<int>(&QComboBox::activated), this, [this, materials, objectId = m_layerId](int row) {
+        const auto value = materials->itemData(row).toString();
+        const int object = m_engine->indexOfId(objectId), scene = m_engine->sceneOfObject(object);
+        if (scene < 0) return;
+        quint64 previous = 0;
+        { Engine::Lock lock(&m_engine->mutex()); previous = m_engine->layer(object)->modelMaterial; }
+        quint64 id = value.toULongLong();
+        const bool duplicate = value == QLatin1String("duplicate");
+        bool created = value == QLatin1String("new") || duplicate;
+        if (created) {
+            bool accepted = false;
+            const auto name = QInputDialog::getText(this, QStringLiteral("New Material"), QStringLiteral("Name"),
+                QLineEdit::Normal, QStringLiteral("Material"), &accepted).trimmed();
+            if (!accepted || name.isEmpty()) {
+                QSignalBlocker block(materials);
+                materials->setCurrentIndex(materials->findData(QString::number(previous)));
+                return;
+            }
+            Material3D copy;
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                const auto found = m_engine->materials().find(previous);
+                if (found == m_engine->materials().end()) return;
+                copy = *found->second;
+            }
+            id = m_engine->addMaterial(name);
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                copy.id = id;
+                copy.name = name;
+                *m_engine->materials().at(id) = copy;
+            }
+        }
+        if (!id || id == previous) return;
+        class AssignMaterial : public QUndoCommand {
+        public:
+            AssignMaterial(Engine *e, quint64 object, quint64 before, quint64 after, bool created)
+                : QUndoCommand(QStringLiteral("Assign 3D Material")), e(e), object(object), before(before), after(after), created(created) {
+                if (created) { Engine::Lock lock(&e->mutex()); stored = *e->materials().at(after); }
+            }
+            void undo() override {
+                e->setModelMaterial(e->indexOfId(object), before);
+                if (created) {
+                    e->removeUnusedMaterial(after);
+                }
+            }
+            void redo() override {
+                if (created) {
+                    e->restoreMaterial(stored);
+                }
+                e->setModelMaterial(e->indexOfId(object), after);
+            }
+        private:
+            Engine *e; quint64 object, before, after; bool created; Material3D stored;
+        };
+        auto *command = new AssignMaterial(m_engine, objectId, previous, id, created);
+        if (m_undo) m_undo->push(command); else { command->redo(); delete command; }
+        emit layerChanged();
+    });
     addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, pictureStage,
                    QStringLiteral("modelPicture"),
                    QStringLiteral("A layer's picture laid on the model, over its UVs: a video on a screen, a dome. The layer "

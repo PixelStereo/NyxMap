@@ -297,6 +297,91 @@ int Engine::addGroup(const QString &name, int at)
 }
 
 // A 3D Scene: a group whose picture its 3D objects make (never inside another scene)
+int Engine::sceneOfObject(int index) const
+{
+    Lock lock(&m_mutex);
+    for (int i = index; i >= 0 && i < int(m_layers.size());) {
+        const auto &layer = m_layers[size_t(i)];
+        if (layer->scene3d) return i;
+        i = layer->parent ? indexOfId(layer->parent) : -1;
+    }
+    return -1;
+}
+
+quint64 Engine::addMaterial(const QString &name)
+{
+    Lock lock(&m_mutex);
+    auto material = std::make_shared<Material3D>();
+    material->id = newIdLocked();
+    material->name = name.isEmpty() ? QStringLiteral("Material %1").arg(m_materials.size() + 1) : name;
+    m_materials.emplace(material->id, material);
+    return material->id;
+}
+
+void Engine::restoreMaterial(const Material3D &material)
+{
+    Lock lock(&m_mutex);
+    if (material.id && !m_materials.count(material.id))
+        m_materials[material.id] = std::make_shared<Material3D>(material);
+}
+
+bool Engine::removeUnusedMaterial(quint64 id)
+{
+    Lock lock(&m_mutex);
+    for (const auto &object : m_layers)
+        if (object->type == SourceType::Model && object->modelMaterial == id) return false;
+    return m_materials.erase(id) != 0;
+}
+
+bool Engine::setModelMaterial(int object, quint64 id)
+{
+    {
+        Lock lock(&m_mutex);
+        const int scene = sceneOfObject(object);
+        if (scene < 0 || !layer(object) || layer(object)->type != SourceType::Model) return false;
+        const auto found = m_materials.find(id);
+        if (found == m_materials.end()) return false;
+        auto *model = layer(object);
+        if (found->second->picture && layerDependsOn(found->second->picture, model->id)) return false;
+        model->modelMaterial = id;
+        model->material = found->second;
+        model->modelPicture = model->material->picture;
+        model->modelPictureStage = model->material->pictureStage;
+        model->paramKey = 0;
+    }
+    emit layersChanged();
+    return true;
+}
+
+void Engine::resolveMaterials()
+{
+    Lock lock(&m_mutex);
+    for (int i = 0; i < int(m_layers.size()); ++i) {
+        auto &object = m_layers[size_t(i)];
+        if (object->type != SourceType::Model) continue;
+        const int owner = sceneOfObject(i);
+        if (owner < 0) { object->material.reset(); continue; }
+        auto &materials = m_materials;
+        auto found = materials.find(object->modelMaterial);
+        if (found == materials.end()) {
+            const auto id = addMaterial();
+            found = materials.find(id);
+            found->second->color = object->material ? object->material->color : object->modelPlacement.color;
+            found->second->metal = object->material ? object->material->metal : object->modelPlacement.metal;
+            found->second->rough = object->material ? object->material->rough : object->modelPlacement.rough;
+            found->second->picture = object->material ? object->material->picture : object->modelPicture;
+            found->second->pictureStage = object->material ? object->material->pictureStage : object->modelPictureStage;
+        }
+        if (object->material != found->second) {
+            object->modelMaterial = found->first;
+            object->material = found->second;
+            object->modelPicture = object->material->picture;
+            object->modelPictureStage = object->material->pictureStage;
+            object->paramKey = 0;
+        }
+    }
+}
+
 int Engine::addScene(const QString &name, int at)
 {
     const int i = addGroup(name, at);
@@ -390,6 +475,19 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, 
                     return false;
                 }
         }
+        if (!displace && l->material) {
+            for (const auto &object : m_layers)
+                if (picture && object->material == l->material && layerDependsOn(picture, object->id)) {
+                    if (err) *err = QStringLiteral("This picture feeds back through another object using the material.");
+                    return false;
+                }
+            l->material->picture = picture;
+            l->material->pictureStage = picture ? stage : -1;
+            for (auto &object : m_layers) if (object->material == l->material) {
+                object->modelPicture = picture;
+                object->modelPictureStage = picture ? stage : -1;
+            }
+        }
         (displace ? l->modelDisplace : l->modelPicture) = picture;
         (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
     }
@@ -463,7 +561,10 @@ bool Engine::setLayerLight(int i)
 
 quint64 Engine::newIdLocked()
 {
-    for (const auto &l : m_layers) m_nextId = std::max(m_nextId, l->id + 1);
+    for (const auto &l : m_layers) {
+        m_nextId = std::max(m_nextId, l->id + 1);
+    }
+    for (const auto &[id, material] : m_materials) m_nextId = std::max(m_nextId, id + 1);
     return m_nextId++;
 }
 
@@ -541,6 +642,7 @@ void Engine::setStructure(const LayerTree &t)
             if (l) out.push_back(std::move(l));
         m_layers.swap(out);
         normalizeLocked();
+        resolveMaterials();
     }
     emit layersChanged();
 }
@@ -1172,6 +1274,24 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
 void Engine::fixLayerReferences(QStringList *warnings)
 {
     Lock lk(&m_mutex);
+    for (auto &[id, material] : m_materials) {
+        if (!material->picture) continue;
+        const Layer *source = layer(indexOfId(material->picture));
+        bool invalid = !source || source->isViewport || source->is3dObject();
+        for (const auto &object : m_layers)
+            if (object->type == SourceType::Model && object->modelMaterial == id &&
+                (material->picture == object->id || layerDependsOn(material->picture, object->id))) invalid = true;
+        if (invalid) {
+            material->picture = 0;
+            material->pictureStage = -1;
+            for (auto &object : m_layers) if (object->modelMaterial == id) {
+                object->modelPicture = 0;
+                object->modelPictureStage = -1;
+            }
+            if (warnings) *warnings << material->name + QStringLiteral(": invalid material picture dropped.");
+        }
+    }
+    resolveMaterials();
     for (auto &l : m_layers) {
         if (l->type != SourceType::Layer) continue;
         const bool exists = indexOfId(l->sourceLayer) >= 0;
@@ -1546,6 +1666,7 @@ bool Engine::setLayerModel(int i, const QString &path, QString *err)
         g = detachSource(*l);
         l->type = SourceType::Model;
         l->model = std::move(model);
+        resolveMaterials();
         // a primitive keeps its virtual path (made absolute, it would take a drive letter on Windows)
         l->sourcePath = Model3D::isPrimitivePath(path) ? Model3D::primitivePath(path.section('/', -1))
                                                        : QDir::cleanPath(QFileInfo(path).absoluteFilePath());

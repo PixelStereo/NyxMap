@@ -73,6 +73,7 @@ void Engine::clearProject()
     {
         Lock lk(&m_mutex);
         old.swap(m_layers);
+        m_materials.clear();
         m_visionReset = true;
         m_projectPath.clear();
         m_binItems.clear();
@@ -232,6 +233,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
         if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
         if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
         if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where their pictures are taken
@@ -410,6 +412,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
             if (Layer *l = layer(index)) {
+                l->modelMaterial = src.value("material").toString().toULongLong();
+                l->material.reset();
                 l->modelPicture = src.value("picture").toString().toULongLong();
                 l->modelDisplace = src.value("displace").toString().toULongLong();
                 l->modelPictureStage = src.value("picture_stage").toInt(-1);
@@ -592,6 +596,9 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray layers;
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
+        QJsonArray materials;
+        for (const auto &[id, material] : m_materials) materials.append(material->toJson());
+        root["materials"] = materials;
         QJsonArray bin;
         for (const QString &p : m_binItems)
             bin.append(isStreamUrl(p) ? QJsonObject{{"path", p}, {"live", true}, {"rtsp_tcp", !m_binStreamsUdp.contains(p)}}
@@ -850,6 +857,8 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     }
     const QString dir = QFileInfo(path).absolutePath();
     QStringList warnings;
+    for (const auto &value : root.value("materials").toArray())
+        restoreMaterial(Material3D::fromJson(value.toObject()));
     const QJsonArray layers = root.value("layers").toArray();
     for (int i = 0; i < layers.size(); ++i) {
         int idx = addLayer(QString(), layerCount());

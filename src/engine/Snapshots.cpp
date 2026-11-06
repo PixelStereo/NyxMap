@@ -1075,6 +1075,11 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         }
         const QJsonObject curSrc = cur.value("source").toObject(),
                           src = o.contains("source") ? o.value("source").toObject() : curSrc;
+        // Material identity is an assignment, not a media reload. Restore it
+        // before resolving this layer's parameter handles and fade tracks.
+        if (curSrc.value("type") == QLatin1String("model") && src.value("type") == QLatin1String("model") &&
+            curSrc.value("material") != src.value("material"))
+            setModelMaterial(idx, src.value("material").toString().toULongLong());
         const bool group = o.value("group").toBool(cur.value("group").toBool());
         auto job = std::make_shared<FadeJob>();
         job->id = id;

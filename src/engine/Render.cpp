@@ -1111,7 +1111,14 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             m->model->setSmooth(m->modelPlacement.shading == 1);
             const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
             const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
-            items.push_back({m->model, m->modelPlacement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
+            auto placement = m->modelPlacement;
+            if (m->material) {
+                placement.color = m->material->color;
+                placement.metal = m->material->metal;
+                placement.rough = m->material->rough;
+                placement.sharedMaterial = true;
+            }
+            items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
                              disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
                              m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid, parent});
         } else if (m->type == SourceType::Light) {

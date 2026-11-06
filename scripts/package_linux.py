@@ -2,7 +2,8 @@
 """Create the Linux x86_64 AppImage and a FUSE-free portable archive from the same AppDir.
 
 Usage: package_linux.py BUILD_DIR FFMPEG_PREFIX OMT_DIR NDI_DIR OUTPUT_DIR
-Run on Ubuntu 24.04 after building NyxMap with build_ffmpeg_linux.py's FFmpeg.
+Run inside packaging/linux/build.Dockerfile via package_linux_baseline.sh.
+NYXMAP_TIFF_PREFIX must point to the source-built libtiff without JBIG.
 Only glibc and the host's graphics driver stack are intentionally external.
 Fails when a bundled library comes from a Debian package whose copyright file is GPL only (see package_licence).
 """
@@ -10,6 +11,7 @@ import hashlib
 import json
 import os
 from linux_qt_plugins import missing_plugin_groups, multimedia_backend
+from linux_package_policy import LICENCE_OVERRIDE, tiff_runtime_files
 from pathlib import Path
 import re
 import shutil
@@ -54,10 +56,7 @@ PERMITTED_LICENCE = re.compile(
 GPL_LICENCE = re.compile(r"(?<![\w-])A?GPL", re.I)
 # Packages whose copyright file the check cannot read correctly, reviewed by hand: package -> the licence of the
 # libraries shipped from it, and why
-LICENCE_OVERRIDE = {
-    # alsa-lib is LGPL-2.1+ (its COPYING); Ubuntu's copyright file misspells the short name "LPGL-2.1+"
-    "libasound2t64": "LGPL-2.1+",
-}
+
 # Reviewed, no override needed: Qt WebEngine (libqt6webenginecore6, -bin for QtWebEngineProcess, libqt6webengine6-data)
 # is "LGPL-3 or GPL-2" for its library and helper process (upstream src/process is LGPL-3.0-only OR GPL-2.0/3.0, as
 # the rest of the module); only its tools and tests are GPL-3 with the Qt exception, and they are not shipped.
@@ -129,7 +128,7 @@ def package(build, ffmpeg, omt, ndi, output):
     library = app / "usr/lib"
     library.mkdir(parents=True)
     tiff_prefix = Path(os.environ['NYXMAP_TIFF_PREFIX']).resolve()
-    for source in (tiff_prefix / 'lib').glob('libtiff*.so*'):
+    for source in tiff_runtime_files(tiff_prefix):
         copy(source, library / source.name)
     if not (library / 'libtiff.so.6').is_file():
         sys.exit('Rebuilt libtiff.so.6 missing; run build_tiff_linux.py first')

@@ -598,14 +598,21 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "scene/studio", 0.0);
         engine.setParameter(caster, "model/position/x", 0.6);
         engine.setParameter(caster, "model/position/y", 1.0);
+        // The reflection test changed the camera and material. Compare shadow
+        // quality against a fresh unshadowed image of this same configuration.
+        engine.setParameter(stage, "camera/pitch", 89.0);
+        engine.setParameter(spot, "light/shadow", false);
+        const int qualityWithout = levels(112);
+        check(qualityWithout > 40, "shadow quality reference is lit");
+        engine.setParameter(spot, "light/shadow", true);
         for (const char *level : {"low", "high", "medium"}) {
             engine.setParameter(0, "quality3d/shadows", QString::fromLatin1(level));
-            check(lite || levels(112) < without - 10, "shadows at each level of quality");
+            check(lite || levels(112) < qualityWithout - 10, "shadows at each level of quality");
         }
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("off"));
         const int shadowsOff = levels(112);
-        check(std::abs(shadowsOff - without) < 12, "shadows off: none");
-        if (std::abs(shadowsOff - without) >= 12) std::printf("  off %d, without %d, aside %d\n", shadowsOff, without, levels(100));
+        check(std::abs(shadowsOff - qualityWithout) < 12, "shadows off: none");
+        if (std::abs(shadowsOff - qualityWithout) >= 12) std::printf("  off %d, reference %d, aside %d\n", shadowsOff, qualityWithout, levels(100));
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
         for (const char *level : {"off", "2x", "8x", "4x"}) {
             engine.setParameter(0, "quality3d/antialiasing", QString::fromLatin1(level));
@@ -1390,5 +1397,55 @@ int runScene3dTests(Engine &engine)
         }
     }
 
+    {
+        engine.newProject();
+        const auto scene = engine.layerId(engine.addScene("Material scene"));
+        const auto a = engine.layerId(engine.addLayer("Material A"));
+        const auto b = engine.layerId(engine.addLayer("Material B"));
+        check(engine.setLayerModel(engine.indexOfId(a), Model3D::primitivePath("Cube"), &error), "material cube");
+        check(engine.setLayerModel(engine.indexOfId(b), Model3D::primitivePath("Sphere"), &error), "material sphere");
+        engine.setStructure(tree::intoGroup(engine.structure(), {a, b}, scene));
+        quint64 material = 0;
+        {
+            Engine::Lock lock(&engine.mutex());
+            material = engine.layer(engine.indexOfId(a))->modelMaterial;
+            check(material != 0 && engine.layer(engine.indexOfId(b))->modelMaterial != material,
+                  "new objects have explicit independent material references");
+        }
+        check(engine.setModelMaterial(engine.indexOfId(b), material), "share a material within the scene");
+        check(engine.setParameter(a, "model/material/color/r", .25), "edit shared material color");
+        check(std::abs(engine.parameterValue(b, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material updates both objects");
+        const auto otherScene = engine.layerId(engine.addScene("Other scene"));
+        const auto other = engine.layerId(engine.addLayer("Other object"));
+        check(engine.setLayerModel(engine.indexOfId(other), Model3D::primitivePath("Cube"), &error), "other scene model");
+        engine.setStructure(tree::intoGroup(engine.structure(), {other}, otherScene));
+        check(engine.setModelMaterial(engine.indexOfId(other), material), "project material can be shared across scenes");
+        check(engine.layer(engine.indexOfId(other))->material == engine.layer(engine.indexOfId(a))->material, "cross-scene objects share the same resource");
+        check(!engine.setModelPicture(engine.indexOfId(a), otherScene, &error), "shared material texture cannot feed back through another scene");
+        check(!engine.removeUnusedMaterial(material), "cannot delete a material referenced in several scenes");
+        const int clone = engine.duplicateLayer(engine.indexOfId(a));
+        check(clone >= 0 && engine.layer(clone)->modelMaterial == material, "duplicating an object preserves its material reference");
+        Engine::Snapshot materialLook;
+        materialLook.name = "Material references";
+        materialLook.fade = 0;
+        materialLook.layers = engine.captureLayers();
+        const int materialSnapshot = engine.addSnapshot(materialLook);
+        const auto temporaryMaterial = engine.addMaterial("Temporary");
+        check(engine.setModelMaterial(engine.indexOfId(b), temporaryMaterial), "change material before snapshot recall");
+        engine.recallSnapshot(materialSnapshot);
+        check(engine.layer(engine.indexOfId(b))->modelMaterial == material &&
+              engine.layer(engine.indexOfId(b))->material == engine.layer(engine.indexOfId(other))->material,
+              "snapshot restores shared material identity across scenes");
+        const auto unused = engine.addMaterial("Unused");
+        check(engine.removeUnusedMaterial(unused), "unused project material can be removed");
+        const QString project = dir.filePath("materials.nyxmap");
+        check(engine.saveProject(project, {}, &error), "save shared materials");
+        check(engine.loadProject(project, nullptr, &error), "load shared materials");
+        check(std::abs(engine.parameterValue(a, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material value persists");
+        check(engine.setParameter(b, "model/material/rough", .33), "edit restored shared material");
+        check(std::abs(engine.parameterValue(a, "model/material/rough").toDouble() - .33) < 1e-6, "restored objects still share one resource");
+        check(std::abs(engine.parameterValue(other, "model/material/rough").toDouble() - .33) < 1e-6, "restored cross-scene reference remains shared");
+        engine.newProject();
+    }
     return failures;
 }
