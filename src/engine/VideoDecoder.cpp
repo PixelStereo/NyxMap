@@ -693,7 +693,7 @@ bool VideoDecoder::fetch(double t, VideoFrame &out)
 bool VideoDecoder::finished()
 {
     std::lock_guard<std::mutex> lk(m_mutex);
-    return m_eof && m_queue.empty();
+    return m_eof && !m_seekPending && m_queue.empty();
 }
 
 void VideoDecoder::recycle(VideoFrame &&f)
@@ -1326,6 +1326,10 @@ void VideoDecoder::runLoop()
             if (m_quit) return;
             if (m_seekPending) {
                 m_seekPending = false;
+                // A decode already in flight when seek() cleared EOF may have
+                // finished the old leg afterwards. Reset it again when the
+                // worker accepts this seek, before starting the new leg.
+                m_eof = false;
                 m_seekFailed = false;
                 const double c = m_seekTarget;
                 m_timeline = m_pendingTimeline;
