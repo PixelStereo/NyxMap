@@ -1544,6 +1544,25 @@ bool Engine::setLayerFile(int i, const QString &path, QString *err)
 }
 
 // A 3D model: its file read here (its meshes reach the GPU when it is first drawn); the layer the composition's size
+bool Engine::setLayerPrimitive(int i, const QString &path)
+{
+    if (!Model3D::isPrimitivePath(path)) return false;
+    auto model = std::make_shared<Model3D>();
+    if (!model->load(path, nullptr)) return false;
+    auto garbage = std::make_shared<Garbage>();
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Model || !Model3D::isPrimitivePath(l->sourcePath) || isLocked(i)) return false;
+        garbage->model = std::move(l->model);
+        l->model = std::move(model);
+        l->sourcePath = Model3D::primitivePath(path.section('/', -1));
+    }
+    releaseGarbage(garbage);
+    emit layersChanged();
+    return true;
+}
+
 bool Engine::setLayerModel(int i, const QString &path, QString *err)
 {
     if (!layer(i)) return false;

@@ -138,10 +138,10 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                     check(tree->sortColumn() == column, "every column header selects its sort key");
                     bin.refresh();
                     check(tree->sortColumn() == column, "refresh preserves the selected sort key");
-                    check(tree->topLevelItemCount() == 2 && tree->topLevelItem(0) == groups[0] && tree->topLevelItem(1) == groups[1],
-                          "sorting keeps the Video and Audio roots in place");
+                    check(tree->topLevelItemCount() == 3 && tree->topLevelItem(0) == groups[0] && tree->topLevelItem(1) == groups[1] && tree->topLevelItem(2) == groups[2],
+                          "sorting keeps the Video, Audio and 3D roots in place");
                     for (int i = 0; i < group->parent()->childCount(); ++i)
-                        check(group->parent()->child(i) == groups[2 + i], "sorting keeps media type groups in place");
+                        check(group->parent()->child(i) == groups[3 + i], "sorting keeps media type groups in place");
                 }
                 tree->sortItems(2, Qt::AscendingOrder);
                 check(orderIs(c, b, a), "Layers sorts zero, two and ten numerically");
@@ -602,8 +602,8 @@ int main(int argc, char **argv)
                     check(gen && shown(gen), "Used shows it");
                     // Two roots, Video and Audio; the kind filter picks Files, Generators, Inputs or ISF in them
                     QTreeWidgetItem *videoRoot = tree->topLevelItem(0), *audioRoot = tree->topLevelItem(1), *videos = nullptr, *isfTop = nullptr;
-                    check(tree->topLevelItemCount() == 2 && videoRoot->text(0) == "Video" && audioRoot->text(0) == "Audio",
-                          "the media bin has a Video root and an Audio root");
+                    check(tree->topLevelItemCount() == 3 && tree->topLevelItem(2)->text(0) == "3D" && videoRoot->text(0) == "Video" && audioRoot->text(0) == "Audio",
+                          "the media bin has separate Video, Audio and 3D roots");
                     for (int c = 0; c < videoRoot->childCount(); ++c) {
                         if (videoRoot->child(c)->text(0).startsWith("Videos")) videos = videoRoot->child(c);
                         if (videoRoot->child(c)->text(0) == "ISF") isfTop = videoRoot->child(c);
