@@ -64,7 +64,7 @@ Geometry geometry(QSize size)
 
 } // namespace
 
-QImage TestCard::still(const QString &name, QSize size)
+QImage TestCard::still(const QString &name, QSize size, const QString &outputName)
 {
     const Geometry g = geometry(size);
     QImage img(int(g.w), int(g.h), QImage::Format_RGBA8888);
@@ -143,8 +143,10 @@ QImage TestCard::still(const QString &name, QSize size)
     sf.setPixelSize(std::max(8, int(g.unit * 0.045)));
     const QString sizeText = QStringLiteral("%1 × %2").arg(size.width()).arg(size.height());
     const QFontMetricsF nm(nf), sm(sf);
-    const double plateW = std::min(g.w * 0.9, std::max(nm.horizontalAdvance(name), sm.horizontalAdvance(sizeText)) + g.unit * 0.08);
-    const double plateH = nm.height() + sm.height() + g.unit * 0.04;
+    const double outputHeight = outputName.isEmpty() ? 0 : sm.height();
+    const double plateW = std::min(g.w * 0.9, std::max({nm.horizontalAdvance(name), sm.horizontalAdvance(sizeText),
+                                                     sm.horizontalAdvance(outputName)}) + g.unit * 0.08);
+    const double plateH = nm.height() + outputHeight + sm.height() + g.unit * 0.04;
     const QRectF plate(g.center.x() - plateW / 2, g.center.y() - plateH / 2, plateW, plateH);
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 0, 0, 200));
@@ -155,8 +157,12 @@ QImage TestCard::still(const QString &name, QSize size)
                nm.elidedText(name, Qt::ElideRight, plate.width() - g.unit * 0.04));
     p.setPen(QColor(200, 200, 205));
     p.setFont(sf);
-    p.drawText(QRectF(plate.left(), plate.top() + g.unit * 0.015 + nm.height(), plate.width(), sm.height()),
-               Qt::AlignCenter, sizeText);
+    const double subtitleTop = plate.top() + g.unit * 0.015 + nm.height();
+    if (!outputName.isEmpty()) {
+        p.drawText(QRectF(plate.left(), subtitleTop, plate.width(), outputHeight), Qt::AlignCenter,
+                   sm.elidedText(outputName, Qt::ElideRight, plate.width() - g.unit * 0.04));
+    }
+    p.drawText(QRectF(plate.left(), subtitleTop + outputHeight, plate.width(), sm.height()), Qt::AlignCenter, sizeText);
     p.end();
     return img;
 }
@@ -180,15 +186,15 @@ bool TestCard::init()
     return true;
 }
 
-void TestCard::render(const QString &name, QSize size, RenderTarget &target, GLuint quadVao)
+void TestCard::render(const QString &name, QSize size, RenderTarget &target, GLuint quadVao, const QString &outputName)
 {
     if (size.isEmpty() || !init()) return;
-    const QString key = QStringLiteral("%1|%2x%3").arg(name).arg(size.width()).arg(size.height());
+    const auto key = std::make_tuple(name, outputName, size.width(), size.height());
     auto it = m_stills.find(key);
     if (it == m_stills.end()) {
         if (m_stills.size() >= 8) release(); // names or sizes no longer shown
         if (!init()) return;
-        const QImage img = still(name, size);
+        const QImage img = still(name, size, outputName);
         it = m_stills.emplace(key, Texture2D()).first;
         it->second.upload(img.constBits(), img.width(), img.height());
     }
