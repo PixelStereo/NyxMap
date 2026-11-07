@@ -37,6 +37,7 @@ jobs:
       fuzz: ${{ steps.scope.outputs.fuzz }}
       valgrind: ${{ steps.scope.outputs.valgrind }}
       media: ${{ steps.scope.outputs.media }}
+      package: ${{ steps.scope.outputs.package }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -126,6 +127,7 @@ jobs:
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
       - name: Rebuild libtiff without JBIG
+        if: needs.scope.outputs.package == 'true'
         run: |
           sed 's/^Types:.*/Types: deb-src/' /etc/apt/sources.list.d/ubuntu.sources | sudo tee /etc/apt/sources.list.d/nyxmap-source.sources >/dev/null
           sudo apt-get update
@@ -133,8 +135,10 @@ jobs:
           python3 scripts/build_tiff_linux.py "$RUNNER_TEMP/tiff-no-jbig"
           echo "NYXMAP_TIFF_PREFIX=$RUNNER_TEMP/tiff-no-jbig" >> "$GITHUB_ENV"
       - name: Check Qt package plugins before compiling
+        if: needs.scope.outputs.package == 'true'
         run: python3 scripts/linux_qt_plugins.py "$(/usr/lib/qt6/bin/qmake -query QT_INSTALL_PLUGINS)"
       - name: Prepare clean Ubuntu runtime images
+        if: needs.scope.outputs.package == 'true'
         timeout-minutes: 15
         run: |
           # Network setup has its own budget, separate from package execution.
@@ -194,6 +198,7 @@ jobs:
             echo "::endgroup::"
           done
       - name: Dependency versions
+        if: needs.scope.outputs.package == 'true'
         run: |
           # The build machine only (package_linux.py labels it so). Ubuntu's FFmpeg (GPL) makes the test fixtures and is
           # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
@@ -202,6 +207,7 @@ jobs:
             dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
+        if: needs.scope.outputs.package == 'true'
         timeout-minutes: 45
         run: |
           # latest remains the test host. Release libraries target the oldest
@@ -217,6 +223,7 @@ jobs:
             -v "$DOTNET_ROOT:/dotnet:ro" \
             nyxmap-build:24.04 sh scripts/package_linux_baseline.sh
       - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
+        if: needs.scope.outputs.package == 'true'
         timeout-minutes: 15
         run: |
           # Only distribution files, fixtures and the test harness cross this boundary.
@@ -231,6 +238,7 @@ jobs:
               "nyxmap-clean-runtime:$ubuntu_version" python3 -u /scripts/smoke_linux_package.py /packages /media /tmp/check
           done
       - uses: actions/upload-artifact@v4
+        if: needs.scope.outputs.package == 'true'
         with:
           name: NyxMap-linux
           path: |
@@ -506,20 +514,24 @@ jobs:
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing
           python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
       - name: Dependency versions
+        if: needs.scope.outputs.package == 'true'
         run: |
           { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; brew list --versions qt ffmpeg; } \
             | tee deps-macos.txt
           echo "TouchEngine macOS SDK c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962 (Shared Use License; licenses/touchengine.txt)" >> deps-macos.txt
       - name: Homebrew FFmpeg version
+        if: needs.scope.outputs.package == 'true'
         id: ffmpeg
         run: |
           echo "version=$(brew list --versions ffmpeg | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           echo "os=$(sw_vers -productVersion)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
+        if: needs.scope.outputs.package == 'true'
         with:
           path: ~/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ steps.ffmpeg.outputs.os }}-${{ runner.arch }}-${{ steps.ffmpeg.outputs.version }}-${{ hashFiles('scripts/build_ffmpeg_lgpl.py') }}
       - name: FFmpeg without GPL components, for the package
+        if: needs.scope.outputs.package == 'true'
         run: |
           # Homebrew's is built with --enable-gpl (x264, x265): the package ships the same version rebuilt LGPL,
           # in place of Homebrew's libraries from here on (the tests above ran with Homebrew's)
@@ -528,6 +540,7 @@ jobs:
           { echo; echo "FFmpeg in the package: built from source without GPL components (LGPL v2.1 or later)"; \
             cat ~/ffmpeg-lgpl/VERSION; } | tee -a deps-macos.txt
       - name: Package .app with runtime dependencies
+        if: needs.scope.outputs.package == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -653,6 +666,7 @@ jobs:
           codesign --force --sign - "$APP" # the resource added: sealed again
           ditto -c -k --keepParent "$APP" "NyxMap-macos${TAG_SUFFIX}.zip"
       - name: Smoke test of the extracted app
+        if: needs.scope.outputs.package == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/clean" && ditto -x -k NyxMap-macos*.zip "$RUNNER_TEMP/clean"
           APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
@@ -661,6 +675,7 @@ jobs:
           python3 scripts/smoke_package.py "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Resources/isf" \
             "$PWD/test/media" "$RUNNER_TEMP/smoke"
       - uses: actions/upload-artifact@v4
+        if: needs.scope.outputs.package == 'true'
         with:
           name: NyxMap-macos
           path: NyxMap-macos*.zip
@@ -730,6 +745,7 @@ jobs:
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package with runtime dependencies
+        if: needs.scope.outputs.package == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -844,6 +860,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq "tag") { $tagSuffix = "-$env:GITHUB_REF_NAME" }
           Compress-Archive -Path dist\* -DestinationPath "NyxMap-windows$tagSuffix.zip" -Force
       - name: Smoke test of the extracted archive
+        if: needs.scope.outputs.package == 'true'
         shell: pwsh
         run: |
           # Extracted elsewhere, with neither FFmpeg's nor Qt's folders in PATH: only what the archive holds
@@ -855,6 +872,7 @@ jobs:
           python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
+        if: needs.scope.outputs.package == 'true'
         with:
           name: NyxMap-windows
           path: NyxMap-windows*.zip
