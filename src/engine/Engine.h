@@ -1084,6 +1084,7 @@ private:
     GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
     GLuint m_blackTex = 0;
     VideoConverter m_videoConv; // video frames to RGBA (render thread)
+    MaterialTextureCache m_materialTextures;
     TestCard m_testCard;        // the viewports' test cards (render thread)
     struct PreviewSlot {
         quint64 id = 0;

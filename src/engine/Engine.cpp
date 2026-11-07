@@ -587,6 +587,7 @@ void Engine::releaseAll()
     }
     m_videoConv.release();
     m_testCard.release();
+    m_materialTextures.release();
     for (GLuint p : {m_blitProgram, m_compProgram, m_diffProgram, m_presentProgram, m_prepProgram, m_maskProgram,
                      m_fadeProgram, m_shapeMaskProgram, m_matteProgram, m_outputColorProgram})
         if (p) f->glDeleteProgram(p);

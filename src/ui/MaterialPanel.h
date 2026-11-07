@@ -1,6 +1,11 @@
 #pragma once
 #include "Engine.h"
 #include "Model3D.h"
+#include "MaterialX.h"
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QToolButton>
 #include "ColorPicker.h"
 #include <QOpenGLWidget>
 #include <QVBoxLayout>
@@ -28,7 +33,7 @@ public:
     }
     ~MaterialSphere() override { if (context()) disconnect(context(), nullptr, this, nullptr); cleanup(); }
     void setMaterial(const Material3D &m) {
-        if (material.color == m.color && material.metal == m.metal && material.rough == m.rough) return;
+        if (material.toJson() == m.toJson()) return;
         material = m; update();
     }
 protected:
@@ -48,11 +53,14 @@ protected:
         settings.ao = settings.reflections = settings.glow = 0;
         Scene3D::Item item;
         item.model = sphere;
-        item.placement.color = material.color;
-        item.placement.metal = material.metal;
-        item.placement.rough = material.rough;
-        item.placement.sharedMaterial = true;
-        sphere->setDetail(3);
+        textures.advance();
+        textures.apply(material, item.placement);
+        if (item.placement.materialTextures[HeightMap]) {
+            item.displace = item.placement.materialTextures[HeightMap];
+            item.displaceAmount = material.height;
+            item.placement.materialHeight = true;
+        }
+        sphere->setDetail(item.displace ? 6 : 3);
         LightSettings light;
         light.shadow = false;
         Scene3DQuality quality;
@@ -69,12 +77,14 @@ private:
         if (!context() || !readFbo) return;
         makeCurrent();
         scene.releaseGl();
+        textures.release();
         sphere->releaseGl();
         gl()->glDeleteFramebuffers(1, &readFbo);
         readFbo = 0;
         doneCurrent();
     }
     Scene3D scene;
+    MaterialTextureCache textures;
     std::shared_ptr<Model3D> sphere;
     Material3D material;
     GLuint readFbo = 0;
@@ -106,11 +116,26 @@ public:
             copy.name += " copy";
             commit({}, copy); selected = copy.id; refresh();
         });
+        button("Import .mtlx…", "importMaterialX", [this] {
+            const QString path = QFileDialog::getOpenFileName(this, "Import MaterialX", {}, "MaterialX (*.mtlx)");
+            if (path.isEmpty()) return;
+            Material3D material;
+            QString error;
+            if (!importMaterialX(path, material, &error)) {
+                QMessageBox::warning(this, "Import MaterialX", error);
+                return;
+            }
+            material.id = this->engine->addMaterial(material.name);
+            this->engine->removeUnusedMaterial(material.id);
+            commit({}, material);
+            selected = material.id;
+            refresh();
+        });
         remove = button("−", "removeMaterial", [this] { const auto m = current(); if (m && !users(m->id)) commit(m, {}); });
         layout->addLayout(tools);
         list = new QListWidget; list->setObjectName("materialList"); list->setMaximumHeight(150); layout->addWidget(list);
         sphere = new MaterialSphere; layout->addWidget(sphere);
-        auto *note = new QLabel("Studio preview · base color, metallic and roughness"); note->setWordWrap(true); layout->addWidget(note);
+        auto *note = new QLabel("Studio preview · physically based material"); note->setWordWrap(true); layout->addWidget(note);
         auto *form = new QFormLayout;
         name = new QLineEdit; name->setObjectName("materialName"); form->addRow("Name", name);
         layout->addLayout(form);
@@ -118,6 +143,73 @@ public:
         auto *surface = new QFormLayout;
         metal = spin("materialMetal"); rough = spin("materialRough");
         surface->addRow("Metallic", metal); surface->addRow("Roughness", rough); layout->addLayout(surface);
+        auto *maps = new QFormLayout;
+        const char *labels[] = {"Base Color", "Roughness", "Metallic", "Normal", "Ambient Occlusion", "Emission", "Displacement"};
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            auto *row = new QHBoxLayout;
+            mapButtons[i] = new QPushButton("Choose Image…");
+            mapButtons[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            clearButtons[i] = new QToolButton;
+            clearButtons[i]->setText(QStringLiteral("×"));
+            clearButtons[i]->setToolTip("Remove image");
+            row->addWidget(mapButtons[i], 1);
+            row->addWidget(clearButtons[i]);
+            maps->addRow(QString::fromLatin1(labels[i]), row);
+            connect(mapButtons[i], &QPushButton::clicked, this, [this, slot = MaterialMap(i)] {
+                const auto before = current();
+                if (!before) return;
+                const QString path = QFileDialog::getOpenFileName(this, "Choose Material Image", before->paths[slot]);
+                if (path.isEmpty()) return;
+                auto after = *before;
+                QString error;
+                if (!after.setMap(slot, path, &error)) {
+                    QMessageBox::warning(this, "Choose Material Image", error);
+                    return;
+                }
+                if (before->paths[slot].isEmpty()) {
+                    if (slot == MetallicMap) after.metal = 1;
+                    if (slot == RoughnessMap) after.rough = 1;
+                    if (slot == BaseColorMap) after.color = {{1, 1, 1}};
+                    if (slot == EmissionMap && after.emission == 0) after.emission = 1;
+                }
+                commit(before, after);
+            });
+            connect(clearButtons[i], &QToolButton::clicked, this, [this, slot = MaterialMap(i)] {
+                change([slot](Material3D &material) { material.setMap(slot, {}); });
+            });
+        }
+        layout->addLayout(maps);
+        auto *details = new QFormLayout;
+        for (const auto &[label, member, lo, hi] : std::initializer_list<Scalar>{
+                {"Normal Strength", &Material3D::normalStrength, 0, 10},
+                {"Occlusion Strength", &Material3D::occlusionStrength, 0, 1},
+                {"Emission Strength", &Material3D::emission, 0, 100},
+                {"Displacement Scale", &Material3D::height, -2, 2},
+                {"Specular IOR", &Material3D::ior, 1, 4},
+                {"Specular Weight", &Material3D::specular, 0, 1}}) {
+            auto *field = spin(QString::fromLatin1(label));
+            field->setRange(lo, hi);
+            details->addRow(QString::fromLatin1(label), field);
+            scalarFields.emplace_back(field, member);
+            connect(field, &SliderField::valueEdited, this, [this, member](double v) {
+                change([&](Material3D &material) { material.*member = float(v); });
+            });
+        }
+        emissionColor = new ColorPicker(false);
+        emissionColor->setSettingsKey("materials/browser/emissionColor");
+        details->addRow("Emission Color", emissionColor);
+        connect(emissionColor, &ColorPicker::colorEdited, this, [this](const QColor &c) {
+            change([&](Material3D &material) { material.emissionColor = {{float(c.redF()), float(c.greenF()), float(c.blueF())}}; });
+        });
+        for (int axis = 0; axis < 2; ++axis) {
+            tiling[axis] = spin(axis == 0 ? "tileU" : "tileV");
+            tiling[axis]->setRange(.01, 100);
+            details->addRow(axis == 0 ? "UV Repeat U" : "UV Repeat V", tiling[axis]);
+            connect(tiling[axis], &SliderField::valueEdited, this, [this, axis](double v) {
+                change([&](Material3D &material) { material.uvTiling[axis] = float(v); });
+            });
+        }
+        layout->addLayout(details);
         usage = new QLabel; usage->setWordWrap(true); layout->addWidget(usage);
         auto *assign = new QPushButton("Assign to selected 3D object"); assign->setObjectName("assignMaterial"); layout->addWidget(assign);
         connect(assign, &QPushButton::clicked, this, [this, currentObject] {
@@ -149,6 +241,13 @@ public:
         refresh();
     }
 private:
+    struct Scalar { const char *label; float Material3D::*member; double min, max; };
+    std::vector<std::pair<SliderField *, float Material3D::*>> scalarFields;
+    std::array<QPushButton *, MaterialMapCount> mapButtons{};
+    std::array<QToolButton *, MaterialMapCount> clearButtons{};
+    std::array<SliderField *, 2> tiling{};
+    ColorPicker *emissionColor = nullptr;
+
     SliderField *spin(const QString &object) {
         auto *s = new SliderField; s->setObjectName(object); s->setRange(0, 1); s->setDecimals(3); s->setSingleStep(.01); return s;
     }
@@ -207,15 +306,32 @@ private:
     void showCurrent() {
         const auto m = current();
         for (auto *w : {static_cast<QWidget *>(name), static_cast<QWidget *>(color), static_cast<QWidget *>(metal), static_cast<QWidget *>(rough)}) w->setEnabled(bool(m));
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            const QString path = m ? m->paths[i] : QString();
+            mapButtons[i]->setEnabled(bool(m));
+            mapButtons[i]->setText(path.isEmpty() ? "Choose Image…" : QFileInfo(path).fileName());
+            mapButtons[i]->setToolTip(path);
+            clearButtons[i]->setEnabled(!path.isEmpty());
+        }
+        for (const auto &[field, member] : scalarFields) {
+            field->setEnabled(bool(m));
+            if (m) field->setValue((*m).*member);
+        }
+        for (int i = 0; i < 2; ++i) {
+            tiling[i]->setEnabled(bool(m));
+            if (m) tiling[i]->setValue(m->uvTiling[i]);
+        }
+        emissionColor->setEnabled(bool(m));
+        if (m) emissionColor->setColor(QColor::fromRgbF(m->emissionColor[0], m->emissionColor[1], m->emissionColor[2]));
         if (!m) { usage->setText("No material selected"); remove->setEnabled(false); return; }
         const QSignalBlocker n(name), c(color), mt(metal), r(rough);
         name->setText(m->name); color->setColor(QColor::fromRgbF(m->color[0], m->color[1], m->color[2])); metal->setValue(m->metal); rough->setValue(m->rough);
         const int count = users(m->id); remove->setEnabled(count == 0);
         usage->setText(QStringLiteral("References: %1 · objects and scene defaults").arg(count));
-        if (shown != m->toJson()) { shown = m->toJson(); sphere->setMaterial(*m); }
+        sphere->setMaterial(*m);
     }
     Engine *engine; QUndoStack *undo; std::function<void()> edited;
-    quint64 selected = 0, listedSelection = ~quint64(0); QJsonObject shown; QJsonArray known, knownNames;
+    quint64 selected = 0, listedSelection = ~quint64(0); QJsonArray known, knownNames;
     QListWidget *list; MaterialSphere *sphere; QLineEdit *name; ColorPicker *color;
     SliderField *metal, *rough; QPushButton *remove; QLabel *usage;
 };

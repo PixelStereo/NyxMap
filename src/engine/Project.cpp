@@ -604,7 +604,7 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
         root["layers"] = layers;
         QJsonArray materials;
-        for (const auto &[id, material] : m_materials) materials.append(material->toJson());
+        for (const auto &[id, material] : m_materials) materials.append(material->toJson(dir));
         root["materials"] = materials;
         QJsonArray bin;
         for (const QString &p : m_binItems)
@@ -864,8 +864,13 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     }
     const QString dir = QFileInfo(path).absolutePath();
     QStringList warnings;
-    for (const auto &value : root.value("materials").toArray())
-        restoreMaterial(Material3D::fromJson(value.toObject()));
+    for (const auto &value : root.value("materials").toArray()) {
+        const auto material = Material3D::fromJson(value.toObject(), dir);
+        for (int i = 0; i < MaterialMapCount; ++i)
+            if (!material.paths[i].isEmpty() && material.images[i].isNull())
+                warnings << QStringLiteral("%1: cannot load material image %2").arg(material.name, material.paths[i]);
+        restoreMaterial(material);
+    }
     const QJsonArray layers = root.value("layers").toArray();
     {
         Lock lock(&m_mutex);

@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "ImageFile.h"
+#include "MaterialX.h"
 #include "Model3D.h"
 #include <QColor>
 #include <QOpenGLContext>
@@ -1468,6 +1469,55 @@ int runScene3dTests(Engine &engine)
         check(engine.setParameter(b, "model/material/rough", .33), "edit restored shared material");
         check(std::abs(engine.parameterValue(a, "model/material/rough").toDouble() - .33) < 1e-6, "restored objects still share one resource");
         check(std::abs(engine.parameterValue(other, "model/material/rough").toDouble() - .33) < 1e-6, "restored cross-scene reference remains shared");
+        engine.newProject();
+    }
+    {
+        const QString imagePath = dir.filePath("red.png");
+        QImage image(8, 8, QImage::Format_RGBA8888);
+        image.fill(Qt::red);
+        check(image.save(imagePath), "write material texture");
+        QFile xml(dir.filePath("surface.mtlx"));
+        check(xml.open(QIODevice::WriteOnly), "write MaterialX fixture");
+        xml.write(R"xml(<materialx version="1.38">
+<nodegraph name="Maps">
+  <input name="Repeat" type="vector2" value="2, 3"/>
+  <constant name="UV"><input name="value" interfacename="Repeat"/></constant>
+  <tiledimage name="Image"><input name="file" value="red.png"/><input name="uvtiling" nodename="UV"/></tiledimage>
+  <output name="Color" nodename="Image"/>
+  <displacement name="Displace"><input name="displacement" nodename="Image"/><input name="scale" value="0"/></displacement>
+  <output name="Height" nodename="Displace"/>
+</nodegraph>
+<surfacematerial name="Material"><input name="surfaceshader" nodename="Surface"/><input name="displacementshader" nodegraph="Maps" output="Height"/></surfacematerial>
+<standard_surface name="Surface">
+  <input name="base_color" nodegraph="Maps" output="Color" value="0, 0, 0"/>
+  <input name="base_color" value="0, 0, 0"/>
+  <input name="specular_roughness" nodegraph="Maps" output="Color" value="0"/>
+</standard_surface>
+</materialx>)xml");
+        xml.close();
+
+        Material3D material;
+        check(importMaterialX(xml.fileName(), material, &error), qPrintable(error));
+        check(material.paths[BaseColorMap] == imagePath && material.rough == 1 &&
+              material.uvTiling == std::array<float, 2>{{2, 3}}, "MaterialX resolves wired inputs, relative images and graph tiling");
+        check(!material.images[HeightMap].isNull() && material.height == 0, "a disabled displacement preserves its image");
+        auto restored = Material3D::fromJson(material.toJson(dir.path()), dir.path());
+        check(!restored.images[BaseColorMap].isNull() && restored.toJson() == material.toJson(), "PBR maps survive project JSON");
+
+        const auto scene = engine.layerId(engine.addScene("Mapped scene"));
+        const auto object = engine.layerId(engine.addLayer("Mapped cube"));
+        check(engine.setLayerModel(engine.indexOfId(object), Model3D::primitivePath("Cube"), &error), "create mapped object");
+        engine.setStructure(tree::intoGroup(engine.structure(), {object}, scene));
+        material.id = engine.layer(engine.indexOfId(object))->modelMaterial;
+        *engine.materials().at(material.id) = material;
+        engine.renderFrame();
+        const auto output = engine.grabOutput();
+        if (!output.isNull()) {
+            const QColor pixel = output.pixelColor(output.width() / 2, output.height() / 2);
+            check(pixel.red() > pixel.green() + 15 && pixel.red() > pixel.blue() + 15, "a MaterialX base map reaches the rendered object");
+        } else {
+            check(false, "read material render");
+        }
         engine.newProject();
     }
     return failures;

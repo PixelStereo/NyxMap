@@ -422,6 +422,7 @@ void Engine::markNeeded()
 // texture of the previous frame, which gives a one-frame feedback loop.
 void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *only)
 {
+    if (!only) m_materialTextures.advance();
     const size_t n = m_layers.size();
     enum { Todo = 0, Doing = 1, Done = 2 };
     m_renderMark.assign(n, Todo);
@@ -1110,20 +1111,22 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
         }
         if (!m->enabled || m->soloHidden) continue;
         if (m->type == SourceType::Model && m->model) {
-            m->model->setDetail(m->modelPlacement.meshDetail(m->modelDisplaceEnabled && m->modelDisplace != 0));
             m->model->setSmooth(m->modelPlacement.shading == 1);
             const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
             const Layer *disp = m->modelDisplaceEnabled && m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
             auto placement = m->modelPlacement;
-            if (m->material) {
-                placement.color = m->material->color;
-                placement.metal = m->material->metal;
-                placement.rough = m->material->rough;
-                placement.sharedMaterial = true;
+            if (m->material) m_materialTextures.apply(*m->material, placement);
+            GLuint displacement = disp ? stagePicture(*disp, m->modelDisplaceStage) : 0;
+            float amount = placement.displaceAmount, mid = placement.displaceMid;
+            if (!displacement && placement.materialTextures[HeightMap]) {
+                displacement = placement.materialTextures[HeightMap];
+                placement.materialHeight = true;
+                amount = m->material->height;
+                mid = 0;
             }
+            m->model->setDetail(placement.meshDetail(displacement != 0));
             items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
-                             disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
-                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid,
+                             displacement, amount, mid,
                              m->modelTransformFxEnabled ? parent * m->modelTransformFx.transform() : parent});
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
