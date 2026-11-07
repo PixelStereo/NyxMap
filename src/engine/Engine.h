@@ -804,6 +804,11 @@ public:
     QString glVersion() const { return m_glVersion; }
     QString glVendor() const { return m_glVendor; }
     quint64 windowFrames(quint64 viewport); // pictures the viewport's window was given (tests)
+    // Manual rendering tests only. The output context and its back buffer are current before swap.
+    void setWindowDrawProbeForTests(std::function<void(quint64, QSize)> probe) {
+        Q_ASSERT(!m_threaded);
+        m_windowDrawProbe = std::move(probe);
+    }
     void setViewportWindow(quint64 viewport, QWindow *w);
     // refreshHz: its screen's (0: not known). The render keeps that pace while the window is shown, and counts its
     // missed deadlines against it, not against the main screen's
@@ -1061,6 +1066,7 @@ private:
     };
     mutable std::mutex m_outputStatsMutex;
     std::vector<OutputStats> m_outputStats;
+    std::function<void(quint64, QSize)> m_windowDrawProbe;
     double m_presentHz = 0; // render thread: the refresh rate of the window that waits for its screen (0: none)
     qint64 m_paceNext = -1; // render thread: when the next frame is due (steady clock ns; -1: from now)
     void releaseOutputSurface(OutputSurface &o);
@@ -1084,6 +1090,7 @@ private:
     GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
     GLuint m_blackTex = 0;
     VideoConverter m_videoConv; // video frames to RGBA (render thread)
+    MaterialTextureCache m_materialTextures;
     TestCard m_testCard;        // the viewports' test cards (render thread)
     struct PreviewSlot {
         quint64 id = 0;

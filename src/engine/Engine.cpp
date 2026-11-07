@@ -587,6 +587,7 @@ void Engine::releaseAll()
     }
     m_videoConv.release();
     m_testCard.release();
+    m_materialTextures.release();
     for (GLuint p : {m_blitProgram, m_compProgram, m_diffProgram, m_presentProgram, m_prepProgram, m_maskProgram,
                      m_fadeProgram, m_shapeMaskProgram, m_matteProgram, m_outputColorProgram})
         if (p) f->glDeleteProgram(p);
@@ -766,6 +767,7 @@ bool Engine::presentViewports()
             continue;
         }
         present(*vp, out);
+        if (m_windowDrawProbe) m_windowDrawProbe(vp->id, out.pixels);
         setSwapInterval(out.context, last ? 1 : 0); // only the last one waits for the screen
         out.context->swapBuffers(out.window);
         any = true;

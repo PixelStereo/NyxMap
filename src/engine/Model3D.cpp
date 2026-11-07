@@ -517,18 +517,70 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
     return true;
 }
 
+void MaterialTextureCache::apply(const Material3D &material, ModelPlacement &placement)
+{
+    placement.sharedMaterial = true;
+    placement.color = material.color;
+    placement.metal = material.metal;
+    placement.rough = material.rough;
+    placement.uvTiling = material.uvTiling;
+    placement.normalStrength = material.normalStrength;
+    placement.occlusionStrength = material.occlusionStrength;
+    placement.ior = material.ior;
+    placement.specular = material.specular;
+    for (int channel = 0; channel < 3; ++channel)
+        placement.emission[channel] = std::pow(material.emissionColor[channel], 2.2f) * material.emission;
+    auto f = gl();
+    for (int slot = 0; slot < MaterialMapCount; ++slot) {
+        const auto &image = material.images[slot];
+        if (image.isNull() || (slot == HeightMap && material.height == 0)) continue;
+        auto [entry, inserted] = m_textures.try_emplace(image.cacheKey());
+        if (inserted) {
+            f->glActiveTexture(GL_TEXTURE0);
+            entry->second.texture.uploadImage(image);
+            f->glBindTexture(GL_TEXTURE_2D, entry->second.texture.tex);
+            f->glGenerateMipmap(GL_TEXTURE_2D);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            f->glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        entry->second.used = m_frame;
+        placement.materialTextures[slot] = entry->second.texture.tex;
+    }
+}
+
+void MaterialTextureCache::advance()
+{
+    ++m_frame;
+    if (m_frame % 60 != 0) return;
+    for (auto it = m_textures.begin(); it != m_textures.end();) {
+        if (m_frame - it->second.used <= 120) { ++it; continue; }
+        it->second.texture.destroy();
+        it = m_textures.erase(it);
+    }
+}
+
+void MaterialTextureCache::release()
+{
+    for (auto &[key, entry] : m_textures) entry.texture.destroy();
+    m_textures.clear();
+}
+
 // --- Drawing ---------------------------------------------------------------------------------------------------------
 
 static const char *kVertex = R"(#version 330 core
 layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(location=2) in vec2 a_uv;
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
 uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
+uniform vec2 u_uvTiling;
 uniform int u_hasDisp; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
 void main() {
     vec3 p = a_pos, n = a_n;
     if (u_hasDisp != 0) {
-        vec4 d = textureLod(u_disp, vec2(a_uv.x, 1.0 - a_uv.y), 0.0); // a layer's picture: its first row at the bottom
+        vec2 uv = u_hasDisp == 2 ? a_uv * u_uvTiling : vec2(a_uv.x, 1.0 - a_uv.y);
+        vec4 d = textureLod(u_disp, uv, 0.0);
         float l = dot(d.rgb, vec3(0.2126, 0.7152, 0.0722)) * d.a; // its luminance
         p += normalize(n) * (l - u_dispMid) * u_dispAmount;
     }
@@ -538,7 +590,7 @@ void main() {
         n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
     }
     vec4 w = u_model * vec4(p, 1.0);
-    v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv;
+    v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv * u_uvTiling;
     gl_Position = u_proj * u_view * w;
 }
 )";
@@ -555,7 +607,8 @@ layout(location = 1) out vec4 o_bright; // what shines more than a screen can sh
 uniform float u_glowLimit;
 uniform vec3 u_lright[8], u_lup[8]; uniform vec2 u_lhalf[8]; // an area light: its sides, half its size
 uniform int u_penumbra; uniform vec3 u_shadowPlanes[4]; uniform sampler2DArray u_shadowRaw; uniform samplerCube u_pointRaw0, u_pointRaw1;
-uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
+uniform vec2 u_uvTiling;
+uniform vec4 u_base; uniform float u_metal, u_rough, u_dielectric; uniform vec3 u_emissive;
 uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_flat; uniform int u_hasDisp; uniform int u_layerTex;
 uniform sampler2D u_roughTex, u_metalTex, u_normalTex, u_aoTexMap, u_emTex;
 uniform int u_hasRough, u_hasMetal, u_hasNormal, u_hasAo, u_hasEm;
@@ -709,7 +762,7 @@ vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' app
 void main() {
     vec4 base = u_base;
     if (u_hasTex != 0) {
-        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y) : v_uv); // a layer's picture: bottom up
         if (u_unlit != 0) { // as it is: a screen
             o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a);
             o_bright = bright(pow(t.rgb * u_base.rgb, vec3(2.2)), t.a * u_base.a);
@@ -742,7 +795,7 @@ void main() {
     float contact = u_aoAmount > 0.0 ? texture(u_aoTex, gl_FragCoord.xy / u_screen).r : 1.0;
     ao *= contact;
     float r = clamp(rough, 0.04, 1.0), a = r * r;
-    vec3 F0 = mix(vec3(0.04), base.rgb, metal);
+    vec3 F0 = mix(vec3(u_dielectric), base.rgb, metal);
     float NdV = max(dot(N, V), 1e-4);
     vec3 c = u_ambient * base.rgb * (1.0 - 0.7 * metal) * ao;
     if (u_hasEnv != 0) { // the environment: diffuse from its most blurred level, reflections as rough as the surface
@@ -1172,6 +1225,7 @@ void MeshUniforms::resolve(GLuint program)
     metal = loc("u_metal");
     rough = loc("u_rough");
     emissive = loc("u_emissive");
+    dielectric = loc("u_dielectric");
     alphaMode = loc("u_alphaMode");
     alphaCutoff = loc("u_alphaCutoff");
     normalScale = loc("u_normalScale");
@@ -1303,6 +1357,10 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
             mat.baseColor = {{std::pow(look->color[0], 2.2f), std::pow(look->color[1], 2.2f), std::pow(look->color[2], 2.2f), 1}};
             mat.metallic = look->metal;
             mat.roughness = look->rough;
+            mat.emissive = look->emission;
+            mat.normalScale = look->normalStrength;
+            mat.aoStrength = look->occlusionStrength;
+            mat.roughChannel = mat.metalChannel = 0;
         }
         if (picture) { // a layer's picture instead of its colours (a white material under it)
             mat.baseColor = {{1, 1, 1, 1}};
@@ -1314,6 +1372,9 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
         f->glUniform4f(u.base, mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
         f->glUniform1f(u.metal, mat.metallic);
         f->glUniform1f(u.rough, mat.roughness);
+        const float ior = look ? look->ior : 1.5f;
+        const float reflectance = (ior - 1) / (ior + 1);
+        f->glUniform1f(u.dielectric, reflectance * reflectance * (look ? look->specular : 1.f));
         f->glUniform3f(u.emissive, mat.emissive[0], mat.emissive[1], mat.emissive[2]);
         f->glUniform1i(u.alphaMode, picture ? 2 : mat.alphaMode); // a picture keeps its alpha
         f->glUniform1f(u.alphaCutoff, mat.alphaCutoff);
@@ -1325,7 +1386,7 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
         f->glUniform4f(u.metalCh, mc.x(), mc.y(), mc.z(), mc.w());
         const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
         for (int k = 0; k < 5; ++k) {
-            const GLuint t = image(indices[k]);
+            const GLuint t = look && look->sharedMaterial ? look->materialTextures[RoughnessMap + k] : image(indices[k]);
             f->glUniform1i(u.has[k], t ? 1 : 0);
             if (t == bound[k]) continue;
             bound[k] = t;
@@ -1333,10 +1394,11 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
             f->glBindTexture(GL_TEXTURE_2D, t);
         }
         f->glActiveTexture(GL_TEXTURE0);
-        const bool textured = picture || image(mat.texture);
+        const GLuint baseTexture = look && look->sharedMaterial ? look->materialTextures[BaseColorMap] : image(mat.texture);
+        const bool textured = picture || baseTexture;
         f->glUniform1i(u.hasTex, textured ? 1 : 0);
         f->glUniform1i(u.layerTex, picture ? 1 : 0);
-        f->glBindTexture(GL_TEXTURE_2D, picture ? picture : image(mat.texture));
+        f->glBindTexture(GL_TEXTURE_2D, picture ? picture : baseTexture);
         f->glBindVertexArray(m.vao);
         f->glDrawElements(GL_TRIANGLES, GLsizei(m.indices.size()), GL_UNSIGNED_INT, nullptr);
     }
@@ -1502,6 +1564,7 @@ void Scene3D::PlaceUniforms::resolve(GLuint program)
     hasDisp = loc("u_hasDisp");
     dispAmount = loc("u_dispAmount");
     dispMid = loc("u_dispMid");
+    uvTiling = loc("u_uvTiling");
 }
 
 bool Scene3D::lite(const QString &renderer)
@@ -1651,13 +1714,17 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         add(&quality, sizeof quality);
         for (const Placed &placedItem : placed) {
             const Item &item = *placedItem.item;
-            could = could && !item.picture && !item.displace;
+            could = could && !item.picture && (!item.displace || item.placement.materialHeight);
             const Model3D *which = item.model.get();
             add(&which, sizeof which);
             add(placedItem.model.constData(), sizeof(float) * 16);
             const ModelPlacement &p = item.placement;
             add(p.color.data(), sizeof(float) * 3);
-            for (float v : {p.metal, p.rough, p.bend}) add(&v, sizeof v);
+            add(p.materialTextures.data(), sizeof(GLuint) * MaterialMapCount);
+            add(p.uvTiling.data(), sizeof(float) * 2);
+            add(p.emission.data(), sizeof(float) * 3);
+            add(&item.displaceAmount, sizeof(float));
+            for (float v : {p.metal, p.rough, p.bend, p.normalStrength, p.occlusionStrength, p.ior, p.specular}) add(&v, sizeof v);
             for (int v : {p.detail, p.shading, int(p.unlit), int(p.sharedMaterial)}) add(&v, sizeof v);
         }
         for (const Lamp &lamp : lamps) {
@@ -1686,7 +1753,8 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
         f->glUniform1f(u.bendCx, item.model->centerX());
         f->glUniform1f(u.bendW, item.model->width());
-        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
+        f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
         f->glActiveTexture(GL_TEXTURE1);
@@ -1868,7 +1936,13 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                 addTo(p.model.constData(), sizeof(float) * 16);
                 addTo(&item.placement.bend, sizeof(float));
                 addTo(&item.placement.detail, sizeof(int));
-                still = still && !item.displace;
+                if (item.placement.materialHeight) {
+                    addTo(&item.displace, sizeof item.displace);
+                    addTo(&item.displaceAmount, sizeof item.displaceAmount);
+                    addTo(item.placement.uvTiling.data(), sizeof(float) * 2);
+                } else {
+                    still = still && !item.displace;
+                }
             }
         const bool castersMoved = !still || key != m_shadowKey;
         m_shadowKey = key;
@@ -2444,11 +2518,12 @@ void Scene3D::releaseLook()
 // and pictures as they are
 static const char *kUnlitFragment = R"(#version 330 core
 in vec2 v_uv; out vec4 o;
+uniform vec2 u_uvTiling;
 uniform vec4 u_base; uniform vec3 u_emissive; uniform int u_hasTex, u_layerTex, u_alphaMode; uniform float u_alphaCutoff; uniform sampler2D u_tex;
 void main() {
     vec4 c = u_base;
     if (u_hasTex != 0) {
-        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y) : v_uv); // a layer's picture: bottom up
         c *= vec4(pow(t.rgb, vec3(2.2)), t.a);
     }
     if (u_alphaMode == 1 && c.a < u_alphaCutoff) discard;
@@ -2505,6 +2580,9 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         add(item.placement.color.data(), sizeof(float) * 3);
         const bool sharedMaterial = item.placement.sharedMaterial;
         add(&sharedMaterial, sizeof sharedMaterial);
+        add(item.placement.materialTextures.data(), sizeof(GLuint) * MaterialMapCount);
+        add(item.placement.uvTiling.data(), sizeof(float) * 2);
+        add(item.placement.emission.data(), sizeof(float) * 3);
         add(&item.placement.bend, sizeof(float));
         add(&item.placement.detail, sizeof(int));
     }
@@ -2568,7 +2646,8 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
         f->glUniform1f(u.bendCx, item.model->centerX());
         f->glUniform1f(u.bendW, item.model->width());
-        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
+        f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
         f->glActiveTexture(GL_TEXTURE1);

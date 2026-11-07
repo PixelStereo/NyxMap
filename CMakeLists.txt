@@ -45,6 +45,7 @@ endif()
 add_library(nyxmap_engine STATIC
   src/engine/Gl.cpp
   src/engine/Model3D.cpp
+  src/engine/MaterialX.cpp
   third_party/ufbx/ufbx.c
   src/engine/Isf.cpp
   src/engine/LineGenerator.cpp

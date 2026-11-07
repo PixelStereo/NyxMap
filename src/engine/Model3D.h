@@ -12,6 +12,8 @@
 
 #include "Gl.h"
 #include <QJsonObject>
+#include <QDir>
+#include <QFileInfo>
 
 #include <QByteArray>
 #include <QImage>
@@ -23,7 +25,11 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <map>
 #include <vector>
+
+enum MaterialMap { BaseColorMap, RoughnessMap, MetallicMap, NormalMap, OcclusionMap, EmissionMap, HeightMap, MaterialMapCount };
+inline constexpr const char *materialMapNames[] = {"base_color", "roughness", "metallic", "normal", "occlusion", "emission", "height"};
 
 // Where a model is in its scene
 struct ModelPlacement {
@@ -36,6 +42,11 @@ struct ModelPlacement {
     QMatrix4x4 transform() const;
     float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
     bool sharedMaterial = false;
+    std::array<GLuint, MaterialMapCount> materialTextures{};
+    std::array<float, 3> emission{};
+    std::array<float, 2> uvTiling{{1, 1}};
+    float normalStrength = 1, occlusionStrength = 1, ior = 1.5f, specular = 1;
+    bool materialHeight = false;
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
     int detail = 1;      // a primitive's mesh: how finely it is cut (1, the least, to 8)
     int shading = 0;     // 0 as it is made (a sphere smooth, a cube with its edges), 1 smooth, 2 flat: its facets show
@@ -54,13 +65,29 @@ struct Material3D {
     QString name;
     std::array<float, 3> color{{.8f, .8f, .8f}};
     float metal = 0, rough = .6f;
+    std::array<QString, MaterialMapCount> paths;
+    std::array<QImage, MaterialMapCount> images;
+    std::array<float, 3> emissionColor{{1, 1, 1}};
+    std::array<float, 2> uvTiling{{1, 1}};
+    float emission = 0, normalStrength = 1, occlusionStrength = 1, height = 0, ior = 1.5f, specular = 1;
     quint64 picture = 0;
     int pictureStage = -1;
-    QJsonObject toJson() const {
+    bool setMap(MaterialMap slot, const QString &path, QString *error = nullptr);
+    QJsonObject toJson(const QString &projectDir = {}) const {
+        QJsonObject maps;
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            if (paths[i].isEmpty()) continue;
+            QJsonObject file{{"path", paths[i]}};
+            if (!projectDir.isEmpty()) file["relative_path"] = QDir(projectDir).relativeFilePath(paths[i]);
+            maps[materialMapNames[i]] = file;
+        }
         return {{"id", QString::number(id)}, {"name", name},
-                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage}};
+                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage},
+                {"maps", maps}, {"normal_strength", normalStrength}, {"occlusion_strength", occlusionStrength},
+                {"emission", emission}, {"emission_r", emissionColor[0]}, {"emission_g", emissionColor[1]}, {"emission_b", emissionColor[2]},
+                {"height", height}, {"ior", ior}, {"specular", specular}, {"tile_u", uvTiling[0]}, {"tile_v", uvTiling[1]}};
     }
-    static Material3D fromJson(const QJsonObject &json) {
+    static Material3D fromJson(const QJsonObject &json, const QString &projectDir = {}) {
         Material3D material;
         material.id = json.value("id").toString().toULongLong();
         material.name = json.value("name").toString();
@@ -70,8 +97,39 @@ struct Material3D {
         material.rough = float(std::clamp(json.value("rough").toDouble(.6), 0., 1.));
         material.picture = json.value("picture").toString().toULongLong();
         material.pictureStage = json.value("picture_stage").toInt(-1);
+        const QJsonObject maps = json.value("maps").toObject();
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            const auto file = maps.value(materialMapNames[i]).toObject();
+            QString path = file.value("path").toString();
+            const QString relative = file.value("relative_path").toString();
+            if (!projectDir.isEmpty() && !relative.isEmpty() && !QFileInfo(path).isFile()) {
+                const QString alternate = QDir(projectDir).absoluteFilePath(relative);
+                if (QFileInfo(alternate).isFile()) path = alternate;
+            }
+            if (!path.isEmpty() && !material.setMap(MaterialMap(i), path)) material.paths[i] = path;
+        }
+        material.normalStrength = float(std::clamp(json.value("normal_strength").toDouble(1), 0., 10.));
+        material.occlusionStrength = float(std::clamp(json.value("occlusion_strength").toDouble(1), 0., 1.));
+        material.emission = float(std::clamp(json.value("emission").toDouble(), 0., 100.));
+        material.emissionColor = {{float(std::clamp(json.value("emission_r").toDouble(1), 0., 1.)), float(std::clamp(json.value("emission_g").toDouble(1), 0., 1.)), float(std::clamp(json.value("emission_b").toDouble(1), 0., 1.))}};
+        material.height = float(std::clamp(json.value("height").toDouble(), -2., 2.));
+        material.ior = float(std::clamp(json.value("ior").toDouble(1.5), 1., 4.));
+        material.specular = float(std::clamp(json.value("specular").toDouble(1), 0., 1.));
+        material.uvTiling = {{float(std::clamp(json.value("tile_u").toDouble(1), .01, 100.)), float(std::clamp(json.value("tile_v").toDouble(1), .01, 100.))}};
         return material;
     }
+};
+
+// One cache per GL owner. A shared material uploads each image once even when used by multiple objects.
+class MaterialTextureCache {
+public:
+    void apply(const Material3D &material, ModelPlacement &placement);
+    void advance();
+    void release();
+private:
+    struct Entry { Texture2D texture; quint64 used = 0; };
+    std::map<qint64, Entry> m_textures;
+    quint64 m_frame = 0;
 };
 
 // A light of a scene
@@ -135,6 +193,7 @@ struct Scene3DQuality {
 
 // Where the program that shades a mesh takes what its material says, found once
 struct MeshUniforms {
+    GLint dielectric = -1;
     GLint base = -1, metal = -1, rough = -1, emissive = -1, alphaMode = -1, alphaCutoff = -1, normalScale = -1, aoStrength = -1;
     GLint roughCh = -1, metalCh = -1, hasTex = -1, layerTex = -1, has[5] = {-1, -1, -1, -1, -1};
     void resolve(GLuint program);
@@ -297,7 +356,7 @@ private:
     GLuint m_picture = 0; // what it gives: its final picture, or m_color with nothing over it
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
-        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1;
+        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1;
         void resolve(GLuint program);
     };
     GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
