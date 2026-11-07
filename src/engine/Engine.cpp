@@ -767,6 +767,7 @@ bool Engine::presentViewports()
             continue;
         }
         present(*vp, out);
+        if (m_windowDrawProbe) m_windowDrawProbe(vp->id, out.pixels);
         setSwapInterval(out.context, last ? 1 : 0); // only the last one waits for the screen
         out.context->swapBuffers(out.window);
         any = true;

@@ -4616,29 +4616,24 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             while ((!w1.isExposed() || !w2.isExposed()) && t.elapsed() < 3000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             e.setViewportWindow(vp1, &w1);
             e.setViewportWindow(vp2, &w2);
-            e.setViewportExposed(vp1, true, w1.size() * w1.devicePixelRatio());
-            e.setViewportExposed(vp2, true, w2.size() * w2.devicePixelRatio());
-            // The windows show their frames when the system presents them, a little after: rendered and grabbed again
-            // until both show their picture (3 s at most), then checked
-            QImage g1, g2;
-            auto shown = [&] {
-                if (g1.isNull() || g2.isNull()) return false;
-                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
-                return c1.red() > 200 && c1.blue() < 50 && c2.blue() > 200 && c2.red() < 50;
-            };
-            t.restart();
-            do {
-                e.renderFrame();
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-                g1 = w1.screen()->grabWindow(w1.winId()).toImage();
-                g2 = w2.screen()->grabWindow(w2.winId()).toImage();
-            } while (!shown() && t.elapsed() < 3000);
-            CHECK(!g1.isNull() && !g2.isNull());
-            if (!g1.isNull() && !g2.isNull()) {
-                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
-                CHECK(c1.red() > 200 && c1.blue() < 50);
-                CHECK(c2.blue() > 200 && c2.red() < 50);
-            }
+            CHECK(w1.isExposed() && w2.isExposed());
+            e.setViewportExposed(vp1, w1.isExposed(), w1.size() * w1.devicePixelRatio());
+            e.setViewportExposed(vp2, w2.isExposed(), w2.size() * w2.devicePixelRatio());
+            // Read the real window back buffers before swap. Desktop capture can be unavailable
+            // on macOS even when the application can draw and swap both windows.
+            QColor c1, c2;
+            e.setWindowDrawProbeForTests([&](quint64 id, QSize size) {
+                if (id != vp1 && id != vp2) return;
+                std::array<GLubyte, 4> rgba{};
+                gl()->glReadPixels(size.width() / 2, size.height() / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+                (id == vp1 ? c1 : c2) = QColor(rgba[0], rgba[1], rgba[2]);
+            });
+            const auto before1 = e.windowFrames(vp1), before2 = e.windowFrames(vp2);
+            e.renderFrame();
+            e.setWindowDrawProbeForTests({});
+            CHECK(e.windowFrames(vp1) > before1 && e.windowFrames(vp2) > before2);
+            CHECK(c1.isValid() && c1.red() > 200 && c1.blue() < 50);
+            CHECK(c2.isValid() && c2.blue() > 200 && c2.red() < 50);
             e.setViewportWindow(vp1, nullptr);
             e.setViewportWindow(vp2, nullptr);
         }
