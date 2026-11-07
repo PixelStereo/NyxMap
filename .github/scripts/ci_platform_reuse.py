@@ -30,6 +30,9 @@ JOB_NAMES = {
 }
 
 
+MAC_SHARDS = {f"{JOB_NAMES['macos']} / {shard}" for shard in ('scene-ui', 'isf-media', 'core')}
+
+
 def linux_packaging_only(paths):
     return bool(paths) and all(path in LINUX_FILES or path.startswith('packaging/linux/') for path in paths)
 
@@ -47,6 +50,8 @@ def other_workflow_jobs_unchanged(before, after):
 def successful_jobs(jobs):
     reused = {key for key, name in JOB_NAMES.items()
               if any(job['name'] == name and job.get('conclusion') == 'success' for job in jobs)}
+    if MAC_SHARDS <= {job['name'] for job in jobs if job.get('conclusion') == 'success'}:
+        reused.add('macos')
     for job in jobs:
         if job['name'] == 'Linux (latest) + tests':
             steps = {step['name']: step.get('conclusion') for step in job.get('steps', [])}
@@ -104,7 +109,7 @@ def _revision_successes(payload):
             jobs.extend(batch)
             if len(batch) < 100:
                 break
-        relevant = [job for job in jobs if job['name'] in JOB_NAMES.values()]
+        relevant = [job for job in jobs if job['name'] in JOB_NAMES.values() or job['name'] in MAC_SHARDS]
         inherited = bool(relevant) and all(job.get('conclusion') == 'skipped' for job in relevant)
         reused = successful_jobs(jobs)
         if ui_only:

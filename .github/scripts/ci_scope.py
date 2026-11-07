@@ -22,6 +22,15 @@ def classify(paths, event="pull_request", ref_type="branch", full=False):
         # Allocation lifetime complements ASan, but does not need a second full workspace build on every PR.
         "valgrind": force or any(p in ("test/valgrind.supp", "test/workspace_ui.cpp") for p in paths),
     }
+    # Ordinary PRs validate source builds and tests on every platform. Distribution
+    # builds remain mandatory on main, on releases, and for PRs that can change them.
+    package_inputs = infrastructure or any(
+        p.startswith(("packaging/", "licenses/", "third_party/", "assets/")) or
+        p in (".gitmodules", "THIRD-PARTY-NOTICES.md") or
+        p.startswith(("scripts/package_", "scripts/smoke_", "scripts/build_ffmpeg", "scripts/build_tiff", "scripts/linux_"))
+        for p in paths
+    )
+    result["package"] = result["build"] and (event != "pull_request" or force or package_inputs)
     result["media"] = any(result[k] for k in ("build", "ui", "tsan", "fuzz"))
     return result
 
