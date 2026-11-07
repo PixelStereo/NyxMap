@@ -276,6 +276,7 @@ struct Layer {
     // Viewport
     bool isViewport = false;
     int vpWidth = 1920, vpHeight = 1080; // size of its picture, in pixels
+    QString vpResolvedScreen;            // actual screen name, refreshed by the output window controller
     QString vpScreen;                    // screen it is shown on (empty: the main one)
     int vpMode = 0;                      // 0 hidden, 1 windowed, 2 fullscreen
     bool testCard = false;               // a viewport shows its test card instead (a setup aid: not saved)

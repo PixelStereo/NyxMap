@@ -1096,6 +1096,10 @@ void MainWindow::syncOutputs()
         if (o.title != title) o.window->setTitle(o.title = title);
         QScreen *sc = OutputWindow::screenNamed(w.screen);
         const QString scName = sc ? sc->name() : QString();
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (Layer *layer = m_engine->layer(m_engine->indexOfId(w.id))) layer->vpResolvedScreen = scName;
+        }
         if (o.mode == w.mode && (w.mode == 0 || o.screen == scName)) continue;
         o.mode = w.mode;
         o.screen = scName;

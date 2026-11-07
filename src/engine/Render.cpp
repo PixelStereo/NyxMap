@@ -1140,7 +1140,8 @@ void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const I
     const QSize size = v.viewportSize();
     // Its test card: what goes to its screen, as it is (no ROI, color or effect)
     if (v.testCard) {
-        m_testCard.render(v.name, size, v.groupTarget, m_quadVao);
+        m_testCard.render(v.name, size, v.groupTarget, m_quadVao,
+                          v.vpResolvedScreen.isEmpty() ? v.vpScreen : v.vpResolvedScreen);
         v.finalTex = v.rawTex = v.preFxTex = v.groupTarget.tex;
         v.finalW = v.rawW = v.preFxW = v.groupTarget.w;
         v.finalH = v.rawH = v.preFxH = v.groupTarget.h;

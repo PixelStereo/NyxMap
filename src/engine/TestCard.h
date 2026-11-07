@@ -15,21 +15,22 @@
 #include <QSize>
 #include <QString>
 #include <map>
+#include <tuple>
 
 class TestCard
 {
 public:
     // The card for a viewport named `name`, drawn into `target` (sized to `size`)
-    void render(const QString &name, QSize size, RenderTarget &target, GLuint quadVao);
+    void render(const QString &name, QSize size, RenderTarget &target, GLuint quadVao, const QString &outputName = {});
     void release();
 
     // The still part of the card, top row first (tests and tools)
-    static QImage still(const QString &name, QSize size);
+    static QImage still(const QString &name, QSize size, const QString &outputName = {});
 
 private:
     bool init();
     GLuint m_program = 0;
     GLint m_texLoc = -1, m_timeLoc = -1, m_sizeLoc = -1, m_circleLoc = -1, m_bandLoc = -1;
-    std::map<QString, Texture2D> m_stills; // by name and size: drawn once, each viewport its own
+    std::map<std::tuple<QString, QString, int, int>, Texture2D> m_stills; // viewport, output, width, height
     QElapsedTimer m_clock;
 };
