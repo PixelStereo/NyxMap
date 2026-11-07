@@ -58,9 +58,11 @@ int Model3D::addImage(const QImage &image)
     return int(m_images.size()) - 1;
 }
 
-bool Model3D::load(const QString &path, QString *err)
+bool Model3D::load(const QString &path, QString *err, const QStringList &hidden)
 {
     m_path = path;
+    m_hidden = hidden;
+    m_objects.clear();
     m_meshes.clear();
     m_materials.clear();
     m_images.clear();
@@ -76,8 +78,10 @@ bool Model3D::load(const QString &path, QString *err)
     }
     if (m_materials.empty()) m_materials.emplace_back();
     m_meshesRead = int(m_meshes.size());
+    computeBounds(); // hiding geometry must not change the fit or pivot
+    if (!m_hidden.isEmpty())
+        m_meshes.erase(std::remove_if(m_meshes.begin(), m_meshes.end(), [this](const Mesh &m) { return m_hidden.contains(m.object); }), m_meshes.end());
     mergeMeshes();
-    computeBounds();
     return true;
 }
 
@@ -482,6 +486,9 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
         if (!mesh) continue;
         const ufbx_matrix toWorld = node->geometry_to_world;
         const ufbx_matrix normalToWorld = ufbx_matrix_for_normals(&toWorld);
+        const QString key = QString::number(n);
+        if (QFileInfo(path).suffix().compare(QStringLiteral("fbx"), Qt::CaseInsensitive) == 0)
+            m_objects.emplace_back(key, QString::fromUtf8(node->name.data, qsizetype(node->name.length)));
         // One mesh of ours per material of it
         std::vector<Mesh> parts(std::max<size_t>(1, mesh->materials.count));
         for (size_t k = 0; k < parts.size(); ++k)
@@ -504,7 +511,7 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
             }
         }
         for (Mesh &part : parts)
-            if (!part.indices.empty()) m_meshes.push_back(std::move(part));
+            if (!part.indices.empty()) { part.object = key; m_meshes.push_back(std::move(part)); }
     }
     ufbx_free_scene(scene);
     return true;

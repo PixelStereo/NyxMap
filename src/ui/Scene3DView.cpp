@@ -328,12 +328,13 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {
-                o.position = parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+                if (l->modelTransformFxEnabled) o.parent = parent * l->modelTransformFx.transform();
+                o.position = o.parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
                 o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
                 o.scale = p.scale;
                 if (l->model) { // its bounds, placed: what a click picks
-                    const QMatrix4x4 m = parent * l->model->matrix(p);
+                    const QMatrix4x4 m = o.parent * l->model->matrix(p);
                     const QVector3D c = m.map(l->model->center());
                     o.position = c;
                     o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());

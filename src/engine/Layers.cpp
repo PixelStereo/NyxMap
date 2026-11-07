@@ -329,7 +329,8 @@ bool Engine::removeUnusedMaterial(quint64 id)
 {
     Lock lock(&m_mutex);
     for (const auto &object : m_layers)
-        if (object->type == SourceType::Model && object->modelMaterial == id) return false;
+        if ((object->type == SourceType::Model && object->modelMaterial == id) ||
+            (object->scene3d && object->sceneDefaultMaterial == id)) return false;
     return m_materials.erase(id) != 0;
 }
 
@@ -356,6 +357,9 @@ bool Engine::setModelMaterial(int object, quint64 id)
 void Engine::resolveMaterials()
 {
     Lock lock(&m_mutex);
+    for (const auto &scene : m_layers)
+        if (scene->scene3d && !m_materials.count(scene->sceneDefaultMaterial))
+            scene->sceneDefaultMaterial = addMaterial(scene->name + QStringLiteral(" Default"));
     for (int i = 0; i < int(m_layers.size()); ++i) {
         auto &object = m_layers[size_t(i)];
         if (object->type != SourceType::Model) continue;
@@ -364,13 +368,8 @@ void Engine::resolveMaterials()
         auto &materials = m_materials;
         auto found = materials.find(object->modelMaterial);
         if (found == materials.end()) {
-            const auto id = addMaterial();
-            found = materials.find(id);
-            found->second->color = object->material ? object->material->color : object->modelPlacement.color;
-            found->second->metal = object->material ? object->material->metal : object->modelPlacement.metal;
-            found->second->rough = object->material ? object->material->rough : object->modelPlacement.rough;
-            found->second->picture = object->material ? object->material->picture : object->modelPicture;
-            found->second->pictureStage = object->material ? object->material->pictureStage : object->modelPictureStage;
+            found = materials.find(m_layers[size_t(owner)]->sceneDefaultMaterial);
+            if (found == materials.end()) continue;
         }
         if (object->material != found->second) {
             object->modelMaterial = found->first;
@@ -394,6 +393,7 @@ int Engine::addScene(const QString &name, int at)
         g.scene3d = true;
         g.sceneRenderer = std::make_shared<Scene3D>();
         if (name.isEmpty()) g.name = QStringLiteral("3D Scene %1").arg(scenes + 1);
+        g.sceneDefaultMaterial = addMaterial(g.name + QStringLiteral(" Default"));
         for (quint64 up = g.parent; up;) { // out of any scene it would land in
             const int pi = indexOfId(up);
             if (pi < 0) break;
@@ -488,6 +488,7 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, 
                 object->modelPictureStage = picture ? stage : -1;
             }
         }
+        if (displace && picture) l->modelDisplaceEnabled = true;
         (displace ? l->modelDisplace : l->modelPicture) = picture;
         (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
     }
@@ -1186,6 +1187,9 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.tox = ToxSettings();
     g->model = std::move(l.model);
     l.modelPlacement = ModelPlacement();
+    l.modelTransformFx = ModelPlacement();
+    l.modelTransformFxEnabled = false;
+    l.modelDisplaceEnabled = false;
     l.light = LightSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
@@ -1683,11 +1687,37 @@ bool Engine::setLayerPrimitive(int i, const QString &path)
     return true;
 }
 
-bool Engine::setLayerModel(int i, const QString &path, QString *err)
+bool Engine::setModelHiddenObjects(int i, const QStringList &hidden)
+{
+    QString path;
+    quint64 id = 0;
+    {
+        Lock lk(&m_mutex);
+        const auto *l = layer(i);
+        if (!l || !l->model || l->model->objects().empty() || isLocked(i)) return false;
+        path = l->sourcePath;
+        id = l->id;
+    }
+    auto model = std::make_shared<Model3D>();
+    if (!model->load(path, nullptr, hidden)) return false;
+    auto garbage = std::make_shared<Garbage>();
+    {
+        Lock lk(&m_mutex);
+        auto *l = layer(indexOfId(id));
+        if (!l || l->sourcePath != path) return false;
+        garbage->model = std::move(l->model);
+        l->model = std::move(model);
+    }
+    releaseGarbage(garbage);
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setLayerModel(int i, const QString &path, QString *err, const QStringList &hidden)
 {
     if (!layer(i)) return false;
     auto model = std::make_shared<Model3D>();
-    if (!model->load(path, err)) return false;
+    if (!model->load(path, err, hidden)) return false;
     std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);

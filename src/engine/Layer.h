@@ -390,7 +390,10 @@ struct Layer {
     std::shared_ptr<Model3D> model;
     ModelPlacement modelPlacement;
 
+    quint64 sceneDefaultMaterial = 0;
     quint64 modelMaterial = 0;
+    ModelPlacement modelTransformFx;
+    bool modelTransformFxEnabled = false, modelDisplaceEnabled = false;
     std::shared_ptr<Material3D> material;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
     quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)

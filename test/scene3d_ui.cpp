@@ -338,7 +338,7 @@ int runScene3dUiTests(Engine &engine)
     }
     select(engine.indexOfId(layer));
     const QStringList objectTabs = tabNames();
-    check(objectTabs.contains("3D") && !objectTabs.contains("Spatial") && !objectTabs.contains("FX"),
+    check(objectTabs.contains("Source") && objectTabs.contains("Material") && objectTabs.contains("Spatial") && objectTabs.contains("FX") && !objectTabs.contains("3D"),
           "a model's inspector shows its 3D values, not a picture's tabs");
     check(inspector && inspector->findChild<SliderField *>("param3d:model/scale/all") &&
               inspector->findChild<SliderField *>("param3d:model/scale/x") && inspector->findChild<SliderField *>("param3d:model/scale/z"),
@@ -752,6 +752,7 @@ int runScene3dUiTests(Engine &engine)
     check(engine.setLayerModel(engine.indexOfId(materialA), Model3D::primitivePath("Cube"), &materialError), "create first material object");
     check(engine.setLayerModel(engine.indexOfId(materialB), Model3D::primitivePath("Sphere"), &materialError), "create second material object");
     engine.setStructure(tree::intoGroup(engine.structure(), {materialA, materialB}, materialScene));
+    check(engine.setModelMaterial(engine.indexOfId(materialB), engine.addMaterial("Independent surface")), "explicit material overrides scene default");
     quint64 materialId = 0, originalMaterial = 0;
     {
         Engine::Lock lock(&engine.mutex());
@@ -796,11 +797,11 @@ int runScene3dUiTests(Engine &engine)
             add->click(); pump();
             check(int(engine.materials().size()) == count + 1, "material browser creates project material");
             const quint64 id = items->currentItem()->data(Qt::UserRole).toULongLong();
-            auto *metal = materials.findChild<QDoubleSpinBox *>("materialMetal");
+            auto *metal = materials.findChild<SliderField *>("materialMetal");
             auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
             auto *color = materials.findChild<ColorPicker *>();
             const QImage before = preview ? preview->grabFramebuffer() : QImage();
-            if (metal) metal->setValue(.9);
+            if (metal) emit metal->valueEdited(.9);
             if (color) emit color->colorEdited(QColor(Qt::red));
             pump();
             const QImage after = preview ? preview->grabFramebuffer() : QImage();

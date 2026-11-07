@@ -769,6 +769,13 @@ const std::vector<Parameter *> &Layer::parameters()
             f3("model/material/metal", "Material › Metal", 0, 1, 0, shared ? &shared->metal : &mp->metal).step(0.01);
             f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, shared ? &shared->rough : &mp->rough).step(0.01);
         }
+        flag("model/displace/enabled", "Displace › Enabled", false, &modelDisplaceEnabled).ramp(Parameter::Ramp::Cut);
+        flag("model/transform_fx/enabled", "Transform 3D › Enabled", false, &modelTransformFxEnabled).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a) {
+            f3("model/transform_fx/position/" + xyz[a], "Transform 3D › Position " + XYZ[a], -10, 10, 0, &modelTransformFx.position[size_t(a)]).step(0.01);
+            f3("model/transform_fx/rotation/" + xyz[a], "Transform 3D › Rotation " + XYZ[a], -180, 180, 0, &modelTransformFx.rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+            f3("model/transform_fx/scale/" + xyz[a], "Transform 3D › Scale " + XYZ[a], 0.01, 10, 1, &modelTransformFx.axisScale[size_t(a)]).step(0.01);
+        }
         f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)

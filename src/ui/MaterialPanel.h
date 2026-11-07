@@ -8,7 +8,7 @@
 #include <QFormLayout>
 #include <QListWidget>
 #include <QLineEdit>
-#include <QDoubleSpinBox>
+#include "Widgets.h"
 #include <QPushButton>
 #include <QLabel>
 #include <QSignalBlocker>
@@ -27,7 +27,10 @@ public:
         sphere->load(Model3D::primitivePath("Sphere"), nullptr);
     }
     ~MaterialSphere() override { if (context()) disconnect(context(), nullptr, this, nullptr); cleanup(); }
-    void setMaterial(const Material3D &m) { material = m; update(); }
+    void setMaterial(const Material3D &m) {
+        if (material.color == m.color && material.metal == m.metal && material.rough == m.rough) return;
+        material = m; update();
+    }
 protected:
     void initializeGL() override {
         connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, [this] { cleanup(); }, Qt::DirectConnection);
@@ -138,16 +141,16 @@ public:
         });
         connect(name, &QLineEdit::editingFinished, this, [this] { change([this](Material3D &m) { m.name = name->text(); }); });
         connect(color, &ColorPicker::colorEdited, this, [this](const QColor &c) { change([&](Material3D &m) { m.color = {{float(c.redF()), float(c.greenF()), float(c.blueF())}}; }); });
-        connect(metal, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) { change([&](Material3D &m) { m.metal = float(v); }); });
-        connect(rough, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) { change([&](Material3D &m) { m.rough = float(v); }); });
+        connect(metal, &SliderField::valueEdited, this, [this](double v) { change([&](Material3D &m) { m.metal = float(v); }); });
+        connect(rough, &SliderField::valueEdited, this, [this](double v) { change([&](Material3D &m) { m.rough = float(v); }); });
         connect(engine, &Engine::layersChanged, this, [this] { refresh(); });
         auto *timer = new QTimer(this); timer->setInterval(500);
         connect(timer, &QTimer::timeout, this, [this] { if (isVisible()) refresh(); }); timer->start();
         refresh();
     }
 private:
-    QDoubleSpinBox *spin(const QString &object) {
-        auto *s = new QDoubleSpinBox; s->setObjectName(object); s->setRange(0, 1); s->setDecimals(3); s->setSingleStep(.01); return s;
+    SliderField *spin(const QString &object) {
+        auto *s = new SliderField; s->setObjectName(object); s->setRange(0, 1); s->setDecimals(3); s->setSingleStep(.01); return s;
     }
     std::optional<Material3D> current() const {
         Engine::Lock lock(&engine->mutex()); const auto it = engine->materials().find(selected);
@@ -155,7 +158,7 @@ private:
     }
     int users(quint64 id) const {
         Engine::Lock lock(&engine->mutex()); int count = 0;
-        for (int i = 0; i < engine->layerCount(); ++i) { const auto *l = engine->layer(i); if (l && l->type == SourceType::Model && l->modelMaterial == id) ++count; }
+        for (int i = 0; i < engine->layerCount(); ++i) { const auto *l = engine->layer(i); if (l && ((l->type == SourceType::Model && l->modelMaterial == id) || (l->scene3d && l->sceneDefaultMaterial == id))) ++count; }
         return count;
     }
     template<class F> void change(F edit) { auto before = current(); if (!before) return; auto after = *before; edit(after); if (before->toJson() != after.toJson()) commit(before, after); }
@@ -182,6 +185,7 @@ private:
           for (int i = 0; i < engine->layerCount(); ++i) {
               const auto *l = engine->layer(i);
               if (l && l->type == SourceType::Model) ++counts[l->modelMaterial];
+              if (l && l->scene3d) ++counts[l->sceneDefaultMaterial];
           }
           for (const auto &[id, m] : engine->materials()) {
               auto json = m->toJson(); json["users"] = counts[id]; state.append(json);
@@ -207,11 +211,11 @@ private:
         const QSignalBlocker n(name), c(color), mt(metal), r(rough);
         name->setText(m->name); color->setColor(QColor::fromRgbF(m->color[0], m->color[1], m->color[2])); metal->setValue(m->metal); rough->setValue(m->rough);
         const int count = users(m->id); remove->setEnabled(count == 0);
-        usage->setText(QStringLiteral("Used by %1 object(s) · shared across scenes").arg(count));
+        usage->setText(QStringLiteral("References: %1 · objects and scene defaults").arg(count));
         if (shown != m->toJson()) { shown = m->toJson(); sphere->setMaterial(*m); }
     }
     Engine *engine; QUndoStack *undo; std::function<void()> edited;
     quint64 selected = 0, listedSelection = ~quint64(0); QJsonObject shown; QJsonArray known, knownNames;
     QListWidget *list; MaterialSphere *sphere; QLineEdit *name; ColorPicker *color;
-    QDoubleSpinBox *metal, *rough; QPushButton *remove; QLabel *usage;
+    SliderField *metal, *rough; QPushButton *remove; QLabel *usage;
 };

@@ -5,6 +5,8 @@
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
@@ -54,6 +56,17 @@ int runScene3dTests(Engine &engine)
     Model3D gltf;
     QString error;
     check(gltf.load(triangle, &error) && gltf.meshCount() == 1 && gltf.triangleCount() == 1, "a glTF is read (inline buffer, no normals)");
+
+    const QString fbx = QFileInfo(QString::fromUtf8(__FILE__)).absoluteDir().filePath(
+        "../third_party/ufbx/misc/ufbx_testcases/maya_cube_7100_binary.fbx");
+    Model3D whole, filtered;
+    if (whole.load(fbx, &error) && !whole.objects().empty()) {
+        QStringList hidden;
+        for (const auto &object : whole.objects()) hidden << object.first;
+        check(whole.triangleCount() > 0 && filtered.load(fbx, &error, hidden) &&
+              filtered.triangleCount() == 0 && filtered.center() == whole.center() &&
+              filtered.radius() == whole.radius(), "FBX visibility filters triangles without changing its fit");
+    } else check(false, "read FBX object names");
 
     // The built-in primitives: each one read, unwrapped, about a unit in size
     for (const QString &name : Model3D::primitives()) {
@@ -396,6 +409,7 @@ int runScene3dTests(Engine &engine)
             engine.setParameter(smooth, "model/position/x", -1.1);
             engine.setParameter(smooth, "model/material/metal", 1.0);
             engine.setParameter(smooth, "model/material/rough", 0.08);
+            engine.setModelMaterial(engine.indexOfId(smooth), engine.addMaterial("Reflector"));
             engine.setParameter(smooth, "model/material/color/r", 0.95);
             engine.setParameter(smooth, "model/material/color/g", 0.95);
             engine.setParameter(smooth, "model/material/color/b", 0.95);
@@ -407,6 +421,7 @@ int runScene3dTests(Engine &engine)
                 engine.setParameter(id, "model/position/x", x);
                 engine.setParameter(id, "model/material/metal", metal);
                 engine.setParameter(id, "model/material/rough", rough);
+                engine.setModelMaterial(engine.indexOfId(id), engine.addMaterial("Surface sample"));
                 engine.setParameter(id, "model/material/color/r", metal > 0 ? 1.0 : 0.8);
                 engine.setParameter(id, "model/material/color/g", metal > 0 ? 0.75 : 0.25);
                 engine.setParameter(id, "model/material/color/b", metal > 0 ? 0.35 : 0.2);
@@ -573,6 +588,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "camera/pitch", 25.0);
         engine.setParameter(floorId, "model/material/rough", 0.03);
         engine.setParameter(floorId, "model/material/metal", 1.0);
+        check(engine.setModelMaterial(engine.indexOfId(caster), engine.addMaterial("Red caster")), "give the reflecting object its own material");
         engine.setParameter(caster, "model/material/color/r", 1.0);
         engine.setParameter(caster, "model/material/color/g", 0.1);
         engine.setParameter(caster, "model/material/color/b", 0.1);
@@ -787,6 +803,13 @@ int runScene3dTests(Engine &engine)
             return engine.grabOutput().pixelColor(x, y).lightness() > 12;
         };
         check(lit(64, 64), "what it holds is drawn by the scene");
+        engine.setParameter(cubeId, "model/transform_fx/position/x", .5);
+        engine.setParameter(cubeId, "model/transform_fx/enabled", true);
+        check(!lit(64, 64) && lit(86, 64), "Transform 3D modifier moves the rendered mesh");
+        check(engine.parameterValue(cubeId, "model/position/x").toDouble() == 0.0, "modifier leaves Spatial values intact");
+        engine.setParameter(cubeId, "model/transform_fx/enabled", false);
+        check(lit(64, 64), "bypassing Transform 3D restores placement");
+
         // Each moves what it holds, and they add up: 4 away at 40° of view, 0.5 is 22 pixels of 128
         engine.setParameter(outer, "merge/position/x", 0.5);
         check(!lit(64, 64) && lit(64 + 22, 64), "a Merge 3D moves what it holds");
@@ -1409,8 +1432,8 @@ int runScene3dTests(Engine &engine)
         {
             Engine::Lock lock(&engine.mutex());
             material = engine.layer(engine.indexOfId(a))->modelMaterial;
-            check(material != 0 && engine.layer(engine.indexOfId(b))->modelMaterial != material,
-                  "new objects have explicit independent material references");
+            check(material != 0 && engine.layer(engine.indexOfId(b))->modelMaterial == material,
+                  "new objects share their scene default material");
         }
         check(engine.setModelMaterial(engine.indexOfId(b), material), "share a material within the scene");
         check(engine.setParameter(a, "model/material/color/r", .25), "edit shared material color");
