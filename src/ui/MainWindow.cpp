@@ -15,6 +15,7 @@
 #include <QCheckBox>
 #include <memory>
 #include "Engine.h"
+#include "ProcessMemory.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "ControlsPanel.h"
@@ -402,6 +403,30 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // Output names and live status can be arbitrarily long; they must not grow the window.
     m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(m_status);
+
+    auto *usageLabel = new QLabel(statusBar());
+    usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
+    usageLabel->setToolTip(tr("System CPU and RAM usage, GPU activity and dedicated video memory when the driver reports them. "
+                              "A dash means the measurement is unavailable. With several GPUs, system readings show the highest usage."));
+    statusBar()->addPermanentWidget(usageLabel);
+    auto *usageTimer = new QTimer(usageLabel);
+    auto refreshUsage = [this, usageLabel, sampler = processMemory::SystemUsageSampler{}]() mutable {
+        auto usage = sampler.sample();
+        if (usage.vram < 0) {
+            const auto resources = m_engine->resourcesJson();
+            const double total = resources.value(QStringLiteral("graphics_memory_total_mb")).toDouble();
+            const double free = resources.value(QStringLiteral("graphics_memory_free_mb")).toDouble(-1);
+            if (total > 0 && free >= 0) usage.vram = 100.0 * (1.0 - std::min(free, total) / total);
+        }
+        const auto percent = [](double value) {
+            return value < 0 ? QStringLiteral("—") : QString::number(qRound(std::min(100.0, value))) + QLatin1Char('%');
+        };
+        usageLabel->setText(QStringLiteral("CPU %1  ·  GPU %2  ·  RAM %3  ·  VRAM %4")
+                                .arg(percent(usage.cpu), percent(usage.gpu), percent(usage.ram), percent(usage.vram)));
+    };
+    refreshUsage();
+    connect(usageTimer, &QTimer::timeout, usageLabel, refreshUsage);
+    usageTimer->start(1000);
 
     buildMenus();
     m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode());
