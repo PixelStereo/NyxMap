@@ -322,10 +322,15 @@ int main(int argc, char **argv)
                     "a layer's tree, as OSCQuery tells it");
             desk.sendText("{\"t\":\"listen\",\"path\":\"" + root + "/opacity\"}");
             desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[0.25]}");
-            desk.pumpUntil([&] { return !last("params").isEmpty(); });
-            require(std::abs(engine.layer(layerIndex)->opacity - 0.25) < 1e-4, "a layer's value is written");
-            require(std::abs(last("params").value("v").toObject().value(QString::fromLatin1(root) + "/opacity").toArray().at(0).toDouble() - 0.25) < 1e-4,
-                    "and followed");
+            const QString opacityPath = QString::fromLatin1(root) + "/opacity";
+            const auto followed = [&] {
+                const auto args = last("params").value("v").toObject().value(opacityPath).toArray();
+                return !args.isEmpty() && near(args.at(0).toDouble(-1), 0.25, 1e-4);
+            };
+            // The subscription can send the old value before the write is echoed.
+            desk.pumpUntil(followed);
+            require(near(engine.layer(layerIndex)->opacity, 0.25, 1e-4), "a layer's value is written");
+            require(followed(), "the desk receives the updated layer opacity");
             engine.layer(layerIndex)->locked = true;
             desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[0.75]}");
             desk.pump(200);
