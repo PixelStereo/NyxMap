@@ -479,11 +479,7 @@ jobs:
 
   macos:
     if: needs.scope.outputs.macos == 'true'
-    name: macOS (Apple Silicon) + tests / ${{ matrix.shard }}
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [scene-ui, isf-media, core]
+    name: macOS (Apple Silicon) + tests
     runs-on: macos-latest
     needs: [scope, media]
     steps:
@@ -508,53 +504,34 @@ jobs:
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
       - name: macOS source build starts before packaging
-        if: matrix.shard == 'core'
         run: |
           codesign --verify --deep --strict build/runtimes/touchengine/TouchEngine.framework
           APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
           codesign --verify --deep --strict "build/$APP_NAME.app/Contents/Frameworks/TouchEngine.framework"
           "./build/$APP_NAME.app/Contents/MacOS/$APP_NAME" --help
       - name: Engine tests
-        shell: bash
-        env:
-          TEST_SHARD: ${{ matrix.shard }}
         run: |
-          # Each shard has its own runner/desktop. Together the shards cover
-          # the same deterministic and timing tests as the distribution build.
-          args=(--test-dir build --output-on-failure --timeout 900 --no-tests=error)
-          case "$TEST_SHARD" in
-            scene-ui)
-              ctest "${args[@]}" -R '^scene3d_ui$' -LE timing
-              ;;
-            isf-media)
-              ctest "${args[@]}" -R '^isf_safe$' -LE timing
-              python3 scripts/run_timing_tests.py ctest "${args[@]}" -R '^media$' -L timing
-              ;;
-            core)
-              ctest "${args[@]}" -E '^(scene3d_ui|isf_safe)$' -LE timing
-              python3 scripts/run_timing_tests.py ctest "${args[@]}" -E '^media$' -L timing
-              ;;
-            *) echo "Unknown test shard: $TEST_SHARD" >&2; exit 1 ;;
-          esac
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing
+          python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
       - name: Dependency versions
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         run: |
           { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; brew list --versions qt ffmpeg; } \
             | tee deps-macos.txt
           echo "TouchEngine macOS SDK c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962 (Shared Use License; licenses/touchengine.txt)" >> deps-macos.txt
       - name: Homebrew FFmpeg version
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         id: ffmpeg
         run: |
           echo "version=$(brew list --versions ffmpeg | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           echo "os=$(sw_vers -productVersion)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         with:
           path: ~/ffmpeg-lgpl
           key: ffmpeg-lgpl-${{ runner.os }}-${{ steps.ffmpeg.outputs.os }}-${{ runner.arch }}-${{ steps.ffmpeg.outputs.version }}-${{ hashFiles('scripts/build_ffmpeg_lgpl.py') }}
       - name: FFmpeg without GPL components, for the package
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         run: |
           # Homebrew's is built with --enable-gpl (x264, x265): the package ships the same version rebuilt LGPL,
           # in place of Homebrew's libraries from here on (the tests above ran with Homebrew's)
@@ -563,7 +540,7 @@ jobs:
           { echo; echo "FFmpeg in the package: built from source without GPL components (LGPL v2.1 or later)"; \
             cat ~/ffmpeg-lgpl/VERSION; } | tee -a deps-macos.txt
       - name: Package .app with runtime dependencies
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -689,7 +666,7 @@ jobs:
           codesign --force --sign - "$APP" # the resource added: sealed again
           ditto -c -k --keepParent "$APP" "NyxMap-macos${TAG_SUFFIX}.zip"
       - name: Smoke test of the extracted app
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/clean" && ditto -x -k NyxMap-macos*.zip "$RUNNER_TEMP/clean"
           APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
@@ -698,7 +675,7 @@ jobs:
           python3 scripts/smoke_package.py "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/Resources/isf" \
             "$PWD/test/media" "$RUNNER_TEMP/smoke"
       - uses: actions/upload-artifact@v4
-        if: needs.scope.outputs.package == 'true' && matrix.shard == 'core'
+        if: needs.scope.outputs.package == 'true'
         with:
           name: NyxMap-macos
           path: NyxMap-macos*.zip

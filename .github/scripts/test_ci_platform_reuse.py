@@ -51,12 +51,6 @@ class PlatformReuseTest(unittest.TestCase):
             self.assertEqual(reused, {'linux', 'windows'} if linux_result == 'success' else {'windows'})
             self.assertEqual(url, run['html_url'])
 
-    def test_reuse_requires_all_macos_shards(self):
-        jobs = [{'name': f'macOS (Apple Silicon) + tests / {shard}', 'conclusion': 'success'}
-                for shard in ('scene-ui', 'isf-media', 'core')]
-        self.assertNotIn('macos', successful_jobs(jobs[:-1]))
-        self.assertIn('macos', successful_jobs(jobs))
-
     def test_only_linux_and_selection_workflow_changes(self):
         newer = WORKFLOW.replace('old-linux', 'new-linux').replace('outputs: {}', 'outputs: expanded')
         newer = newer.replace('needs.scope.outputs.build', 'needs.scope.outputs.macos', 1)
