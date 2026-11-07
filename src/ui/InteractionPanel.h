@@ -115,6 +115,8 @@ private:
     QTimer *m_valuesTimer = nullptr;
     class InteractionPatch *m_patch = nullptr; // the nodes, in place of the list
     class QStackedWidget *m_views = nullptr;
+    quint64 m_targetTab = 0;
+    std::function<quint64(quint64)> m_addTarget;
     quint64 m_shown = 0;        // the interaction whose settings are shown
     int m_xyAxis = 0; // source/chain currently edited in an XY interaction
     bool m_committing = false;  // its own edit going to the engine: the settings are not made again

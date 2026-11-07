@@ -848,6 +848,24 @@ void LayerInspector::rebuild()
     connect(tabs->tabBar(), &QWidget::customContextMenuRequested, this, [this, tabs, id = s.id](const QPoint &point) {
         const int tab = tabs->tabBar()->tabAt(point);
         if (tab < 0) return;
+        const QString title = tabs->tabText(tab);
+        QStringList paths;
+        for (const ParamInfo &param : m_engine->parameters(id)) {
+            const auto &path = param.path;
+            if ((title == QLatin1String("3D") && (path.startsWith("merge/") || path.startsWith("light/"))) ||
+                (title == QLatin1String("Scene") && (path.startsWith("camera/") || path.startsWith("scene/"))) ||
+                (title == QLatin1String("Source") && (path == QLatin1String("model/detail") || path == QLatin1String("model/shading"))) ||
+                (title == QLatin1String("Material") && (path.startsWith("model/material/") || path == QLatin1String("model/unlit"))) ||
+                (title == QLatin1String("Spatial") && (path.startsWith("model/position/") || path.startsWith("model/rotation/") ||
+                                                        path.startsWith("model/scale/") || path == QLatin1String("model/fit"))) ||
+                (title == QLatin1String("FX") && (path.startsWith("model/displace/") || path.startsWith("model/transform_fx/") ||
+                                                   path == QLatin1String("model/bend"))))
+                paths << path;
+        }
+        if (!paths.isEmpty()) {
+            show3dCategoryMenu(id, paths, tabs->tabBar()->mapToGlobal(point));
+            return;
+        }
         if (PresetEditor *editor = PresetEditor::instance()) {
             QMenu menu(this);
             const QString category = tabs->tabText(tab).section(' ', 0, 0);
@@ -4506,6 +4524,27 @@ void LayerInspector::addSceneEnvironment(QFormLayout *form)
 
 // The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors
 // as pickers, switches, choices; each one undoable, animatable (right-click) and refreshed while it moves
+void LayerInspector::show3dCategoryMenu(quint64 layer, const QStringList &paths, const QPoint &global)
+{
+    QMenu menu(this);
+    QJsonObject defaults;
+    QStringList presetPaths;
+    for (const ParamInfo &param : m_engine->parameters(layer)) {
+        if (!paths.contains(param.path)) continue;
+        if (param.presettable) presetPaths << param.path;
+        if ((param.access & ParamInfo::Write) && param.defaultValue.isValid() && param.type != ParamInfo::Type::Trigger)
+            defaults[param.path] = QJsonValue::fromVariant(param.defaultValue);
+    }
+    if (auto *editor = PresetEditor::instance()) editor->fillMenu(&menu, layer, presetPaths);
+    if (!defaults.isEmpty()) {
+        menu.addAction(QStringLiteral("Reset to Defaults"), this, [this, layer, defaults] {
+            cmd::setValues(m_undo, m_engine, layer, defaults, QStringLiteral("Reset 3D Category"));
+            refreshDynamic();
+        });
+    }
+    if (!menu.isEmpty()) menu.exec(global);
+}
+
 QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList &except, const std::function<void(QFormLayout *)> &first)
 {
     auto *w = new QWidget;
@@ -4522,8 +4561,21 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
         const QString category = p.label.section(QStringLiteral(" › "), 0, 0), name = p.label.section(QStringLiteral(" › "), 1);
         if (!form || category != section) {
             section = category;
-            auto *box = new QGroupBox(category);
+            auto *box = new QGroupBox;
+            QStringList paths;
+            for (const auto &param : params)
+                if (param.label.section(QStringLiteral(" › "), 0, 0) == category) paths << param.path;
+            auto *heading = new QToolButton(box);
+            heading->setText(category);
+            heading->setAutoRaise(true);
+            heading->setArrowType(Qt::DownArrow);
+            heading->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            heading->setToolTip(QStringLiteral("Preset and reset options for this category"));
+            connect(heading, &QToolButton::clicked, this, [this, heading, paths, layer = m_layerId] {
+                show3dCategoryMenu(layer, paths, heading->mapToGlobal(heading->rect().bottomLeft()));
+            });
             form = new QFormLayout(box);
+            form->addRow(heading);
             form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
             v->addWidget(box);
             if (first) first(form);
