@@ -1072,7 +1072,10 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
         up = g->parent;
     }
     if (object.type == SourceType::Light) return parent.map(object.light.located());
-    if (object.model) return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+    if (object.model) {
+        if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
+        return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+    }
     const ModelPlacement &p = object.modelPlacement;
     return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
 }
@@ -1107,10 +1110,10 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
         }
         if (!m->enabled || m->soloHidden) continue;
         if (m->type == SourceType::Model && m->model) {
-            m->model->setDetail(m->modelPlacement.meshDetail(m->modelDisplace != 0));
+            m->model->setDetail(m->modelPlacement.meshDetail(m->modelDisplaceEnabled && m->modelDisplace != 0));
             m->model->setSmooth(m->modelPlacement.shading == 1);
             const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
-            const Layer *disp = m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
+            const Layer *disp = m->modelDisplaceEnabled && m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
             auto placement = m->modelPlacement;
             if (m->material) {
                 placement.color = m->material->color;
@@ -1120,7 +1123,8 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             }
             items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
                              disp ? stagePicture(*disp, m->modelDisplaceStage) : 0,
-                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid, parent});
+                             m->modelPlacement.displaceAmount, m->modelPlacement.displaceMid,
+                             m->modelTransformFxEnabled ? parent * m->modelTransformFx.transform() : parent});
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
         }

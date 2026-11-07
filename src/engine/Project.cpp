@@ -177,7 +177,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
-        if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
+        if (l.scene3d) { o["scene3d"] = true; o["default_material"] = QString::number(l.sceneDefaultMaterial); }
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
             o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
@@ -233,6 +233,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        if (l.model && !l.model->hiddenObjects().isEmpty()) src["hidden_objects"] = QJsonArray::fromStringList(l.model->hiddenObjects());
         if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
         if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
         if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
@@ -326,6 +327,7 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->isGroup = o.value("group").toBool(false);
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
+        l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
             const QJsonObject env = o.value("environment").toObject();
@@ -420,7 +422,9 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
                 l->modelDisplaceStage = src.value("displace_stage").toInt(-1);
             }
         }
-        const bool ok = setLayerModel(index, path, &err);
+        QStringList hidden;
+        for (const auto &key : src.value("hidden_objects").toArray()) if (key.isString()) hidden << key.toString();
+        const bool ok = setLayerModel(index, path, &err, hidden);
         if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
         if (!ok) {
             Lock lk(&m_mutex);
@@ -541,7 +545,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     Lock lk(&m_mutex);
     Layer *l = layer(index);
     if (o.contains("mesh")) l->mapping.setMeshJson(o.value("mesh").toObject());
-    parametersFromJson(l->parameters(), o.value("params").toObject(), &l->extraParams);
+    const auto layerParams = o.value("params").toObject();
+    parametersFromJson(l->parameters(), layerParams, &l->extraParams);
+    if (l->type == SourceType::Model && !layerParams.contains("model/displace/enabled"))
+        l->modelDisplaceEnabled = l->modelDisplace != 0;
     if (l->hasTransport()) {
         // Played or paused: its parameter (a snapshot that restarts it plays it)
         const QJsonObject params = o.value("params").toObject();
@@ -860,6 +867,11 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     for (const auto &value : root.value("materials").toArray())
         restoreMaterial(Material3D::fromJson(value.toObject()));
     const QJsonArray layers = root.value("layers").toArray();
+    {
+        Lock lock(&m_mutex);
+        for (const auto &entry : layers)
+            m_nextId = std::max(m_nextId, entry.toObject().value("id").toString().toULongLong() + 1);
+    }
     for (int i = 0; i < layers.size(); ++i) {
         int idx = addLayer(QString(), layerCount());
         layerFromJson(idx, layers[i].toObject(), dir, &warnings);

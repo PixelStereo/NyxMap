@@ -17,6 +17,7 @@
 #include <QImage>
 #include <QMatrix4x4>
 #include <QString>
+#include <QStringList>
 #include <QVector3D>
 #include <algorithm>
 #include <array>
@@ -155,7 +156,9 @@ public:
     static QString primitivePath(const QString &name);
     static bool isPrimitivePath(const QString &path);
 
-    bool load(const QString &path, QString *err); // reads the file (no GL): its meshes, materials and textures
+    bool load(const QString &path, QString *err, const QStringList &hidden = {});
+    const auto &objects() const { return m_objects; }
+    const QStringList &hiddenObjects() const { return m_hidden; } // reads the file (no GL): its meshes, materials and textures
     QString path() const { return m_path; }
     int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;
@@ -200,6 +203,7 @@ private:
         std::vector<Vertex> vertices;
         std::vector<quint32> indices;
         int material = 0;
+        QString object;
         GLuint vao = 0, vbo = 0, ibo = 0;
         GLuint edgeVao = 0, edgeIbo = 0;
         GLsizei edgeCount = 0;
@@ -215,6 +219,8 @@ private:
     bool uploadGl();
 
     QString m_path;
+    QStringList m_hidden;
+    std::vector<std::pair<QString, QString>> m_objects;
     std::vector<Mesh> m_meshes;
     int m_meshesRead = 0;
     std::vector<Material> m_materials;
