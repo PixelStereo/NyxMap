@@ -14,7 +14,6 @@
 #include <QTcpSocket>
 #include <QTcpServer>
 #include <QTimer>
-#include <QThread>
 #include <cstdio>
 #include <iostream>
 #include <stdexcept>
@@ -40,9 +39,17 @@ struct Client {
         t.start();
         while (t.elapsed() < ms) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (!socket.isOpen()) break;
             socket.waitForReadyRead(5);
-            in += socket.readAll();
+            if (socket.bytesAvailable()) in += socket.readAll();
         }
+    }
+    template<class Predicate>
+    void pumpUntil(Predicate ready, int timeoutMs = 2000)
+    {
+        QElapsedTimer deadline;
+        deadline.start();
+        while (!ready() && deadline.elapsed() < timeoutMs) pump(10);
     }
     QByteArray request(const QByteArray &text)
     {
@@ -54,7 +61,10 @@ struct Client {
         while (deadline.elapsed() < 5000) {
             pump(10);
             const int headerEnd = in.indexOf("\r\n\r\n");
-            if (headerEnd < 0) continue;
+            if (headerEnd < 0) {
+                if (socket.state() == QAbstractSocket::UnconnectedState) break;
+                continue;
+            }
             // Wait for the HTTP response, rather than assuming the runner
             // delivered it within a fixed sleep. WebSocket upgrades end here.
             if (in.startsWith("HTTP/1.1 101")) break;
@@ -100,8 +110,15 @@ struct Client {
         while (rest.size() >= 2) {
             quint64 len = quint8(rest[1]) & 0x7F;
             int pos = 2;
-            if (len == 126) { len = qFromBigEndian<quint16>(rest.constData() + 2); pos = 4; }
-            else if (len == 127) { len = qFromBigEndian<quint64>(rest.constData() + 2); pos = 10; }
+            if (len == 126) {
+                if (rest.size() < 4) break;
+                len = qFromBigEndian<quint16>(rest.constData() + 2);
+                pos = 4;
+            } else if (len == 127) {
+                if (rest.size() < 10) break;
+                len = qFromBigEndian<quint64>(rest.constData() + 2);
+                pos = 10;
+            }
             if (quint64(rest.size()) < quint64(pos) + len) break;
             out << QJsonDocument::fromJson(rest.mid(pos, int(len))).object();
             rest.remove(0, pos + int(len));
@@ -275,7 +292,7 @@ int main(int argc, char **argv)
                 return found;
             };
             desk.sendText("{\"t\":\"desk\"}");
-            desk.pump(400);
+            desk.pumpUntil([&] { return !last("catalog").isEmpty() && !last("state").isEmpty(); });
             const QJsonObject catalog = last("catalog").value("catalog").toObject();
             require(catalog.value("sequences").toArray().size() == 1 && catalog.value("snapshots").toArray().size() == 2 &&
                         catalog.value("presets").toArray().size() == 1 && catalog.value("timelines").toArray().size() == 1,
@@ -284,25 +301,28 @@ int main(int argc, char **argv)
                     "and where the show is");
             const QByteArray id = QByteArray::number(sequenceId);
             desk.sendText("{\"t\":\"do\",\"c\":\"go\",\"id\":\"" + id + "\"}");
-            desk.pump(400);
+            desk.pumpUntil([&] {
+                return last("state").value("state").toObject().value("values").toObject()
+                           .value("/sequence/cue/current/number").toInt() == 1;
+            });
             require(engine.sequencer().position() == 0, "its GO plays the first cue");
             require(last("state").value("state").toObject().value("values").toObject().value("/sequence/cue/current/number").toInt() == 1,
                     "and it follows");
             desk.sendText("{\"t\":\"do\",\"c\":\"stop_all\"}");
             desk.sendText("{\"t\":\"do\",\"c\":\"cue\",\"id\":\"" + id + "\",\"cue\":\"" +
                           QByteArray::number(engine.sequencer().sequence(0).steps[1].runtimeId) + "\"}");
-            desk.pump(300);
+            desk.pumpUntil([&] { return engine.sequencer().position() == 1; });
             require(engine.sequencer().position() == 1, "a cue of the stack is played by its id");
 
             const QByteArray root = "/show/layer/by-id/" + QByteArray::number(layerId);
             desk.sendText("{\"t\":\"layer\",\"id\":\"" + QByteArray::number(layerId) + "\"}");
-            desk.pump(300);
+            desk.pumpUntil([&] { return !last("layer").isEmpty(); });
             const QJsonObject tree = last("layer").value("tree").toObject();
             require(tree.value("FULL_PATH").toString() == QString::fromLatin1(root) && tree.value("CONTENTS").toObject().contains("opacity"),
                     "a layer's tree, as OSCQuery tells it");
             desk.sendText("{\"t\":\"listen\",\"path\":\"" + root + "/opacity\"}");
             desk.sendText("{\"t\":\"write\",\"path\":\"" + root + "/opacity\",\"args\":[0.25]}");
-            desk.pump(300);
+            desk.pumpUntil([&] { return !last("params").isEmpty(); });
             require(std::abs(engine.layer(layerIndex)->opacity - 0.25) < 1e-4, "a layer's value is written");
             require(std::abs(last("params").value("v").toObject().value(QString::fromLatin1(root) + "/opacity").toArray().at(0).toDouble() - 0.25) < 1e-4,
                     "and followed");
@@ -349,7 +369,7 @@ int main(int argc, char **argv)
         const QByteArray origin = "http://127.0.0.1:" + QByteArray::number(port);
         const QByteArray host = "127.0.0.1:" + QByteArray::number(port);
         require(phone.upgrade("/ws?pin=482913", origin, host).startsWith("HTTP/1.1 101"), "the right PIN, from the page's own origin: accepted");
-        phone.pump(700);
+        phone.pumpUntil([&] { return !phone.messages().isEmpty(); });
         auto first = phone.messages();
         require(!first.isEmpty() && first[0].value("t").toString() == "controls", "it gets the list at once");
         const QJsonArray list = first[0].value("list").toArray();
@@ -362,13 +382,15 @@ int main(int argc, char **argv)
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(a)}, {"v", 7.5}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(b)}, {"v", 1}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "color"}, {"id", QString::number(c)}, {"rgb", QJsonArray{0.1, 0.2, 0.3}}}).toJson(QJsonDocument::Compact));
-        phone.pump(700);
+        phone.pumpUntil([&] {
+            return near(engine.control(a)->value, 7.5) && engine.control(b)->value == 1 && near(engine.control(c)->rgb[2], 0.3);
+        });
         require(near(engine.control(a)->value, 7.5) && engine.control(b)->value == 1.0 && near(engine.control(c)->rgb[2], 0.3), "a slider, a held button and a color set from the phone");
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", QString::number(a)}, {"v", 99}}).toJson(QJsonDocument::Compact));
         phone.sendText("not json");
         phone.sendText(QJsonDocument(QJsonObject{{"t", "set"}, {"id", "999999"}, {"v", 1}}).toJson(QJsonDocument::Compact));
         phone.sendText(QJsonDocument(QJsonObject{{"t", "layer"}, {"id", QString::number(a)}, {"v", 1}}).toJson(QJsonDocument::Compact));
-        phone.pump(700);
+        phone.pumpUntil([&] { return near(engine.control(a)->value, 10); });
         require(near(engine.control(a)->value, 10), "a value beyond the range is kept in it");
         require(server.isRunning(), "junk is ignored, nothing falls");
 
@@ -376,13 +398,17 @@ int main(int argc, char **argv)
         phone.in.clear();
         engine.setControlValue(a, 2.5);
         engine.setControlColor(c, 1, 0, 0);
-        phone.pump(800);
         QJsonObject values;
-        for (const QJsonObject &m : phone.messages()) {
-            if (m.value("t").toString() != "values") continue;
-            const QJsonObject v = m.value("v").toObject();
-            for (auto it = v.begin(); it != v.end(); ++it) values[it.key()] = it.value();
-        }
+        phone.pumpUntil([&] {
+            values = {};
+            for (const QJsonObject &m : phone.messages()) {
+                if (m.value("t").toString() != "values") continue;
+                const QJsonObject v = m.value("v").toObject();
+                for (auto it = v.begin(); it != v.end(); ++it) values[it.key()] = it.value();
+            }
+            return near(values.value(QString::number(a)).toDouble(-1), 2.5) &&
+                   near(values.value(QString::number(c)).toArray().at(0).toDouble(-1), 1.0);
+        });
         require(near(values.value(QString::number(a)).toDouble(-1), 2.5), "a value changed in NyxMap reaches the phone");
         require(values.value(QString::number(c)).toArray().size() == 3 && near(values.value(QString::number(c)).toArray()[0].toDouble(), 1.0), "and a color");
         require(!values.contains(QString::number(b)) || values.value(QString::number(b)).toDouble() == 1.0, "only what changed");
@@ -395,9 +421,12 @@ int main(int argc, char **argv)
         ShowControl extra;
         extra.name = "Extra";
         engine.addControl(extra);
-        phone.pump(800);
         bool refreshed = false;
-        for (const QJsonObject &m : phone.messages()) refreshed |= m.value("t").toString() == "controls" && m.value("list").toArray().size() == 4;
+        phone.pumpUntil([&] {
+            for (const QJsonObject &m : phone.messages())
+                refreshed |= m.value("t").toString() == "controls" && m.value("list").toArray().size() == 4;
+            return refreshed;
+        });
         require(refreshed, "a control added in NyxMap appears on the phone");
 
         // A frame that is too large, or not masked, drops the client
@@ -405,7 +434,6 @@ int main(int argc, char **argv)
             Client big;
             require(big.connectTo(port), "connect");
             require(big.upgrade("/ws?pin=482913", origin, host).startsWith("HTTP/1.1 101"), "second phone");
-            big.sendText(QByteArray(200, 'x')); // fine
             QByteArray huge;
             huge.append(char(0x81));
             huge.append(char(0xFE));
@@ -415,7 +443,7 @@ int main(int argc, char **argv)
             huge.append(QByteArray(10000, 'x'));
             big.socket.write(huge);
             big.socket.flush();
-            big.pump(800);
+            big.pumpUntil([&] { return big.socket.state() != QAbstractSocket::ConnectedState; });
             require(big.socket.state() != QAbstractSocket::ConnectedState, "an oversize frame drops the connection");
         }
         // The lockout: eight wrong PINs, then even the right one is refused for a while
@@ -442,7 +470,7 @@ int main(int argc, char **argv)
             Client w;
             require(w.connectTo(p), "connect");
             require(w.upgrade("/ws", o, hh).startsWith("HTTP/1.1 101"), "no code: it connects without one");
-            w.pump(700);
+            w.pumpUntil([&] { return !w.messages().isEmpty(); });
             require(!w.messages().isEmpty() && w.messages()[0].value("t").toString() == "controls", "and gets the controls");
             Client x;
             require(x.connectTo(p), "connect");
@@ -451,7 +479,6 @@ int main(int argc, char **argv)
         }
         // Stopped: nothing listens
         server.stop();
-        for (int i = 0; i < 20; ++i) { QCoreApplication::processEvents(); QThread::msleep(10); }
         // Nothing answers any more (a refused connection, or one the system drops at once)
         Client gone;
         const bool answered = gone.connectTo(port) && gone.request("GET / HTTP/1.1\r\nHost: x\r\n\r\n").startsWith("HTTP/");
