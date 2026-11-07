@@ -149,7 +149,7 @@ public:
         commit(std::move(graph), QStringLiteral("Add branch filter"));
         return id;
     }
-    void addBranch(quint64 mapping, bool filtered) {
+    quint64 addBranch(quint64 mapping, bool filtered) {
         auto graph = m_engine->interactionGraph();
         quint64 next = 1, from = 0;
         for (const auto &n : graph.nodes) {
@@ -159,17 +159,17 @@ public:
         if (!from) {
             const auto definitions = m_engine->interactions();
             const auto it = std::find_if(definitions.begin(), definitions.end(), [=](const auto &x) { return x.id == mapping; });
-            if (it == definitions.end() || it->isAction() || !it->xyInputs.empty()) return;
+            if (it == definitions.end() || it->isAction() || !it->xyInputs.empty()) return 0;
             Interaction settings;
             settings.name = it->name;
             from = next++;
             graph.nodes.push_back({from, InteractionGraph::Kind::Source, settings});
             graph.nodes.back().mapping = mapping;
         }
-        appendBranch(std::move(graph), from, next, filtered);
+        return appendBranch(std::move(graph), from, next, filtered);
     }
 private:
-    void appendBranch(InteractionGraph graph, quint64 from, quint64 next, bool filtered) {
+    quint64 appendBranch(InteractionGraph graph, quint64 from, quint64 next, bool filtered) {
         if (filtered) {
             Interaction settings;
             settings.filters = {InteractionStage::made(InteractionFilter::Math)};
@@ -183,6 +183,7 @@ private:
         graph.edges.push_back({from, next});
         m_selected = next;
         commit(std::move(graph), QStringLiteral("Add mapping destination"));
+        return next;
     }
 
 private:

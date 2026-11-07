@@ -42,6 +42,8 @@
 #include <QSplitter>
 #include <QButtonGroup>
 #include <QTimer>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUndoCommand>
@@ -287,6 +289,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_views->addWidget(m_list);
     m_views->addWidget(patchScroll);
     auto *branches = new InteractionGraphWorkspace(engine, undo);
+    m_addTarget = [branches](quint64 mapping) { return branches->addBranch(mapping, false); };
     auto *routingHost = new QWidget;
     auto *routingLayout = new QVBoxLayout(routingHost);
     routingLayout->setContentsMargins(0, 0, 0, 0);
@@ -1059,6 +1062,7 @@ void InteractionPanel::rebuildSettings()
 {
     const std::optional<Interaction> cur = selected();
     if (!cur || cur->id != m_shown || cur->xyInputs.empty()) m_xyAxis = 0;
+    if (!cur || cur->id != m_shown) m_targetTab = 0;
     m_shown = cur ? cur->id : 0;
     m_inMeter = m_outMeter = nullptr;
     m_actionState = nullptr;
@@ -1550,58 +1554,113 @@ void InteractionPanel::rebuildSettings()
         return;
     }
 
-    // The target
-    auto *target = new QToolButton;
-    target->setText(targetLabel(it.layer, it.param));
-    target->setPopupMode(QToolButton::InstantPopup);
-    target->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    target->setToolTip(QStringLiteral("The value of the show it drives: a number, a switch, a choice or an action"));
-    auto *targetMenu = new QMenu(target);
-    target->setMenu(targetMenu);
-    connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, editRoot] {
-        targetMenu->clear();
-        auto fill = [&](QMenu *into, quint64 layer) {
-            std::vector<ParamInfo> params;
-            const std::vector<ParamInfo> available = m_engine->parameters(layer);
-            QSet<QString> writable;
-            for (const ParamInfo &p : available) {
-                if (!(p.access & ParamInfo::Write) || p.type == ParamInfo::Type::Text) continue;
-                writable.insert(p.path);
-                params.push_back(p);
-            }
-            // Add one selectable composite target above its individually
-            // addressable channels (e.g. param/color as well as /r, /g, /b).
-            for (const ParamInfo &p : available) {
-                if (!p.path.endsWith(QStringLiteral("/r"))) continue;
-                const QString base = p.path.chopped(2);
-                if (!writable.contains(base + QStringLiteral("/r")) ||
-                    !writable.contains(base + QStringLiteral("/g")) ||
-                    !writable.contains(base + QStringLiteral("/b")) ||
-                    writable.contains(base)) continue;
-                ParamInfo color = p;
-                color.path = base;
-                if (color.label.endsWith(QStringLiteral(" R"))) color.label.chop(2);
-                color.animatable = false;
-                params.push_back(color);
-            }
-            const auto points = m_engine->animatablePoints(layer);
-            params.insert(params.end(), points.begin(), points.end());
-            addParamMenu(into, params, [this, editRoot, layer](QMenu *m, const ParamInfo &p, const QString &text) {
-                m->addAction(text, this, [this, editRoot, layer, p] {
-                    editRoot(QStringLiteral("Change Interaction Target"), [this, layer, p](Interaction &x) {
-                        m_engine->configureInteractionTarget(x, layer, p.path);
-                    });
-                    m_xyAxis = 0;
-                    rebuildSettings();
-                    rebuildList();
+    // All destination tabs use the same parameter picker.
+    const auto makeTarget = [this](quint64 owner, const QString &path,
+                                    std::function<void(quint64, const QString &)> change, bool scalarOnly = false) {
+        auto *target = new QToolButton;
+        target->setText(targetLabel(owner, path));
+        target->setPopupMode(QToolButton::InstantPopup);
+        target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto *targetMenu = new QMenu(target);
+        target->setMenu(targetMenu);
+        connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, change, scalarOnly] {
+            targetMenu->clear();
+            auto fill = [&](QMenu *into, quint64 layer) {
+                std::vector<ParamInfo> params;
+                const std::vector<ParamInfo> available = m_engine->parameters(layer);
+                QSet<QString> writable;
+                for (const ParamInfo &p : available) {
+                    if (!(p.access & ParamInfo::Write) || p.type == ParamInfo::Type::Text) continue;
+                    writable.insert(p.path);
+                    params.push_back(p);
+                }
+                if (!scalarOnly) {
+                    // Add one selectable composite target above its individually
+                    // addressable channels (e.g. param/color as well as /r, /g, /b).
+                    for (const ParamInfo &p : available) {
+                        if (!p.path.endsWith(QStringLiteral("/r"))) continue;
+                        const QString base = p.path.chopped(2);
+                        if (!writable.contains(base + QStringLiteral("/r")) ||
+                            !writable.contains(base + QStringLiteral("/g")) ||
+                            !writable.contains(base + QStringLiteral("/b")) ||
+                            writable.contains(base)) continue;
+                        ParamInfo color = p;
+                        color.path = base;
+                        if (color.label.endsWith(QStringLiteral(" R"))) color.label.chop(2);
+                        color.animatable = false;
+                        params.push_back(color);
+                    }
+                    const auto points = m_engine->animatablePoints(layer);
+                    params.insert(params.end(), points.begin(), points.end());
+                }
+                addParamMenu(into, params, [this, change, layer](QMenu *menu, const ParamInfo &p, const QString &text) {
+                    menu->addAction(text, this, [change, layer, path = p.path] { change(layer, path); });
                 });
-            });
-        };
-        fillByOwner(targetMenu, fill);
+            };
+            fillByOwner(targetMenu, fill);
+        });
+        return target;
+    };
+    auto *target = makeTarget(it.layer, it.param, [this, editRoot](quint64 layer, const QString &path) {
+        editRoot(QStringLiteral("Change Interaction Target"), [this, layer, path](Interaction &x) {
+            m_engine->configureInteractionTarget(x, layer, path);
+        });
+        m_xyAxis = 0;
+        rebuildSettings();
+        rebuildList();
     });
-    form->addRow(QStringLiteral("Target"), target);
     attachPreset({target}, {QStringLiteral("target")});
+    if (root.xyInputs.empty()) {
+        auto *tabs = new QTabWidget;
+        tabs->setObjectName(QStringLiteral("interactionTargetTabs"));
+        auto *add = new QToolButton;
+        add->setText(QStringLiteral("Add Target"));
+        tabs->setCornerWidget(add);
+        connect(add, &QToolButton::clicked, this, [this, id] {
+            m_targetTab = m_addTarget(id);
+            rebuildSettings();
+        });
+        const auto addPage = [tabs](QToolButton *picker, quint64 node, const QString &label) {
+            auto *page = new QWidget;
+            auto *layout = new QHBoxLayout(page);
+            layout->addWidget(picker);
+            const int index = tabs->addTab(page, label);
+            tabs->tabBar()->setTabData(index, QVariant::fromValue(node));
+            return index;
+        };
+        addPage(target, 0, QStringLiteral("Target 1"));
+        const auto graph = m_engine->interactionGraph();
+        QSet<quint64> reachable;
+        for (const auto &node : graph.nodes)
+            if (node.mapping == id && node.kind == InteractionGraph::Kind::Source) reachable.insert(node.id);
+        qsizetype previous;
+        do {
+            previous = reachable.size();
+            for (const auto &edge : graph.edges)
+                if (reachable.contains(edge.from)) reachable.insert(edge.to);
+        } while (reachable.size() != previous);
+        for (const auto &node : graph.nodes) {
+            if (node.kind != InteractionGraph::Kind::Destination || !reachable.contains(node.id)) continue;
+            auto *picker = makeTarget(node.settings.layer, node.settings.param, [this, nodeId = node.id](quint64 layer, const QString &path) {
+                auto current = m_engine->interactionGraph();
+                for (auto &n : current.nodes) {
+                    if (n.id != nodeId) continue;
+                    n.settings.layer = layer;
+                    n.settings.param = path;
+                    m_undo->push(new SetInteractionGraph(m_engine, std::move(current), QStringLiteral("Change Routing Target")));
+                    return;
+                }
+            }, true);
+            const int index = addPage(picker, node.id, QStringLiteral("Target %1").arg(tabs->count() + 1));
+            if (m_targetTab == node.id) tabs->setCurrentIndex(index);
+        }
+        connect(tabs, &QTabWidget::currentChanged, this, [this, tabs](int index) {
+            m_targetTab = tabs->tabBar()->tabData(index).toULongLong();
+        });
+        form->addRow(tabs);
+    } else {
+        form->addRow(QStringLiteral("Target"), target);
+    }
 
     // Whole-color targets expose an explicit alpha opt-in. By default a
     // Chataigne RGBA packet changes RGB but keeps the layer's existing alpha.

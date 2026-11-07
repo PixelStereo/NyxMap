@@ -170,6 +170,7 @@ private:
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
     QPointer<class AdsrCurve> m_adsrCurve; // an instrument's envelope
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
+    void show3dCategoryMenu(quint64 layer, const QStringList &paths, const QPoint &global);
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
