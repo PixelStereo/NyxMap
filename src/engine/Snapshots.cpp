@@ -1030,6 +1030,13 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
                 else
                     initial.remove(it.key());
             }
+            // A cue can replace the source without rewiring the layer's projection.
+            if (!live.isEmpty()) {
+                for (const QString &key : {QStringLiteral("is_mapping_zone"), QStringLiteral("mapping_zone")}) {
+                    if (live.contains(key)) state[key] = live.value(key);
+                    else state.remove(key);
+                }
+            }
             state.insert("params", initial);
             if (delayOf(delays, "opacity") > 0 && params.contains("opacity"))
                 state.insert("enable", live.value("enable").toBool(false));

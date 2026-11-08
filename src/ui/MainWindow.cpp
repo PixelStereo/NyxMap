@@ -1049,6 +1049,11 @@ void MainWindow::buildMenus()
     if (prefs->shortcut().isEmpty()) prefs->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma)); // Linux / Windows
 
     QMenu *layer = menuBar()->addMenu(QStringLiteral("&Layer"));
+    auto *zones = layer->addMenu(QStringLiteral("Zones"));
+    connect(zones, &QMenu::aboutToShow, this, [this, zones] {
+        zones->clear();
+        fillZonesMenu(zones, currentLayer());
+    });
     // A layer is created empty; media is then dropped onto it (Media Bin, Finder)
     layer->addAction(QStringLiteral("New Layer"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), this,
                      &MainWindow::addEmptyLayer);
@@ -1354,7 +1359,7 @@ void MainWindow::refreshLayerList()
             r.name = l->name;
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
-            r.tag = l->isViewport ? QStringLiteral("▭")
+            r.tag = l->isMappingZone ? QStringLiteral("◈") : l->isViewport ? QStringLiteral("▭")
                     : l->scene3d  ? QStringLiteral("⬡")
                     : l->merge3d  ? QStringLiteral("◇")
                     : l->isGroup  ? QStringLiteral("▤")
@@ -1362,7 +1367,7 @@ void MainWindow::refreshLayerList()
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
-            r.color = l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
+            r.color = l->isMappingZone ? QColor(165, 146, 240) : l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
             r.group = l->isGroup;
             r.collapsed = l->isGroup && l->collapsed;
             r.locked = l->locked;
@@ -1428,6 +1433,12 @@ void MainWindow::refreshLayerList()
             }
             default: r.source = l->missingType != SourceType::None ? QFileInfo(l->sourcePath).fileName() + QStringLiteral(" — missing")
                                                                     : QStringLiteral("(empty)");
+            }
+            if (l->isMappingZone) {
+                r.source = QStringLiteral("Mapping Zone");
+                r.noPicture = true; // no opacity or blend controls for the geometry row
+            } else if (const auto *zone = m_engine->mappingZoneFor(*l)) {
+                r.source += QStringLiteral("  ·  ◈ %1").arg(zone->name);
             }
             QStringList fx;
             for (const auto &e : l->effects) fx << (e->enabled ? e->name() : QStringLiteral("(") + e->name() + QStringLiteral(")"));
@@ -1568,8 +1579,109 @@ QList<int> MainWindow::selectedRows() const
 // Layer actions (all undoable)
 // ---------------------------------------------------------------------------
 
+void MainWindow::assignZone(const QList<quint64> &layers, quint64 zone)
+{
+    struct Link {
+        quint64 layer, oldZone;
+        Mapping before, after;
+    };
+    class ChangeZone : public QUndoCommand {
+    public:
+        ChangeZone(Engine *engine, quint64 zone, std::vector<Link> links)
+            : QUndoCommand(zone ? QStringLiteral("Assign to Zone") : QStringLiteral("Unlink from Zone")),
+              engine(engine), zone(zone), links(std::move(links)) {}
+        void undo() override {
+            for (const auto &link : links) engine->setMappingZone(link.layer, link.oldZone, link.before);
+        }
+        void redo() override {
+            for (const auto &link : links) engine->setMappingZone(link.layer, zone, link.after);
+        }
+    private:
+        Engine *engine;
+        quint64 zone;
+        std::vector<Link> links;
+    };
+    std::vector<Link> links;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *destination = zone ? m_engine->layer(m_engine->indexOfId(zone)) : nullptr;
+        if (zone && (!destination || !destination->isMappingZone)) return;
+        for (quint64 id : layers) {
+            const int row = m_engine->indexOfId(id);
+            const auto *layer = m_engine->layer(row);
+            if (!layer || layer->isMappingZone || layer->isViewport || !layer->hasPicture() ||
+                m_engine->isLocked(row) || layer->mappingZone == zone ||
+                (destination && destination->parent != layer->parent)) continue;
+            const auto *previous = m_engine->mappingZoneFor(*layer);
+            links.push_back({id, previous ? previous->id : 0, layer->mapping,
+                             zone ? layer->mapping : m_engine->effectiveMapping(*layer)});
+        }
+    }
+    if (!links.empty()) m_undo->push(new ChangeZone(m_engine, zone, std::move(links)));
+}
+
+void MainWindow::fillZonesMenu(QMenu *menu, int row)
+{
+    Engine::Lock lock(&m_engine->mutex());
+    const auto *layer = m_engine->layer(row);
+    if (!layer || layer->isViewport || !layer->hasPicture()) {
+        menu->addAction(QStringLiteral("Select a mapped layer"))->setEnabled(false);
+        return;
+    }
+    const quint64 id = layer->id;
+    if (layer->isMappingZone) {
+        if (auto *editor = PresetEditor::instance())
+            editor->fillCategoryMenu(menu, id, QStringLiteral("Spatial"));
+        return;
+    }
+    QList<quint64> targets;
+    const auto selection = selectedRows();
+    for (int index : selection.contains(row) ? selection : QList<int>{row})
+        targets << m_engine->layerId(index);
+    const auto *linked = m_engine->mappingZoneFor(*layer);
+    if (linked) {
+        menu->addAction(QStringLiteral("Edit Zone · %1").arg(linked->name), this, [this, zone = linked->id] {
+            selectLayer(m_engine->indexOfId(zone));
+        });
+    }
+    const bool hasLink = std::any_of(targets.begin(), targets.end(), [this](quint64 target) {
+        const auto *layer = m_engine->layer(m_engine->indexOfId(target));
+        return layer && layer->mappingZone;
+    });
+    menu->addAction(QStringLiteral("Unlink and Keep Mapping"), this, [this, targets] { assignZone(targets, 0); })->setEnabled(hasLink);
+    auto *assign = menu->addMenu(QStringLiteral("Assign to Zone"));
+    for (int i = 0; i < m_engine->layerCount(); ++i) {
+        const auto *zone = m_engine->layer(i);
+        if (!zone->isMappingZone || zone->parent != layer->parent) continue;
+        auto *action = assign->addAction(zone->name, this, [this, targets, zoneId = zone->id] { assignZone(targets, zoneId); });
+        action->setCheckable(true);
+        action->setChecked(zone == linked);
+    }
+    assign->setEnabled(!assign->isEmpty());
+    menu->addAction(QStringLiteral("Create Zone from Layer…"), this, [this, id, targets, suggested = layer->name] {
+        bool accepted = false;
+        const QString name = QInputDialog::getText(this, QStringLiteral("Create Zone"), QStringLiteral("Name"),
+            QLineEdit::Normal, suggested, &accepted).trimmed();
+        if (!accepted || name.isEmpty()) return;
+        const int from = m_engine->indexOfId(id);
+        if (from < 0 || m_engine->isLocked(from)) return;
+        const int created = m_engine->addMappingZone(from, name);
+        if (created < 0) return;
+        const quint64 zone = m_engine->layerId(created);
+        m_undo->beginMacro(QStringLiteral("Create Mapping Zone"));
+        m_undo->push(new cmd::AddLayer(m_engine, created, QStringLiteral("Create Mapping Zone")));
+        assignZone(targets, zone);
+        m_undo->endMacro();
+        selectLayer(m_engine->indexOfId(zone));
+    })->setEnabled(!m_engine->isLocked(row));
+}
+
 bool MainWindow::loadIntoLayer(int i, const QString &path)
 {
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        if (const auto *layer = m_engine->layer(i); layer && layer->isMappingZone) return false;
+    }
     if (i < 0 || i >= m_engine->layerCount()) {
         statusBar()->showMessage(QStringLiteral("Create a layer with + first, then drop the media onto it."), 6000);
         return false;
@@ -2289,6 +2401,7 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
             into->setEnabled(!targets.empty());
             into->setToolTip(QStringLiteral("This layer's picture becomes the source of the one chosen"));
         }
+        fillZonesMenu(menu.addMenu(QStringLiteral("Zones")), row);
         menu.addAction(QStringLiteral("Copy Attributes"), this, [this, row] { copyLayerParams(row); });
         if (PresetEditor *pe = PresetEditor::instance()) { // any of its values into a preset
             menu.addSeparator();

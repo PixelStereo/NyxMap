@@ -173,6 +173,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     QJsonObject o;
     // Ids are strings: JSON numbers are doubles
     o["id"] = QString::number(l.id);
+    if (l.isMappingZone) o["is_mapping_zone"] = true;
+    if (l.mappingZone) o["mapping_zone"] = QString::number(l.mappingZone);
     if (l.parent) o["parent"] = QString::number(l.parent);
     if (l.isGroup) {
         o["group"] = true;
@@ -324,6 +326,8 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->masks = masks::fromJson(o.value("masks").toArray());
         ++l->masksRevision;
         l->matte = LayerMatte::fromJson(o.value("matte").toObject());
+        l->isMappingZone = o.value("is_mapping_zone").toBool(false);
+        l->mappingZone = l->isMappingZone ? 0 : o.value("mapping_zone").toString().toULongLong();
         l->isGroup = o.value("group").toBool(false);
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);

@@ -90,6 +90,7 @@ private:
     };
 
     Mapping *mapping() const;
+    bool mappingLocked() const;
     // Members of a group are mapped inside the group's canvas, itself mapped by the group, and so on up (lock held)
     std::vector<const Mapping *> groupMappings(int layer) const;
     bool isViewport(int layer) const;

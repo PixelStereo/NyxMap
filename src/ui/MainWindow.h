@@ -70,6 +70,8 @@ private:
     QList<int> selectedRows() const; // the selection the layer actions act on (layers, or viewports in their tab)
     void refreshAll();
     void selectLayer(int index);
+    void fillZonesMenu(QMenu *menu, int row);
+    void assignZone(const QList<quint64> &layers, quint64 zone);
     void toggleSolo(int row); // a setup aid: not undone, not saved
     int currentLayer() const;
     void statusTick();

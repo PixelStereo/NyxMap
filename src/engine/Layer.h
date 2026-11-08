@@ -470,6 +470,8 @@ struct Layer {
     int rawW = 0, rawH = 0;
 
     Mapping mapping;
+    bool isMappingZone = false;
+    quint64 mappingZone = 0; // stable layer id of a geometry-only Zone in the same canvas
     // Animations of its own numbers (one track each, on this layer): the Anim tab (see Engine::setLayerAnims)
     std::vector<Animation> anims;
     GLuint meshVbo = 0;  // its mesh's vertices (render thread)

@@ -140,6 +140,61 @@ std::unique_ptr<Layer> Engine::makeLayerLocked(const QString &name)
     return l;
 }
 
+const Layer *Engine::mappingZoneFor(const Layer &layer) const
+{
+    if (!layer.mappingZone || layer.isMappingZone || layer.isViewport || !layer.hasPicture()) return nullptr;
+    const int index = indexOfId(layer.mappingZone);
+    const auto *zone = index >= 0 ? m_layers[size_t(index)].get() : nullptr;
+    return zone && zone->isMappingZone && zone->parent == layer.parent ? zone : nullptr;
+}
+
+const Mapping &Engine::effectiveMapping(const Layer &layer) const
+{
+    if (const auto *zone = mappingZoneFor(layer)) return zone->mapping;
+    return layer.mapping;
+}
+
+int Engine::addMappingZone(int from, const QString &name)
+{
+    quint64 id;
+    {
+        Lock lock(&m_mutex);
+        const auto *source = layer(from);
+        if (!source || source->isViewport || source->isMappingZone || !source->hasPicture()) return -1;
+        auto zone = makeLayerLocked(name);
+        id = zone->id;
+        zone->isMappingZone = true;
+        zone->enabled = false;
+        zone->parent = source->parent;
+        zone->mapping = effectiveMapping(*source);
+        m_layers.insert(m_layers.begin() + from, std::move(zone));
+        normalizeLocked();
+    }
+    emit layersChanged();
+    return indexOfId(id);
+}
+
+bool Engine::setMappingZone(quint64 layerId, quint64 zoneId, const Mapping &local)
+{
+    {
+        Lock lock(&m_mutex);
+        auto *target = layer(indexOfId(layerId));
+        if (!target || target->isMappingZone || target->isViewport || !target->hasPicture()) return false;
+        if (zoneId) {
+            const auto *zone = layer(indexOfId(zoneId));
+            if (!zone || !zone->isMappingZone || zone->parent != target->parent) return false;
+        }
+        const unsigned revision = target->mapping.revision;
+        const double aspect = target->mapping.aspect;
+        target->mappingZone = zoneId;
+        target->mapping = local;
+        target->mapping.aspect = aspect;
+        target->mapping.revision = revision + 1;
+    }
+    emit layersChanged();
+    return true;
+}
+
 int Engine::addLayer(const QString &name, int at)
 {
     {

@@ -3562,6 +3562,22 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
     auto *g = new QWidget; // titled by its sub-tab
     auto *v = new QVBoxLayout(g);
 
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        if (const auto *layer = m_engine->layer(m_engine->indexOfId(s.id))) {
+            if (const auto *zone = m_engine->mappingZoneFor(*layer)) {
+                auto *label = new QLabel(QStringLiteral("◈ Zone · %1").arg(zone->name));
+                label->setTextFormat(Qt::PlainText);
+                v->addWidget(label);
+                auto *help = new QLabel(QStringLiteral("Edit the shared mapping from Layer › Zones › Edit Zone."));
+                help->setWordWrap(true);
+                v->addWidget(help);
+                v->addStretch();
+                return g;
+            }
+        }
+    }
+
     // Position (center, composition pixels) and scale (% of the composition) of the whole mapped layer
     {
         const QSize comp = m_engine->compositionSize();
@@ -4934,6 +4950,7 @@ QString LayerInspector::layoutKey() const
     if (!layer) return {};
     QStringList key{QString::number(layer->id), QString::number(int(layer->type)), layer->sourcePath,
         QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
+        QString::number(bool(m_engine->mappingZoneFor(*layer))), QString::number(layer->mappingZone),
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};

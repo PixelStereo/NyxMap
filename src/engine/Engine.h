@@ -110,6 +110,10 @@ public:
     Layer *layer(int i);
     int indexOf(const Layer *l) const;
 
+    const Layer *mappingZoneFor(const Layer &layer) const; // caller holds the engine lock
+    const Mapping &effectiveMapping(const Layer &layer) const;
+    int addMappingZone(int from, const QString &name);
+    bool setMappingZone(quint64 layer, quint64 zone, const Mapping &local);
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
     int sceneOfObject(int index) const;

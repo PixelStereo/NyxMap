@@ -39,6 +39,7 @@ Mix, layer, and manipulate your media score with performance-grade speed.
 * **Unified Media Streams:** High-performance video (HAP, live capture, NDI, Syphon/Spout, DeckLink), generative ISF shaders, web streams, and dynamic text.
 * **Non-Destructive Routing:** Stack and blend layers, apply color correction, and reuse layer textures (pre- or post-effects) at **zero GPU performance cost**.
 * **Precise Spatial Mapping:** Corner pin onto flat surfaces or mesh warp over complex curves and architectural structures.
+* **Mapping Zones:** Use **Layer → Zones → Create Zone from Layer** to share corner pins and mesh warp across layers in the same group or composition. Edit the Zone row to adjust the shared mapping. Store its Spatial settings in a preset to move the whole Zone on a cue. **Unlink and Keep Mapping** copies the current pose back to the layer.
 
 ---
 

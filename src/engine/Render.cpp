@@ -1217,7 +1217,7 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
     for (int i = int(layers.size()) - 1; i >= 0; --i) {
         Layer &l = *layers[size_t(i)];
         const float opacity = viewport ? l.opacity * l.opacityIn(viewport) : l.opacity;
-        if (!l.enabled || l.soloHidden || !l.finalTex || opacity <= 0.0f) continue;
+        if (l.isMappingZone || !l.enabled || l.soloHidden || !l.finalTex || opacity <= 0.0f) continue;
         bool diff = l.blend == BlendMode::Difference;
         if (diff) {
             // Difference samples the picture already on the destination. It
@@ -1286,7 +1286,7 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
         // Drawn smaller than it is: sampled from mipmaps (no shimmer, no moiré), made for this draw only
         bool mip = false;
         if (rs.mipmaps > 0 && l.finalW > 0 && l.finalH > 0) {
-            const QRectF b = l.mapping.bounds();
+            const QRectF b = effectiveMapping(l).bounds();
             const double drawnW = b.width() / std::max(1e-6, view.width()) * target.w;
             const double drawnH = b.height() / std::max(1e-6, view.height()) * target.h;
             mip = drawnW < l.finalW * 0.9 || drawnH < l.finalH * 0.9;
@@ -1337,7 +1337,7 @@ void Engine::bindMeshBuffer(GLuint vbo)
 void Engine::bindMesh(Layer &l)
 {
     auto f = gl();
-    const Mapping &m = l.mapping, &was = l.meshShape;
+    const Mapping &m = effectiveMapping(l), &was = l.meshShape;
     bool same = l.meshVbo && was.cols == m.cols && was.rows == m.rows && was.offsets == m.offsets &&
                 was.position == m.position && was.size == m.size && was.rotation == m.rotation && was.pivot == m.pivot &&
                 was.aspect == m.aspect;

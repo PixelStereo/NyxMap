@@ -1566,5 +1566,40 @@ int runScene3dTests(Engine &engine)
         }
         engine.newProject();
     }
+    {
+        const auto a = engine.layerId(engine.addLayer("Water"));
+        const auto b = engine.layerId(engine.addLayer("Embers"));
+        check(engine.setParameter(a, "position/x", 120), "position the first layer");
+        const auto zone = engine.layerId(engine.addMappingZone(engine.indexOfId(a), "Moving flat"));
+        auto at = [&](quint64 id) { return engine.layer(engine.indexOfId(id)); };
+        check(zone && engine.setMappingZone(a, zone, at(a)->mapping) && engine.setMappingZone(b, zone, at(b)->mapping),
+              "two layers reference the same zone");
+        if (zone) {
+            check(&engine.effectiveMapping(*at(a)) == &at(zone)->mapping &&
+                  &engine.effectiveMapping(*at(b)) == &at(zone)->mapping, "both layers use the zone geometry");
+            Engine::Preset open;
+            open.name = "Open flat";
+            open.fade = 2;
+            open.values.push_back({zone, "position/x", 300});
+            engine.setFadesManual(true);
+            engine.recallPreset(engine.addPreset(open));
+            engine.advanceFades(1);
+            check(std::abs(engine.effectiveMapping(*at(a)).position.x() * engine.compositionSize().width() - 210) < .01,
+                  "a preset interpolates the shared zone pose");
+            engine.advanceFades(1);
+            const QString project = dir.filePath("mapping-zones.nyxmap");
+            check(engine.saveProject(project, {}, &error) && engine.loadProject(project, nullptr, &error),
+                  "zone project round trips");
+            check(at(a) && at(b) && at(zone) && &engine.effectiveMapping(*at(a)) == &at(zone)->mapping &&
+                  &engine.effectiveMapping(*at(b)) == &at(zone)->mapping, "both stable zone links survive reopening");
+            if (at(b)) {
+                const Mapping pose = engine.effectiveMapping(*at(b));
+                check(engine.setMappingZone(b, 0, pose) && !at(b)->mappingZone && at(b)->mapping == pose,
+                      "unlink keeps the current shared pose");
+            }
+            engine.setFadesManual(false);
+        }
+        engine.newProject();
+    }
     return failures;
 }
