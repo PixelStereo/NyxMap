@@ -325,7 +325,7 @@ InteractionStage InteractionStage::remap(double inMin, double inMax, double outM
 
 bool InteractionStage::operator==(const InteractionStage &o) const
 {
-    if (kind != o.kind || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
+    if (kind != o.kind || name != o.name || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
         curve.keys.size() != o.curve.keys.size())
         return false;
     for (size_t k = 0; k < curve.keys.size(); ++k) {
@@ -373,6 +373,7 @@ static AnimTrack curveFromJson(const QJsonArray &a)
 QJsonObject InteractionStage::toJson() const
 {
     QJsonObject o{{"type", interactionFilterKey(kind)}};
+    if (!name.isEmpty()) o["name"] = name;
     if (!enabled) o["enabled"] = false;
     for (int w = 0; w < kFilterSettingCount; ++w)
         if (!interactionFilterSetting(kind, w).name.isEmpty()) o[QString(QChar('a' + w))] = setting(w);
@@ -384,6 +385,7 @@ QJsonObject InteractionStage::toJson() const
 InteractionStage InteractionStage::fromJson(const QJsonObject &o)
 {
     InteractionStage s = made(interactionFilterFromKey(o.value("type").toString()));
+    s.name = o.value("name").toString().trimmed();
     s.enabled = o.value("enabled").toBool(true);
     for (int w = 0; w < kFilterSettingCount; ++w) {
         const double v = o.value(QString(QChar('a' + w))).toDouble(s.setting(w));

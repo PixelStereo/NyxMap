@@ -67,16 +67,21 @@ struct Material3D {
     float metal = 0, rough = .6f;
     std::array<QString, MaterialMapCount> paths;
     std::array<QImage, MaterialMapCount> images;
+    std::array<QString, MaterialMapCount> embeddedMaps; // base64 PNG for imported maps without standalone paths
     std::array<float, 3> emissionColor{{1, 1, 1}};
     std::array<float, 2> uvTiling{{1, 1}};
     float emission = 0, normalStrength = 1, occlusionStrength = 1, height = 0, ior = 1.5f, specular = 1;
     quint64 picture = 0;
     int pictureStage = -1;
     bool setMap(MaterialMap slot, const QString &path, QString *error = nullptr);
+    bool setEmbeddedMap(MaterialMap slot, const QImage &image);
     QJsonObject toJson(const QString &projectDir = {}) const {
         QJsonObject maps;
         for (int i = 0; i < MaterialMapCount; ++i) {
-            if (paths[i].isEmpty()) continue;
+            if (paths[i].isEmpty()) {
+                if (!embeddedMaps[i].isEmpty()) maps[materialMapNames[i]] = QJsonObject{{"png", embeddedMaps[i]}};
+                continue;
+            }
             QJsonObject file{{"path", paths[i]}};
             if (!projectDir.isEmpty()) file["relative_path"] = QDir(projectDir).relativeFilePath(paths[i]);
             maps[materialMapNames[i]] = file;
@@ -107,6 +112,11 @@ struct Material3D {
                 if (QFileInfo(alternate).isFile()) path = alternate;
             }
             if (!path.isEmpty() && !material.setMap(MaterialMap(i), path)) material.paths[i] = path;
+            if (path.isEmpty()) {
+                material.embeddedMaps[i] = file.value("png").toString();
+                if (!material.embeddedMaps[i].isEmpty())
+                    material.images[i] = QImage::fromData(QByteArray::fromBase64(material.embeddedMaps[i].toLatin1()), "PNG");
+            }
         }
         material.normalStrength = float(std::clamp(json.value("normal_strength").toDouble(1), 0., 10.));
         material.occlusionStrength = float(std::clamp(json.value("occlusion_strength").toDouble(1), 0., 1.));
@@ -119,6 +129,9 @@ struct Material3D {
         return material;
     }
 };
+
+// Import editable metallic-roughness surfaces without importing the model's geometry.
+std::vector<Material3D> importGltfMaterials(const QString &path, QString *error = nullptr);
 
 // One cache per GL owner. A shared material uploads each image once even when used by multiple objects.
 class MaterialTextureCache {

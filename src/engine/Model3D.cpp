@@ -289,38 +289,125 @@ bool Model3D::loadPrimitive(const QString &name, QString *err)
 
 // --- glTF / GLB (cgltf) --------------------------------------------------------------------------------------------
 
-bool Model3D::loadGltf(const QString &path, QString *err)
+namespace {
+using GltfDocument = std::unique_ptr<cgltf_data, decltype(&cgltf_free)>;
+
+GltfDocument readGltf(const QString &path)
 {
     cgltf_options options{};
     cgltf_data *data = nullptr;
     const QByteArray file = QFile::encodeName(path);
-    if (cgltf_parse_file(&options, file.constData(), &data) != cgltf_result_success ||
-        cgltf_load_buffers(&options, data, file.constData()) != cgltf_result_success) {
-        if (data) cgltf_free(data);
+    const auto result = cgltf_parse_file(&options, file.constData(), &data);
+    GltfDocument document(data, &cgltf_free);
+    if (result != cgltf_result_success || cgltf_load_buffers(&options, data, file.constData()) != cgltf_result_success)
+        document.reset();
+    return document;
+}
+
+QImage readGltfImage(const cgltf_image &image, const QDir &dir)
+{
+    if (image.buffer_view) {
+        const auto *view = image.buffer_view;
+        const auto *buffer = view->buffer;
+        if (!buffer || !buffer->data || view->offset > buffer->size || view->size > buffer->size - view->offset ||
+            view->size > std::numeric_limits<int>::max()) return {};
+        const auto *bytes = static_cast<const uchar *>(buffer->data) + view->offset;
+        return QImage::fromData(bytes, int(view->size));
+    }
+    if (!image.uri) return {};
+    QByteArray uri(image.uri);
+    if (uri.startsWith("data:")) {
+        const int comma = uri.indexOf(',');
+        if (comma < 0 || !uri.left(comma).endsWith(";base64")) return {};
+        return QImage::fromData(QByteArray::fromBase64(uri.mid(comma + 1)));
+    }
+    cgltf_decode_uri(uri.data());
+    return QImage(dir.absoluteFilePath(QString::fromUtf8(uri.constData())));
+}
+
+QImage gltfChannel(const QImage &rgba, int channel)
+{
+    QImage result(rgba.size(), QImage::Format_Grayscale8);
+    if (result.isNull()) return {};
+    for (int y = 0; y < rgba.height(); ++y) {
+        const auto *src = rgba.constScanLine(y);
+        auto *dst = result.scanLine(y);
+        for (int x = 0; x < rgba.width(); ++x) dst[x] = src[4 * x + channel];
+    }
+    return result;
+}
+} // namespace
+
+std::vector<Material3D> importGltfMaterials(const QString &path, QString *error)
+{
+    if (error) error->clear();
+    const auto document = readGltf(path);
+    if (!document || document->materials_count == 0) {
+        if (error) *error = document ? QStringLiteral("The glTF file has no materials.")
+                                     : QStringLiteral("Not a glTF file that can be read.");
+        return {};
+    }
+    const QFileInfo source(path);
+    const QDir dir = source.absoluteDir();
+    QHash<const cgltf_image *, QImage> images;
+    std::vector<Material3D> materials;
+    for (size_t i = 0; i < document->materials_count; ++i) {
+        const auto &input = document->materials[i];
+        Material3D material;
+        material.name = QString::fromUtf8(input.name);
+        if (material.name.isEmpty()) material.name = QStringLiteral("%1 · Material %2").arg(source.completeBaseName()).arg(i + 1);
+        const auto &pbr = input.pbr_metallic_roughness;
+        const auto displayColor = [](float linear) { return std::pow(std::clamp(linear, 0.f, 1.f), 1.f / 2.2f); };
+        for (int c = 0; c < 3; ++c) {
+            material.color[c] = displayColor(pbr.base_color_factor[c]);
+            material.emissionColor[c] = displayColor(input.emissive_factor[c]);
+        }
+        material.metal = pbr.metallic_factor;
+        material.rough = pbr.roughness_factor;
+        material.emission = input.has_emissive_strength ? input.emissive_strength.emissive_strength : 1.f;
+        material.normalStrength = input.normal_texture.texture ? input.normal_texture.scale : 1.f;
+        material.occlusionStrength = input.occlusion_texture.texture ? input.occlusion_texture.scale : 1.f;
+        if (input.has_ior) material.ior = input.ior.ior;
+        if (input.has_specular) material.specular = input.specular.specular_factor;
+        auto map = [&](MaterialMap slot, const cgltf_texture_view &view, int channel = -1) {
+            if (!view.texture) return true;
+            const auto *image = view.texture->image;
+            if (!image) return false;
+            auto it = images.find(image);
+            if (it == images.end())
+                it = images.insert(image, readGltfImage(*image, dir).convertToFormat(QImage::Format_RGBA8888));
+            if (it->isNull()) return false;
+            return material.setEmbeddedMap(slot, channel < 0 ? *it : gltfChannel(*it, channel));
+        };
+        if (!map(BaseColorMap, pbr.base_color_texture) ||
+            !map(RoughnessMap, pbr.metallic_roughness_texture, 1) ||
+            !map(MetallicMap, pbr.metallic_roughness_texture, 2) ||
+            !map(NormalMap, input.normal_texture) ||
+            !map(OcclusionMap, input.occlusion_texture, 0) ||
+            !map(EmissionMap, input.emissive_texture)) {
+            if (error) *error = QStringLiteral("Cannot read or embed a texture for %1.").arg(material.name);
+            return {};
+        }
+        materials.push_back(std::move(material));
+    }
+    return materials;
+}
+
+bool Model3D::loadGltf(const QString &path, QString *err)
+{
+    const auto document = readGltf(path);
+    if (!document) {
         if (err) *err = QStringLiteral("Not a glTF file that can be read.");
         return false;
     }
+    const auto *data = document.get();
     const QDir dir = QFileInfo(path).absoluteDir();
-    // Its images, decoded once: embedded (a buffer, a data URI) or beside the file
     QHash<const cgltf_image *, int> images;
     auto imageOf = [&](const cgltf_texture_view &view) -> int {
         if (!view.texture || !view.texture->image) return -1;
         const cgltf_image *img = view.texture->image;
         if (images.contains(img)) return images.value(img);
-        QImage decoded;
-        if (img->buffer_view && img->buffer_view->buffer->data) {
-            const auto *bytes = static_cast<const uchar *>(img->buffer_view->buffer->data) + img->buffer_view->offset;
-            decoded = QImage::fromData(bytes, int(img->buffer_view->size));
-        } else if (img->uri) {
-            const QString uri = QString::fromUtf8(img->uri);
-            if (uri.startsWith(QLatin1String("data:"))) {
-                decoded = QImage::fromData(QByteArray::fromBase64(uri.section(',', 1).toLatin1()));
-            } else {
-                QByteArray name = QByteArray(img->uri);
-                cgltf_decode_uri(name.data());
-                decoded = QImage(dir.absoluteFilePath(QString::fromUtf8(name.constData())));
-            }
-        }
+        const QImage decoded = readGltfImage(*img, dir);
         const int index = addImage(decoded);
         images.insert(img, index);
         return index;
@@ -406,7 +493,6 @@ bool Model3D::loadGltf(const QString &path, QString *err)
             m_meshes.push_back(std::move(mesh));
         }
     }
-    cgltf_free(data);
     return true;
 }
 

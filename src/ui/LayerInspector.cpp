@@ -4423,6 +4423,8 @@ QWidget *LayerInspector::buildModelLayers()
     if (scene >= 0) {
         Engine::Lock lock(&m_engine->mutex());
         const auto *object = m_engine->layer(m_layer);
+        if (object->model && !object->model->isPrimitive())
+            materials->addItem(QStringLiteral("Materials from model"), QStringLiteral("0"));
         for (const auto &[id, material] : m_engine->materials())
             materials->addItem(material->name, QString::number(id));
         materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
@@ -4464,7 +4466,7 @@ QWidget *LayerInspector::buildModelLayers()
                 *m_engine->materials().at(id) = copy;
             }
         }
-        if (!id || id == previous) return;
+        if (id == previous) return;
         class AssignMaterial : public QUndoCommand {
         public:
             AssignMaterial(Engine *e, quint64 object, quint64 before, quint64 after, bool created)

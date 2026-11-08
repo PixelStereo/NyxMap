@@ -4,6 +4,7 @@
 #include "MaterialX.h"
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QToolButton>
 #include "ColorPicker.h"
@@ -125,11 +126,29 @@ public:
                 QMessageBox::warning(this, "Import MaterialX", error);
                 return;
             }
-            material.id = this->engine->addMaterial(material.name);
-            this->engine->removeUnusedMaterial(material.id);
-            commit({}, material);
-            selected = material.id;
-            refresh();
+            addImportedMaterial(std::move(material));
+        });
+        button("Import glTF…", "importMaterialGltf", [this] {
+            const QString path = QFileDialog::getOpenFileName(this, "Import glTF Material", {}, "glTF (*.gltf *.glb)");
+            if (path.isEmpty()) return;
+            QString error;
+            auto materials = importGltfMaterials(path, &error);
+            if (materials.empty()) {
+                QMessageBox::warning(this, "Import glTF Material", error);
+                return;
+            }
+            int index = 0;
+            if (materials.size() > 1) {
+                QStringList choices;
+                for (size_t i = 0; i < materials.size(); ++i)
+                    choices << QStringLiteral("%1 · %2").arg(i + 1).arg(materials[i].name);
+                bool accepted = false;
+                const auto choice = QInputDialog::getItem(this, "Import glTF Material", "Material", choices, 0, false, &accepted);
+                if (!accepted) return;
+                index = choices.indexOf(choice);
+                if (index < 0) return;
+            }
+            addImportedMaterial(std::move(materials[size_t(index)]));
         });
         remove = button("−", "removeMaterial", [this] { const auto m = current(); if (m && !users(m->id)) commit(m, {}); });
         layout->addLayout(tools);
@@ -166,7 +185,7 @@ public:
                     QMessageBox::warning(this, "Choose Material Image", error);
                     return;
                 }
-                if (before->paths[slot].isEmpty()) {
+                if (before->images[slot].isNull()) {
                     if (slot == MetallicMap) after.metal = 1;
                     if (slot == RoughnessMap) after.rough = 1;
                     if (slot == BaseColorMap) after.color = {{1, 1, 1}};
@@ -261,6 +280,13 @@ private:
         return count;
     }
     template<class F> void change(F edit) { auto before = current(); if (!before) return; auto after = *before; edit(after); if (before->toJson() != after.toJson()) commit(before, after); }
+    void addImportedMaterial(Material3D material) {
+        material.id = engine->addMaterial(material.name);
+        engine->removeUnusedMaterial(material.id);
+        commit({}, material);
+        selected = material.id;
+        refresh();
+    }
     void commit(std::optional<Material3D> before, std::optional<Material3D> after) {
         class Edit : public QUndoCommand {
         public:
@@ -309,9 +335,10 @@ private:
         for (int i = 0; i < MaterialMapCount; ++i) {
             const QString path = m ? m->paths[i] : QString();
             mapButtons[i]->setEnabled(bool(m));
-            mapButtons[i]->setText(path.isEmpty() ? "Choose Image…" : QFileInfo(path).fileName());
+            const bool embedded = m && !m->embeddedMaps[i].isEmpty();
+            mapButtons[i]->setText(embedded ? "Embedded Image" : path.isEmpty() ? "Choose Image…" : QFileInfo(path).fileName());
             mapButtons[i]->setToolTip(path);
-            clearButtons[i]->setEnabled(!path.isEmpty());
+            clearButtons[i]->setEnabled(embedded || !path.isEmpty());
         }
         for (const auto &[field, member] : scalarFields) {
             field->setEnabled(bool(m));

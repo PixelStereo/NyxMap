@@ -1,0 +1,48 @@
+{
+    "asset": {
+        "version": "2.0"
+    },
+    "images": [
+        {
+            "uri": "textures/metal_plate_diff_1k.jpg"
+        },
+        {
+            "uri": "textures/metal_plate_nor_gl_1k.jpg"
+        },
+        {
+            "uri": "textures/metal_plate_arm_1k.jpg"
+        }
+    ],
+    "textures": [
+        {
+            "source": 0
+        },
+        {
+            "source": 1
+        },
+        {
+            "source": 2
+        }
+    ],
+    "materials": [
+        {
+            "name": "Diamond Plate",
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {
+                    "index": 0
+                },
+                "metallicRoughnessTexture": {
+                    "index": 2
+                },
+                "metallicFactor": 1,
+                "roughnessFactor": 1
+            },
+            "normalTexture": {
+                "index": 1
+            },
+            "occlusionTexture": {
+                "index": 2
+            }
+        }
+    ]
+}

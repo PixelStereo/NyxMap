@@ -110,12 +110,14 @@ InteractionFilter interactionFilterFromKey(const QString &k, bool *ok = nullptr)
 // One filter of an interaction's chain
 struct InteractionStage {
     InteractionFilter kind = InteractionFilter::Average;
+    QString name; // optional display label
     bool enabled = true;
     double a = 0, b = 0, c = 0, d = 0; // its settings (interactionFilterSetting)
     double &setting(int which) { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
     double setting(int which) const { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
     MathOp op = MathOp::Multiply; // Math
     AnimTrack curve;              // Curve: keys over 0..1 (time) to 0..1 (value)
+    QString displayName() const { return name.isEmpty() ? interactionFilterName(kind) : name; }
     static InteractionStage made(InteractionFilter kind); // with its defaults (a Curve: straight)
     static InteractionStage remap(double inMin, double inMax, double outMin, double outMax);
     QJsonObject toJson() const;

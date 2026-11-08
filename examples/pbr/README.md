@@ -1,16 +1,19 @@
 # PBR
 
-A test chart for the 3D renderer, made only of built-in primitives: no media, so the project opens anywhere.
+Open `PBR.nyxmap`. The startup sequence plays the **PBR Wave & Moving Light** timeline. Choose **PBR Scene (3D view)** in a preview's source menu to see the animated rim light and the spot cone.
 
-- **Spheres:** gold, steel and red or teal plastic. Roughness rises from left to right (0.06 to 0.91).
-- **Lights:** a warm **spot** with a wide falloff, a cool **directional** fill, and an orange **point** light from behind on the right. All three cast shadows.
-- **Light:** the scene has no environment layer, so the metals reflect its **Studio Light**.
-- **Contact:** contact shadows where the spheres meet the floor, and the floor reflecting them.
+- **Wave** in **Controls** shows the four-second sine. The six Merge 3D groups each move a row of three spheres together. Each row maps the signal to its Y position with a different delay.
+- **Wave Amplitude** scales the lift of all 18 spheres. At 0 they sit on the floor. At 1 the wave has its full height. The orange point light moves side to side throughout.
+- Right-click a slider in **Controls** and choose **Animate → Timeline** to create a track, add the slider to a timeline, or open an existing timeline driver.
 
-Open `PBR.nyxmap`, then choose "PBR Scene (3D view)" in a preview's source menu to see the lights and the spot's cone.
+All 18 spheres are built-in Sphere primitives with individual project materials. The diamond plate and wood materials were imported from glTF 2.0, with base color, normal, occlusion, roughness and metallic maps stored in the project.
+
+To reuse a glTF surface on a built-in primitive, open **Materials**, choose **Import glTF…**, and pick a material from a `.gltf` or `.glb` file. Select the primitive and click **Assign to selected 3D object**. The imported maps are stored in the project. The importer uses the metallic-roughness surface and its first UV set. The project material does not reproduce glTF transparency, per-texture transforms, or advanced material extensions.
+
+The wave mappings use named filters. Double-click a filter name to edit its label, or clear the name to display its type again.
+
+The bundled 1K maps are from Poly Haven and released under CC0. The two glTF files and the `textures` folder are included as material import samples. [Metal Plate](https://polyhaven.com/a/metal_plate) · [Wood Table 001](https://polyhaven.com/a/wood_table_001) · [CC0 license](https://polyhaven.com/license)
 
 ```bash
 NyxMap --render preview.png --frames 3 --strict PBR.nyxmap
 ```
-
-![Render](preview.png)

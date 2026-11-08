@@ -341,13 +341,14 @@ bool Engine::setModelMaterial(int object, quint64 id)
         const int scene = sceneOfObject(object);
         if (scene < 0 || !layer(object) || layer(object)->type != SourceType::Model) return false;
         const auto found = m_materials.find(id);
-        if (found == m_materials.end()) return false;
         auto *model = layer(object);
-        if (found->second->picture && layerDependsOn(found->second->picture, model->id)) return false;
+        if (id ? found == m_materials.end() : !model->model || model->model->isPrimitive()) return false;
+        const auto material = id ? found->second : nullptr;
+        if (material && material->picture && layerDependsOn(material->picture, model->id)) return false;
         model->modelMaterial = id;
-        model->material = found->second;
-        model->modelPicture = model->material->picture;
-        model->modelPictureStage = model->material->pictureStage;
+        model->material = material;
+        model->modelPicture = material ? material->picture : 0;
+        model->modelPictureStage = material ? material->pictureStage : -1;
         model->paramKey = 0;
     }
     emit layersChanged();
@@ -365,6 +366,11 @@ void Engine::resolveMaterials()
         if (object->type != SourceType::Model) continue;
         const int owner = sceneOfObject(i);
         if (owner < 0) { object->material.reset(); continue; }
+        if (!object->modelMaterial && object->model && !object->model->isPrimitive()) {
+            object->material.reset();
+            object->paramKey = 0;
+            continue;
+        }
         auto &materials = m_materials;
         auto found = materials.find(object->modelMaterial);
         if (found == materials.end()) {

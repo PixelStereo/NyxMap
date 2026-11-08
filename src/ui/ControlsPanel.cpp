@@ -1,6 +1,7 @@
 #include "ControlsPanel.h"
 #include "ColorPicker.h"
 #include "Engine.h"
+#include "TimelinePanel.h"
 #include "Widgets.h"
 
 #include <QAbstractItemView>
@@ -295,6 +296,16 @@ void ControlsPanel::rebuild()
         gear->setPopupMode(QToolButton::InstantPopup);
         auto *menu = new QMenu(gear);
         menu->addAction(QStringLiteral("Edit…"), this, [this, id] { editControl(id); });
+        const QString path = QStringLiteral("control/") + c.key;
+        if (c.kind == ShowControl::Kind::Slider) {
+            field->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(field, &QWidget::customContextMenuRequested, this, [this, field, path](const QPoint &pos) {
+                auto *menu = new QMenu(field);
+                menu->setAttribute(Qt::WA_DeleteOnClose);
+                TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, {path}, field);
+                menu->popup(field->mapToGlobal(pos));
+            });
+        }
         menu->addAction(QStringLiteral("Duplicate"), this, [this, id] {
             const auto c = m_engine->control(id);
             if (!c) return;

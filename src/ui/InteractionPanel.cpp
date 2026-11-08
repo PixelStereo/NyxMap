@@ -23,6 +23,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QKeySequenceEdit>
@@ -100,6 +101,30 @@ protected:
     {
         if (pressed && e->button() == Qt::LeftButton) pressed();
         QFrame::mousePressEvent(e);
+    }
+};
+
+class FilterNameLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> rename;
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton) event->accept();
+        else QLabel::mousePressEvent(event);
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && rename) {
+            event->accept();
+            rename();
+        } else {
+            QLabel::mouseDoubleClickEvent(event);
+        }
     }
 };
 
@@ -572,7 +597,7 @@ void InteractionPanel::refreshPatch()
                 link.sustain = f.c;
                 link.release = f.d;
             }
-            names << interactionFilterName(f.kind);
+            names << f.displayName();
         }
         link.chain = names.isEmpty() ? QStringLiteral("direct") : names.join(QStringLiteral(" · "));
         links.push_back(link);
@@ -1839,11 +1864,30 @@ void InteractionPanel::rebuildSettings()
         bf->setContentsMargins(6, 3, 2, 3);
         bf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
         bf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        auto *on = new FlagBox(QStringLiteral("%1 · %2").arg(k + 1).arg(interactionFilterName(f.kind)));
+        const QString type = interactionFilterName(f.kind);
+        const QString title = f.name.isEmpty() ? type : QStringLiteral("%1 (%2)").arg(f.name, type);
+        auto *on = new FlagBox(QString());
+        on->setAccessibleName(QStringLiteral("Enable %1").arg(title));
         on->setObjectName(QStringLiteral("filterOn%1").arg(k));
         on->setChecked(f.enabled);
         on->setToolTip(QStringLiteral("On / off (off: the value goes through unchanged)"));
-        bf->addRow(on);
+        auto *header = new QHBoxLayout;
+        header->addWidget(on);
+        auto *label = new FilterNameLabel(QStringLiteral("%1 · %2").arg(k + 1).arg(title));
+        label->setTextFormat(Qt::PlainText);
+        label->setObjectName(QStringLiteral("filterName%1").arg(k));
+        label->setToolTip(QStringLiteral("Double-click to rename"));
+        header->addWidget(label);
+        header->addStretch();
+        bf->addRow(header);
+        label->rename = [this, editStage, k, oldName = f.name] {
+            bool accepted = false;
+            const QString name = QInputDialog::getText(this, QStringLiteral("Rename Filter"),
+                QStringLiteral("Name (empty uses the filter type)"), QLineEdit::Normal, oldName, &accepted).trimmed();
+            if (!accepted || name == oldName) return;
+            editStage(k, QStringLiteral("Rename Filter"), [name](InteractionStage &stage) { stage.name = name; });
+            rebuildSettings();
+        };
         attachPreset({on}, {base + QStringLiteral("enable")});
         {
             // What comes out of it now: a meter in its range, and the number

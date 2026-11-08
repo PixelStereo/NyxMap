@@ -2,6 +2,7 @@
 #include "ImageFile.h"
 #include "MaterialX.h"
 #include "Model3D.h"
+#include <QBuffer>
 #include <QColor>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
@@ -1517,6 +1518,49 @@ int runScene3dTests(Engine &engine)
             check(pixel.red() > pixel.green() + 15 && pixel.red() > pixel.blue() + 15, "a MaterialX base map reaches the rendered object");
         } else {
             check(false, "read material render");
+        }
+        engine.newProject();
+    }
+    {
+        QImage packed(2, 2, QImage::Format_RGBA8888);
+        packed.fill(QColor(32, 96, 224));
+        QByteArray png;
+        QBuffer bytes(&png);
+        bytes.open(QIODevice::WriteOnly);
+        check(packed.save(&bytes, "PNG"), "encode glTF packed texture");
+        QFile gltfFile(dir.filePath("surface.gltf"));
+        check(gltfFile.open(QIODevice::WriteOnly), "write glTF material fixture");
+        gltfFile.write(R"({"asset":{"version":"2.0"},"images":[{"uri":"data:image/png;base64,)" + png.toBase64() + R"("}],
+"textures":[{"source":0}],"materials":[{"name":"Mapped","occlusionTexture":{"index":0},
+"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0},"metallicFactor":0.8,"roughnessFactor":0.5}},
+{"name":"Solid"}]})");
+        gltfFile.close();
+        auto imported = importGltfMaterials(gltfFile.fileName(), &error);
+        check(imported.size() == 2, "glTF material library reads all surfaces in a file without geometry");
+        if (imported.size() == 2) {
+            auto &material = imported.front();
+            check(material.name == "Mapped" && imported.back().name == "Solid" &&
+                  std::abs(material.metal - .8f) < 1e-6f && material.rough == .5f, "glTF keeps names and factors");
+            const auto scene = engine.layerId(engine.addScene("glTF Materials"));
+            const auto sphere = engine.layerId(engine.addLayer("Sphere"));
+            check(engine.setLayerModel(engine.indexOfId(sphere), Model3D::primitivePath("Sphere"), &error), "create a sphere primitive");
+            engine.setStructure(tree::intoGroup(engine.structure(), {sphere}, scene));
+            material.id = engine.addMaterial(material.name);
+            *engine.materials().at(material.id) = material;
+            check(engine.setModelMaterial(engine.indexOfId(sphere), material.id), "assign an imported glTF material to a primitive");
+            const QString project = dir.filePath("gltf-material.nyxmap");
+            check(engine.saveProject(project, {}, &error), "save the imported surface");
+            check(gltfFile.remove(), "remove the source glTF");
+            check(engine.loadProject(project, nullptr, &error), "open the project without the glTF");
+            const auto *layer = engine.layer(engine.indexOfId(sphere));
+            check(layer && layer->material && layer->modelMaterial == material.id, "the primitive keeps its imported material");
+            if (layer && layer->material) {
+                const auto &maps = layer->material->images;
+                check(!maps[OcclusionMap].isNull() && maps[OcclusionMap].pixelColor(0, 0).red() == 32 &&
+                      !maps[RoughnessMap].isNull() && maps[RoughnessMap].pixelColor(0, 0).red() == 96 &&
+                      !maps[MetallicMap].isNull() && maps[MetallicMap].pixelColor(0, 0).red() == 224,
+                      "packed occlusion, roughness and metallic channels survive saving and reopening");
+            }
         }
         engine.newProject();
     }

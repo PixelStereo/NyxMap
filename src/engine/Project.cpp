@@ -867,8 +867,9 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     for (const auto &value : root.value("materials").toArray()) {
         const auto material = Material3D::fromJson(value.toObject(), dir);
         for (int i = 0; i < MaterialMapCount; ++i)
-            if (!material.paths[i].isEmpty() && material.images[i].isNull())
-                warnings << QStringLiteral("%1: cannot load material image %2").arg(material.name, material.paths[i]);
+            if (material.images[i].isNull() && (!material.paths[i].isEmpty() || !material.embeddedMaps[i].isEmpty()))
+                warnings << QStringLiteral("%1: cannot load material image %2").arg(
+                    material.name, material.paths[i].isEmpty() ? QString::fromLatin1(materialMapNames[i]) : material.paths[i]);
         restoreMaterial(material);
     }
     const QJsonArray layers = root.value("layers").toArray();

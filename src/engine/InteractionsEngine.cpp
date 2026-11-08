@@ -954,7 +954,7 @@ void Engine::makeInteractionParams()
         for (size_t k = 0; k < it.filters.size(); ++k) {
             const InteractionStage &f = it.filters[k];
             const QString path = QStringLiteral("filters/%1/").arg(k + 1);
-            const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(interactionFilterName(f.kind));
+            const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(f.displayName());
             flag(path + QStringLiteral("enable"), name + QStringLiteral("On"), true, [k](Interaction &x) -> bool & {
                 static bool gone = false; // the filters changed meanwhile (the list is made again)
                 return k < x.filters.size() ? x.filters[k].enabled : gone;

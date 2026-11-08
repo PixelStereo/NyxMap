@@ -13,6 +13,8 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
+#include <QTimer>
 #include <QMenu>
 #include <QPointer>
 #include <QMouseEvent>
@@ -70,6 +72,27 @@ int main(int argc, char **argv)
     }
     check(filters()[0].op == MathOp::OneMinus, "Math › 1 − x");
     check(!panel.findChild<QWidget *>("filter0a"), "1 − x has no value to set");
+    auto *rename = panel.findChild<QLabel *>("filterName0");
+    check(rename != nullptr, "a filter has a name label");
+    if (rename) {
+        QTimer::singleShot(0, &panel, [] {
+            if (auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                dialog->setTextValue("Invert signal");
+                dialog->accept();
+            }
+        });
+        const QPoint at = rename->rect().center();
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, at, rename->mapToGlobal(at),
+                                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(rename, &doubleClick);
+        settle();
+        const auto *label = panel.findChild<QLabel *>("filterName0");
+        check(filters()[0].enabled && filters()[0].name == "Invert signal" && label && label->text().contains("Invert signal (Math)"),
+              "renaming shows both purpose and type");
+        undo.undo();
+        settle();
+        check(filters()[0].name.isEmpty() && filters()[0].op == MathOp::OneMinus, "renaming undoes without changing settings");
+    }
     auto select = [&](int k) { // a click on a filter (its frame, not a field)
         if (auto *block = panel.findChild<QWidget *>(QStringLiteral("filterBlock%1").arg(k))) {
             const QPointF at(block->width() - 4, 4);
