@@ -22,6 +22,8 @@
 #include <QTableWidget>
 #include <QAction>
 #include <QHeaderView>
+#include <QHelpEvent>
+#include <QStatusTipEvent>
 #include <QMouseEvent>
 #include <QMenu>
 #include <QMap>
@@ -402,6 +404,32 @@ int main(int argc, char **argv)
         nestedGroupTests(engine, check);
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();
+        auto *contextHelp = window.findChild<QLabel *>("contextHelpStatus");
+        auto *usageStatus = window.findChild<QLabel *>("systemUsageStatus");
+        check(contextHelp && usageStatus, "context help and resource indicators have separate status fields");
+        if (contextHelp && usageStatus) {
+            const QPoint pos = usageStatus->rect().center();
+            QHelpEvent help(QEvent::ToolTip, pos, usageStatus->mapToGlobal(pos));
+            QApplication::sendEvent(usageStatus, &help);
+            check(contextHelp->text().contains("System CPU and RAM usage"), "widget help goes to the status bar");
+            QEvent leave(QEvent::Leave);
+            QApplication::sendEvent(usageStatus, &leave);
+            check(contextHelp->text().isEmpty(), "context help clears on leave");
+
+            QTableWidget actions(1, 1, &window);
+            actions.setItem(0, 0, new QTableWidgetItem("Action"));
+            actions.item(0, 0)->setToolTip("<b>Timeline</b> · play");
+            actions.resize(240, 120);
+            actions.show();
+            app.processEvents();
+            const QPoint cell = actions.visualItemRect(actions.item(0, 0)).center();
+            QHelpEvent actionHelp(QEvent::ToolTip, cell, actions.viewport()->mapToGlobal(cell));
+            QApplication::sendEvent(actions.viewport(), &actionHelp);
+            check(contextHelp->text() == "Timeline · play", "table cell help shows as plain status text");
+            QStatusTipEvent dragHelp("1.20 s → 0.5");
+            QApplication::sendEvent(&actions, &dragHelp);
+            check(contextHelp->text() == "1.20 s → 0.5", "live drag help uses the same field");
+        }
         auto *defaultColorView = window.findChild<QComboBox *>("defaultColorPickerView");
         check(defaultColorView && defaultColorView->currentData().toInt() == int(ColorPicker::HSL), "Settings defaults to HSL");
         if (defaultColorView) {
@@ -442,12 +470,12 @@ int main(int argc, char **argv)
                           "switching workspace and inspector pages preserves a compact window size");
                 }
             }
-            if (auto *status = window.findChild<QLabel *>("mainStatus")) {
+            if (auto *status = window.findChild<QLabel *>("contextHelpStatus")) {
                 const QString before = status->text();
                 status->setText(QString(1000, QLatin1Char('W')));
                 app.processEvents();
                 check(window.width() <= 480 && window.height() <= 360,
-                      "long output status cannot increase the window minimum size");
+                      "long context help cannot increase the window minimum size");
                 status->setText(before);
             }
             auto *editor = window.findChild<QScrollArea *>("showEditorScroll");

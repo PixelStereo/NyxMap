@@ -25,7 +25,7 @@
 #include <QSlider>
 #include <QStyle>
 #include <QTimer>
-#include <QToolTip>
+#include <QStatusTipEvent>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -692,7 +692,8 @@ void CurveLane::mouseMoveEvent(QMouseEvent *e)
         k.t = valueOnly ? m_pressKey.t : std::clamp(tOf(xOf(m_pressKey.t) + d.x()), lo, hi);
         k.v = timeOnly ? m_pressKey.v : vOf(yOf(m_pressKey.v) + d.y());
         const QString v = m_dragKey == 0 && k.isCurrentValue ? QStringLiteral("current value") : num(k.v);
-        QToolTip::showText(e->globalPosition().toPoint(), QStringLiteral("%1 s → %2").arg(k.t, 0, 'f', 2).arg(v), this);
+        QStatusTipEvent help(QStringLiteral("%1 s → %2").arg(k.t, 0, 'f', 2).arg(v));
+        QCoreApplication::sendEvent(this, &help);
         update();
         emitEdited(m_gesture);
         return;
@@ -749,6 +750,10 @@ void CurveLane::mouseMoveEvent(QMouseEvent *e)
 
 void CurveLane::mouseReleaseEvent(QMouseEvent *)
 {
+    if (m_dragKey >= 0) {
+        QStatusTipEvent help{QString()};
+        QCoreApplication::sendEvent(this, &help);
+    }
     if (m_panning) {
         m_panning = false;
         unsetCursor();

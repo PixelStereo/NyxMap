@@ -59,6 +59,12 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QAbstractSpinBox>
+#include <QAbstractItemView>
+#include <QHeaderView>
+#include <QHelpEvent>
+#include <QMouseEvent>
+#include <QStatusTipEvent>
+#include <QTextDocument>
 #include <QLabel>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -398,11 +404,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     qApp->installEventFilter(this); // Shift+1 / Shift+2: left tabs
     setCentralWidget(split);
 
-    m_status = new QLabel;
-    m_status->setObjectName(QStringLiteral("mainStatus"));
-    // Output names and live status can be arbitrarily long; they must not grow the window.
-    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    statusBar()->addPermanentWidget(m_status);
+    m_contextHelp = new QLabel(statusBar());
+    m_contextHelp->setObjectName(QStringLiteral("contextHelpStatus"));
+    m_contextHelp->setTextFormat(Qt::PlainText);
+    m_contextHelp->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    statusBar()->addWidget(m_contextHelp, 1);
 
     auto *usageLabel = new QLabel(statusBar());
     usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
@@ -762,6 +768,7 @@ void MainWindow::showEvent(QShowEvent *e)
 
 MainWindow::~MainWindow()
 {
+    qApp->removeEventFilter(this);
     // The undo stack is a child, deleted after this window's members: it clears itself (indexChanged) when
     // deleted, which must not reach this window's slots (they use members already destroyed, m_binTimer…)
     m_undo->disconnect(this);
@@ -788,8 +795,80 @@ MainWindow::~MainWindow()
 // Show-control shortcuts
 // ---------------------------------------------------------------------------
 
+static QString helpAt(QWidget *widget, const QPoint &global)
+{
+    for (auto *part = widget; part; part = part->isWindow() ? nullptr : part->parentWidget()) {
+        QString tip;
+        if (auto *header = qobject_cast<QHeaderView *>(part)) {
+            const int section = header->logicalIndexAt(header->mapFromGlobal(global));
+            if (section >= 0 && header->model())
+                tip = header->model()->headerData(section, header->orientation(), Qt::ToolTipRole).toString();
+        } else if (auto *view = qobject_cast<QAbstractItemView *>(part)) {
+            const QPoint pos = view->viewport()->mapFromGlobal(global);
+            if (view->viewport()->rect().contains(pos))
+                tip = view->indexAt(pos).data(Qt::ToolTipRole).toString();
+        } else if (auto *tabs = qobject_cast<QTabBar *>(part)) {
+            const int index = tabs->tabAt(tabs->mapFromGlobal(global));
+            if (index >= 0) tip = tabs->tabToolTip(index);
+        } else if (auto *menu = qobject_cast<QMenu *>(part)) {
+            if (auto *action = menu->actionAt(menu->mapFromGlobal(global)))
+                tip = action->statusTip().isEmpty() ? action->toolTip() : action->statusTip();
+        } else if (auto *bar = qobject_cast<QMenuBar *>(part)) {
+            if (auto *action = bar->actionAt(bar->mapFromGlobal(global)))
+                tip = action->statusTip().isEmpty() ? action->toolTip() : action->statusTip();
+        }
+        if (tip.isEmpty()) tip = part->toolTip();
+        if (!tip.isEmpty()) return tip;
+    }
+    return {};
+}
+
+void MainWindow::showContextHelp(QWidget *widget, QString text)
+{
+    if (Qt::mightBeRichText(text)) {
+        QTextDocument document;
+        document.setHtml(text);
+        text = document.toPlainText();
+    }
+    text = text.simplified();
+    m_helpWidget = text.isEmpty() ? nullptr : widget;
+    if (m_contextHelp->text() != text) m_contextHelp->setText(text);
+}
+
 bool MainWindow::eventFilter(QObject *o, QEvent *e)
 {
+    if (m_contextHelp) {
+        if (auto *widget = qobject_cast<QWidget *>(o)) {
+            switch (e->type()) {
+            case QEvent::ToolTip:
+                showContextHelp(widget, helpAt(widget, static_cast<QHelpEvent *>(e)->globalPos()));
+                return true;
+            case QEvent::StatusTip:
+                showContextHelp(widget, static_cast<QStatusTipEvent *>(e)->tip());
+                return true;
+            case QEvent::Enter:
+                showContextHelp(widget, helpAt(widget, static_cast<QEnterEvent *>(e)->globalPosition().toPoint()));
+                break;
+            case QEvent::MouseMove: {
+                const auto *mouse = static_cast<QMouseEvent *>(e);
+                if (mouse->buttons() == Qt::NoButton) {
+                    const QPoint global = mouse->globalPosition().toPoint();
+                    auto *hovered = widget->childAt(widget->mapFromGlobal(global));
+                    if (!hovered) hovered = widget;
+                    showContextHelp(hovered, helpAt(hovered, global));
+                }
+                break;
+            }
+            case QEvent::Leave:
+            case QEvent::Hide:
+                if (widget == m_helpWidget) showContextHelp(nullptr, {});
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
     // A project opened from the Finder (a double-click on a .nyxmap, a file dropped on the app's icon): macOS sends it
     // to the application, also when it launches the app for it
     if (o == qApp && e->type() == QEvent::FileOpen) {
@@ -2666,27 +2745,6 @@ void MainWindow::statusTick()
     m_viewportInspector->refreshDynamic();
     m_composition->refreshStatus();
     refreshLayerList(); // playback positions (in-place update)
-    const int pct = int(std::lround(m_engine->outputLevel() * 100));
-    const QSize c = m_engine->compositionSize();
-    // Each viewport: shown how (F fullscreen, W window), and what it publishes
-    QStringList outs;
-    int shown = 0;
-    for (const auto &[id, o] : m_outputs) {
-        QStringList pubs;
-        for (int k = 0; k < kPublishKindCount; ++k)
-            if (m_engine->publishState(id, PublishKind(k)).level == PublishState::Ok) pubs << publishKindName(PublishKind(k));
-        if (o.mode) ++shown;
-        if (!pubs.isEmpty()) outs << QStringLiteral("%1 → %2").arg(o.title.section(QStringLiteral(" — "), 1), pubs.join('+'));
-    }
-    m_status->setText(QStringLiteral("%1 × %2   ·   %3 fps   ·   composition %4%   ·   %5 of %6 viewport(s) shown%7")
-                          .arg(c.width())
-                          .arg(c.height())
-                          .arg(m_engine->fps(), 0, 'f', 1)
-                          .arg(pct)
-                          .arg(shown)
-                          .arg(m_outputs.size())
-                          .arg(outs.isEmpty() ? QString() : QStringLiteral("   ·   ") + outs.join(QStringLiteral(", ")))
-                      + (m_engine->blackout() ? QStringLiteral("   ·   BLACKOUT") : QString()));
 }
 
 // ---------------------------------------------------------------------------

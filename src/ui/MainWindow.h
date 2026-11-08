@@ -1,4 +1,5 @@
 #pragma once
+#include <QPointer>
 #include "LayerTree.h"
 #include <QJsonObject>
 #include <QMainWindow>
@@ -172,7 +173,9 @@ private:
     };
     std::map<quint64, Output> m_outputs;      // by viewport id
     std::map<quint64, int> m_modesBefore;     // modes before ⌘F / ⌘⇧F, to go back to
-    QLabel *m_status = nullptr;
+    void showContextHelp(QWidget *widget, QString text);
+    QLabel *m_contextHelp = nullptr;
+    QPointer<QWidget> m_helpWidget;
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
     class RemoteServer *m_remote = nullptr;
