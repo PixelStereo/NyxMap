@@ -7,6 +7,7 @@ class QComboBox;
 class QLabel;
 class QPushButton;
 class QTableWidget;
+class QPlainTextEdit;
 class QCheckBox;
 class QToolButton;
 class QTimer;
@@ -75,6 +76,8 @@ protected:
     bool eventFilter(QObject *o, QEvent *e) override; // snapshots dropped onto the steps
 
 private:
+    void refreshStepChanges();
+    QPlainTextEdit *m_stepChanges = nullptr;
     void addStep(int at, quint64 snapshot, quint64 timeline = 0, quint64 preset = 0, quint64 sequence = 0, quint64 folder = 0);
     void setStepSnapshot(int row, quint64 snapshot);
     void setStepTimeline(int row, quint64 timeline); // Play, unless it was already a timeline step

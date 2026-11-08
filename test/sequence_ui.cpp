@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QKeyEvent>
+#include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <cstdio>
@@ -96,6 +97,30 @@ int main(int argc, char **argv)
         check(editor.proposedTimecode(2) == "1:02.50", "an empty cell offers the time of the step before");
         steps->item(1, at)->setText("");
         check(edited().steps[1].at < 0 && steps->item(1, at)->text().isEmpty(), "emptied: no timecode");
+    }
+    if (steps) {
+        Engine::Snapshot initial;
+        initial.name = "Initial look";
+        initial.composition = {{"opacity", 0.25}, {"volume", 0.75}};
+        const auto snapshot = engine.snapshot(engine.addSnapshot(initial)).id;
+        Engine::Preset next;
+        next.name = "Lift the light";
+        next.values = {{0, "opacity", 0.5}, {0, "volume", 0.75}};
+        const auto preset = engine.preset(engine.addPreset(next)).id;
+        Sequencer::Sequence comparison;
+        comparison.steps.resize(3);
+        comparison.steps[0].snapshot = snapshot;
+        comparison.steps[1].preset = preset;
+        comparison.steps[2].preset = preset;
+        engine.sequencer().setCurrent(engine.sequencer().add(comparison));
+        auto *changes = editor.findChild<QPlainTextEdit *>("sequenceStepChanges");
+        steps->setCurrentCell(1, 1);
+        const QString diff = changes ? changes->toPlainText() : QString();
+        check(diff.contains("opacity") && diff.contains("0.25 → 0.5") && !diff.contains("volume"),
+              "selected preset lists only changes from the preceding snapshot");
+        steps->setCurrentCell(2, 1);
+        check(changes && changes->toPlainText().contains("No stored changes."), "a repeated preset has no differences");
+        check(engine.sequencer().position() == -1, "inspecting differences never triggers GO");
     }
     return failures ? 1 : 0;
 }

@@ -23,6 +23,8 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPlainTextEdit>
+#include <QMap>
 #include <QPushButton>
 #include <QSet>
 #include "LibraryTree.h"
@@ -297,6 +299,16 @@ static void normalizeFolders(Sequencer::Sequence &s)
 
 constexpr Qt::ItemFlags kRowFlags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
 enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColQuantize, ColNext, ColDescription, ColAt, ColTime, ColCount };
+constexpr int kStepOutlineRole = Qt::UserRole + 1;
+
+static void setStepOutline(QTableWidgetItem *item, const QString &kind, const QColor &color)
+{
+    item->setData(kStepOutlineRole, color);
+    const QString description = item->toolTip().isEmpty() ? item->text().trimmed() : item->toolTip();
+    item->setToolTip(QStringLiteral("%1 · %2").arg(kind, description));
+    item->setData(Qt::AccessibleTextRole, item->toolTip());
+}
+
 
 // The time columns (pre-wait, action, post-wait) filling as their time goes by, the continuation as a word;
 // the waits are edited with the app's number field, the continuation with a menu
@@ -355,6 +367,17 @@ public:
         paintCell(p, opt, idx);
         if (const int role = idx.column() == ColSnapshot ? idx.data(Qt::UserRole).toInt() : 0) // a group and its steps: one line down them
             p->fillRect(QRect(opt.rect.left(), opt.rect.top(), 3, opt.rect.height()), role <= 2 ? QColor(76, 217, 100, 170) : QColor(86, 156, 230, 200));
+        if (idx.column() == ColSnapshot) {
+            const QColor outline = idx.data(kStepOutlineRole).value<QColor>();
+            if (outline.isValid()) {
+                p->save();
+                p->setRenderHint(QPainter::Antialiasing);
+                p->setPen(QPen(outline, 1));
+                p->setBrush(Qt::NoBrush);
+                p->drawRoundedRect(QRectF(opt.rect).adjusted(4.5, 3.5, -4.5, -3.5), 3, 3);
+                p->restore();
+            }
+        }
         paintFrame(p, opt, idx);
     }
 
@@ -387,6 +410,23 @@ private:
     void paintCell(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
     {
         const int col = idx.column();
+        if (col == ColSnapshot && idx.data(kStepOutlineRole).isValid()) {
+            QStyleOptionViewItem o(opt);
+            initStyleOption(&o, idx);
+            const QWidget *w = opt.widget;
+            auto *style = w ? w->style() : QApplication::style();
+            const QString label = o.text;
+            o.text.clear();
+            style->drawControl(QStyle::CE_ItemViewItem, &o, p, w);
+            const QRect textRect = opt.rect.adjusted(10, 0, -9, 0);
+            p->save();
+            p->setFont(o.font);
+            const auto role = o.state.testFlag(QStyle::State_Selected) ? QPalette::HighlightedText : QPalette::Text;
+            p->setPen(o.palette.color(role));
+            p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, o.fontMetrics.elidedText(label, Qt::ElideRight, textRect.width()));
+            p->restore();
+            return;
+        }
         if (col != ColTime && col != ColNext) {
             QStyledItemDelegate::paint(p, opt, idx);
             return;
@@ -774,6 +814,17 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                            [this] { if (m_steps->currentRow() >= 0) emit goToRequested(stepOfRow(m_steps->currentRow())); },
                            [this] { removeSteps(); }, [this] { duplicateSteps(); }, [this] { groupSteps(); }});
     right->addWidget(m_steps, 1);
+    m_stepChanges = new QPlainTextEdit;
+    m_stepChanges->setObjectName(QStringLiteral("sequenceStepChanges"));
+    m_stepChanges->setReadOnly(true);
+    m_stepChanges->setFocusPolicy(Qt::NoFocus);
+    m_stepChanges->setMaximumHeight(110);
+    m_stepChanges->setToolTip(QStringLiteral("Stored changes from the preceding steps in this sequence. Selecting a row never recalls it."));
+    m_stepChanges->hide();
+    right->addWidget(m_stepChanges);
+    connect(m_steps, &QTableWidget::currentCellChanged, this, [this] {
+        if (!m_filling) refreshStepChanges();
+    });
     auto *stb = new QHBoxLayout;
     m_stepAdd = new QPushButton(QStringLiteral("+ Step"));
     m_stepDel = new QPushButton(QStringLiteral("−"));
@@ -1296,6 +1347,126 @@ void SequenceWindow::pollClock()
     m_beatLabel->setText(clock.source() == BeatClock::Source::External ? QStringLiteral("ext ") + dots : dots);
 }
 
+namespace {
+using CueValues = QMap<QPair<QString, QString>, QJsonValue>;
+
+QString cueValueText(const QJsonValue &value)
+{
+    if (value.isUndefined()) return QStringLiteral("—");
+    if (value.isArray()) return QStringLiteral("[%1 items]").arg(value.toArray().size());
+    if (value.isObject()) {
+        const auto object = value.toObject();
+        const auto path = object.value("path").toString();
+        if (!path.isEmpty()) return path;
+        return object.value("type").toString(QStringLiteral("{settings}"));
+    }
+    if (value.isString()) return value.toString().simplified();
+    const QByteArray json = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+    return QString::fromUtf8(json.mid(1, json.size() - 2));
+}
+} // namespace
+
+void SequenceWindow::refreshStepChanges()
+{
+    const int row = m_steps->currentRow(), index = stepOfRow(row), child = actionOfRow(row);
+    const auto sequence = m_engine->sequencer().sequence(m_engine->sequencer().current());
+    const bool selected = index >= 0 && index < int(sequence.steps.size()) && child != kHeaderRow;
+    m_stepChanges->setVisible(selected);
+    if (!selected) return;
+
+    CueValues values;
+    QMap<QString, QString> owners;
+    QStringList actions;
+    auto layerOwner = [&](quint64 id) {
+        if (!id) return QStringLiteral("Composition");
+        const QString key = QStringLiteral("Layer %1").arg(id);
+        if (!owners.contains(key)) {
+            Engine::Lock lock(&m_engine->mutex());
+            const auto *layer = m_engine->layer(m_engine->indexOfId(id));
+            if (layer) owners[key] = layer->name;
+        }
+        return key;
+    };
+    auto put = [&](const QString &owner, const QJsonObject &params) {
+        for (auto it = params.begin(); it != params.end(); ++it)
+            values[{owner, it.key()}] = it.value();
+    };
+    auto apply = [&](const Sequencer::Step &step, bool report) {
+        if (step.preset) {
+            const int i = m_engine->indexOfPreset(step.preset);
+            if (i < 0) { if (report) actions << stepTarget(m_engine, step); return; }
+            const auto preset = m_engine->preset(i);
+            for (const auto &value : preset.values)
+                values[{layerOwner(value.layer), value.path}] = value.value;
+            put(QStringLiteral("Preset structure"), preset.categories);
+            put(QStringLiteral("Mapping"), preset.geometry);
+        } else if (step.snapshot) {
+            const int i = m_engine->indexOfSnapshot(step.snapshot);
+            if (i < 0) { if (report) actions << stepTarget(m_engine, step); return; }
+            const auto snapshot = m_engine->snapshot(i);
+            for (const auto &entry : snapshot.layers) {
+                const auto layer = entry.toObject();
+                if (!layer.value("included").toBool(true) || layer.value("viewport").toBool()) continue;
+                const QString owner = layerOwner(layer.value("id").toString().toULongLong());
+                put(owner, layer.value("params").toObject());
+                for (const QString &field : {QStringLiteral("enable"), QStringLiteral("source"), QStringLiteral("fx"),
+                                             QStringLiteral("parent"), QStringLiteral("mesh"), QStringLiteral("masks"),
+                                             QStringLiteral("matte"), QStringLiteral("viewports"), QStringLiteral("anims")}) {
+                    if (layer.contains(field)) values[{owner, field}] = layer.value(field);
+                }
+            }
+            if (snapshot.composition.value("included").toBool(true))
+                for (const QString &field : {QStringLiteral("opacity"), QStringLiteral("volume")})
+                    if (snapshot.composition.contains(field))
+                        values[{QStringLiteral("Composition"), field}] = snapshot.composition.value(field);
+            for (const auto &[kind, entries] : {std::pair{QStringLiteral("Interaction"), snapshot.interactions},
+                                               std::pair{QStringLiteral("Fixture"), snapshot.fixtures}}) {
+                for (const auto &entry : entries) {
+                    const auto object = entry.toObject();
+                    if (!object.value("included").toBool(true)) continue;
+                    const QString owner = kind + QLatin1Char(' ') + object.value("id").toString();
+                    owners[owner] = object.value("name").toString(owner);
+                    put(owner, object.value("params").toObject());
+                    if (object.contains("enabled")) values[{owner, QStringLiteral("enabled")}] = object.value("enabled");
+                }
+            }
+        } else if (step.timeline || step.sequence) {
+            if (report) actions << stepTarget(m_engine, step);
+            if (step.sequence) values.clear(); // its execution is independent of this cue list
+            const int timeline = m_engine->indexOfAnimation(step.timeline);
+            if (timeline >= 0)
+                for (const auto &track : m_engine->animation(timeline).tracks)
+                    if (track.enabled)
+                        for (const auto &path : track.drivenParams()) values.remove({layerOwner(track.layer), path});
+        }
+    };
+    auto applyStep = [&](const Sequencer::Step &step, bool report) {
+        if (step.actions.empty()) apply(step, report);
+        else for (const auto &action : step.actions) apply(action, report);
+    };
+    for (int i = 0; i < index; ++i) applyStep(sequence.steps[size_t(i)], false);
+    const CueValues before = values;
+    const auto &step = sequence.steps[size_t(index)];
+    if (child >= 0 && child < int(step.actions.size())) apply(step.actions[size_t(child)], true);
+    else applyStep(step, true);
+
+    QStringList lines{index == 0 ? QStringLiteral("Changes · first GO")
+                                : QStringLiteral("Changes · compared with the state after GO %1").arg(index)};
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        const QJsonValue old = before.value(it.key(), QJsonValue::Undefined);
+        if (old == it.value()) continue;
+        const auto &[owner, path] = it.key();
+        const QString afterText = cueValueText(it.value());
+        const QString beforeText = cueValueText(old);
+        lines << QStringLiteral("%1 · %2    %3").arg(owners.value(owner, owner), path,
+            beforeText == afterText ? QStringLiteral("changed") : beforeText + QStringLiteral(" → ") + afterText);
+    }
+    lines.append(actions);
+    if (lines.size() == 1) lines << QStringLiteral("No stored changes.");
+    const QString text = lines.join(QLatin1Char('\n'));
+    if (m_stepChanges->toPlainText() != text) m_stepChanges->setPlainText(text);
+}
+
 void SequenceWindow::refresh()
 {
     m_filling = true;
@@ -1368,6 +1539,7 @@ void SequenceWindow::refresh()
             title->setText(QStringLiteral("%1  Group · %2 GOs").arg(closed ? QStringLiteral("▸") : QStringLiteral("▾")).arg(last - first + 1));
             title->setToolTip(QStringLiteral("A group of %1 steps played one GO per step").arg(last - first + 1));
             title->setData(Qt::UserRole, 3);
+            setStepOutline(title, QStringLiteral("GO Group"), QColor(185, 142, 232));
             QFont bold = title->font();
             bold.setBold(true);
             title->setFont(bold);
@@ -1387,6 +1559,11 @@ void SequenceWindow::refresh()
         auto *mem = new QTableWidgetItem(target);
         mem->setFlags(kRowFlags);
         mem->setData(Qt::UserRole, isGroup ? 1 : child >= 0 ? 2 : inFolder ? 4 : 0);
+        if (isGroup) setStepOutline(mem, QStringLiteral("Action Group"), QColor(185, 142, 232));
+        else if (st.sequence) setStepOutline(mem, QStringLiteral("Sequence"), QColor(100, 208, 173));
+        else if (st.preset) setStepOutline(mem, QStringLiteral("Preset"), QColor(232, 187, 103));
+        else if (st.timeline) setStepOutline(mem, QStringLiteral("Timeline"), QColor(86, 196, 255));
+        else if (st.snapshot) setStepOutline(mem, QStringLiteral("Snapshot"), QColor(241, 141, 156));
         if (targetGone(m_engine, st)) mem->setForeground(QColor(255, 120, 100));
         else if (st.timeline) mem->setForeground(QColor(86, 196, 255));
         auto *pre = new QTableWidgetItem;
@@ -1448,6 +1625,7 @@ void SequenceWindow::refresh()
     if (keep >= 0 && keep < m_steps->rowCount()) m_steps->setCurrentCell(keep, ColSnapshot);
     refreshTransport();
     m_filling = false;
+    refreshStepChanges();
 }
 
 void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline, quint64 preset, quint64 sequence, quint64 folder)
