@@ -16,7 +16,6 @@ class QUndoStack;
 class QVBoxLayout;
 class QSlider;
 class QLabel;
-class MaterialSphere;
 class QPushButton;
 class QListWidget;
 class QProgressBar;
@@ -179,7 +178,6 @@ private:
                         const QString &objectName, const QString &tip, const QString &undoText,
                         const std::function<bool(quint64, int, QString *)> &set, bool hdr = false);
     QPointer<QLabel> m_modelTriangles;
-    QPointer<MaterialSphere> m_modelMaterialPreview;
     std::vector<std::pair<QPointer<QWidget>, QString>> m_3dFields;
     std::vector<std::pair<QPointer<QWidget>, QStringList>> m_3dColors;
     QPointer<ParamPanel> m_generatorParams, m_effectParams;

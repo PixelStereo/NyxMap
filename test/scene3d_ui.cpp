@@ -782,6 +782,27 @@ int runScene3dUiTests(Engine &engine)
         undo->redo(); pump();
         { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == materialId, "material assignment redo"); }
     }
+    if (materialInspector) {
+        {
+            Engine::Lock lock(&engine.mutex());
+            QImage normal(2, 2, QImage::Format_RGBA8888);
+            normal.fill(QColor(128, 128, 255));
+            check(engine.materials().at(materialId)->setEmbeddedMap(NormalMap, normal, QStringLiteral("normal-source.png")),
+                  "set a named embedded map");
+        }
+        materialInspector->rebuild();
+        pump();
+        const auto *map = materialInspector->findChild<QPushButton *>("materialMap_normal");
+        check(map && map->text() == "normal-source.png", "the object shows the source image name");
+        auto *strength = materialInspector->findChild<SliderField *>("Normal Strength");
+        check(strength != nullptr, "the object exposes normal strength");
+        if (strength) {
+            emit strength->valueEdited(2.0);
+            check(engine.materials().at(materialId)->normalStrength == 2.f, "object edits the shared project material");
+            undo->undo();
+            check(engine.materials().at(materialId)->normalStrength == 1.f, "object material edit undoes");
+        }
+    }
     window.hide();
     {
         QUndoStack materialUndo;
@@ -799,7 +820,7 @@ int runScene3dUiTests(Engine &engine)
             const quint64 id = items->currentItem()->data(Qt::UserRole).toULongLong();
             auto *metal = materials.findChild<SliderField *>("materialMetal");
             auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
-            auto *color = materials.findChild<ColorPicker *>();
+            auto *color = materials.findChild<ColorPicker *>("materialBaseColor");
             const QImage before = preview ? preview->grabFramebuffer() : QImage();
             if (metal) emit metal->valueEdited(.9);
             if (color) emit color->colorEdited(QColor(Qt::red));

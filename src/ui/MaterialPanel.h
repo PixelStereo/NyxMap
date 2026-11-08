@@ -94,7 +94,9 @@ private:
 class MaterialPanel : public QWidget {
 public:
     MaterialPanel(Engine *engine, QUndoStack *undo, std::function<int()> currentObject, std::function<void()> edited,
-                  QWidget *parent = nullptr) : QWidget(parent), engine(engine), undo(undo), edited(edited) {
+                  QWidget *parent = nullptr, QWidget *objectSurface = nullptr)
+        : QWidget(parent), engine(engine), undo(undo), edited(edited),
+          inspectedObject(objectSurface ? currentObject : std::function<int()>{}) {
         setObjectName("materialPanel");
         auto *layout = new QVBoxLayout(this);
         auto *tools = new QHBoxLayout;
@@ -152,21 +154,36 @@ public:
         });
         remove = button("−", "removeMaterial", [this] { const auto m = current(); if (m && !users(m->id)) commit(m, {}); });
         layout->addLayout(tools);
+        if (inspectedObject)
+            for (int i = 0; i < tools->count(); ++i) tools->itemAt(i)->widget()->hide();
         list = new QListWidget; list->setObjectName("materialList"); list->setMaximumHeight(150); layout->addWidget(list);
+        list->setVisible(!inspectedObject);
         sphere = new MaterialSphere; layout->addWidget(sphere);
         auto *note = new QLabel("Studio preview · physically based material"); note->setWordWrap(true); layout->addWidget(note);
         auto *form = new QFormLayout;
         name = new QLineEdit; name->setObjectName("materialName"); form->addRow("Name", name);
         layout->addLayout(form);
-        color = new ColorPicker(false); color->setSettingsKey("materials/browser/color"); layout->addWidget(color);
+        auto *basic = new QWidget;
+        auto *basicLayout = new QVBoxLayout(basic);
+        basicLayout->setContentsMargins(0, 0, 0, 0);
+        color = new ColorPicker(false);
+        color->setObjectName("materialBaseColor");
+        color->setSettingsKey("materials/browser/color");
+        basicLayout->addWidget(color);
         auto *surface = new QFormLayout;
         metal = spin("materialMetal"); rough = spin("materialRough");
-        surface->addRow("Metallic", metal); surface->addRow("Roughness", rough); layout->addLayout(surface);
+        surface->addRow("Metallic", metal); surface->addRow("Roughness", rough); basicLayout->addLayout(surface);
+        layout->addWidget(basic);
+        if (objectSurface) {
+            basic->hide();
+            layout->addWidget(objectSurface);
+        }
         auto *maps = new QFormLayout;
         const char *labels[] = {"Base Color", "Roughness", "Metallic", "Normal", "Ambient Occlusion", "Emission", "Displacement"};
         for (int i = 0; i < MaterialMapCount; ++i) {
             auto *row = new QHBoxLayout;
             mapButtons[i] = new QPushButton("Choose Image…");
+            mapButtons[i]->setObjectName(QStringLiteral("materialMap_%1").arg(QString::fromLatin1(materialMapNames[i])));
             mapButtons[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             clearButtons[i] = new QToolButton;
             clearButtons[i]->setText(QStringLiteral("×"));
@@ -231,6 +248,7 @@ public:
         layout->addLayout(details);
         usage = new QLabel; usage->setWordWrap(true); layout->addWidget(usage);
         auto *assign = new QPushButton("Assign to selected 3D object"); assign->setObjectName("assignMaterial"); layout->addWidget(assign);
+        assign->setVisible(!inspectedObject);
         connect(assign, &QPushButton::clicked, this, [this, currentObject] {
             const int row = currentObject();
             quint64 object = 0, before = 0;
@@ -301,9 +319,31 @@ private:
             void undo() override { apply(b, a); }
             Engine *e; std::optional<Material3D> b, a;
         };
-        undo->push(new Edit(engine, before, after)); edited(); refresh();
+        if (inspectedObject && engine->isLocked(inspectedObject())) return;
+        auto *command = new Edit(engine, before, after);
+        if (undo) undo->push(command);
+        else { command->redo(); delete command; }
+        edited(); refresh();
     }
     void refresh() {
+        if (inspectedObject) {
+            QJsonObject state;
+            {
+                Engine::Lock lock(&engine->mutex());
+                const auto *object = engine->layer(inspectedObject());
+                selected = object ? object->modelMaterial : 0;
+                if (object && object->material) {
+                    state = object->material->toJson();
+                    state["users"] = users(selected);
+                }
+            }
+            if (state != inspectedState || listedSelection != selected) {
+                inspectedState = state;
+                listedSelection = selected;
+                showCurrent();
+            }
+            return;
+        }
         QJsonArray state, names;
         { Engine::Lock lock(&engine->mutex());
           std::map<quint64, int> counts;
@@ -331,34 +371,38 @@ private:
     }
     void showCurrent() {
         const auto m = current();
-        for (auto *w : {static_cast<QWidget *>(name), static_cast<QWidget *>(color), static_cast<QWidget *>(metal), static_cast<QWidget *>(rough)}) w->setEnabled(bool(m));
+        const bool editable = m && (!inspectedObject || !engine->isLocked(inspectedObject()));
+        for (auto *w : {static_cast<QWidget *>(name), static_cast<QWidget *>(color), static_cast<QWidget *>(metal), static_cast<QWidget *>(rough)}) w->setEnabled(editable);
         for (int i = 0; i < MaterialMapCount; ++i) {
             const QString path = m ? m->paths[i] : QString();
-            mapButtons[i]->setEnabled(bool(m));
+            mapButtons[i]->setEnabled(editable);
             const bool embedded = m && !m->embeddedMaps[i].isEmpty();
             const QString imageName = embedded ? m->embeddedMapNames[i] : QFileInfo(path).fileName();
             mapButtons[i]->setText(!imageName.isEmpty() ? imageName : embedded ? "Embedded Image" : "Choose Image…");
             mapButtons[i]->setToolTip(path.isEmpty() ? imageName : path);
-            clearButtons[i]->setEnabled(embedded || !path.isEmpty());
+            clearButtons[i]->setEnabled(editable && (embedded || !path.isEmpty()));
         }
         for (const auto &[field, member] : scalarFields) {
-            field->setEnabled(bool(m));
+            field->setEnabled(editable);
             if (m) field->setValue((*m).*member);
         }
         for (int i = 0; i < 2; ++i) {
-            tiling[i]->setEnabled(bool(m));
+            tiling[i]->setEnabled(editable);
             if (m) tiling[i]->setValue(m->uvTiling[i]);
         }
-        emissionColor->setEnabled(bool(m));
+        emissionColor->setEnabled(editable);
         if (m) emissionColor->setColor(QColor::fromRgbF(m->emissionColor[0], m->emissionColor[1], m->emissionColor[2]));
-        if (!m) { usage->setText("No material selected"); remove->setEnabled(false); return; }
+        if (!m) { usage->setText("No project material selected"); remove->setEnabled(false); sphere->setMaterial(Material3D()); return; }
         const QSignalBlocker n(name), c(color), mt(metal), r(rough);
-        name->setText(m->name); color->setColor(QColor::fromRgbF(m->color[0], m->color[1], m->color[2])); metal->setValue(m->metal); rough->setValue(m->rough);
+        if (!name->hasFocus()) name->setText(m->name);
+        color->setColor(QColor::fromRgbF(m->color[0], m->color[1], m->color[2])); metal->setValue(m->metal); rough->setValue(m->rough);
         const int count = users(m->id); remove->setEnabled(count == 0);
         usage->setText(QStringLiteral("References: %1 · objects and scene defaults").arg(count));
         sphere->setMaterial(*m);
     }
     Engine *engine; QUndoStack *undo; std::function<void()> edited;
+    std::function<int()> inspectedObject;
+    QJsonObject inspectedState;
     quint64 selected = 0, listedSelection = ~quint64(0); QJsonArray known, knownNames;
     QListWidget *list; MaterialSphere *sphere; QLineEdit *name; ColorPicker *color;
     SliderField *metal, *rough; QPushButton *remove; QLabel *usage;

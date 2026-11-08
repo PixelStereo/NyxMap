@@ -898,7 +898,9 @@ void LayerInspector::rebuild()
         auto *surface = new QWidget;
         auto *layout = new QVBoxLayout(surface);
         layout->addWidget(buildModelLayers());
-        layout->addWidget(build3d({QStringLiteral("model/material/"), QStringLiteral("model/unlit")}));
+        auto *surfaceParams = build3d({QStringLiteral("model/material/"), QStringLiteral("model/unlit")});
+        layout->addWidget(new MaterialPanel(m_engine, m_undo, [this, id = s.id] { return m_engine->indexOfId(id); },
+                                          [this] { emit projectEdited(); }, surface, surfaceParams));
         tabs->addTab(page(surface), QStringLiteral("Material"));
         tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/"), QStringLiteral("model/fit")})), QStringLiteral("Spatial"));
         auto *effects = new QWidget;
@@ -4429,6 +4431,18 @@ QWidget *LayerInspector::buildModelLayers()
             materials->addItem(material->name, QString::number(id));
         materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
     }
+    connect(m_engine, &Engine::layersChanged, materials, [this, materials, objectId = m_layerId] {
+        Engine::Lock lock(&m_engine->mutex());
+        if (m_layerId == objectId && m_layoutKey != layoutKey()) {
+            QMetaObject::invokeMethod(this, [this, objectId] {
+                if (m_layerId == objectId && m_layoutKey != layoutKey()) rebuild();
+            }, Qt::QueuedConnection);
+        }
+        for (const auto &[id, material] : m_engine->materials()) {
+            const int row = materials->findData(QString::number(id));
+            if (row >= 0 && materials->itemText(row) != material->name) materials->setItemText(row, material->name);
+        }
+    });
     materials->addItem(QStringLiteral("+ New Material…"), QStringLiteral("new"));
     materials->addItem(QStringLiteral("Duplicate Material…"), QStringLiteral("duplicate"));
     materials->setEnabled(scene >= 0);
@@ -4498,8 +4512,6 @@ QWidget *LayerInspector::buildModelLayers()
                                   "can stay hidden. Unlit (below): shown as it is."),
                    QStringLiteral("Show Layer on Model"),
                    [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, false, err, stage); });
-    m_modelMaterialPreview = new MaterialSphere;
-    form->addRow(m_modelMaterialPreview);
     return box;
 }
 
@@ -4655,18 +4667,13 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
 
 void LayerInspector::refreshDynamic()
 {
-    if (m_modelTriangles || m_modelMaterialPreview) {
+    if (m_modelTriangles) {
         int triangles = 0;
-        Material3D material;
         {
             Engine::Lock lock(&m_engine->mutex());
-            if (const auto *l = m_engine->layer(m_layer); l && l->model) {
-                if (m_modelTriangles) triangles = l->model->triangleCount();
-                if (m_modelMaterialPreview && l->material) material = *l->material;
-            }
+            if (const auto *l = m_engine->layer(m_layer); l && l->model) triangles = l->model->triangleCount();
         }
-        if (m_modelTriangles) m_modelTriangles->setText(QStringLiteral("%L1 triangles").arg(triangles));
-        if (m_modelMaterialPreview) m_modelMaterialPreview->setMaterial(material);
+        m_modelTriangles->setText(QStringLiteral("%L1 triangles").arg(triangles));
     }
     refreshPicker(); // a layer renamed or moved by something else
     for (const auto &[field, path] : m_3dFields) { // animated, recalled, driven
@@ -4930,6 +4937,7 @@ QString LayerInspector::layoutKey() const
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};
+    if (layer->type == SourceType::Model) key << QString::number(layer->modelMaterial);
     if (layer->timecode) key << QString::fromUtf8(QJsonDocument(layer->timecode->toJson()).toJson(QJsonDocument::Compact));
     if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
     if (layer->audioEffects)
