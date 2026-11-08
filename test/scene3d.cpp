@@ -1530,7 +1530,7 @@ int runScene3dTests(Engine &engine)
         check(packed.save(&bytes, "PNG"), "encode glTF packed texture");
         QFile gltfFile(dir.filePath("surface.gltf"));
         check(gltfFile.open(QIODevice::WriteOnly), "write glTF material fixture");
-        gltfFile.write(R"({"asset":{"version":"2.0"},"images":[{"uri":"data:image/png;base64,)" + png.toBase64() + R"("}],
+        gltfFile.write(R"({"asset":{"version":"2.0"},"images":[{"name":"packed.png","uri":"data:image/png;base64,)" + png.toBase64() + R"("}],
 "textures":[{"source":0}],"materials":[{"name":"Mapped","occlusionTexture":{"index":0},
 "pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0},"metallicFactor":0.8,"roughnessFactor":0.5}},
 {"name":"Solid"}]})");
@@ -1555,6 +1555,8 @@ int runScene3dTests(Engine &engine)
             const auto *layer = engine.layer(engine.indexOfId(sphere));
             check(layer && layer->material && layer->modelMaterial == material.id, "the primitive keeps its imported material");
             if (layer && layer->material) {
+                check(layer->material->embeddedMapNames[RoughnessMap] == "packed.png",
+                      "the imported map keeps its source image name");
                 const auto &maps = layer->material->images;
                 check(!maps[OcclusionMap].isNull() && maps[OcclusionMap].pixelColor(0, 0).red() == 32 &&
                       !maps[RoughnessMap].isNull() && maps[RoughnessMap].pixelColor(0, 0).red() == 96 &&

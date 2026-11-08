@@ -377,7 +377,14 @@ std::vector<Material3D> importGltfMaterials(const QString &path, QString *error)
             if (it == images.end())
                 it = images.insert(image, readGltfImage(*image, dir).convertToFormat(QImage::Format_RGBA8888));
             if (it->isNull()) return false;
-            return material.setEmbeddedMap(slot, channel < 0 ? *it : gltfChannel(*it, channel));
+            QString name = QString::fromUtf8(image->name);
+            QByteArray uri(image->uri);
+            if (!uri.isEmpty() && !uri.startsWith("data:")) {
+                cgltf_decode_uri(uri.data());
+                name = QFileInfo(QString::fromUtf8(uri.constData())).fileName();
+            }
+            if (name.isEmpty()) name = QStringLiteral("%1 · Image %2").arg(source.fileName()).arg(image - document->images + 1);
+            return material.setEmbeddedMap(slot, channel < 0 ? *it : gltfChannel(*it, channel), name);
         };
         if (!map(BaseColorMap, pbr.base_color_texture) ||
             !map(RoughnessMap, pbr.metallic_roughness_texture, 1) ||

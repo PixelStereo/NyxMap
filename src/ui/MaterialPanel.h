@@ -336,8 +336,9 @@ private:
             const QString path = m ? m->paths[i] : QString();
             mapButtons[i]->setEnabled(bool(m));
             const bool embedded = m && !m->embeddedMaps[i].isEmpty();
-            mapButtons[i]->setText(embedded ? "Embedded Image" : path.isEmpty() ? "Choose Image…" : QFileInfo(path).fileName());
-            mapButtons[i]->setToolTip(path);
+            const QString imageName = embedded ? m->embeddedMapNames[i] : QFileInfo(path).fileName();
+            mapButtons[i]->setText(!imageName.isEmpty() ? imageName : embedded ? "Embedded Image" : "Choose Image…");
+            mapButtons[i]->setToolTip(path.isEmpty() ? imageName : path);
             clearButtons[i]->setEnabled(embedded || !path.isEmpty());
         }
         for (const auto &[field, member] : scalarFields) {

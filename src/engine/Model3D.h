@@ -67,6 +67,7 @@ struct Material3D {
     float metal = 0, rough = .6f;
     std::array<QString, MaterialMapCount> paths;
     std::array<QImage, MaterialMapCount> images;
+    std::array<QString, MaterialMapCount> embeddedMapNames;
     std::array<QString, MaterialMapCount> embeddedMaps; // base64 PNG for imported maps without standalone paths
     std::array<float, 3> emissionColor{{1, 1, 1}};
     std::array<float, 2> uvTiling{{1, 1}};
@@ -74,12 +75,12 @@ struct Material3D {
     quint64 picture = 0;
     int pictureStage = -1;
     bool setMap(MaterialMap slot, const QString &path, QString *error = nullptr);
-    bool setEmbeddedMap(MaterialMap slot, const QImage &image);
+    bool setEmbeddedMap(MaterialMap slot, const QImage &image, const QString &name);
     QJsonObject toJson(const QString &projectDir = {}) const {
         QJsonObject maps;
         for (int i = 0; i < MaterialMapCount; ++i) {
             if (paths[i].isEmpty()) {
-                if (!embeddedMaps[i].isEmpty()) maps[materialMapNames[i]] = QJsonObject{{"png", embeddedMaps[i]}};
+                if (!embeddedMaps[i].isEmpty()) maps[materialMapNames[i]] = QJsonObject{{"png", embeddedMaps[i]}, {"name", embeddedMapNames[i]}};
                 continue;
             }
             QJsonObject file{{"path", paths[i]}};
@@ -114,6 +115,7 @@ struct Material3D {
             if (!path.isEmpty() && !material.setMap(MaterialMap(i), path)) material.paths[i] = path;
             if (path.isEmpty()) {
                 material.embeddedMaps[i] = file.value("png").toString();
+                material.embeddedMapNames[i] = file.value("name").toString();
                 if (!material.embeddedMaps[i].isEmpty())
                     material.images[i] = QImage::fromData(QByteArray::fromBase64(material.embeddedMaps[i].toLatin1()), "PNG");
             }

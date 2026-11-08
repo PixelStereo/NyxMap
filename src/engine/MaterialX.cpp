@@ -20,16 +20,18 @@ bool Material3D::setMap(MaterialMap slot, const QString &path, QString *error)
     }
     paths[slot] = path;
     embeddedMaps[slot].clear();
+    embeddedMapNames[slot].clear();
     images[slot] = std::move(image);
     return true;
 }
 
-bool Material3D::setEmbeddedMap(MaterialMap slot, const QImage &image)
+bool Material3D::setEmbeddedMap(MaterialMap slot, const QImage &image, const QString &name)
 {
     QBuffer buffer;
     if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG")) return false;
     paths[slot].clear();
     images[slot] = image;
+    embeddedMapNames[slot] = name;
     embeddedMaps[slot] = QString::fromLatin1(buffer.data().toBase64());
     return true;
 }
