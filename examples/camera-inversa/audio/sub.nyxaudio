@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "type": "fm",
+  "frequency": 43,
+  "ratio": 1.005,
+  "index": 0.5,
+  "gain": 0.23,
+  "attack": 0.06,
+  "decay": 0.32,
+  "sustain": 0.73,
+  "release": 0.42,
+  "gate": 0
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "type": "pink",
+  "gain": 0.16,
+  "attack": 0.8,
+  "sustain": 1,
+  "release": 1.4,
+  "gate": 1
+}
