@@ -76,7 +76,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
         if (found == wanted.end())
             wanted[key] = request;
         else
-            found->second.hands |= request.hands;
+            found->second.tasks |= request.tasks;
     }
     d->error = wanted.size() > 8 ? QStringLiteral("At most 8 visual analysis sources can run at once") : QString();
     auto invalidate = [&](const QString &key) {
@@ -107,9 +107,9 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             continue;
         }
         const int width =
-            request.hands ? std::max(16, int(320. * picture.width / std::max(picture.width, picture.height))) : 64;
+            request.tasks ? std::max(16, int(320. * picture.width / std::max(picture.width, picture.height))) : 64;
         const int height =
-            request.hands ? std::max(16, int(320. * picture.height / std::max(picture.width, picture.height))) : 64;
+            request.tasks ? std::max(16, int(320. * picture.height / std::max(picture.width, picture.height))) : 64;
         if (input.width != width || input.height != height) {
             invalidate(key);
             if (input.sampler)
@@ -141,8 +141,8 @@ void VisionRuntime::step(const std::vector<Request> &requests,
                 input.timeNs = timestamp->second;
                 input.received = tag;
                 input.error.clear();
-                if (request.hands && input.timeNs - input.lastHandSubmit >= 66666666) {
-                    d->worker.submit(key, imageOf(input.pixels, width, height), input.timeNs);
+                if (request.tasks && input.timeNs - input.lastHandSubmit >= 66666666) {
+                    d->worker.submit(key, imageOf(input.pixels, width, height), input.timeNs, request.tasks);
                     input.lastHandSubmit = input.timeNs;
                 }
             }

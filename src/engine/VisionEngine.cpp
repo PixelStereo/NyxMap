@@ -14,7 +14,7 @@ void Engine::stepVision()
     auto add = [&](const Interaction &input) {
         if (input.enabled && input.pixels.layer &&
             (input.source == InteractionSource::Pixels || input.source == InteractionSource::Hands))
-            requests.push_back({input.pixels, input.source == InteractionSource::Hands});
+            requests.push_back({input.pixels, input.source == InteractionSource::Hands ? HandTracking::taskFor(input.handFeature) : 0});
     };
     for (const auto &input : m_interactions)
         if (input.enabled) {
@@ -50,17 +50,9 @@ double Engine::visionValue(const Interaction &input)
     if (input.source == InteractionSource::Pixels)
         return m_vision->pixelValue(input.pixels, input.pixelFeature, now);
     const auto frame = m_vision->hands(input.pixels);
-    if (!frame.error.isEmpty() || !frame.timeNs || now - frame.timeNs > 500000000)
+    if (!HandTracking::taskError(frame, input.handFeature).isEmpty() || !frame.timeNs || now - frame.timeNs > 500000000)
         return 0;
-    if (input.handFeature == HandTracking::Feature::Count) {
-        double count = 0;
-        for (const auto &hand : frame.hands)
-            if (hand.valid && hand.confidence >= input.handConfidence)
-                ++count;
-        return count;
-    }
-    const auto &hand = frame.hands[size_t(std::clamp(input.handIndex, 0, 1))];
-    return hand.confidence >= input.handConfidence ? HandTracking::measure(hand, input.handFeature) : 0;
+    return HandTracking::measure(frame, input.handIndex, input.handFeature, input.handConfidence);
 }
 void Engine::releaseVision()
 {
@@ -101,8 +93,6 @@ QString Engine::visionStatus(const PixelAnalysis::Settings &settings, bool hands
     Lock lock(&m_mutex);
     if (!settings.layer)
         return QStringLiteral("Choose an image layer to analyze, before or after FX");
-    if (hands && !handTrackingAvailable())
-        return QStringLiteral("Hands require OpenCV DNN at build time");
     if (!m_vision || m_visionReset)
         return QStringLiteral("Waiting for camera / image frames");
     if (!hands)
@@ -111,12 +101,11 @@ QString Engine::visionStatus(const PixelAnalysis::Settings &settings, bool hands
     if (!frame.error.isEmpty())
         return frame.error;
     if (!frame.timeNs)
-        return QStringLiteral("Waiting for hand detection");
+        return QStringLiteral("Waiting for MediaPipe detection");
     if (AudioStream::clockNs() - frame.timeNs > 500000000)
         return QStringLiteral("No recent camera frames");
-    int count = 0;
-    for (const auto &hand : frame.hands)
-        if (hand.valid)
-            ++count;
-    return QStringLiteral("%1 hand(s) detected locally").arg(count);
+    const auto results = frame.detections.keys();
+    for (const auto &key : results)
+        if (key.endsWith("_error")) return frame.detections.value(key).toString();
+    return QStringLiteral("MediaPipe Tasks · local inference active");
 }

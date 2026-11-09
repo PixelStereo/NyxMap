@@ -9,7 +9,7 @@ class VisionRuntime {
 public:
     struct Request {
         PixelAnalysis::Settings settings;
-        bool hands = false;
+        unsigned tasks = 0;
     };
     struct Texture {
         unsigned int id = 0;

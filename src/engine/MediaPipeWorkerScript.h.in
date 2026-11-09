@@ -1,0 +1,4 @@
+#pragma once
+inline constexpr char mediaPipeWorkerScript[] = R"NYXMP(
+@NYXMAP_MEDIAPIPE_WORKER@
+)NYXMP";

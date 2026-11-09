@@ -1459,9 +1459,9 @@ void InteractionPanel::rebuildSettings()
         } else {
             auto *hand = new QComboBox;
             hand->setObjectName(QStringLiteral("trackedHand"));
-            hand->addItems({QStringLiteral("Tracked hand 1"), QStringLiteral("Tracked hand 2")});
+            hand->addItems({QStringLiteral("Detection 1"), QStringLiteral("Detection 2")});
             hand->setCurrentIndex(it.handIndex);
-            form->addRow(QStringLiteral("Hand"), hand);
+            form->addRow(QStringLiteral("Detection"), hand);
             connect(hand, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
                 edit(QStringLiteral("Change Tracked Hand"), [value](Interaction &x) { x.handIndex = value; });
             });
@@ -1487,18 +1487,18 @@ void InteractionPanel::rebuildSettings()
                 edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
             });
             attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *models = new QPushButton(QStringLiteral("Choose hand models folder…"));
+            auto *models = new QPushButton(QStringLiteral("Choose MediaPipe models folder…"));
             form->addRow(models);
             connect(models, &QPushButton::clicked, this, [this] {
                 const auto directory = QFileDialog::getExistingDirectory(
-                    this, QStringLiteral("OpenCV Zoo hand model directory"), m_engine->handModelsDirectory());
+                    this, QStringLiteral("MediaPipe model directory"), m_engine->handModelsDirectory());
                 if (!directory.isEmpty()) {
                     m_engine->setHandModelsDirectory(directory);
                     rebuildSettings();
                 }
             });
-            form->addRow(note(QStringLiteral("Local OpenCV DNN / MediaPipe: two verified ONNX models. Download with "
-                                             "scripts/download_hand_models.py; no images leave this computer.")));
+            form->addRow(note(QStringLiteral("Local MediaPipe Tasks. Set up Python and models with "
+                                             "scripts/setup_mediapipe.py. Images stay on this computer.")));
         }
         auto *status = new QLabel;
         status->setWordWrap(true);

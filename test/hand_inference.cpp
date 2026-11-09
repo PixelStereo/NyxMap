@@ -8,7 +8,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     const auto directory = qEnvironmentVariable("NYXMAP_HAND_MODELS");
     if (!HandTracking::Detector::available() || directory.isEmpty()) {
-        std::cout << "Set NYXMAP_HAND_MODELS to the verified ONNX model folder in an OpenCV build\n";
+        std::cout << "Set NYXMAP_HAND_MODELS to the MediaPipe Tasks model folder\n";
         return 77;
     }
     HandTracking::Detector detector;
