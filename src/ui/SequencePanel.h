@@ -83,6 +83,7 @@ private:
     void setStepTimeline(int row, quint64 timeline); // Play, unless it was already a timeline step
     void setStepLibraryTarget(int row, quint64 preset, quint64 sequence);
     void fillActionMenu(QMenu *menu, int row);
+    void simplifyStep(int row);
     void removeSteps();
     void applySequence(int index, const Sequencer::Sequence &sequence,
                        const QString &text = QStringLiteral("Edit Sequence"));

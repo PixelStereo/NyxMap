@@ -1,6 +1,7 @@
 #include "SequencePanel.h"
 #include "Engine.h"
 #include "SnapshotPanel.h"
+#include "StoredContent.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
 
@@ -1170,6 +1171,13 @@ void SequenceWindow::fillStepMenu(QMenu *menu, int row)
     Sequencer::Sequence shown = cs;
     if (const Sequencer::Step *st = stepAt(shown, row); st && st->timeline)
         fillActionMenu(menu->addMenu(QStringLiteral("Timeline action")), row);
+    if (const auto *step = stepAt(shown, row); step && (step->snapshot || step->preset)) {
+        auto *simplify = menu->addAction(QStringLiteral("Simplify Against Previous Cue"), this,
+                                         [this, row] { simplifyStep(row); });
+        const int index = stepOfRow(row);
+        simplify->setEnabled(actionOfRow(row) < 0 && index > 0 &&
+                             (cs.steps[size_t(index - 1)].snapshot || cs.steps[size_t(index - 1)].preset));
+    }
     menu->addSeparator();
     menu->addAction(QStringLiteral("Insert empty step before"), this, [this, row] { row < 0 ? addStep(-1, 0) : insertStep(row, true); });
     menu->addAction(QStringLiteral("Insert empty step after"), this,
@@ -2188,7 +2196,116 @@ public:
             engine->sequencer().setSequence(engine->sequencer().indexOfSequence(id), after);
     }
 };
+class SimplifyCueEdit : public QUndoCommand {
+    Engine *engine;
+    quint64 sequenceId;
+    Sequencer::Sequence before, after;
+    std::vector<Engine::Preset> oldPresets, newPresets;
+
+public:
+    SimplifyCueEdit(Engine *e, quint64 id, Sequencer::Sequence original, Sequencer::Sequence simplified,
+                    std::vector<Engine::Preset> oldList, std::vector<Engine::Preset> newList)
+        : QUndoCommand(QStringLiteral("Simplify Cue")), engine(e), sequenceId(id),
+          before(std::move(original)), after(std::move(simplified)),
+          oldPresets(std::move(oldList)), newPresets(std::move(newList))
+    {}
+    void undo() override
+    {
+        auto &seq = engine->sequencer();
+        seq.setSequence(seq.indexOfSequence(sequenceId), before);
+        engine->setPresets(oldPresets);
+    }
+    void redo() override
+    {
+        engine->setPresets(newPresets);
+        auto &seq = engine->sequencer();
+        seq.setSequence(seq.indexOfSequence(sequenceId), after);
+    }
+};
 } // namespace
+void SequenceWindow::simplifyStep(int row)
+{
+    auto &seq = m_engine->sequencer();
+    const int index = seq.current(), stepIndex = stepOfRow(row);
+    const auto before = seq.sequence(index);
+    auto after = before;
+    auto *step = stepAt(after, row);
+    if (!step || actionOfRow(row) >= 0 || stepIndex <= 0 || (!step->snapshot && !step->preset))
+        return;
+
+    auto stored = [this](const Sequencer::Step &cue) {
+        if (cue.preset)
+            return m_engine->preset(m_engine->indexOfPreset(cue.preset));
+        const auto snapshot = m_engine->snapshot(m_engine->indexOfSnapshot(cue.snapshot));
+        auto preset = StoredContent::toPreset(snapshot);
+        preset.id = snapshot.id;
+        preset.name = snapshot.name;
+        return preset;
+    };
+    auto simplified = stored(*step);
+    if (!stored(before.steps[size_t(stepIndex - 1)]).id || !simplified.id)
+        return;
+
+    // Fold the stored cues in playback order. A timeline, sub-sequence or
+    // simultaneous group makes the resulting parameter values unknown.
+    Engine::Preset previous;
+    for (int i = 0; i < stepIndex; ++i) {
+        const auto &cue = before.steps[size_t(i)];
+        if (cue.timeline || cue.sequence || !cue.actions.empty()) {
+            previous = {};
+            continue;
+        }
+        const auto next = stored(cue);
+        for (auto category = next.categories.constBegin(); category != next.categories.constEnd(); ++category) {
+            const int parts = category.key().section(':', 1).toInt();
+            if (!(parts & (Engine::PartSource | Engine::PartEffects)) ||
+                previous.categories.value(category.key()) == category.value())
+                continue;
+            const quint64 layer = category.key().section(':', 0, 0).toULongLong();
+            auto &values = previous.values;
+            values.erase(std::remove_if(values.begin(), values.end(), [layer, parts](const auto &value) {
+                return value.layer == layer && (Engine::partOf(value.path) & parts);
+            }), values.end());
+        }
+        StoredContent::merge(previous, next);
+    }
+
+    const bool removed = StoredContent::simplify(simplified, previous);
+    if (step->preset && !removed) return;
+
+    auto oldList = m_engine->presets();
+    auto newList = oldList;
+    int references = 0;
+    if (step->preset) {
+        const quint64 id = step->preset;
+        for (int i = 0; i < seq.count(); ++i)
+            for (const auto &cue : seq.sequence(i).steps) {
+                references += cue.preset == id;
+                for (const auto &action : cue.actions) references += action.preset == id;
+            }
+    }
+    if (step->preset && references == 1) {
+        newList[size_t(m_engine->indexOfPreset(step->preset))] = simplified;
+    } else {
+        // A delta depends on its predecessor. Leave any other use of the original intact.
+        simplified.id = 0;
+        simplified.name += QStringLiteral(" · Simplified");
+        const int added = m_engine->addPreset(simplified);
+        simplified = m_engine->preset(added);
+        newList.push_back(simplified);
+        step->snapshot = 0;
+        step->preset = simplified.id;
+    }
+    auto *edit = new SimplifyCueEdit(m_engine, seq.sequenceId(index), before, after, oldList, newList);
+    if (m_undo)
+        m_undo->push(edit);
+    else {
+        edit->redo();
+        delete edit;
+    }
+    emit edited();
+}
+
 void SequenceWindow::applySequence(int index, const Sequencer::Sequence &sequence, const QString &text)
 {
     auto &sequencer = m_engine->sequencer();

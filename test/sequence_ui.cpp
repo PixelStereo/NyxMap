@@ -6,6 +6,8 @@
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QKeyEvent>
+#include <QMenu>
+#include <QUndoStack>
 #include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -41,7 +43,8 @@ int main(int argc, char **argv)
     overview.steps[1].next = Sequencer::StepContinue::AutoFollow;
     overview.steps[2].next = Sequencer::StepContinue::AutoFollow;
     engine.sequencer().setCurrent(engine.sequencer().add(overview));
-    SequenceWindow editor(&engine);
+    QUndoStack undo;
+    SequenceWindow editor(&engine, nullptr, &undo);
     auto *steps = editor.findChild<QTableWidget *>("sequenceSteps");
     if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty()) { // a picture of the window, for a look
         editor.show();
@@ -121,6 +124,42 @@ int main(int argc, char **argv)
         steps->setCurrentCell(2, 1);
         check(changes && changes->toPlainText().contains("No stored changes."), "a repeated preset has no differences");
         check(engine.sequencer().position() == -1, "inspecting differences never triggers GO");
+        auto simplify = [&](int row) {
+            QMenu menu;
+            editor.fillStepMenu(&menu, row);
+            for (auto *action : menu.actions())
+                if (action->text() == "Simplify Against Previous Cue" && action->isEnabled()) {
+                    action->trigger();
+                    return true;
+                }
+            return false;
+        };
+        auto current = [&] { return engine.sequencer().sequence(engine.sequencer().current()); };
+        check(simplify(1), "the preset's context menu offers simplification");
+        const quint64 delta = current().steps[1].preset;
+        const auto simplified = engine.preset(engine.indexOfPreset(delta));
+        check(delta != preset && current().steps[2].preset == preset && simplified.values.size() == 1 &&
+                  simplified.indexOf(0, "opacity") >= 0 && engine.preset(engine.indexOfPreset(preset)).values.size() == 2,
+              "a shared preset is copied and only the changed value remains");
+        undo.undo();
+        check(current().steps[1].preset == preset && engine.indexOfPreset(delta) < 0, "undo restores cue and preset library");
+        undo.redo();
+        check(current().steps[1].preset == delta && engine.indexOfPreset(delta) >= 0, "redo restores the delta");
+        check(simplify(1) && current().steps[1].preset == delta, "simplifying an existing delta keeps its reference");
+
+        initial.composition["opacity"] = 0.6;
+        const auto secondSnapshot = engine.snapshot(engine.addSnapshot(initial)).id;
+        comparison.steps[1].preset = 0;
+        comparison.steps[1].snapshot = secondSnapshot;
+        const int sequenceIndex = engine.sequencer().add(comparison);
+        engine.sequencer().setCurrent(sequenceIndex);
+        check(simplify(1), "the snapshot's context menu offers simplification");
+        const auto converted = current().steps[1];
+        const auto convertedPreset = engine.preset(engine.indexOfPreset(converted.preset));
+        check(!converted.snapshot && convertedPreset.values.size() == 1 &&
+                  convertedPreset.indexOf(0, "opacity") >= 0 && engine.indexOfSnapshot(secondSnapshot) >= 0,
+              "the snapshot cue becomes a delta preset and the library snapshot is preserved");
+
     }
     return failures ? 1 : 0;
 }
