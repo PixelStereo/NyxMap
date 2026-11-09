@@ -5144,7 +5144,7 @@ QWidget *LayerInspector::buildAudioEffects()
         emit layerChanged();
     });
 
-    auto addMeter = [this](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
+    auto addMeter = [](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
         auto *row = new QHBoxLayout;
         auto *label = new QLabel(name);
         label->setStyleSheet("color:#8a8a8e;");

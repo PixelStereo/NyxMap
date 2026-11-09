@@ -42,11 +42,11 @@ struct ParamInfo {
     Ramp ramp = Ramp::Linear;
     int access = ReadWrite;
     double step = 0.01;      // its granularity: a number moves by this (a whole number: 1)
-    QVariant defaultValue;   // what a reset puts back
+    QVariant defaultValue{};   // what a reset puts back
     double min = 0, max = 1; // the range shown (bars, lanes, OSC range)
     double lo = 0, hi = 1;   // the limits a value is kept within
-    QList<int> values;       // Int: the values it can take (empty: any whole number within the limits)
-    QStringList choices;     // Choice: its keys
+    QList<int> values{};       // Int: the values it can take (empty: any whole number within the limits)
+    QStringList choices{};     // Choice: its keys
     bool animatable = false; // a timeline or an animation can drive it (the numbers)
     int colorComponent = -1; // explicit RGB(A) member at <color path>/r,g,b,a; -1: not a color
     int pointComponent = -1; // explicit XY member at <point path>/x,y; -1: not a point

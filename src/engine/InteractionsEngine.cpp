@@ -299,7 +299,11 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
         const auto level = run.proc.level();
         if (!level && !run.xyY.level()) continue;
         const double x = level.value_or(0);
-        out->push_back({id, x, run.proc.output().value_or(x), run.proc.curveInput().value_or(x)});
+        auto &activity = out->emplace_back();
+        activity.id = id;
+        activity.input = x;
+        activity.output = run.proc.output().value_or(x);
+        activity.curveInput = run.proc.curveInput().value_or(x);
         if (run.actionMet) out->back().met = *run.actionMet ? 1 : 0;
         out->back().stages = run.proc.stageOutputs();
         out->back().yStages = run.xyY.stageOutputs();

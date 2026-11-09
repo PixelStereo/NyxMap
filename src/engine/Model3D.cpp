@@ -601,9 +601,11 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
             for (size_t i = 0; i < count * 3; ++i) {
                 const uint32_t ix = tri[i];
                 const ufbx_vec3 p = ufbx_transform_position(&toWorld, ufbx_get_vertex_vec3(&mesh->vertex_position, ix));
-                ufbx_vec3 nn = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, ix) : ufbx_vec3{0, 0, 1};
+                ufbx_vec3 nn{};
+                if (mesh->vertex_normal.exists) nn = ufbx_get_vertex_vec3(&mesh->vertex_normal, ix);
+                else nn.z = 1;
                 nn = ufbx_vec3_normalize(ufbx_transform_direction(&normalToWorld, nn));
-                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, ix) : ufbx_vec2{0, 0};
+                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, ix) : ufbx_vec2{};
                 out.indices.push_back(quint32(out.vertices.size()));
                 out.vertices.push_back(Vertex{{float(p.x), float(p.y), float(p.z)}, {float(nn.x), float(nn.y), float(nn.z)},
                                               {float(uv.x), 1.0f - float(uv.y)}}); // its V from the bottom: ours from the top
@@ -1858,7 +1860,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     {
         QByteArray key;
         const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
-        bool could = !environment || hasEnv && environment == m_envSource; // an HDR file's picture does not change
+        bool could = !environment || (hasEnv && environment == m_envSource); // an HDR file's picture does not change
         add(&environment, sizeof environment);
         add(&w, sizeof w);
         add(&h, sizeof h);

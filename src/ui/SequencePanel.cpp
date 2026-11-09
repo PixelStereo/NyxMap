@@ -921,7 +921,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                 ParamInfo info;
                 if (m_engine->parameterInfo(id, QString::fromLatin1(path), &info))
                     menu->addAction(QStringLiteral("%1 › %2").arg(name, info.label.section(QStringLiteral(" › "), -1)), this,
-                                    [choose, id, path] { choose(id, QString::fromLatin1(path)); });
+                                    [choose, layerId = id, path] { choose(layerId, QString::fromLatin1(path)); });
             }
     });
     connect(m_tracking, &QCheckBox::toggled, this, [this, current](bool on) {
