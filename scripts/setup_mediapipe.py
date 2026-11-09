@@ -45,20 +45,52 @@ def bundle_python(folder):
     runtime = folder / "python"
     if runtime.exists():
         raise RuntimeError(f"Bundle destination already contains Python: {runtime}")
+    uv = [sys.executable, "-m", "uv"]
     with tempfile.TemporaryDirectory(prefix="nyxmap-python-") as directory:
         managed = Path(directory)
         env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(managed)}
-        uv = [sys.executable, "-m", "uv"]
         subprocess.run([*uv, "python", "install", "3.11", "--no-bin"], env=env, check=True)
         installs = list(managed.glob("cpython-3.11.*"))
         if len(installs) != 1:
             raise RuntimeError(f"Expected one portable Python installation, got {installs}")
         shutil.copytree(installs[0], runtime, symlinks=os.name != "nt")
-    python = runtime / ("python.exe" if os.name == "nt" else "bin/python3.11")
-    site = subprocess.check_output([str(python), "-I", "-c",
-        "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
-    subprocess.run([*uv, "pip", "install", "--python", str(python), "--target", site,
-                    "--link-mode", "copy", "--only-binary", ":all:", "mediapipe==0.10.32"], check=True)
+        python = runtime / ("python.exe" if os.name == "nt" else "bin/python3.11")
+        site = subprocess.check_output([str(python), "-I", "-c",
+            "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
+        dependencies = ["mediapipe==0.10.32"]
+        if sys.platform == "darwin":
+            # PyPI's macOS wheel contains FFmpeg codecs that cannot ship with NyxMap.
+            # MediaPipe only uses OpenCV for drawing and encoding the setup preview.
+            wheel_dir = managed / "wheelhouse"
+            wheel_dir.mkdir()
+            build_env = {
+                **os.environ, "ENABLE_CONTRIB": "1", "ENABLE_HEADLESS": "0",
+                "CMAKE_BUILD_PARALLEL_LEVEL": "4", "MACOSX_DEPLOYMENT_TARGET": "14.0",
+                "CMAKE_ARGS": " ".join((
+                    "-DBUILD_LIST=core,imgproc,imgcodecs,features2d,flann,python3",
+                    "-DWITH_FFMPEG=OFF", "-DWITH_GSTREAMER=OFF", "-DWITH_AVFOUNDATION=OFF",
+                    "-DWITH_QT=OFF", "-DWITH_GTK=OFF", "-DWITH_OPENCL=OFF", "-DWITH_IPP=OFF",
+                    "-DBUILD_JPEG=ON", "-DBUILD_PNG=ON", "-DWITH_TIFF=OFF", "-DWITH_WEBP=OFF",
+                    "-DWITH_OPENJPEG=OFF", "-DWITH_OPENEXR=OFF", "-DWITH_JASPER=OFF",
+                    "-DWITH_AVIF=OFF", "-DWITH_JPEGXL=OFF", "-DWITH_GDAL=OFF",
+                )),
+            }
+            subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-binary",
+                            "opencv-contrib-python", "opencv-contrib-python==4.11.0.86",
+                            "--wheel-dir", str(wheel_dir)], env=build_env, check=True)
+            wheels = list(wheel_dir.glob("opencv_contrib_python-*.whl"))
+            if len(wheels) != 1:
+                raise RuntimeError(f"Expected exactly one locally built OpenCV wheel, got {wheels}")
+            dependencies.append(str(wheels[0]))
+        else:
+            dependencies.append("opencv-contrib-python==5.0.0.93")
+        subprocess.run([*uv, "pip", "install", "--python", str(python), "--target", site,
+                        "--link-mode", "copy", "--only-binary", ":all:", *dependencies], check=True)
+    if sys.platform.startswith("linux"):
+        # Matplotlib uses Agg. The optional Tk module links to Tcl/Tk 9, absent
+        # from the Ubuntu 24.04 release baseline.
+        for extension in (runtime / "lib" / "python3.11" / "lib-dynload").glob("_tkinter*.so"):
+            extension.unlink()
     return python
 
 
