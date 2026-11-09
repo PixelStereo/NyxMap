@@ -19,10 +19,6 @@
       "viewports": {},
       "fx": [
         {
-          "path": "VHS Glitch.fs",
-          "relative_path": "../../isf/effects/VHS Glitch.fs"
-        },
-        {
           "path": "Pixelate.fs",
           "relative_path": "../../isf/effects/Pixelate.fs"
         }
@@ -33,10 +29,7 @@
       },
       "params": {
         "opacity": 0,
-        "fx/enable": true,
-        "fx/VHS_Glitch/enable": false,
-        "fx/Pixelate/enable": false,
-        "fx/VHS_Glitch/param/scanFollow": false
+        "fx/enable": true
       },
       "group": true,
       "collapsed": true
@@ -2297,8 +2290,8 @@
     },
     {
       "id": "5",
-      "key": "rgb",
-      "name": "05 · RGB interference",
+      "key": "air",
+      "name": "05 · Air level",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2308,8 +2301,8 @@
     },
     {
       "id": "6",
-      "key": "air",
-      "name": "06 · Air level",
+      "key": "metal",
+      "name": "06 · Granular level",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2319,8 +2312,8 @@
     },
     {
       "id": "7",
-      "key": "metal",
-      "name": "07 · Granular level",
+      "key": "sub",
+      "name": "07 · Sub level",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2330,19 +2323,8 @@
     },
     {
       "id": "8",
-      "key": "sub",
-      "name": "08 · Sub level",
-      "kind": "slider",
-      "min": 0,
-      "max": 1,
-      "step": 0.01,
-      "default": 0,
-      "value": 0
-    },
-    {
-      "id": "9",
       "key": "density",
-      "name": "09 · Grain density",
+      "name": "08 · Grain density",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2351,9 +2333,9 @@
       "value": 0.16
     },
     {
-      "id": "10",
+      "id": "9",
       "key": "size",
-      "name": "10 · Grain duration",
+      "name": "09 · Grain duration",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2362,9 +2344,9 @@
       "value": 0.5
     },
     {
-      "id": "11",
+      "id": "10",
       "key": "fracture",
-      "name": "11 · Fracture / contact noise",
+      "name": "10 · Fracture / contact noise",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2373,9 +2355,9 @@
       "value": 0
     },
     {
-      "id": "12",
+      "id": "11",
       "key": "camera",
-      "name": "12 · Camera angle",
+      "name": "11 · Camera angle",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2384,9 +2366,9 @@
       "value": 0.52
     },
     {
-      "id": "13",
+      "id": "12",
       "key": "drift",
-      "name": "13 · Smoke turbulence",
+      "name": "12 · Smoke turbulence",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2395,9 +2377,9 @@
       "value": 0.37
     },
     {
-      "id": "14",
+      "id": "13",
       "key": "pitch",
-      "name": "14 · Grain transposition",
+      "name": "13 · Grain transposition",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2406,9 +2388,9 @@
       "value": 0.48
     },
     {
-      "id": "15",
+      "id": "14",
       "key": "room",
-      "name": "15 · Grain space",
+      "name": "14 · Grain space",
       "kind": "slider",
       "min": 0,
       "max": 1,
@@ -2417,9 +2399,9 @@
       "value": 0.3
     },
     {
-      "id": "16",
+      "id": "15",
       "key": "strike",
-      "name": "16 · Strike / hold",
+      "name": "15 · Strike / hold",
       "kind": "button",
       "min": 0,
       "max": 1,
@@ -2641,91 +2623,7 @@
     },
     {
       "id": "11",
-      "name": "05 · RGB interference",
-      "enabled": true,
-      "layer": "101",
-      "param": "fx/VHS_Glitch/enable",
-      "master": 1,
-      "takeover": "jump",
-      "filters": [
-        {
-          "type": "remap",
-          "a": 0,
-          "b": 1,
-          "c": 0,
-          "d": 8
-        }
-      ],
-      "source": "internal",
-      "source_layer": "0",
-      "source_param": "control/rgb"
-    },
-    {
-      "id": "12",
-      "name": "05 · RGB interference",
-      "enabled": true,
-      "layer": "101",
-      "param": "fx/VHS_Glitch/param/bleedAmount",
-      "master": 1,
-      "takeover": "jump",
-      "filters": [
-        {
-          "type": "remap",
-          "a": 0,
-          "b": 1,
-          "c": 0,
-          "d": 2.8
-        }
-      ],
-      "source": "internal",
-      "source_layer": "0",
-      "source_param": "control/rgb"
-    },
-    {
-      "id": "13",
-      "name": "05 · RGB interference",
-      "enabled": true,
-      "layer": "101",
-      "param": "fx/VHS_Glitch/param/analogDistort",
-      "master": 1,
-      "takeover": "jump",
-      "filters": [
-        {
-          "type": "remap",
-          "a": 0,
-          "b": 1,
-          "c": 0,
-          "d": 9
-        }
-      ],
-      "source": "internal",
-      "source_layer": "0",
-      "source_param": "control/rgb"
-    },
-    {
-      "id": "14",
-      "name": "05 · RGB interference",
-      "enabled": true,
-      "layer": "101",
-      "param": "fx/VHS_Glitch/param/grainLevel",
-      "master": 1,
-      "takeover": "jump",
-      "filters": [
-        {
-          "type": "remap",
-          "a": 0,
-          "b": 1,
-          "c": 0,
-          "d": 2.6
-        }
-      ],
-      "source": "internal",
-      "source_layer": "0",
-      "source_param": "control/rgb"
-    },
-    {
-      "id": "15",
-      "name": "06 · Air level",
+      "name": "05 · Air level",
       "enabled": true,
       "layer": "102",
       "param": "volume",
@@ -2745,8 +2643,8 @@
       "source_param": "control/air"
     },
     {
-      "id": "16",
-      "name": "07 · Granular level",
+      "id": "12",
+      "name": "06 · Granular level",
       "enabled": true,
       "layer": "103",
       "param": "volume",
@@ -2766,8 +2664,8 @@
       "source_param": "control/metal"
     },
     {
-      "id": "17",
-      "name": "08 · Sub level",
+      "id": "13",
+      "name": "07 · Sub level",
       "enabled": true,
       "layer": "104",
       "param": "volume",
@@ -2787,8 +2685,8 @@
       "source_param": "control/sub"
     },
     {
-      "id": "18",
-      "name": "09 · Grain density",
+      "id": "14",
+      "name": "08 · Grain density",
       "enabled": true,
       "layer": "103",
       "param": "synth/density",
@@ -2808,8 +2706,8 @@
       "source_param": "control/density"
     },
     {
-      "id": "19",
-      "name": "10 · Grain duration",
+      "id": "15",
+      "name": "09 · Grain duration",
       "enabled": true,
       "layer": "103",
       "param": "synth/grainMs",
@@ -2829,8 +2727,8 @@
       "source_param": "control/size"
     },
     {
-      "id": "20",
-      "name": "11 · Fracture / contact noise",
+      "id": "16",
+      "name": "10 · Fracture / contact noise",
       "enabled": true,
       "layer": "106",
       "param": "volume",
@@ -2850,8 +2748,8 @@
       "source_param": "control/fracture"
     },
     {
-      "id": "21",
-      "name": "11 · Fracture / contact noise",
+      "id": "17",
+      "name": "10 · Fracture / contact noise",
       "enabled": true,
       "layer": "110",
       "param": "enable",
@@ -2871,8 +2769,8 @@
       "source_param": "control/fracture"
     },
     {
-      "id": "22",
-      "name": "11 · Fracture / contact noise",
+      "id": "18",
+      "name": "10 · Fracture / contact noise",
       "enabled": true,
       "layer": "101",
       "param": "fx/Pixelate/enable",
@@ -2892,8 +2790,8 @@
       "source_param": "control/fracture"
     },
     {
-      "id": "23",
-      "name": "11 · Fracture / contact noise",
+      "id": "19",
+      "name": "10 · Fracture / contact noise",
       "enabled": true,
       "layer": "101",
       "param": "fx/Pixelate/param/gap",
@@ -2913,8 +2811,8 @@
       "source_param": "control/fracture"
     },
     {
-      "id": "24",
-      "name": "12 · Camera angle",
+      "id": "20",
+      "name": "11 · Camera angle",
       "enabled": true,
       "layer": "107",
       "param": "camera/yaw",
@@ -2934,8 +2832,8 @@
       "source_param": "control/camera"
     },
     {
-      "id": "25",
-      "name": "13 · Smoke turbulence",
+      "id": "21",
+      "name": "12 · Smoke turbulence",
       "enabled": true,
       "layer": "108",
       "param": "param/turbulence",
@@ -2955,8 +2853,8 @@
       "source_param": "control/drift"
     },
     {
-      "id": "26",
-      "name": "14 · Grain transposition",
+      "id": "22",
+      "name": "13 · Grain transposition",
       "enabled": true,
       "layer": "103",
       "param": "synth/pitch",
@@ -2976,8 +2874,8 @@
       "source_param": "control/pitch"
     },
     {
-      "id": "27",
-      "name": "15 · Grain space",
+      "id": "23",
+      "name": "14 · Grain space",
       "enabled": true,
       "layer": "103",
       "param": "audio_fx/metal-room/wet",
@@ -2997,8 +2895,8 @@
       "source_param": "control/room"
     },
     {
-      "id": "28",
-      "name": "16 · Strike / hold",
+      "id": "24",
+      "name": "15 · Strike / hold",
       "enabled": true,
       "layer": "105",
       "param": "synth/gate",
@@ -3018,7 +2916,7 @@
       "source_param": "control/strike"
     },
     {
-      "id": "29",
+      "id": "25",
       "name": "32–106 Hz transients → camera/distance",
       "enabled": true,
       "layer": "107",
@@ -3050,7 +2948,7 @@
       "audio_gap": 0.09
     },
     {
-      "id": "30",
+      "id": "26",
       "name": "32–106 Hz transients → light/intensity",
       "enabled": true,
       "layer": "111",
@@ -3082,7 +2980,7 @@
       "audio_gap": 0.09
     },
     {
-      "id": "31",
+      "id": "27",
       "name": "850–5400 Hz transients → light/intensity",
       "enabled": true,
       "layer": "112",
@@ -3114,7 +3012,7 @@
       "audio_gap": 0.09
     },
     {
-      "id": "32",
+      "id": "28",
       "name": "850–5400 Hz transients → merge/scale/all",
       "enabled": true,
       "layer": "110",
@@ -3937,12 +3835,12 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.23
+          "value": 0.32
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 0.02
+          "value": 0
         },
         {
           "layer": "0",
@@ -3951,18 +3849,13 @@
         },
         {
           "layer": "0",
-          "path": "control/rgb",
-          "value": 0
-        },
-        {
-          "layer": "0",
           "path": "control/air",
-          "value": 0.36
+          "value": 0.31
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.02
+          "value": 0
         },
         {
           "layer": "0",
@@ -3982,6 +3875,71 @@
         {
           "layer": "0",
           "path": "control/fracture",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 53
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.55
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.43
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 460
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
           "value": 0
         }
       ]
@@ -3999,12 +3957,12 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.38
+          "value": 0.25
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 0.11
+          "value": 0.68
         },
         {
           "layer": "0",
@@ -4013,18 +3971,13 @@
         },
         {
           "layer": "0",
-          "path": "control/rgb",
-          "value": 0
-        },
-        {
-          "layer": "0",
           "path": "control/air",
-          "value": 0.31
+          "value": 0.13
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.14
+          "value": 0.24
         },
         {
           "layer": "0",
@@ -4034,16 +3987,81 @@
         {
           "layer": "0",
           "path": "control/density",
-          "value": 0.11
+          "value": 0.12
         },
         {
           "layer": "0",
           "path": "control/size",
-          "value": 0.82
+          "value": 0.86
         },
         {
           "layer": "0",
           "path": "control/fracture",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 19
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 9
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": -1.9
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0.93
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": 0.4
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": -8
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 0.75
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0.018
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.28
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.55
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 860
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0.25
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
           "value": 0
         }
       ]
@@ -4061,243 +4079,117 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.43
+          "value": 0.2
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 0.72
+          "value": 1
         },
         {
           "layer": "0",
           "path": "control/depth",
-          "value": 0.04
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0
+          "value": 0.01
         },
         {
           "layer": "0",
           "path": "control/air",
-          "value": 0.21
+          "value": 0.1
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.22
+          "value": 0.16
         },
         {
           "layer": "0",
           "path": "control/sub",
-          "value": 0.36
+          "value": 0.53
         },
         {
           "layer": "0",
           "path": "control/density",
-          "value": 0.14
+          "value": 0.1
         },
         {
           "layer": "0",
           "path": "control/size",
-          "value": 0.56
+          "value": 0.58
         },
         {
           "layer": "0",
           "path": "control/fracture",
           "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 44
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 18
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0.1
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 12
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1.08
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0.026
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.36
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.73
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 540
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0.65
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 0.14
         }
       ]
     },
     {
       "id": "4",
-      "name": "Compression",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.52
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.94
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.08
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.04
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.12
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.22
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0.73
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
-          "value": 0.27
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.38
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
-          "value": 0.06
-        }
-      ]
-    },
-    {
-      "id": "5",
-      "name": "Fault line",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.47
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.91
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.13
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.19
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.15
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.45
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0.45
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
-          "value": 0.44
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.32
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
-          "value": 0.32
-        }
-      ]
-    },
-    {
-      "id": "6",
-      "name": "Channel shear",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.54
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.98
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.2
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.57
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.11
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.61
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0.3
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
-          "value": 0.68
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.19
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
-          "value": 0.72
-        }
-      ]
-    },
-    {
-      "id": "7",
       "name": "Grain storm",
       "fade": 0,
       "values": [
@@ -4309,42 +4201,37 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.72
+          "value": 0.26
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 0.88
+          "value": 1
         },
         {
           "layer": "0",
           "path": "control/depth",
-          "value": 0.29
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.8
+          "value": 0.52
         },
         {
           "layer": "0",
           "path": "control/air",
-          "value": 0.29
+          "value": 0.2
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.76
+          "value": 0.78
         },
         {
           "layer": "0",
           "path": "control/sub",
-          "value": 0.15
+          "value": 0.12
         },
         {
           "layer": "0",
           "path": "control/density",
-          "value": 0.87
+          "value": 0.88
         },
         {
           "layer": "0",
@@ -4354,111 +4241,109 @@
         {
           "layer": "0",
           "path": "control/fracture",
-          "value": 0.96
+          "value": 0.97
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 61
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 44
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": -2
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 71
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 0.54
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0.084
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.34
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 1.24
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 3710
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 1
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 1
         }
       ]
     },
     {
-      "id": "8",
+      "id": "5",
       "name": "Pressure drop",
       "fade": 0,
       "values": [
         {
           "layer": "0",
           "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.43
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.95
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.35
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.27
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.12
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.19
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
           "value": 0
         },
         {
           "layer": "0",
-          "path": "control/density",
-          "value": 0.2
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.48
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
-          "value": 0.21
-        }
-      ]
-    },
-    {
-      "id": "9",
-      "name": "Hinge",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
           "path": "control/smoke",
-          "value": 0.57
+          "value": 0
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 1
+          "value": 0
         },
         {
           "layer": "0",
           "path": "control/depth",
-          "value": 0.44
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.08
+          "value": 0.52
         },
         {
           "layer": "0",
           "path": "control/air",
-          "value": 0.35
+          "value": 0
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.09
+          "value": 0
         },
         {
           "layer": "0",
@@ -4478,12 +4363,77 @@
         {
           "layer": "0",
           "path": "control/fracture",
-          "value": 0.08
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 42
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 1
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 460
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 0
         }
       ]
     },
     {
-      "id": "10",
+      "id": "6",
       "name": "Camera Inversa",
       "fade": 0,
       "values": [
@@ -4495,119 +4445,117 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.75
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.11
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.41
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.21
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0.26
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
-          "value": 0.19
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.8
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
-          "value": 0.42
-        }
-      ]
-    },
-    {
-      "id": "11",
-      "name": "Deep chamber",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.83
-        },
-        {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.92
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.97
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0.04
-        },
-        {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.27
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.43
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0.58
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
           "value": 0.32
         },
         {
           "layer": "0",
+          "path": "control/walls",
+          "value": 1
+        },
+        {
+          "layer": "0",
+          "path": "control/depth",
+          "value": 1
+        },
+        {
+          "layer": "0",
+          "path": "control/air",
+          "value": 0.22
+        },
+        {
+          "layer": "0",
+          "path": "control/metal",
+          "value": 0.2
+        },
+        {
+          "layer": "0",
+          "path": "control/sub",
+          "value": 0.34
+        },
+        {
+          "layer": "0",
+          "path": "control/density",
+          "value": 0.18
+        },
+        {
+          "layer": "0",
           "path": "control/size",
-          "value": 0.71
+          "value": 0.77
         },
         {
           "layer": "0",
           "path": "control/fracture",
-          "value": 0.34
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 55
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": -6
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": -3.8
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0.035
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.37
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.77
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 610
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0.46
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 0.46
         }
       ]
     },
     {
-      "id": "12",
+      "id": "7",
       "name": "Residue",
       "fade": 0,
       "values": [
@@ -4619,37 +4567,32 @@
         {
           "layer": "0",
           "path": "control/smoke",
-          "value": 0.36
+          "value": 0.39
         },
         {
           "layer": "0",
           "path": "control/walls",
-          "value": 0.35
-        },
-        {
-          "layer": "0",
-          "path": "control/depth",
-          "value": 0.96
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
           "value": 0
         },
         {
           "layer": "0",
+          "path": "control/depth",
+          "value": 1
+        },
+        {
+          "layer": "0",
           "path": "control/air",
-          "value": 0.2
+          "value": 0.11
         },
         {
           "layer": "0",
           "path": "control/metal",
-          "value": 0.31
+          "value": 0.26
         },
         {
           "layer": "0",
           "path": "control/sub",
-          "value": 0.05
+          "value": 0
         },
         {
           "layer": "0",
@@ -4659,79 +4602,82 @@
         {
           "layer": "0",
           "path": "control/size",
-          "value": 0.88
+          "value": 0.89
         },
         {
           "layer": "0",
           "path": "control/fracture",
-          "value": 0.07
-        }
-      ]
-    },
-    {
-      "id": "13",
-      "name": "Afterimage",
-      "fade": 0,
-      "values": [
-        {
-          "layer": "0",
-          "path": "control/image",
-          "value": 0.5
+          "value": 0
         },
         {
-          "layer": "0",
-          "path": "control/smoke",
-          "value": 0.18
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 48
         },
         {
-          "layer": "0",
-          "path": "control/walls",
-          "value": 0.08
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 4
         },
         {
-          "layer": "0",
-          "path": "control/depth",
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": -2
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
           "value": 1
         },
         {
-          "layer": "0",
-          "path": "control/rgb",
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0.02
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0.5
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.48
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 940
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
           "value": 0
         },
         {
-          "layer": "0",
-          "path": "control/air",
-          "value": 0.08
-        },
-        {
-          "layer": "0",
-          "path": "control/metal",
-          "value": 0.19
-        },
-        {
-          "layer": "0",
-          "path": "control/sub",
-          "value": 0
-        },
-        {
-          "layer": "0",
-          "path": "control/density",
-          "value": 0.04
-        },
-        {
-          "layer": "0",
-          "path": "control/size",
-          "value": 0.9
-        },
-        {
-          "layer": "0",
-          "path": "control/fracture",
+          "layer": "112",
+          "path": "light/level",
           "value": 0
         }
       ]
     },
     {
-      "id": "14",
+      "id": "8",
       "name": "Black / tail",
       "fade": 0,
       "values": [
@@ -4754,11 +4700,6 @@
           "layer": "0",
           "path": "control/depth",
           "value": 1
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
-          "value": 0
         },
         {
           "layer": "0",
@@ -4789,11 +4730,76 @@
           "layer": "0",
           "path": "control/fracture",
           "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 48
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 4
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": -2
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.36
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 620
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 0
         }
       ]
     },
     {
-      "id": "15",
+      "id": "9",
       "name": "End",
       "fade": 0,
       "values": [
@@ -4815,11 +4821,6 @@
         {
           "layer": "0",
           "path": "control/depth",
-          "value": 0
-        },
-        {
-          "layer": "0",
-          "path": "control/rgb",
           "value": 0
         },
         {
@@ -4851,6 +4852,71 @@
           "layer": "0",
           "path": "control/fracture",
           "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/fov",
+          "value": 48
+        },
+        {
+          "layer": "107",
+          "path": "camera/pitch",
+          "value": 4
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/x",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/y",
+          "value": 0
+        },
+        {
+          "layer": "107",
+          "path": "camera/target/z",
+          "value": -2
+        },
+        {
+          "layer": "109",
+          "path": "merge/rotation/z",
+          "value": 0
+        },
+        {
+          "layer": "109",
+          "path": "merge/scale/x",
+          "value": 1
+        },
+        {
+          "layer": "107",
+          "path": "scene/fog/density",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "opacity",
+          "value": 0
+        },
+        {
+          "layer": "108",
+          "path": "param/spread",
+          "value": 0.36
+        },
+        {
+          "layer": "102",
+          "path": "audio_fx/air-filter/cutoff",
+          "value": 620
+        },
+        {
+          "layer": "111",
+          "path": "light/level",
+          "value": 0
+        },
+        {
+          "layer": "112",
+          "path": "light/level",
+          "value": 0
         }
       ]
     }
@@ -4862,7 +4928,7 @@
       "loop": false,
       "steps": [
         {
-          "description": "00:00 · First breath — Raise smoke until the first filaments read.",
+          "description": "00:00 · First breath — A thin plume emerges in the center. Leave space around the breath.",
           "actions": [
             {
               "preset": "1"
@@ -4875,61 +4941,37 @@
         },
         {
           "preset": "2",
-          "description": "00:16 · Silver thread — Move the camera slowly across the first edge."
+          "description": "00:08 · Silver thread — A tight crop catches the top corner. Let one long grain hang on the edge."
         },
         {
           "preset": "3",
-          "description": "00:32 · Solid edge — Weight the sub to bring the wall forward."
+          "description": "00:16 · Solid edge — Cut wide. The ribs stand in relief and the first sub pulses enter."
         },
         {
           "preset": "4",
-          "description": "00:49 · Compression — Hold the edge. Shorten grains for sharper attacks."
+          "description": "00:25 · Grain storm — A wide burst of splinters and short grains."
         },
         {
           "preset": "5",
-          "description": "01:05 · Fault line — Send a metal strike into the RGB interference."
+          "description": "00:34 · Pressure drop — Cut to black and silence."
         },
         {
           "preset": "6",
-          "description": "01:14 · Channel shear — Push RGB or leave the tear at the edges."
+          "description": "00:37 · Camera Inversa — Look straight down the cavity as the ribs fall away from the lip."
         },
         {
           "preset": "7",
-          "description": "01:32 · Grain storm — Play grain size against density."
+          "description": "00:50 · Residue — Lose the chamber. Leave the dissolving plume and a few long grains."
         },
         {
           "preset": "8",
-          "description": "01:50 · Pressure drop — Let the gap open. Keep the lip in frame."
+          "description": "00:57 · Black / tail — Listen on black."
         },
         {
-          "preset": "9",
-          "description": "01:56 · Hinge — Sweep depth slowly through the flat plane."
-        },
-        {
-          "preset": "10",
-          "description": "02:04 · Camera Inversa — Watch the same edge become the lip of a cavity."
-        },
-        {
-          "preset": "11",
-          "description": "02:21 · Deep chamber — Open the room and lean into the sub."
-        },
-        {
-          "preset": "12",
-          "description": "02:38 · Residue — Pull back air and leave a few long grains."
-        },
-        {
-          "preset": "13",
-          "description": "02:53 · Afterimage — Leave the last filament suspended."
-        },
-        {
-          "preset": "14",
-          "description": "02:57 · Black / tail — Listen on black."
-        },
-        {
-          "description": "03:00 · End — Silence and stop the pressure and fracture clock.",
+          "description": "01:00 · End — Silence and stop the pressure and fracture clock.",
           "actions": [
             {
-              "preset": "15"
+              "preset": "9"
             },
             {
               "timeline": "1",
@@ -4941,15 +4983,15 @@
     },
     {
       "id": "2",
-      "name": "Camera Inversa · Reference (3:00)",
+      "name": "Camera Inversa · Reference (1:00)",
       "loop": false,
       "steps": [
         {
-          "description": "Play the three-minute score",
+          "description": "Play the one-minute score",
           "actions": [
             {
               "preset": "1",
-              "description": "00:00 · First breath — Raise smoke until the first filaments read.",
+              "description": "00:00 · First breath — A thin plume emerges in the center. Leave space around the breath.",
               "pre_wait": 0
             },
             {
@@ -4959,78 +5001,48 @@
             },
             {
               "preset": "2",
-              "description": "00:16 · Silver thread — Move the camera slowly across the first edge.",
-              "pre_wait": 16
+              "description": "00:08 · Silver thread — A tight crop catches the top corner. Let one long grain hang on the edge.",
+              "pre_wait": 8
             },
             {
               "preset": "3",
-              "description": "00:32 · Solid edge — Weight the sub to bring the wall forward.",
-              "pre_wait": 32
+              "description": "00:16 · Solid edge — Cut wide. The ribs stand in relief and the first sub pulses enter.",
+              "pre_wait": 16
             },
             {
               "preset": "4",
-              "description": "00:49 · Compression — Hold the edge. Shorten grains for sharper attacks.",
-              "pre_wait": 49
+              "description": "00:25 · Grain storm — A wide burst of splinters and short grains.",
+              "pre_wait": 25
             },
             {
               "preset": "5",
-              "description": "01:05 · Fault line — Send a metal strike into the RGB interference.",
-              "pre_wait": 65
+              "description": "00:34 · Pressure drop — Cut to black and silence.",
+              "pre_wait": 34
             },
             {
               "preset": "6",
-              "description": "01:14 · Channel shear — Push RGB or leave the tear at the edges.",
-              "pre_wait": 74
+              "description": "00:37 · Camera Inversa — Look straight down the cavity as the ribs fall away from the lip.",
+              "pre_wait": 37
             },
             {
               "preset": "7",
-              "description": "01:32 · Grain storm — Play grain size against density.",
-              "pre_wait": 92
+              "description": "00:50 · Residue — Lose the chamber. Leave the dissolving plume and a few long grains.",
+              "pre_wait": 50
             },
             {
               "preset": "8",
-              "description": "01:50 · Pressure drop — Let the gap open. Keep the lip in frame.",
-              "pre_wait": 110
+              "description": "00:57 · Black / tail — Listen on black.",
+              "pre_wait": 57
             },
             {
               "preset": "9",
-              "description": "01:56 · Hinge — Sweep depth slowly through the flat plane.",
-              "pre_wait": 116
-            },
-            {
-              "preset": "10",
-              "description": "02:04 · Camera Inversa — Watch the same edge become the lip of a cavity.",
-              "pre_wait": 124
-            },
-            {
-              "preset": "11",
-              "description": "02:21 · Deep chamber — Open the room and lean into the sub.",
-              "pre_wait": 141
-            },
-            {
-              "preset": "12",
-              "description": "02:38 · Residue — Pull back air and leave a few long grains.",
-              "pre_wait": 158
-            },
-            {
-              "preset": "13",
-              "description": "02:53 · Afterimage — Leave the last filament suspended.",
-              "pre_wait": 173
-            },
-            {
-              "preset": "14",
-              "description": "02:57 · Black / tail — Listen on black.",
-              "pre_wait": 177
-            },
-            {
-              "preset": "15",
-              "description": "03:00 · End — Silence and stop the pressure and fracture clock.",
-              "pre_wait": 180
+              "description": "01:00 · End — Silence and stop the pressure and fracture clock.",
+              "pre_wait": 60
             },
             {
               "timeline": "1",
               "action": "stop",
-              "pre_wait": 180,
+              "pre_wait": 60,
               "description": "Stop pressure and fracture clock"
             }
           ]

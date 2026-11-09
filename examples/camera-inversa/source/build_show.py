@@ -76,8 +76,6 @@ WORLD, STAGE, SMOKE, FRAME, SHARDS = "101", "107", "108", "109", "110"
 visuals = [
     dict(layer(WORLD, "Camera Inversa · image", dict(type="none"), {
         "opacity": 0, "fx/enable": True,
-        "fx/VHS_Glitch/enable": False, "fx/Pixelate/enable": False,
-        "fx/VHS_Glitch/param/scanFollow": False,
     }), group=True, collapsed=True),
     dict(layer(SMOKE, "Smoke", dict(type="isf", width=960, height=540, **library_shader("smoke.fs")),
                {"blend_mode": "add", "opacity": .8}), parent=WORLD),
@@ -93,7 +91,7 @@ visuals = [
     dict(layer(FRAME, "Inverting frame", dict(type="none"), {}),
          parent=STAGE, group=True, merge3d=True, collapsed=True),
 ]
-visuals[0]["fx"] = [library_shader(name, "effects") for name in ("VHS Glitch.fs", "Pixelate.fs")]
+visuals[0]["fx"] = [library_shader(name, "effects") for name in ("Pixelate.fs",)]
 
 
 def model(name, parent, shape, position, scale, gray, rotation=(0, 0, 0), unlit=True):
@@ -175,18 +173,12 @@ scene_controls = [
     ("smoke", "02 · Smoke density", .2, [(SMOKE, "param/densityAmount", 0, 1.45)]),
     ("walls", "03 · Wall reveal", .08, [(STAGE, "opacity", 0, 1)]),
     ("depth", "04 · Relief ↔ cavity", 0, [(rib, "merge/position/z", k * .42, -k * .88) for k, rib in enumerate(ribs)]),
-    ("rgb", "05 · RGB interference", 0, [
-        (WORLD, "fx/VHS_Glitch/enable", 0, 8),
-        (WORLD, "fx/VHS_Glitch/param/bleedAmount", 0, 2.8),
-        (WORLD, "fx/VHS_Glitch/param/analogDistort", 0, 9),
-        (WORLD, "fx/VHS_Glitch/param/grainLevel", 0, 2.6),
-    ]),
-    ("air", "06 · Air level", 0, [(AIR, "volume", 0, .7)]),
-    ("metal", "07 · Granular level", 0, [(METAL, "volume", 0, .75)]),
-    ("sub", "08 · Sub level", 0, [(SUB, "volume", 0, .9)]),
-    ("density", "09 · Grain density", .16, [(METAL, "synth/density", 2, 72)]),
-    ("size", "10 · Grain duration", .5, [(METAL, "synth/grainMs", 18, 265)]),
-    ("fracture", "11 · Fracture / contact noise", 0, [
+    ("air", "05 · Air level", 0, [(AIR, "volume", 0, .7)]),
+    ("metal", "06 · Granular level", 0, [(METAL, "volume", 0, .75)]),
+    ("sub", "07 · Sub level", 0, [(SUB, "volume", 0, .9)]),
+    ("density", "08 · Grain density", .16, [(METAL, "synth/density", 2, 72)]),
+    ("size", "09 · Grain duration", .5, [(METAL, "synth/grainMs", 18, 265)]),
+    ("fracture", "10 · Fracture / contact noise", 0, [
         (BREAK, "volume", 0, 1),
         (SHARDS, "enable", 0, 5),
         (WORLD, "fx/Pixelate/enable", 0, .75),
@@ -194,11 +186,11 @@ scene_controls = [
     ]),
 ]
 live_controls = [
-    ("camera", "12 · Camera angle", .52, [(STAGE, "camera/yaw", -49, 39)]),
-    ("drift", "13 · Smoke turbulence", .37, [(SMOKE, "param/turbulence", 0, 1)]),
-    ("pitch", "14 · Grain transposition", .48, [(METAL, "synth/pitch", .35, 1.7)]),
-    ("room", "15 · Grain space", .3, [(METAL, "audio_fx/metal-room/wet", 0, .8)]),
-    ("strike", "16 · Strike / hold", 0, [(STRIKE, "synth/gate", 0, 1)]),
+    ("camera", "11 · Camera angle", .52, [(STAGE, "camera/yaw", -49, 39)]),
+    ("drift", "12 · Smoke turbulence", .37, [(SMOKE, "param/turbulence", 0, 1)]),
+    ("pitch", "13 · Grain transposition", .48, [(METAL, "synth/pitch", .35, 1.7)]),
+    ("room", "14 · Grain space", .3, [(METAL, "audio_fx/metal-room/wet", 0, .8)]),
+    ("strike", "15 · Strike / hold", 0, [(STRIKE, "synth/gate", 0, 1)]),
 ]
 controls, interactions = [], []
 
@@ -258,33 +250,69 @@ for target, param, initial, keys in [
 ]:
     timeline["tracks"].append(dict(layer=target, param=param, keys=[[0, initial, "hold"], *keys]))
 
-# The last column suggests a gesture. It is visible beside the cue on Show Control.
-# Values follow scene_controls in order.
+# Cues carry both a mix and a shot. Shot values avoid the addresses driven by
+# live controls, audio interactions and the irregular fracture clock.
+# Shot: field of view, pitch, aim XYZ, frame rotation, rib width, fog,
+# smoke opacity and spread, air filter frequency, left/right light levels.
 scenes = [
-    (0, "First breath",       (1,.23,.02,0,0,.36,.02,0,.05,.73), "Raise smoke until the first filaments read."),
-    (16, "Silver thread",     (1,.38,.11,0,0,.31,.14,0,.11,.82), "Move the camera slowly across the first edge."),
-    (32, "Solid edge",        (1,.43,.72,.04,0,.21,.22,.36,.14,.56), "Weight the sub to bring the wall forward."),
-    (49, "Compression",      (1,.52,.94,.08,.04,.12,.22,.73,.27,.38), "Hold the edge. Shorten grains for sharper attacks."),
-    (65, "Fault line",       (1,.47,.91,.13,.19,.15,.45,.45,.44,.32), "Send a metal strike into the RGB interference."),
-    (74, "Channel shear",    (1,.54,.98,.2,.57,.11,.61,.3,.68,.19), "Push RGB or leave the tear at the edges."),
-    (92, "Grain storm",      (1,.72,.88,.29,.8,.29,.76,.15,.87,.1), "Play grain size against density."),
-    (110, "Pressure drop",   (1,.43,.95,.35,.27,.12,.19,0,.2,.48), "Let the gap open. Keep the lip in frame."),
-    (116, "Hinge",           (1,.57,1,.44,.08,.35,.09,0,.09,.72), "Sweep depth slowly through the flat plane."),
-    (124, "Camera Inversa",  (1,.75,1,1,.11,.41,.21,.26,.19,.8), "Watch the same edge become the lip of a cavity."),
-    (141, "Deep chamber",    (1,.83,.92,.97,.04,.27,.43,.58,.32,.71), "Open the room and lean into the sub."),
-    (158, "Residue",         (1,.36,.35,.96,0,.2,.31,.05,.12,.88), "Pull back air and leave a few long grains."),
-    (173, "Afterimage",      (.5,.18,.08,1,0,.08,.19,0,.04,.9), "Leave the last filament suspended."),
-    (177, "Black / tail",    (0,0,0,1,0,0,.13,0,.03,.93), "Listen on black."),
-    (180, "End",             (0,0,0,0,0,0,0,0,0,.5), "Silence and stop the pressure and fracture clock."),
+    (0, 'First breath',
+     (1, 0.32, 0, 0, 0.31, 0, 0, 0.05, 0.73, 0),
+     (53, 0, (0, 0, 0), 0, 1, 0, 0.55, 0.43, 460, (0, 0)),
+     'A thin plume emerges in the center. Leave space around the breath.'),
+    (8, 'Silver thread',
+     (1, 0.25, 0.68, 0, 0.13, 0.24, 0, 0.12, 0.86, 0),
+     (19, 9, (-1.9, 0.93, 0.4), -8, 0.75, 0.018, 0.28, 0.55, 860, (0.25, 0)),
+     'A tight crop catches the top corner. Let one long grain hang on the edge.'),
+    (16, 'Solid edge',
+     (1, 0.2, 1, 0.01, 0.1, 0.16, 0.53, 0.1, 0.58, 0),
+     (44, 18, (0, 0.1, 0), 12, 1.08, 0.026, 0.36, 0.73, 540, (0.65, 0.14)),
+     'Cut wide. The ribs stand in relief and the first sub pulses enter.'),
+    (25, 'Grain storm',
+     (1, 0.26, 1, 0.52, 0.2, 0.78, 0.12, 0.88, 0.1, 0.97),
+     (61, 44, (0, 0, -2), 71, 0.54, 0.084, 0.34, 1.24, 3710, (1, 1)),
+     'A wide burst of splinters and short grains.'),
+    (34, 'Pressure drop',
+     (0, 0, 0, 0.52, 0, 0, 0, 0.09, 0.72, 0),
+     (42, 0, (0, 0, 0), 0, 1, 0, 0, 1, 460, (0, 0)),
+     'Cut to black and silence.'),
+    (37, 'Camera Inversa',
+     (1, 0.32, 1, 1, 0.22, 0.2, 0.34, 0.18, 0.77, 0),
+     (55, -6, (0, 0, -3.8), 0, 1, 0.035, 0.37, 0.77, 610, (0.46, 0.46)),
+     'Look straight down the cavity as the ribs fall away from the lip.'),
+    (50, 'Residue',
+     (1, 0.39, 0, 1, 0.11, 0.26, 0, 0.12, 0.89, 0),
+     (48, 4, (0, 0, -2), 0, 1, 0.02, 0.5, 0.48, 940, (0, 0)),
+     'Lose the chamber. Leave the dissolving plume and a few long grains.'),
+    (57, 'Black / tail',
+     (0, 0, 0, 1, 0, 0.13, 0, 0.03, 0.93, 0),
+     (48, 4, (0, 0, -2), 0, 1, 0, 0, 0.36, 620, (0, 0)),
+     'Listen on black.'),
+    (60, 'End',
+     (0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0),
+     (48, 4, (0, 0, -2), 0, 1, 0, 0, 0.36, 620, (0, 0)),
+     'Silence and stop the pressure and fracture clock.'),
 ]
+
+def shot_values(shot):
+    fov, pitch, target, roll, width, fog, smoke, spread, air_band, lights = shot
+    return [
+        (STAGE, "camera/fov", fov), (STAGE, "camera/pitch", pitch),
+        *((STAGE, f"camera/target/{axis}", value) for axis, value in zip("xyz", target)),
+        (FRAME, "merge/rotation/z", roll), (FRAME, "merge/scale/x", width),
+        (STAGE, "scene/fog/density", fog), (SMOKE, "opacity", smoke),
+        (SMOKE, "param/spread", spread), (AIR, "audio_fx/air-filter/cutoff", air_band),
+        ("111", "light/level", lights[0]), ("112", "light/level", lights[1]),
+    ]
+
+
 presets, manual, automatic = [], [], []
-fracture_levels = (0, 0, 0, .06, .32, .72, .96, .21, .08, .42, .34, .07, 0, 0, 0)
-for index, ((at, title, values, gesture), fracture) in enumerate(zip(scenes, fracture_levels)):
-    values = (*values, fracture)
+for index, (at, title, mix, shot, gesture) in enumerate(scenes):
     id = str(index + 1)
+    values = [("0", f"control/{key}", value)
+              for (key, _, _, _), value in zip(scene_controls, mix)]
+    values.extend(shot_values(shot))
     presets.append(dict(id=id, name=title, fade=0, values=[
-        dict(layer="0", path=f"control/{key}", value=value)
-        for (key, _, _, _), value in zip(scene_controls, values)
+        dict(layer=layer_id, path=path, value=value) for layer_id, path, value in values
     ]))
     description = f"{at // 60:02d}:{at % 60:02d} · {title} — {gesture}"
     step = dict(preset=id, description=description)
@@ -300,7 +328,7 @@ for index, ((at, title, values, gesture), fracture) in enumerate(zip(scenes, fra
 # A single clocked group fires each scene relative to GO. The looping child
 # can overlap the scene recalls without holding up their dispatch.
 automatic.insert(1, dict(timeline="1", action="play", description="Start pressure and fracture clock"))
-automatic.append(dict(timeline="1", action="stop", pre_wait=180, description="Stop pressure and fracture clock"))
+automatic.append(dict(timeline="1", action="stop", pre_wait=60, description="Stop pressure and fracture clock"))
 
 project = dict(app="NyxMap", format_version=1,
                composition=dict(width=1280, height=720, fps=60, speed=1),
@@ -308,7 +336,7 @@ project = dict(app="NyxMap", format_version=1,
                interactions=interactions, timelines=[timeline], presets=presets,
                sequences=[
                    dict(id="1", name="Camera Inversa · Live GO", loop=False, steps=manual),
-                   dict(id="2", name="Camera Inversa · Reference (3:00)", loop=False, steps=[dict(description="Play the three-minute score", actions=automatic)]),
+                   dict(id="2", name="Camera Inversa · Reference (1:00)", loop=False, steps=[dict(description="Play the one-minute score", actions=automatic)]),
                ],
                current_sequence=1, startup_sequence=1, startup_step=0, startup_go=False,
                ui=dict(selected_layer=0))
