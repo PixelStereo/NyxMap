@@ -19,10 +19,16 @@ MODELS = {
         "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"),
     "pose_landmarker_lite.task": ("pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
         "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"),
-    "efficientdet_lite0.tflite": ("object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite",
-        "0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb"),
+    "efficientdet_lite0.tflite": ("object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite",
+        "40338edf5ec70d43e318b0a716a84d4564cd1802759a7a07170c7e43796dbf58"),
     "selfie_segmenter.tflite": ("image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite",
         "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b"),
+    "blaze_face_short_range.tflite": ("face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+        "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f"),
+    "efficientnet_lite0.tflite": ("image_classifier/efficientnet_lite0/float32/1/efficientnet_lite0.tflite",
+        "6c7ab0a6e5dcbf38a8c33b960996a55a3b4300b36a018c4545801de3a3c8bde0"),
+    "selfie_multiclass_256x256.tflite": ("image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite",
+        "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"),
 }
 
 

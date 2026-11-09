@@ -71,16 +71,31 @@ PlayMode playModeFromKey(const QString &k, PlayMode fallback)
 
 QString layerTapKey(LayerTap t)
 {
+    if (t == LayerTap::MediaPipeMask) return QStringLiteral("mediapipe-mask");
+    if (t == LayerTap::MediaPipeHair) return QStringLiteral("mediapipe-hair");
+    if (t == LayerTap::MediaPipeParts) return QStringLiteral("mediapipe-parts");
+    if (t == LayerTap::MediaPipeCutout) return QStringLiteral("mediapipe-cutout");
+    if (t == LayerTap::MediaPipePose) return QStringLiteral("mediapipe-pose");
     return t == LayerTap::Source ? QStringLiteral("source") : t == LayerTap::PreFx ? QStringLiteral("prefx") : QStringLiteral("postfx");
 }
 
 LayerTap layerTapFromKey(const QString &k)
 {
+    if (k == QLatin1String("mediapipe-mask")) return LayerTap::MediaPipeMask;
+    if (k == QLatin1String("mediapipe-hair")) return LayerTap::MediaPipeHair;
+    if (k == QLatin1String("mediapipe-parts")) return LayerTap::MediaPipeParts;
+    if (k == QLatin1String("mediapipe-cutout")) return LayerTap::MediaPipeCutout;
+    if (k == QLatin1String("mediapipe-pose")) return LayerTap::MediaPipePose;
     return k == "source" ? LayerTap::Source : k == "prefx" ? LayerTap::PreFx : LayerTap::PostFx;
 }
 
 QString layerTapName(LayerTap t)
 {
+    if (t == LayerTap::MediaPipeMask) return QStringLiteral("MediaPipe Foreground Mask");
+    if (t == LayerTap::MediaPipeHair) return QStringLiteral("MediaPipe Hair Mask");
+    if (t == LayerTap::MediaPipeParts) return QStringLiteral("MediaPipe Body Parts");
+    if (t == LayerTap::MediaPipeCutout) return QStringLiteral("MediaPipe Person Cutout");
+    if (t == LayerTap::MediaPipePose) return QStringLiteral("MediaPipe Pose Skeleton");
     return t == LayerTap::Source ? QStringLiteral("Source") : t == LayerTap::PreFx ? QStringLiteral("Pre-FX") : QStringLiteral("Post-FX");
 }
 

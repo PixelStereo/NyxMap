@@ -63,16 +63,22 @@ Current releases require this one-time setup, and keep processing local after in
 | Face Landmarker | Count, position, jaw opening and left/right eye blinks |
 | Pose Landmarker | Count and nose/left wrist/right wrist position |
 | Object Detector | Count, box center, width, height and confidence |
-| Image Segmenter | Foreground coverage, with a mask overlay in the interaction preview |
+| Face Detector | Count, box center, width, height and confidence |
+| Image Classifier | Label in the preview, confidence and class index as interaction values |
+| Image Segmenter | Foreground coverage, mask overlay and a compositing layer source |
 
 Normalized image coordinates have Y increasing downward. Each selected measurement can drive a parameter,
 an action condition, or an XY input. The detection selector exposes the first two detections.
 Only requested tasks run for a source. Readback is asynchronous and frames are submitted at up to 15 Hz
 at a maximum side of 320 pixels. The queue keeps the latest pending frame per source, and stale detections
-yield zero after half a second. Tasks use the SDK's CPU image mode. Stable wrist slots are maintained in NyxMap.
-Face, pose and object indices follow model order. The segmentation mask is currently an interaction preview,
-not a compositing layer. Indexed measurements expose the normalized hand, face and pose landmarks,
-world coordinates for hands and pose, pose landmark visibility, and face blendshape scores.
+yield zero after half a second. Tasks use image mode and try the GPU delegate first, then use the CPU when the GPU delegate fails.
+The interaction status displays the active delegate. Set `NYXMAP_MEDIAPIPE_DELEGATE=cpu` to force CPU,
+or `NYXMAP_MEDIAPIPE_DELEGATE=gpu` to require GPU. Rerun setup to install the float32 detector and the new models. Stable wrist slots are maintained in NyxMap.
+Face, pose and object indices follow model order. To use the segmentation in a composition, create a layer and choose **Source → From layer**.
+Select the video layer and set **Taken → MediaPipe Foreground Mask**. The mask uses the model’s confidence as white alpha and can be used as a layer matte. **MediaPipe Hair Mask** isolates hair, and
+**MediaPipe Body Parts** gives a colored texture for hair, body skin, face skin, clothes and accessories. **MediaPipe Person Cutout** applies the confidence map to the exact sampled source frame. It is synchronized but limited to the inference resolution. When applying the mask to the live source separately, account for inference latency.
+**MediaPipe Pose Skeleton** renders the body as a transparent texture with OpenPose COCO-18 joint order. Indexed measurements expose the normalized hand, face and pose landmarks,
+world coordinates for hands and pose, pose landmark visibility, face blendshape scores, facial transformation matrix components and left/right handedness scores.
 
 Existing hand mappings keep their feature and source IDs. Replace the former ONNX folder with the new model folder.
 Model errors are shown in the interaction. Pixel analysis and motion masks remain available independently.

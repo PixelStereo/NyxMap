@@ -244,6 +244,49 @@ int main(int argc, char **argv)
         require(engine.parameterValue(beforeId, "opacity").toDouble() > .95 &&
                     engine.parameterValue(afterId, "opacity").toDouble() < .01,
                 "same layer analyzed independently before/after FX");
+        const auto person = qEnvironmentVariable("NYXMAP_MEDIAPIPE_PERSON_IMAGE");
+        if (!person.isEmpty()) {
+            engine.newProject();
+            engine.setHandModelsDirectory(qEnvironmentVariable("NYXMAP_HAND_MODELS"));
+            const int camera = engine.addLayer("Person");
+            const auto cameraId = engine.layerId(camera);
+            require(engine.setLayerImage(camera, person, &error), error);
+            const int mask = engine.addLayer("MediaPipe mask");
+            const auto maskId = engine.layerId(mask);
+            require(engine.setLayerSourceLayer(mask, cameraId, LayerTap::MediaPipeMask, &error), error);
+            require(engine.setParameter(cameraId, "enable", false), "hide the camera while keeping the mask");
+            const auto hasMixedAlpha = [&] {
+                const QImage result = engine.grabLayerSource(engine.indexOfId(maskId));
+                bool opaque = false, transparent = false;
+                for (int y = 0; y < result.height() && !(opaque && transparent); ++y)
+                    for (int x = 0; x < result.width() && !(opaque && transparent); ++x) {
+                        const int alpha = result.pixelColor(x, y).alpha();
+                        opaque |= alpha > 250;
+                        transparent |= alpha < 5;
+                    }
+                return opaque && transparent;
+            };
+            require(renderUntilDone(engine, hasMixedAlpha), "MediaPipe mask reaches the compositor as foreground alpha");
+            require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipeCutout), "select the synchronized cutout");
+            require(renderUntilDone(engine, hasMixedAlpha), "the same-frame person cutout preserves foreground alpha");
+            require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipeParts), "select the body parts texture");
+            const auto hasColoredParts = [&] {
+                const QImage result = engine.grabLayerSource(engine.indexOfId(maskId));
+                for (int y = 0; y < result.height(); ++y)
+                    for (int x = 0; x < result.width(); ++x) {
+                        const QColor pixel = result.pixelColor(x, y);
+                        if (pixel.alpha() > 250 && pixel.red() != pixel.green()) return true;
+                    }
+                return false;
+            };
+            require(renderUntilDone(engine, hasColoredParts), "multiclass segmentation produces a colored texture");
+            require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipePose), "select pose texture");
+            require(renderUntilDone(engine, hasColoredParts), "pose landmarks produce a colored skeleton texture");
+            require(engine.saveProject(project, {}, &error) && engine.loadProject(project, nullptr, &error), error);
+            const auto *restoredMask = engine.layer(engine.indexOfId(maskId));
+            require(restoredMask && restoredMask->sourceTap == LayerTap::MediaPipePose &&
+                        restoredMask->sourceLayer == cameraId, "MediaPipe mask tap survives project reload");
+        }
         engine.shutdown();
         std::cout << "GPU motion masks, lighting compensation, history, async analysis and project restore passed\n";
         return 0;

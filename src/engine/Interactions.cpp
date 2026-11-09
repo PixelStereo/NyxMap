@@ -547,7 +547,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.pixels = PixelAnalysis::Settings::fromJson(o.value("pixels").toObject());
     it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
     it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
-    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::PoseVisibility)));
+    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::HandRightness)));
     it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 1);
     it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();

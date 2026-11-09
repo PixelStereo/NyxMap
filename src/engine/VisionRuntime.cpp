@@ -1,5 +1,6 @@
 #include "VisionRuntime.h"
 #include "PixelSampler.h"
+#include "Gl.h"
 #include <QJsonDocument>
 #include <algorithm>
 #include <map>
@@ -34,6 +35,12 @@ struct VisionRuntime::Private {
         quint64 received = 0;
         qint64 timeNs = 0, lastHandSubmit = 0;
         QString error;
+        std::array<Texture2D, 5> masks;
+        std::array<qint64, 5> maskTimes{};
+        void clearMasks() {
+            for (auto &mask : masks) mask.destroy();
+            maskTimes.fill(0);
+        }
     };
     struct Analysis {
         QString source;
@@ -59,9 +66,10 @@ VisionRuntime::VisionRuntime(std::function<void()> drawQuad, QString directory)
 VisionRuntime::~VisionRuntime() = default;
 void VisionRuntime::release()
 {
-    for (auto &[key, input] : d->inputs)
-        if (input.sampler)
-            input.sampler->release();
+    for (auto &[key, input] : d->inputs) {
+        if (input.sampler) input.sampler->release();
+        input.clearMasks();
+    }
     d->inputs.clear();
     d->analyses.clear();
 }
@@ -103,6 +111,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             invalidate(key);
             input.pixels.clear();
             input.timeNs = 0;
+            input.clearMasks();
             input.error = "Source has no current picture";
             continue;
         }
@@ -122,6 +131,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             input.width = width;
             input.height = height;
             input.timeNs = 0;
+            input.clearMasks();
             input.pending.clear();
             input.pixels.clear();
             input.points.clear();
@@ -148,6 +158,26 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             }
             input.pending.erase(tag);
         }
+        const unsigned foregroundTask = HandTracking::taskFor(HandTracking::Feature::ForegroundCoverage);
+        const unsigned poseTask = HandTracking::taskFor(HandTracking::Feature::PoseCount);
+        if (request.tasks & (foregroundTask | HandTracking::partsTask | poseTask)) {
+            const auto frame = d->worker.latest(key);
+            for (size_t i = 0; i < input.masks.size(); ++i) {
+                const unsigned task = i == 4 ? poseTask : (i == 0 || i == 3 ? foregroundTask : HandTracking::partsTask);
+                if (!(request.tasks & task)) {
+                    input.masks[i].destroy();
+                    input.maskTimes[i] = 0;
+                    continue;
+                }
+                const auto &mask = frame.pictures[i];
+                if (!mask.isNull() && frame.timeNs > input.maskTimes[i] && now - frame.timeNs <= 500000000) {
+                    input.masks[i].uploadImage(flippedVertically(mask));
+                    input.maskTimes[i] = frame.timeNs;
+                }
+            }
+        } else {
+            input.clearMasks();
+        }
         const quint64 serial = ++d->serial;
         input.pending[serial] = now;
         while (input.pending.size() > 8)
@@ -158,6 +188,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
         if (!active.count(it->first)) {
             if (it->second.sampler)
                 it->second.sampler->release();
+            it->second.clearMasks();
             invalidate(it->first);
             it = d->inputs.erase(it);
         } else
@@ -191,6 +222,16 @@ HandTracking::Frame VisionRuntime::hands(const PixelAnalysis::Settings &settings
     const auto input = d->inputs.find(sourceKey(settings));
     return input == d->inputs.end() || !input->second.timeNs ? HandTracking::Frame{}
                                                              : d->worker.latest(sourceKey(settings));
+}
+VisionRuntime::Texture VisionRuntime::segmentation(const PixelAnalysis::Settings &settings, int channel, qint64 nowNs) const
+{
+    const auto found = d->inputs.find(sourceKey(settings));
+    if (found == d->inputs.end() || channel < 0 || channel >= int(found->second.masks.size())) return {};
+    const auto &input = found->second;
+    const auto time = input.maskTimes[size_t(channel)];
+    if (!time || nowNs - time > 500000000) return {};
+    const auto &mask = input.masks[size_t(channel)];
+    return {mask.tex, mask.w, mask.h};
 }
 QImage VisionRuntime::preview(const PixelAnalysis::Settings &settings) const
 {

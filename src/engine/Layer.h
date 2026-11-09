@@ -75,7 +75,13 @@ enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
     PostFx = 1, // after its effect chain (its own mapping and opacity are not part of it)
     Source = 2, // its source's own picture, as decoded or generated: before its ROI, its color and its effects
+    MediaPipeMask = 3, // foreground alpha inferred from the post-FX picture
+    MediaPipeHair = 4,
+    MediaPipeParts = 5,
+    MediaPipeCutout = 6,
+    MediaPipePose = 7,
 };
+inline bool isMediaPipeTap(LayerTap tap) { return tap >= LayerTap::MediaPipeMask && tap <= LayerTap::MediaPipePose; }
 QString layerTapName(LayerTap t); // "Source", "Pre-FX", "Post-FX"
 QString layerTapKey(LayerTap t);
 LayerTap layerTapFromKey(const QString &k);

@@ -1,6 +1,7 @@
 """Local MediaPipe Tasks worker. Stdout is reserved for one JSON reply per frame."""
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,9 @@ MODELS = {
     "pose": ("PoseLandmarker", "pose_landmarker_lite.task"),
     "objects": ("ObjectDetector", "efficientdet_lite0.tflite"),
     "segment": ("ImageSegmenter", "selfie_segmenter.tflite"),
+    "face_detector": ("FaceDetector", "blaze_face_short_range.tflite"),
+    "classification": ("ImageClassifier", "efficientnet_lite0.tflite"),
+    "parts": ("ImageSegmenter", "selfie_multiclass_256x256.tflite"),
 }
 
 
@@ -24,25 +28,52 @@ def run(folder):
 
     vision = mp.tasks.vision
     tasks = {}
+    delegates = {}
+    cpu_only = set()
+    backend = os.environ.get("NYXMAP_MEDIAPIPE_DELEGATE", "auto").lower()
+    if backend not in ("auto", "cpu", "gpu"):
+        raise ValueError("NYXMAP_MEDIAPIPE_DELEGATE must be auto, cpu or gpu")
 
     def points(landmarks):
         return [[p.x, p.y, p.z] for p in landmarks]
 
-    def infer(task, image):
+    def infer(task, rgba):
         if task not in tasks:
             class_name, filename = MODELS[task]
-            options = {"base_options": mp.tasks.BaseOptions(model_asset_path=str(folder / filename))}
+            model = folder / filename
+            if not model.is_file():
+                raise FileNotFoundError(f"Missing MediaPipe model: {filename}")
+            options = {}
             if task in ("hands", "gestures"):
                 options.update(num_hands=2, min_hand_detection_confidence=.5)
             elif task == "face":
-                options.update(num_faces=2, output_face_blendshapes=True)
+                options.update(num_faces=2, output_face_blendshapes=True, output_facial_transformation_matrixes=True)
             elif task == "pose":
                 options.update(num_poses=2)
             elif task == "objects":
                 options.update(max_results=10, score_threshold=.5)
-            elif task == "segment":
-                options.update(output_category_mask=True, output_confidence_masks=False)
-            tasks[task] = getattr(vision, class_name).create_from_options(getattr(vision, class_name + "Options")(**options))
+            elif task == "classification":
+                options.update(max_results=5)
+            elif task in ("segment", "parts"):
+                options.update(output_category_mask=task == "parts", output_confidence_masks=task == "segment")
+            create = getattr(vision, class_name).create_from_options
+            options_type = getattr(vision, class_name + "Options")
+            for delegate in (("cpu",) if task in cpu_only else ("gpu", "cpu") if backend == "auto" else (backend,)):
+                options["base_options"] = mp.tasks.BaseOptions(
+                    model_asset_path=str(model), delegate=getattr(mp.tasks.BaseOptions.Delegate, delegate.upper()))
+                try:
+                    tasks[task] = create(options_type(**options))
+                except Exception as error:
+                    if delegate != "gpu" or backend != "auto":
+                        raise RuntimeError(f"MediaPipe {task} ({delegate.upper()}): {error}") from error
+                else:
+                    delegates[task] = delegate.upper()
+                    break
+        # Apple's GPU converter accepts RGBA ImageFrames, but aborts on RGB.
+        if delegates[task] == "GPU" and sys.platform == "darwin":
+            image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=rgba)
+        else:
+            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgba[:, :, :3]))
         detector = tasks[task]
         if task in ("hands", "gestures"):
             result = detector.detect(image) if task == "hands" else detector.recognize(image)
@@ -57,7 +88,8 @@ def run(folder):
             result = detector.detect(image)
             return {"face": [
                 {"points": points(face), "expressions": {p.category_name: p.score for p in result.face_blendshapes[i]},
-                 "blendshapes": {p.index: p.score for p in result.face_blendshapes[i]}}
+                 "blendshapes": {p.index: p.score for p in result.face_blendshapes[i]},
+                 "matrix": result.facial_transformation_matrixes[i].flatten().tolist()}
                 for i, face in enumerate(result.face_landmarks)
             ]}
         if task == "pose":
@@ -65,18 +97,26 @@ def run(folder):
             return {"pose": [{"points": points(pose), "world": points(result.pose_world_landmarks[i]),
                               "visibility": [p.visibility for p in pose]}
                              for i, pose in enumerate(result.pose_landmarks)]}
-        if task == "objects":
-            return {"objects": [
+        if task in ("objects", "face_detector"):
+            return {task: [
                 {"box": [d.bounding_box.origin_x / image.width, d.bounding_box.origin_y / image.height,
                          d.bounding_box.width / image.width, d.bounding_box.height / image.height],
                  "score": d.categories[0].score, "label": d.categories[0].category_name}
                 for d in detector.detect(image).detections if d.categories
             ]}
-        mask = detector.segment(image).category_mask.numpy_view()
-        foreground = mask != 0
-        return {"coverage": float(np.count_nonzero(foreground) / foreground.size),
-                "mask": base64.b64encode(foreground.astype(np.uint8).tobytes()).decode("ascii"),
-                "mask_width": mask.shape[1], "mask_height": mask.shape[0]}
+        if task == "classification":
+            classifications = detector.classify(image).classifications
+            return {"classification": [{"label": item.category_name, "score": item.score, "index": item.index}
+                                       for head in classifications for item in head.categories]}
+        result = detector.segment(image)
+        if task == "parts":
+            mask = result.category_mask.numpy_view()
+            return {"parts": base64.b64encode(mask.tobytes()).decode("ascii"),
+                    "parts_width": mask.shape[1], "parts_height": mask.shape[0]}
+        foreground = np.clip(result.confidence_masks[-1].numpy_view(), 0, 1)
+        return {"coverage": float(np.count_nonzero(foreground >= .5) / foreground.size),
+                "mask": base64.b64encode(np.rint(foreground * 255).astype(np.uint8).tobytes()).decode("ascii"),
+                "mask_width": foreground.shape[1], "mask_height": foreground.shape[0]}
 
     reply({"ready": True})
     for line in sys.stdin.buffer:
@@ -88,13 +128,22 @@ def run(folder):
             if len(data) != width * height * 4:
                 break
             rgba = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgba[:, :, :3]))
             result = {}
             for bit, task in enumerate(MODELS):
                 if mask & (1 << bit):
                     try:
-                        result.update(infer(task, image))
+                        result.update(infer(task, rgba))
+                        result[task + "_delegate"] = delegates[task]
                     except Exception as error:
+                        if backend == "auto" and delegates.get(task) == "GPU":
+                            tasks.pop(task).close()
+                            cpu_only.add(task)
+                            try:
+                                result.update(infer(task, rgba))
+                                result[task + "_delegate"] = delegates[task]
+                                continue
+                            except Exception as fallback_error:
+                                error = fallback_error
                         result[task + "_error"] = str(error)
             reply(result)
         except Exception as error:

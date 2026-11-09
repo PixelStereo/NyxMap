@@ -28,10 +28,13 @@ enum class Feature {
     ForegroundCoverage,
     HandPointX, HandPointY, HandPointZ, HandWorldX, HandWorldY, HandWorldZ,
     FacePointX, FacePointY, FacePointZ, FaceBlendshape,
-    PosePointX, PosePointY, PosePointZ, PoseWorldX, PoseWorldY, PoseWorldZ, PoseVisibility
+    PosePointX, PosePointY, PosePointZ, PoseWorldX, PoseWorldY, PoseWorldZ, PoseVisibility,
+    FaceDetectionCount, FaceBoxX, FaceBoxY, FaceBoxWidth, FaceBoxHeight, FaceDetectionScore,
+    ClassificationScore, ClassificationIndex, FaceTransform, HandLeftness, HandRightness
 };
 QStringList featureNames();
 unsigned taskFor(Feature feature);
+inline constexpr unsigned partsTask = 1u << 8;
 
 struct Hand {
     bool valid = false;
@@ -46,6 +49,7 @@ struct Frame {
     std::array<Hand, 2> hands{};
     QString error;
     QImage preview;
+    std::array<QImage, 5> pictures; // foreground, hair, colored parts, synchronized cutout, pose
     QJsonObject detections;
 };
 double measure(const Frame &frame, int index, Feature feature, double confidence, int landmark = 0);

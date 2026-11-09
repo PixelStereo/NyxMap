@@ -26,10 +26,14 @@ int main(int argc, char **argv)
     }
     for (const auto &feature : {HandTracking::Feature::GestureFist, HandTracking::Feature::FaceCount,
                                 HandTracking::Feature::PoseCount, HandTracking::Feature::ObjectCount,
-                                HandTracking::Feature::ForegroundCoverage}) {
+                                HandTracking::Feature::ForegroundCoverage, HandTracking::Feature::FaceDetectionCount,
+                                HandTracking::Feature::ClassificationScore}) {
         if (!qEnvironmentVariableIsSet("NYXMAP_MEDIAPIPE_ALL_MODELS")) break;
         HandTracking::Frame result;
         result.detections = detector.infer(blank, HandTracking::taskFor(feature), &result.error);
+        for (const auto &key : result.detections.keys())
+            if (key.endsWith("_delegate")) std::cout << key.toStdString() << ": "
+                                                       << result.detections.value(key).toString().toStdString() << '\n';
         const auto failure = HandTracking::taskError(result, feature);
         if (!failure.isEmpty() || result.detections.isEmpty()) {
             std::cerr << "MediaPipe task failed: " << failure.toStdString();

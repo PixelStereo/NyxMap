@@ -24,6 +24,18 @@ void Engine::stepVision()
         }
     for (const auto &node : m_interactionGraph.nodes)
         if (node.kind == InteractionGraph::Kind::Source) add(node.settings);
+    for (const auto &layer : m_layers) {
+        if (layer->type != SourceType::Layer || !isMediaPipeTap(layer->sourceTap) ||
+            !layer->sourceLayer || !layer->needed) continue;
+        PixelAnalysis::Settings settings;
+        settings.layer = layer->sourceLayer;
+        settings.tap = 2;
+        const bool foreground = layer->sourceTap == LayerTap::MediaPipeMask || layer->sourceTap == LayerTap::MediaPipeCutout;
+        const unsigned task = foreground ? HandTracking::taskFor(HandTracking::Feature::ForegroundCoverage)
+                              : layer->sourceTap == LayerTap::MediaPipePose ? HandTracking::taskFor(HandTracking::Feature::PoseCount)
+                              : HandTracking::partsTask;
+        requests.push_back({settings, task});
+    }
     if (!m_vision && !requests.empty())
         m_vision = std::make_unique<VisionRuntime>([this] { drawQuad(); }, handModelsDirectory());
     if (!m_vision)
@@ -41,6 +53,17 @@ void Engine::stepVision()
             return {source->finalTex, source->finalW, source->finalH};
         },
         AudioStream::clockNs());
+}
+GLuint Engine::segmentationTexture(quint64 source, LayerTap tap, int &width, int &height) const
+{
+    if (!m_vision || m_visionReset) return 0;
+    PixelAnalysis::Settings settings;
+    settings.layer = source;
+    settings.tap = 2;
+    const auto mask = m_vision->segmentation(settings, int(tap) - int(LayerTap::MediaPipeMask), AudioStream::clockNs());
+    width = mask.width;
+    height = mask.height;
+    return mask.id;
 }
 double Engine::visionValue(const Interaction &input)
 {
@@ -106,5 +129,10 @@ QString Engine::visionStatus(const PixelAnalysis::Settings &settings, bool hands
     const auto results = frame.detections.keys();
     for (const auto &key : results)
         if (key.endsWith("_error")) return frame.detections.value(key).toString();
-    return QStringLiteral("MediaPipe Tasks · local inference active");
+    QStringList delegates;
+    for (const auto &key : results)
+        if (key.endsWith("_delegate")) delegates << frame.detections.value(key).toString();
+    delegates.removeDuplicates();
+    return delegates.isEmpty() ? QStringLiteral("MediaPipe Tasks · local inference active")
+                               : QStringLiteral("MediaPipe Tasks · %1").arg(delegates.join(" / "));
 }

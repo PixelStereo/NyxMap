@@ -21,6 +21,7 @@ public:
               const std::function<Texture(const PixelAnalysis::Settings &)> &texture, qint64 timeNs);
     double pixelValue(const PixelAnalysis::Settings &settings, PixelAnalysis::Feature feature, qint64 nowNs);
     HandTracking::Frame hands(const PixelAnalysis::Settings &settings) const;
+    Texture segmentation(const PixelAnalysis::Settings &settings, int channel, qint64 nowNs) const;
     QImage preview(const PixelAnalysis::Settings &settings) const;
     QString status(const PixelAnalysis::Settings &settings) const;
     void setModelsDirectory(QString directory);

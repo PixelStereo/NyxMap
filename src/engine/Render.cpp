@@ -539,6 +539,13 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                 break;
             case LayerTap::PreFx: tex = s->preFxTex, w = s->preFxW, h = s->preFxH; break;
             case LayerTap::PostFx: tex = s->finalTex, w = s->finalW, h = s->finalH; break;
+            case LayerTap::MediaPipeMask:
+            case LayerTap::MediaPipeHair:
+            case LayerTap::MediaPipeParts:
+            case LayerTap::MediaPipeCutout:
+            case LayerTap::MediaPipePose:
+                tex = segmentationTexture(s->id, l.sourceTap, w, h);
+                break;
             }
             l.srcWidth = w; // what the inspector and the ROI editor show
             l.srcHeight = h;

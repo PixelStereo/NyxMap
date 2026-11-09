@@ -32,7 +32,10 @@ QStringList HandTracking::featureNames()
             "Hand · Landmark X", "Hand · Landmark Y", "Hand · Landmark Z", "Hand · World X", "Hand · World Y", "Hand · World Z",
             "Face · Landmark X", "Face · Landmark Y", "Face · Landmark Z", "Face · Blendshape",
             "Pose · Landmark X", "Pose · Landmark Y", "Pose · Landmark Z", "Pose · World X", "Pose · World Y",
-            "Pose · World Z", "Pose · Landmark visibility"};
+            "Pose · World Z", "Pose · Landmark visibility", "Face detection · Count", "Face detection · Center X",
+            "Face detection · Center Y", "Face detection · Width", "Face detection · Height", "Face detection · Confidence",
+            "Classification · Confidence", "Classification · Class index", "Face · Transform matrix component",
+            "Hand · Leftness", "Hand · Rightness"};
 }
 double HandTracking::measure(const Hand &hand, Feature feature)
 {
@@ -80,6 +83,10 @@ double HandTracking::measure(const Hand &hand, Feature feature)
 }
 unsigned HandTracking::taskFor(Feature feature)
 {
+    if (feature >= Feature::HandLeftness) return 1;
+    if (feature == Feature::FaceTransform) return 4;
+    if (feature >= Feature::ClassificationScore) return 128;
+    if (feature >= Feature::FaceDetectionCount) return 64;
     if (feature >= Feature::PosePointX) return 8;
     if (feature >= Feature::FacePointX) return 4;
     if (feature >= Feature::HandPointX) return 1;
@@ -96,13 +103,41 @@ QString HandTracking::taskError(const Frame &frame, Feature feature)
     if (!frame.error.isEmpty()) return frame.error;
     const auto task = taskFor(feature);
     const char *key = task == 1 ? "hands" : task == 2 ? "gestures" : task == 4 ? "face" :
-                      task == 8 ? "pose" : task == 16 ? "objects" : "segment";
+                      task == 8 ? "pose" : task == 16 ? "objects" : task == 32 ? "segment" :
+                      task == 64 ? "face_detector" : "classification";
     return frame.detections.value(QString::fromLatin1(key) + "_error").toString();
 }
 
 double HandTracking::measure(const Frame &frame, int index, Feature feature, double confidence, int landmarkIndex)
 {
     const auto &hand = frame.hands[size_t(std::clamp(index, 0, 1))];
+    if (feature == Feature::HandLeftness || feature == Feature::HandRightness) {
+        if (!hand.valid) return 0;
+        const double right = hand.handedness > 0.5 ? hand.confidence : 1.0 - hand.confidence;
+        return feature == Feature::HandRightness ? right : 1.0 - right;
+    }
+    if (feature == Feature::FaceTransform) {
+        const auto all = frame.detections.value("face").toArray();
+        if (index < 0 || index >= all.size() || landmarkIndex < 0) return 0;
+        const auto matrix = all.at(index).toObject().value("matrix").toArray();
+        return landmarkIndex < matrix.size() ? matrix.at(landmarkIndex).toDouble() : 0;
+    }
+    if (feature == Feature::ClassificationScore || feature == Feature::ClassificationIndex) {
+        const auto all = frame.detections.value("classification").toArray();
+        if (index < 0 || index >= all.size()) return 0;
+        return all.at(index).toObject().value(feature == Feature::ClassificationScore ? "score" : "index").toDouble();
+    }
+    if (feature >= Feature::FaceDetectionCount) {
+        const auto all = frame.detections.value("face_detector").toArray();
+        if (feature == Feature::FaceDetectionCount) return all.size();
+        if (index < 0 || index >= all.size()) return 0;
+        const auto detection = all.at(index).toObject();
+        if (feature == Feature::FaceDetectionScore) return detection.value("score").toDouble();
+        const auto box = detection.value("box").toArray();
+        if (box.size() != 4) return 0;
+        const int component = int(feature) - int(Feature::FaceBoxX);
+        return box.at(component).toDouble() + (component < 2 ? box.at(component + 2).toDouble() / 2 : 0);
+    }
     if (feature >= Feature::HandPointX) {
         if (landmarkIndex < 0) return 0;
         if (feature < Feature::FacePointX) {
@@ -184,6 +219,7 @@ QString mediaPipePython(const QString &directory = {})
 struct HandTracking::Detector::Private {
     QProcess process;
     std::function<bool()> cancelled;
+    bool cpuAfterCrash = false;
     explicit Private(std::function<bool()> stop) : cancelled(std::move(stop)) {
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.insert(QStringLiteral("MPLBACKEND"), QStringLiteral("Agg"));
@@ -204,6 +240,9 @@ struct HandTracking::Detector::Private {
                elapsed.elapsed() < timeout && !(cancelled && cancelled()))
             process.waitForReadyRead(50);
         if (!process.canReadLine()) {
+            const auto mode = qEnvironmentVariable("NYXMAP_MEDIAPIPE_DELEGATE", "auto").toLower();
+            if (mode == "auto" && process.state() == QProcess::NotRunning && process.exitStatus() == QProcess::CrashExit)
+                cpuAfterCrash = true;
             if (error) *error = "MediaPipe worker stopped or timed out";
             close();
             return {};
@@ -226,6 +265,11 @@ bool HandTracking::Detector::load(const QString &directory, QString *error)
     if (python.isEmpty()) {
         if (error) *error = "Python with MediaPipe Tasks is required. Set NYXMAP_MEDIAPIPE_PYTHON.";
         return false;
+    }
+    if (d->cpuAfterCrash) {
+        auto environment = d->process.processEnvironment();
+        environment.insert(QStringLiteral("NYXMAP_MEDIAPIPE_DELEGATE"), QStringLiteral("cpu"));
+        d->process.setProcessEnvironment(environment);
     }
     d->process.start(python, {"-u", "-c", QString::fromUtf8(mediaPipeWorkerScript), directory});
     if (!d->process.waitForStarted(500)) {
@@ -380,13 +424,91 @@ struct HandTracking::Worker::Private {
                 if (maskWidth > 0 && maskHeight > 0 && maskWidth <= 2048 && maskHeight <= 2048 &&
                     mask.size() == maskWidth * maskHeight) {
                     QImage overlay(maskWidth, maskHeight, QImage::Format_ARGB32_Premultiplied);
-                    const QRgb foreground = qPremultiply(qRgba(30, 180, 255, 105));
+                    frame.pictures[0] = QImage(maskWidth, maskHeight, QImage::Format_RGBA8888);
                     for (int y = 0; y < maskHeight; ++y) {
                         auto *row = reinterpret_cast<QRgb *>(overlay.scanLine(y));
-                        for (int x = 0; x < maskWidth; ++x)
-                            row[x] = mask.at(y * maskWidth + x) ? foreground : 0;
+                        auto *alpha = frame.pictures[0].scanLine(y);
+                        for (int x = 0; x < maskWidth; ++x) {
+                            const int opacity = uchar(mask.at(y * maskWidth + x));
+                            row[x] = qPremultiply(qRgba(30, 180, 255, opacity * 105 / 255));
+                            std::fill_n(alpha + x * 4, 3, uchar(255));
+                            alpha[x * 4 + 3] = uchar(opacity);
+                        }
                     }
+                    // Apply the confidence map to the exact input frame, even if the source has moved on.
+                    auto cutout = job.image.convertToFormat(QImage::Format_RGBA8888);
+                    const auto scaled = frame.pictures[0].scaled(cutout.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                    for (int y = 0; y < cutout.height(); ++y) {
+                        auto *row = cutout.scanLine(y);
+                        const auto *alpha = scaled.constScanLine(y);
+                        for (int x = 0; x < cutout.width(); ++x)
+                            row[x * 4 + 3] = uchar((int(row[x * 4 + 3]) * int(alpha[x * 4 + 3]) + 127) / 255);
+                    }
+                    frame.pictures[3] = std::move(cutout);
                     painter.drawImage(frame.preview.rect(), overlay);
+                }
+                const int partsWidth = frame.detections.value("parts_width").toInt();
+                const int partsHeight = frame.detections.value("parts_height").toInt();
+                const auto parts = QByteArray::fromBase64(frame.detections.take("parts").toString().toLatin1());
+                if (partsWidth > 0 && partsHeight > 0 && partsWidth <= 2048 && partsHeight <= 2048 &&
+                    parts.size() == partsWidth * partsHeight) {
+                    static const QRgb palette[] = {0, qRgb(242, 96, 220), qRgb(255, 181, 90),
+                                                   qRgb(100, 208, 240), qRgb(67, 221, 138), qRgb(254, 222, 80)};
+                    auto &hair = frame.pictures[1];
+                    auto &colors = frame.pictures[2];
+                    hair = QImage(partsWidth, partsHeight, QImage::Format_ARGB32);
+                    colors = QImage(partsWidth, partsHeight, QImage::Format_ARGB32);
+                    for (int y = 0; y < partsHeight; ++y) {
+                        auto *hairRow = reinterpret_cast<QRgb *>(hair.scanLine(y));
+                        auto *colorRow = reinterpret_cast<QRgb *>(colors.scanLine(y));
+                        for (int x = 0; x < partsWidth; ++x) {
+                            const auto label = uchar(parts.at(y * partsWidth + x));
+                            hairRow[x] = label == 1 ? qRgb(255, 255, 255) : 0;
+                            colorRow[x] = label < std::size(palette) ? palette[label] : 0;
+                        }
+                    }
+                }
+                if (frame.detections.contains("pose")) {
+                    auto &skeleton = frame.pictures[4];
+                    skeleton = QImage(job.image.size(), QImage::Format_ARGB32_Premultiplied);
+                    skeleton.fill(Qt::transparent);
+                    QPainter posePainter(&skeleton);
+                    posePainter.setRenderHint(QPainter::Antialiasing);
+                    // Map MediaPipe's body to the OpenPose COCO-18 joint order. Neck is the shoulder midpoint.
+                    static constexpr int joints[] = {0, -1, 12, 14, 16, 11, 13, 15, 24, 26, 28, 23, 25, 27, 5, 2, 8, 7};
+                    static constexpr int links[][2] = {{1,2}, {1,5}, {2,3}, {3,4}, {5,6}, {6,7}, {1,8}, {8,9}, {9,10},
+                                                      {1,11}, {11,12}, {12,13}, {1,0}, {0,14}, {14,16}, {0,15}, {15,17}};
+                    for (const auto &person : frame.detections.value("pose").toArray()) {
+                        const auto data = person.toObject();
+                        const auto points = data.value("points").toArray();
+                        const auto visibility = data.value("visibility").toArray();
+                        if (points.size() < 33 || visibility.size() < 33) continue;
+                        const auto point = [&](int index) {
+                            const auto xy = points.at(index).toArray();
+                            return QPointF(xy.at(0).toDouble() * skeleton.width(), xy.at(1).toDouble() * skeleton.height());
+                        };
+                        std::array<QPointF, std::size(joints)> mapped;
+                        std::array<bool, std::size(joints)> visible{};
+                        for (size_t joint = 0; joint < mapped.size(); ++joint) {
+                            const int index = joints[joint];
+                            mapped[joint] = index >= 0 ? point(index) : (point(11) + point(12)) / 2;
+                            visible[joint] = index >= 0 ? visibility.at(index).toDouble() >= 0.5
+                                                        : std::min(visibility.at(11).toDouble(), visibility.at(12).toDouble()) >= 0.5;
+                        }
+                        const double radius = std::max(1., std::min(skeleton.width(), skeleton.height()) * .009);
+                        for (size_t link = 0; link < std::size(links); ++link) {
+                            const int from = links[link][0], to = links[link][1];
+                            if (!visible[from] || !visible[to]) continue;
+                            posePainter.setPen(QPen(QColor::fromHsv(int(link) * 20, 255, 235), radius * 2, Qt::SolidLine, Qt::RoundCap));
+                            posePainter.drawLine(mapped[from], mapped[to]);
+                        }
+                        posePainter.setPen(Qt::NoPen);
+                        for (size_t joint = 0; joint < mapped.size(); ++joint)
+                            if (visible[joint]) {
+                                posePainter.setBrush(QColor::fromHsv(int(joint) * 20, 255, 255));
+                                posePainter.drawEllipse(mapped[joint], radius, radius);
+                            }
+                    }
                 }
                 const auto screenPoint = [&](double x, double y) {
                     return QPointF(x * frame.preview.width(), y * frame.preview.height());
@@ -401,7 +523,9 @@ struct HandTracking::Worker::Private {
                         }
                 }
                 painter.setPen(QPen(QColor(255, 160, 60), 1));
-                for (const auto &detection : frame.detections.value("objects").toArray()) {
+                auto boxes = frame.detections.value("objects").toArray();
+                for (const auto &face : frame.detections.value("face_detector").toArray()) boxes.append(face);
+                for (const auto &detection : boxes) {
                     const auto item = detection.toObject();
                     const auto box = item.value("box").toArray();
                     if (box.size() != 4) continue;
@@ -411,6 +535,11 @@ struct HandTracking::Worker::Private {
                     painter.drawText(at + QPointF(2, 12), item.value("label").toString());
                 }
                 painter.setPen(QPen(QColor(40, 255, 100), 2));
+                const auto labels = frame.detections.value("classification").toArray();
+                if (!labels.isEmpty()) {
+                    const auto top = labels.at(0).toObject();
+                    painter.drawText(QPointF(8, 16), top.value("label").toString());
+                }
                 for (const auto &hand : frame.hands)
                     if (hand.valid) {
                         auto point = [&](int i) {

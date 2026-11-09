@@ -1412,6 +1412,7 @@ private:
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread
     void stepVision();
+    GLuint segmentationTexture(quint64 source, LayerTap tap, int &width, int &height) const;
     double visionValue(const Interaction &input);
     void releaseVision();
     std::unique_ptr<VisionRuntime> m_vision;
