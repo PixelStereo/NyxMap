@@ -667,23 +667,40 @@ layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(locatio
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
 uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
 uniform vec2 u_uvTiling;
-uniform int u_hasDisp; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
+uniform int u_hasDisp, u_shading; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
+out vec3 v_basePos; out float v_heightScale; out vec2 v_heightSlope;
+float heightAt(vec2 uv) {
+    vec4 h = textureLod(u_disp, uv, 0.0);
+    return dot(h.rgb, vec3(0.2126, 0.7152, 0.0722)) * h.a;
+}
+vec3 bendPosition(vec3 p, float r) {
+    float t = (p.x - u_bendCx) / r;
+    return vec3(u_bendCx + (r - p.z) * sin(t), p.y, r - (r - p.z) * cos(t));
+}
 void main() {
-    vec3 p = a_pos, n = a_n;
+    vec3 p = a_pos, n = a_n, base = a_pos;
+    v_heightSlope = vec2(0.0);
     if (u_hasDisp != 0) {
         vec2 uv = u_hasDisp == 2 ? a_uv * u_uvTiling : vec2(a_uv.x, 1.0 - a_uv.y);
-        vec4 d = textureLod(u_disp, uv, 0.0);
-        float l = dot(d.rgb, vec3(0.2126, 0.7152, 0.0722)) * d.a; // its luminance
-        p += normalize(n) * (l - u_dispMid) * u_dispAmount;
+        p += normalize(n) * (heightAt(uv) - u_dispMid) * u_dispAmount;
+        if (u_shading == 1) {
+            vec2 stepUV = 1.0 / vec2(textureSize(u_disp, 0));
+            vec2 dx = vec2(stepUV.x, 0), dy = vec2(0, stepUV.y);
+            v_heightSlope = vec2(heightAt(uv + dx) - heightAt(uv - dx),
+                                 heightAt(uv + dy) - heightAt(uv - dy)) / (2.0 * stepUV);
+        }
     }
     if (abs(u_bend) > 1e-4) {
         float R = u_bendW / u_bend, t = (p.x - u_bendCx) / R, s = sin(t), c = cos(t);
-        p = vec3(u_bendCx + (R - p.z) * s, p.y, R - (R - p.z) * c);
+        p = bendPosition(p, R);
+        base = bendPosition(base, R);
         n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
     }
     vec4 w = u_model * vec4(p, 1.0);
     v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv * u_uvTiling;
+    v_basePos = (u_model * vec4(base, 1.0)).xyz;
+    v_heightScale = 1.0 / max(length(u_normal * normalize(n)), 1e-8);
     gl_Position = u_proj * u_view * w;
 }
 )";
@@ -695,6 +712,7 @@ void main() {
 // tone mapping, sRGB out
 static const char *kFragment = R"(#version 330 core
 in vec3 v_pos; in vec3 v_n; in vec2 v_uv;
+in vec3 v_basePos; in float v_heightScale; in vec2 v_heightSlope;
 layout(location = 0) out vec4 o;
 layout(location = 1) out vec4 o_bright; // what shines more than a screen can show: its glow (linear light)
 uniform float u_glowLimit;
@@ -702,7 +720,8 @@ uniform vec3 u_lright[8], u_lup[8]; uniform vec2 u_lhalf[8]; // an area light: i
 uniform int u_penumbra; uniform vec3 u_shadowPlanes[4]; uniform sampler2DArray u_shadowRaw; uniform samplerCube u_pointRaw0, u_pointRaw1;
 uniform vec2 u_uvTiling;
 uniform vec4 u_base; uniform float u_metal, u_rough, u_dielectric; uniform vec3 u_emissive;
-uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_flat; uniform int u_hasDisp; uniform int u_layerTex;
+uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_shading; uniform int u_hasDisp; uniform int u_layerTex;
+uniform float u_dispAmount;
 uniform sampler2D u_roughTex, u_metalTex, u_normalTex, u_aoTexMap, u_emTex;
 uniform int u_hasRough, u_hasMetal, u_hasNormal, u_hasAo, u_hasEm;
 uniform vec4 u_roughCh, u_metalCh; uniform float u_normalScale, u_aoStrength;
@@ -852,6 +871,16 @@ vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' app
     float a004 = min(k.x * k.x, exp2(-9.28 * NdV)) * k.x + k.y;
     return vec2(-1.04, 1.04) * a004 + k.zw;
 }
+vec3 smoothDisplacedNormal(vec3 n) {
+    // Project the interpolated texture slope onto the base surface.
+    // Differentiating displaced positions would give one normal per face.
+    vec2 uv = u_hasDisp == 2 ? v_uv : vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y);
+    vec3 rx = cross(dFdy(v_basePos), n), ry = cross(n, dFdx(v_basePos));
+    float area = dot(dFdx(v_basePos), rx);
+    if (abs(area) < 1e-12) return n;
+    vec3 gradient = (rx * dot(v_heightSlope, dFdx(uv)) + ry * dot(v_heightSlope, dFdy(uv))) / area;
+    return normalize(n - gradient * (u_dispAmount * v_heightScale));
+}
 void main() {
     vec4 base = u_base;
     if (u_hasTex != 0) {
@@ -869,7 +898,11 @@ void main() {
     }
     if (u_alphaMode == 1 && base.a < u_alphaCutoff) discard;
     if (u_alphaMode == 0) base.a = 1.0;
-    vec3 N = u_hasDisp != 0 || u_flat != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced, flat: its own surface
+    vec3 N = normalize(v_n);
+    if (u_hasDisp != 0 && u_shading == 1)
+        N = smoothDisplacedNormal(N);
+    else if (u_hasDisp != 0 || u_shading == 2)
+        N = normalize(cross(dFdx(v_pos), dFdy(v_pos)));
     vec3 V = normalize(u_eye - v_pos);
     if (dot(N, V) < 0.0) N = -N; // both faces lit
     if (u_hasNormal != 0) { // its normal map, in the frame its UVs make on screen
@@ -1743,7 +1776,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             m_sceneUniforms.u_viewProj = f->glGetUniformLocation(m_program, "u_viewProj");
             m_placeMain.resolve(m_program);
             m_unlitAt = f->glGetUniformLocation(m_program, "u_unlit");
-            m_flatAt = f->glGetUniformLocation(m_program, "u_flat");
+            m_shadingAt = f->glGetUniformLocation(m_program, "u_shading");
         }
         if (!m_lite) {
             m_glowDownProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowDown), &log);
@@ -2390,7 +2423,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         if (pass == 0) computed += item.model->triangleCount();
         place(m_placeMain, p);
         f->glUniform1i(m_unlitAt, item.placement.unlit ? 1 : 0);
-        f->glUniform1i(m_flatAt, item.placement.shading == 2 ? 1 : 0);
+        f->glUniform1i(m_shadingAt, item.placement.shading);
         if (pass == 1) {
             f->glEnable(GL_BLEND);
             f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied

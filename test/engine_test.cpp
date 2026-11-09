@@ -1960,6 +1960,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(server.handleMessage({"/composition/opacity", "f", {0.4}}) && std::abs(e.compositionOpacityTarget() - 0.4) < 1e-3);
         e.fadeCompositionOpacity(1.0, 0);
         CHECK(server.handleMessage({"/composition/fps", "f", {30.0}}) && e.effectiveRender().frameRate == 30.0);
+        CHECK(server.handleMessage({"/composition/fps", "f", {-2.0}}) &&
+              e.effectiveRender().frameRate == Engine::RenderSettings::UncappedFrameRate);
+        CHECK(e.frameTimingJson().value("pace_hz").toDouble(-1) == 0);
         e.setRenderSettings(Engine::RenderSettings());
         // Hierarchy, lowercase, and an "enable" child for every switch, over the whole tree
         {
@@ -4881,13 +4884,14 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.removeLayer(e.indexOfId(e.layerId(v2)));
         }
         // The frame rate is the project's (composition/fps); samples, mipmaps and depth are the machine's
-        rs = Engine::RenderSettings{30, 8, 1};
+        rs = Engine::RenderSettings{Engine::RenderSettings::UncappedFrameRate, 8, 1};
         e.setRenderSettings(rs);
         CHECK(e.saveProject(tmp + "/render.nyxmap", {}, &err));
         e.newProject();
         CHECK(e.renderSettings().frameRate < 0 && e.renderSettings().samples < 0); // a new project: the defaults
         CHECK(e.loadProject(tmp + "/render.nyxmap", nullptr, &err));
-        CHECK(e.renderSettings().frameRate == 30 && e.renderSettings().samples < 0 && e.renderSettings().mipmaps < 0);
+        CHECK(e.effectiveRender().frameRate == Engine::RenderSettings::UncappedFrameRate &&
+              e.renderSettings().samples < 0 && e.renderSettings().mipmaps < 0);
         e.setRenderSettings({});
     }
     } // rendering

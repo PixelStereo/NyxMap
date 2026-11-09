@@ -518,13 +518,14 @@ void Engine::renderLoop()
         // vertical sync); else the main screen's refresh rate. A frame its output does not show (no surface from
         // macOS this time) is not followed by one at another screen's pace.
         const double rate = effectiveRender().frameRate;
+        const bool uncapped = rate == RenderSettings::UncappedFrameRate;
         const double hz = rate > 0 ? rate : m_presentHz > 1 ? m_presentHz : screenRefreshRate();
-        const qint64 periodNs = qint64(1e9 / std::clamp(hz, 1.0, 1000.0));
+        const qint64 periodNs = uncapped ? 0 : qint64(1e9 / std::clamp(hz, 1.0, 1000.0));
 
         const qint64 t0 = FrameTiming::nowNs();
         frame(nextDt());
         const qint64 t1 = FrameTiming::nowNs();
-        const bool presented = presentViewports();
+        const bool presented = presentViewports(!uncapped);
         const qint64 t2 = FrameTiming::nowNs();
         m_frameTiming.noteFrame(t0, t1, t2, periodNs, presented);
         sampleResources();
@@ -533,7 +534,11 @@ void Engine::renderLoop()
         // The vertical sync held this frame (it waited for its screen): it is the pace, nothing to add. Otherwise the
         // next frame is due one period after this one was (absolute deadlines: a late wake-up is caught up on the next
         // frame instead of adding up; more than a period late, the count starts again from now)
-        const bool heldBySync = rate <= 0 && presented && t2 - t1 >= 4000000;
+        if (uncapped) {
+            m_paceNext = -1;
+            continue;
+        }
+        const bool heldBySync = rate == 0 && presented && t2 - t1 >= 4000000;
         const qint64 sleepNs = heldBySync ? FramePacer::resync(m_paceNext, t2, periodNs)
                                           : FramePacer::next(m_paceNext, t0, FrameTiming::nowNs(), periodNs);
         if (sleepNs > 0) QThread::usleep(static_cast<unsigned long>(sleepNs / 1000));
@@ -719,7 +724,7 @@ static void setSwapInterval(QOpenGLContext *ctx, int n)
 
 // Each window on screen is drawn with its own context and swapped; the engine's context then becomes current
 // again. Each window's context waits on the GPU for the frame's fence (waitForFrame) before drawing it.
-bool Engine::presentViewports()
+bool Engine::presentViewports(bool syncToDisplay)
 {
     std::vector<std::pair<const Layer *, OutputSurface *>> shown;
     {
@@ -736,10 +741,10 @@ bool Engine::presentViewports()
     for (size_t k = 0; k < shown.size(); ++k) {
         const Layer *vp = shown[k].first;
         OutputSurface &out = *shown[k].second;
-        const bool last = k + 1 == shown.size();
+        const bool waitForDisplay = syncToDisplay && k + 1 == shown.size();
         if (out.metal) { // drawn by Metal from here, with the engine's context current
             const RenderTarget &pic = vp->vpOut[vp->vpPublished.load()];
-            switch (out.metal->present(pic.fbo, pic.w, pic.h, out.pixels, last)) {
+            switch (out.metal->present(pic.fbo, pic.w, pic.h, out.pixels, waitForDisplay)) {
             case MetalOutput::Result::Shown:
                 any = true;
                 ++out.presented;
@@ -779,7 +784,7 @@ bool Engine::presentViewports()
         }
         present(*vp, out);
         if (m_windowDrawProbe) m_windowDrawProbe(vp->id, out.pixels);
-        setSwapInterval(out.context, last ? 1 : 0); // only the last one waits for the screen
+        setSwapInterval(out.context, waitForDisplay ? 1 : 0); // only the last one waits for the screen
         out.context->swapBuffers(out.window);
         any = true;
         ++out.presented;
@@ -995,7 +1000,7 @@ Engine::RenderSettings Engine::effectiveRender() const
 {
     Lock lk(&m_mutex);
     RenderSettings e;
-    e.frameRate = m_render.frameRate >= 0 ? m_render.frameRate : std::max(0.0, m_renderDefaults.frameRate);
+    e.frameRate = (m_render.frameRate >= 0 || m_render.frameRate == RenderSettings::UncappedFrameRate) ? m_render.frameRate : std::max(0.0, m_renderDefaults.frameRate);
     e.samples = m_render.samples >= 0 ? m_render.samples : std::max(0, m_renderDefaults.samples);
     e.mipmaps = m_render.mipmaps >= 0 ? m_render.mipmaps : std::max(0, m_renderDefaults.mipmaps);
     // RGBA16 UNORM ("10") unless 8 bits are chosen: smooth generated gradients by default, half the GPU memory and

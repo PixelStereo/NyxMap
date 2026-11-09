@@ -61,7 +61,7 @@ public:
     using QTableWidget::QTableWidget;
     int anchor() const { return m_anchor; }
     void setAnchor(int row) { m_anchor = row; }
-    void cancelPendingPress() { m_pendingPress.reset(); m_pressRow = -1; m_rangePress = false; }
+    void cancelPendingPress() { m_pendingColumn = -1; m_pressRow = -1; m_rangePress = false; }
     const std::vector<LayerTable::Row> *rows = nullptr;
     std::function<void(int, const QStringList &)> onDrop;
     std::function<void(const QList<int> &, int, int)> onMove;
@@ -167,7 +167,7 @@ protected:
     {
         const QPoint p = e->position().toPoint();
         const int row = rowAt(p.y()), col = columnAt(p.x());
-        m_pressRow = -1;
+        cancelPendingPress();
         if (row < 0) { // empty area: nothing selected (a new group is then created empty)
             clearSelection();
             setCurrentCell(-1, -1);
@@ -222,7 +222,8 @@ protected:
             // A plain click selects on release: a press that becomes a drag (onto the inspector's source, say)
             // leaves the selection, and the layer shown, as they are
             if (e->modifiers() == Qt::NoModifier) {
-                m_pendingPress.reset(static_cast<QMouseEvent *>(e->clone()));
+                m_pendingColumn = col;
+                setFocus(Qt::MouseFocusReason);
                 return;
             }
         }
@@ -249,24 +250,33 @@ protected:
             auto *drag = new QDrag(this);
             drag->setMimeData(mime);
             m_pressRow = -1;
-            m_pendingPress.reset();
+            m_pendingColumn = -1;
             drag->exec(Qt::MoveAction);
             return;
         }
-        QTableWidget::mouseMoveEvent(e);
+        if (m_pendingColumn < 0 && !m_rangePress) QTableWidget::mouseMoveEvent(e);
     }
 
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        m_pressRow = -1;
+        const int row = m_pressRow, col = m_pendingColumn;
+        m_pressRow = m_pendingColumn = -1;
         if (m_rangePress) { m_rangePress = false; return; }
-        if (m_pendingPress) { // a plain click, not a drag: that row alone, selected now
-            // Feed Qt the original press as well as the release: setCurrentCell
-            // alone does not update QAbstractItemView's Shift selection anchor.
-            m_anchor = rowAt(m_pendingPress->position().toPoint().y());
-            auto press = std::move(m_pendingPress);
-            QTableWidget::mousePressEvent(press.get());
-            QTableWidget::mouseReleaseEvent(e);
+        if (row >= 0 && col >= 0 && e->button() == Qt::LeftButton) {
+            // Commit one row explicitly. Qt's extended selection can defer
+            // deselection on an already selected row until release.
+            if (rowAt(e->position().toPoint().y()) != row) return;
+            const auto index = model()->index(row, col);
+            const int previous = currentRow(), previousColumn = currentColumn();
+            m_anchor = row;
+            {
+                const QSignalBlocker block(this);
+                selectionModel()->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            }
+            if (row != previous || col != previousColumn)
+                emit currentCellChanged(row, col, previous, previousColumn);
+            emit itemSelectionChanged();
+            emit clicked(index);
             return;
         }
         QTableWidget::mouseReleaseEvent(e);
@@ -274,6 +284,7 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent *e) override
     {
+        cancelPendingPress();
         const QPoint p = e->position().toPoint();
         const int row = rowAt(p.y()), col = columnAt(p.x());
         if (row >= 0 && col == ColName && rows && row < int(rows->size())) {
@@ -406,7 +417,7 @@ private:
     QPoint m_pressPos;
     int m_anchor = -1;
     bool m_rangePress = false;
-    std::unique_ptr<QMouseEvent> m_pendingPress; // a plain click, selecting on release unless it became a drag
+    int m_pendingColumn = -1; // a plain click, selecting on release unless it became a drag
 };
 } // namespace
 

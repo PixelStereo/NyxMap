@@ -724,6 +724,20 @@ int runScene3dTests(Engine &engine)
         check(different(made, picture()) > 30, "smooth: the cube's edges are rounded");
         engine.setParameter(box, "model/shading", QStringLiteral("as made"));
         check(different(made, picture()) < 6, "as made: as it was");
+        const int heightAt = engine.addLayer("Smooth shading height");
+        const quint64 height = engine.layerId(heightAt);
+        check(engine.setLayerIsf(heightAt, white, &err), "a constant height map for the sphere");
+        engine.setParameter(height, "enable", false);
+        check(engine.setModelDisplace(engine.indexOfId(ball), height, &err), "displace the shaded sphere");
+        engine.setParameter(ball, "model/displace/amount", 0.2);
+        engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
+        const QImage displacedFlat = picture();
+        engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
+        check(different(displacedFlat, picture()) > 30, "smooth shading interpolates normals even with displacement");
+        check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
+        engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
+        engine.removeLayer(engine.indexOfId(height));
+
         // The count: what it holds, shown
         const int sceneRow = engine.indexOfId(stage);
         const auto triangleOf = [&](quint64 id) {

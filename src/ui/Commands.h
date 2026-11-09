@@ -160,6 +160,18 @@ private:
     QJsonObject m_json;
 };
 
+class RemoveLayers : public QUndoCommand
+{
+public:
+    RemoveLayers(Engine *e, QList<int> rows);
+    void undo() override;
+    void redo() override;
+
+private:
+    Engine *m_e;
+    std::vector<std::pair<int, QJsonObject>> m_layers;
+};
+
 class MoveLayer : public QUndoCommand
 {
 public:

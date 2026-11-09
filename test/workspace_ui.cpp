@@ -406,6 +406,25 @@ int main(int argc, char **argv)
         layers->setCurrentRow(0);
         check(action("Cut Layers") && engine.layerCount() == count, "cut removes the selected layer");
         undo->undo(); check(engine.layerCount() == count + 1, "layer cut is undoable");
+        const quint64 first = engine.layerId(engine.addLayer("Batch delete A", 0));
+        const quint64 second = engine.layerId(engine.addLayer("Batch delete B", 1));
+        const int a = engine.indexOfId(first), b = engine.indexOfId(second);
+        auto *table = static_cast<QTableWidget *>(layers->table());
+        table->setCurrentCell(a, 4, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        table->selectionModel()->select(table->model()->index(b, 0),
+                                        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+        int notifications = 0;
+        const auto connection = QObject::connect(&engine, &Engine::layersChanged, [&] { ++notifications; });
+        auto deleted = [&] { return engine.indexOfId(first) < 0 && engine.indexOfId(second) < 0; };
+        check(action("Delete (Del in list)") && deleted() && notifications == 1,
+              "multiple layers are removed with one list notification");
+        undo->undo();
+        check(engine.indexOfId(first) == a && engine.indexOfId(second) == b,
+              "one undo restores all removed layer identities and their order");
+        notifications = 0;
+        undo->redo();
+        check(deleted() && notifications == 1, "redo removes the batch with one notification");
+        QObject::disconnect(connection);
         QApplication::clipboard()->setMimeData(saved);
     }
     engine.newProject();

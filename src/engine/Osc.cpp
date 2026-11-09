@@ -265,14 +265,15 @@ void OscNamespace::build()
     }
     {
         // Frame rate of the render (0: the refresh rate of the screen); what is measured is under /fps/measured
-        OscNode &n = add("/composition/fps", "f", 3, "Frame Rate (0 = screen refresh)");
-        n.range = {minMax(0, 240)};
+        OscNode &n = add("/composition/fps", "f", 3, "Frame Rate (-2 = uncapped, 0 = screen refresh)");
+        n.range = {minMax(-2, 240)};
         n.clip = "both";
         n.get = [e] { return QVariantList{e->effectiveRender().frameRate}; };
         n.set = [e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             Engine::RenderSettings r = e->renderSettings();
-            r.frameRate = std::clamp(num(a[0]), 0.0, 240.0);
+            const double requested = num(a[0]);
+            r.frameRate = requested == Engine::RenderSettings::UncappedFrameRate ? requested : std::clamp(requested, 0.0, 240.0);
             e->setRenderSettings(r);
             return true;
         };

@@ -719,11 +719,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.
         m_renderTimer.setTimerType(Qt::PreciseTimer);
         m_renderTimer.setInterval(16);
-        // The rate chosen, or the screen's
+        // A zero-interval timer renders whenever the event loop is ready.
         auto *pace = new QTimer(this);
         connect(pace, &QTimer::timeout, this, [this] {
             const double r = m_engine->effectiveRender().frameRate;
-            const int ms = int(1000.0 / std::clamp(r > 0 ? r : m_engine->screenRefreshRate(), 1.0, 1000.0));
+            const int ms = r == Engine::RenderSettings::UncappedFrameRate ? 0
+                : int(1000.0 / std::clamp(r > 0 ? r : m_engine->screenRefreshRate(), 1.0, 1000.0));
             if (m_renderTimer.interval() != ms) m_renderTimer.setInterval(ms);
         });
         pace->start(500);
@@ -2131,6 +2132,7 @@ void MainWindow::removeCurrentLayer()
     if (rows.isEmpty()) return;
     // A group goes with its layers; locked layers stay
     QSet<int> victims;
+    const LayerTree structure = m_engine->structure();
     int skipped = 0;
     for (int r : rows) {
         if (m_engine->isLocked(r)) {
@@ -2138,7 +2140,7 @@ void MainWindow::removeCurrentLayer()
             continue;
         }
         QList<int> members;
-        for (quint64 id : tree::descendants(m_engine->structure(), m_engine->layerId(r)))
+        for (quint64 id : tree::descendants(structure, m_engine->layerId(r)))
             members << m_engine->indexOfId(id);
         bool lockedMember = false;
         for (int m : members) lockedMember |= m_engine->isLocked(m);
@@ -2151,7 +2153,7 @@ void MainWindow::removeCurrentLayer()
     }
     if (skipped) statusBar()->showMessage(QStringLiteral("%1 locked layer(s) not deleted.").arg(skipped), 4000);
     if (victims.isEmpty()) return;
-    if (const QString used = layersInUse(victims); !used.isEmpty() && !m_quiet) {
+    if (const QString used = m_quiet ? QString() : layersInUse(victims); !used.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, QStringLiteral("Delete"), QStringLiteral("What you are deleting is used elsewhere."), QMessageBox::NoButton, this);
         box.setInformativeText(used);
         QPushButton *remove = box.addButton(QStringLiteral("Delete"), QMessageBox::DestructiveRole);
@@ -2163,12 +2165,9 @@ void MainWindow::removeCurrentLayer()
         if (box.clickedButton() == withUsers && withUsers) victims.unite(users);
         else if (box.clickedButton() != remove) return;
     }
-    QList<int> order = victims.values();
-    std::sort(order.begin(), order.end(), std::greater<int>()); // members (below their group) first
-    const int first = order.last();
-    m_undo->beginMacro(order.size() > 1 ? QStringLiteral("Delete %1 Layers").arg(order.size()) : QStringLiteral("Delete Layer"));
-    for (int r : order) m_undo->push(new cmd::RemoveLayer(m_engine, r));
-    m_undo->endMacro();
+    const auto order = victims.values();
+    const int first = *std::min_element(order.begin(), order.end());
+    m_undo->push(new cmd::RemoveLayers(m_engine, order));
     if (viewportSelection) { refreshViewports(); m_tabs->setCurrentIndex(1); }
     else selectLayer(qMin(first, m_engine->layerCount() - 1));
 }

@@ -290,7 +290,8 @@ QWidget *CompositionPanel::buildComposition()
     m_rate = new QComboBox;
     m_rate->addItem(QStringLiteral("Machine default"), -1.0);
     for (double r : renderChoice::frameRates()) m_rate->addItem(renderChoice::frameRateName(r), r);
-    m_rate->setToolTip(QStringLiteral("Frame rate of the render (Machine default: the choice made in Settings)"));
+    m_rate->addItem(QStringLiteral("Uncapped (as fast as possible)"), Engine::RenderSettings::UncappedFrameRate);
+    m_rate->setToolTip(QStringLiteral("Composition render rate. Uncapped removes the frame-rate limit and display sync waits."));
     form->addRow(new ResetLabel(QStringLiteral("Frame rate"), [this] {
         m_rate->setCurrentIndex(0);
         emit m_rate->activated(0);

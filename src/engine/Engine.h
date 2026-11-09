@@ -146,6 +146,7 @@ public:
     GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
+    QList<int> removeLayers(const QList<int> &rows); // returns the original indices actually removed
     void moveLayer(int from, int to);
     // Duplicates a layer before itself (a group with its members); returns the index of the copy (the group's).
     int duplicateLayer(int i);
@@ -274,7 +275,8 @@ public:
     // --- Rendering: frame rate and antialiasing. A project chooses them (Composition tab), or takes the machine's
     // defaults (Settings): -1 in a project means "the default".
     struct RenderSettings {
-        double frameRate = -1; // frames per second; 0: the refresh rate of the screen
+        static constexpr double UncappedFrameRate = -2;
+        double frameRate = -1; // -1: machine default; 0: screen refresh; positive: fixed FPS
         int samples = -1;      // multisampling of the mapped edges: 0 / 1 off, 2, 4, 8
         int mipmaps = -1;      // smooth pictures drawn smaller than they are (mipmaps): 0 off, 1 on
         int depth = -1;        // bits per channel of the render: 10 (RGBA16, the default) or 8 (lighter)
@@ -943,7 +945,7 @@ private:
     void renderLoop();
     void runPendingTasks();
     void frame(double dt);
-    bool presentViewports(); // every viewport whose window is on screen (false: none)
+    bool presentViewports(bool syncToDisplay = true); // every viewport whose window is on screen (false: none)
     void releaseLayer(Layer &l);
     void releaseAll();
     std::shared_ptr<Garbage> detachSource(Layer &l);

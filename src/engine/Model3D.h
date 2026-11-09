@@ -431,7 +431,7 @@ private:
         GLint u_view = -1;
         GLint u_viewProj = -1;
     } m_sceneUniforms;
-    GLint m_unlitAt = -1, m_flatAt = -1;
+    GLint m_unlitAt = -1, m_shadingAt = -1;
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0;                          // its picture

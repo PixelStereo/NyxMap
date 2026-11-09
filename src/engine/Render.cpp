@@ -1809,8 +1809,8 @@ void Engine::renderFrame()
     const qint64 t0 = FrameTiming::nowNs();
     frame(nextDt());
     const qint64 t1 = FrameTiming::nowNs();
-    const bool presented = presentViewports();
     const double rate = effectiveRender().frameRate;
+    const bool presented = presentViewports(rate != RenderSettings::UncappedFrameRate);
     m_frameTiming.noteFrame(t0, t1, FrameTiming::nowNs(), rate > 0 ? qint64(1e9 / rate) : 0, presented);
     sampleResources();
     if (!m_framePending.exchange(true)) emit frameRendered();
@@ -1861,11 +1861,11 @@ QJsonObject Engine::frameTimingJson() const
                                     {"failed", double(s.failed)},
                                     {"no_picture", double(s.noPicture)},
                                     {"not_render_thread", double(s.notRenderThread)}});
-            if (rate <= 0 && s.exposed && s.hz > 1) paceHz = s.hz; // the last one shown sets the pace
+            if (rate == 0 && s.exposed && s.hz > 1) paceHz = s.hz; // the last one shown sets the pace
         }
     }
     o["outputs"] = outs;
-    o["pace_hz"] = paceHz > 0 ? paceHz : screenRefreshRate();
+    o["pace_hz"] = rate == RenderSettings::UncappedFrameRate ? 0 : (paceHz > 0 ? paceHz : screenRefreshRate());
     o["outputs_dropped"] = double(m_outputsDropped.load());
     o["gpu_shares_skipped"] = double(m_sharesSkipped.load());          // Syphon / Spout, one frame later: not ready
     o["readbacks_skipped"] = double(m_publishing.readbacksSkipped()); // NDI / OMT: the GPU not done in time

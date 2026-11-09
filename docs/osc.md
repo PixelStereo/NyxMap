@@ -139,7 +139,7 @@ Detailed transport feedback is available through `/show/state`.
 | `/composition/pause` | Boolean | Hold composition time at zero speed until released. |
 | `/composition/speed` | `f 0…10` | Composition time multiplier. |
 | `/composition/width`, `/height` | `i pixels` | Composition dimensions. |
-| `/composition/fps` | `f fps` | Frame-rate target; `0` follows screen refresh. |
+| `/composition/fps` | `f fps` | Frame-rate target. Use `0` to follow screen refresh or `-2` to render uncapped. |
 
 Clock generators and some external/live sources have their own time domains;
 composition pause is not a universal freeze of every input.

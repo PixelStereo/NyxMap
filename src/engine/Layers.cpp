@@ -833,30 +833,54 @@ void Engine::releaseLayer(Layer &l)
     l.finalTex = l.rawTex = 0;
 }
 
-void Engine::removeLayer(int i)
+void Engine::removeLayer(int i) { removeLayers({i}); }
+
+QList<int> Engine::removeLayers(const QList<int> &rows)
 {
-    auto g = std::make_shared<Garbage>();
+    QList<int> removed = rows;
+    std::sort(removed.begin(), removed.end(), std::greater<int>());
+    removed.erase(std::unique(removed.begin(), removed.end()), removed.end());
+    auto garbage = std::make_shared<std::vector<std::unique_ptr<Layer>>>();
     {
         Lock lk(&m_mutex);
-        if (i < 0 || i >= int(m_layers.size())) return;
-        if (m_layers[size_t(i)]->isViewport && viewportCountLocked() <= 1) return; // there is always one
-        clearAnimationFilterHistory(m_layers[size_t(i)]->id, 0);
-        g->layer = std::move(m_layers[size_t(i)]);
-        m_layers.erase(m_layers.begin() + i);
-        // A source transition running on it ends with it (the id may come back, undo: not the transition)
-        if (auto t = m_transitions.find(g->layer->id); t != m_transitions.end()) {
-            retireTransition(std::move(t->second));
-            m_transitions.erase(t);
+        int viewports = viewportCountLocked();
+        QHash<quint64, quint64> removedParents;
+        for (auto it = removed.begin(); it != removed.end();) {
+            const int row = *it;
+            if (row < 0 || row >= int(m_layers.size()) ||
+                (m_layers[size_t(row)]->isViewport && viewports <= 1)) {
+                it = removed.erase(it);
+                continue;
+            }
+            const auto &layer = m_layers[size_t(row)];
+            if (layer->isViewport) --viewports;
+            removedParents.insert(layer->id, layer->parent);
+            clearAnimationFilterHistory(layer->id, 0);
+            // End transitions for detached layers even if their IDs come back on undo.
+            if (auto transition = m_transitions.find(layer->id); transition != m_transitions.end()) {
+                retireTransition(std::move(transition->second));
+                m_transitions.erase(transition);
+            }
+            ++it;
         }
-        if (g->layer->isGroup) // its contents go up one level, where they are
-            for (auto &l : m_layers)
-                if (l->parent == g->layer->id) l->parent = g->layer->parent;
+        if (removed.isEmpty()) return removed;
+        garbage->reserve(size_t(removed.size()));
+        for (int row : removed) garbage->push_back(std::move(m_layers[size_t(row)]));
+        m_layers.erase(std::remove(m_layers.begin(), m_layers.end(), nullptr), m_layers.end());
+        for (auto &layer : m_layers)
+            while (removedParents.contains(layer->parent))
+                layer->parent = removedParents.value(layer->parent);
         normalizeLocked();
     }
-    if (g->layer->video) g->layer->video->close(); // stop the decode thread outside the render thread
-    releaseAudio(*m_audio, g->layer->audio);
-    runGl([this, g] { releaseLayer(*g->layer); }, false);
+    for (auto &layer : *garbage) {
+        if (layer->video) layer->video->close(); // stop decoders outside the render thread
+        releaseAudio(*m_audio, layer->audio);
+    }
+    runGl([this, garbage] {
+        for (auto &layer : *garbage) releaseLayer(*layer);
+    }, false);
     emit layersChanged();
+    return removed;
 }
 
 void Engine::moveLayer(int from, int to)
