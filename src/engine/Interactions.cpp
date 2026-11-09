@@ -433,13 +433,6 @@ Interaction Interaction::made(InteractionSource s)
 {
     Interaction it;
     it.source = s;
-    if (s == InteractionSource::Audio || s == InteractionSource::Pixels ||
-        s == InteractionSource::Hands) { // smoothed: a band's level flickers
-        InteractionStage smooth = InteractionStage::made(InteractionFilter::AttackRelease);
-        smooth.a = .012;
-        smooth.b = .2;
-        it.filters = {smooth};
-    }
     // A fader or a knob: it waits to meet the value (pick-up); a key, a link: it sets it
     it.takeover = s == InteractionSource::Midi || s == InteractionSource::Osc ? Takeover::PickUp : Takeover::Jump;
     return it;
@@ -548,7 +541,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
     it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
     it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::HandRightness)));
-    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 1);
+    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 3);
     it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();

@@ -35,6 +35,8 @@ enum class Feature {
 };
 QStringList featureNames();
 unsigned taskFor(Feature feature);
+// The worker draws its official face overlay only while Setup requests it.
+inline constexpr unsigned setupPreviewTask = 1u << 12;
 inline constexpr size_t pictureCount = 9;
 inline constexpr std::array<unsigned, pictureCount> pictureTasks{{32, 256, 256, 32, 8, 512, 1024, 2048, 256}};
 
@@ -54,6 +56,9 @@ struct Frame {
     std::array<QImage, pictureCount> pictures;
     QJsonObject detections;
 };
+// Slot 1 remains readable for older projects. Slots 2 and 3 select by handedness.
+int handSlot(const Frame &frame, int selection);
+double measureSelected(const Frame &frame, int selection, Feature feature, double confidence, int landmarkIndex);
 double measure(const Frame &frame, int index, Feature feature, double confidence, int landmark = 0);
 QString taskError(const Frame &frame, Feature feature);
 

@@ -1143,7 +1143,7 @@ void Engine::makeInteractionParams()
             [](Interaction &x, int n) { x.handFeature = HandTracking::Feature(n); });
         whole(QStringLiteral("source/hands/landmark"), QStringLiteral("MediaPipe landmark / blendshape index"), 0, 477, 0,
               [](Interaction &x) -> int & { return x.visionLandmark; });
-        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 1, 0,
+        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 3, 0,
               [](Interaction &x) -> int & { return x.handIndex; });
         number(QStringLiteral("source/hands/confidence"), QStringLiteral("Hand confidence"), .5, .99, .7,
                [](Interaction &x) -> double & { return x.handConfidence; })

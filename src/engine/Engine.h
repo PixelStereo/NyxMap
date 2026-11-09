@@ -832,7 +832,8 @@ public:
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
     void waitForFrame(QOpenGLExtraFunctions *f) const;
-    QJsonObject visionFaceExpressions(const PixelAnalysis::Settings &settings) const;
+    void setVisionSetupInput(std::optional<Interaction> input);
+    QJsonObject visionSignals(const Interaction &input) const;
     QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString handModelsDirectory() const;
@@ -1418,6 +1419,7 @@ private:
     void releaseVision();
     std::unique_ptr<VisionRuntime> m_vision;
     bool m_visionReset = false;
+    std::optional<Interaction> m_visionSetupInput;
     PixelSampler m_sampler{[this] { drawQuad(); }};
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;

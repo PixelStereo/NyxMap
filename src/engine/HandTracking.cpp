@@ -109,6 +109,24 @@ QString HandTracking::taskError(const Frame &frame, Feature feature)
     return frame.detections.value(QString::fromLatin1(key) + "_error").toString();
 }
 
+int HandTracking::handSlot(const Frame &frame, int selection)
+{
+    if (selection < 2)
+        return selection == 0 && !frame.hands[0].valid && frame.hands[1].valid ? 1 : selection;
+    for (int i = 0; i < int(frame.hands.size()); ++i) {
+        const auto &hand = frame.hands[size_t(i)];
+        if (hand.valid && (hand.handedness > .5) == (selection == 3)) return i;
+    }
+    return -1;
+}
+double HandTracking::measureSelected(const Frame &frame, int selection, Feature feature, double confidence, int landmarkIndex)
+{
+    const unsigned task = taskFor(feature);
+    const auto value = [&](int slot) { return measure(frame, slot, feature, confidence, landmarkIndex); };
+    if (task == 2 && selection == 0) return std::max(value(0), value(1));
+    const int slot = task <= 2 ? handSlot(frame, selection) : 0;
+    return slot < 0 && feature != Feature::Count ? 0 : value(std::max(0, slot));
+}
 double HandTracking::measure(const Frame &frame, int index, Feature feature, double confidence, int landmarkIndex)
 {
     const auto &hand = frame.hands[size_t(std::clamp(index, 0, 1))];
@@ -443,6 +461,10 @@ struct HandTracking::Worker::Private {
                         used[slot] = true;
                     }
                 }
+                const auto jpeg = QByteArray::fromBase64(frame.detections.take("preview_jpeg").toString().toLatin1());
+                const auto annotated = jpeg.isEmpty() ? QImage() : QImage::fromData(jpeg, "JPEG");
+                const bool hasOfficialOverlay = !annotated.isNull() && annotated.size() == frame.preview.size();
+                if (hasOfficialOverlay) frame.preview = annotated;
                 QPainter painter(&frame.preview);
                 const int maskWidth = frame.detections.value("mask_width").toInt();
                 const int maskHeight = frame.detections.value("mask_height").toInt();
@@ -554,15 +576,15 @@ struct HandTracking::Worker::Private {
                 const auto screenPoint = [&](double x, double y) {
                     return QPointF(x * frame.preview.width(), y * frame.preview.height());
                 };
-                for (const char *key : {"face", "pose"}) {
-                    painter.setPen(QPen(key[0] == 'f' ? QColor(255, 200, 60) : QColor(70, 195, 255), 1));
-                    for (const auto &detection : frame.detections.value(key).toArray())
-                        for (const auto &landmark : detection.toObject().value("points").toArray()) {
-                            const auto point = landmark.toArray();
-                            if (point.size() >= 2)
-                                painter.drawEllipse(screenPoint(point.at(0).toDouble(), point.at(1).toDouble()), 1, 1);
-                        }
-                }
+                painter.setRenderHint(QPainter::Antialiasing);
+                const double stroke = std::max(1.5, std::min(frame.preview.width(), frame.preview.height()) / 290.0);
+                painter.setPen(QPen(QColor(70, 195, 255), stroke));
+                for (const auto &detection : frame.detections.value("pose").toArray())
+                    for (const auto &landmark : detection.toObject().value("points").toArray()) {
+                        const auto point = landmark.toArray();
+                        if (point.size() >= 2)
+                            painter.drawEllipse(screenPoint(point.at(0).toDouble(), point.at(1).toDouble()), stroke, stroke);
+                    }
                 painter.setPen(QPen(QColor(255, 160, 60), 1));
                 auto boxes = frame.detections.value("objects").toArray();
                 for (const auto &face : frame.detections.value("face_detector").toArray()) boxes.append(face);
@@ -582,7 +604,7 @@ struct HandTracking::Worker::Private {
                     painter.drawText(QPointF(8, 16), top.value("label").toString());
                 }
                 for (const auto &hand : frame.hands)
-                    if (hand.valid) {
+                    if (hand.valid && !hasOfficialOverlay) {
                         auto point = [&](int i) {
                             return QPointF(hand.points[i][0] * frame.preview.width(),
                                            hand.points[i][1] * frame.preview.height());

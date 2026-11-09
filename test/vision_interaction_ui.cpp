@@ -6,6 +6,8 @@
 #include <QDoubleSpinBox>
 #include <QButtonGroup>
 #include <QAbstractButton>
+#include <QPushButton>
+#include <QLabel>
 #include <QToolButton>
 #include <QUndoStack>
 #include <iostream>
@@ -51,9 +53,41 @@ int main(int argc, char **argv)
         panel.learnFor(0, "opacity", InteractionSource::Hands);
         app.processEvents();
         require(tabs->checkedButton()->text() == "MediaPipe", "MediaPipe tab selected");
-        require(!panel.findChild<QComboBox *>("trackedHand") && panel.findChild<QComboBox *>("handFeature"),
-                "one detection with MediaPipe measures");
+        require(engine.interactions().back().filters.empty(), "new MediaPipe interactions have no default filter");
+        HandTracking::Frame tracked;
+        tracked.hands[0].valid = tracked.hands[1].valid = true;
+        tracked.hands[0].handedness = 1;
+        tracked.hands[1].handedness = 0;
+        require(HandTracking::handSlot(tracked, 2) == 1 && HandTracking::handSlot(tracked, 3) == 0,
+                "left and right routing follows handedness instead of detector order");
+        tracked.hands[0].confidence = tracked.hands[1].confidence = 1;
+        tracked.hands[0].gesture = QStringLiteral("Thumb_Down");
+        tracked.hands[1].gesture = QStringLiteral("Victory");
+        using Feature = HandTracking::Feature;
+        require(HandTracking::measureSelected(tracked, 0, Feature::GestureThumbDown, .7, 0) == 1 &&
+                    HandTracking::measureSelected(tracked, 0, Feature::GestureVictory, .7, 0) == 1,
+                "different gestures can be active on two hands at the same time");
+        require(HandTracking::measureSelected(tracked, 2, Feature::GestureThumbDown, .7, 0) == 0 &&
+                    HandTracking::measureSelected(tracked, 2, Feature::GestureVictory, .7, 0) == 1,
+                "explicit left-hand routing ignores the right hand's gesture");
+        auto *hand = panel.findChild<QComboBox *>("trackedHand");
+        require(hand && hand->findText("Left") >= 0 && hand->findText("Right") >= 0,
+                "both hands are selectable by handedness");
         require(!learn->isChecked() && !learn->isEnabled(), "Hands does not start external Learn");
+        auto *category = panel.findChild<QComboBox *>("visionCategory");
+        require(category && category->findText("Face") >= 0, "Face is a selectable category");
+        category->setCurrentIndex(category->findText("Face"));
+        emit category->activated(category->currentIndex());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        feature = panel.findChild<QComboBox *>("handFeature");
+        require(feature && feature->findText("Face · Jaw open") >= 0 && feature->findText("Pinch strength") < 0,
+                "choosing Face shows only face measures");
+        require(panel.findChild<QPushButton *>("visionSetup"), "Setup is available for Face");
+        require(!panel.findChild<QComboBox *>("trackedHand"), "Face has no hand selector");
+        require(!panel.findChild<QLabel *>("visionPreview"), "MediaPipe preview stays in Setup");
+        feature->setCurrentIndex(feature->findText("Face · Jaw open"));
+        emit feature->activated(feature->currentIndex());
+        require(engine.interactions().back().handFeature == HandTracking::Feature::JawOpen, "Face measure reaches the engine");
         std::cout << "Pixels/Hands UI, source and channel editors passed\n";
         return 0;
     } catch (const std::exception &e) {

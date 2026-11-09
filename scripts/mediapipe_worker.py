@@ -41,7 +41,14 @@ def run(folder):
     def points(landmarks):
         return [[p.x, p.y, p.z] for p in landmarks]
 
-    def infer(task, rgba):
+    def annotated_preview(rgba, draw):
+        import cv2
+        annotated = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+        draw(annotated)
+        ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        return {"preview_jpeg": base64.b64encode(jpeg.tobytes()).decode("ascii")} if ok else {}
+
+    def infer(task, rgba, draw_preview):
         if task not in tasks:
             class_name, filename = MODELS[task]
             model = folder / filename
@@ -49,7 +56,7 @@ def run(folder):
                 raise FileNotFoundError(f"Missing MediaPipe model: {filename}")
             options = {}
             if task in ("hands", "gestures"):
-                options.update(num_hands=1, min_hand_detection_confidence=.5)
+                options.update(num_hands=2, min_hand_detection_confidence=.5)
             elif task == "face":
                 options.update(num_faces=1, output_face_blendshapes=True, output_facial_transformation_matrixes=True)
             elif task == "pose":
@@ -81,21 +88,47 @@ def run(folder):
         detector = tasks[task]
         if task in ("hands", "gestures"):
             result = detector.detect(image) if task == "hands" else detector.recognize(image)
-            return {"hands": [
+            output = {"hands": [
                 {"points": points(hand), "world": points(result.hand_world_landmarks[i]), "score": result.handedness[i][0].score,
                  "right": result.handedness[i][0].category_name == "Right",
                  "gesture": result.gestures[i][0].category_name
                  if task == "gestures" and result.gestures[i] else ""}
                 for i, hand in enumerate(result.hand_landmarks)
             ]}
+            if draw_preview and result.hand_landmarks:
+                def draw_hands(annotated):
+                    for hand in result.hand_landmarks:
+                        vision.drawing_utils.draw_landmarks(
+                            annotated, hand, vision.HandLandmarksConnections.HAND_CONNECTIONS,
+                            landmark_drawing_spec=vision.drawing_styles.get_default_hand_landmarks_style(),
+                            connection_drawing_spec=vision.drawing_styles.get_default_hand_connections_style(),
+                        )
+                output.update(annotated_preview(rgba, draw_hands))
+            return output
         if task == "face":
             result = detector.detect(image)
-            return {"face": [
+            output = {"face": [
                 {"points": points(face), "expressions": {p.category_name: p.score for p in result.face_blendshapes[i]},
                  "blendshapes": {p.index: p.score for p in result.face_blendshapes[i]},
                  "matrix": result.facial_transformation_matrixes[i].flatten().tolist()}
                 for i, face in enumerate(result.face_landmarks)
             ]}
+            if draw_preview and result.face_landmarks:
+                def draw_face(annotated):
+                    connections = vision.FaceLandmarksConnections
+                    for face in result.face_landmarks:
+                        vision.drawing_utils.draw_landmarks(
+                            annotated, face, connections.FACE_LANDMARKS_CONTOURS,
+                            landmark_drawing_spec=None,
+                            connection_drawing_spec=vision.drawing_styles.get_default_face_mesh_contours_style(),
+                        )
+                        vision.drawing_utils.draw_landmarks(
+                            annotated, face, connections.FACE_LANDMARKS_LEFT_IRIS + connections.FACE_LANDMARKS_RIGHT_IRIS,
+                            landmark_drawing_spec=None,
+                            connection_drawing_spec=vision.drawing_styles.get_default_face_mesh_iris_connections_style(),
+                        )
+                output.update(annotated_preview(rgba, draw_face))
+            return output
         if task == "pose":
             result = detector.detect(image)
             return {"pose": [{"points": points(pose), "world": points(result.pose_world_landmarks[i]),
@@ -145,7 +178,7 @@ def run(folder):
             for bit, task in enumerate(MODELS):
                 if mask & (1 << bit):
                     try:
-                        result.update(infer(task, rgba))
+                        result.update(infer(task, rgba, bool(mask & (1 << 12)) and (task != "hands" or not mask & 2)))
                         result[task + "_delegate"] = delegates[task]
                     except Exception as error:
                         if backend == "auto" and delegates.get(task) == "GPU":
@@ -154,7 +187,7 @@ def run(folder):
                             with suppress(Exception):
                                 tasks.pop(task).close()
                             try:
-                                result.update(infer(task, rgba))
+                                result.update(infer(task, rgba, bool(mask & (1 << 12)) and (task != "hands" or not mask & 2)))
                                 result[task + "_delegate"] = delegates[task]
                                 continue
                             except Exception as fallback_error:

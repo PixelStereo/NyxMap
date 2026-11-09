@@ -377,6 +377,7 @@ void Engine::markNeeded()
         if (index >= 0)
             m_layers[size_t(index)]->referenced = true;
     };
+    if (m_visionSetupInput) visionReference(*m_visionSetupInput);
     for (const auto &input : m_interactions)
         if (input.enabled) {
             visionReference(input);
