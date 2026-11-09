@@ -740,15 +740,28 @@ int runScene3dTests(Engine &engine)
                 displacedDiff, int(displacedFlat == displacedSmooth), different(made, displacedFlat), different(made, displacedSmooth),
                 qPrintable(QColor(displacedFlat.pixel(displacedFlat.width() / 2, displacedFlat.height() / 2)).name()),
                 qPrintable(QColor(displacedSmooth.pixel(displacedSmooth.width() / 2, displacedSmooth.height() / 2)).name()));
-        { // TEMPORARY diagnostic: a coarse map of lightness (0-9) of each picture
-            for (const QImage *im : {&displacedFlat, &displacedSmooth, &made}) {
-                std::printf("map %s %dx%d\n", im == &displacedFlat ? "flat" : im == &displacedSmooth ? "smooth" : "as-made", im->width(), im->height());
-                for (int j = 0; j < 16; ++j) {
-                    char line[33] = {};
-                    for (int i = 0; i < 32; ++i) line[i] = char('0' + std::min(9, QColor(im->pixel((i * im->width()) / 32 + im->width() / 64, (j * im->height()) / 16 + im->height() / 32)).lightness() / 26));
-                    std::printf("%s\n", line);
-                }
+        { // TEMPORARY diagnostic: how many pixels tell flat from smooth, for several lamp intensities
+            const auto lowDiff = [](const QImage &x, const QImage &y, int limit) {
+                int count = 0;
+                for (int j = 0; j < x.height(); ++j)
+                    for (int i = 0; i < x.width(); ++i) count += std::abs(QColor(x.pixel(i, j)).lightness() - QColor(y.pixel(i, j)).lightness()) > limit;
+                return count;
+            };
+            const auto saturated = [](const QImage &x) {
+                int count = 0;
+                for (int j = 0; j < x.height(); ++j)
+                    for (int i = 0; i < x.width(); ++i) count += QColor(x.pixel(i, j)).lightness() >= 234;
+                return count;
+            };
+            for (double level : {25.0, 12.0, 6.0, 3.0, 1.5, 0.8}) {
+                engine.setParameter(lamp, "light/intensity", level);
+                engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
+                const QImage f = picture();
+                engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
+                const QImage sm = picture();
+                std::printf("lamp %5.1f: differ >6: %d, >2: %d, >0: %d; saturated flat %d smooth %d\n", level, lowDiff(f, sm, 6), lowDiff(f, sm, 2), lowDiff(f, sm, 0), saturated(f), saturated(sm));
             }
+            engine.setParameter(lamp, "light/intensity", 25.0);
         }
         check(displacedDiff > 30 && false, "smooth shading interpolates normals even with displacement");
         check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
