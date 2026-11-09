@@ -202,6 +202,12 @@ struct Builder {
 bool Model3D::loadPrimitive(const QString &name, QString *err)
 {
     Builder b;
+    // Periodic U/V and collapsed ends of V, for stitching live displacement textures.
+    if (name == QLatin1String("Torus")) m_displacementUvTopology = 1 | 2;
+    else if (name == QLatin1String("Sphere") || name == QLatin1String("Capsule")) m_displacementUvTopology = 1 | 4 | 8;
+    else if (name == QLatin1String("Dome")) m_displacementUvTopology = 1 | 8;
+    else if (name == QLatin1String("Cylinder") || name == QLatin1String("Open Cylinder")) m_displacementUvTopology = 1;
+    else m_displacementUvTopology = 0;
     // As little as the shape needs, more when asked: segments around; cuts of a flat face (a cube is 12 triangles, a plane 2)
     static const int kRound[8] = {24, 32, 48, 64, 96, 128, 192, 256}, kFlat[8] = {1, 4, 8, 16, 32, 64, 128, 256};
     const int S = kRound[std::clamp(m_detail, 1, 8) - 1], F = kFlat[std::clamp(m_detail, 1, 8) - 1];
@@ -667,12 +673,41 @@ layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(locatio
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
 uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
 uniform vec2 u_uvTiling;
-uniform int u_hasDisp, u_shading; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
+uniform int u_hasDisp, u_shading, u_dispTopology; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
 out vec3 v_basePos; out float v_heightScale; out vec2 v_heightSlope;
-float heightAt(vec2 uv) {
+float rawHeight(vec2 uv) {
     vec4 h = textureLod(u_disp, uv, 0.0);
     return dot(h.rgb, vec3(0.2126, 0.7152, 0.0722)) * h.a;
+}
+float stitchedU(vec2 uv) {
+    if ((u_dispTopology & 1) == 0) return rawHeight(uv);
+    uv.x = fract(uv.x);
+    float distanceToEdge = min(uv.x, 1.0 - uv.x);
+    float blend = 1.0 - smoothstep(0.0, 0.10, distanceToEdge);
+    if (blend <= 0.0) return rawHeight(uv);
+    float seam = 0.5 * (rawHeight(vec2(0, uv.y)) + rawHeight(vec2(1, uv.y)));
+    return mix(rawHeight(uv), seam, blend);
+}
+float heightAt(vec2 uv) {
+    if (u_hasDisp != 1 || u_dispTopology == 0) return rawHeight(uv);
+    if ((u_dispTopology & 2) != 0) {
+        uv.y = fract(uv.y);
+        float edge = min(uv.y, 1.0 - uv.y);
+        float blend = 1.0 - smoothstep(0.0, 0.10, edge);
+        if (blend <= 0.0) return stitchedU(uv);
+        float seam = 0.5 * (stitchedU(vec2(uv.x, 0)) + stitchedU(vec2(uv.x, 1)));
+        return mix(stitchedU(uv), seam, blend);
+    }
+    uv.y = clamp(uv.y, 0.0, 1.0);
+    float pole = uv.y < 0.5 ? 0.0 : 1.0;
+    int poleFlag = pole == 0.0 ? 4 : 8;
+    float blend = 1.0 - smoothstep(0.0, 0.14, abs(uv.y - pole));
+    if ((u_dispTopology & poleFlag) == 0 || blend <= 0.0) return stitchedU(uv);
+    // A whole UV row converges on one vertex position at the pole.
+    float mean = 0.0;
+    for (int i = 0; i < 8; ++i) mean += rawHeight(vec2((float(i) + 0.5) / 8.0, pole));
+    return mix(stitchedU(uv), mean / 8.0, blend);
 }
 vec3 bendPosition(vec3 p, float r) {
     float t = (p.x - u_bendCx) / r;
@@ -1690,6 +1725,7 @@ void Scene3D::PlaceUniforms::resolve(GLuint program)
     hasDisp = loc("u_hasDisp");
     dispAmount = loc("u_dispAmount");
     dispMid = loc("u_dispMid");
+    dispTopology = loc("u_dispTopology");
     uvTiling = loc("u_uvTiling");
 }
 
@@ -1883,6 +1919,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);
@@ -2776,6 +2813,7 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);

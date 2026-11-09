@@ -248,6 +248,7 @@ public:
     bool hasBlended() const;
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
+    int displacementUvTopology() const { return m_primitive ? m_displacementUvTopology : 0; }
     int detail() const { return m_detail; }
     void setDetail(int detail); // a primitive made again, finer or coarser (render thread)
     void setSmooth(bool on);    // its normals averaged where its faces meet, its edges rounded (render thread)
@@ -303,6 +304,7 @@ private:
     QVector3D m_center;
     float m_radius = 1, m_width = 1;
     bool m_primitive = false;
+    int m_displacementUvTopology = 0;
     int m_detail = 1;
     void releaseMeshes();
     bool m_uploaded = false;
@@ -371,7 +373,7 @@ private:
     GLuint m_picture = 0; // what it gives: its final picture, or m_color with nothing over it
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
-        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1;
+        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
         void resolve(GLuint program);
     };
     GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
