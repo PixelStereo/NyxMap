@@ -733,7 +733,14 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
         const QImage displacedFlat = picture();
         engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
-        check(different(displacedFlat, picture()) > 30, "smooth shading interpolates normals even with displacement");
+        const QImage displacedSmooth = picture();
+        const int displacedDiff = different(displacedFlat, displacedSmooth);
+        // Diagnostic for platforms whose renderer differs: what the two pictures hold
+        std::printf("displaced smooth vs flat: %d pixels differ; flat==smooth image: %d; vs as made: flat %d, smooth %d; centre flat %s smooth %s\n",
+                displacedDiff, int(displacedFlat == displacedSmooth), different(made, displacedFlat), different(made, displacedSmooth),
+                qPrintable(QColor(displacedFlat.pixel(displacedFlat.width() / 2, displacedFlat.height() / 2)).name()),
+                qPrintable(QColor(displacedSmooth.pixel(displacedSmooth.width() / 2, displacedSmooth.height() / 2)).name()));
+        check(displacedDiff > 30, "smooth shading interpolates normals even with displacement");
         check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
         engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
         engine.removeLayer(engine.indexOfId(height));
