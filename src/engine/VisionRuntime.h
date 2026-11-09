@@ -10,6 +10,7 @@ public:
     struct Request {
         PixelAnalysis::Settings settings;
         unsigned tasks = 0;
+        unsigned pictures = 0;
     };
     struct Texture {
         unsigned int id = 0;

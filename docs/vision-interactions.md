@@ -73,10 +73,12 @@ Only requested tasks run for a source. Readback is asynchronous and frames are s
 at a maximum side of 320 pixels. The queue keeps the latest pending frame per source, and stale detections
 yield zero after half a second. Tasks use image mode and try the GPU delegate first, then use the CPU when the GPU delegate fails.
 The interaction status displays the active delegate. Set `NYXMAP_MEDIAPIPE_DELEGATE=cpu` to force CPU,
-or `NYXMAP_MEDIAPIPE_DELEGATE=gpu` to require GPU. Rerun setup to install the float32 detector and the new models. Stable wrist slots are maintained in NyxMap.
+or `NYXMAP_MEDIAPIPE_DELEGATE=gpu` to require GPU. The dedicated hair model may require CPU on Metal. Rerun setup to install the float32 detector and the new models. Stable wrist slots are maintained in NyxMap.
 Face, pose and object indices follow model order. To use the segmentation in a composition, create a layer and choose **Source → From layer**.
 Select the video layer and set **Taken → MediaPipe Foreground Mask**. The mask uses the model’s confidence as white alpha and can be used as a layer matte. **MediaPipe Hair Mask** isolates hair, and
-**MediaPipe Body Parts** gives a colored texture for hair, body skin, face skin, clothes and accessories. **MediaPipe Person Cutout** applies the confidence map to the exact sampled source frame. It is synchronized but limited to the inference resolution. When applying the mask to the live source separately, account for inference latency.
+**MediaPipe Landscape Mask** uses the wide selfie model, **MediaPipe Detailed Hair Mask** uses the dedicated hair model,
+**MediaPipe DeepLab Foreground** masks all recognized non-background classes, and **MediaPipe Multiclass Foreground**
+uses the background confidence from the multiclass selfie model. **MediaPipe Body Parts** gives a colored texture for hair, body skin, face skin, clothes and accessories. **MediaPipe Person Cutout** applies the confidence map to the exact sampled source frame. It is synchronized but limited to the inference resolution. When applying the mask to the live source separately, account for inference latency.
 **MediaPipe Pose Skeleton** renders the body as a transparent texture with OpenPose COCO-18 joint order. Indexed measurements expose the normalized hand, face and pose landmarks,
 world coordinates for hands and pose, pose landmark visibility, face blendshape scores, facial transformation matrix components and left/right handedness scores.
 

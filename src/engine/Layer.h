@@ -80,8 +80,12 @@ enum class LayerTap {
     MediaPipeParts = 5,
     MediaPipeCutout = 6,
     MediaPipePose = 7,
+    MediaPipeLandscape = 8,
+    MediaPipeHairDetail = 9,
+    MediaPipeDeepLab = 10,
+    MediaPipePartsForeground = 11,
 };
-inline bool isMediaPipeTap(LayerTap tap) { return tap >= LayerTap::MediaPipeMask && tap <= LayerTap::MediaPipePose; }
+inline bool isMediaPipeTap(LayerTap tap) { return tap >= LayerTap::MediaPipeMask && tap <= LayerTap::MediaPipePartsForeground; }
 QString layerTapName(LayerTap t); // "Source", "Pre-FX", "Post-FX"
 QString layerTapKey(LayerTap t);
 LayerTap layerTapFromKey(const QString &k);

@@ -282,9 +282,25 @@ int main(int argc, char **argv)
             require(renderUntilDone(engine, hasColoredParts), "multiclass segmentation produces a colored texture");
             require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipePose), "select pose texture");
             require(renderUntilDone(engine, hasColoredParts), "pose landmarks produce a colored skeleton texture");
+            for (const auto variant : {LayerTap::MediaPipeLandscape, LayerTap::MediaPipeDeepLab,
+                                       LayerTap::MediaPipePartsForeground}) {
+                require(engine.setLayerTap(engine.indexOfId(maskId), variant), "select alternate segmentation model");
+                const auto hasSoftAlpha = [&] {
+                    const auto result = engine.grabLayerSource(engine.indexOfId(maskId));
+                    bool foreground = false, background = false;
+                    for (int y = 0; y < result.height() && !(foreground && background); ++y)
+                        for (int x = 0; x < result.width() && !(foreground && background); ++x) {
+                            const int alpha = result.pixelColor(x, y).alpha();
+                            foreground |= alpha > 150;
+                            background |= alpha < 50;
+                        }
+                    return foreground && background;
+                };
+                require(renderUntilDone(engine, hasSoftAlpha), layerTapName(variant) + " reaches the layer");
+            }
             require(engine.saveProject(project, {}, &error) && engine.loadProject(project, nullptr, &error), error);
             const auto *restoredMask = engine.layer(engine.indexOfId(maskId));
-            require(restoredMask && restoredMask->sourceTap == LayerTap::MediaPipePose &&
+            require(restoredMask && restoredMask->sourceTap == LayerTap::MediaPipePartsForeground &&
                         restoredMask->sourceLayer == cameraId, "MediaPipe mask tap survives project reload");
         }
         engine.shutdown();

@@ -29,6 +29,12 @@ MODELS = {
         "6c7ab0a6e5dcbf38a8c33b960996a55a3b4300b36a018c4545801de3a3c8bde0"),
     "selfie_multiclass_256x256.tflite": ("image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite",
         "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"),
+    "deeplab_v3.tflite": ("image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite",
+        "ff36e24d40547fe9e645e2f4e8745d1876d6e38b332d39a82f0bf0f5d1d561b3"),
+    "hair_segmenter.tflite": ("image_segmenter/hair_segmenter/float32/1/hair_segmenter.tflite",
+        "2628cf3ce5f695f604cbea2841e00befcaa3624bf80caf3664bef2656d59bf84"),
+    "selfie_segmenter_landscape.tflite": ("image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite",
+        "490e9ea734313e0de10fa0cd9e3c6133e36ea4db2b7a49bde9ef019f72796b8e"),
 }
 
 

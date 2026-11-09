@@ -1,5 +1,6 @@
 """Local MediaPipe Tasks worker. Stdout is reserved for one JSON reply per frame."""
 import base64
+from contextlib import suppress
 import json
 import os
 import sys
@@ -15,6 +16,9 @@ MODELS = {
     "face_detector": ("FaceDetector", "blaze_face_short_range.tflite"),
     "classification": ("ImageClassifier", "efficientnet_lite0.tflite"),
     "parts": ("ImageSegmenter", "selfie_multiclass_256x256.tflite"),
+    "landscape": ("ImageSegmenter", "selfie_segmenter_landscape.tflite"),
+    "hair_detail": ("ImageSegmenter", "hair_segmenter.tflite"),
+    "deeplab": ("ImageSegmenter", "deeplab_v3.tflite"),
 }
 
 
@@ -54,8 +58,8 @@ def run(folder):
                 options.update(max_results=10, score_threshold=.5)
             elif task == "classification":
                 options.update(max_results=5)
-            elif task in ("segment", "parts"):
-                options.update(output_category_mask=task == "parts", output_confidence_masks=task == "segment")
+            elif class_name == "ImageSegmenter":
+                options.update(output_category_mask=task == "parts", output_confidence_masks=True)
             create = getattr(vision, class_name).create_from_options
             options_type = getattr(vision, class_name + "Options")
             for delegate in (("cpu",) if task in cpu_only else ("gpu", "cpu") if backend == "auto" else (backend,)):
@@ -108,15 +112,24 @@ def run(folder):
             classifications = detector.classify(image).classifications
             return {"classification": [{"label": item.category_name, "score": item.score, "index": item.index}
                                        for head in classifications for item in head.categories]}
+        def alpha_packet(key, values):
+            alpha = np.clip(values, 0, 1)
+            return {key: base64.b64encode(np.rint(alpha * 255).astype(np.uint8).tobytes()).decode("ascii"),
+                    key + "_width": alpha.shape[1], key + "_height": alpha.shape[0]}
+
         result = detector.segment(image)
         if task == "parts":
             mask = result.category_mask.numpy_view()
             return {"parts": base64.b64encode(mask.tobytes()).decode("ascii"),
-                    "parts_width": mask.shape[1], "parts_height": mask.shape[0]}
-        foreground = np.clip(result.confidence_masks[-1].numpy_view(), 0, 1)
+                    "parts_width": mask.shape[1], "parts_height": mask.shape[0],
+                    **alpha_packet("parts_foreground", 1 - result.confidence_masks[0].numpy_view())}
+        if task == "deeplab":
+            return alpha_packet(task, 1 - result.confidence_masks[0].numpy_view())
+        foreground = result.confidence_masks[-1].numpy_view()
+        if task != "segment":
+            return alpha_packet(task, foreground)
         return {"coverage": float(np.count_nonzero(foreground >= .5) / foreground.size),
-                "mask": base64.b64encode(np.rint(foreground * 255).astype(np.uint8).tobytes()).decode("ascii"),
-                "mask_width": foreground.shape[1], "mask_height": foreground.shape[0]}
+                **alpha_packet("mask", foreground)}
 
     reply({"ready": True})
     for line in sys.stdin.buffer:
@@ -136,8 +149,10 @@ def run(folder):
                         result[task + "_delegate"] = delegates[task]
                     except Exception as error:
                         if backend == "auto" and delegates.get(task) == "GPU":
-                            tasks.pop(task).close()
                             cpu_only.add(task)
+                            delegates.pop(task, None)
+                            with suppress(Exception):
+                                tasks.pop(task).close()
                             try:
                                 result.update(infer(task, rgba))
                                 result[task + "_delegate"] = delegates[task]

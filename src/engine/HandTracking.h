@@ -34,7 +34,8 @@ enum class Feature {
 };
 QStringList featureNames();
 unsigned taskFor(Feature feature);
-inline constexpr unsigned partsTask = 1u << 8;
+inline constexpr size_t pictureCount = 9;
+inline constexpr std::array<unsigned, pictureCount> pictureTasks{{32, 256, 256, 32, 8, 512, 1024, 2048, 256}};
 
 struct Hand {
     bool valid = false;
@@ -49,7 +50,7 @@ struct Frame {
     std::array<Hand, 2> hands{};
     QString error;
     QImage preview;
-    std::array<QImage, 5> pictures; // foreground, hair, colored parts, synchronized cutout, pose
+    std::array<QImage, pictureCount> pictures;
     QJsonObject detections;
 };
 double measure(const Frame &frame, int index, Feature feature, double confidence, int landmark = 0);

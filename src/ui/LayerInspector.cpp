@@ -1438,7 +1438,9 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         if (s.type == SourceType::Layer) {
             auto *tap = new QComboBox;
             tap->setObjectName(QStringLiteral("sourceTap"));
-            for (LayerTap t : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx, LayerTap::MediaPipeMask, LayerTap::MediaPipeHair, LayerTap::MediaPipeParts, LayerTap::MediaPipeCutout, LayerTap::MediaPipePose}) tap->addItem(layerTapName(t), int(t));
+            for (LayerTap t : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx}) tap->addItem(layerTapName(t), int(t));
+            for (int i = int(LayerTap::MediaPipeMask); i <= int(LayerTap::MediaPipePartsForeground); ++i)
+                tap->addItem(layerTapName(LayerTap(i)), i);
             tap->setCurrentIndex(std::max(0, tap->findData(int(s.sourceTap))));
             tap->setEnabled(!m_locked);
             tap->setToolTip(QStringLiteral("Where the picture is taken in that layer:\n"

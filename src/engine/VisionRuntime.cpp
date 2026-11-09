@@ -35,8 +35,8 @@ struct VisionRuntime::Private {
         quint64 received = 0;
         qint64 timeNs = 0, lastHandSubmit = 0;
         QString error;
-        std::array<Texture2D, 5> masks;
-        std::array<qint64, 5> maskTimes{};
+        std::array<Texture2D, HandTracking::pictureCount> masks;
+        std::array<qint64, HandTracking::pictureCount> maskTimes{};
         void clearMasks() {
             for (auto &mask : masks) mask.destroy();
             maskTimes.fill(0);
@@ -83,8 +83,10 @@ void VisionRuntime::step(const std::vector<Request> &requests,
         auto found = wanted.find(key);
         if (found == wanted.end())
             wanted[key] = request;
-        else
+        else {
             found->second.tasks |= request.tasks;
+            found->second.pictures |= request.pictures;
+        }
     }
     d->error = wanted.size() > 8 ? QStringLiteral("At most 8 visual analysis sources can run at once") : QString();
     auto invalidate = [&](const QString &key) {
@@ -158,13 +160,10 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             }
             input.pending.erase(tag);
         }
-        const unsigned foregroundTask = HandTracking::taskFor(HandTracking::Feature::ForegroundCoverage);
-        const unsigned poseTask = HandTracking::taskFor(HandTracking::Feature::PoseCount);
-        if (request.tasks & (foregroundTask | HandTracking::partsTask | poseTask)) {
+        if (request.pictures) {
             const auto frame = d->worker.latest(key);
             for (size_t i = 0; i < input.masks.size(); ++i) {
-                const unsigned task = i == 4 ? poseTask : (i == 0 || i == 3 ? foregroundTask : HandTracking::partsTask);
-                if (!(request.tasks & task)) {
+                if (!(request.pictures & (1u << i))) {
                     input.masks[i].destroy();
                     input.maskTimes[i] = 0;
                     continue;

@@ -468,6 +468,23 @@ struct HandTracking::Worker::Private {
                         }
                     }
                 }
+                static const char *alphaOutputs[] = {"landscape", "hair_detail", "deeplab", "parts_foreground"};
+                for (size_t i = 0; i < std::size(alphaOutputs); ++i) {
+                    const auto key = QString::fromLatin1(alphaOutputs[i]);
+                    const int width = frame.detections.value(key + "_width").toInt();
+                    const int height = frame.detections.value(key + "_height").toInt();
+                    const auto data = QByteArray::fromBase64(frame.detections.take(key).toString().toLatin1());
+                    if (width <= 0 || height <= 0 || width > 2048 || height > 2048 || data.size() != width * height) continue;
+                    auto &image = frame.pictures[i + 5];
+                    image = QImage(width, height, QImage::Format_RGBA8888);
+                    for (int y = 0; y < height; ++y) {
+                        auto *line = image.scanLine(y);
+                        for (int x = 0; x < width; ++x) {
+                            std::fill_n(line + x * 4, 3, uchar(255));
+                            line[x * 4 + 3] = uchar(data.at(y * width + x));
+                        }
+                    }
+                }
                 if (frame.detections.contains("pose")) {
                     auto &skeleton = frame.pictures[4];
                     skeleton = QImage(job.image.size(), QImage::Format_ARGB32_Premultiplied);

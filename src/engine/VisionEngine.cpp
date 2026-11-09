@@ -30,11 +30,9 @@ void Engine::stepVision()
         PixelAnalysis::Settings settings;
         settings.layer = layer->sourceLayer;
         settings.tap = 2;
-        const bool foreground = layer->sourceTap == LayerTap::MediaPipeMask || layer->sourceTap == LayerTap::MediaPipeCutout;
-        const unsigned task = foreground ? HandTracking::taskFor(HandTracking::Feature::ForegroundCoverage)
-                              : layer->sourceTap == LayerTap::MediaPipePose ? HandTracking::taskFor(HandTracking::Feature::PoseCount)
-                              : HandTracking::partsTask;
-        requests.push_back({settings, task});
+        static_assert(int(LayerTap::MediaPipePartsForeground) - int(LayerTap::MediaPipeMask) + 1 == HandTracking::pictureCount);
+        const auto channel = size_t(int(layer->sourceTap) - int(LayerTap::MediaPipeMask));
+        requests.push_back({settings, HandTracking::pictureTasks[channel], 1u << channel});
     }
     if (!m_vision && !requests.empty())
         m_vision = std::make_unique<VisionRuntime>([this] { drawQuad(); }, handModelsDirectory());

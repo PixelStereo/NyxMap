@@ -544,6 +544,10 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
             case LayerTap::MediaPipeParts:
             case LayerTap::MediaPipeCutout:
             case LayerTap::MediaPipePose:
+            case LayerTap::MediaPipeLandscape:
+            case LayerTap::MediaPipeHairDetail:
+            case LayerTap::MediaPipeDeepLab:
+            case LayerTap::MediaPipePartsForeground:
                 tex = segmentationTexture(s->id, l.sourceTap, w, h);
                 break;
             }

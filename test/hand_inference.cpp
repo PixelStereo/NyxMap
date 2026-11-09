@@ -40,6 +40,16 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    if (qEnvironmentVariableIsSet("NYXMAP_MEDIAPIPE_SEGMENTATION_MODELS")) {
+        for (const auto &variant : {std::pair{8, "parts_foreground"}, std::pair{9, "landscape"},
+                                    std::pair{10, "hair_detail"}, std::pair{11, "deeplab"}}) {
+            const auto result = detector.infer(blank, 1u << variant.first, &error);
+            if (!error.isEmpty() || result.value(variant.second).toString().isEmpty()) {
+                std::cerr << "Missing segmentation output: " << variant.second << '\n';
+                return 1;
+            }
+        }
+    }
     const auto fixture = qEnvironmentVariable("NYXMAP_HAND_IMAGE");
     if (!fixture.isEmpty()) {
         QImage image(fixture);
