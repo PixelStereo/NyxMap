@@ -22,7 +22,8 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFileDialog>
+#include <QPlainTextEdit>
+#include <QProcess>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -60,7 +61,7 @@
 // ---------------------------------------------------------------------------
 namespace {
 
-void showFaceMonitor(QWidget *parent, Engine *engine, const PixelAnalysis::Settings &settings, int faceIndex)
+void showFaceMonitor(QWidget *parent, Engine *engine, const PixelAnalysis::Settings &settings)
 {
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("MediaPipe Face Monitor"));
@@ -105,7 +106,7 @@ void showFaceMonitor(QWidget *parent, Engine *engine, const PixelAnalysis::Setti
         if (frame.isNull()) preview->clear();
         else preview->setPixmap(QPixmap::fromImage(frame).scaled(preview->size(), Qt::KeepAspectRatio,
                                                                  Qt::SmoothTransformation));
-        const auto expressions = engine->visionFaceExpressions(settings, faceIndex);
+        const auto expressions = engine->visionFaceExpressions(settings);
         for (auto it = expressions.begin(); it != expressions.end(); ++it) {
             if (rows.contains(it.key())) continue;
             auto *item = new QTreeWidgetItem(meters, {it.key()});
@@ -1524,15 +1525,6 @@ void InteractionPanel::rebuildSettings()
             });
             attachPreset({threshold}, {QStringLiteral("source/pixels/threshold")});
         } else {
-            auto *hand = new QComboBox;
-            hand->setObjectName(QStringLiteral("trackedHand"));
-            hand->addItems({QStringLiteral("Detection 1"), QStringLiteral("Detection 2")});
-            hand->setCurrentIndex(it.handIndex);
-            form->addRow(QStringLiteral("Detection"), hand);
-            connect(hand, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Tracked Hand"), [value](Interaction &x) { x.handIndex = value; });
-            });
-            attachPreset({hand}, {QStringLiteral("source/hands/index")});
             auto *feature = new QComboBox;
             feature->setObjectName(QStringLiteral("handFeature"));
             feature->addItems(HandTracking::featureNames());
@@ -1564,24 +1556,48 @@ void InteractionPanel::rebuildSettings()
                 edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
             });
             attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *models = new QPushButton(QStringLiteral("Choose MediaPipe models folder…"));
-            form->addRow(models);
-            connect(models, &QPushButton::clicked, this, [this] {
-                const auto directory = QFileDialog::getExistingDirectory(
-                    this, QStringLiteral("MediaPipe model directory"), m_engine->handModelsDirectory());
-                if (!directory.isEmpty()) {
-                    m_engine->setHandModelsDirectory(directory);
-                    rebuildSettings();
-                }
+            auto *install = new QPushButton(QStringLiteral("Install / Repair MediaPipe…"));
+            form->addRow(install);
+            connect(install, &QPushButton::clicked, this, [this] {
+                QDialog dialog(this);
+                dialog.setWindowTitle(QStringLiteral("Install MediaPipe"));
+                dialog.resize(640, 330);
+                auto *layout = new QVBoxLayout(&dialog);
+                auto *status = new QLabel(QStringLiteral("Downloading the local runtime and models…"));
+                layout->addWidget(status);
+                auto *log = new QPlainTextEdit;
+                log->setReadOnly(true);
+                log->setMaximumBlockCount(250);
+                layout->addWidget(log);
+                auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
+                layout->addWidget(close);
+                connect(close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+                QProcess process;
+                auto readLog = [&] { log->appendPlainText(QString::fromLocal8Bit(process.readAll())); };
+                connect(&process, &QProcess::readyRead, &dialog, readLog);
+                connect(&process, &QProcess::errorOccurred, &dialog, [&](QProcess::ProcessError error) {
+                    if (error == QProcess::FailedToStart) status->setText(process.errorString());
+                });
+                connect(&process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &dialog,
+                        [&](int code, QProcess::ExitStatus exit) {
+                    readLog();
+                    if (code == 0 && exit == QProcess::NormalExit) {
+                        m_engine->setHandModelsDirectory(m_engine->handModelsDirectory());
+                        status->setText(QStringLiteral("MediaPipe is ready."));
+                    } else {
+                        status->setText(QStringLiteral("MediaPipe installation failed. See the log below."));
+                    }
+                });
+                if (!m_engine->startMediaPipeInstall(process))
+                    status->setText(QStringLiteral("Install Python 3.11 or 3.12, then try again."));
+                dialog.exec();
             });
-            form->addRow(note(QStringLiteral("Local MediaPipe Tasks. Set up Python and models with "
-                                             "scripts/setup_mediapipe.py. Images stay on this computer.")));
         }
         if (hands && HandTracking::taskFor(it.handFeature) == HandTracking::taskFor(HandTracking::Feature::FaceBlendshape)) {
             auto *monitor = new QPushButton(QStringLiteral("Face Monitor…"));
             form->addRow(monitor);
-            connect(monitor, &QPushButton::clicked, this, [this, settings = it.pixels, index = it.handIndex] {
-                showFaceMonitor(this, m_engine, settings, index);
+            connect(monitor, &QPushButton::clicked, this, [this, settings = it.pixels] {
+                showFaceMonitor(this, m_engine, settings);
             });
         }
         auto *status = new QLabel;

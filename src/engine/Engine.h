@@ -832,9 +832,10 @@ public:
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
     void waitForFrame(QOpenGLExtraFunctions *f) const;
-    QJsonObject visionFaceExpressions(const PixelAnalysis::Settings &settings, int index) const;
+    QJsonObject visionFaceExpressions(const PixelAnalysis::Settings &settings) const;
     QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
+    bool startMediaPipeInstall(class QProcess &process) const;
     QString handModelsDirectory() const;
     void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }

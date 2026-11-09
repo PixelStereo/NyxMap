@@ -49,11 +49,11 @@ def run(folder):
                 raise FileNotFoundError(f"Missing MediaPipe model: {filename}")
             options = {}
             if task in ("hands", "gestures"):
-                options.update(num_hands=2, min_hand_detection_confidence=.5)
+                options.update(num_hands=1, min_hand_detection_confidence=.5)
             elif task == "face":
-                options.update(num_faces=2, output_face_blendshapes=True, output_facial_transformation_matrixes=True)
+                options.update(num_faces=1, output_face_blendshapes=True, output_facial_transformation_matrixes=True)
             elif task == "pose":
-                options.update(num_poses=2)
+                options.update(num_poses=1)
             elif task == "objects":
                 options.update(max_results=10, score_threshold=.5)
             elif task == "classification":

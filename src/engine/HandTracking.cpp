@@ -258,7 +258,7 @@ bool HandTracking::Detector::load(const QString &directory, QString *error)
 {
     d->close();
     if (!QDir(directory).exists() || QDir(directory).entryList({"*.task", "*.tflite"}, QDir::Files).isEmpty()) {
-        if (error) *error = "Choose a MediaPipe model folder. See docs/vision-interactions.md.";
+        if (error) *error = "MediaPipe is not installed. Use Install / Repair MediaPipe in Interactions.";
         return false;
     }
     const QString python = mediaPipePython(directory);

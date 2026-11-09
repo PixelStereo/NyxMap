@@ -149,8 +149,9 @@ if(NYXMAP_FAUST_COMPILER)
 endif()
 
 # Embed the worker so installed builds do not need a source checkout.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe_worker.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe_worker.py scripts/setup_mediapipe.py)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" NYXMAP_MEDIAPIPE_WORKER)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/setup_mediapipe.py" NYXMAP_MEDIAPIPE_INSTALLER)
 configure_file(src/engine/MediaPipeWorkerScript.h.in generated/MediaPipeWorkerScript.h @ONLY)
 target_include_directories(nyxmap_engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 

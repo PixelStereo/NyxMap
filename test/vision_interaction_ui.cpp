@@ -47,19 +47,14 @@ int main(int argc, char **argv)
         emit channel->activated(3);
         require(engine.interactions()[0].pixels.channel == PixelAnalysis::Channel::Alpha,
                 "channel edits reach the engine");
-        auto *roi = panel.findChild<QDoubleSpinBox *>("pixelROI_width");
-        require(roi, "ROI editor");
-        roi->setValue(.4);
-        require(engine.interactions()[0].pixels.roi.width() == .4, "ROI editor updates source");
-        undo.undo();
-        require(engine.interactions()[0].pixels.roi.width() == 1, "ROI change undoes");
+        require(!panel.findChild<QDoubleSpinBox *>("pixelROI_width"), "Pixels hides its ROI fields");
         panel.learnFor(0, "opacity", InteractionSource::Hands);
         app.processEvents();
         require(tabs->checkedButton()->text() == "MediaPipe", "MediaPipe tab selected");
-        require(panel.findChild<QComboBox *>("trackedHand") && panel.findChild<QComboBox *>("handFeature"),
-                "hand selection and gesture features");
+        require(!panel.findChild<QComboBox *>("trackedHand") && panel.findChild<QComboBox *>("handFeature"),
+                "one detection with MediaPipe measures");
         require(!learn->isChecked() && !learn->isEnabled(), "Hands does not start external Learn");
-        std::cout << "Pixels/Hands UI, source/channel/ROI editors and undo passed\n";
+        std::cout << "Pixels/Hands UI, source and channel editors passed\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

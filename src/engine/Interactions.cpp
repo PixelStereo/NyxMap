@@ -264,7 +264,7 @@ QString Interaction::label() const
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels · ") + PixelAnalysis::featureNames().value(int(pixelFeature));
     case InteractionSource::Hands:
-        return QStringLiteral("MediaPipe %1 · ").arg(handIndex + 1) + HandTracking::featureNames().value(int(handFeature));
+        return QStringLiteral("MediaPipe · ") + HandTracking::featureNames().value(int(handFeature));
     case InteractionSource::Audio: {
         const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : audioFeature==AudioFeature::Hit ? QStringLiteral("hits %1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : QStringLiteral("attacks");
         return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;

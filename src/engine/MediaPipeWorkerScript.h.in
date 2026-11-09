@@ -2,3 +2,6 @@
 inline constexpr char mediaPipeWorkerScript[] = R"NYXMP(
 @NYXMAP_MEDIAPIPE_WORKER@
 )NYXMP";
+inline constexpr char mediaPipeInstallerScript[] = R"NYXMP(
+@NYXMAP_MEDIAPIPE_INSTALLER@
+)NYXMP";

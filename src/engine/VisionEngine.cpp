@@ -1,5 +1,8 @@
 #include "EngineInternal.h"
 #include "VisionRuntime.h"
+#include "MediaPipeWorkerScript.h"
+#include <QProcess>
+#include <QDir>
 #include <QSettings>
 #include <QJsonArray>
 #include <QStandardPaths>
@@ -74,7 +77,7 @@ double Engine::visionValue(const Interaction &input)
     const auto frame = m_vision->hands(input.pixels);
     if (!HandTracking::taskError(frame, input.handFeature).isEmpty() || !frame.timeNs || now - frame.completedNs > 500000000)
         return 0;
-    return HandTracking::measure(frame, input.handIndex, input.handFeature, input.handConfidence, input.visionLandmark);
+    return HandTracking::measure(frame, 0, input.handFeature, input.handConfidence, input.visionLandmark);
 }
 void Engine::releaseVision()
 {
@@ -82,6 +85,25 @@ void Engine::releaseVision()
         m_vision->release();
         m_vision.reset();
     }
+}
+bool Engine::startMediaPipeInstall(QProcess &process) const
+{
+    QStringList searchPaths = qEnvironmentVariable("PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts);
+#ifdef Q_OS_MACOS
+    searchPaths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
+#endif
+    QString python = qEnvironmentVariable("NYXMAP_MEDIAPIPE_PYTHON");
+    if (python.isEmpty()) {
+        for (const auto *name : {"python3.11", "python3.12", "python3.13", "python3", "python"}) {
+            python = QStandardPaths::findExecutable(QLatin1String(name), searchPaths);
+            if (!python.isEmpty()) break;
+        }
+    }
+    if (python.isEmpty()) return false;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(python, {QStringLiteral("-c"), QString::fromUtf8(mediaPipeInstallerScript),
+                           QStringLiteral("--directory"), handModelsDirectory()});
+    return true;
 }
 QString Engine::handModelsDirectory() const
 {
@@ -97,7 +119,7 @@ void Engine::setHandModelsDirectory(const QString &directory)
     if (m_vision)
         m_vision->setModelsDirectory(directory);
 }
-QJsonObject Engine::visionFaceExpressions(const PixelAnalysis::Settings &settings, int index) const
+QJsonObject Engine::visionFaceExpressions(const PixelAnalysis::Settings &settings) const
 {
     Lock lock(&m_mutex);
     if (!m_vision || m_visionReset || !settings.layer) return {};
@@ -106,8 +128,8 @@ QJsonObject Engine::visionFaceExpressions(const PixelAnalysis::Settings &setting
         !HandTracking::taskError(frame, HandTracking::Feature::FaceBlendshape).isEmpty())
         return {};
     const auto faces = frame.detections.value("face").toArray();
-    if (index < 0 || index >= faces.size()) return {};
-    return faces.at(index).toObject().value("expressions").toObject();
+    if (faces.isEmpty()) return {};
+    return faces.first().toObject().value("expressions").toObject();
 }
 QImage Engine::visionPreview(const PixelAnalysis::Settings &settings, bool hands) const
 {
