@@ -70,6 +70,7 @@ private:
     QList<int> selectedRows() const; // the selection the layer actions act on (layers, or viewports in their tab)
     void refreshAll();
     void selectLayer(int index);
+    void syncLayerSelection(int row, bool focusInspector);
     void fillZonesMenu(QMenu *menu, int row);
     void assignZone(const QList<quint64> &layers, quint64 zone);
     void toggleSolo(int row); // a setup aid: not undone, not saved
@@ -189,7 +190,6 @@ private:
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
             *m_blackoutAction = nullptr;
     int m_listedRows = 0; // rows the layer list had (0: empty, a layer chosen as it fills)
-    int m_lastSelected = -1;
     QJsonObject m_paramClipboard;       // layer parameters copied with the right-click menu
     QString m_paramClipboardName;       // the layer they come from (shown in the menu)
 

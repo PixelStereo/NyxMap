@@ -366,6 +366,21 @@ int main(int argc, char **argv)
         click(5, Qt::ShiftModifier);
         wanted.clear(); for (int i = 1; i <= 5; ++i) wanted << i;
         check(list.selectedRows() == wanted, "repeated Shift click retains the original anchor");
+        click(4, Qt::NoModifier);
+        click(7, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>({4, 7}) && list.currentRow() == 7,
+              "modifier-click adds a row and makes it current");
+        click(4, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>{7} && list.currentRow() == 7,
+              "modifier-clicking a secondary row keeps the primary row current");
+        click(4, Qt::NoModifier);
+        click(7, Qt::ControlModifier);
+        click(7, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>{4} && list.currentRow() == 4,
+              "modifier-clicking the primary row leaves the remaining row current");
+        click(4, Qt::ControlModifier);
+        check(list.selectedRows().isEmpty() && list.currentRow() == -1,
+              "modifier-clicking the last selected row clears the inspector target");
     }
     {
         auto *saved = new QMimeData;
@@ -894,6 +909,25 @@ int main(int argc, char **argv)
             app.processEvents();
             check(table->currentRow() == -1 && table->selectionModel()->selectedRows().isEmpty(),
                   "a deselected list stays empty after a refresh");
+            table->setCurrentCell(engine.indexOfId(ids[0]), 4);
+            table->selectionModel()->select(table->model()->index(engine.indexOfId(ids[2]), 0),
+                                            QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            const auto inserted = engine.layerId(engine.addLayer("Inserted ahead of selection", engine.indexOfId(ids[2])));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[0] && inspector->layerId() == ids[0] &&
+                      inspector->coTargets() == QList<quint64>{ids[2]},
+                  "inserting a layer preserves both selected IDs and the inspector target");
+            engine.moveLayer(engine.indexOfId(ids[2]), engine.indexOfId(ids[0]));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[0] && inspector->coTargets() == QList<quint64>{ids[2]},
+                  "reordering layers preserves the primary and secondary selection");
+            engine.removeLayer(engine.indexOfId(inserted));
+            const QJsonObject removed = engine.layerJson(engine.indexOfId(ids[0]));
+            engine.removeLayer(engine.indexOfId(ids[0]));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[2] && inspector->layerId() == ids[2],
+                  "deleting the current layer promotes a surviving selected layer");
+            engine.insertLayerJson(engine.layerCount(), removed);
             // Viewports: several selected in their list, pasted onto together and edited together
             auto *tabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *viewportList = window.findChild<QListWidget *>("viewportList");
@@ -926,6 +960,9 @@ int main(int argc, char **argv)
                               std::abs(opacityOf(v1) - .3) < 1e-6,
                           "viewport inspector edit reaches every selected viewport only");
                 }
+                emit table->cellClicked(table->currentRow(), 4);
+                check(tabs->currentIndex() == 0 && inspector->layerId() == ids[2],
+                      "clicking the already-selected layer returns from the Viewports inspector");
             }
         }
         window.hide();

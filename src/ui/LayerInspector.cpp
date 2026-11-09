@@ -87,6 +87,8 @@ struct LayerValues {
     std::vector<Route> routes;
     QString routedBy; // the top group of an item inside a group
     QRectF roi{0, 0, 1, 1};
+    int roiMode = 0;
+    std::array<QPointF, 4> roiPoints{};
     ColorAdjust color;
     bool effectsEnabled = true;
     bool solo = false;
@@ -154,6 +156,8 @@ struct LayerValues {
         s.lockedByGroup = !l->locked && e->isLocked(index);
         s.members = e->groupMembers(index).size();
         s.roi = l->roi;
+        s.roiMode = l->roiMode;
+        s.roiPoints = l->roiPoints;
         s.color = l->color;
         s.effectsEnabled = l->effectsEnabled;
         const QSize comp = e->compositionSize();
@@ -3242,18 +3246,55 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
     auto *v = new QVBoxLayout(box);
     auto *head = new QHBoxLayout;
     auto *title = new ResetLabel(QStringLiteral("<b>ROI</b>"), [this] {
-        setRoi(Layer::fullRoi());
+        setValues({{"roi/mode", "rectangle"}, {"roi/left", 0}, {"roi/top", 0}, {"roi/right", 1}, {"roi/bottom", 1}},
+                  QStringLiteral("Reset ROI"));
         rebuild();
     });
     title->setToolTip(QStringLiteral("Part of the source picture used by the layer — click to use the whole picture"));
     head->addWidget(title);
+    auto *mode = new QComboBox;
+    mode->setObjectName(QStringLiteral("roiMode"));
+    for (const auto &name : {QStringLiteral("Rectangle"), QStringLiteral("Triangle"), QStringLiteral("Quad")})
+        mode->addItem(name, name.toLower());
+    mode->setCurrentIndex(s.roiMode);
+    mode->setToolTip(QStringLiteral("Rectangle crops by four sides. Triangle cuts out three source points. Quad straightens four source corners."));
+    head->addWidget(mode);
+    m_roiMode = mode;
     head->addStretch();
     v->addLayout(head);
     m_roi = new RoiEditor;
     m_roi->setAspect(s.aspect);
     m_roi->setRoi(s.roi);
+    m_roi->setPolygon(s.roiMode, s.roiPoints);
     v->addWidget(m_roi);
     m_animate->attach({title, m_roi.data()}, {"roi/left", "roi/top", "roi/right", "roi/bottom"});
+    auto *ranges = new QWidget;
+    m_roiRanges = ranges;
+    ranges->setVisible(s.roiMode == 0);
+    connect(mode, qOverload<int>(&QComboBox::activated), this, [this, mode](int index) {
+        QJsonObject values{{"roi/mode", mode->itemData(index).toString()}};
+        if (index > 0) {
+            Engine::Lock lock(&m_engine->mutex());
+            const auto *layer = m_engine->layer(m_layer);
+            const std::array<QPointF, 4> full{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
+            if (layer && (!validRoiPolygon(layer->roiPoints.data(), index == 1 ? 3 : 4) ||
+                          (layer->roiMode == 0 && layer->roiPoints == full && layer->roi != Layer::fullRoi()))) {
+                const auto &r = layer->roi;
+                const QPointF corners[] = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+                for (int i = 0; i < 4; ++i) {
+                    const QString base = QStringLiteral("roi/point/%1/").arg(i + 1);
+                    values[base + "x"] = corners[i].x();
+                    values[base + "y"] = corners[i].y();
+                }
+            }
+        }
+        setValues(values, QStringLiteral("Change ROI Shape"));
+        refreshDynamic();
+    });
+    connect(m_roi, &RoiEditor::roiPointEdited, this, [this](int point, QPointF p) {
+        const QString base = QStringLiteral("roi/point/%1/").arg(point + 1);
+        setValues({{base + "x", p.x()}, {base + "y", p.y()}}, QStringLiteral("Move ROI Point"));
+    });
     auto *grid = new QGridLayout;
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(4);
@@ -3279,7 +3320,8 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
         grid->addWidget(bar, k, 1);
         m_animate->attach({name, bar}, k == 0 ? QStringList{"roi/left", "roi/right"} : QStringList{"roi/top", "roi/bottom"});
     }
-    v->addLayout(grid);
+    ranges->setLayout(grid);
+    v->addWidget(ranges);
     auto apply = [this](const QRectF &r) {
         setRoi(r);
         emit layerChanged();
@@ -4844,6 +4886,8 @@ void LayerInspector::refreshDynamic()
     // Values changed elsewhere (OSC, undo, a snapshot) follow in the fields
     if (follow) {
         QRectF roi;
+        int roiMode = 0;
+        std::array<QPointF, 4> roiPoints{};
         QColor add, remove;
         double temp = 0, tint = 0;
         unsigned masksRev = 0;
@@ -4852,6 +4896,8 @@ void LayerInspector::refreshDynamic()
             Layer *l = m_engine->layer(m_layer);
             if (!l) return;
             roi = l->roi;
+            roiMode = l->roiMode;
+            roiPoints = l->roiPoints;
             masksRev = l->masksRevision;
             add = QColor::fromRgbF(l->color.add[0], l->color.add[1], l->color.add[2]);
             remove = QColor::fromRgbF(l->color.remove[0], l->color.remove[1], l->color.remove[2]);
@@ -4860,7 +4906,12 @@ void LayerInspector::refreshDynamic()
         }
         for (auto [field, value] : {std::pair{m_temp.data(), temp}, std::pair{m_tint.data(), tint}})
             if (field && !field->isDragging() && std::abs(field->value() - value) > 1e-3) field->setValue(value);
-        if (m_roi) m_roi->setRoi(roi);
+        if (m_roi) {
+            m_roi->setRoi(roi);
+            m_roi->setPolygon(roiMode, roiPoints);
+        }
+        if (m_roiMode) m_roiMode->setCurrentIndex(roiMode);
+        if (m_roiRanges) m_roiRanges->setVisible(roiMode == 0);
         if (m_colorAdd) m_colorAdd->setColor(add);
         if (m_colorRemove) m_colorRemove->setColor(remove);
         if (masksRev != m_masksRev) { // a snapshot (or OSC) changed them: the list and the fields follow

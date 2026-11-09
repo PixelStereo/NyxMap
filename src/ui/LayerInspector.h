@@ -160,6 +160,8 @@ private:
     QPointer<QLabel> m_sourceColorStatus;
     QPointer<RangeField> m_loop;
     QPointer<QButtonGroup> m_playButtons;
+    QPointer<QComboBox> m_roiMode;
+    QPointer<QWidget> m_roiRanges;
     QPointer<RoiEditor> m_roi;
     QPointer<ColorEditor> m_colorAdd, m_colorRemove;
     std::vector<std::pair<QPointer<QPushButton>, QString>> m_textColors;

@@ -1090,6 +1090,7 @@ private:
     RenderTarget m_dstCopy; // what is drawn so far, for Difference
     static inline std::atomic<bool> s_failDifferenceCopyForTests{false};
     GLint m_blitTexLoc = -1, m_compTexLoc = -1, m_compOpacityLoc = -1, m_compViewLoc = -1, m_presentTexLoc = -1;
+    GLint m_prepRoiModeLoc = -1, m_prepRoiTriangleLoc = -1, m_prepRoiQuadLoc = -1;
     GLint m_prepTexLoc = -1, m_prepRoiLoc = -1, m_prepAddLoc = -1, m_prepRemoveLoc = -1, m_prepUnpremulLoc = -1, m_prepBalanceLoc = -1;
     GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
     GLuint m_blackTex = 0;

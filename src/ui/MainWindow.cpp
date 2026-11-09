@@ -212,8 +212,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_viewportList, &QListWidget::itemSelectionChanged, this, &MainWindow::updateCoTargets);
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int tab) {
-        if (tab == 1) m_view->setLayer(m_engine->indexOfId(m_selectedViewport));
-        else if (tab == 0 && m_layerTable) m_view->setLayer(m_layerTable->currentRow());
+        if (tab == 1) {
+            m_view->setLayer(m_engine->indexOfId(m_selectedViewport));
+            if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_selectedViewport);
+        } else if (tab == 0 && m_layerTable) {
+            const int row = m_layerTable->currentRow();
+            m_view->setLayer(row);
+            if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_engine->layerId(row));
+        }
     });
     connect(m_viewportInspector, &LayerInspector::layerChanged, this, [this] { refreshLayerList(); markDirty(); });
     connect(m_viewportInspector, &LayerInspector::mappingChanged, m_view, qOverload<>(&QWidget::update));
@@ -438,13 +444,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode());
 
     // --- Layers
-    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
-        m_view->setLayer(r);
-        m_previews->setCurrentLayer(m_engine->layerId(r));
-        m_inspector->setLayer(r);
-        updateCoTargets();
-        if (r >= 0 && r != m_lastSelected) m_tabs->setCurrentIndex(0);
-        m_lastSelected = r;
+    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int row) {
+        syncLayerSelection(row, true);
+    });
+    connect(m_layerTable, &LayerTable::rowClicked, this, [this](int row) {
+        if (m_tabs->currentIndex() != 0) syncLayerSelection(row, true);
     });
     connect(m_layerTable, &LayerTable::selectionChanged, this, &MainWindow::updateCoTargets);
     connect(m_layerTable, &LayerTable::visibilityToggled, this, [this](int row, bool on) {
@@ -497,8 +501,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         // The selection does not stay on a hidden row
         bool inside = false;
         for (int g = m_engine->groupIndexOf(currentLayer()); g >= 0 && !inside; g = m_engine->groupIndexOf(g)) inside = g == row;
-        if (inside) selectLayer(row);
-        else refreshLayerList();
+        refreshLayerList();
+        if (inside && m_layerTable->currentRow() < 0) selectLayer(row);
     });
     connect(m_layerTable, &LayerTable::renamed, this, [this](int row, const QString &name) {
         if (refuseLocked(row)) return;
@@ -651,9 +655,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_timelineWindow->addActions({m_undoAction, m_redoAction}); // undo / redo from the Timelines window too
     connect(m_timelineWindow, &TimelineWindow::edited, this, &MainWindow::markDirty);
     connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
-    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
-        m_timelineWindow->setCurrentLayer(r >= 0 ? m_engine->layerId(r) : 0);
-    });
     // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the panel
     // then shows the step unchanged
     m_engine->sequencer().setRecaller([this](int snapshot) {
@@ -1356,6 +1357,7 @@ void MainWindow::refreshLayerList()
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             Layer *l = m_engine->layer(i);
             LayerTable::Row r;
+            r.id = l->id;
             r.name = l->name;
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
@@ -1463,23 +1465,17 @@ void MainWindow::refreshLayerList()
         }
     }
     const int n = int(rows.size());
-    int keep = qBound(-1, m_layerTable->currentRow(), n - 1);
-    if (keep >= 0 && rows[size_t(keep)].viewport) keep = -1;
-    const bool filled = m_listedRows == 0 && n > 0; // the list was empty (a project opened, the first layer made)
+    const bool filled = m_listedRows == 0 && n > 0;
     m_listedRows = n;
-    m_layerTable->setRows(rows);
-    // A list just filled: its first layer below the viewports (or the first viewport). Otherwise what the user chose,
-    // nothing included: a layer deselected stays deselected
-    int firstLayer = 0;
-    while (firstLayer < n && rows[size_t(firstLayer)].viewport) ++firstLayer;
-    const int sel = keep >= 0 ? keep : filled && firstLayer < n ? firstLayer : -1;
-    if (sel != m_layerTable->currentRow()) m_layerTable->setCurrentRow(sel);
-    // By index and by id: an opened project may put another layer at the same index (its edits would be lost)
-    if (sel != m_inspector->layerIndex() || (sel >= 0 && m_engine->layerId(sel) != m_inspector->layerId())) {
-        m_inspector->setLayer(sel);
-        m_view->setLayer(sel);
-        m_lastSelected = sel;
+    const bool changed = m_layerTable->setRows(rows);
+    if (filled && m_layerTable->currentRow() < 0) {
+        const auto first = std::find_if(rows.begin(), rows.end(), [](const auto &row) { return !row.hidden && !row.viewport; });
+        if (first != rows.end()) m_layerTable->setCurrentRow(int(first - rows.begin()));
     }
+    const int selected = m_layerTable->currentRow();
+    if (changed || selected != m_inspector->layerIndex() ||
+        (selected >= 0 && m_engine->layerId(selected) != m_inspector->layerId()))
+        syncLayerSelection(selected, false);
     refreshViewports();
 }
 
@@ -1548,12 +1544,27 @@ void MainWindow::selectLayer(int index)
           return;
       }
     }
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        for (int group = m_engine->groupIndexOf(index); group >= 0; group = m_engine->groupIndexOf(group))
+            m_engine->layer(group)->collapsed = false;
+    }
     refreshLayerList();
     m_layerTable->setCurrentRow(index);
-    m_view->setLayer(index);
-    m_inspector->setLayer(index);
-    if (index >= 0) m_tabs->setCurrentIndex(0);
-    m_lastSelected = index;
+    syncLayerSelection(m_layerTable->currentRow(), true);
+}
+
+void MainWindow::syncLayerSelection(int row, bool focusInspector)
+{
+    const quint64 id = m_engine->layerId(row);
+    if (row != m_inspector->layerIndex() || id != m_inspector->layerId()) m_inspector->setLayer(row);
+    m_previews->setCurrentLayer(id);
+    if (focusInspector && row >= 0) m_tabs->setCurrentIndex(0);
+    if (m_tabs->currentIndex() != 1) {
+        if (m_timelineWindow) m_timelineWindow->setCurrentLayer(id);
+        m_view->setLayer(row);
+    }
+    updateCoTargets();
 }
 
 int MainWindow::currentLayer() const { return m_tabs->currentIndex() == 1 ? m_engine->indexOfId(m_selectedViewport) : m_layerTable->currentRow(); }
@@ -2451,7 +2462,6 @@ void MainWindow::moveCurrentLayer(int delta)
     const LayerTree after = tree::moved(t, {cur.id}, before, cur.parent);
     if (after == t || refuse3d(after)) return;
     m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Reorder Layers")));
-    selectLayer(m_engine->indexOfId(cur.id));
 }
 
 void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
@@ -2479,7 +2489,8 @@ void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
     if (after == t || refuse3d(after)) return;
     const bool into = parent && std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].parent != parent; });
     m_undo->push(new cmd::SetStructure(m_engine, t, after, into ? QStringLiteral("Move into Group") : QStringLiteral("Move Layers")));
-    selectLayer(m_engine->indexOfId(ids.front()));
+    const int moved = m_engine->indexOfId(ids.front());
+    if (!m_layerTable->selectedRows().contains(moved)) selectLayer(moved);
 }
 
 void MainWindow::createGroup()

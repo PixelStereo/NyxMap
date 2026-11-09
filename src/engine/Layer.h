@@ -301,6 +301,8 @@ struct Layer {
     float opacity = 1.0f;
     BlendMode blend = BlendMode::Normal;
 
+    int roiMode = 0; // 0 rectangle, 1 triangle, 2 quad
+    std::array<QPointF, 4> roiPoints{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
     QRectF roi{0, 0, 1, 1};      // part of the source picture used (normalized, origin top left)
     ColorAdjust color;
     bool effectsEnabled = true;   // general switch of the effect chain

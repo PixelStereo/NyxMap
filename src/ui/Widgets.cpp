@@ -1,4 +1,5 @@
 #include "Widgets.h"
+#include "Mapping.h"
 #include "ColorPicker.h"
 #include <QDateTime>
 #include <QSpinBox>
@@ -328,6 +329,26 @@ void RoiEditor::setRoi(const QRectF &r)
     update();
 }
 
+void RoiEditor::setPolygon(int mode, const std::array<QPointF, 4> &points)
+{
+    if (mode != m_roiMode) m_drag = -1;
+    if (m_drag >= 0 || (mode == m_roiMode && points == m_roiPoints)) return;
+    m_roiMode = mode;
+    m_roiPoints = points;
+    setToolTip(mode ? QStringLiteral("Drag the numbered points on the source image")
+                    : QStringLiteral("Drag a side to crop the image, or drag inside to move the rectangle"));
+    update();
+}
+
+QPolygonF RoiEditor::polygon() const
+{
+    const QRectF pic = picture();
+    QPolygonF result;
+    for (int i = 0; i < (m_roiMode == 1 ? 3 : 4); ++i)
+        result << QPointF(pic.left() + m_roiPoints[i].x() * pic.width(), pic.top() + m_roiPoints[i].y() * pic.height());
+    return result;
+}
+
 int RoiEditor::heightForWidth(int w) const { return std::clamp(int(std::lround((w - 16) / m_aspect)) + 16, 80, 400); }
 
 QRectF RoiEditor::picture() const
@@ -354,6 +375,25 @@ void RoiEditor::paintEvent(QPaintEvent *)
     } else {
         p.drawImage(pic, m_image);
     }
+    if (m_roiMode) {
+        const QPolygonF shape = polygon();
+        QPainterPath outside;
+        outside.addRect(pic);
+        outside.addPolygon(shape);
+        outside.setFillRule(Qt::OddEvenFill);
+        p.fillPath(outside, QColor(0, 0, 0, 150));
+        p.setPen(QPen(theme::accent(), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolygon(shape);
+        if (isEnabled()) for (int i = 0; i < shape.size(); ++i) {
+            p.setBrush(theme::accent());
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(shape[i], 8, 8);
+            p.setPen(QColor(20, 20, 25));
+            p.drawText(QRectF(shape[i] - QPointF(8, 8), QSizeF(16, 16)), Qt::AlignCenter, QString::number(i + 1));
+        }
+        return;
+    }
     const QRectF c(pic.left() + m_roi.left() * pic.width(), pic.top() + m_roi.top() * pic.height(),
                    m_roi.width() * pic.width(), m_roi.height() * pic.height());
     // Unused part dimmed
@@ -379,6 +419,12 @@ void RoiEditor::paintEvent(QPaintEvent *)
 
 int RoiEditor::hit(QPointF p) const
 {
+    if (m_roiMode) {
+        const auto shape = polygon();
+        for (int i = 0; i < shape.size(); ++i)
+            if (QLineF(shape[i], p).length() <= 10) return i;
+        return -1;
+    }
     const QRectF pic = picture();
     const QRectF c(pic.left() + m_roi.left() * pic.width(), pic.top() + m_roi.top() * pic.height(),
                    m_roi.width() * pic.width(), m_roi.height() * pic.height());
@@ -413,6 +459,21 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
 {
     const QRectF pic = picture();
     const QPointF n((e->position().x() - pic.left()) / pic.width(), (e->position().y() - pic.top()) / pic.height());
+    if (m_roiMode) {
+        if (m_drag < 0) {
+            setCursor(hit(e->position()) >= 0 ? Qt::OpenHandCursor : Qt::ArrowCursor);
+            return;
+        }
+        const QPointF point(std::clamp(n.x(), 0.0, 1.0), std::clamp(n.y(), 0.0, 1.0));
+        auto points = m_roiPoints;
+        points[m_drag] = point;
+        if (points != m_roiPoints && validRoiPolygon(points.data(), m_roiMode == 1 ? 3 : 4)) {
+            m_roiPoints = points;
+            update();
+            emit roiPointEdited(m_drag, point);
+        }
+        return;
+    }
     if (m_drag < 0) {
         const int h = hit(e->position());
         setCursor(h == 0 || h == 2 ? Qt::SizeHorCursor : h == 1 || h == 3 ? Qt::SizeVerCursor : h == 4 ? Qt::SizeAllCursor

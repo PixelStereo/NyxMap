@@ -21,6 +21,7 @@ class LayerTable : public QWidget
     Q_OBJECT
 public:
     struct Row {
+        quint64 id = 0;
         QString name, tag, source, effects, blend, playback;
         QColor color;               // of its kind
         bool enabled = true, error = false;
@@ -38,7 +39,7 @@ public:
 
     explicit LayerTable(QWidget *parent = nullptr);
 
-    void setRows(const std::vector<Row> &rows); // rebuilds if the count changes, otherwise updates in place
+    bool setRows(const std::vector<Row> &rows); // true if the order, visibility or membership changed
     int currentRow() const;
     void setCurrentRow(int row);
     QList<int> selectedRows() const; // in order
@@ -47,6 +48,7 @@ public:
 
 signals:
     void currentRowChanged(int row);
+    void rowClicked(int row);
     void selectionChanged(); // the rows selected (selectedRows) changed
     void addClicked();
     void groupClicked();

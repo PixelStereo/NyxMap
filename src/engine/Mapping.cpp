@@ -3,6 +3,19 @@
 #include <algorithm>
 #include <cmath>
 
+bool validRoiPolygon(const QPointF *points, int count)
+{
+    double winding = 0;
+    for (int i = 0; i < count; ++i) {
+        const QPointF a = points[(i + 1) % count] - points[i];
+        const QPointF b = points[(i + 2) % count] - points[(i + 1) % count];
+        const double cross = a.x() * b.y() - a.y() * b.x();
+        if (std::abs(cross) < 1e-6 || (i && cross * winding <= 0)) return false;
+        winding = cross;
+    }
+    return true;
+}
+
 Homography Homography::squareToQuad(const QPointF q[4])
 {
     // Heckbert, "Fundamentals of Texture Mapping": unit square -> quadrilateral.

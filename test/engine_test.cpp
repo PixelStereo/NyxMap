@@ -833,7 +833,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     for (int i = 0; i < 10; ++i) e.renderFrame();
     const QPointF cp = e.layer(gen)->mapping.controlPoint(1, 1);
     CHECK(e.saveProject(tmp + "/a.nyxmap", {}, &err));
+    bool sawPartialLayers = false, sawCompleteLayers = false;
+    const auto observer = QObject::connect(&e, &Engine::layersChanged, &e, [&] {
+        const int count = e.layerCount();
+        sawPartialLayers |= count > V && count < V + 2;
+        sawCompleteLayers |= count == V + 2;
+    });
     CHECK(e.loadProject(tmp + "/a.nyxmap", nullptr, &err));
+    QObject::disconnect(observer);
+    CHECK(!sawPartialLayers && sawCompleteLayers);
     CHECK(err.isEmpty());
     CHECK(e.saveProject(tmp + "/b.nyxmap", {}, &err));
     QJsonObject a = readJson(tmp + "/a.nyxmap"), b = readJson(tmp + "/b.nyxmap");
@@ -4355,6 +4363,36 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     } // masks
 
     if (area("rendering")) {
+    // The ROI samples source coordinates before the destination mapping.
+    {
+        e.newProject();
+        e.setCompositionSize({64, 64});
+        QImage source(64, 64, QImage::Format_RGB32);
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 0; x < source.width(); ++x)
+                source.setPixelColor(x, y, y < 32 ? Qt::red : Qt::blue);
+        const QString path = tmp + "/roi-shapes.png";
+        CHECK(source.save(path));
+        const int row = e.addLayer("ROI shapes");
+        const quint64 id = e.layerId(row);
+        CHECK(e.setLayerImage(row, path, &err));
+        CHECK(e.setParameter(id, "roi/mode", "triangle"));
+        e.renderFrame();
+        QImage output = e.grabOutput();
+        CHECK(output.pixelColor(48, 12).red() > 240 && output.pixelColor(12, 48).blue() < 10);
+        CHECK(e.setParameter(id, "roi/mode", "quad"));
+        CHECK(e.setParameter(id, "roi/point/3/y", .45));
+        CHECK(e.setParameter(id, "roi/point/4/y", .25));
+        CHECK(e.setParameter(id, "roi/point/4/x", .20));
+        e.renderFrame();
+        output = e.grabOutput();
+        CHECK(output.pixelColor(12, 48).red() > 240 && output.pixelColor(48, 48).red() > 240);
+        CHECK(e.saveProject(tmp + "/roi-shapes.nyxmap", {}, &err));
+        CHECK(e.loadProject(tmp + "/roi-shapes.nyxmap", nullptr, &err));
+        CHECK(e.parameterValue(id, "roi/mode").toString() == "quad" &&
+              std::abs(e.parameterValue(id, "roi/point/4/x").toDouble() - .20) < 1e-6);
+        e.newProject();
+    }
     // A delayed GPU share reads the old front at the end of this tick.
     // The renderer must not write into that buffer on the next tick.
     {

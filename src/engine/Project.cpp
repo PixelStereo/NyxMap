@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <cmath>
 
 static constexpr int kProjectFormat = 1; // the project file's format: the version that writes it reads only this one
@@ -882,9 +883,13 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
         for (const auto &entry : layers)
             m_nextId = std::max(m_nextId, entry.toObject().value("id").toString().toULongLong() + 1);
     }
-    for (int i = 0; i < layers.size(); ++i) {
-        int idx = addLayer(QString(), layerCount());
-        layerFromJson(idx, layers[i].toObject(), dir, &warnings);
+    {
+        // The layer list is incomplete here. Publish it once after the project and its references are restored.
+        const QSignalBlocker batch(this);
+        for (const auto &entry : layers) {
+            const int idx = addLayer(QString(), layerCount());
+            layerFromJson(idx, entry.toObject(), dir, &warnings);
+        }
     }
     {
         Lock lk(&m_mutex);

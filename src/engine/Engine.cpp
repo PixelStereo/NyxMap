@@ -241,7 +241,15 @@ bool Engine::initialize(QString *err)
                                    "#version 330 core\nuniform sampler2D u_tex; uniform vec4 u_roi; uniform vec3 u_add;\n"
                                    "uniform vec3 u_remove; uniform vec3 u_balance; uniform int u_unpremul;\n"
                                    "uniform sampler2D u_mask; uniform int u_maskMode; in vec2 v_uv; out vec4 o;\n"
-                                   "void main(){ vec4 c = texture(u_tex, mix(u_roi.xy, u_roi.zw, v_uv));\n"
+                                   "uniform int u_roiMode; uniform vec2 u_triangle[3]; uniform mat3 u_quad;\n"
+                                   "float side(vec2 a, vec2 b, vec2 p) { vec2 e=b-a, d=p-a; return e.x*d.y-e.y*d.x; }\n"
+                                   "void main(){ vec2 uv = mix(u_roi.xy, u_roi.zw, v_uv);\n"
+                                   "  if (u_roiMode == 3) { o=vec4(0); return; }\n"
+                                   "  if (u_roiMode == 1) { vec2 p=vec2(uv.x,1.0-uv.y);\n"
+                                   "    float a=side(u_triangle[0],u_triangle[1],p), b=side(u_triangle[1],u_triangle[2],p), c=side(u_triangle[2],u_triangle[0],p);\n"
+                                   "    if (min(a,min(b,c))<0.0 && max(a,max(b,c))>0.0) { o=vec4(0); return; } }\n"
+                                   "  if (u_roiMode == 2) { vec3 p=u_quad*vec3(v_uv.x,1.0-v_uv.y,1.0); uv=vec2(p.x/p.z,1.0-p.y/p.z); }\n"
+                                   "  vec4 c = texture(u_tex, uv);\n"
                                    "  if (u_unpremul != 0 && c.a > 0.0) c.rgb /= c.a;\n"
                                    "  vec3 col = clamp(c.rgb * u_balance * (1.0 - u_remove) + u_add, 0.0, 1.0);\n"
                                    // Color through a mask: 1 as it is, 2 inverted (luminance times alpha)
@@ -324,6 +332,9 @@ bool Engine::initialize(QString *err)
     m_maskChannelsLoc = f->glGetUniformLocation(m_maskProgram, "u_channels");
     m_prepTexLoc = f->glGetUniformLocation(m_prepProgram, "u_tex");
     m_prepRoiLoc = f->glGetUniformLocation(m_prepProgram, "u_roi");
+    m_prepRoiModeLoc = f->glGetUniformLocation(m_prepProgram, "u_roiMode");
+    m_prepRoiTriangleLoc = f->glGetUniformLocation(m_prepProgram, "u_triangle[0]");
+    m_prepRoiQuadLoc = f->glGetUniformLocation(m_prepProgram, "u_quad");
     m_prepAddLoc = f->glGetUniformLocation(m_prepProgram, "u_add");
     m_prepRemoveLoc = f->glGetUniformLocation(m_prepProgram, "u_remove");
     m_prepUnpremulLoc = f->glGetUniformLocation(m_prepProgram, "u_unpremul");

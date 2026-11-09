@@ -751,11 +751,36 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
     l.rawH = h;
     QRectF c = l.roi.normalized() & Layer::fullRoi();
     if (c.width() < 1e-4 || c.height() < 1e-4) c = Layer::fullRoi();
-    const bool restricted = c != Layer::fullRoi();
+    int roiMode = l.roiMode;
+    double cropWidth = w * c.width(), cropHeight = h * c.height();
+    const auto &points = l.roiPoints;
+    Homography quad;
+    if (roiMode) {
+        if (!validRoiPolygon(points.data(), roiMode == 1 ? 3 : 4))
+            roiMode = 3; // invalid geometry produces transparent pixels
+        if (roiMode == 1) {
+            c = QRectF(QPointF(std::min({points[0].x(), points[1].x(), points[2].x()}),
+                               std::min({points[0].y(), points[1].y(), points[2].y()})),
+                       QPointF(std::max({points[0].x(), points[1].x(), points[2].x()}),
+                               std::max({points[0].y(), points[1].y(), points[2].y()})));
+            cropWidth = w * c.width();
+            cropHeight = h * c.height();
+        } else if (roiMode == 2) {
+            quad = Homography::squareToQuad(points.data());
+            auto edge = [&](int a, int b) {
+                const QPointF d = points[a] - points[b];
+                return std::hypot(d.x() * w, d.y() * h);
+            };
+            cropWidth = (edge(0, 1) + edge(3, 2)) / 2;
+            cropHeight = (edge(0, 3) + edge(1, 2)) / 2;
+        }
+    }
+    const bool restricted = roiMode || c != Layer::fullRoi();
     const ColorAdjust col = l.color.effective(); // switches honoured once, here
     if (restricted || !col.isIdentity() || premultiplied) {
         auto f = gl();
-        const int cw = std::max(1, int(std::lround(w * c.width()))), ch = std::max(1, int(std::lround(h * c.height())));
+        const int cw = std::clamp(int(std::lround(cropWidth)), 1, std::max(1, w));
+        const int ch = std::clamp(int(std::lround(cropHeight)), 1, std::max(1, h));
         l.prepTarget.ensure(cw, ch);
         if (!l.prepTarget.ready(cw, ch)) {
             // Fail closed: never expose unprocessed media when ROI/color
@@ -772,6 +797,16 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
         f->glBindTexture(GL_TEXTURE_2D, tex);
         f->glUniform1i(m_prepTexLoc, 0);
         // ROI: top-left origin in the UI, textures in OpenGL convention (origin bottom left)
+        f->glUniform1i(m_prepRoiModeLoc, roiMode);
+        if (roiMode == 1) {
+            const GLfloat coords[] = {float(points[0].x()), float(points[0].y()), float(points[1].x()),
+                                      float(points[1].y()), float(points[2].x()), float(points[2].y())};
+            f->glUniform2fv(m_prepRoiTriangleLoc, 3, coords);
+        } else if (roiMode == 2) {
+            const GLfloat matrix[] = {float(quad.a), float(quad.d), float(quad.g), float(quad.b), float(quad.e),
+                                      float(quad.h), float(quad.c), float(quad.f), 1.f};
+            f->glUniformMatrix3fv(m_prepRoiQuadLoc, 1, GL_FALSE, matrix);
+        }
         f->glUniform4f(m_prepRoiLoc, float(c.left()), float(1.0 - c.bottom()), float(c.right()), float(1.0 - c.top()));
         f->glUniform3f(m_prepAddLoc, col.add[0], col.add[1], col.add[2]);
         f->glUniform3f(m_prepRemoveLoc, col.remove[0], col.remove[1], col.remove[2]);
@@ -1745,6 +1780,7 @@ void Engine::readSourcePreview()
     f->glActiveTexture(GL_TEXTURE0);
     f->glBindTexture(GL_TEXTURE_2D, l->rawTex);
     f->glUniform1i(m_prepTexLoc, 0);
+    f->glUniform1i(m_prepRoiModeLoc, 0);
     f->glUniform4f(m_prepRoiLoc, 0, 0, 1, 1);
     f->glUniform3f(m_prepAddLoc, 0, 0, 0);
     f->glUniform3f(m_prepRemoveLoc, 0, 0, 0);

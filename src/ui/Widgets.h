@@ -17,6 +17,7 @@ class QPainter;
 #include <QRectF>
 #include <QWidget>
 #include <functional>
+#include <array>
 #include <vector>
 
 // A button of one symbol (+, −, ⧉) in a tight bar: narrow, as high as the words beside it
@@ -241,12 +242,14 @@ public:
     void setImage(const QImage &img);
     void setAspect(double aspect); // used while no preview is available
     void setRoi(const QRectF &r);
+    void setPolygon(int mode, const std::array<QPointF, 4> &points);
     QRectF roi() const { return m_roi; }
     QSize sizeHint() const override { return QSize(320, 200); }
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int w) const override;
 
 signals:
+    void roiPointEdited(int point, QPointF position);
     void roiEdited(const QRectF &r); // continuous while dragging
 
 protected:
@@ -256,11 +259,14 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override;
 
 private:
+    QPolygonF polygon() const;
     QRectF picture() const; // image area in the widget
     int hit(QPointF p) const;   // 0 left, 1 top, 2 right, 3 bottom, 4 inside, -1 none
     QImage m_image;
     double m_aspect = 16.0 / 9.0;
     QRectF m_roi{0, 0, 1, 1}, m_dragStart;
+    int m_roiMode = 0;
+    std::array<QPointF, 4> m_roiPoints{};
     int m_drag = -1;
     QPointF m_pressNorm;
 };

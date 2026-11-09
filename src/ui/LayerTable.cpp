@@ -1,4 +1,5 @@
 #include "LayerTable.h"
+#include <QSet>
 #include "Widgets.h"
 
 #include <QApplication>
@@ -58,7 +59,9 @@ class LayerGrid : public QTableWidget
 {
 public:
     using QTableWidget::QTableWidget;
+    int anchor() const { return m_anchor; }
     void setAnchor(int row) { m_anchor = row; }
+    void cancelPendingPress() { m_pendingPress.reset(); m_pressRow = -1; m_rangePress = false; }
     const std::vector<LayerTable::Row> *rows = nullptr;
     std::function<void(int, const QStringList &)> onDrop;
     std::function<void(const QList<int> &, int, int)> onMove;
@@ -189,6 +192,28 @@ protected:
         }
         if (e->button() == Qt::LeftButton && col == ColName && rows && row < int(rows->size()) && onArrow(row, p.x())) {
             if (onCollapse) onCollapse(row);
+            return;
+        }
+        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier)) {
+            const int previous = currentRow(), previousColumn = currentColumn();
+            auto *selection = selectionModel();
+            const bool remove = selection->isRowSelected(row, QModelIndex());
+            int current = row;
+            {
+                const QSignalBlocker block(this);
+                selection->select(model()->index(row, 0), QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
+                if (remove) {
+                    const auto remaining = selection->selectedRows();
+                    current = previous >= 0 && selection->isRowSelected(previous, QModelIndex()) ? previous
+                              : remaining.isEmpty() ? -1 : remaining.front().row();
+                }
+                selection->setCurrentIndex(current < 0 ? QModelIndex() : model()->index(current, ColName),
+                                           QItemSelectionModel::NoUpdate);
+            }
+            m_anchor = current;
+            m_rangePress = true;
+            emit currentCellChanged(current, ColName, previous, previousColumn);
+            emit itemSelectionChanged();
             return;
         }
         if (e->button() == Qt::LeftButton && col != ColVisible && col != ColLock && col != ColSolo) {
@@ -499,6 +524,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         emit visibilityToggled(it->row(), it->checkState() == Qt::Checked);
     });
     connect(m_table, &QTableWidget::cellClicked, this, [this](int row, int col) {
+        if (row == m_table->currentRow() && m_table->selectionModel()->isRowSelected(row, QModelIndex()))
+            emit rowClicked(row);
         if (col == ColLock) emit lockToggled(row);
         if (col == ColSolo && row >= 0 && row < int(m_rows.size()) && !m_rows[size_t(row)].viewport) emit soloToggled(row);
     });
@@ -538,7 +565,7 @@ QList<int> LayerTable::selectedRows() const
 
 void LayerTable::setCurrentRow(int row)
 {
-    if (row != m_table->currentRow()) static_cast<LayerGrid *>(m_table)->setAnchor(row);
+    static_cast<LayerGrid *>(m_table)->setAnchor(row);
     m_updating = true;
     if (row < 0) {
         m_table->setCurrentCell(-1, -1);
@@ -561,11 +588,12 @@ void LayerTable::startRename(int row)
     m_table->setCellWidget(row, ColName, edit);
     edit->setFocus();
     QPointer<RenameEdit> guard(edit);
-    connect(edit, &QLineEdit::editingFinished, this, [this, guard, row] {
+    connect(edit, &QLineEdit::editingFinished, this, [this, guard, row, id = r.id] {
         if (!guard || guard->property("done").toBool()) return;
         guard->setProperty("done", true);
         const QString name = guard->text().trimmed();
-        const bool ok = !guard->cancelled && !name.isEmpty() && row < int(m_rows.size()) && name != m_rows[size_t(row)].name;
+        const bool ok = !m_updating && !guard->cancelled && !name.isEmpty() && row < int(m_rows.size()) &&
+                        m_rows[size_t(row)].id == id && name != m_rows[size_t(row)].name;
         QTimer::singleShot(0, this, [this, guard, row] {
             if (guard && m_table->cellWidget(row, ColName) == guard) m_table->removeCellWidget(row, ColName);
             m_table->setFocus();
@@ -704,19 +732,45 @@ void LayerTable::updateRow(int r, const Row &row)
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-void LayerTable::setRows(const std::vector<Row> &rows)
+bool LayerTable::setRows(const std::vector<Row> &rows)
 {
+    const bool changed = !std::equal(m_rows.begin(), m_rows.end(), rows.begin(), rows.end(),
+        [](const Row &a, const Row &b) { return a.id == b.id && a.hidden == b.hidden; });
+    auto *grid = static_cast<LayerGrid *>(m_table);
+    auto oldId = [this](int row) -> quint64 {
+        return row >= 0 && row < int(m_rows.size()) ? m_rows[size_t(row)].id : 0;
+    };
+    const quint64 currentId = oldId(m_table->currentRow()), anchorId = oldId(grid->anchor());
+    QSet<quint64> selected;
+    if (changed)
+        for (int row : selectedRows()) selected.insert(oldId(row));
+
     m_updating = true;
-    const int keep = m_table->currentRow();
     m_rows = rows;
-    if (m_table->rowCount() != int(rows.size())) {
+    if (changed) {
+        grid->cancelPendingPress();
         m_table->clearContents();
         m_table->setRowCount(int(rows.size()));
-        if (keep >= 0 && keep < int(rows.size()))
-            m_table->selectionModel()->setCurrentIndex(m_table->model()->index(keep, ColName),
-                                                       QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     }
     for (int r = 0; r < int(rows.size()); ++r) updateRow(r, rows[size_t(r)]);
+    if (changed) {
+        int current = -1, anchor = -1, firstSelected = -1;
+        QItemSelection restored;
+        for (int r = 0; r < int(rows.size()); ++r) {
+            const auto &row = rows[size_t(r)];
+            if (!row.id || row.hidden || row.viewport) continue;
+            if (row.id == anchorId) anchor = r;
+            if (!selected.contains(row.id)) continue;
+            if (firstSelected < 0) firstSelected = r;
+            if (row.id == currentId) current = r;
+            restored.select(m_table->model()->index(r, 0), m_table->model()->index(r, m_table->columnCount() - 1));
+        }
+        if (current < 0) current = firstSelected;
+        m_table->selectionModel()->select(restored, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_table->selectionModel()->setCurrentIndex(current < 0 ? QModelIndex() : m_table->model()->index(current, ColName),
+                                                   QItemSelectionModel::NoUpdate);
+        grid->setAnchor(anchor >= 0 ? anchor : current);
+    }
     m_updating = false;
+    return changed;
 }
-

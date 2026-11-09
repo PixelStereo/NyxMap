@@ -209,6 +209,20 @@ const std::vector<Parameter *> &Layer::parameters()
                 })
                 .step(0.001);
 
+        const QStringList roiModes{QStringLiteral("rectangle"), QStringLiteral("triangle"), QStringLiteral("quad")};
+        add("roi/mode", "ROI › Shape", T::Choice).choices(roiModes).byDefault(roiModes.front()).ramp(Parameter::Ramp::Cut)
+            .bind([self, roiModes] { return QVariant(roiModes.value(self->roiMode)); },
+                  [self, roiModes](const QVariant &v) { self->roiMode = std::max(0, int(roiModes.indexOf(v.toString()))); });
+        for (int point = 0; point < 4; ++point)
+            for (int axis = 0; axis < 2; ++axis)
+                num(QStringLiteral("roi/point/%1/%2").arg(point + 1).arg(axis ? "y" : "x"),
+                    QStringLiteral("ROI › Point %1 %2").arg(point + 1).arg(axis ? "Y" : "X"),
+                    0, 1, axis ? (point >= 2 ? 1 : 0) : (point == 1 || point == 2 ? 1 : 0),
+                    [self, point, axis] { return axis ? self->roiPoints[point].y() : self->roiPoints[point].x(); },
+                    [self, point, axis](double v) {
+                        (axis ? self->roiPoints[point].ry() : self->roiPoints[point].rx()) = std::clamp(v, 0.0, 1.0);
+                    }).step(0.001).pointComponent(axis);
+
         // Color: the section's switch, the balance, the colors removed and added (each with its switch)
         flag("color/enable", "Color › Enable", true, &color.enabled);
         const double T_ = ColorAdjust::kTempRange, N = ColorAdjust::kTintRange;
