@@ -135,7 +135,7 @@ def run(folder):
     for line in sys.stdin.buffer:
         try:
             width, height, mask = map(int, line.split())
-            if not (0 < width <= 2048 and 0 < height <= 2048):
+            if width <= 0 or height <= 0:
                 raise ValueError("Invalid frame size")
             data = sys.stdin.buffer.read(width * height * 4)
             if len(data) != width * height * 4:

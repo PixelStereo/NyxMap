@@ -250,7 +250,10 @@ int main(int argc, char **argv)
             engine.setHandModelsDirectory(qEnvironmentVariable("NYXMAP_HAND_MODELS"));
             const int camera = engine.addLayer("Person");
             const auto cameraId = engine.layerId(camera);
-            require(engine.setLayerImage(camera, person, &error), error);
+            const auto native = QImage(person).scaledToWidth(2304, Qt::SmoothTransformation);
+            const auto nativePath = dir.filePath("native-person.png");
+            require(!native.isNull() && native.save(nativePath), "write source above the old protocol limit");
+            require(engine.setLayerImage(camera, nativePath, &error), error);
             const int mask = engine.addLayer("MediaPipe mask");
             const auto maskId = engine.layerId(mask);
             require(engine.setLayerSourceLayer(mask, cameraId, LayerTap::MediaPipeMask, &error), error);
@@ -269,6 +272,8 @@ int main(int argc, char **argv)
             require(renderUntilDone(engine, hasMixedAlpha), "MediaPipe mask reaches the compositor as foreground alpha");
             require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipeCutout), "select the synchronized cutout");
             require(renderUntilDone(engine, hasMixedAlpha), "the same-frame person cutout preserves foreground alpha");
+            require(engine.grabLayerSource(engine.indexOfId(maskId)).size() == native.size(),
+                    "synchronized cutout preserves the native dimensions above 2048 pixels");
             require(engine.setLayerTap(engine.indexOfId(maskId), LayerTap::MediaPipeParts), "select the body parts texture");
             const auto hasColoredParts = [&] {
                 const QImage result = engine.grabLayerSource(engine.indexOfId(maskId));

@@ -421,15 +421,14 @@ struct HandTracking::Worker::Private {
                 const int maskWidth = frame.detections.value("mask_width").toInt();
                 const int maskHeight = frame.detections.value("mask_height").toInt();
                 const auto mask = QByteArray::fromBase64(frame.detections.take("mask").toString().toLatin1());
-                if (maskWidth > 0 && maskHeight > 0 && maskWidth <= 2048 && maskHeight <= 2048 &&
-                    mask.size() == maskWidth * maskHeight) {
+                if (maskWidth > 0 && maskHeight > 0 && mask.size() == qint64(maskWidth) * maskHeight) {
                     QImage overlay(maskWidth, maskHeight, QImage::Format_ARGB32_Premultiplied);
                     frame.pictures[0] = QImage(maskWidth, maskHeight, QImage::Format_RGBA8888);
                     for (int y = 0; y < maskHeight; ++y) {
                         auto *row = reinterpret_cast<QRgb *>(overlay.scanLine(y));
                         auto *alpha = frame.pictures[0].scanLine(y);
                         for (int x = 0; x < maskWidth; ++x) {
-                            const int opacity = uchar(mask.at(y * maskWidth + x));
+                            const int opacity = uchar(mask.at(qsizetype(y) * maskWidth + x));
                             row[x] = qPremultiply(qRgba(30, 180, 255, opacity * 105 / 255));
                             std::fill_n(alpha + x * 4, 3, uchar(255));
                             alpha[x * 4 + 3] = uchar(opacity);
@@ -450,8 +449,7 @@ struct HandTracking::Worker::Private {
                 const int partsWidth = frame.detections.value("parts_width").toInt();
                 const int partsHeight = frame.detections.value("parts_height").toInt();
                 const auto parts = QByteArray::fromBase64(frame.detections.take("parts").toString().toLatin1());
-                if (partsWidth > 0 && partsHeight > 0 && partsWidth <= 2048 && partsHeight <= 2048 &&
-                    parts.size() == partsWidth * partsHeight) {
+                if (partsWidth > 0 && partsHeight > 0 && parts.size() == qint64(partsWidth) * partsHeight) {
                     static const QRgb palette[] = {0, qRgb(242, 96, 220), qRgb(255, 181, 90),
                                                    qRgb(100, 208, 240), qRgb(67, 221, 138), qRgb(254, 222, 80)};
                     auto &hair = frame.pictures[1];
@@ -462,7 +460,7 @@ struct HandTracking::Worker::Private {
                         auto *hairRow = reinterpret_cast<QRgb *>(hair.scanLine(y));
                         auto *colorRow = reinterpret_cast<QRgb *>(colors.scanLine(y));
                         for (int x = 0; x < partsWidth; ++x) {
-                            const auto label = uchar(parts.at(y * partsWidth + x));
+                            const auto label = uchar(parts.at(qsizetype(y) * partsWidth + x));
                             hairRow[x] = label == 1 ? qRgb(255, 255, 255) : 0;
                             colorRow[x] = label < std::size(palette) ? palette[label] : 0;
                         }
@@ -474,14 +472,14 @@ struct HandTracking::Worker::Private {
                     const int width = frame.detections.value(key + "_width").toInt();
                     const int height = frame.detections.value(key + "_height").toInt();
                     const auto data = QByteArray::fromBase64(frame.detections.take(key).toString().toLatin1());
-                    if (width <= 0 || height <= 0 || width > 2048 || height > 2048 || data.size() != width * height) continue;
+                    if (width <= 0 || height <= 0 || data.size() != qint64(width) * height) continue;
                     auto &image = frame.pictures[i + 5];
                     image = QImage(width, height, QImage::Format_RGBA8888);
                     for (int y = 0; y < height; ++y) {
                         auto *line = image.scanLine(y);
                         for (int x = 0; x < width; ++x) {
                             std::fill_n(line + x * 4, 3, uchar(255));
-                            line[x * 4 + 3] = uchar(data.at(y * width + x));
+                            line[x * 4 + 3] = uchar(data.at(qsizetype(y) * width + x));
                         }
                     }
                 }
@@ -575,6 +573,8 @@ struct HandTracking::Worker::Private {
                 frame.error = loaded;
             {
                 std::lock_guard<std::mutex> lock(mutex);
+                frame.completedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
                 if (job.generation == generation) {
                     frames[job.source] = std::move(frame);
                     while (frames.size() > 8) {

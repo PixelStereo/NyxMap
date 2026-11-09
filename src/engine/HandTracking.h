@@ -46,7 +46,7 @@ struct Hand {
 };
 double measure(const Hand &hand, Feature feature);
 struct Frame {
-    qint64 timeNs = 0;
+    qint64 timeNs = 0, completedNs = 0;
     std::array<Hand, 2> hands{};
     QString error;
     QImage preview;

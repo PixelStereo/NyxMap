@@ -3,6 +3,7 @@
 #include "Gl.h"
 #include <QJsonDocument>
 #include <algorithm>
+#include <cstring>
 #include <map>
 #include <set>
 
@@ -24,6 +25,80 @@ QImage imageOf(const std::vector<PixelAnalysis::Pixel> &pixels, int w, int h)
     }
     return image;
 }
+// The full-size path uses one byte-RGBA PBO per source. It never builds a list of per-pixel coordinates.
+struct FrameReadback {
+    GLuint fbo = 0, pbo = 0;
+    GLsync fence = nullptr;
+    QSize size;
+    qint64 submitted = 0;
+
+    void release()
+    {
+        auto f = gl();
+        if (fence) f->glDeleteSync(fence);
+        if (pbo) f->glDeleteBuffers(1, &pbo);
+        if (fbo) f->glDeleteFramebuffers(1, &fbo);
+        *this = {};
+    }
+
+    QImage collect(qint64 &timestamp)
+    {
+        if (!fence) return {};
+        auto f = gl();
+        const GLenum ready = f->glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+        if (ready == GL_TIMEOUT_EXPIRED) return {};
+        f->glDeleteSync(fence);
+        fence = nullptr;
+        if (ready == GL_WAIT_FAILED) return {};
+        QImage image(size, QImage::Format_RGBA8888);
+        if (image.isNull()) return {};
+        GLint previous = 0;
+        f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previous);
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+        const auto bytes = GLsizeiptr(image.sizeInBytes());
+        if (const auto *data = static_cast<const uchar *>(f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT))) {
+            for (int y = 0; y < size.height(); ++y)
+                std::memcpy(image.scanLine(y), data + qsizetype(size.height() - 1 - y) * image.bytesPerLine(),
+                            size_t(image.bytesPerLine()));
+            if (!f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER)) image = {};
+        } else {
+            image = {};
+        }
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(previous));
+        timestamp = submitted;
+        return image;
+    }
+
+    void submit(const VisionRuntime::Texture &picture, qint64 now)
+    {
+        if (fence || now - submitted < 66666666) return;
+        auto f = gl();
+        if (!fbo) f->glGenFramebuffers(1, &fbo);
+        if (!pbo) f->glGenBuffers(1, &pbo);
+        GLint previousFbo = 0, previousPbo = 0, alignment = 0;
+        f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousFbo);
+        f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPbo);
+        f->glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, picture.id, 0);
+        if (f->glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+            const QSize dimensions(picture.width, picture.height);
+            if (size != dimensions) {
+                size = dimensions;
+                f->glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(qint64(size.width()) * size.height() * 4), nullptr, GL_STREAM_READ);
+            }
+            f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            f->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            fence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        }
+        f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        f->glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(previousPbo));
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previousFbo));
+        submitted = now;
+    }
+};
 } // namespace
 struct VisionRuntime::Private {
     struct Input {
@@ -33,13 +108,16 @@ struct VisionRuntime::Private {
         std::map<quint64, qint64> pending;
         int width = 0, height = 0;
         quint64 received = 0;
-        qint64 timeNs = 0, lastHandSubmit = 0;
+        qint64 timeNs = 0;
+        FrameReadback readback;
+        QSize pictureSize;
         QString error;
         std::array<Texture2D, HandTracking::pictureCount> masks;
-        std::array<qint64, HandTracking::pictureCount> maskTimes{};
+        std::array<qint64, HandTracking::pictureCount> maskTimes{}, maskReadyTimes{};
         void clearMasks() {
             for (auto &mask : masks) mask.destroy();
             maskTimes.fill(0);
+            maskReadyTimes.fill(0);
         }
     };
     struct Analysis {
@@ -69,6 +147,7 @@ void VisionRuntime::release()
     for (auto &[key, input] : d->inputs) {
         if (input.sampler) input.sampler->release();
         input.clearMasks();
+        input.readback.release();
     }
     d->inputs.clear();
     d->analyses.clear();
@@ -114,13 +193,26 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             input.pixels.clear();
             input.timeNs = 0;
             input.clearMasks();
+            input.readback.release();
             input.error = "Source has no current picture";
             continue;
         }
-        const int width =
-            request.tasks ? std::max(16, int(320. * picture.width / std::max(picture.width, picture.height))) : 64;
-        const int height =
-            request.tasks ? std::max(16, int(320. * picture.height / std::max(picture.width, picture.height))) : 64;
+        if (request.tasks) {
+            const QSize dimensions(picture.width, picture.height);
+            if (dimensions != input.pictureSize) {
+                input.clearMasks();
+                input.readback.release();
+                input.pictureSize = dimensions;
+            }
+            qint64 timestamp = 0;
+            QImage image = input.readback.collect(timestamp);
+            if (!image.isNull() && image.size() == dimensions)
+                d->worker.submit(key, std::move(image), timestamp, request.tasks);
+            input.readback.submit(picture, now);
+        } else if (input.readback.fbo) {
+            input.readback.release();
+        }
+        constexpr int width = 64, height = 64;
         if (input.width != width || input.height != height) {
             invalidate(key);
             if (input.sampler)
@@ -153,10 +245,6 @@ void VisionRuntime::step(const std::vector<Request> &requests,
                 input.timeNs = timestamp->second;
                 input.received = tag;
                 input.error.clear();
-                if (request.tasks && input.timeNs - input.lastHandSubmit >= 66666666) {
-                    d->worker.submit(key, imageOf(input.pixels, width, height), input.timeNs, request.tasks);
-                    input.lastHandSubmit = input.timeNs;
-                }
             }
             input.pending.erase(tag);
         }
@@ -166,12 +254,15 @@ void VisionRuntime::step(const std::vector<Request> &requests,
                 if (!(request.pictures & (1u << i))) {
                     input.masks[i].destroy();
                     input.maskTimes[i] = 0;
+                    input.maskReadyTimes[i] = 0;
                     continue;
                 }
                 const auto &mask = frame.pictures[i];
-                if (!mask.isNull() && frame.timeNs > input.maskTimes[i] && now - frame.timeNs <= 500000000) {
+                if (!mask.isNull() && frame.preview.size() == QSize(picture.width, picture.height) &&
+                    frame.timeNs > input.maskTimes[i] && now - frame.completedNs <= 500000000) {
                     input.masks[i].uploadImage(flippedVertically(mask));
                     input.maskTimes[i] = frame.timeNs;
+                    input.maskReadyTimes[i] = frame.completedNs;
                 }
             }
         } else {
@@ -188,6 +279,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             if (it->second.sampler)
                 it->second.sampler->release();
             it->second.clearMasks();
+            it->second.readback.release();
             invalidate(it->first);
             it = d->inputs.erase(it);
         } else
@@ -227,7 +319,7 @@ VisionRuntime::Texture VisionRuntime::segmentation(const PixelAnalysis::Settings
     const auto found = d->inputs.find(sourceKey(settings));
     if (found == d->inputs.end() || channel < 0 || channel >= int(found->second.masks.size())) return {};
     const auto &input = found->second;
-    const auto time = input.maskTimes[size_t(channel)];
+    const auto time = input.maskReadyTimes[size_t(channel)];
     if (!time || nowNs - time > 500000000) return {};
     const auto &mask = input.masks[size_t(channel)];
     return {mask.tex, mask.w, mask.h};

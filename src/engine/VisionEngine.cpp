@@ -71,7 +71,7 @@ double Engine::visionValue(const Interaction &input)
     if (input.source == InteractionSource::Pixels)
         return m_vision->pixelValue(input.pixels, input.pixelFeature, now);
     const auto frame = m_vision->hands(input.pixels);
-    if (!HandTracking::taskError(frame, input.handFeature).isEmpty() || !frame.timeNs || now - frame.timeNs > 500000000)
+    if (!HandTracking::taskError(frame, input.handFeature).isEmpty() || !frame.timeNs || now - frame.completedNs > 500000000)
         return 0;
     return HandTracking::measure(frame, input.handIndex, input.handFeature, input.handConfidence, input.visionLandmark);
 }
@@ -122,7 +122,7 @@ QString Engine::visionStatus(const PixelAnalysis::Settings &settings, bool hands
         return frame.error;
     if (!frame.timeNs)
         return QStringLiteral("Waiting for MediaPipe detection");
-    if (AudioStream::clockNs() - frame.timeNs > 500000000)
+    if (AudioStream::clockNs() - frame.completedNs > 500000000)
         return QStringLiteral("No recent camera frames");
     const auto results = frame.detections.keys();
     for (const auto &key : results)

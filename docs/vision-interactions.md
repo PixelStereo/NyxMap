@@ -40,7 +40,7 @@ The **Pixels** source can measure any image without either motion FX. Channels a
 | Velocity X / Y | Centroid displacement per second; may be negative |
 | Mean derivative | Change in mean intensity per second; may be negative |
 
-Analysis uses asynchronous GPU readback at 64×64, or the hand-analysis resolution when shared with a hand input. It drops samples when the GPU is busy. These values are suitable for interactive control, not full-resolution measurement. Up to eight distinct source/tap pairs and 128 analyzer configurations are supported. Missing images or data older than half a second yield zero. The first sample and configuration changes reset temporal measurements.
+Pixel analysis uses asynchronous GPU readback at 64×64. It drops samples when the GPU is busy. These values are suitable for interactive control, not full-resolution measurement. Up to eight distinct source/tap pairs and 128 analyzer configurations are supported. Missing images or data older than half a second yield zero. The first sample and configuration changes reset temporal measurements.
 
 ## MediaPipe Tasks
 
@@ -70,15 +70,15 @@ Current releases require this one-time setup, and keep processing local after in
 Normalized image coordinates have Y increasing downward. Each selected measurement can drive a parameter,
 an action condition, or an XY input. The detection selector exposes the first two detections.
 Only requested tasks run for a source. Readback is asynchronous and frames are submitted at up to 15 Hz
-at a maximum side of 320 pixels. The queue keeps the latest pending frame per source, and stale detections
-yield zero after half a second. Tasks use image mode and try the GPU delegate first, then use the CPU when the GPU delegate fails.
+at the source texture’s native dimensions, without a separate resolution cap. The queue keeps the latest pending frame per source, and stale detections
+yield zero after half a second without a completed result. Tasks use image mode and try the GPU delegate first, then use the CPU when the GPU delegate fails.
 The interaction status displays the active delegate. Set `NYXMAP_MEDIAPIPE_DELEGATE=cpu` to force CPU,
 or `NYXMAP_MEDIAPIPE_DELEGATE=gpu` to require GPU. The dedicated hair model may require CPU on Metal. Rerun setup to install the float32 detector and the new models. Stable wrist slots are maintained in NyxMap.
 Face, pose and object indices follow model order. To use the segmentation in a composition, create a layer and choose **Source → From layer**.
 Select the video layer and set **Taken → MediaPipe Foreground Mask**. The mask uses the model’s confidence as white alpha and can be used as a layer matte. **MediaPipe Hair Mask** isolates hair, and
 **MediaPipe Landscape Mask** uses the wide selfie model, **MediaPipe Detailed Hair Mask** uses the dedicated hair model,
 **MediaPipe DeepLab Foreground** masks all recognized non-background classes, and **MediaPipe Multiclass Foreground**
-uses the background confidence from the multiclass selfie model. **MediaPipe Body Parts** gives a colored texture for hair, body skin, face skin, clothes and accessories. **MediaPipe Person Cutout** applies the confidence map to the exact sampled source frame. It is synchronized but limited to the inference resolution. When applying the mask to the live source separately, account for inference latency.
+uses the background confidence from the multiclass selfie model. **MediaPipe Body Parts** gives a colored texture for hair, body skin, face skin, clothes and accessories. **MediaPipe Person Cutout** applies the confidence map to the exact sampled source frame. It is synchronized and keeps the sampled source dimensions. Each model still has its own internal inference grid. When applying the mask to the live source separately, account for inference latency.
 **MediaPipe Pose Skeleton** renders the body as a transparent texture with OpenPose COCO-18 joint order. Indexed measurements expose the normalized hand, face and pose landmarks,
 world coordinates for hands and pose, pose landmark visibility, face blendshape scores, facial transformation matrix components and left/right handedness scores.
 
