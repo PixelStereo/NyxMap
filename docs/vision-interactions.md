@@ -44,13 +44,11 @@ Pixel analysis uses asynchronous GPU readback at 64×64. It drops samples when t
 
 ## MediaPipe Tasks
 
-In **Interactions → MediaPipe**, choose a camera, video or image layer and click
-**Install / Repair MediaPipe…** once. NyxMap installs its local Python environment and
-verified models in the application data directory, then uses them automatically. The
-installer requires an available Python 3.11 or 3.12 and a network connection. Inference
-runs locally after installation.
+Release packages contain a portable Python runtime and the verified models. In
+**Interactions → MediaPipe**, select a camera, video or image layer. The bundled worker
+runs locally without installing Python or downloading models at first launch.
 
-For CI and unattended installations, use
+For source builds and CI inference tests, use
 `python3 scripts/setup_mediapipe.py --directory /path/to/mediapipe-models`.
 To use an existing Python environment, set `NYXMAP_MEDIAPIPE_PYTHON` to its interpreter
 before launching NyxMap. The supported wheels cover macOS Apple Silicon, Linux x86-64,

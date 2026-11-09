@@ -181,7 +181,7 @@ jobs:
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
       - uses: actions/setup-python@v5
-        if: needs.scope.outputs.linux_engine == 'true'
+        if: needs.scope.outputs.linux_engine == 'true' || needs.scope.outputs.package == 'true'
         with:
           python-version: '3.11'
           cache: pip
@@ -233,6 +233,8 @@ jobs:
             --build-arg "BUILDER_UID=$(id -u)" --build-arg "BUILDER_GID=$(id -g)" \
             -f packaging/linux/build.Dockerfile packaging/linux
           mkdir -p "$RUNNER_TEMP/linux-baseline"
+          python -m pip install uv==0.9.28
+          python scripts/setup_mediapipe.py --bundle --directory "$RUNNER_TEMP/linux-baseline/mediapipe"
           docker run --rm \
             -e GITHUB_REF_TYPE -e GITHUB_REF_NAME \
             -v "$PWD:/workspace" -v "$RUNNER_TEMP/linux-baseline:/work" \
@@ -619,13 +621,15 @@ jobs:
           # Resolve and bundle every non-system dependency recursively, including @rpath libraries
           # (e.g. WebP -> SharpYUV). The helper fails closed when a dependency is missing/ambiguous.
           python3 scripts/macos_bundle_deps.py "$APP"
+          python -m pip install uv==0.9.28
+          python scripts/setup_mediapipe.py --bundle --directory "$APP/Contents/Resources/mediapipe"
           # This project is distributed without a paid Apple Developer account:
           # use an ad-hoc signature for bundle integrity only. This is NOT Developer ID
           # signing and cannot bypass Gatekeeper for quarantined downloads.
           while IFS= read -r -d '' binary; do
             file "$binary" | grep -q "Mach-O" || continue
             codesign --force --sign - "$binary"
-          done < <(find "$APP/Contents/Frameworks" "$APP/Contents/PlugIns" -type f -print0)
+          done < <(find "$APP/Contents/Frameworks" "$APP/Contents/PlugIns" "$APP/Contents/Resources/mediapipe/python" -type f -print0)
 
           # Qt WebEngine (the Web Page generator): macdeployqt deploys QtWebEngineCore.framework with its helper
           # process and its resources; a build with it must have them
@@ -800,6 +804,10 @@ jobs:
           Copy-Item build\TouchEngine.dll dist\TouchEngine.dll -Force
           Copy-Item -Recurse -Force build\isf dist\isf
           Copy-Item -Recurse -Force build\audio dist\audio
+          python -m pip install uv==0.9.28
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/setup_mediapipe.py --bundle --directory dist/mediapipe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item LICENSE, LICENSE-EXCEPTION.md, THIRD-PARTY-NOTICES.md -Destination dist -Force
           Copy-Item -Recurse -Force licenses dist\licenses
 

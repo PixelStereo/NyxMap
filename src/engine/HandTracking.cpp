@@ -1,6 +1,7 @@
 #include "HandTracking.h"
 #include "MediaPipeWorkerScript.h"
 #include <QDir>
+#include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -200,8 +201,31 @@ double HandTracking::measure(const Frame &frame, int index, Feature feature, dou
 }
 
 namespace {
+QString bundledPython(const QString &directory)
+{
+#ifdef Q_OS_WIN
+    return QDir(directory).filePath("python/python.exe");
+#else
+    return QDir(directory).filePath("python/bin/python3.11");
+#endif
+}
+}
+
+QString HandTracking::bundledDirectory()
+{
+    const QDir executable(QCoreApplication::applicationDirPath());
+#ifdef Q_OS_MACOS
+    const auto path = executable.absoluteFilePath("../Resources/mediapipe");
+#else
+    const auto path = executable.absoluteFilePath("mediapipe");
+#endif
+    return QFileInfo(bundledPython(path)).isExecutable() ? QDir::cleanPath(path) : QString();
+}
+
+namespace {
 QString mediaPipePython(const QString &directory = {})
 {
+    if (!directory.isEmpty() && QFileInfo(bundledPython(directory)).isExecutable()) return bundledPython(directory);
     const QString configured = qEnvironmentVariable("NYXMAP_MEDIAPIPE_PYTHON");
     if (!configured.isEmpty()) return configured;
 #ifdef Q_OS_WIN
@@ -258,7 +282,7 @@ bool HandTracking::Detector::load(const QString &directory, QString *error)
 {
     d->close();
     if (!QDir(directory).exists() || QDir(directory).entryList({"*.task", "*.tflite"}, QDir::Files).isEmpty()) {
-        if (error) *error = "MediaPipe is not installed. Use Install / Repair MediaPipe in Interactions.";
+        if (error) *error = "MediaPipe runtime or models are missing from this build.";
         return false;
     }
     const QString python = mediaPipePython(directory);
@@ -271,7 +295,9 @@ bool HandTracking::Detector::load(const QString &directory, QString *error)
         environment.insert(QStringLiteral("NYXMAP_MEDIAPIPE_DELEGATE"), QStringLiteral("cpu"));
         d->process.setProcessEnvironment(environment);
     }
-    d->process.start(python, {"-u", "-c", QString::fromUtf8(mediaPipeWorkerScript), directory});
+    QStringList arguments{"-u", "-c", QString::fromUtf8(mediaPipeWorkerScript), directory};
+    if (python == bundledPython(directory)) arguments.prepend(QStringLiteral("-I"));
+    d->process.start(python, arguments);
     if (!d->process.waitForStarted(500)) {
         if (error) *error = d->process.errorString();
         return false;

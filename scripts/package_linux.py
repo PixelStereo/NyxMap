@@ -272,6 +272,9 @@ def package(build, ffmpeg, omt, ndi, output):
          "--desktop-file", desktop, "--icon-file", icon,
          "--icon-filename", "nyxmap"], env=env)
 
+    # Stage after linuxdeploy so it cannot rewrite the wheel/interpreter rpaths.
+    mediapipe = binary / "mediapipe"
+    shutil.copytree(build / "mediapipe", mediapipe, symlinks=True)
     origins = {}
     checked = set()
     while True:
@@ -327,6 +330,9 @@ def package(build, ffmpeg, omt, ndi, output):
                 sys.exit(f"{path}: {problem}")
             notices.append(f"| {path.relative_to(app)} | FFmpeg { (ffmpeg / 'VERSION').read_text().splitlines()[0] } "
                            "| LGPL-2.1+ (built without GPL components) |")
+            continue
+        if path.is_relative_to(mediapipe):
+            notices.append(f"| {path.relative_to(app)} | Portable CPython / PyPI wheels | See the bundled Python and wheel licences |")
             continue
         if path.name in ("NyxMap", "libndi.so.6", "libomt.so", "libvmx.so"):
             continue

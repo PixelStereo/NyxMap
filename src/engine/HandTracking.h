@@ -8,6 +8,7 @@
 #include <vector>
 
 namespace HandTracking {
+QString bundledDirectory();
 enum class Feature {
     Presence,
     Confidence,

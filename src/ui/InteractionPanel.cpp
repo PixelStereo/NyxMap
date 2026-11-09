@@ -22,8 +22,6 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QPlainTextEdit>
-#include <QProcess>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -1556,42 +1554,6 @@ void InteractionPanel::rebuildSettings()
                 edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
             });
             attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *install = new QPushButton(QStringLiteral("Install / Repair MediaPipe…"));
-            form->addRow(install);
-            connect(install, &QPushButton::clicked, this, [this] {
-                QDialog dialog(this);
-                dialog.setWindowTitle(QStringLiteral("Install MediaPipe"));
-                dialog.resize(640, 330);
-                auto *layout = new QVBoxLayout(&dialog);
-                auto *status = new QLabel(QStringLiteral("Downloading the local runtime and models…"));
-                layout->addWidget(status);
-                auto *log = new QPlainTextEdit;
-                log->setReadOnly(true);
-                log->setMaximumBlockCount(250);
-                layout->addWidget(log);
-                auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
-                layout->addWidget(close);
-                connect(close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-                QProcess process;
-                auto readLog = [&] { log->appendPlainText(QString::fromLocal8Bit(process.readAll())); };
-                connect(&process, &QProcess::readyRead, &dialog, readLog);
-                connect(&process, &QProcess::errorOccurred, &dialog, [&](QProcess::ProcessError error) {
-                    if (error == QProcess::FailedToStart) status->setText(process.errorString());
-                });
-                connect(&process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &dialog,
-                        [&](int code, QProcess::ExitStatus exit) {
-                    readLog();
-                    if (code == 0 && exit == QProcess::NormalExit) {
-                        m_engine->setHandModelsDirectory(m_engine->handModelsDirectory());
-                        status->setText(QStringLiteral("MediaPipe is ready."));
-                    } else {
-                        status->setText(QStringLiteral("MediaPipe installation failed. See the log below."));
-                    }
-                });
-                if (!m_engine->startMediaPipeInstall(process))
-                    status->setText(QStringLiteral("Install Python 3.11 or 3.12, then try again."));
-                dialog.exec();
-            });
         }
         if (hands && HandTracking::taskFor(it.handFeature) == HandTracking::taskFor(HandTracking::Feature::FaceBlendshape)) {
             auto *monitor = new QPushButton(QStringLiteral("Face Monitor…"));

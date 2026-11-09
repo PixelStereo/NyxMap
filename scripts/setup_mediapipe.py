@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import os
+import shutil
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -38,16 +40,42 @@ MODELS = {
 }
 
 
+def bundle_python(folder):
+    """Stage a relocatable Python distribution and its native wheels."""
+    runtime = folder / "python"
+    if runtime.exists():
+        raise RuntimeError(f"Bundle destination already contains Python: {runtime}")
+    with tempfile.TemporaryDirectory(prefix="nyxmap-python-") as directory:
+        managed = Path(directory)
+        env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(managed)}
+        uv = [sys.executable, "-m", "uv"]
+        subprocess.run([*uv, "python", "install", "3.11", "--no-bin"], env=env, check=True)
+        installs = list(managed.glob("cpython-3.11.*"))
+        if len(installs) != 1:
+            raise RuntimeError(f"Expected one portable Python installation, got {installs}")
+        shutil.copytree(installs[0], runtime, symlinks=os.name != "nt")
+    python = runtime / ("python.exe" if os.name == "nt" else "bin/python3.11")
+    site = subprocess.check_output([str(python), "-I", "-c",
+        "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
+    subprocess.run([*uv, "pip", "install", "--python", str(python), "--target", site,
+                    "--link-mode", "copy", "--only-binary", ":all:", "mediapipe==0.10.32"], check=True)
+    return python
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--bundle", action="store_true", help="Stage portable Python and models for a release package")
     args = parser.parse_args()
     folder = args.directory.expanduser().resolve()
     folder.mkdir(parents=True, exist_ok=True)
-    runtime = folder / ".venv"
-    venv.EnvBuilder(with_pip=True, symlinks=os.name != "nt").create(runtime)
-    python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    subprocess.run([str(python), "-m", "pip", "install", "mediapipe==0.10.32"], check=True)
+    if args.bundle:
+        python = bundle_python(folder)
+    else:
+        runtime = folder / ".venv"
+        venv.EnvBuilder(with_pip=True, symlinks=os.name != "nt").create(runtime)
+        python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        subprocess.run([str(python), "-m", "pip", "install", "mediapipe==0.10.32"], check=True)
     for filename, (url, digest) in MODELS.items():
         destination = folder / filename
         if destination.is_file() and hashlib.sha256(destination.read_bytes()).hexdigest() == digest:
@@ -62,6 +90,8 @@ def main():
                     output.write(data)
             if checksum.hexdigest() != digest:
                 raise RuntimeError(f"Unexpected SHA-256 for {filename}")
+            if args.bundle:
+                temporary.chmod(0o644)
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)

@@ -835,7 +835,6 @@ public:
     QJsonObject visionFaceExpressions(const PixelAnalysis::Settings &settings) const;
     QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
-    bool startMediaPipeInstall(class QProcess &process) const;
     QString handModelsDirectory() const;
     void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }

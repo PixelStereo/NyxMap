@@ -1,8 +1,5 @@
 #include "EngineInternal.h"
 #include "VisionRuntime.h"
-#include "MediaPipeWorkerScript.h"
-#include <QProcess>
-#include <QDir>
 #include <QSettings>
 #include <QJsonArray>
 #include <QStandardPaths>
@@ -86,27 +83,9 @@ void Engine::releaseVision()
         m_vision.reset();
     }
 }
-bool Engine::startMediaPipeInstall(QProcess &process) const
-{
-    QStringList searchPaths = qEnvironmentVariable("PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts);
-#ifdef Q_OS_MACOS
-    searchPaths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
-#endif
-    QString python = qEnvironmentVariable("NYXMAP_MEDIAPIPE_PYTHON");
-    if (python.isEmpty()) {
-        for (const auto *name : {"python3.11", "python3.12", "python3.13", "python3", "python"}) {
-            python = QStandardPaths::findExecutable(QLatin1String(name), searchPaths);
-            if (!python.isEmpty()) break;
-        }
-    }
-    if (python.isEmpty()) return false;
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(python, {QStringLiteral("-c"), QString::fromUtf8(mediaPipeInstallerScript),
-                           QStringLiteral("--directory"), handModelsDirectory()});
-    return true;
-}
 QString Engine::handModelsDirectory() const
 {
+    if (const auto bundled = HandTracking::bundledDirectory(); !bundled.isEmpty()) return bundled;
     return QSettings()
         .value(QStringLiteral("vision/handModels"),
                QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models/hands"))
