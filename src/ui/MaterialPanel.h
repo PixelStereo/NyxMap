@@ -227,8 +227,8 @@ public:
             field->setRange(lo, hi);
             details->addRow(QString::fromLatin1(label), field);
             scalarFields.emplace_back(field, member);
-            connect(field, &SliderField::valueEdited, this, [this, member](double v) {
-                change([&](Material3D &material) { material.*member = float(v); });
+            connect(field, &SliderField::valueEdited, this, [this, fieldMember = member](double v) {
+                change([&](Material3D &material) { material.*fieldMember = float(v); });
             });
         }
         emissionColor = new ColorPicker(false);

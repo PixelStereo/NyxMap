@@ -259,7 +259,7 @@ private:
         double y = 0, v = 0, slow = 0, prev = 0;     // its value, its speed (Damper), its slow average (Pulse), the last input
         int phase = 0;                                // Envelope: 0 idle, 1 attack, 2 decay, 3 sustain, 4 release
         double peak = 1;                              // Envelope: the level the trigger came in at (its velocity)
-        std::deque<std::pair<double, double>> window; // Average, Delay: (time, value)
+        std::deque<std::pair<double, double>> window{}; // Average, Delay: (time, value)
     };
     OnsetDetector m_hit;             // a Hit source: what it learned of the sound
     std::optional<double> m_level;   // the source's last value

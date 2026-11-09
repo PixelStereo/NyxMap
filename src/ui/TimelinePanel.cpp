@@ -536,8 +536,11 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
         [this] { return m_engine->timelineTree(); },
         [this](const LibraryGroups::Tree &before, const LibraryGroups::Tree &after, const QString &text) {
             auto set = [e = m_engine](const LibraryGroups::Tree &tree) { e->setTimelineTree(tree); };
-            if (m_undo) m_undo->push(new cmd::SetLibraryTree(set, before, after, text));
-            else set(after);
+            if (m_undo) {
+                m_undo->push(new cmd::SetLibraryTree(set, before, after, text));
+            } else {
+                set(after);
+            }
             emit edited();
         },
         [this](const LibraryGroups::Tree &tree) { // a group folded: the list and the editor stay

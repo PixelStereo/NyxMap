@@ -97,8 +97,11 @@ void MappingView::commitLines(const std::vector<LinePath> &before, const std::ve
 {
     const quint64 id = m_engine->layerId(m_layer);
     if (!id) return;
-    if (m_undo && before != after) m_undo->push(new cmd::SetLines(m_engine, id, before, after, text));
-    else m_engine->setLayerLines(id, after);
+    if (m_undo && before != after) {
+        m_undo->push(new cmd::SetLines(m_engine, id, before, after, text));
+    } else {
+        m_engine->setLayerLines(id, after);
+    }
     emit linesEdited();
     update();
 }

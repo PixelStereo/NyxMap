@@ -131,7 +131,7 @@ add_library(nyxmap_engine STATIC
   src/engine/LayerParams.cpp
 )
 target_include_directories(nyxmap_engine PUBLIC src/engine)
-target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_party/faust/architecture")
+target_include_directories(nyxmap_engine SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/faust/architecture")
 # Built-in Faust instruments use portable generated C++; the optional interpreter
 # enables arbitrary user .dsp files without any compilation in the audio callback.
 option(NYXMAP_FAUST_COMPILER "Compile user Faust .dsp generators with libfaust" ON)
@@ -140,7 +140,7 @@ if(NYXMAP_FAUST_COMPILER)
   find_library(FAUST_COMPILER_LIBRARY NAMES faust libfaust)
   find_path(FAUST_LIBRARY_PATH stdfaust.lib PATH_SUFFIXES share/faust faust)
   if(FAUST_COMPILER_INCLUDE_DIR AND FAUST_COMPILER_LIBRARY AND FAUST_LIBRARY_PATH)
-    target_include_directories(nyxmap_engine PRIVATE "${FAUST_COMPILER_INCLUDE_DIR}")
+    target_include_directories(nyxmap_engine SYSTEM PRIVATE "${FAUST_COMPILER_INCLUDE_DIR}")
     target_compile_definitions(nyxmap_engine PUBLIC NYXMAP_FAUST_COMPILER)
     target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_FAUST_LIBRARY_PATH="${FAUST_LIBRARY_PATH}" NYXMAP_FAUST_LIBRARY_FILE="${FAUST_COMPILER_LIBRARY}")
   else()
