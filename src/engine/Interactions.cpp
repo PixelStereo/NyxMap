@@ -473,6 +473,7 @@ QJsonObject Interaction::toJson() const
         o["pixels"] = pixels.toJson();
         o["pixel_feature"] = int(pixelFeature);
         o["hand_feature"] = int(handFeature);
+        o["vision_landmark"] = visionLandmark;
         o["hand_index"] = handIndex;
         o["hand_confidence"] = handConfidence;
         break;
@@ -545,7 +546,8 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.audioInput=o.value("audio_input").toBool(false);
     it.pixels = PixelAnalysis::Settings::fromJson(o.value("pixels").toObject());
     it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
-    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::ForegroundCoverage)));
+    it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
+    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::PoseVisibility)));
     it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 1);
     it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();

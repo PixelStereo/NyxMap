@@ -1,4 +1,5 @@
 """Local MediaPipe Tasks worker. Stdout is reserved for one JSON reply per frame."""
+import base64
 import json
 import sys
 from pathlib import Path
@@ -46,7 +47,7 @@ def run(folder):
         if task in ("hands", "gestures"):
             result = detector.detect(image) if task == "hands" else detector.recognize(image)
             return {"hands": [
-                {"points": points(hand), "score": result.handedness[i][0].score,
+                {"points": points(hand), "world": points(result.hand_world_landmarks[i]), "score": result.handedness[i][0].score,
                  "right": result.handedness[i][0].category_name == "Right",
                  "gesture": result.gestures[i][0].category_name
                  if task == "gestures" and result.gestures[i] else ""}
@@ -55,11 +56,15 @@ def run(folder):
         if task == "face":
             result = detector.detect(image)
             return {"face": [
-                {"points": points(face), "expressions": {p.category_name: p.score for p in result.face_blendshapes[i]}}
+                {"points": points(face), "expressions": {p.category_name: p.score for p in result.face_blendshapes[i]},
+                 "blendshapes": {p.index: p.score for p in result.face_blendshapes[i]}}
                 for i, face in enumerate(result.face_landmarks)
             ]}
         if task == "pose":
-            return {"pose": [{"points": points(pose)} for pose in detector.detect(image).pose_landmarks]}
+            result = detector.detect(image)
+            return {"pose": [{"points": points(pose), "world": points(result.pose_world_landmarks[i]),
+                              "visibility": [p.visibility for p in pose]}
+                             for i, pose in enumerate(result.pose_landmarks)]}
         if task == "objects":
             return {"objects": [
                 {"box": [d.bounding_box.origin_x / image.width, d.bounding_box.origin_y / image.height,
@@ -68,7 +73,10 @@ def run(folder):
                 for d in detector.detect(image).detections if d.categories
             ]}
         mask = detector.segment(image).category_mask.numpy_view()
-        return {"coverage": float(np.count_nonzero(mask) / mask.size)}
+        foreground = mask != 0
+        return {"coverage": float(np.count_nonzero(foreground) / foreground.size),
+                "mask": base64.b64encode(foreground.astype(np.uint8).tobytes()).decode("ascii"),
+                "mask_width": mask.shape[1], "mask_height": mask.shape[0]}
 
     reply({"ready": True})
     for line in sys.stdin.buffer:

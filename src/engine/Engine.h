@@ -834,7 +834,6 @@ public:
     void waitForFrame(QOpenGLExtraFunctions *f) const;
     QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
-    static bool handTrackingAvailable();
     QString handModelsDirectory() const;
     void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }

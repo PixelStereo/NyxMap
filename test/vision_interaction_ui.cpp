@@ -55,7 +55,7 @@ int main(int argc, char **argv)
         require(engine.interactions()[0].pixels.roi.width() == 1, "ROI change undoes");
         panel.learnFor(0, "opacity", InteractionSource::Hands);
         app.processEvents();
-        require(tabs->checkedButton()->text() == "Hands", "Hands tab selected");
+        require(tabs->checkedButton()->text() == "MediaPipe", "MediaPipe tab selected");
         require(panel.findChild<QComboBox *>("trackedHand") && panel.findChild<QComboBox *>("handFeature"),
                 "hand selection and gesture features");
         require(!learn->isChecked() && !learn->isEnabled(), "Hands does not start external Learn");

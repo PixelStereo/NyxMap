@@ -52,7 +52,7 @@ double Engine::visionValue(const Interaction &input)
     const auto frame = m_vision->hands(input.pixels);
     if (!HandTracking::taskError(frame, input.handFeature).isEmpty() || !frame.timeNs || now - frame.timeNs > 500000000)
         return 0;
-    return HandTracking::measure(frame, input.handIndex, input.handFeature, input.handConfidence);
+    return HandTracking::measure(frame, input.handIndex, input.handFeature, input.handConfidence, input.visionLandmark);
 }
 void Engine::releaseVision()
 {
@@ -61,7 +61,6 @@ void Engine::releaseVision()
         m_vision.reset();
     }
 }
-bool Engine::handTrackingAvailable() { return HandTracking::Detector::available(); }
 QString Engine::handModelsDirectory() const
 {
     return QSettings()

@@ -1476,6 +1476,16 @@ void InteractionPanel::rebuildSettings()
                      [value](Interaction &x) { x.handFeature = HandTracking::Feature(value); });
             });
             attachPreset({feature}, {QStringLiteral("source/hands/feature")});
+            auto *landmark = new QSpinBox;
+            landmark->setRange(0, 477);
+            landmark->setValue(it.visionLandmark);
+            landmark->setKeyboardTracking(false);
+            landmark->setToolTip(QStringLiteral("MediaPipe index for landmark, world-coordinate and blendshape measurements"));
+            form->addRow(QStringLiteral("Landmark / blendshape index"), landmark);
+            connect(landmark, qOverload<int>(&QSpinBox::valueChanged), this, [edit](int value) {
+                edit(QStringLiteral("Change MediaPipe Landmark"), [value](Interaction &x) { x.visionLandmark = value; });
+            });
+            attachPreset({landmark}, {QStringLiteral("source/hands/landmark")});
             auto *confidence = new QDoubleSpinBox;
             confidence->setRange(.5, .99);
             confidence->setDecimals(2);

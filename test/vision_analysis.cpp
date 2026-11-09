@@ -114,6 +114,15 @@ int main(int argc, char **argv)
         HandTracking::Frame detection;
         detection.detections = {{"coverage", 0.25}};
         require(near(HandTracking::measure(detection, 0, vision.handFeature, 0), 0.25), "segmentation coverage is routable");
+        vision.visionLandmark = 477;
+        vision.handFeature = HandTracking::Feature::FacePointZ;
+        const auto restored = Interaction::fromJson(vision.toJson());
+        require(restored.visionLandmark == 477 && restored.handFeature == vision.handFeature, "indexed MediaPipe feature roundtrip");
+        detection.hands[0].valid = true;
+        detection.hands[0].confidence = 0.9f;
+        detection.hands[0].world[8][2] = -0.35f;
+        require(near(HandTracking::measure(detection, 0, HandTracking::Feature::HandWorldZ, 0.7, 8), -0.35),
+                "indexed world coordinates preserve signed depth");
         HandTracking::Worker worker(dir.path());
         QImage image(32, 32, QImage::Format_RGB32);
         image.fill(Qt::white);

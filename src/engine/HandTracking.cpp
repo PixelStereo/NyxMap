@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QPainter>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <algorithm>
 #include <atomic>
@@ -27,7 +28,11 @@ QStringList HandTracking::featureNames()
             "Face · Count", "Face · X", "Face · Y", "Face · Jaw open", "Face · Left blink", "Face · Right blink",
             "Pose · Count", "Pose · Nose X", "Pose · Nose Y", "Pose · Left wrist X", "Pose · Left wrist Y",
             "Pose · Right wrist X", "Pose · Right wrist Y", "Object · Count", "Object · Center X", "Object · Center Y",
-            "Object · Width", "Object · Height", "Object · Confidence", "Segmentation · Foreground coverage"};
+            "Object · Width", "Object · Height", "Object · Confidence", "Segmentation · Foreground coverage",
+            "Hand · Landmark X", "Hand · Landmark Y", "Hand · Landmark Z", "Hand · World X", "Hand · World Y", "Hand · World Z",
+            "Face · Landmark X", "Face · Landmark Y", "Face · Landmark Z", "Face · Blendshape",
+            "Pose · Landmark X", "Pose · Landmark Y", "Pose · Landmark Z", "Pose · World X", "Pose · World Y",
+            "Pose · World Z", "Pose · Landmark visibility"};
 }
 double HandTracking::measure(const Hand &hand, Feature feature)
 {
@@ -75,6 +80,9 @@ double HandTracking::measure(const Hand &hand, Feature feature)
 }
 unsigned HandTracking::taskFor(Feature feature)
 {
+    if (feature >= Feature::PosePointX) return 8;
+    if (feature >= Feature::FacePointX) return 4;
+    if (feature >= Feature::HandPointX) return 1;
     if (feature < Feature::GestureFist) return 1;
     if (feature < Feature::FaceCount) return 2;
     if (feature < Feature::PoseCount) return 4;
@@ -92,9 +100,34 @@ QString HandTracking::taskError(const Frame &frame, Feature feature)
     return frame.detections.value(QString::fromLatin1(key) + "_error").toString();
 }
 
-double HandTracking::measure(const Frame &frame, int index, Feature feature, double confidence)
+double HandTracking::measure(const Frame &frame, int index, Feature feature, double confidence, int landmarkIndex)
 {
     const auto &hand = frame.hands[size_t(std::clamp(index, 0, 1))];
+    if (feature >= Feature::HandPointX) {
+        if (landmarkIndex < 0) return 0;
+        if (feature < Feature::FacePointX) {
+            if (!hand.valid || hand.confidence < confidence || landmarkIndex >= int(hand.points.size())) return 0;
+            const bool world = feature >= Feature::HandWorldX;
+            const int axis = int(feature) - int(world ? Feature::HandWorldX : Feature::HandPointX);
+            return (world ? hand.world : hand.points)[size_t(landmarkIndex)][size_t(axis)];
+        }
+        const bool face = feature < Feature::PosePointX;
+        const auto all = frame.detections.value(face ? "face" : "pose").toArray();
+        if (index < 0 || index >= all.size()) return 0;
+        const auto detection = all.at(index).toObject();
+        if (feature == Feature::FaceBlendshape)
+            return detection.value("blendshapes").toObject().value(QString::number(landmarkIndex)).toDouble();
+        if (feature == Feature::PoseVisibility) {
+            const auto values = detection.value("visibility").toArray();
+            return landmarkIndex < values.size() ? values.at(landmarkIndex).toDouble() : 0;
+        }
+        const bool world = feature >= Feature::PoseWorldX;
+        const int axis = int(feature) - int(world ? Feature::PoseWorldX : face ? Feature::FacePointX : Feature::PosePointX);
+        const auto points = detection.value(world ? "world" : "points").toArray();
+        if (landmarkIndex >= points.size()) return 0;
+        const auto point = points.at(landmarkIndex).toArray();
+        return axis >= 0 && axis < point.size() ? point.at(axis).toDouble() : 0;
+    }
     if (feature == Feature::Count)
         return std::count_if(frame.hands.begin(), frame.hands.end(), [confidence](const auto &h) { return h.valid && h.confidence >= confidence; });
     if (feature < Feature::GestureFist) return hand.confidence >= confidence ? measure(hand, feature) : 0;
@@ -152,6 +185,9 @@ struct HandTracking::Detector::Private {
     QProcess process;
     std::function<bool()> cancelled;
     explicit Private(std::function<bool()> stop) : cancelled(std::move(stop)) {
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("MPLBACKEND"), QStringLiteral("Agg"));
+        process.setProcessEnvironment(environment);
         process.setStandardErrorFile(QProcess::nullDevice());
     }
     ~Private() { close(); }
@@ -179,7 +215,6 @@ struct HandTracking::Detector::Private {
 };
 HandTracking::Detector::Detector(std::function<bool()> cancelled) : d(std::make_unique<Private>(std::move(cancelled))) {}
 HandTracking::Detector::~Detector() = default;
-bool HandTracking::Detector::available() { return !mediaPipePython().isEmpty(); }
 bool HandTracking::Detector::load(const QString &directory, QString *error)
 {
     d->close();
@@ -197,7 +232,7 @@ bool HandTracking::Detector::load(const QString &directory, QString *error)
         if (error) *error = d->process.errorString();
         return false;
     }
-    const auto reply = d->response(8000, error);
+    const auto reply = d->response(30000, error);
     if (reply.value("ready").toBool()) return true;
     d->close();
     return false;
@@ -221,6 +256,7 @@ std::vector<HandTracking::Hand> HandTracking::Detector::decodeHands(const QJsonO
     for (const auto &entry : result.value("hands").toArray()) {
         const auto item = entry.toObject();
         const auto points = item.value("points").toArray();
+        const auto world = item.value("world").toArray();
         if (points.size() != 21) continue;
         Hand hand;
         hand.valid = true;
@@ -230,7 +266,11 @@ std::vector<HandTracking::Hand> HandTracking::Detector::decodeHands(const QJsonO
         for (int i = 0; i < 21; ++i) {
             const auto point = points.at(i).toArray();
             if (point.size() != 3) { hand.valid = false; break; }
-            for (int j = 0; j < 3; ++j) hand.points[i][j] = float(point.at(j).toDouble());
+            const auto worldPoint = i < world.size() ? world.at(i).toArray() : QJsonArray{};
+            for (int j = 0; j < 3; ++j) {
+                hand.points[i][j] = float(point.at(j).toDouble());
+                if (j < worldPoint.size()) hand.world[i][j] = float(worldPoint.at(j).toDouble());
+            }
         }
         if (hand.valid) hands.push_back(hand);
     }
@@ -334,6 +374,42 @@ struct HandTracking::Worker::Private {
                     }
                 }
                 QPainter painter(&frame.preview);
+                const int maskWidth = frame.detections.value("mask_width").toInt();
+                const int maskHeight = frame.detections.value("mask_height").toInt();
+                const auto mask = QByteArray::fromBase64(frame.detections.take("mask").toString().toLatin1());
+                if (maskWidth > 0 && maskHeight > 0 && maskWidth <= 2048 && maskHeight <= 2048 &&
+                    mask.size() == maskWidth * maskHeight) {
+                    QImage overlay(maskWidth, maskHeight, QImage::Format_ARGB32_Premultiplied);
+                    const QRgb foreground = qPremultiply(qRgba(30, 180, 255, 105));
+                    for (int y = 0; y < maskHeight; ++y) {
+                        auto *row = reinterpret_cast<QRgb *>(overlay.scanLine(y));
+                        for (int x = 0; x < maskWidth; ++x)
+                            row[x] = mask.at(y * maskWidth + x) ? foreground : 0;
+                    }
+                    painter.drawImage(frame.preview.rect(), overlay);
+                }
+                const auto screenPoint = [&](double x, double y) {
+                    return QPointF(x * frame.preview.width(), y * frame.preview.height());
+                };
+                for (const char *key : {"face", "pose"}) {
+                    painter.setPen(QPen(key[0] == 'f' ? QColor(255, 200, 60) : QColor(70, 195, 255), 1));
+                    for (const auto &detection : frame.detections.value(key).toArray())
+                        for (const auto &landmark : detection.toObject().value("points").toArray()) {
+                            const auto point = landmark.toArray();
+                            if (point.size() >= 2)
+                                painter.drawEllipse(screenPoint(point.at(0).toDouble(), point.at(1).toDouble()), 1, 1);
+                        }
+                }
+                painter.setPen(QPen(QColor(255, 160, 60), 1));
+                for (const auto &detection : frame.detections.value("objects").toArray()) {
+                    const auto item = detection.toObject();
+                    const auto box = item.value("box").toArray();
+                    if (box.size() != 4) continue;
+                    const auto at = screenPoint(box.at(0).toDouble(), box.at(1).toDouble());
+                    const auto size = screenPoint(box.at(2).toDouble(), box.at(3).toDouble());
+                    painter.drawRect(QRectF(at, QSizeF(size.x(), size.y())));
+                    painter.drawText(at + QPointF(2, 12), item.value("label").toString());
+                }
                 painter.setPen(QPen(QColor(40, 255, 100), 2));
                 for (const auto &hand : frame.hands)
                     if (hand.valid) {

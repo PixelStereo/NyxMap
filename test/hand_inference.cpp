@@ -7,7 +7,7 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     const auto directory = qEnvironmentVariable("NYXMAP_HAND_MODELS");
-    if (!HandTracking::Detector::available() || directory.isEmpty()) {
+    if (directory.isEmpty()) {
         std::cout << "Set NYXMAP_HAND_MODELS to the MediaPipe Tasks model folder\n";
         return 77;
     }
@@ -24,6 +24,18 @@ int main(int argc, char **argv)
         std::cerr << "Blank frame inference failed: " << error.toStdString();
         return 1;
     }
+    for (const auto &feature : {HandTracking::Feature::GestureFist, HandTracking::Feature::FaceCount,
+                                HandTracking::Feature::PoseCount, HandTracking::Feature::ObjectCount,
+                                HandTracking::Feature::ForegroundCoverage}) {
+        if (!qEnvironmentVariableIsSet("NYXMAP_MEDIAPIPE_ALL_MODELS")) break;
+        HandTracking::Frame result;
+        result.detections = detector.infer(blank, HandTracking::taskFor(feature), &result.error);
+        const auto failure = HandTracking::taskError(result, feature);
+        if (!failure.isEmpty() || result.detections.isEmpty()) {
+            std::cerr << "MediaPipe task failed: " << failure.toStdString();
+            return 1;
+        }
+    }
     const auto fixture = qEnvironmentVariable("NYXMAP_HAND_IMAGE");
     if (!fixture.isEmpty()) {
         QImage image(fixture);
@@ -35,6 +47,15 @@ int main(int argc, char **argv)
         if (!error.isEmpty() || found.empty()) {
             std::cerr << "No hand in fixture: " << error.toStdString();
             return 1;
+        }
+        if (qEnvironmentVariableIsSet("NYXMAP_MEDIAPIPE_ALL_MODELS")) {
+            const auto result = detector.infer(image, HandTracking::taskFor(HandTracking::Feature::GestureThumbUp), &error);
+            const auto gestures = HandTracking::Detector::decodeHands(result);
+            if (!error.isEmpty() || gestures.empty() || gestures.front().gesture.isEmpty()) {
+                std::cerr << "Gesture classification failed: " << error.toStdString();
+                return 1;
+            }
+            std::cout << "Recognized gesture: " << gestures.front().gesture.toStdString() << '\n';
         }
         std::cout << found.size() << " hand(s) detected in fixture\n";
     }

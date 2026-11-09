@@ -42,26 +42,42 @@ The **Pixels** source can measure any image without either motion FX. Channels a
 
 Analysis uses asynchronous GPU readback at 64×64, or the hand-analysis resolution when shared with a hand input. It drops samples when the GPU is busy. These values are suitable for interactive control, not full-resolution measurement. Up to eight distinct source/tap pairs and 128 analyzer configurations are supported. Missing images or data older than half a second yield zero. The first sample and configuration changes reset temporal measurements.
 
-## Hand gestures
+## MediaPipe Tasks
 
-Build with OpenCV's **core**, **imgproc**, and **dnn** libraries (see below). Download the two pinned models once:
+Install the official MediaPipe Python package and Google models once using a supported Python distribution:
 
 ```sh
-python3 scripts/download_hand_models.py --directory /path/to/hand-models
+python3 scripts/setup_mediapipe.py --directory /path/to/mediapipe-models
 ```
 
-In **Interactions → Hands**, choose the camera layer, select this folder, and choose a tracked hand and gesture. The preview displays the detected skeleton and any model error. Available inputs include presence, confidence, wrist/index/thumb coordinates, pinch strength, finger openness, rotation, and visible hand count (0–2). Pinch and openness are normalized heuristics derived from landmarks, not trained gesture classifiers. Hand slots follow the nearest previous wrist and can swap when hands cross or disappear.
+Open **Interactions → MediaPipe**, choose the camera, video or image layer and select the installed folder.
+NyxMap uses the isolated Python runtime in that folder. To use an existing Python environment, set
+`NYXMAP_MEDIAPIPE_PYTHON` to its interpreter before launching NyxMap. A native build of OpenCV DNN is no longer needed.
+The pinned package provides wheels for macOS Apple Silicon, Linux x86-64, and Windows x86-64.
+Current releases require this one-time setup, and keep processing local after installation.
 
-Set a minimum confidence, then map the input to the desired parameter. Position is normalized to the image; Y increases downwards. Use an XY interaction's two inputs for index X and Y. Existing interaction smoothing helps reduce landmark jitter. Hand inference runs on a worker thread at a submission rate of at most 15 Hz, with at most two hands and image dimensions up to 320 pixels. Video stays on this machine. Lost/stale detections yield zero after half a second, before any configured interaction smoothing.
+| Task | Available interaction values |
+|---|---|
+| Hand landmarks | Presence, handedness confidence, wrist/index/thumb position, pinch, openness, rotation, count |
+| Gesture Recognizer | Fist, open palm, pointing up, thumbs up/down, victory and I love you |
+| Face Landmarker | Count, position, jaw opening and left/right eye blinks |
+| Pose Landmarker | Count and nose/left wrist/right wrist position |
+| Object Detector | Count, box center, width, height and confidence |
+| Image Segmenter | Foreground coverage, with a mask overlay in the interaction preview |
 
-Models are optional external files, verified by size/SHA-256 when downloaded and SHA-256 when loaded. They are not Git submodules or bundled weights. `third_party/hand-models/models.json` pins the upstream commit, download URLs and hashes. An unavailable backend, missing file or wrong hash produces an explicit error and no gestures. The model-folder preference is local to the computer; source and gesture settings are saved in the project.
+Normalized image coordinates have Y increasing downward. Each selected measurement can drive a parameter,
+an action condition, or an XY input. The detection selector exposes the first two detections.
+Only requested tasks run for a source. Readback is asynchronous and frames are submitted at up to 15 Hz
+at a maximum side of 320 pixels. The queue keeps the latest pending frame per source, and stale detections
+yield zero after half a second. Tasks use the SDK's CPU image mode. Stable wrist slots are maintained in NyxMap.
+Face, pose and object indices follow model order. The segmentation mask is currently an interaction preview,
+not a compositing layer. Indexed measurements expose the normalized hand, face and pose landmarks,
+world coordinates for hands and pose, pose landmark visibility, and face blendshape scores.
 
-## Build and upstream choices
+Existing hand mappings keep their feature and source IDs. Replace the former ONNX folder with the new model folder.
+Model errors are shown in the interaction. Pixel analysis and motion masks remain available independently.
 
-`NYXMAP_HAND_TRACKING=ON` (default) enables the backend if OpenCV is found. Install OpenCV development packages, e.g. Homebrew `opencv` on macOS, `libopencv-core-dev libopencv-imgproc-dev libopencv-dnn-dev` on Debian/Ubuntu, or OpenCV with DNN via vcpkg on Windows. Set `OpenCV_DIR` / `CMAKE_PREFIX_PATH` when needed. With `-DNYXMAP_HAND_TRACKING=OFF`, motion shaders and pixel interactions remain available. Distributable builds must package the corresponding OpenCV shared libraries; the existing release dependency lists do not install OpenCV automatically.
-
-The implementation uses native OpenCV DNN CPU inference and OpenCV Zoo's MediaPipe palm/21-landmark ONNX models, adapting its pre/postprocessing under Apache-2.0. This reuses an established detector without a browser, Python runtime, or MediaPipe Tasks/Bazel dependency in the application. Sources: [OpenCV Zoo palm detector](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/palm_detection_mediapipe), [landmark estimator](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/handpose_estimation_mediapipe), and [MediaPipe Hands](https://chuoling.github.io/mediapipe/solutions/hands.html). See `licenses/opencv-zoo-hands.txt`.
-
-Automated tests cover synthetic motion masks on OpenGL, pixel statistics and derivatives, async interaction mapping, project persistence, UI edits/undo, and missing/corrupt model handling. Real-model inference tests require the model downloads. Validate detection accuracy, latency, and dependency packaging on each target platform before distributing a hand-enabled build.
-
-To exercise real model inference after installing the weights, run `NYXMAP_HAND_MODELS=/path/to/hand-models ctest --test-dir build -R vision_hand_inference --output-on-failure`. Set `NYXMAP_HAND_IMAGE` to an image with a visible hand to also check positive detection. Without the models, this test is explicitly skipped.
+Run the real SDK tests after installation with
+`NYXMAP_HAND_MODELS=/path/to/mediapipe-models NYXMAP_MEDIAPIPE_ALL_MODELS=1 ctest --test-dir build -R vision_hand_inference --output-on-failure`.
+Set `NYXMAP_HAND_IMAGE` to a hand image to also check positive detection. Without models the inference test skips.
+See the [official MediaPipe Tasks documentation](https://developers.google.com/edge/mediapipe/solutions/tasks).

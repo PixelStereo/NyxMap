@@ -169,6 +169,7 @@ struct Interaction {
     bool audioInput = false;
     PixelAnalysis::Settings pixels;
     PixelAnalysis::Feature pixelFeature = PixelAnalysis::Feature::Mean;
+    int visionLandmark = 0;
     HandTracking::Feature handFeature = HandTracking::Feature::Pinch;
     int handIndex = 0;
     double handConfidence = .7;

@@ -25,7 +25,10 @@ enum class Feature {
     FaceCount, FaceX, FaceY, JawOpen, BlinkLeft, BlinkRight,
     PoseCount, NoseX, NoseY, LeftWristX, LeftWristY, RightWristX, RightWristY,
     ObjectCount, ObjectX, ObjectY, ObjectWidth, ObjectHeight, ObjectScore,
-    ForegroundCoverage
+    ForegroundCoverage,
+    HandPointX, HandPointY, HandPointZ, HandWorldX, HandWorldY, HandWorldZ,
+    FacePointX, FacePointY, FacePointZ, FaceBlendshape,
+    PosePointX, PosePointY, PosePointZ, PoseWorldX, PoseWorldY, PoseWorldZ, PoseVisibility
 };
 QStringList featureNames();
 unsigned taskFor(Feature feature);
@@ -34,6 +37,7 @@ struct Hand {
     bool valid = false;
     QString gesture;
     float confidence = 0, handedness = 0;
+    std::array<std::array<float, 3>, 21> world{};
     std::array<std::array<float, 3>, 21> points{}; // normalized image x/y, relative depth
 };
 double measure(const Hand &hand, Feature feature);
@@ -44,14 +48,13 @@ struct Frame {
     QImage preview;
     QJsonObject detections;
 };
-double measure(const Frame &frame, int index, Feature feature, double confidence);
+double measure(const Frame &frame, int index, Feature feature, double confidence, int landmark = 0);
 QString taskError(const Frame &frame, Feature feature);
 
 class Detector {
 public:
     explicit Detector(std::function<bool()> cancelled = {});
     ~Detector();
-    static bool available();
     bool load(const QString &directory, QString *error);
     std::vector<Hand> detect(const QImage &image, QString *error);
     QJsonObject infer(const QImage &image, unsigned tasks, QString *error);
