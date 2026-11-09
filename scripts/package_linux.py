@@ -18,6 +18,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 
 from PIL import Image
@@ -105,13 +107,27 @@ def package_licence(owner):
     return summary, "licence not recognised"
 
 
+def download(url, path, attempts=6):
+    # The hosting sometimes answers 5xx for a while: wait longer between each attempt
+    for attempt in range(1, attempts + 1):
+        try:
+            urllib.request.urlretrieve(url, path)
+            return
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            if attempt == attempts or (isinstance(error, urllib.error.HTTPError) and error.code < 500 and error.code != 429):
+                raise
+            delay = 5 * 2 ** (attempt - 1)
+            print(f"{url}: {error}; attempt {attempt}/{attempts}, again in {delay} s", flush=True)
+            time.sleep(delay)
+
+
 def tools(folder):
     folder.mkdir(parents=True, exist_ok=True)
     lock = json.loads((ROOT / "packaging/linux/tools.json").read_text())
     result = {}
     for name, entry in lock.items():
         path = folder / (name + (".AppImage" if name != "runtime-x86_64" else ""))
-        urllib.request.urlretrieve(entry["url"], path)
+        download(entry["url"], path)
         if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
             sys.exit(f"{name}: checksum mismatch; review and update packaging/linux/tools.json")
         path.chmod(0o755)

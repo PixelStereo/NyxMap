@@ -731,9 +731,22 @@ int runScene3dTests(Engine &engine)
         check(engine.setModelDisplace(engine.indexOfId(ball), height, &err), "displace the shaded sphere");
         engine.setParameter(ball, "model/displace/amount", 0.2);
         engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
+        // A dim lamp: a bright one saturates the sphere and hides the shading. What tells the two shadings apart is a small
+        // shift of tone over the whole sphere, so count every pixel that changes at all, against a flat picture drawn twice.
+        engine.setParameter(lamp, "light/intensity", 1.5);
+        const auto changed = [](const QImage &x, const QImage &y) {
+            int count = 0;
+            for (int j = 0; j < x.height(); ++j)
+                for (int i = 0; i < x.width(); ++i) count += x.pixel(i, j) != y.pixel(i, j);
+            return count;
+        };
         const QImage displacedFlat = picture();
+        const int steady = changed(displacedFlat, picture());
         engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
-        check(different(displacedFlat, picture()) > 30, "smooth shading interpolates normals even with displacement");
+        const int interpolated = changed(displacedFlat, picture());
+        check(steady < 20, "a displaced sphere drawn twice looks the same");
+        check(interpolated > 300 && interpolated > 10 * steady, "smooth shading interpolates normals even with displacement");
+        engine.setParameter(lamp, "light/intensity", 25.0);
         check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
         engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
         engine.removeLayer(engine.indexOfId(height));

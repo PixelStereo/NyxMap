@@ -711,7 +711,7 @@ jobs:
       - name: FFmpeg
         shell: pwsh
         run: |
-          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/$env:FFMPEG_RELEASE/$env:FFMPEG_ZIP.zip" -OutFile ffmpeg.zip -MaximumRetryCount 3 -RetryIntervalSec 5
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/$env:FFMPEG_RELEASE/$env:FFMPEG_ZIP.zip" -OutFile ffmpeg.zip -MaximumRetryCount 6 -RetryIntervalSec 20
           if ((Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash -ne $env:FFMPEG_SHA256) {
             throw "FFmpeg archive checksum mismatch"
           }
