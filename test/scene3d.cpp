@@ -740,7 +740,17 @@ int runScene3dTests(Engine &engine)
                 displacedDiff, int(displacedFlat == displacedSmooth), different(made, displacedFlat), different(made, displacedSmooth),
                 qPrintable(QColor(displacedFlat.pixel(displacedFlat.width() / 2, displacedFlat.height() / 2)).name()),
                 qPrintable(QColor(displacedSmooth.pixel(displacedSmooth.width() / 2, displacedSmooth.height() / 2)).name()));
-        check(displacedDiff > 30, "smooth shading interpolates normals even with displacement");
+        { // TEMPORARY diagnostic: a coarse map of lightness (0-9) of each picture
+            for (const QImage *im : {&displacedFlat, &displacedSmooth, &made}) {
+                std::printf("map %s %dx%d\n", im == &displacedFlat ? "flat" : im == &displacedSmooth ? "smooth" : "as-made", im->width(), im->height());
+                for (int j = 0; j < 16; ++j) {
+                    char line[33] = {};
+                    for (int i = 0; i < 32; ++i) line[i] = char('0' + std::min(9, QColor(im->pixel((i * im->width()) / 32 + im->width() / 64, (j * im->height()) / 16 + im->height() / 32)).lightness() / 26));
+                    std::printf("%s\n", line);
+                }
+            }
+        }
+        check(displacedDiff > 30 && false, "smooth shading interpolates normals even with displacement");
         check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
         engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
         engine.removeLayer(engine.indexOfId(height));
