@@ -1,6 +1,7 @@
 #include "EngineInternal.h"
 #include "VisionRuntime.h"
 #include <QSettings>
+#include <QJsonArray>
 #include <QStandardPaths>
 #include <cmath>
 
@@ -95,6 +96,18 @@ void Engine::setHandModelsDirectory(const QString &directory)
     Lock lock(&m_mutex);
     if (m_vision)
         m_vision->setModelsDirectory(directory);
+}
+QJsonObject Engine::visionFaceExpressions(const PixelAnalysis::Settings &settings, int index) const
+{
+    Lock lock(&m_mutex);
+    if (!m_vision || m_visionReset || !settings.layer) return {};
+    const auto frame = m_vision->hands(settings);
+    if (!frame.timeNs || AudioStream::clockNs() - frame.completedNs > 500000000 ||
+        !HandTracking::taskError(frame, HandTracking::Feature::FaceBlendshape).isEmpty())
+        return {};
+    const auto faces = frame.detections.value("face").toArray();
+    if (index < 0 || index >= faces.size()) return {};
+    return faces.at(index).toObject().value("expressions").toObject();
 }
 QImage Engine::visionPreview(const PixelAnalysis::Settings &settings, bool hands) const
 {
