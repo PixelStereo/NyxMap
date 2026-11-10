@@ -316,8 +316,9 @@ void PreviewWorkspace::setCount(int count)
 void PreviewWorkspace::refreshFrames()
 {
     for (int slot = 0; slot < m_count; ++slot) {
-        m_cells[size_t(slot)].picture->update();
-        if (m_cells[size_t(slot)].scene3d->scene()) m_cells[size_t(slot)].scene3d->update();
+        const auto &cell = m_cells[size_t(slot)];
+        if (cell.picture->isVisible()) cell.picture->update();
+        if (cell.scene3d->isVisible() && cell.scene3d->scene()) cell.scene3d->update();
     }
 }
 

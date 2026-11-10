@@ -667,6 +667,10 @@ int Engine::indexOfId(quint64 id) const
 {
     Lock lk(&m_mutex);
     if (!id) return -1;
+    if (m_renderLayerIndexActive) {
+        const size_t row = renderLayerIndex(id);
+        return row < m_layers.size() ? int(row) : -1;
+    }
     for (size_t i = 0; i < m_layers.size(); ++i)
         if (m_layers[i]->id == id) return int(i);
     return -1;
@@ -1275,6 +1279,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->videoTex = std::move(l.videoTex);
     l.frame = VideoFrame{}; // its upload buffer belongs to the texture that goes
     l.frameUploaded = true;
+    l.videoHiddenSeconds = 0;
+    l.videoDecodeIdle = false;
     g->audio = std::move(l.audio);
     g->tex = l.sourceTex;
     l.sourceTex = Texture2D{};

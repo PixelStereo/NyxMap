@@ -58,7 +58,7 @@ struct IsfInput {
     int extW = 0, extH = 0;
 
     // An "audio" or "audioFFT" input: the sound it shows (saved), and its MAX (the columns wanted; 0: the native
-    // width). The engine fills imageTex before each render.
+    // width). The engine binds the shared analysis texture before each render.
     enum AudioSource { LiveInput, Program };
     AudioSource audioSource = LiveInput;
     int audioMax = 0;

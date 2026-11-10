@@ -72,6 +72,7 @@ signals:
 
 private:
     void updateRow(int r, const Row &row);
+    void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
     std::vector<Row> m_rows;
     bool m_updating = false;

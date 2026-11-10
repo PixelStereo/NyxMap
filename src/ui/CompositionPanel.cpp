@@ -498,8 +498,10 @@ void CompositionPanel::refreshStatus()
     refreshTimecodeStatus();
 
     const int pct = int(std::lround(m_engine->outputLevel() * 100));
-    m_compositionLabel->setText(QStringLiteral("out %1%").arg(pct)); // the fader, and the blackout over it
-    m_compositionLabel->setStyleSheet(pct == 0 ? "color:#ff5a4f; font-weight:bold;" : "");
+    const QString level = QStringLiteral("out %1%").arg(pct); // the fader, and the blackout over it
+    if (m_compositionLabel->text() != level) m_compositionLabel->setText(level);
+    const QString style = pct == 0 ? QStringLiteral("color:#ff5a4f; font-weight:bold;") : QString();
+    if (m_compositionLabel->styleSheet() != style) m_compositionLabel->setStyleSheet(style);
 
     if (!m_rate->view()->isVisible()) {
         m_syncing = true;

@@ -339,6 +339,8 @@ struct Layer {
     std::unique_ptr<VideoDecoder> video;
     VideoFrame frame;                       // the last one fetched from the decoder
     bool frameUploaded = true;              // and already on the GPU
+    double videoHiddenSeconds = 0;
+    bool videoDecodeIdle = false;
     std::unique_ptr<VideoTexture> videoTex; // its picture (created in the render thread)
     // Mipmaps of its picture made for this frame of the video (a plain video: made again only for a new frame)
     GLuint mipTex = 0;
@@ -487,6 +489,7 @@ struct Layer {
     // Animations of its own numbers (one track each, on this layer): the Anim tab (see Engine::setLayerAnims)
     std::vector<Animation> anims;
     GLuint meshVbo = 0;  // its mesh's vertices (render thread)
+    bool meshUsesGrid = false;
     Mapping meshShape;   // the mapping they were built from
 
     // Transition used when a snapshot gives this layer another source (ISF with startImage, endImage, progress;

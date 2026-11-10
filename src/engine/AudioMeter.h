@@ -15,22 +15,25 @@ public:
     void update(const float *stereo, int frames, int rate)
     {
         if (!stereo || frames <= 0 || rate <= 0) return;
-        const float fall = std::exp(-float(frames) / (float(rate) * kDecaySeconds));
-        float peak[2] = {m_peak[0].load(std::memory_order_relaxed) * fall, m_peak[1].load(std::memory_order_relaxed) * fall};
+        float peak[2] = {};
         for (int i = 0; i < frames; ++i)
             for (int c = 0; c < 2; ++c) {
                 const float x = std::abs(stereo[2 * i + c]);
                 if (std::isfinite(x)) peak[c] = std::max(peak[c], x);
             }
-        for (int c = 0; c < 2; ++c) m_peak[c].store(peak[c], std::memory_order_relaxed);
+        updatePeaks(peak[0], peak[1], frames, rate);
     }
-    // Audio thread: a silent block (a bypassed or stopped path): the meter keeps falling
-    void silence(int frames, int rate)
+    // The mixer already measures these peaks while applying its fader.
+    void updatePeaks(float left, float right, int frames, int rate)
     {
         if (frames <= 0 || rate <= 0) return;
         const float fall = std::exp(-float(frames) / (float(rate) * kDecaySeconds));
-        for (auto &p : m_peak) p.store(p.load(std::memory_order_relaxed) * fall, std::memory_order_relaxed);
+        const float peak[] = {left, right};
+        for (int c = 0; c < 2; ++c)
+            m_peak[c].store(std::max(peak[c], m_peak[c].load(std::memory_order_relaxed) * fall), std::memory_order_relaxed);
     }
+    // Audio thread: a silent block (a bypassed or stopped path): the meter keeps falling
+    void silence(int frames, int rate) { updatePeaks(0.f, 0.f, frames, rate); }
     void reset()
     {
         for (auto &p : m_peak) p.store(0, std::memory_order_relaxed);
