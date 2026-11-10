@@ -72,6 +72,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPainter>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
@@ -94,6 +95,42 @@
 #include <cmath>
 
 static const QStringList kIsfExt = {"fs", "frag"};
+
+namespace {
+class CueWorkspaceTabs final : public QTabBar
+{
+public:
+    CueWorkspaceTabs()
+    {
+        // Keep the normal tab fills and hide their border and underline.
+        setStyleSheet(theme::tabStyle() +
+                      QStringLiteral("QTabBar::tab { padding-left: 16px; }") +
+                      QStringLiteral("QTabBar::tab, QTabBar::tab:selected, QTabBar::tab:hover:!selected {"
+                                     " border-color: transparent; border-bottom-color: transparent; }"));
+        addCueTab(QStringLiteral("Snapshots"), theme::CueKind::Snapshot);
+        addCueTab(QStringLiteral("Presets"), theme::CueKind::Preset);
+        addCueTab(QStringLiteral("Timelines"), theme::CueKind::Timeline);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QTabBar::paintEvent(event);
+        QPainter painter(this);
+        for (int i = 0; i < count(); ++i) {
+            const QRect tab = tabRect(i);
+            painter.fillRect(QRect(tab.left() + 6, tab.top() + 6, 3, tab.height() - 12),
+                             theme::cueColor(theme::CueKind(tabData(i).toInt())));
+        }
+    }
+
+private:
+    void addCueTab(const QString &label, theme::CueKind kind)
+    {
+        setTabData(addTab(label), int(kind));
+    }
+};
+}
 
 // STOP ALL: Ctrl+Esc, Cmd+Esc on macOS (Qt's Control is Cmd there), as the platform writes it ("Ctrl+Esc", "⌘Esc")
 static QString emergencyStopKeyText()
@@ -350,11 +387,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto *workspace = new QWidget;
     auto *workspaceLayout = new QVBoxLayout(workspace);
     workspaceLayout->setContentsMargins(0, 0, 0, 0);
-    m_workspaceTabs = new QTabBar;
+    m_workspaceTabs = new CueWorkspaceTabs;
     m_workspaceTabs->setObjectName(QStringLiteral("showWorkspaceTabs"));
-    m_workspaceTabs->addTab(QStringLiteral("Snapshots"));
-    m_workspaceTabs->addTab(QStringLiteral("Presets"));
-    m_workspaceTabs->addTab(QStringLiteral("Timelines"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
     library->setMinimumWidth(340);
@@ -1352,6 +1386,7 @@ void MainWindow::toggleSolo(int row)
 void MainWindow::refreshLayerList()
 {
     std::vector<LayerTable::Row> rows;
+    const bool audioRunning = m_engine->audioOutput().isRunning();
     {
         Engine::Lock lk(&m_engine->mutex());
         const std::vector<bool> leftOut = m_engine->soloLeftOut();
@@ -1448,6 +1483,11 @@ void MainWindow::refreshLayerList()
             r.effects = fx.join(QStringLiteral(" › "));
             r.effectCount = int(l->effects.size());
             if (l->audio) {
+                r.hasAudio = true;
+                if (audioRunning) {
+                    r.audioLeft = l->audio->outputMeter().peak(0);
+                    r.audioRight = l->audio->outputMeter().peak(1);
+                }
                 const QString vol = l->muted ? QStringLiteral("muted") : QStringLiteral("%1%").arg(std::lround(l->volume * 100));
                 r.source += (l->type == SourceType::Video ? QStringLiteral("   ♪ ") : QStringLiteral("   ")) + vol;
             }

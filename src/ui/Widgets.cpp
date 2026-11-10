@@ -109,6 +109,18 @@ QString theme::tabStyle()
         .arg(css());
 }
 
+QColor theme::cueColor(CueKind kind)
+{
+    switch (kind) {
+    case CueKind::Snapshot: return QColor(172, 190, 207);
+    case CueKind::Preset: return QColor(112, 142, 169);
+    case CueKind::Timeline: return QColor(102, 178, 173);
+    case CueKind::Group: return QColor(184, 121, 101);
+    case CueKind::Sequence: return QColor(139, 144, 153);
+    }
+    return {};
+}
+
 namespace autoselect {
 Notifier *notifier()
 {

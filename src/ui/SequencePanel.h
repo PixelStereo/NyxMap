@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine.h"
+#include <QPersistentModelIndex>
 #include <QWidget>
 
 class Engine;
@@ -73,7 +74,7 @@ signals:
     void edited();                // the sequences changed: the project is modified
 
 protected:
-    bool eventFilter(QObject *o, QEvent *e) override; // snapshots dropped onto the steps
+    bool eventFilter(QObject *o, QEvent *e) override; // disclosure clicks and drops onto the steps
 
 private:
     void refreshStepChanges();
@@ -115,6 +116,7 @@ private:
     QPushButton *m_tap, *m_clockRun;
     QLabel *m_beatLabel;
     QTableWidget *m_steps;
+    QPersistentModelIndex m_disclosurePress;
     QLabel *m_status; // the step played, and whether something changed since
     bool m_modified = false;
     QPushButton *m_add, *m_dup, *m_del, *m_stepAdd, *m_stepDel, *m_up, *m_down, *m_stop, *m_stopAll, *m_go, *m_back;

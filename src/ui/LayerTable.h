@@ -27,6 +27,8 @@ public:
         bool enabled = true, error = false;
         bool noPicture = false; // audio layer: no opacity or blend
         float opacity = 1.f;
+        bool hasAudio = false;
+        float audioLeft = 0.f, audioRight = 0.f;
         bool viewport = false;      // a viewport: in the block at the top of the list
         bool group = false, collapsed = false; // collapsed: the group itself is folded
         bool hidden = false;        // inside a folded group

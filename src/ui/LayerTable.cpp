@@ -27,7 +27,7 @@
 #include <cmath>
 #include <functional>
 
-enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColAudio, ColCount };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
@@ -469,7 +469,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
     m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback")});
+                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback"), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -477,6 +477,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
+    m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -508,6 +509,10 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setColumnWidth(ColBlend, 66);
     h->setSectionResizeMode(ColPlayback, QHeaderView::Interactive);
     m_table->setColumnWidth(ColPlayback, 150);
+    h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColAudio, 92);
+    h->moveSection(h->visualIndex(ColAudio), h->visualIndex(ColName) + 1);
+    m_table->setColumnHidden(ColAudio, true);
     h->setStretchLastSection(true);
     v->addWidget(m_table, 1);
 
@@ -697,6 +702,22 @@ void LayerTable::updateRow(int r, const Row &row)
     fx->setForeground(row.effectsOn ? QColor(255, 200, 140) : QColor(110, 110, 115));
     text(ColBlend, row.noPicture || row.viewport ? QStringLiteral("—") : row.blend);
     text(ColPlayback, row.playback)->setFont(QFont(QStringLiteral("monospace")));
+    auto *audioCell = m_table->cellWidget(r, ColAudio);
+    if (row.hasAudio) {
+        if (!audioCell) {
+            audioCell = new QWidget;
+            audioCell->setAttribute(Qt::WA_TransparentForMouseEvents);
+            auto *layout = new QHBoxLayout(audioCell);
+            layout->setContentsMargins(5, 0, 5, 0);
+            auto *meter = new LevelMeter(QStringLiteral("Layer output"));
+            meter->setFixedHeight(meter->sizeHint().height());
+            layout->addWidget(meter);
+            m_table->setCellWidget(r, ColAudio, audioCell);
+        }
+        audioCell->findChild<LevelMeter *>()->setLevels(row.audioLeft, row.audioRight);
+    } else if (audioCell) {
+        m_table->removeCellWidget(r, ColAudio);
+    }
     const QBrush bg = row.viewport ? QBrush(QColor(38, 48, 60)) : row.group ? QBrush(QColor(50, 50, 58)) : QBrush();
     for (int c = 0; c < ColCount; ++c)
         if (QTableWidgetItem *it = m_table->item(r, c)) it->setBackground(bg);
@@ -758,6 +779,7 @@ bool LayerTable::setRows(const std::vector<Row> &rows)
 
     m_updating = true;
     m_rows = rows;
+    m_table->setColumnHidden(ColAudio, std::none_of(rows.begin(), rows.end(), [](const Row &row) { return row.hasAudio; }));
     if (changed) {
         grid->cancelPendingPress();
         m_table->clearContents();
