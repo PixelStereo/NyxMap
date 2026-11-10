@@ -1845,6 +1845,41 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
     const float envMaxLod = std::log2(float(kEnvW));
     if (!m_program) return 0;
+
+    const int outputW = w, outputH = h;
+    // High quality resolves the whole 3D picture after the look passes. MSAA alone
+    // cannot smooth fog and other effects evaluated on a single-sample depth buffer.
+    bool supersample = false;
+    if (!m_lite && quality.antialiasing == 3 && qint64(w) * h <= 4'194'304) {
+        GLint maxTexture = 0, maxRenderbuffer = 0;
+        f->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+        f->glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+        const int limit = std::min(maxTexture, maxRenderbuffer);
+        if (w <= limit / 2 && h <= limit / 2) {
+            if (m_aaOutput.ensure(w, h)) m_frameKey.clear();
+            supersample = m_aaOutput.ready(w, h);
+        }
+    }
+    if (supersample) {
+        w *= 2;
+        h *= 2;
+    } else if (m_aaOutput.fbo) {
+        m_aaOutput.destroy();
+    }
+
+    // The extra resolution is internal. Layers, effects and viewports still see
+    // the composition-sized picture with its premultiplied alpha.
+    const auto finishPicture = [&](GLuint tex, GLuint sourceFbo) {
+        m_picture = tex;
+        if (supersample) {
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFbo);
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_aaOutput.fbo);
+            f->glBlitFramebuffer(0, 0, w, h, 0, 0, outputW, outputH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            m_aaOutput.bind();
+            m_picture = m_aaOutput.tex;
+        }
+        return m_picture;
+    };
     std::vector<Placed> placed;
     placed.reserve(items.size());
     for (const Item &item : items) {
@@ -1864,6 +1899,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         add(&environment, sizeof environment);
         add(&w, sizeof w);
         add(&h, sizeof h);
+        add(&supersample, sizeof supersample);
         const auto addScene = [&] {
             for (float v : {s.distance, s.yaw, s.pitch, s.fov, s.ambientIntensity, s.exposure, s.envIntensity, s.envRotation, s.envBlur, s.studio, s.ao,
                             s.aoRadius, s.reflections, s.glow, s.glowThreshold, s.glowSize, s.vignette, s.contrast, s.saturation, s.temperature,
@@ -1926,7 +1962,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);
     };
-    const int aaLevel = m_lite ? 0 : std::clamp(quality.antialiasing, 0, 3);
+    const int aaLevel = m_lite ? 0 : supersample ? 1 : std::clamp(quality.antialiasing, 0, 3);
     GLint maxSamples = 1;
     f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, maxSamples));
@@ -2301,6 +2337,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glBindVertexArray(0);
     }
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_msFbo);
+    if (m_samples > 1) f->glEnable(GL_MULTISAMPLE);
     f->glViewport(0, 0, w, h);
     const float a = s.background[3];
     f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
@@ -2506,10 +2543,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     m_computed = computed;
     ++m_framesDrawn;
-    m_picture = m_color;
     // All over its picture, as a camera does. m_color stays as it is: what a reflection reads
     const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
-    if (!m_postProgram || !(wantsGlow || wantsFog || graded)) return m_color;
+    if (!m_postProgram || !(wantsGlow || wantsFog || graded)) return finishPicture(m_color, m_fbo);
     makeLookTargets(w, h);
     const auto target = [&](GLuint tex, int tw, int th) {
         f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
@@ -2639,8 +2675,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindVertexArray(0);
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     f->glViewport(0, 0, w, h);
-    m_picture = m_final;
-    return m_final;
+    return finishPicture(m_final, m_lookFbo);
 }
 
 // What its look needs, its size, kept while it is not resized
@@ -2892,6 +2927,7 @@ void Scene3D::releaseGl()
     if (m_rawSampler) f->glDeleteSamplers(1, &m_rawSampler);
     m_rawSampler = 0;
     m_picture = 0;
+    m_aaOutput.destroy();
     if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo);
     if (m_color) f->glDeleteTextures(1, &m_color);
     if (m_depth) f->glDeleteRenderbuffers(1, &m_depth);

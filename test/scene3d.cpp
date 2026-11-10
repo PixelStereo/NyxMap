@@ -1066,6 +1066,48 @@ int runScene3dTests(Engine &engine)
             check(!inkAt(qRgb(0, 0, 255), 40), "simple: no picture");
             g->glDeleteTextures(1, &picture);
             plain.releaseGl();
+
+            const auto renderer = QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER)));
+            if (!Scene3D::lite(renderer)) {
+                one[0].picture = 0;
+                one[0].placement.unlit = true;
+                camera.fogDensity = .08f;
+                camera.glow = 0;
+                Scene3DQuality quality;
+                quality.shadows = quality.contact = quality.reflections = quality.glow = 0;
+                Scene3D output;
+                const auto render = [&](int resolution, int aa) {
+                    quality.antialiasing = aa;
+                    return output.draw(camera, one, {}, resolution, resolution, 0, false, quality);
+                };
+                const auto native = read(render(size, 1), size, size);
+                const auto twice = read(render(size * 2, 1), size * 2, size * 2);
+                const GLuint highTexture = render(size, 3);
+                g->glBindTexture(GL_TEXTURE_2D, highTexture);
+                GLint width = 0;
+                g->glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                g->glBindTexture(GL_TEXTURE_2D, 0);
+                check(width == size, "3D supersampling returns a composition-sized picture");
+                const auto high = read(highTexture, size, size);
+                int mismatches = 0, differentEdges = 0;
+                for (int y = 0; y < size; ++y)
+                    for (int x = 0; x < size; ++x) {
+                        const int expected = (qRed(twice.pixel(2*x, 2*y)) + qRed(twice.pixel(2*x+1, 2*y)) +
+                                              qRed(twice.pixel(2*x, 2*y+1)) + qRed(twice.pixel(2*x+1, 2*y+1)) + 2) / 4;
+                        const int pixel = qRed(high.pixel(x, y));
+                        mismatches += std::abs(pixel - expected) > 2;
+                        differentEdges += std::abs(pixel - qRed(native.pixel(x, y))) > 12;
+                    }
+                check(mismatches == 0 && differentEdges > 20, "high-quality 3D resolves the fogged render after supersampling");
+                for (int frame = 0; frame < 4; ++frame) render(size, 3);
+                const int frames = output.framesDrawn();
+                const int bits = renderBits();
+                setRenderBits(bits == 8 ? 16 : 8);
+                render(size, 3);
+                setRenderBits(bits);
+                check(output.framesDrawn() == frames + 1, "changing output precision refreshes the resolved 3D picture");
+                output.releaseGl();
+            }
             one[0].model->releaseGl();
         }
         g->glDeleteTextures(1, &hdr);
