@@ -51,6 +51,39 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     e.renderFrame();
     e.runGl([&] { Engine::Lock lock(&e.mutex()); check(!e.previewTexture(3, nullptr), "deleted layer never leaves a stale image"); });
     for (int slot = 0; slot < 4; ++slot) e.setPreviewSource(slot, 0);
+
+    const int sourceRow = e.addLayer("Hidden source");
+    const quint64 source = e.layerId(sourceRow);
+    check(e.setLayerImage(sourceRow, path, &error), "load the linked source");
+    e.setParameter(source, "opacity", 0.0);
+    const int intermediateRow = e.addLayer("Transparent link");
+    const quint64 intermediate = e.layerId(intermediateRow);
+    check(e.setLayerSourceLayer(intermediateRow, source, LayerTap::PostFx, &error), "link the source");
+    e.setParameter(intermediate, "opacity", 0.0);
+    e.renderFrame();
+    check(!e.layer(e.indexOfId(source))->needed && !e.layer(e.indexOfId(intermediate))->needed,
+          "a transparent, unused link does not render its source");
+    e.setPreviewSource(0, intermediate);
+    e.renderFrame();
+    check(e.layer(e.indexOfId(source))->finalTex && e.layer(e.indexOfId(intermediate))->finalTex,
+          "an explicit preview still renders the transparent link and its source");
+    e.setPreviewSource(0, 0);
+    const int visible = e.addLayer("Visible link");
+    check(e.setLayerSourceLayer(visible, intermediate, LayerTap::PostFx, &error), "link through the transparent layer");
+    e.renderFrame();
+    check(e.layer(e.indexOfId(source))->finalTex && e.layer(visible)->finalTex,
+          "a visible link still follows a chain through transparent layers");
+    const quint64 child = e.layerId(visible);
+    const quint64 group = e.layerId(e.addGroup("Transparent group"));
+    e.setStructure(tree::intoGroup(e.structure(), {child}, group));
+    e.setParameter(group, "opacity", 0.0);
+    e.renderFrame();
+    check(!e.layer(e.indexOfId(group))->finalTex && e.layer(e.indexOfId(child))->finalTex,
+          "transparent group skips composition while its children continue rendering");
+    e.setPreviewSource(0, group);
+    e.renderFrame();
+    check(e.layer(e.indexOfId(group))->finalTex, "a preview still composites a transparent group");
+    e.setPreviewSource(0, 0);
     e.newProject();
     return failures;
 }

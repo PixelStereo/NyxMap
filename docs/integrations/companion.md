@@ -1,6 +1,6 @@
 # NyxMap · Stream Deck with Companion
 
-Use the [NyxMap Companion module](../integrations/companion/README.md) to build a
+Use the [NyxMap Companion module](https://github.com/PixelStereo/NyxMap/blob/main/integrations/companion/README.md) to build a
 show desk by dragging ready-made presets onto Stream Deck buttons.
 
 ## Installation
@@ -39,15 +39,15 @@ up to 10 Hz, without fetching/rebuilding catalogs on each timing update.
 
 STOP WAITS cancels pending waits/follows; it does not stop running media or
 timelines. The all-sequence stop preset requires a two-second hold. Recalls and
-live automation still follow the [parameter-control rules](parameter-control.md).
+live automation still follow the [parameter-control rules](../control/parameters.md).
 
 Offline actions are dropped, monitoring values clear and the buttons turn red.
 Library IDs survive list reordering; deleted IDs are refused. Direct cue buttons
 must be rebuilt after a project reload because cue IDs are runtime identities.
 
 The project preset gallery is bounded by the connection setting; action dropdowns
-still expose the full catalog. See the [complete help](../integrations/companion/companion/HELP.md)
-for variables, configuration and troubleshooting, and the [OSC API](osc.md) for
+still expose the full catalog. See the [complete help](https://github.com/PixelStereo/NyxMap/blob/main/integrations/companion/companion/HELP.md)
+for variables, configuration and troubleshooting, and the [OSC API](../reference/osc.md) for
 the protocol used by the module.
 
 Module installation follows Bitfocus's [module package workflow](https://companion.free/user-guide/beta/config/modules/).

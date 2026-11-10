@@ -81,3 +81,6 @@ test/out/
 
 # Python test caches
 __pycache__/
+
+# Documentation site (zensical build)
+/site/

@@ -368,7 +368,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_engine->setViewProvider([this] { return viewsState(); });
     connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
-    connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
     previews->setUndoStack(m_undo);
     connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
@@ -653,10 +652,25 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::layersChanged, this, &MainWindow::refreshLayerList);
     connect(m_engine, &Engine::layersChanged, this, &MainWindow::syncOutputs); // windows follow the viewports
     connect(m_engine, &Engine::compositionSizeChanged, this, [this] { m_view->update(); });
-    // The preview follows rendering (at most one update per rendered frame)
-    connect(m_engine, &Engine::frameRendered, this, [this] {
+    // Coalesce fast engine frames into editor updates. Keep the engine's notification
+    // pending until the update so uncapped rendering cannot fill the Qt event queue.
+    m_previewTimer.setSingleShot(true);
+    m_previewTimer.setTimerType(Qt::PreciseTimer);
+    const auto refreshPreview = [this] {
+        m_previewClock.start();
+        if (!isMinimized()) {
+            if (m_view->isVisible()) m_view->update();
+            if (m_previews->isVisible()) m_previews->refreshFrames();
+        }
         m_engine->acknowledgeFrame();
-        m_view->update();
+    };
+    connect(&m_previewTimer, &QTimer::timeout, this, refreshPreview);
+    connect(m_engine, &Engine::frameRendered, this, [this, refreshPreview] {
+        if (m_previewTimer.isActive()) return;
+        const qint64 periodNs = !isVisible() || isMinimized() ? 100'000'000 : 16'666'667;
+        const qint64 delayNs = m_previewClock.isValid() ? periodNs - m_previewClock.nsecsElapsed() : 0;
+        if (delayNs > 0) m_previewTimer.start(int((delayNs + 999'999) / 1'000'000));
+        else refreshPreview();
     });
     // Rendering may have started before this connection: unblock the notification.
     m_engine->acknowledgeFrame();
@@ -745,9 +759,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         m_binTimer.start();
         m_view->update();
     });
-    m_statusTimer.setInterval(100);
+    m_statusTimer.setInterval(200);
     connect(&m_statusTimer, &QTimer::timeout, this, &MainWindow::statusTick);
     m_statusTimer.start();
+    m_layerStatusTimer.setInterval(100);
+    connect(&m_layerStatusTimer, &QTimer::timeout, this, [this] {
+        if (m_layerTable->isVisible() && !isMinimized())
+            refreshLayerListFromEngine(false); // retry next tick if the renderer owns the lock
+    });
+    m_layerStatusTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
         // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.
@@ -822,6 +842,8 @@ MainWindow::~MainWindow()
         m_oscThread->wait();
     }
     m_statusTimer.stop();
+    m_layerStatusTimer.stop();
+    m_previewTimer.stop();
     m_renderTimer.stop();
     m_autosaveTimer.stop();
     for (auto &[id, o] : m_outputs) delete o.window;
@@ -1385,10 +1407,17 @@ void MainWindow::toggleSolo(int row)
 
 void MainWindow::refreshLayerList()
 {
+    refreshLayerListFromEngine(true);
+}
+
+void MainWindow::refreshLayerListFromEngine(bool wait)
+{
     std::vector<LayerTable::Row> rows;
     const bool audioRunning = m_engine->audioOutput().isRunning();
     {
-        Engine::Lock lk(&m_engine->mutex());
+        std::unique_lock<Engine::Mutex> lock(m_engine->mutex(), std::defer_lock);
+        if (wait) lock.lock();
+        else if (!lock.try_lock()) return;
         const std::vector<bool> leftOut = m_engine->soloLeftOut();
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             Layer *l = m_engine->layer(i);
@@ -2903,11 +2932,10 @@ void MainWindow::togglePlayCurrent()
 
 void MainWindow::statusTick()
 {
-    m_engine->acknowledgeFrame(); // safety net: the preview cannot stay frozen
-    m_inspector->refreshDynamic();
-    m_viewportInspector->refreshDynamic();
-    m_composition->refreshStatus();
-    refreshLayerList(); // playback positions (in-place update)
+    if (isMinimized()) return;
+    if (m_inspector->isVisible()) m_inspector->refreshDynamic();
+    if (m_viewportInspector->isVisible()) m_viewportInspector->refreshDynamic();
+    if (m_composition->isVisible()) m_composition->refreshStatus();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 #pragma once
+#include <QElapsedTimer>
 #include <QPointer>
 #include "LayerTree.h"
 #include <QJsonObject>
@@ -63,6 +64,7 @@ private:
     void fitToAvailableScreen();
     void buildMenus();
     void refreshLayerList();
+    void refreshLayerListFromEngine(bool wait);
     void scheduleRecallRefresh();
     void refreshViewports();
     void updateCoTargets(); // the inspectors edit the whole selection of their list
@@ -185,7 +187,9 @@ private:
     class ShowControlPanel *m_showControl = nullptr;
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
-    QTimer m_statusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
+    QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
+    QTimer m_previewTimer;
+    QElapsedTimer m_previewClock;
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
             *m_blackoutAction = nullptr;

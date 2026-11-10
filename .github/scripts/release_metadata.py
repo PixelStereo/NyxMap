@@ -55,7 +55,7 @@ def downloads(release, urls, repository):
     tag = release["tag_name"]
     preview = " (preview)" if release.get("prerelease") else ""
     companion = (f"\n\n**[Download the Stream Deck module for Companion]({urls['companion']})** "
-                 "— import it in Companion; [setup guide](docs/companion.md).") if 'companion' in urls else ''
+                 "— import it in Companion; [setup guide](docs/integrations/companion.md).") if 'companion' in urls else ''
     return f"""{START}
 Latest published build: **[{tag}](https://github.com/{repository}/releases/tag/{tag})**{preview}.
 
@@ -63,7 +63,7 @@ Latest published build: **[{tag}](https://github.com/{repository}/releases/tag/{
 | :---: | :---: | :---: |
 | **[Download macOS]({urls['mac']})** | **[Download Windows]({urls['win']})** | **[Download Ubuntu AppImage]({urls['linux']})** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive]({urls['portable']})** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).{companion}
+Linux: Ubuntu 24.04 or newer. The **[portable archive]({urls['portable']})** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).{companion}
 {END}"""
 
 

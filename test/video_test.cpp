@@ -802,8 +802,44 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         }
         e.renderFrame();
         VCHECK(e.videoFramesShown(i) == hidden + 1);
-        Engine::Lock lk(&e.mutex());
         VCHECK(e.layer(i)->finalTex != 0);
+    }
+
+    // A dormant file leaves its decoder idle without stopping its transport.
+    {
+        e.newProject();
+        e.setCompositionSize(QSize(640, 360));
+        const int i = e.addLayer(QStringLiteral("Dormant video"));
+        QString err;
+        const bool opened = e.setLayerVideo(i, root + "/media/h264.mp4", &err);
+        VCHECK(opened);
+        if (!opened) return g_failures;
+        e.setParameter(e.layerId(i), "play_mode", QStringLiteral("loop"));
+        QElapsedTimer tm;
+        e.layer(i)->enabled = false;
+        tm.start();
+        while (tm.elapsed() < 1100) {
+            e.renderFrame();
+            QThread::msleep(20);
+        }
+        const auto decoded = e.layer(i)->video->metrics().decodedFrames;
+        const double heldClock = e.layer(i)->clock;
+        tm.restart();
+        while (tm.elapsed() < 500) {
+            e.renderFrame();
+            QThread::msleep(20);
+        }
+        VCHECK(e.layer(i)->clock > heldClock + 0.25);
+        VCHECK(e.layer(i)->video->metrics().decodedFrames <= decoded + 1);
+        e.layer(i)->enabled = true;
+        const quint64 uploaded = e.videoFramesShown(i);
+        tm.restart();
+        while (e.videoFramesShown(i) == uploaded && tm.elapsed() < 3000) {
+            e.renderFrame();
+            QThread::msleep(20);
+        }
+        VCHECK(e.videoFramesShown(i) > uploaded && e.layer(i)->finalTex != 0);
+        VCHECK(std::abs(e.layer(i)->clock - e.layer(i)->frame.pts) < 0.3);
     }
     // Decoded frames over the memory budget: every stream keeps its minimum ahead and none is dropped; once closed,
     // nothing is left counted

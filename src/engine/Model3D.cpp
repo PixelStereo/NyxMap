@@ -1145,6 +1145,7 @@ in vec2 v_ndc; out vec4 o;
 uniform sampler2D u_seen; uniform mat4 u_inv; uniform vec3 u_eye, u_fogColor;
 uniform float u_density, u_fogBase, u_falloff, u_reach, u_exposure; uniform int u_steps;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8], u_cosIn[8];
+uniform vec2 u_coneDot[8];
 uniform int u_shadow[8], u_pointShadow[8]; uniform mat4 u_shadowMat[4]; uniform sampler2DArrayShadow u_shadows;
 uniform float u_pointFar[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
@@ -1183,11 +1184,18 @@ void main() {
                 float dist2 = max(dot(d, d), 0.05);
                 L = d * inversesqrt(dist2);
                 att = 1.0 / dist2;
-                if (u_type[i] == 2) att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(dot(-L, normalize(u_ldir[i])), -1.0, 1.0)));
+                if (u_type[i] == 2) {
+                    // The angular gradient only needs acos along the edge of the beam.
+                    float axis = dot(-L, normalize(u_ldir[i]));
+                    if (axis <= u_coneDot[i].x) continue;
+                    if (axis < u_coneDot[i].y)
+                        att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(axis, -1.0, 1.0)));
+                }
                 if (u_type[i] == 3) att *= max(dot(-L, normalize(u_ldir[i])), 0.0);
                 if (att <= 1e-4) continue;
             }
-            float cosine = dot(dir, -L), phase = 0.0796 * (1.0 - 0.16) / pow(1.16 - 0.8 * cosine, 1.5); // forward, as dust
+            float phaseBase = 1.16 - 0.8 * dot(dir, -L);
+            float phase = 0.0796 * (1.0 - 0.16) / (phaseBase * sqrt(phaseBase)); // forward, as dust
             light += u_color[i] * att * phase * through(i, p);
         }
         added += seen * gets * light;
@@ -1834,8 +1842,35 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_COMPARE_MODE, GL_NONE);
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (m_shadowProgram) m_placeDepth.resolve(m_shadowProgram);
-        if (m_pointProgram) m_placePoint.resolve(m_pointProgram);
+        auto resolveDepth = [&](GLuint program, DepthUniforms &u) {
+            u.view = f->glGetUniformLocation(program, "u_view");
+            u.projection = f->glGetUniformLocation(program, "u_proj");
+            u.displacement = f->glGetUniformLocation(program, "u_disp");
+        };
+        if (m_shadowProgram) {
+            m_placeDepth.resolve(m_shadowProgram);
+            resolveDepth(m_shadowProgram, m_depthUniforms);
+        }
+        if (m_pointProgram) {
+            m_placePoint.resolve(m_pointProgram);
+            resolveDepth(m_pointProgram, m_pointUniforms);
+            m_pointUniforms.light = f->glGetUniformLocation(m_pointProgram, "u_light");
+            m_pointUniforms.farPlane = f->glGetUniformLocation(m_pointProgram, "u_far");
+        }
+        for (int slot = 0; slot < kMaxShadows; ++slot) {
+            const QByteArray index = QByteArray::number(slot) + ']';
+            if (m_program) {
+                m_shadowPlaneAt[slot] = f->glGetUniformLocation(m_program, ("u_shadowPlanes[" + index).constData());
+                m_shadowMatrixAt[slot] = f->glGetUniformLocation(m_program, ("u_shadowMat[" + index).constData());
+            }
+            if (m_fogProgram)
+                m_fogShadowMatrixAt[slot] = f->glGetUniformLocation(m_fogProgram, ("u_shadowMat[" + index).constData());
+        }
+        GLint maxTexture = 0, maxRenderbuffer = 0;
+        f->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+        f->glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+        m_targetLimit = std::min(maxTexture, maxRenderbuffer);
+        f->glGetIntegerv(GL_MAX_SAMPLES, &m_sampleLimit);
     }
     // An HDR file's picture does not change: copied and blurred once
     bool hasEnv = environment && environmentLinear && environment == m_envSource && m_env;
@@ -1850,15 +1885,10 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     // High quality resolves the whole 3D picture after the look passes. MSAA alone
     // cannot smooth fog and other effects evaluated on a single-sample depth buffer.
     bool supersample = false;
-    if (!m_lite && quality.antialiasing == 3 && qint64(w) * h <= 4'194'304) {
-        GLint maxTexture = 0, maxRenderbuffer = 0;
-        f->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
-        f->glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
-        const int limit = std::min(maxTexture, maxRenderbuffer);
-        if (w <= limit / 2 && h <= limit / 2) {
-            if (m_aaOutput.ensure(w, h)) m_frameKey.clear();
-            supersample = m_aaOutput.ready(w, h);
-        }
+    if (!m_lite && quality.antialiasing == 3 && qint64(w) * h <= 4'194'304 &&
+        w <= m_targetLimit / 2 && h <= m_targetLimit / 2) {
+        if (m_aaOutput.ensure(w, h)) m_frameKey.clear();
+        supersample = m_aaOutput.ready(w, h);
     }
     if (supersample) {
         w *= 2;
@@ -1963,9 +1993,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glActiveTexture(GL_TEXTURE0);
     };
     const int aaLevel = m_lite ? 0 : supersample ? 1 : std::clamp(quality.antialiasing, 0, 3);
-    GLint maxSamples = 1;
-    f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
-    const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, maxSamples));
+    const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, m_sampleLimit));
     if (!m_fbo || w != m_w || h != m_h || wantedSamples != m_samples) { // its targets, the composition's size: antialiased with depth, and its picture
         if (m_fbo) {
             f->glDeleteFramebuffers(1, &m_fbo);
@@ -2188,8 +2216,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glDisable(GL_BLEND);
             f->glDisable(GL_CULL_FACE);
             f->glUseProgram(m_pointProgram);
-            auto where = [&](const char *name) { return f->glGetUniformLocation(m_pointProgram, name); };
-            f->glUniform1i(where("u_disp"), 1);
+            f->glUniform1i(m_pointUniforms.displacement, 1);
             static const QVector3D kLook[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             static const QVector3D kUp[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
             for (int slot = 0; slot < pointShadows; ++slot) {
@@ -2208,16 +2235,16 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                     f->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
                     f->glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
                 }
-                f->glUniform3f(where("u_light"), pointAt[slot].x(), pointAt[slot].y(), pointAt[slot].z());
-                f->glUniform1f(where("u_far"), pointFar[slot]);
+                f->glUniform3f(m_pointUniforms.light, pointAt[slot].x(), pointAt[slot].y(), pointAt[slot].z());
+                f->glUniform1f(m_pointUniforms.farPlane, pointFar[slot]);
                 for (int face = 0; face < 6; ++face) {
                     f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GLenum(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face), m_pointMaps[slot], 0);
                     f->glClear(GL_DEPTH_BUFFER_BIT);
                     QMatrix4x4 faceView, faceProj;
                     faceView.lookAt(pointAt[slot], pointAt[slot] + kLook[face], kUp[face]);
                     faceProj.perspective(90, 1, 0.02f, pointFar[slot]);
-                    f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, faceView.constData());
-                    f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, faceProj.constData());
+                    f->glUniformMatrix4fv(m_pointUniforms.view, 1, GL_FALSE, faceView.constData());
+                    f->glUniformMatrix4fv(m_pointUniforms.projection, 1, GL_FALSE, faceProj.constData());
                     drawCasters(m_placePoint, faceProj * faceView);
                 }
             }
@@ -2250,15 +2277,14 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glEnable(GL_POLYGON_OFFSET_FILL);
             f->glPolygonOffset(1.5f, 2.0f);
             f->glUseProgram(m_shadowProgram);
-            auto where = [&](const char *name) { return f->glGetUniformLocation(m_shadowProgram, name); };
             const QMatrix4x4 identity;
-            f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, identity.constData());
-            f->glUniform1i(where("u_disp"), 1);
+            f->glUniformMatrix4fv(m_depthUniforms.view, 1, GL_FALSE, identity.constData());
+            f->glUniform1i(m_depthUniforms.displacement, 1);
             for (int slot = 0; slot < shadows; ++slot) {
                 if (!shadowAgain[slot]) continue;
                 f->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_shadowMaps, 0, slot);
                 f->glClear(GL_DEPTH_BUFFER_BIT);
-                f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, shadowMatrices[slot].constData());
+                f->glUniformMatrix4fv(m_depthUniforms.projection, 1, GL_FALSE, shadowMatrices[slot].constData());
                 drawCasters(m_placeDepth, shadowMatrices[slot]);
             }
             f->glDisable(GL_POLYGON_OFFSET_FILL);
@@ -2293,10 +2319,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glDisable(GL_BLEND);
         f->glDisable(GL_CULL_FACE);
         f->glUseProgram(m_shadowProgram);
-        auto where = [&](const char *name) { return f->glGetUniformLocation(m_shadowProgram, name); };
-        f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, view.constData());
-        f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, proj.constData());
-        f->glUniform1i(where("u_disp"), 1);
+        f->glUniformMatrix4fv(m_depthUniforms.view, 1, GL_FALSE, view.constData());
+        f->glUniformMatrix4fv(m_depthUniforms.projection, 1, GL_FALSE, proj.constData());
+        f->glUniform1i(m_depthUniforms.displacement, 1);
         for (const Placed *near : nearestFirst) {
             computed += near->item->model->triangleCount();
             place(m_placeDepth, *near);
@@ -2426,7 +2451,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform1i(m_sceneUniforms.u_pointRaw0, 16);
     f->glUniform1i(m_sceneUniforms.u_pointRaw1, 17);
     for (int slot = 0; slot < shadows; ++slot)
-        f->glUniform3f(f->glGetUniformLocation(m_program, qPrintable(QStringLiteral("u_shadowPlanes[%1]").arg(slot))), shadowPlanes[slot].x(), shadowPlanes[slot].y(), shadowPlanes[slot].z());
+        f->glUniform3f(m_shadowPlaneAt[slot], shadowPlanes[slot].x(), shadowPlanes[slot].y(), shadowPlanes[slot].z());
     f->glActiveTexture(GL_TEXTURE15);
     f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
     f->glBindSampler(15, m_rawSampler);
@@ -2443,7 +2468,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glUniform1f(m_sceneUniforms.u_studio, std::max(0.0f, s.studio));
     f->glUniform1iv(m_sceneUniforms.u_shadow, kMaxLights, shadowOf);
     for (int slot = 0; slot < shadows; ++slot)
-        f->glUniformMatrix4fv(f->glGetUniformLocation(m_program, qPrintable(QStringLiteral("u_shadowMat[%1]").arg(slot))), 1, GL_FALSE, shadowMatrices[slot].constData());
+        f->glUniformMatrix4fv(m_shadowMatrixAt[slot], 1, GL_FALSE, shadowMatrices[slot].constData());
     f->glUniform1fv(m_sceneUniforms.u_shadowRadius, kMaxShadows, shadowRadii);
     f->glUniform1fv(m_sceneUniforms.u_shadowBias, kMaxShadows, shadowBiases);
     f->glUniform1i(m_sceneUniforms.u_shadows, 9);
@@ -2613,11 +2638,17 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform3fv(where("u_ldir"), kMaxLights, directions);
         f->glUniform1fv(where("u_cos"), kMaxLights, cones);
         f->glUniform1fv(where("u_cosIn"), kMaxLights, conesIn);
+        GLfloat coneDots[2 * kMaxLights] = {};
+        for (int k = 0; k < count; ++k) {
+            coneDots[2 * k] = std::cos(cones[k]);
+            coneDots[2 * k + 1] = std::cos(conesIn[k]);
+        }
+        f->glUniform2fv(where("u_coneDot"), kMaxLights, coneDots);
         f->glUniform1iv(where("u_shadow"), kMaxLights, shadowOf);
         f->glUniform1iv(where("u_pointShadow"), kMaxLights, pointOf);
         f->glUniform1fv(where("u_pointFar"), kMaxPointShadows, pointFar);
         for (int slot = 0; slot < shadows; ++slot)
-            f->glUniformMatrix4fv(f->glGetUniformLocation(m_fogProgram, qPrintable(QStringLiteral("u_shadowMat[%1]").arg(slot))), 1, GL_FALSE, shadowMatrices[slot].constData());
+            f->glUniformMatrix4fv(m_fogShadowMatrixAt[slot], 1, GL_FALSE, shadowMatrices[slot].constData());
         f->glUniform1i(where("u_seen"), 0);
         f->glUniform1i(where("u_shadows"), 9);
         f->glUniform1i(where("u_pointMap0"), 10);

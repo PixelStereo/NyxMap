@@ -435,6 +435,11 @@ private:
         GLint u_viewProj = -1;
     } m_sceneUniforms;
     GLint m_unlitAt = -1, m_shadingAt = -1;
+    struct DepthUniforms {
+        GLint view = -1, projection = -1, displacement = -1, light = -1, farPlane = -1;
+    } m_depthUniforms, m_pointUniforms;
+    std::array<GLint, kMaxShadows> m_shadowPlaneAt{}, m_shadowMatrixAt{}, m_fogShadowMatrixAt{};
+    GLint m_targetLimit = 0, m_sampleLimit = 1;
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0;                          // its picture
