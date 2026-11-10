@@ -245,6 +245,62 @@ The points are in the layer's own frame, so moving, scaling or warping the layer
 | P2 | Apply a consistent arbitration model to layer values, composition masters and interaction settings. | Simultaneous recall, timeline and input scenarios follow a documented rule across all targets. |
 | P2 | Offer explicit Replace, Add and Multiply modes with a defined base value, evaluation order and clamping. | Users can combine automation and live modulation deliberately, including grouped RGB, without depending on list order. |
 
-Keep existing project behavior until users opt into a new policy. Validate simultaneous writes, sparse MIDI versus continuous audio, pick-up, RGB, delayed recalls and release behavior in GitHub CI.
+### Proposed design: control priorities
+
+A possible design for the takeover, return and arbitration proposals above. Keep three concepts separate:
+
+- **Control priority:** which eligible control wins for a parameter.
+- **Rule precedence:** which matching rule defines that control order.
+- **Ownership lifetime:** when a winning control releases the parameter.
+
+**Profiles.** **Composition > Control Priorities** holds named profiles, each a reorderable default order with scoped exceptions. Example orders, highest first (none is a mandatory default):
+
+| Profile | Control order |
+|---|---|
+| Live | Interactions > Timelines > Layer Animations > Presets > Snapshots |
+| Playback | Timelines > Presets > Snapshots > Layer Animations > Interactions |
+| Recall | Snapshots > Presets > Timelines > Layer Animations > Interactions |
+
+An individual timeline, animation or interaction can override its class rank (a specific MIDI controller outranking audio interactions). Controls are referenced by stable IDs, with names displayed in the editor.
+
+**Scoped rules.** A rule selects targets and replaces their control order or ownership settings; unspecified settings inherit from the profile. Scopes: composition, category (Source, Color, FX, Spatial), layer, layer and category, parameter, or OSC address pattern (`/layer/*/opacity`). Categories need explicit metadata, not OSC prefixes. Layer selections follow internal IDs across renames; **Include Descendants** covers group contents. `*` keeps OSC semantics (one path segment, no recursive `**`). The most specific rule wins; **Rule Priority** resolves equal or overlapping selectors, a stable rule ID breaks remaining ties, and ambiguous overlaps are flagged. The specificity comparison between category, layer and wildcard selectors must be formalized so results never depend on container iteration order.
+
+Illustrative notation only, not an implemented file format:
+
+```yaml
+profile: Live
+default_order: [interactions, timelines, layer_animations, presets, snapshots]
+rules:
+  - target: { layer: Background, category: Color }
+    order: [presets, timelines, interactions, layer_animations, snapshots]
+  - target: { osc: /layer/*/opacity }
+    order: [timelines, interactions, presets, snapshots, layer_animations]
+```
+
+**Switching during a show.** Snapshots and sequence steps select **Control Profile: Inherit** or a named profile, which becomes active before that recall's values are submitted. Presets may select one too, off by default, so a color preset never changes the policy unexpectedly. Profile changes and their recalls apply atomically at an engine update boundary, in a deterministic command order. Policy selection is not itself an arbitrated parameter, and changing it never restarts running timelines or animations.
+
+**Ownership and release.** Priority applies only to eligible candidates; a stored value must not own a parameter forever because its class ranks first.
+
+| Mode | Lifetime |
+|---|---|
+| While Active | Owns the parameter during playback or a recall fade, then releases. |
+| Until Released | Keeps its candidate until an explicit release or replacement. |
+| Timeout | Releases after a configured interval without new input. |
+
+Interaction **Jump / Pick-up** stays separate from ownership. Sparse MIDI/OSC messages need explicit hold or timeout semantics; continuous audio can stay active while sampled. Paused, stopped and completed animations need explicit behavior; a delayed recall becomes eligible at its deadline. On release, the current underlying candidate is revealed, optionally through a **Return Fade**. Hidden timelines and fades keep advancing. With no candidate left, a defined base value remains; how manual edits and completed recalls update it must be documented. Example: a timeline drives opacity, a higher-priority snapshot holds `0.8` Until Released; releasing it returns to the timeline's current value, optionally over 300 ms, without rewinding.
+
+**Engine and interface requirements.**
+
+- Show **Controlled by**, **Profile**, **Rule**, competing controls and **Release Control** beside each affected parameter, with rule-match previews.
+- Evaluate candidate values first, then arbitrate and commit the winner. Reordering today's direct writes is insufficient: some writes cancel fades.
+- Break ties within a class by explicit instance priority, activation order and stable IDs, not list placement.
+- Treat grouped RGB as one candidate, with explicit channel overrides.
+- Keep transport triggers, source replacement and topology changes outside scalar arbitration; preserve locks and safety controls independently.
+- Cache rule resolution per parameter, invalidated on profile, rule, namespace or topology changes.
+- Missing profiles or deleted targets get visible diagnostics and a defined fallback.
+
+**Order.** 1) Specify rule precedence, base values and ownership transitions; introduce the central arbiter. 2) Add saved profiles, scoped rules and an inspector explaining the winning rule. 3) Add atomic snapshot/sequence profile selection, holds and return fades. This first stage selects a winner; Add/Multiply mixing remains the separate P2 proposal.
+
+Keep existing project behavior until users opt into a new policy. Validate simultaneous writes, sparse MIDI versus continuous audio, pick-up, hold/release, RGB, delayed recalls, simultaneous profile changes, overlapping patterns, renamed/deleted targets and project round trips in GitHub CI.
 
 Implementation references: [frame order](../src/engine/Render.cpp), [animation evaluation](../src/engine/Animations.cpp), [recalls and fades](../src/engine/Snapshots.cpp), [interaction evaluation](../src/engine/InteractionsEngine.cpp), [takeover](../src/engine/Interactions.cpp).
