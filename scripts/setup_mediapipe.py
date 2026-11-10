@@ -58,6 +58,7 @@ def bundle_python(folder):
         site = subprocess.check_output([str(python), "-I", "-c",
             "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
         dependencies = ["mediapipe==0.10.32"]
+        options = []
         if sys.platform == "darwin":
             # PyPI's macOS wheel contains FFmpeg codecs that cannot ship with NyxMap.
             # MediaPipe only uses OpenCV for drawing and encoding the setup preview.
@@ -82,10 +83,18 @@ def bundle_python(folder):
             if len(wheels) != 1:
                 raise RuntimeError(f"Expected exactly one locally built OpenCV wheel, got {wheels}")
             dependencies.append(str(wheels[0]))
+        elif sys.platform.startswith("linux"):
+            # PyPI's regular Linux wheel bundles its own Qt 5, which the package must not carry and the clean-runtime
+            # check refuses. MediaPipe never opens an OpenCV window, so the headless build is enough; an override keeps
+            # MediaPipe's own opencv-contrib-python requirement from installing the regular wheel next to it.
+            dependencies.append("opencv-contrib-python-headless==5.0.0.93")
+            overrides = managed / "overrides.txt"
+            overrides.write_text("opencv-contrib-python; sys_platform == 'never'\n")
+            options.extend(["--override", str(overrides)])
         else:
             dependencies.append("opencv-contrib-python==5.0.0.93")
         subprocess.run([*uv, "pip", "install", "--python", str(python), "--target", site,
-                        "--link-mode", "copy", "--only-binary", ":all:", *dependencies], check=True)
+                        "--link-mode", "copy", "--only-binary", ":all:", *options, *dependencies], check=True)
     if sys.platform.startswith("linux"):
         # Matplotlib uses Agg. The optional Tk module links to Tcl/Tk 9, absent
         # from the Ubuntu 24.04 release baseline.
