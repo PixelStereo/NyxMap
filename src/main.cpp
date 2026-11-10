@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "HandTracking.h"
 #include "EnduranceLogger.h"
 #include "MainWindow.h"
 #include "NetVideo.h"
@@ -79,12 +80,43 @@ int main(int argc, char *argv[])
     cli.addOption(enduranceOpt);
     QCommandLineOption libsOpt("check-libraries", "Load the NDI and OMT libraries as publishing does, print where they "
                                                   "were found, then quit (exit code 5 if one does not load).");
+    QCommandLineOption mediaPipeOpt("check-mediapipe", "Run an offline inference using the bundled MediaPipe runtime.");
+    cli.addOption(mediaPipeOpt);
     cli.addOption(libsOpt);
     cli.addPositionalArgument("project", ".nyxmap project to open");
     // --render exit codes: 0 rendered, 1 OpenGL unavailable, 2 output not written, 3 project not loaded,
     // 4 a layer or an effect in error (--strict)
     cli.process(app);
     const QString project = cli.positionalArguments().value(0);
+
+    if (cli.isSet(mediaPipeOpt)) {
+        const auto directory = HandTracking::bundledDirectory();
+        if (directory.isEmpty()) {
+            qCritical("Bundled MediaPipe runtime is missing");
+            return 6;
+        }
+        HandTracking::Detector detector;
+        QString error;
+        if (detector.load(directory, &error)) {
+            QImage blank(128, 128, QImage::Format_RGBA8888);
+            blank.fill(Qt::black);
+            const auto result = detector.infer(blank, (1u << 12) - 1, &error);
+            int loaded = 0;
+            for (const auto &key : result.keys()) {
+                if (key.endsWith("_delegate")) ++loaded;
+                if (key.endsWith("_error")) {
+                    qCritical("%s: %s", qPrintable(key), qPrintable(result.value(key).toString()));
+                    return 6;
+                }
+            }
+            if (error.isEmpty() && loaded == 12) {
+                std::puts("Bundled MediaPipe inference passed");
+                return 0;
+            }
+        }
+        qCritical("Bundled MediaPipe inference failed: %s", qPrintable(error));
+        return 6;
+    }
 
     // The packages ship NDI and OMT: their smoke test checks that both load from where they were put
     if (cli.isSet(libsOpt)) {

@@ -9,6 +9,9 @@
 #include "AnimEditor.h"
 #include "PresetEditor.h"
 #include "Osc.h"
+#include "OscCodec.h"
+#include <QCheckBox>
+#include <QUdpSocket>
 #include "Engine.h"
 #include "Widgets.h"
 
@@ -19,7 +22,6 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -56,6 +58,95 @@
 // Undo: the whole list before and after (edits of one drag merge into one step)
 // ---------------------------------------------------------------------------
 namespace {
+
+void showVisionSetup(QWidget *parent, Engine *engine, const Interaction &input, const QString &category)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("MediaPipe Setup · %1").arg(category));
+    const QString prefix = QStringLiteral("/mediapipe/%1/").arg(osc::safeName(category).toLower());
+    const auto address = [&prefix](const QString &key) { return prefix + osc::safeName(key); };
+    dialog.resize(930, 570);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *split = new QSplitter(Qt::Horizontal, &dialog);
+    auto *preview = new QLabel;
+    preview->setAlignment(Qt::AlignCenter);
+    preview->setMinimumSize(280, 180);
+    preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    split->addWidget(preview);
+    auto *meters = new QTreeWidget;
+    meters->setRootIsDecorated(false);
+    meters->setHeaderLabels({QStringLiteral("Signal"), QStringLiteral("Live value"), QStringLiteral("Send OSC")});
+    meters->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    meters->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    split->addWidget(meters);
+    split->setSizes({480, 450});
+    layout->addWidget(split, 1);
+    auto *status = new QLabel;
+    status->setWordWrap(true);
+    layout->addWidget(status);
+    auto *output = new QHBoxLayout;
+    auto *armed = new QCheckBox(QStringLiteral("Send selected signals"));
+    auto *host = new QLineEdit(QStringLiteral("127.0.0.1"));
+    host->setPlaceholderText(QStringLiteral("Destination IP"));
+    auto *port = new QSpinBox;
+    port->setRange(1, 65535);
+    port->setValue(1234);
+    output->addWidget(armed);
+    output->addWidget(host);
+    output->addWidget(port);
+    layout->addLayout(output);
+    layout->addWidget(new QLabel(QStringLiteral("OSC · %1<signal>").arg(prefix)));
+
+    QUdpSocket socket;
+    struct Row { QTreeWidgetItem *item; QProgressBar *meter; };
+    QMap<QString, Row> rows;
+    QTimer timer;
+    auto refresh = [&] {
+        const auto frame = engine->visionPreview(input.pixels, true);
+        if (frame.isNull()) preview->clear();
+        else preview->setPixmap(QPixmap::fromImage(frame).scaled(preview->size(), Qt::KeepAspectRatio,
+                                                                 Qt::SmoothTransformation));
+        const auto expressions = engine->visionSignals(input);
+        for (auto it = expressions.begin(); it != expressions.end(); ++it) {
+            if (rows.contains(it.key())) continue;
+            auto *item = new QTreeWidgetItem(meters, {it.key()});
+            item->setCheckState(2, Qt::Unchecked);
+            item->setToolTip(0, address(it.key()));
+            auto *meter = new QProgressBar;
+            meter->setRange(0, 1000);
+            meters->setItemWidget(item, 1, meter);
+            rows.insert(it.key(), {item, meter});
+        }
+        const QHostAddress destination(host->text().trimmed());
+        const bool sending = armed->isChecked() && !destination.isNull();
+        int sent = 0;
+        bool failed = false;
+        for (auto it = rows.begin(); it != rows.end(); ++it) {
+            const double value = expressions.value(it.key()).toDouble();
+            it->meter->setValue(qRound(1000 * std::clamp(value, 0.0, 1.0)));
+            it->meter->setFormat(expressions.isEmpty() ? QStringLiteral("—") : QString::number(value, 'f', 3));
+            if (sending && !expressions.isEmpty() && it->item->checkState(2) == Qt::Checked) {
+                const auto packet = osc::encode({address(it.key()), QStringLiteral("f"), {value}});
+                if (socket.writeDatagram(packet, destination, quint16(port->value())) < 0) failed = true;
+                else ++sent;
+            }
+        }
+        QString message = engine->visionStatus(input.pixels, true);
+        if (expressions.isEmpty()) message += QStringLiteral(" · Waiting for signals");
+        else if (expressions.value("Face · Count").toInt(-1) == 0)
+            message += QStringLiteral(" · No face detected");
+        if (armed->isChecked() && destination.isNull()) message += QStringLiteral(" · Enter a valid destination IP");
+        if (sent) message += QStringLiteral(" · OSC sent: %1").arg(sent);
+        if (failed) message += QStringLiteral(" · OSC send failed");
+        status->setText(message);
+    };
+    QObject::connect(&timer, &QTimer::timeout, &dialog, refresh);
+    timer.start(50);
+    engine->setVisionSetupInput(input);
+    refresh();
+    dialog.exec();
+    engine->setVisionSetupInput(std::nullopt);
+}
 
 class SetInteractions : public QUndoCommand
 {
@@ -206,7 +297,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     auto *bar = new QHBoxLayout;
     auto *addButton = new QPushButton(QStringLiteral("+"));
     addButton->setFixedWidth(32);
-    addButton->setToolTip(QStringLiteral("A new interaction; choose its category with Source"));
+    addButton->setToolTip(QStringLiteral("Add an interaction of the current category, or choose a category in All"));
     m_remove = new QPushButton(QStringLiteral("−"));
     m_remove->setFixedWidth(32);
     m_remove->setToolTip(QStringLiteral("Remove the selected interactions"));
@@ -360,9 +451,15 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         rebuildList();
     });
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildList(); });
-    connect(addButton, &QPushButton::clicked, this, [this] {
-        m_kinds->button(kInteractionSourceCount)->click();
-        add(InteractionSource::Keyboard);
+    connect(addButton, &QPushButton::clicked, this, [this, addButton] {
+        if (const auto kind = shownKind()) {
+            add(*kind);
+            return;
+        }
+        QMenu menu;
+        for (const auto kind : kKinds)
+            menu.addAction(interactionSourceName(kind), this, [this, kind] { add(kind); });
+        menu.exec(addButton->mapToGlobal(QPoint(0, addButton->height())));
     });
     connect(m_remove, &QPushButton::clicked, this, &InteractionPanel::removeSelected);
     connect(m_learn, &QToolButton::toggled, this, [this](bool on) {
@@ -1431,51 +1528,76 @@ void InteractionPanel::rebuildSettings()
                     QStringLiteral("pixel_threshold"));
             });
             attachPreset({threshold}, {QStringLiteral("source/pixels/threshold")});
-            const char *labels[] = {"x", "y", "width", "height"};
-            const double values[] = {it.pixels.roi.x(), it.pixels.roi.y(), it.pixels.roi.width(),
-                                     it.pixels.roi.height()};
-            for (int c = 0; c < 4; ++c) {
-                auto *number = new QDoubleSpinBox;
-                number->setObjectName(QStringLiteral("pixelROI_") + labels[c]);
-                number->setRange(0, 1);
-                number->setDecimals(3);
-                number->setSingleStep(.01);
-                number->setValue(values[c]);
-                number->setKeyboardTracking(false);
-                form->addRow(QStringLiteral("ROI ") + labels[c], number);
-                connect(number, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, c](double value) {
-                    edit(
-                        QStringLiteral("Change Pixel ROI"),
-                        [value, c](Interaction &x) {
-                            const auto r = x.pixels.roi;
-                            x.pixels.roi = QRectF(c == 0 ? value : r.x(), c == 1 ? value : r.y(),
-                                                  c == 2 ? value : r.width(), c == 3 ? value : r.height())
-                                               .intersected(QRectF(0, 0, 1, 1));
-                        },
-                        QStringLiteral("pixel_roi"));
-                });
-                attachPreset({number}, {QStringLiteral("source/pixels/roi/") + labels[c]});
-            }
         } else {
-            auto *hand = new QComboBox;
-            hand->setObjectName(QStringLiteral("trackedHand"));
-            hand->addItems({QStringLiteral("Tracked hand 1"), QStringLiteral("Tracked hand 2")});
-            hand->setCurrentIndex(it.handIndex);
-            form->addRow(QStringLiteral("Hand"), hand);
-            connect(hand, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Tracked Hand"), [value](Interaction &x) { x.handIndex = value; });
+            const auto task = [](HandTracking::Feature measure) {
+                const unsigned kind = HandTracking::taskFor(measure);
+                return kind == 2 ? 1u : kind; // hand landmarks and gestures share a category
+            };
+            const auto currentTask = task(it.handFeature);
+            const auto names = HandTracking::featureNames();
+            auto *category = new QComboBox;
+            category->setObjectName(QStringLiteral("visionCategory"));
+            category->addItem(QStringLiteral("Hands"), 1u);
+            category->addItem(QStringLiteral("Face"), 4u);
+            category->addItem(QStringLiteral("Body"), 8u);
+            category->addItem(QStringLiteral("Objects"), 16u);
+            category->addItem(QStringLiteral("Segmentation"), 32u);
+            category->addItem(QStringLiteral("Face detection"), 64u);
+            category->addItem(QStringLiteral("Image classification"), 128u);
+            category->setCurrentIndex(category->findData(currentTask));
+            form->addRow(QStringLiteral("Category"), category);
+            auto changeMeasure = [this, edit](HandTracking::Feature measure) {
+                edit(QStringLiteral("Change MediaPipe Measure"), [measure](Interaction &x) { x.handFeature = measure; });
+                rebuildSettings();
+            };
+            connect(category, qOverload<int>(&QComboBox::activated), this,
+                    [category, task, names, changeMeasure](int index) {
+                const auto chosen = category->itemData(index).toUInt();
+                for (int i = 0; i < names.size(); ++i) {
+                    const auto measure = HandTracking::Feature(i);
+                    if (task(measure) == chosen) {
+                        changeMeasure(measure);
+                        return;
+                    }
+                }
             });
-            attachPreset({hand}, {QStringLiteral("source/hands/index")});
             auto *feature = new QComboBox;
             feature->setObjectName(QStringLiteral("handFeature"));
-            feature->addItems(HandTracking::featureNames());
-            feature->setCurrentIndex(int(it.handFeature));
+            for (int i = 0; i < names.size(); ++i)
+                if (task(HandTracking::Feature(i)) == currentTask)
+                    feature->addItem(names[i], i);
+            feature->setCurrentIndex(feature->findData(int(it.handFeature)));
             form->addRow(QStringLiteral("Measure"), feature);
-            connect(feature, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Hand Measure"),
-                     [value](Interaction &x) { x.handFeature = HandTracking::Feature(value); });
+            connect(feature, qOverload<int>(&QComboBox::activated), this, [feature, changeMeasure](int index) {
+                changeMeasure(HandTracking::Feature(feature->itemData(index).toInt()));
             });
             attachPreset({feature}, {QStringLiteral("source/hands/feature")});
+            if (currentTask == 1) {
+                auto *hand = new QComboBox;
+                hand->setObjectName(QStringLiteral("trackedHand"));
+                hand->addItem(HandTracking::taskFor(it.handFeature) == 2 ? QStringLiteral("Any tracked hand")
+                                                                        : QStringLiteral("First tracked"), 0);
+                if (it.handIndex == 1) hand->addItem(QStringLiteral("Second tracked"), 1);
+                hand->addItem(QStringLiteral("Left"), 2);
+                hand->addItem(QStringLiteral("Right"), 3);
+                hand->setCurrentIndex(hand->findData(it.handIndex));
+                form->addRow(QStringLiteral("Hand"), hand);
+                connect(hand, qOverload<int>(&QComboBox::activated), this, [edit, hand](int index) {
+                    const int selection = hand->itemData(index).toInt();
+                    edit(QStringLiteral("Change Tracked Hand"), [selection](Interaction &x) { x.handIndex = selection; });
+                });
+                attachPreset({hand}, {QStringLiteral("source/hands/index")});
+            }
+            auto *landmark = new QSpinBox;
+            landmark->setRange(0, 477);
+            landmark->setValue(it.visionLandmark);
+            landmark->setKeyboardTracking(false);
+            landmark->setToolTip(QStringLiteral("MediaPipe index for landmark, world-coordinate and blendshape measurements"));
+            form->addRow(QStringLiteral("Landmark / blendshape index"), landmark);
+            connect(landmark, qOverload<int>(&QSpinBox::valueChanged), this, [edit](int value) {
+                edit(QStringLiteral("Change MediaPipe Landmark"), [value](Interaction &x) { x.visionLandmark = value; });
+            });
+            attachPreset({landmark}, {QStringLiteral("source/hands/landmark")});
             auto *confidence = new QDoubleSpinBox;
             confidence->setRange(.5, .99);
             confidence->setDecimals(2);
@@ -1487,29 +1609,29 @@ void InteractionPanel::rebuildSettings()
                 edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
             });
             attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *models = new QPushButton(QStringLiteral("Choose hand models folder…"));
-            form->addRow(models);
-            connect(models, &QPushButton::clicked, this, [this] {
-                const auto directory = QFileDialog::getExistingDirectory(
-                    this, QStringLiteral("OpenCV Zoo hand model directory"), m_engine->handModelsDirectory());
-                if (!directory.isEmpty()) {
-                    m_engine->setHandModelsDirectory(directory);
-                    rebuildSettings();
+            auto *setup = new QPushButton(QStringLiteral("Setup…"));
+            setup->setObjectName(QStringLiteral("visionSetup"));
+            form->addRow(setup);
+            connect(setup, &QPushButton::clicked, this, [this, category] {
+                if (const auto root = this->selected()) {
+                    const auto &input = m_xyAxis == 1 && !root->xyInputs.empty() ? root->xyInputs.front() : *root;
+                    showVisionSetup(this, m_engine, input, category->currentText());
                 }
             });
-            form->addRow(note(QStringLiteral("Local OpenCV DNN / MediaPipe: two verified ONNX models. Download with "
-                                             "scripts/download_hand_models.py; no images leave this computer.")));
         }
         auto *status = new QLabel;
         status->setWordWrap(true);
         status->setObjectName(QStringLiteral("visionStatus"));
         form->addRow(status);
-        auto *preview = new QLabel;
-        preview->setObjectName(QStringLiteral("visionPreview"));
-        preview->setMinimumHeight(80);
-        preview->setMaximumHeight(200);
-        preview->setAlignment(Qt::AlignCenter);
-        form->addRow(preview);
+        QLabel *preview = nullptr;
+        if (!hands) {
+            preview = new QLabel;
+            preview->setObjectName(QStringLiteral("visionPreview"));
+            preview->setMinimumHeight(80);
+            preview->setMaximumHeight(200);
+            preview->setAlignment(Qt::AlignCenter);
+            form->addRow(preview);
+        }
         auto *timer = new QTimer(status);
         const auto settings = it.pixels;
         auto refresh = [this, status, preview, settings, hands] {
@@ -1519,7 +1641,8 @@ void InteractionPanel::rebuildSettings()
                 current = input.pixels;
             }
             status->setText(m_engine->visionStatus(current, hands));
-            auto image = m_engine->visionPreview(current, hands);
+            if (!preview) return;
+            auto image = m_engine->visionPreview(current);
             if (!image.isNull()) {
                 if (!hands && current.roi != QRectF(0, 0, 1, 1)) {
                     QPainter painter(&image);

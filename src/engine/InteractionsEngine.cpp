@@ -36,7 +36,7 @@ static bool sameInputBinding(const Interaction &a, const Interaction &b)
            a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
            a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
            a.audioInput == b.audioInput && a.pixels == b.pixels && a.pixelFeature == b.pixelFeature &&
-           a.handFeature == b.handFeature && a.handIndex == b.handIndex && a.handConfidence == b.handConfidence &&
+           a.visionLandmark == b.visionLandmark && a.handFeature == b.handFeature && a.handIndex == b.handIndex && a.handConfidence == b.handConfidence &&
            a.layer == b.layer && a.param == b.param;
 }
 
@@ -1141,7 +1141,9 @@ void Engine::makeInteractionParams()
             QStringLiteral("source/hands/feature"), QStringLiteral("Hand measure"), HandTracking::featureNames(),
             [](const Interaction &x) { return int(x.handFeature); },
             [](Interaction &x, int n) { x.handFeature = HandTracking::Feature(n); });
-        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 1, 0,
+        whole(QStringLiteral("source/hands/landmark"), QStringLiteral("MediaPipe landmark / blendshape index"), 0, 477, 0,
+              [](Interaction &x) -> int & { return x.visionLandmark; });
+        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 3, 0,
               [](Interaction &x) -> int & { return x.handIndex; });
         number(QStringLiteral("source/hands/confidence"), QStringLiteral("Hand confidence"), .5, .99, .7,
                [](Interaction &x) -> double & { return x.handConfidence; })

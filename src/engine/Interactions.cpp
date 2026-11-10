@@ -81,7 +81,7 @@ QString interactionSourceName(InteractionSource s)
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels");
     case InteractionSource::Hands:
-        return QStringLiteral("Hands");
+        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -223,7 +223,7 @@ QString InteractionEvent::describe() const
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels");
     case InteractionSource::Hands:
-        return QStringLiteral("Hands");
+        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -264,7 +264,7 @@ QString Interaction::label() const
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels · ") + PixelAnalysis::featureNames().value(int(pixelFeature));
     case InteractionSource::Hands:
-        return QStringLiteral("Hand %1 · ").arg(handIndex + 1) + HandTracking::featureNames().value(int(handFeature));
+        return QStringLiteral("MediaPipe · ") + HandTracking::featureNames().value(int(handFeature));
     case InteractionSource::Audio: {
         const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : audioFeature==AudioFeature::Hit ? QStringLiteral("hits %1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : QStringLiteral("attacks");
         return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;
@@ -433,13 +433,6 @@ Interaction Interaction::made(InteractionSource s)
 {
     Interaction it;
     it.source = s;
-    if (s == InteractionSource::Audio || s == InteractionSource::Pixels ||
-        s == InteractionSource::Hands) { // smoothed: a band's level flickers
-        InteractionStage smooth = InteractionStage::made(InteractionFilter::AttackRelease);
-        smooth.a = .012;
-        smooth.b = .2;
-        it.filters = {smooth};
-    }
     // A fader or a knob: it waits to meet the value (pick-up); a key, a link: it sets it
     it.takeover = s == InteractionSource::Midi || s == InteractionSource::Osc ? Takeover::PickUp : Takeover::Jump;
     return it;
@@ -473,6 +466,7 @@ QJsonObject Interaction::toJson() const
         o["pixels"] = pixels.toJson();
         o["pixel_feature"] = int(pixelFeature);
         o["hand_feature"] = int(handFeature);
+        o["vision_landmark"] = visionLandmark;
         o["hand_index"] = handIndex;
         o["hand_confidence"] = handConfidence;
         break;
@@ -545,8 +539,9 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.audioInput=o.value("audio_input").toBool(false);
     it.pixels = PixelAnalysis::Settings::fromJson(o.value("pixels").toObject());
     it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
-    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, 11));
-    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 1);
+    it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
+    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::HandRightness)));
+    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 3);
     it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();

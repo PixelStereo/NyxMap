@@ -1170,7 +1170,8 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         name = QStringLiteral("(gone)");
         for (const auto &c : s.candidates)
             if (c.first == s.sourceLayer) name = c.second;
-        d << (s.sourceTap == LayerTap::Source ? QStringLiteral("its source, before ROI, color and FX")
+        d << (isMediaPipeTap(s.sourceTap) ? layerTapName(s.sourceTap)
+              : s.sourceTap == LayerTap::Source ? QStringLiteral("its source, before ROI, color and FX")
               : s.sourceTap == LayerTap::PreFx ? QStringLiteral("before its FX") : QStringLiteral("after its FX"));
         break;
     }
@@ -1438,12 +1439,15 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             auto *tap = new QComboBox;
             tap->setObjectName(QStringLiteral("sourceTap"));
             for (LayerTap t : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx}) tap->addItem(layerTapName(t), int(t));
+            for (int i = int(LayerTap::MediaPipeMask); i <= int(LayerTap::MediaPipePartsForeground); ++i)
+                tap->addItem(layerTapName(LayerTap(i)), i);
             tap->setCurrentIndex(std::max(0, tap->findData(int(s.sourceTap))));
             tap->setEnabled(!m_locked);
             tap->setToolTip(QStringLiteral("Where the picture is taken in that layer:\n"
                                            "Source — its source as decoded or generated, before its ROI, color and FX\n"
                                            "Pre-FX — after its ROI and color, before its FX\n"
-                                           "Post-FX — after its FX (its own mapping and opacity are never part of it)"));
+                                           "Post-FX — after its FX (its own mapping and opacity are never part of it)\n"
+                                           "MediaPipe Foreground Mask — use the inferred foreground as alpha."));
             auto setTap = [this](LayerTap t) {
                 editSource(QStringLiteral("Change Source Tap"), [this, t] { m_engine->setLayerTap(m_layer, t); });
                 emit layerChanged();

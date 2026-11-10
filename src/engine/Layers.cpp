@@ -71,16 +71,43 @@ PlayMode playModeFromKey(const QString &k, PlayMode fallback)
 
 QString layerTapKey(LayerTap t)
 {
+    if (t == LayerTap::MediaPipeMask) return QStringLiteral("mediapipe-mask");
+    if (t == LayerTap::MediaPipeHair) return QStringLiteral("mediapipe-hair");
+    if (t == LayerTap::MediaPipeParts) return QStringLiteral("mediapipe-parts");
+    if (t == LayerTap::MediaPipeCutout) return QStringLiteral("mediapipe-cutout");
+    if (t == LayerTap::MediaPipePose) return QStringLiteral("mediapipe-pose");
+    if (t == LayerTap::MediaPipePartsForeground) return QStringLiteral("mediapipe-parts-foreground");
+    if (t == LayerTap::MediaPipeDeepLab) return QStringLiteral("mediapipe-deeplab");
+    if (t == LayerTap::MediaPipeHairDetail) return QStringLiteral("mediapipe-hair-detail");
+    if (t == LayerTap::MediaPipeLandscape) return QStringLiteral("mediapipe-landscape");
     return t == LayerTap::Source ? QStringLiteral("source") : t == LayerTap::PreFx ? QStringLiteral("prefx") : QStringLiteral("postfx");
 }
 
 LayerTap layerTapFromKey(const QString &k)
 {
+    if (k == QLatin1String("mediapipe-mask")) return LayerTap::MediaPipeMask;
+    if (k == QLatin1String("mediapipe-hair")) return LayerTap::MediaPipeHair;
+    if (k == QLatin1String("mediapipe-parts")) return LayerTap::MediaPipeParts;
+    if (k == QLatin1String("mediapipe-cutout")) return LayerTap::MediaPipeCutout;
+    if (k == QLatin1String("mediapipe-pose")) return LayerTap::MediaPipePose;
+    if (k == QLatin1String("mediapipe-parts-foreground")) return LayerTap::MediaPipePartsForeground;
+    if (k == QLatin1String("mediapipe-deeplab")) return LayerTap::MediaPipeDeepLab;
+    if (k == QLatin1String("mediapipe-hair-detail")) return LayerTap::MediaPipeHairDetail;
+    if (k == QLatin1String("mediapipe-landscape")) return LayerTap::MediaPipeLandscape;
     return k == "source" ? LayerTap::Source : k == "prefx" ? LayerTap::PreFx : LayerTap::PostFx;
 }
 
 QString layerTapName(LayerTap t)
 {
+    if (t == LayerTap::MediaPipeMask) return QStringLiteral("MediaPipe Foreground Mask");
+    if (t == LayerTap::MediaPipeHair) return QStringLiteral("MediaPipe Hair Mask");
+    if (t == LayerTap::MediaPipeParts) return QStringLiteral("MediaPipe Body Parts");
+    if (t == LayerTap::MediaPipeCutout) return QStringLiteral("MediaPipe Person Cutout");
+    if (t == LayerTap::MediaPipePose) return QStringLiteral("MediaPipe Pose Skeleton");
+    if (t == LayerTap::MediaPipePartsForeground) return QStringLiteral("MediaPipe Multiclass Foreground");
+    if (t == LayerTap::MediaPipeDeepLab) return QStringLiteral("MediaPipe DeepLab Foreground");
+    if (t == LayerTap::MediaPipeHairDetail) return QStringLiteral("MediaPipe Detailed Hair Mask");
+    if (t == LayerTap::MediaPipeLandscape) return QStringLiteral("MediaPipe Landscape Mask");
     return t == LayerTap::Source ? QStringLiteral("Source") : t == LayerTap::PreFx ? QStringLiteral("Pre-FX") : QStringLiteral("Post-FX");
 }
 

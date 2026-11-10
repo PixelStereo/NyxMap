@@ -18,4 +18,5 @@ python3 scripts/fetch_ndi.py "$TASK_WORK/ndi"
     cat /etc/os-release
     dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
 } > deps-linux.txt
+cp -a "$TASK_WORK/mediapipe" "$TASK_WORK/build/mediapipe"
 python3 scripts/package_linux.py "$TASK_WORK/build" "$TASK_WORK/ffmpeg" "$TASK_WORK/omt" "$TASK_WORK/ndi" /workspace/dist
