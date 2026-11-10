@@ -42,10 +42,10 @@ curl 'http://127.0.0.1:5678/show/catalog?VALUE'
 curl 'http://127.0.0.1:5678/sequence'
 ```
 
-The [Stream Deck module for Companion](companion.md) uses one WebSocket for commands
+The [Stream Deck module for Companion](../integrations/companion.md) uses one WebSocket for commands
 and live state, and follows the current project without manually entering snapshot,
 preset or timeline numbers. For a desk with nothing to install, see
-[Show Control](controls-and-remote.md#show-control).
+[Show Control](../show/controls-and-remote.md#show-control).
 
 ## Address rules
 
@@ -109,7 +109,7 @@ Read-only discovery: `/sequence/count`, `/sequence/<n>/name`, `/sequence/<n>/id`
 
 Each family exposes `/count`, `/<n>/name` and `/<n>/id`. Recalls use the fades,
 delays and captured controls stored in NyxMap. A command does not grant permanent
-ownership of its parameters: see [control rules](parameter-control.md).
+ownership of its parameters: see [control rules](../control/parameters.md).
 
 ### Timelines
 
@@ -287,7 +287,7 @@ exceptions.
 
 An address claimed by an enabled OSC interaction feeds its mapping chain instead
 of also writing the native value. Audio, MIDI, OSC and automation can still
-compete on a target; see [parameter-control rules](parameter-control.md).
+compete on a target; see [parameter-control rules](../control/parameters.md).
 
 ### Reset a parameter
 
@@ -372,5 +372,5 @@ NyxMap publishes `_oscjson._tcp` and `_osc._udp` services when announcement is
 enabled. OSC/OSCQuery has no authentication or encryption; keep show control on
 the intended show network. No request in this guide changes project structure.
 
-Implementation: [namespace](../src/engine/Osc.cpp), [show control](../src/engine/OscShowControl.cpp),
-[cue feedback](../src/engine/SequenceFeedback.cpp), [OSC codec](../src/engine/OscCodec.cpp).
+Implementation: [namespace](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/Osc.cpp), [show control](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/OscShowControl.cpp),
+[cue feedback](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/SequenceFeedback.cpp), [OSC codec](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/OscCodec.cpp).
