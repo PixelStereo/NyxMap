@@ -282,6 +282,8 @@ int runShowControlUiTests(Engine &engine)
                 for (auto *b : library->findChildren<QPushButton *>())
                     if (b->isVisible()) {
                         const QRect r(b->mapTo(library, QPoint(0, 0)), b->size());
+                        if (!library->rect().contains(r))
+                            qWarning() << "Library button outside layout" << tab << b->text() << r << library->rect();
                         check(library->rect().contains(r), "the bar fits the narrowest library");
                     }
                 for (auto *list : library->findChildren<QTreeWidget *>())

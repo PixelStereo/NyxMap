@@ -644,6 +644,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_sequences = new QComboBox;
     m_sequences->setObjectName(QStringLiteral("sequenceMenu"));
     m_sequences->setEditable(true);
+    m_sequences->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_sequences->setMinimumContentsLength(8);
     m_sequences->setInsertPolicy(QComboBox::NoInsert);
     m_sequences->setCompleter(nullptr);
     m_sequences->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -777,6 +779,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     flags->addWidget(m_beatLabel);
     right->addWidget(new RecallProgressBar(m_engine));
     m_steps = new QTableWidget(0, ColCount);
+    m_steps->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre"),
                                         QStringLiteral("Action"), QStringLiteral("Post"), QStringLiteral("Quantize"),
                                         QStringLiteral("Next"), QStringLiteral("Description"), QStringLiteral("Timecode"), QStringLiteral("Time")});
@@ -814,7 +817,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_steps->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     m_steps->horizontalHeader()->setSectionResizeMode(ColSnapshot, QHeaderView::Stretch);
     m_steps->horizontalHeader()->setSectionResizeMode(ColDescription, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setMinimumSectionSize(30);
+    m_steps->horizontalHeader()->setMinimumSectionSize(18);
     m_steps->setColumnWidth(ColNum, 40);
     m_steps->setObjectName(QStringLiteral("sequenceSteps"));
     m_steps->setAcceptDrops(true);
@@ -864,17 +867,19 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_down = new QPushButton(QStringLiteral("▼"));
     for (QPushButton *b : {m_stepAdd, m_stepDel, m_up, m_down}) stb->addWidget(b);
     stb->addStretch();
+    auto *stops = new QHBoxLayout;
+    stops->addStretch();
     m_stop = new QPushButton(QStringLiteral("■ Stop"));
     m_stop->setToolTip(QStringLiteral("The selected sequence: its pre-waits and follows still to come are dropped "
                                       "(the snapshots already running go on; the other sequences keep playing)"));
     m_stop->setEnabled(false);
-    stb->addWidget(m_stop);
+    stops->addWidget(m_stop);
     connect(m_stop, &QPushButton::clicked, this, &SequenceWindow::stopRequested);
     m_stopAll = new QPushButton(QStringLiteral("■■ Stop all"));
     m_stopAll->setToolTip(QStringLiteral("The pre-waits and follows still to come in every sequence, those playing "
                                          "in the background too (the snapshots already running go on)"));
     m_stopAll->setEnabled(false);
-    stb->addWidget(m_stopAll);
+    stops->addWidget(m_stopAll);
     connect(m_stopAll, &QPushButton::clicked, this, &SequenceWindow::stopAllRequested);
     auto *runs = new QTimer(this);
     runs->setInterval(33);
@@ -885,6 +890,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
         box->setMinimumWidth(box->fontMetrics().horizontalAdvance(box->text()) + 28); // with its square
     right->addLayout(flags);
     right->addLayout(stb);
+    right->addLayout(stops);
 
     auto current = [this] { return m_engine->sequencer().current(); };
     connect(m_sequences, qOverload<int>(&QComboBox::activated), this, [this](int r) {
@@ -1622,7 +1628,9 @@ void SequenceWindow::refresh()
         quantize->setTextAlignment(Qt::AlignCenter);
         m_steps->setItem(row, ColQuantize, quantize);
         m_steps->setItem(row, ColNext, next);
-        m_steps->setItem(row, ColDescription, new QTableWidgetItem(st.description));
+        auto *description = new QTableWidgetItem(st.description);
+        description->setToolTip(st.description);
+        m_steps->setItem(row, ColDescription, description);
         auto *time = new QTableWidgetItem;
         time->setFlags(kRowFlags);
         const QString unitName = s.beats ? QStringLiteral(" beats") : QStringLiteral(" s");
@@ -2094,6 +2102,14 @@ void SequenceWindow::dropPlace(int y, int *top, int *action, quint64 *folder) co
 bool SequenceWindow::eventFilter(QObject *o, QEvent *e)
 {
     if (o != m_steps->viewport()) return QWidget::eventFilter(o, e);
+    if (e->type() == QEvent::Resize) {
+        const int width = m_steps->viewport()->width();
+        m_steps->setColumnWidth(ColNum, qBound(20, width / 13, 40));
+        m_steps->setColumnWidth(ColAt, qBound(28, width / 8, 70));
+        m_steps->setColumnWidth(ColQuantize, qBound(28, width / 8, 70));
+        m_steps->setColumnWidth(ColNext, qBound(28, width / 9, 56));
+        m_steps->setColumnWidth(ColTime, qBound(52, width / 3, 150));
+    }
     if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
         e->type() == QEvent::MouseButtonDblClick) {
         const auto *mouse = static_cast<QMouseEvent *>(e);
