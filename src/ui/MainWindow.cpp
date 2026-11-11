@@ -705,15 +705,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
     // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the panel
     // then shows the step unchanged
-    m_engine->sequencer().setRecaller([this](int snapshot) {
-        m_snapshots->recall(snapshot);
+    m_engine->sequencer().setRecaller([this](int snapshot, double fadeOverride) {
+        m_snapshots->recall(snapshot, fadeOverride);
         m_cueUndoIndex = m_undo->index();
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
-    m_engine->sequencer().setPresetRecaller([this](int preset) {
+    m_engine->sequencer().setPresetRecaller([this](int preset, double fadeOverride) {
         if (preset >= 0 && preset < m_engine->presetCount())
-            m_undo->push(new cmd::RecallPreset(m_engine, m_engine->preset(preset).id));
+            m_undo->push(new cmd::RecallPreset(m_engine, m_engine->preset(preset).id, fadeOverride));
     });
     // A step the cue clock fired (its pre-wait, a follow): already recalled on time, recorded here for undo
     m_engine->sequencer().setRecallRecorder([this](int snapshot, const Sequencer::RecallBefore &before) {

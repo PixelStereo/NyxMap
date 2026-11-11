@@ -53,7 +53,7 @@ public:
     QWidget *listPanel() const; // shared library column; inspection stays in this panel
     void refresh(); // snapshots changed (project opened…)
     void setMode(int mode); // 0 Snapshots, 1 Presets; the main bottom tab controls which list/inspector is shown
-    void recall(int i);
+    void recall(int i, double fadeOverride = -1);
     int activeSnapshot() const { return m_active; } // last recalled (-1: none)
     void clearActive(); // another project: nothing recalled yet
 

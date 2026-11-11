@@ -1456,11 +1456,11 @@ void SnapshotPanel::store()
     emit edited();
 }
 
-void SnapshotPanel::recall(int i)
+void SnapshotPanel::recall(int i, double fadeOverride)
 {
     if (i < 0 || i >= m_engine->snapshotCount()) return;
-    if (m_engine->sequencer().requestSnapshot(m_engine->snapshot(i).id)) return;
-    m_undo->push(new cmd::RecallSnapshot(m_engine, i));
+    if (m_engine->sequencer().requestSnapshot(m_engine->snapshot(i).id, fadeOverride)) return;
+    m_undo->push(new cmd::RecallSnapshot(m_engine, i, fadeOverride));
     emit recalled();
 }
 

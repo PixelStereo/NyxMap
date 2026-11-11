@@ -89,7 +89,7 @@ int main(int argc, char **argv)
     const int si = engine.addSnapshot(snapshot);
     int recalls = 0;
     auto &seq = engine.sequencer();
-    seq.setRecaller([&](int) { ++recalls; });
+    seq.setRecaller([&](int, double) { ++recalls; });
     Sequencer::Step play, follow;
     play.timeline = id;
     play.preWait = .1;
