@@ -800,7 +800,13 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             Engine::Lock lk(&e.mutex());
             e.layer(i)->enabled = true;
         }
-        e.renderFrame();
+        // The dormant decoder refills its queue asynchronously after the layer is shown.
+        tm.restart();
+        do {
+            e.renderFrame();
+            if (e.videoFramesShown(i) != hidden) break;
+            QThread::msleep(20);
+        } while (tm.elapsed() < 3000);
         VCHECK(e.videoFramesShown(i) == hidden + 1);
         VCHECK(e.layer(i)->finalTex != 0);
     }
