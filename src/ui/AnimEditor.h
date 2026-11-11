@@ -151,7 +151,8 @@ QString animCurveName(int curve);
 // Numbers by category in a menu: "Spatial › Rotation" is "Rotation" in the sub-menu "Spatial". `item` adds the entry of
 // each number (into: its menu; text: its name there).
 void addParamMenu(QMenu *menu, const std::vector<Engine::AnimParam> &params,
-                  const std::function<void(QMenu *into, const Engine::AnimParam &p, const QString &text)> &item);
+                  const std::function<void(QMenu *into, const Engine::AnimParam &p, const QString &text)> &item,
+                  bool nested = false);
 // Keep a whole color beside its component entries in the same Source / Color / FX category.
 std::vector<Engine::AnimParam> animationMenuParams(Engine *engine, quint64 layer);
 

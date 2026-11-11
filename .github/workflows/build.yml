@@ -61,7 +61,8 @@ jobs:
 
   fixture-geometry:
     name: Fixture picking geometry (Linux, no GPU)
-    runs-on: ubuntu-latest
+    # Keep apt-backed jobs on a known image while ubuntu-latest rolls to 26.04.
+    runs-on: ubuntu-24.04
     needs: scope
     if: needs.scope.outputs.build == 'true'
     steps:
@@ -87,7 +88,7 @@ jobs:
     if: needs.scope.outputs.media == 'true'
     needs: scope
     name: Test media
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Make
@@ -106,7 +107,7 @@ jobs:
   linux:
     if: needs.scope.outputs.linux == 'true'
     name: Linux (latest) + tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [scope, media]
     steps:
       - uses: actions/checkout@v4
@@ -267,7 +268,7 @@ jobs:
     if: needs.scope.outputs.memory == 'true'
     needs: scope
     name: Workspace memory safety (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -307,7 +308,7 @@ jobs:
     if: needs.scope.outputs.valgrind == 'true'
     needs: scope
     name: Workspace allocation lifetime (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -349,7 +350,7 @@ jobs:
   tsan:
     if: needs.scope.outputs.tsan == 'true'
     name: ThreadSanitizer (video, sound, OSC)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [scope, media]
     timeout-minutes: 45
     steps:
@@ -414,7 +415,7 @@ jobs:
   ui:
     if: needs.scope.outputs.ui == 'true'
     name: Interface scenario (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [scope, media]
     timeout-minutes: 30
     steps:
@@ -461,7 +462,7 @@ jobs:
     # -max_total_time: a 1-minute OSC run once stayed up for over 20 minutes. Per input: 10 s (a timeout becomes a
     # finding, its input kept); for the job: a hard ceiling
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [scope, media]
     steps:
       - uses: actions/checkout@v4

@@ -78,24 +78,24 @@ QString animCurveName(int c)
 }
 
 void addParamMenu(QMenu *menu, const std::vector<Engine::AnimParam> &params,
-                  const std::function<void(QMenu *, const Engine::AnimParam &, const QString &)> &item)
+                  const std::function<void(QMenu *, const Engine::AnimParam &, const QString &)> &item,
+                  bool nested)
 {
-    std::vector<std::pair<QString, QMenu *>> subs; // in the order they come
-    for (const Engine::AnimParam &p : params) {
-        const int cut = p.label.lastIndexOf(QStringLiteral(" › "));
+    const QString separator = QStringLiteral(" › ");
+    QHash<QMenu *, QHash<QString, QMenu *>> submenus;
+    for (const auto &p : params) {
         QMenu *into = menu;
-        QString text = p.label;
-        if (cut >= 0) { // the category: up to the last " › " (none: at the top of the menu)
-            const QString cat = p.label.left(cut);
-            auto it = std::find_if(subs.begin(), subs.end(), [&](const auto &x) { return x.first == cat; });
-            if (it == subs.end()) {
-                subs.push_back({cat, menu->addMenu(cat)});
-                it = subs.end() - 1;
+        const auto cut = p.label.lastIndexOf(separator);
+        if (cut >= 0) {
+            const QString category = p.label.left(cut);
+            const auto parts = nested ? category.split(separator) : QStringList{category};
+            for (const auto &part : parts) {
+                auto &submenu = submenus[into][part];
+                if (!submenu) submenu = into->addMenu(part);
+                into = submenu;
             }
-            into = it->second;
-            text = p.label.mid(cut + 3);
         }
-        item(into, p, text);
+        item(into, p, p.label.mid(cut < 0 ? 0 : cut + separator.size()));
     }
 }
 

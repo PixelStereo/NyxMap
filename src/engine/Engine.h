@@ -647,10 +647,10 @@ public:
     std::vector<ShowControl> controls() const;
     std::optional<ShowControl> control(quint64 id) const;
     QJsonArray controlsJson() const;
-    bool setControlsJson(const QJsonArray &a, QString *error = nullptr); // replaces them all (undo, project, a remote)
+    bool setControlsJson(const QJsonArray &a, QString *error = nullptr, bool remapKeys = false); // replaces them all (undo, project, a remote)
     quint64 controlsRevision() const { return m_controlsRevision; } // changes with the list or a definition, not a value
     quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
-    bool updateControl(quint64 id, const ShowControl &change); // its address (key) stays
+    bool updateControl(quint64 id, const ShowControl &change); // a new name also updates the OSC key
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
     bool setControlValue(quint64 id, double value); // a number, a switch, an index; any thread
@@ -1280,6 +1280,7 @@ private:
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
     ShowControl *controlLocked(quint64 id);
+    void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject
     std::atomic<bool> m_fadesManual{false};
     void attachAudio(Layer &l, std::shared_ptr<AudioStream> s);
@@ -1308,7 +1309,8 @@ private:
     std::vector<Interaction> m_interactions; // under m_mutex
     quint64 m_nextInteractionId = 1;
     struct InteractionRun {
-        InteractionProcessor proc;
+        InteractionProcessor proc, shared;
+        std::optional<double> sharedOut;
         InteractionTargetState target;
         std::optional<double> lastOut;
         double lastInternal = std::numeric_limits<double>::quiet_NaN();
@@ -1399,7 +1401,8 @@ private:
         int curve = 3;
     };
     std::vector<ActionFade> m_actionFades;
-    void runConsequence(const InteractionConsequence &c); // at once, or a fade (lock held)
+    void runConsequence(const InteractionConsequence &c, double sourceValue); // lock held
+    void feedControlAction(const QString &path, double value); // lock held
     void stepActionFades(double dt);
     void updateMidiInputs();          // main thread
     void requestMidiInputUpdate();    // any thread; coalesced named Qt invocation

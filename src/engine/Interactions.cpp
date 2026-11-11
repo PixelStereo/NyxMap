@@ -491,6 +491,7 @@ QJsonObject Interaction::toJson() const
     }
     o["master"] = master;
     o["filters"] = filtersToJson(filters);
+    if (!sharedFilters.empty()) o["shared_filters"] = filtersToJson(sharedFilters);
     o["takeover"] = takeover == Takeover::PickUp ? "pickup" : "jump";
     if (isAction()) {
         o["mode"] = QStringLiteral("action");
@@ -501,9 +502,14 @@ QJsonObject Interaction::toJson() const
         o["conditions_all"] = conditionsAll;
         auto list = [](const std::vector<InteractionConsequence> &v) {
             QJsonArray a;
-            for (const InteractionConsequence &c : v)
-                a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value},
-                                     {"time", c.time}, {"curve", c.curve}});
+            for (const InteractionConsequence &c : v) {
+                if (c.sendsOsc())
+                    a.append(QJsonObject{{"osc_destination", c.oscDestination}, {"osc_address", c.oscAddress},
+                                         {"osc_arguments", c.oscArguments}});
+                else
+                    a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value},
+                                         {"time", c.time}, {"curve", c.curve}});
+            }
             return a;
         };
         o["if_true"] = list(onTrue);
@@ -553,6 +559,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     }
     it.master = std::clamp(o.value("master").toDouble(1), 0.0, 1.0);
     it.filters = filtersFromJson(o);
+    it.sharedFilters = filtersFromJson(QJsonObject{{"filters", o.value("shared_filters")}});
     it.takeover = o.value("takeover").toString() == QLatin1String("pickup") ? Takeover::PickUp : Takeover::Jump;
     // An XY mapping drives its point: never an Action
     it.mode = o.value("mode").toString() == QLatin1String("action") && it.xyInputs.empty() ? InteractionMode::Action
@@ -579,7 +586,10 @@ Interaction Interaction::fromJson(const QJsonObject &o)
             const double time = c.value("time").toDouble(0);
             q.time = std::isfinite(time) ? std::clamp(time, 0.0, 600.0) : 0;
             q.curve = std::clamp(c.value("curve").toInt(3), 0, 5);
-            if (!q.param.isEmpty()) out.push_back(q);
+            q.oscDestination = c.value("osc_destination").toString();
+            q.oscAddress = c.value("osc_address").toString();
+            q.oscArguments = c.value("osc_arguments").toArray();
+            if (q.sendsOsc() || !q.param.isEmpty()) out.push_back(q);
         }
         return out;
     };

@@ -22,6 +22,7 @@ public:
     void refreshValues(); // the values as they are now (OSC, an interaction, a timeline, the remote), except one being dragged
 
 signals:
+    void oscInteractionRequested(const QString &path, const QString &name, bool button);
     void edited(); // the project is modified
 
 private:

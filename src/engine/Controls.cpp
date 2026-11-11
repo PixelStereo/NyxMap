@@ -3,6 +3,8 @@
 #include "ParameterKey.h"
 #include "ShowControl.h"
 
+#include <QJsonDocument>
+
 namespace {
 constexpr int kMaxControls = 256;
 } // namespace
@@ -21,8 +23,7 @@ QJsonArray Engine::controlsJson() const
     return a;
 }
 
-// Names to keys, unique: "Master Level" is control/master_level, a second one control/master_level_2. Never changed once made
-// (an interaction or a remote knows it by that address); a control that is renamed keeps its key
+// Names to unique keys: "Master Level" is control/master_level, then control/master_level_2.
 static void keyAll(std::vector<ShowControl> &list)
 {
     QStringList taken;
@@ -38,7 +39,91 @@ static void keyAll(std::vector<ShowControl> &list)
     }
 }
 
-bool Engine::setControlsJson(const QJsonArray &a, QString *error)
+void Engine::remapControlKeys(const QHash<QString, QString> &keys)
+{
+    if (keys.isEmpty()) return;
+    const QString prefix = QStringLiteral("control/");
+    const auto remap = [&](quint64 layer, QString &path) {
+        if (layer || !path.startsWith(prefix)) return;
+        const auto slash = path.indexOf(QLatin1Char('/'), prefix.size());
+        const auto key = keys.constFind(path.mid(prefix.size(), slash < 0 ? -1 : slash - prefix.size()));
+        if (key != keys.cend()) path = prefix + key.value() + (slash < 0 ? QString() : path.mid(slash));
+    };
+    const auto interaction = [&](Interaction &entry) {
+        const auto binding = [&](Interaction &item) {
+            if (item.source == InteractionSource::Internal) remap(item.sourceLayer, item.sourceParam);
+            remap(item.layer, item.param);
+            for (auto *actions : {&item.onTrue, &item.onFalse})
+                for (auto &action : *actions) remap(action.layer, action.param);
+        };
+        binding(entry);
+        for (auto &axis : entry.xyInputs) binding(axis);
+    };
+    const auto timeline = [&](Animation &entry) {
+        for (auto &track : entry.tracks) {
+            remap(track.layer, track.param);
+            for (auto &axis : track.axes) remap(axis.layer, axis.param);
+        }
+    };
+    const auto remapGraph = [&](InteractionGraph &graph) {
+        for (auto &node : graph.nodes) interaction(node.settings);
+    };
+    const auto storedValue = [&](const QString &path, QJsonValue value) {
+        QString text = value.toString();
+        if ((path == "source/internal" || path == "target") && text.startsWith(QLatin1String("0:"))) {
+            text.remove(0, 2);
+            remap(0, text);
+            return QJsonValue(QStringLiteral("0:") + text);
+        }
+        if (path == "graph") {
+            InteractionGraph graph;
+            if (InteractionGraph::fromJson(QJsonDocument::fromJson(text.toUtf8()).object(), &graph)) {
+                remapGraph(graph);
+                return QJsonValue(QString::fromUtf8(QJsonDocument(graph.toJson()).toJson(QJsonDocument::Compact)));
+            }
+        }
+        return value;
+    };
+    for (auto &entry : m_interactions) interaction(entry);
+    m_interactionParamsDirty = true;
+    for (auto &fade : m_actionFades) remap(fade.layer, fade.path);
+    for (auto &entry : m_animations) timeline(entry);
+    for (auto &preset : m_presets) {
+        for (auto &entry : preset.interactions) interaction(entry);
+        for (auto &entry : preset.animations) timeline(entry);
+        for (auto &value : preset.values) {
+            remap(value.layer, value.path);
+            if (!value.layer && value.path.startsWith(QLatin1String("interaction/")))
+                value.value = storedValue(value.path.section(QLatin1Char('/'), 2), value.value);
+        }
+    }
+    for (auto &snapshot : m_snapshots) {
+        for (qsizetype i = 0; i < snapshot.interactions.size(); ++i) {
+            auto entry = snapshot.interactions.at(i).toObject();
+            if (entry.contains("definition")) {
+                auto definition = Interaction::fromJson(entry.value("definition").toObject());
+                interaction(definition);
+                entry["definition"] = definition.toJson();
+            }
+            auto params = entry.value("params").toObject();
+            for (const char *path : {"source/internal", "target", "graph"})
+                if (params.contains(path)) params[path] = storedValue(QLatin1String(path), params.value(path));
+            entry["params"] = params;
+            snapshot.interactions[i] = entry;
+        }
+    }
+    if (!m_interactionGraph.nodes.empty()) {
+        remapGraph(m_interactionGraph);
+        m_graphProcessor.configure(m_interactionGraph);
+        ++m_graphRevision;
+        m_graphLastOutputs.clear();
+    }
+    std::lock_guard<std::mutex> lock(m_interactionEventsMutex);
+    for (auto &event : m_interactionEvents)
+        if (event.source == InteractionSource::Internal) remap(0, event.address);
+}
+
+bool Engine::setControlsJson(const QJsonArray &a, QString *error, bool remapKeys)
 {
     if (a.size() > kMaxControls) {
         if (error) *error = QStringLiteral("At most %1 controls").arg(kMaxControls);
@@ -70,11 +155,24 @@ bool Engine::setControlsJson(const QJsonArray &a, QString *error)
     keyAll(next);
     {
         Lock lk(&m_mutex);
+        if (remapKeys) {
+            QHash<QString, QString> keys;
+            for (const auto &control : next)
+                if (const auto *old = controlLocked(control.id); old && old->key != control.key)
+                    keys.insert(old->key, control.key);
+            remapControlKeys(keys);
+        }
         m_controls = std::move(next);
         m_nextControlId = std::max(m_nextControlId, id + 1);
         ++m_controlsRevision;
     }
     emit controlsChanged();
+    if (remapKeys) {
+        emit interactionsChanged();
+        emit animationsChanged();
+        emit presetsChanged();
+        emit snapshotsChanged();
+    }
     return true;
 }
 
@@ -101,14 +199,24 @@ quint64 Engine::addControl(const ShowControl &control)
 
 bool Engine::updateControl(quint64 id, const ShowControl &change)
 {
+    bool keyChanged = false;
     {
         Lock lk(&m_mutex);
         auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
         if (it == m_controls.end()) return false;
         ShowControl c = change;
         c.id = id;
-        c.key = it->key; // its address does not follow its name
-        if (c.name.trimmed().isEmpty()) c.name = it->name;
+        c.key = it->key;
+        c.name = c.name.trimmed();
+        if (c.name.isEmpty()) c.name = it->name;
+        if (c.name != it->name) {
+            QStringList taken;
+            for (const auto &other : m_controls)
+                if (other.id != id) taken << other.key;
+            c.key = faustControlKey(c.name, taken, int(it - m_controls.begin()) + 1);
+            keyChanged = c.key != it->key;
+            if (keyChanged) remapControlKeys({{it->key, c.key}});
+        }
         if (c.kind == ShowControl::Kind::Slider) {
             if (!(c.max > c.min)) c.max = c.min + 1;
             c.def = std::clamp(c.def, c.min, c.max);
@@ -119,6 +227,12 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
         ++m_controlsRevision;
     }
     emit controlsChanged();
+    if (keyChanged) {
+        emit interactionsChanged();
+        emit animationsChanged();
+        emit presetsChanged();
+        emit snapshotsChanged();
+    }
     return true;
 }
 
@@ -158,7 +272,11 @@ bool Engine::setControlValue(quint64 id, double value)
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind == ShowControl::Kind::Color || !std::isfinite(value)) return false;
-    it->value = it->clamped(value);
+    const double next = it->clamped(value);
+    if (it->value != next) {
+        it->value = next;
+        feedControlAction(QStringLiteral("control/") + it->key, next);
+    }
     return true;
 }
 
@@ -168,8 +286,13 @@ bool Engine::setControlColor(quint64 id, double r, double g, double b)
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
     if (it == m_controls.end() || it->kind != ShowControl::Kind::Color) return false;
     const double c[3] = {r, g, b};
-    for (int i = 0; i < 3; ++i)
-        if (std::isfinite(c[i])) it->rgb[size_t(i)] = std::clamp(c[i], 0.0, 1.0);
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(c[i])) continue;
+        const double next = std::clamp(c[i], 0.0, 1.0);
+        if (it->rgb[size_t(i)] == next) continue;
+        it->rgb[size_t(i)] = next;
+        feedControlAction(QStringLiteral("control/") + it->key + QLatin1Char('/') + QLatin1Char("rgb"[i]), next);
+    }
     return true;
 }
 

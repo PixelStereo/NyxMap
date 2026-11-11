@@ -64,11 +64,13 @@ int main(int argc, char **argv)
     if (auto *target = panel.findChild<QToolButton *>("trueTarget0"); target && target->menu()) {
         emit target->menu()->aboutToShow();
         for (QAction *owner : target->menu()->actions())
-            if (owner->text() == "Composition" && owner->menu())
+            if (owner->text() == "Composition" && owner->menu()) {
+                emit owner->menu()->aboutToShow();
                 for (QAction *cat : owner->menu()->actions())
                     if (cat->text() == "Show" && cat->menu())
                         for (QAction *a : cat->menu()->actions())
                             if (a->text() == "GO") go = a;
+            }
     }
     check(go != nullptr, "the show's GO offered as an action");
     if (go) go->trigger();

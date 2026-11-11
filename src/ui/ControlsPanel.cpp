@@ -16,6 +16,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QShortcut>
+#include <QStackedWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -36,20 +39,38 @@ public:
         : QUndoCommand(text), m_e(e), m_before(std::move(before)), m_after(std::move(after))
     {
     }
-    void undo() override { m_e->setControlsJson(m_before); }
+    void undo() override { m_e->setControlsJson(m_before, nullptr, true); }
     void redo() override
     {
         if (m_first) {
             m_first = false; // the edit is already made
             return;
         }
-        m_e->setControlsJson(m_after);
+        m_e->setControlsJson(m_after, nullptr, true);
     }
 
 private:
     Engine *m_e;
     QJsonArray m_before, m_after;
     bool m_first = true;
+};
+
+class ControlNameLabel final : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> edit;
+
+protected:
+    void mouseDoubleClickEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && edit) {
+            edit();
+            event->accept();
+        } else {
+            QLabel::mouseDoubleClickEvent(event);
+        }
+    }
 };
 
 int decimalsFor(double step)
@@ -218,11 +239,39 @@ void ControlsPanel::rebuild()
         auto *h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(6);
-        auto *label = new QLabel(c.name);
-        label->setMinimumWidth(84);
-        label->setMaximumWidth(140);
-        label->setToolTip(QStringLiteral("/control/%1").arg(c.key));
-        h->addWidget(label);
+        auto *name = new QStackedWidget;
+        name->setMinimumWidth(84);
+        name->setMaximumWidth(140);
+        auto *label = new ControlNameLabel(c.name);
+        label->setTextFormat(Qt::PlainText);
+        label->setObjectName(QStringLiteral("controlName"));
+        label->setToolTip(QStringLiteral("Double-click to rename · /control/%1").arg(c.key));
+        auto *editor = new QLineEdit(c.name);
+        editor->setObjectName(QStringLiteral("controlNameEditor"));
+        name->addWidget(label);
+        name->addWidget(editor);
+        h->addWidget(name);
+        label->edit = [name, label, editor] {
+            editor->setText(label->text());
+            name->setCurrentWidget(editor);
+            editor->setFocus();
+            editor->selectAll();
+        };
+        auto *cancel = new QShortcut(QKeySequence(Qt::Key_Escape), editor);
+        cancel->setContext(Qt::WidgetShortcut);
+        connect(cancel, &QShortcut::activated, name, [name, label] { name->setCurrentWidget(label); });
+        connect(editor, &QLineEdit::editingFinished, name, [this, id, name, label, editor] {
+            if (name->currentWidget() != editor) return;
+            const QString text = editor->text().trimmed();
+            name->setCurrentWidget(label);
+            auto control = m_engine->control(id);
+            if (!control || text.isEmpty() || control->name == text) return;
+            const auto before = m_engine->controlsJson();
+            control->name = text;
+            if (!m_engine->updateControl(id, *control)) return;
+            m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Rename Control")));
+            emit edited();
+        });
         QWidget *field = nullptr;
         switch (c.kind) {
         case ShowControl::Kind::Slider: {
@@ -297,6 +346,22 @@ void ControlsPanel::rebuild()
         auto *menu = new QMenu(gear);
         menu->addAction(QStringLiteral("Edit…"), this, [this, id] { editControl(id); });
         const QString path = QStringLiteral("control/") + c.key;
+        const auto addOsc = [this, id, path](QMenu *parent, const QString &title, const QString &component = {}) {
+            parent->addAction(title, this, [this, id, path, component, title] {
+                if (const auto control = m_engine->control(id)) {
+                    const QString name = component.isEmpty() ? control->name : control->name + QStringLiteral(" · ") + title;
+                    emit oscInteractionRequested(path + component, name, control->kind == ShowControl::Kind::Button);
+                }
+            });
+        };
+        if (c.kind == ShowControl::Kind::Color) {
+            auto *osc = menu->addMenu(QStringLiteral("Send OSC…"));
+            addOsc(osc, QStringLiteral("Red"), QStringLiteral("/r"));
+            addOsc(osc, QStringLiteral("Green"), QStringLiteral("/g"));
+            addOsc(osc, QStringLiteral("Blue"), QStringLiteral("/b"));
+        } else {
+            addOsc(menu, QStringLiteral("Send OSC…"));
+        }
         if (c.kind == ShowControl::Kind::Slider) {
             field->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(field, &QWidget::customContextMenuRequested, this, [this, field, path](const QPoint &pos) {

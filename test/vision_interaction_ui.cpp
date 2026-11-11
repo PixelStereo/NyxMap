@@ -8,6 +8,7 @@
 #include <QAbstractButton>
 #include <QPushButton>
 #include <QLabel>
+#include <QMenu>
 #include <QToolButton>
 #include <QUndoStack>
 #include <iostream>
@@ -22,6 +23,11 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     theme::applyToApplication(app);
     Engine engine;
+    const auto outer = engine.layerId(engine.addGroup("Outer Group"));
+    const auto inner = engine.layerId(engine.addGroup("Inner Group"));
+    const auto image = engine.layerId(engine.addLayer("Image Layer"));
+    auto structure = tree::intoGroup(engine.structure(), {inner}, outer);
+    engine.setStructure(tree::intoGroup(structure, {image}, inner));
     QUndoStack undo;
     try {
         InteractionPanel panel(&engine, &undo);
@@ -29,10 +35,40 @@ int main(int argc, char **argv)
         panel.show();
         panel.learnFor(0, "opacity", InteractionSource::Pixels);
         app.processEvents();
-        auto *sourceChoice = panel.findChild<QComboBox *>("visionSource");
+        auto *sourceChoice = panel.findChild<QToolButton *>("visionSource");
         auto *tapChoice = panel.findChild<QComboBox *>("visionTap");
-        require(sourceChoice && sourceChoice->findText("Composition") == -1,
-                "analysis source is a layer, without composition option");
+        const auto item = [](QMenu *menu, const QString &text) -> QAction * {
+            if (menu)
+                for (auto *action : menu->actions())
+                    if (action->text() == text) return action;
+            return nullptr;
+        };
+        const auto submenu = [&](QMenu *menu, const QString &text) -> QMenu * {
+            const auto *action = item(menu, text);
+            return action ? action->menu() : nullptr;
+        };
+        require(sourceChoice && sourceChoice->menu(), "analysis source offers a menu");
+        auto *sourceMenu = sourceChoice->menu();
+        emit sourceMenu->aboutToShow();
+        require(!item(sourceMenu, "Composition") && !item(sourceMenu, "Image Layer"),
+                "analysis menu leaves the layer in its group");
+        auto *imageChoice = item(submenu(submenu(sourceMenu, "Outer Group"), "Inner Group"), "Image Layer");
+        require(imageChoice, "analysis menu follows nested layer groups");
+        imageChoice->trigger();
+        require(engine.interactions()[0].pixels.layer == image, "choosing a nested source stores its layer ID");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        tapChoice = panel.findChild<QComboBox *>("visionTap");
+        auto *target = panel.findChild<QToolButton *>("interactionTargetParameter");
+        require(target && target->menu(), "mapping target offers a menu");
+        emit target->menu()->aboutToShow();
+        auto *outerTarget = submenu(target->menu(), "Outer Group");
+        auto *innerTarget = submenu(outerTarget, "Inner Group");
+        auto *layerTarget = submenu(innerTarget, "Image Layer");
+        require(layerTarget, "the target layer is inside its group");
+        emit layerTarget->aboutToShow();
+        require(submenu(layerTarget, "Layer") && submenu(innerTarget, "Group Parameters") &&
+                    !item(target->menu(), "Image Layer"), "target menu keeps both group and layer parameters");
+
         require(tapChoice && tapChoice->count() == 2 && tapChoice->itemData(0).toInt() == 1 &&
                     tapChoice->itemData(1).toInt() == 2,
                 "pre/post FX are the only two analysis taps");
@@ -42,7 +78,7 @@ int main(int argc, char **argv)
         require(learn && !learn->isChecked() && !learn->isEnabled(), "Pixels does not start external Learn");
         auto *channel = panel.findChild<QComboBox *>("pixelChannel");
         auto *feature = panel.findChild<QComboBox *>("pixelFeature");
-        auto *source = panel.findChild<QComboBox *>("visionSource");
+        auto *source = panel.findChild<QToolButton *>("visionSource");
         require(channel && feature && source && channel->count() == 6,
                 "pixel channel, feature and image selection widgets");
         channel->setCurrentIndex(3);

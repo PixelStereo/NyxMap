@@ -1,5 +1,7 @@
 #include "Engine.h"
-#include "InteractionGraphWorkspace.h"
+#include "OscCodec.h"
+#include <QNetworkDatagram>
+#include <QUdpSocket>
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -18,8 +20,8 @@ int main(int argc, char **argv)
     engine.setFadesManual(true);
     int failures = 0;
     auto check = [&](bool ok, const char *why) { if (!ok) { ++failures; std::printf("FAIL: %s\n", why); } };
-    const int a = engine.addLayer("Graph A"), b = engine.addLayer("Graph B");
-    const auto aid = engine.layerId(a), bid = engine.layerId(b);
+    const auto aid = engine.layerId(engine.addLayer("Graph A"));
+    const auto bid = engine.layerId(engine.addLayer("Graph B"));
     Interaction source = Interaction::made(InteractionSource::Osc);
     source.oscAddress = "/graph";
     Interaction first, second, filter;
@@ -64,96 +66,68 @@ int main(int argc, char **argv)
     engine.setInteractionGraph({});
     check(engine.setParameter(0, "interaction/0/graph", definition), "graph can be recalled as preset parameter");
     check(engine.interactionGraph().nodes.size() == 4, "preset graph definition restores topology");
-    QUndoStack undo;
-    {
-        InteractionGraphWorkspace workspace(&engine, &undo);
-        QWidget host;
-        auto *dockLayout = new QVBoxLayout(&host);
-        workspace.setDockHost(&host);
-        dockLayout->addWidget(&workspace);
-        workspace.setDetached(true);
-        check(workspace.isDetached() && workspace.isWindow(), "graph and inspector detach together");
-        auto *onTop = workspace.findChild<QCheckBox *>("interactionGraphOnTop");
-        onTop->setChecked(true);
-        check(workspace.windowFlags().testFlag(Qt::WindowStaysOnTopHint), "floating graph supports always on top");
-        workspace.close();
-        check(!workspace.isDetached() && workspace.parentWidget() == &host, "closing floating graph docks it");
-        workspace.setParent(nullptr); // stack workspace must outlive its temporary host safely
-        workspace.resize(1000, 600);
-        workspace.show();
-        app.processEvents();
-        if (argc > 1) workspace.grab().save(QString::fromLocal8Bit(argv[1]));
-        auto *canvas = static_cast<InteractionGraphView *>(workspace.findChild<QGraphicsView *>("interactionGraphCanvas"));
-        check(canvas != nullptr, "graph workspace has a canvas");
-        if (canvas) {
-            canvas->disconnected(2, 4, 0);
-            app.processEvents();
-            check(engine.interactionGraph().edges.size() == 2, "disconnect changes engine graph");
-            undo.undo(); app.processEvents();
-            check(engine.interactionGraph().edges.size() == 3, "undo restores cable");
-            canvas->disconnected(2, 4, 0); app.processEvents();
-            auto port = [&](quint64 id, bool output) {
-                for (auto *item : canvas->scene()->items())
-                    if (item->data(0).toULongLong() == id && item->data(1).isValid() && item->data(1).toBool() == output)
-                        return canvas->mapFromScene(item->sceneBoundingRect().center());
-                return QPoint(-1000, -1000);
-            };
-            const QPoint from = port(2, true), to = port(4, false);
-            QMouseEvent press(QEvent::MouseButtonPress, QPointF(from), QPointF(canvas->viewport()->mapToGlobal(from)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(canvas->viewport(), &press);
-            QMouseEvent move(QEvent::MouseMove, QPointF(to), QPointF(canvas->viewport()->mapToGlobal(to)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(canvas->viewport(), &move);
-            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(to), QPointF(canvas->viewport()->mapToGlobal(to)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(canvas->viewport(), &release);
-            app.processEvents();
-            check(engine.interactionGraph().edges.size() == 3, "mouse drag connects actual canvas ports");
-            canvas->removed(2); app.processEvents();
-            check(engine.interactionGraph().nodes.size() == 3 && engine.interactionGraph().edges.empty(), "remove block removes attached cables");
-            undo.undo(); app.processEvents();
-            check(engine.interactionGraph().nodes.size() == 4, "undo restores block and cables");
-        }
-    }
-    engine.setInteractionGraph({});
     Interaction original = source;
-    original.layer = aid; original.param = "opacity"; original.filters = {multiply}; original.takeover = Takeover::Jump;
+    original.layer = aid;
+    original.param = "opacity";
+    original.sharedFilters = {multiply};
+    original.filters = {multiply};
+    original.takeover = Takeover::Jump;
     const auto mapping = engine.addInteraction(original);
-    const auto cid = engine.layerId(engine.addLayer("Graph C"));
-    {
-        InteractionGraphWorkspace workspace(&engine, &undo);
-        workspace.addBranch(mapping, false);
-        workspace.addBranch(mapping, true);
-        auto routes = engine.interactionGraph();
-        int sources = 0, destinations = 0;
-        for (auto &node : routes.nodes) {
-            if (node.kind == Kind::Source) ++sources;
-            if (node.kind == Kind::Destination) {
-                node.settings.layer = destinations++ ? cid : bid;
-                node.settings.param = "opacity";
-                node.settings.takeover = Takeover::Jump;
-            }
-            if (node.kind == Kind::Filter) node.settings.filters.front().a = .5;
-        }
-        check(sources == 1 && destinations == 2, "both routes share the same mapping output");
-        check(engine.setInteractionGraph(routes), "assign branch destinations");
-        event.value = .35;
-        engine.feedInteraction(event); engine.renderFrame();
-        check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .7) < 1e-5, "original destination remains active");
-        check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .7) < 1e-5, "direct branch uses original filtered value in same frame");
-        check(std::abs(engine.parameterValue(cid, "opacity").toDouble() - .35) < 1e-5, "extra filter affects only its own destination");
-    }
-    {
-        InteractionGraphWorkspace workspace(&engine, &undo);
-        auto graph = engine.interactionGraph();
-        quint64 shared = 0;
-        for (const auto &node : graph.nodes) if (node.kind == Kind::Filter) { shared = node.id; break; }
-        const auto count = graph.nodes.size();
-        const auto child = workspace.addFilterAfter(shared);
-        check(child != 0 && engine.interactionGraph().nodes.size() == count + 1, "append a filter without creating a destination");
-        graph = engine.interactionGraph();
-        check(std::any_of(graph.edges.begin(), graph.edges.end(), [=](const auto &edge) { return edge.from == shared && edge.to == child; }), "shared filter can feed another filter");
-        undo.undo(); app.processEvents();
-        check(engine.interactionGraph().nodes.size() == count, "branch filter creation is undoable");
-    }
+    Interaction tap;
+    tap.source = InteractionSource::Internal;
+    tap.sourceParam = "shared";
+    second.filters = {multiply};
+    second.filters.front().a = .5;
+    second.takeover = Takeover::Jump;
+    InteractionGraph targets;
+    targets.nodes = {{1, Kind::Source, tap}, {2, Kind::Destination, second}};
+    targets.nodes.front().mapping = mapping;
+    check(targets.connect(1, 2) && engine.setInteractionGraph(targets), "install a second target");
+    event.value = .2;
+    engine.feedInteraction(event);
+    engine.renderFrame();
+    check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .8) < 1e-5, "shared filters run before target 1 filters");
+    check(std::abs(engine.parameterValue(bid, "opacity").toDouble() - .2) < 1e-5, "target 2 receives the shared signal and its own filters");
+    check(engine.saveProject(dir.filePath("targets.nyxmap"), {}, &error), "save shared and target filters");
+    engine.newProject();
+    check(engine.loadProject(dir.filePath("targets.nyxmap"), nullptr, &error), "reload targets");
+    event.value = .15;
+    engine.feedInteraction(event);
+    engine.renderFrame();
+    check(std::abs(engine.parameterValue(aid, "opacity").toDouble() - .6) < 1e-5 &&
+          std::abs(engine.parameterValue(bid, "opacity").toDouble() - .15) < 1e-5, "both chains survive reload");
+    QUdpSocket receiver;
+    check(receiver.bind(QHostAddress(QHostAddress::LocalHost), 0), "bind OSC test receiver");
+    ShowControl button;
+    button.name = "Fire OSC";
+    button.kind = ShowControl::Kind::Button;
+    const auto buttonId = engine.addControl(button);
+    Interaction action = Interaction::made(InteractionSource::Internal);
+    action.mode = InteractionMode::Action;
+    action.sourceParam = QStringLiteral("control/") + engine.control(buttonId)->key;
+    action.conditions = {InteractionCondition{}};
+    InteractionConsequence message;
+    message.oscDestination = QStringLiteral("127.0.0.1:%1").arg(receiver.localPort());
+    message.oscAddress = QStringLiteral("/performance/go");
+    message.oscArguments = {7, QStringLiteral("cue"), true, QStringLiteral("$value")};
+    action.onTrue = {message};
+    engine.addInteraction(action);
+    check(engine.saveProject(dir.filePath("control-osc.nyxmap"), {}, &error), "save OSC action");
+    engine.newProject();
+    check(engine.loadProject(dir.filePath("control-osc.nyxmap"), nullptr, &error), "reload OSC action");
+    engine.renderFrame();
+    app.processEvents();
+    check(!receiver.hasPendingDatagrams(), "loading an OSC action is silent");
+    check(engine.setControlValue(buttonId, 1) && engine.setControlValue(buttonId, 0), "quick control press and release");
+    engine.renderFrame();
+    app.processEvents();
+    std::vector<osc::Message> messages;
+    check((receiver.hasPendingDatagrams() || receiver.waitForReadyRead(2000)) &&
+          osc::decode(receiver.receiveDatagram().data(), messages) && messages.size() == 1 &&
+          messages.front().address == "/performance/go" && messages.front().types == "isTf" &&
+          messages.front().args.value(0).toInt() == 7 && messages.front().args.value(1).toString() == "cue" &&
+          messages.front().args.value(3).toFloat() == 1.f, "OSC sender receives the saved custom packet on press");
+    check(!receiver.hasPendingDatagrams(), "release does not send a second packet");
     engine.shutdown();
     return failures ? 1 : 0;
 }

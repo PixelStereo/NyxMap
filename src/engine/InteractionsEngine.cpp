@@ -2,6 +2,11 @@
 #include "EngineInternal.h"
 #include "Midi.h"
 #include "EventLog.h"
+#include "OscCodec.h"
+#include "SequenceFeedback.h"
+#include <QHostInfo>
+#include <QRegularExpression>
+#include <QUdpSocket>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -107,8 +112,10 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
         if (node.mapping) {
             const auto definition = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const auto &it) { return it.id == node.mapping; });
             const auto run = m_interactionRun.find(node.mapping);
-            if (definition != m_interactions.end() && definition->enabled && run != m_interactionRun.end() && run->second.lastOut)
-                m_graphProcessor.input(node.id, *run->second.lastOut);
+            const auto value = run == m_interactionRun.end() ? std::optional<double>{}
+                : source.sourceParam == QStringLiteral("shared") ? run->second.sharedOut : run->second.lastOut;
+            if (definition != m_interactions.end() && definition->enabled && !definition->isAction() && value)
+                m_graphProcessor.input(node.id, *value);
             else m_graphProcessor.clearInput(node.id);
         } else if (source.source == InteractionSource::Internal) {
             if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
@@ -283,7 +290,7 @@ bool Engine::interactionLevels(quint64 id, double *level, double *output, double
     Lock lk(&m_mutex);
     const auto r = m_interactionRun.find(id);
     if (r == m_interactionRun.end() || !r->second.proc.level()) return false;
-    if (level) *level = *r->second.proc.level();
+    if (level) *level = r->second.shared.level().value_or(*r->second.proc.level());
     if (output) *output = r->second.proc.output().value_or(*r->second.proc.level());
     if (curveIn) *curveIn = r->second.proc.curveInput().value_or(*r->second.proc.level());
     return true;
@@ -296,7 +303,7 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
     out->clear();
     out->reserve(m_interactionRun.size());
     for (const auto &[id, run] : m_interactionRun) {
-        const auto level = run.proc.level();
+        const auto level = run.shared.level() ? run.shared.level() : run.proc.level();
         if (!level && !run.xyY.level()) continue;
         const double x = level.value_or(0);
         auto &activity = out->emplace_back();
@@ -502,8 +509,73 @@ void Engine::updateMidiInputs()
 // ---------------------------------------------------------------------------
 // An Action's value: a number with a time goes there from where it is, a step each frame (stepActionFades); the rest,
 // at once. Either way, what was moving it (a snapshot's fade, another action's) lets go.
-void Engine::runConsequence(const InteractionConsequence &c)
+void Engine::feedControlAction(const QString &path, double value)
 {
+    for (const auto &interaction : m_interactions) {
+        if (!interaction.enabled || !interaction.isAction() || interaction.source != InteractionSource::Internal ||
+            interaction.sourceLayer != 0 || interaction.sourceParam != path) continue;
+        InteractionEvent event;
+        event.source = InteractionSource::Internal;
+        event.address = path;
+        event.value = value;
+        std::lock_guard<std::mutex> lock(m_interactionEventsMutex);
+        if (m_interactionEvents.size() < 8192) m_interactionEvents.push_back(event);
+        else m_interactionEventsDropped.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+}
+
+void Engine::runConsequence(const InteractionConsequence &c, double sourceValue)
+{
+    if (c.sendsOsc()) {
+        QString host;
+        quint16 port = 0;
+        static const QRegularExpression addressPattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
+        if (!SequenceFeedback::parseTarget(c.oscDestination, &host, &port) ||
+            !addressPattern.match(c.oscAddress).hasMatch() || c.oscAddress.contains(QChar::Null)) return;
+        osc::Message message{c.oscAddress, {}, {}};
+        for (const auto argument : c.oscArguments) {
+            QVariant value = argument.toVariant();
+            char tag = 'N';
+            if (argument.isString()) {
+                if (argument.toString() == QStringLiteral("$value")) {
+                    tag = 'f';
+                    value = sourceValue;
+                } else {
+                    if (argument.toString().contains(QChar::Null)) return;
+                    tag = 's';
+                }
+            } else if (argument.isDouble()) {
+                const double number = argument.toDouble();
+                tag = number >= std::numeric_limits<qint32>::min() && number <= std::numeric_limits<qint32>::max() &&
+                              std::trunc(number) == number ? 'i' : 'f';
+            } else if (argument.isBool()) {
+                tag = argument.toBool() ? 'T' : 'F';
+            } else if (!argument.isNull()) {
+                return;
+            }
+            message.types += QLatin1Char(tag);
+            message.args.push_back(value);
+        }
+        const QByteArray packet = osc::encode(message);
+        if (packet.size() > 65507) return;
+        QMetaObject::invokeMethod(this, [this, host, port, packet, address = c.oscAddress] {
+            const auto send = [this, port, packet, address](const QHostAddress &target) {
+                QUdpSocket socket;
+                if (socket.writeDatagram(packet, target, port) == packet.size() && EventLog::instance().wants(EventLog::OscOut)) {
+                    EventLog::instance().append(EventLog::OscOut, address);
+                    emit eventObserved(QStringLiteral("OSC OUT"), address);
+                }
+            };
+            const QHostAddress numeric(host);
+            if (!numeric.isNull()) send(numeric);
+            else if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) send(QHostAddress::LocalHost);
+            else QHostInfo::lookupHost(host, this, [send](const QHostInfo &info) {
+                if (!info.addresses().isEmpty()) send(info.addresses().constFirst());
+            });
+        }, Qt::QueuedConnection);
+        return;
+    }
     releaseFromFades(c.layer, c.param);
     Parameter *p = c.time > 0 ? findParameter(c.layer, c.param) : nullptr;
     const ParamInfo info = p ? p->info() : ParamInfo{};
@@ -577,11 +649,25 @@ void Engine::stepInteractions(double dt)
                                      : it.audioFeature == Interaction::AudioFeature::Hit ? run.proc.hit(fluxes[it.audioInput], it, dt)
                                                                                           : audio.onset);
             } else if (it.source == InteractionSource::Internal) {
+                const bool control = it.sourceLayer == 0 && it.sourceParam.startsWith(QLatin1String("control/"));
+                if (control) {
+                    for (const auto &event : events) {
+                        if (event.source == InteractionSource::Internal && event.address == it.sourceParam) {
+                            run.lastInternal = event.value;
+                            values.push_back(event.value);
+                        }
+                    }
+                }
                 if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
                     const double x = src->asNumber();
                     if (std::isfinite(x) && !(x == run.lastInternal)) {
+                        const auto oscOnly = [](const auto &actions) {
+                            return std::all_of(actions.begin(), actions.end(), [](const auto &action) { return action.sendsOsc(); });
+                        };
+                        const bool initialOsc = control && !std::isfinite(run.lastInternal) &&
+                                                oscOnly(it.onTrue) && oscOnly(it.onFalse);
                         run.lastInternal = x;
-                        values.push_back(x);
+                        if (!initialOsc) values.push_back(x);
                     }
                 }
             } else {
@@ -593,7 +679,7 @@ void Engine::stepInteractions(double dt)
                 run.proc.input(it, x); // shown (In)
                 if (it.conditions.empty()) { // no test: each value the source gives does the "if true" actions
                     run.actionMet = true;
-                    for (const InteractionConsequence &c : it.onTrue) runConsequence(c);
+                    for (const InteractionConsequence &c : it.onTrue) runConsequence(c, x);
                     journal(QStringLiteral("interaction"), QStringLiteral("%1 true").arg(it.id));
                     continue;
                 }
@@ -602,7 +688,7 @@ void Engine::stepInteractions(double dt)
                 if (!first && *run.actionMet == met) continue; // only when the answer changes
                 run.actionMet = met;
                 if (first && !met) continue; // nothing was true before: nothing to undo
-                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse) runConsequence(c);
+                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse) runConsequence(c, x);
                 journal(QStringLiteral("interaction"), QStringLiteral("%1 %2").arg(it.id).arg(met ? QStringLiteral("true") : QStringLiteral("false")));
             }
             continue;
@@ -683,35 +769,48 @@ void Engine::stepInteractions(double dt)
         // A whole color: each channel through the chain, but a Toggle (a channel is not pressed)
         auto colorChain = [](const Interaction &from) {
             Interaction chain = from;
+            chain.filters.insert(chain.filters.begin(), from.sharedFilters.begin(), from.sharedFilters.end());
             chain.filters.erase(std::remove_if(chain.filters.begin(), chain.filters.end(),
                                                [](const InteractionStage &f) { return f.kind == InteractionFilter::Toggle; }),
                                 chain.filters.end());
             return chain;
         };
+        Interaction shared;
+        shared.filters = it.sharedFilters;
+        const auto feed = [&](double value) {
+            run.shared.input(shared, value);
+            if (shared.filters.empty()) {
+                run.sharedOut = value;
+                run.proc.input(it, value);
+            } else {
+                run.sharedOut = run.shared.step(shared, 0);
+                if (run.sharedOut) run.proc.input(it, *run.sharedOut);
+            }
+        };
         unsigned rises = 0;
         if (it.source == InteractionSource::Pixels || it.source == InteractionSource::Hands) {
-            run.proc.input(it, visionValue(it));
+            feed(visionValue(it));
             fresh = true;
         } else if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
             const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
                 it.audioFeature==Interaction::AudioFeature::Level?audio.level:
                 it.audioFeature==Interaction::AudioFeature::Hit?run.proc.hit(fluxes[it.audioInput],it,dt):audio.onset;
-            run.proc.input(it,x);
+            feed(x);
             fresh=true;
         } else if (it.source == InteractionSource::Internal) {
             if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
                 const double x = src->asNumber();
                 if (std::isfinite(x) && !(x == run.lastInternal)) {
                     run.lastInternal = x;
-                    run.proc.input(it, x);
+                    feed(x);
                     fresh = true;
                 }
             }
         } else {
             for (const InteractionEvent &e : events)
                 if (it.matches(e)) {
-                    run.proc.input(it, e.value);
+                    feed(e.value);
                     if (eachValue) {
                         const auto value = run.proc.step(it, 0);
                         if (eventTrigger) {
@@ -729,6 +828,9 @@ void Engine::stepInteractions(double dt)
                     fresh = true;
                 }
         }
+        const auto sharedValue = run.shared.step(shared, dt);
+        if (sharedValue && sharedValue != run.sharedOut) run.proc.input(it, *sharedValue);
+        run.sharedOut = sharedValue;
         const std::optional<double> out = run.proc.step(it, dt);
         if (!out) continue;
         // A whole color: its channels move on too (a filter keeps moving them after the last message); the alpha

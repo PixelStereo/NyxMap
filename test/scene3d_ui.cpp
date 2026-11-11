@@ -1,6 +1,5 @@
 #include <QElapsedTimer>
 #include "InteractionPanel.h"
-#include "InteractionPatch.h"
 #include "AdsrCurve.h"
 // 3D scenes in the interface: Layer › New 3D Scene makes one with a light; a model dropped onto a layer goes into a new
 // scene; the list refuses a move that takes a 3D object out of its scene or a 2D layer into one; the inspector shows the
@@ -192,28 +191,9 @@ int runScene3dUiTests(Engine &engine)
             const quint64 gate = panel->addEnvelope(tone, "synth/gate", InteractionPanel::heard(35, 120));
             pump();
             check(find(gate).filters.empty(), "a gate takes the hit as it is: its instrument has its envelope");
-            auto *nodes = panel->findChild<QToolButton *>("interactionNodes");
-            auto *patch = static_cast<InteractionPatch *>(panel->findChild<QWidget *>("interactionPatch"));
-            check(nodes && patch, "the interactions can be nodes");
-            if (nodes && patch) {
-                nodes->setChecked(true);
-                pump();
-                check(patch->isVisible() && patch->links().size() == 2, "each one a link");
-                check(patch->sourceCount() == 1 && patch->targetCount() == 2, "one source with two cables, two targets");
-                check(std::any_of(patch->links().begin(), patch->links().end(), [](const auto &l) { return l.envelope; }), "its envelope is drawn on its node");
-                const size_t before = engine.interactions().size();
-                patch->onConnect(id, gate);
-                pump();
-                check(engine.interactions().size() == before + 1, "a cable dropped on a target is a new interaction");
-                patch->onToggle(id);
-                pump();
-                check(!find(id).enabled, "a double-click switches it off");
-                if (curve) window.grab().save(qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR", dir.path()) + "/patch.png");
-                patch->onRemove(id);
-                pump();
-                check(find(id).id == 0, "Del removes it");
-                nodes->setChecked(false);
-            }
+            check(!panel->findChild<QToolButton *>("interactionNodes"), "node view is absent");
+            check(panel->findChild<QWidget *>("interactionTargetTabs") &&
+                      panel->findChild<QWidget *>("sharedFiltersFrame"), "target tabs follow the shared filter stack");
         }
         engine.setInteractions({});
         engine.removeLayer(engine.indexOfId(other));

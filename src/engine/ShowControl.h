@@ -19,7 +19,7 @@ struct ShowControl {
     enum class Kind { Slider = 0, Toggle, Choice, Button, Color };
     quint64 id = 0;
     QString name = QStringLiteral("Control");
-    QString key; // its address, control/<key>: made from the name, unique (Engine::addControl)
+    QString key; // its address, control/<key>: derived from the name and unique within the show
     Kind kind = Kind::Slider;
     double min = 0, max = 1, step = 0.01; // Slider
     QString unit;                         // Slider: " %", " Hz", " s"

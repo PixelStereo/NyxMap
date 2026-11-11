@@ -220,7 +220,7 @@ public:
                 else if (node.kind == Kind::Minimum) *value = std::min(*value, *m_values[parent]);
                 else if (node.kind == Kind::Multiply) *value *= *m_values[parent];
             }
-            if (node.kind == Kind::Filter && node.settings.enabled && value) {
+            if ((node.kind == Kind::Filter || node.kind == Kind::Destination) && node.settings.enabled && value) {
                 m_processors[i].input(node.settings, *value);
                 value = m_processors[i].step(node.settings, dt);
             }

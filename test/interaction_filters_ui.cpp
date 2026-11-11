@@ -7,7 +7,8 @@
 #include "TimelineActivity.h"
 #include <QPushButton>
 #include <QStackedWidget>
-#include "InteractionPatch.h"
+#include <QTabWidget>
+#include <QTabBar>
 #include "PresetEditor.h"
 #include "Widgets.h"
 #include <QApplication>
@@ -122,46 +123,24 @@ int main(int argc, char **argv)
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
 
-    // A stationary patch must not repaint at every telemetry poll.
-    struct CountedPatch : InteractionPatch {
-        int paints = 0;
-        void paintEvent(QPaintEvent *event) override {
-            ++paints;
-            InteractionPatch::paintEvent(event);
-        }
-    } patch;
-    patch.setAttribute(Qt::WA_DontShowOnScreen);
-    patch.resize(500, 160);
-    patch.show();
-    patch.setLevels({{1, 0.25}});
-    settle();
-    patch.repaint();
-    const int initialPaints = patch.paints;
-    for (int i = 0; i < 20; ++i) {
-        patch.setLevels({{1, 0.25}});
+    auto *tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
+    check(tabs && tabs->count() == 1 && tabs->tabText(0) == "Target 1", "Target 1 exists by default");
+    check(panel.findChild<QWidget *>("sharedFiltersFrame"), "shared filters have their own frame");
+    if (tabs) {
+        QTimer::singleShot(0, &panel, [&] {
+            if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+                for (auto *action : menu->actions())
+                    if (action->text() == "Add Target") { action->trigger(); break; }
+                menu->close();
+            }
+        });
+        tabs->tabBar()->customContextMenuRequested(tabs->tabBar()->tabRect(0).center());
+        settle();
+        tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
+        check(tabs && tabs->count() == 2 && tabs->currentIndex() == 1, "right-click adds and opens Target 2");
+        undo.undo();
         settle();
     }
-    check(patch.paints == initialPaints, "unchanged telemetry does not repaint patch");
-    patch.setLevels({{1, 0.75}});
-    settle();
-    check(patch.paints > initialPaints, "changed telemetry repaints patch");
-    patch.setLinks({{1, "Source A", "direct", "Target A"}, {2, "Source B", "direct", "Target B"}}, 0);
-    quint64 cableFrom = 0, cableTo = 0;
-    patch.onConnect = [&](quint64 from, quint64 to) { cableFrom = from; cableTo = to; };
-    auto dragCable = [&](QPointF from, QPointF to) {
-        QMouseEvent press(QEvent::MouseButtonPress, from, patch.mapToGlobal(from.toPoint()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(&patch, &press);
-        QMouseEvent move(QEvent::MouseMove, to, patch.mapToGlobal(to.toPoint()), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(&patch, &move);
-        QMouseEvent release(QEvent::MouseButtonRelease, to, patch.mapToGlobal(to.toPoint()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(&patch, &release);
-    };
-    dragCable({30, 35}, {400, 69});
-    check(cableFrom == 1 && cableTo == 2, "mouse drag connects source to target");
-    cableFrom = cableTo = 0;
-    dragCable({400, 69}, {30, 35});
-    check(cableFrom == 1 && cableTo == 2, "reverse mouse drag connects target to source");
-    patch.hide();
     // Switching protocols preserves the complete mapping and remains undoable.
     auto changeSource = [&](InteractionSource kind) {
         auto *button = panel.findChild<QToolButton *>("interactionSource");

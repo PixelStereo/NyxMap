@@ -89,9 +89,14 @@ struct InteractionConsequence {
     double value = 1;
     double time = 0;
     int curve = 3; // ease in-out
+    QString oscDestination;
+    QString oscAddress;
+    QJsonArray oscArguments;
+    bool sendsOsc() const { return !oscDestination.isEmpty(); }
     bool operator==(const InteractionConsequence &o) const
     {
-        return layer == o.layer && param == o.param && value == o.value && time == o.time && curve == o.curve;
+        return layer == o.layer && param == o.param && value == o.value && time == o.time && curve == o.curve &&
+               oscDestination == o.oscDestination && oscAddress == o.oscAddress && oscArguments == o.oscArguments;
     }
 };
 
@@ -203,6 +208,7 @@ struct Interaction {
 
     // The chain: its filters in their order, then the master level
     double master = 1;    // 0..1
+    std::vector<InteractionStage> sharedFilters; // before the target branches
     std::vector<InteractionStage> filters; // in their order
     bool movesOverTime() const; // a filter on that moves by itself between values (Average, Damper, Delay…)
     Takeover takeover = Takeover::Jump;
