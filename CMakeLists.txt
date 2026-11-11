@@ -770,13 +770,14 @@ if(NYXMAP_TESTS)
   endif()
   find_package(Python3 QUIET COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
-    # The Demo example: its project built (without its soundtrack) and rendered, every layer and effect in order
+    # Render one small frame of each example with strict layer and effect error checks.
     add_test(NAME demo_fixture COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/examples/demo/build_show.py --out ${CMAKE_BINARY_DIR}/demo-fixture)
     set_tests_properties(demo_fixture PROPERTIES FIXTURES_SETUP demo)
-    add_test(NAME demo_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/demo-fixture/preview.png --frames 3 --strict ${CMAKE_BINARY_DIR}/demo-fixture/Demo.nyxmap)
+    add_test(NAME demo_render COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/render_example.py
+      $<TARGET_FILE:NyxMap> ${CMAKE_BINARY_DIR}/demo-fixture/Demo.nyxmap ${CMAKE_BINARY_DIR}/demo-preview.png)
     set_tests_properties(demo_render PROPERTIES FIXTURES_REQUIRED demo TIMEOUT 120)
-    # The PBR example: its project as it is in the repository, rendered
-    add_test(NAME pbr_render COMMAND $<TARGET_FILE:NyxMap> --render ${CMAKE_BINARY_DIR}/pbr-preview.png --frames 3 --strict ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap)
+    add_test(NAME pbr_render COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/render_example.py
+      $<TARGET_FILE:NyxMap> ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap ${CMAKE_BINARY_DIR}/pbr-preview.png)
     set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
     add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
