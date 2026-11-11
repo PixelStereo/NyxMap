@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "AdaptiveSplitter.h"
 #include "NyxMapVersion.h"
 #include "PresetEditor.h"
 #include "Commands.h"
@@ -20,7 +21,6 @@
 #include "LayerTable.h"
 #include "ControlsPanel.h"
 #include "RemoteServer.h"
-#include "ShowControlPanel.h"
 #include "InteractionPanel.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
@@ -55,6 +55,7 @@
 #include <QFileInfo>
 #include <QFileOpenEvent>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -337,18 +338,20 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         const int index = m_engine->indexOfId(id);
         if (index >= 0) selectLayer(index);
     });
+    m_seqWindow = new SequenceWindow(m_engine, this, m_undo);
+    m_seqWindow->setWindowFlags(Qt::Widget);
+    auto *sequencePage = workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll"));
+    const int sequenceTab = m_leftTabs->addTab(sequencePage, QStringLiteral("Sequences"));
     m_logs = new LogPanel;
     m_leftTabs->addTab(m_logs, QStringLiteral("Logs"));
-    m_showControl = new ShowControlPanel(m_engine);
-    m_leftTabs->addTab(m_showControl, QStringLiteral("Show Control"));
-    connect(m_showControl, &ShowControlPanel::layersRequested, this, [this] { m_leftTabs->setCurrentIndex(1); });
     // The Logs panel reads the events' ring (EventLog) a few times a second: no signal per message
     m_leftTabs->setTabToolTip(0, QStringLiteral("Media Bin (Shift+1)"));
     m_leftTabs->setTabToolTip(1, QStringLiteral("Layers (Shift+2)"));
-    m_leftTabs->setTabToolTip(2, QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
-    m_leftTabs->setTabToolTip(3, QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_interactions), QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_logs), QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
     m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_controls), QStringLiteral("Controls: your own sliders, switches, selectors, buttons and colors, for interactions, timelines, OSC and the remote (Shift+5)"));
-    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_showControl), QStringLiteral("Show Control: GO, the cues and their times, snapshots, presets and timelines. Also a web page: see Settings › OSC › Remote (Shift+6)"));
+    m_leftTabs->setTabToolTip(sequenceTab,
+                             QStringLiteral("Sequences (Shift+6)"));
     connect(m_interactions, &InteractionPanel::edited, this, &MainWindow::markDirty);
     connect(m_interactions, &InteractionPanel::showRequested, this, [this] { m_leftTabs->setCurrentWidget(m_interactions); });
     m_leftTabs->tabBar()->setChangeCurrentOnDrag(true);
@@ -356,7 +359,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs->setCurrentIndex(1);
 
     auto *top = new QSplitter(Qt::Horizontal);
-    top->addWidget(workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll")));
+    auto *left = workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll"));
+    connect(m_leftTabs, &QTabWidget::currentChanged, left, [this, left, sequencePage](int index) {
+        const bool sequences = m_leftTabs->widget(index) == sequencePage;
+        m_leftTabs->setSizePolicy(sequences ? QSizePolicy::Ignored : QSizePolicy::Preferred, QSizePolicy::Preferred);
+        left->setHorizontalScrollBarPolicy(sequences ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    });
     auto *center = new QWidget;
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
@@ -372,15 +380,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
-    top->setStretchFactor(0, 0);
-    top->setStretchFactor(1, 1);
-    top->setStretchFactor(2, 0);
-    top->setSizes({560, 610, 430});
+    top->setStretchFactor(0, 1);
+    top->setStretchFactor(1, 0);
+    top->setSizes({610, 430});
 
-    // --- Bottom: sequences beside a shared snapshot/preset/timeline workspace
+    // --- Show library below the preview and inspector.
     m_snapshots = new SnapshotPanel(m_engine, m_undo);
-    m_seqWindow = new SequenceWindow(m_engine, this, m_undo);
-    m_seqWindow->setWindowFlags(Qt::Widget);
     m_timelineWindow = new TimelineWindow(m_engine, m_undo, this);
     m_timelineWindow->setWindowFlags(Qt::Widget);
     auto *workspace = new QWidget;
@@ -390,12 +395,13 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_workspaceTabs->setObjectName(QStringLiteral("showWorkspaceTabs"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
-    library->setMinimumWidth(340);
+    library->setMinimumWidth(302);
+
     auto *libraryLayout = new QVBoxLayout(library);
     libraryLayout->setContentsMargins(0, 0, 0, 0);
     m_workspaceTabs->setExpanding(true);
     m_workspaceTabs->setUsesScrollButtons(false);
-    m_workspaceTabs->setElideMode(Qt::ElideNone);
+    m_workspaceTabs->setElideMode(Qt::ElideRight);
     libraryLayout->addWidget(m_workspaceTabs);
     auto *libraryPages = new QStackedWidget;
     libraryPages->setObjectName(QStringLiteral("showLibraryPages"));
@@ -407,14 +413,19 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     workspacePages->addWidget(m_snapshots);
     workspacePages->addWidget(m_timelineWindow->workspace());
     m_timelineWindow->hide(); // retains the library/editor controller connections
-    auto *librarySplit = new QSplitter(Qt::Horizontal);
+    auto *librarySplit = new AdaptiveSplitter(730);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
-    librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
-    librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
+    auto *libraryScroll = workspacePane(library, QStringLiteral("showLibraryScroll"));
+    auto *editorScroll = workspacePane(workspacePages, QStringLiteral("showEditorScroll"));
+    for (auto *pane : {sequencePage, libraryScroll, editorScroll})
+        pane->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    libraryScroll->setMinimumWidth(316);
+    librarySplit->addWidget(libraryScroll);
+    librarySplit->addWidget(editorScroll);
     librarySplit->setStretchFactor(0, 0);
     librarySplit->setStretchFactor(1, 1);
-    librarySplit->setSizes({355, 825});
+    librarySplit->setSizes({316, 825});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -424,24 +435,26 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_snapshots, &SnapshotPanel::modeChanged, this, [this](int mode) {
         m_workspaceTabs->setCurrentIndex(mode);
     });
-    auto *bottom = new QSplitter(Qt::Horizontal);
-    bottom->addWidget(workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll")));
-    bottom->addWidget(workspace);
-    bottom->setStretchFactor(0, 1);
-    bottom->setStretchFactor(1, 2);
-    bottom->setSizes({620, 1000});
     auto *split = new QSplitter(Qt::Vertical);
     split->addWidget(top);
-    split->addWidget(bottom);
+    split->addWidget(workspace);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
     split->setSizes({620, 340});
-    split->setObjectName("mainSplit3"); // (layout changed: earlier saved states are not restored)
-    top->setObjectName("topSplit2");
+    split->setObjectName("mainSplit4");
+    top->setObjectName("topSplit3");
+    auto *columns = new AdaptiveSplitter(620);
+    columns->setObjectName("mainColumns");
+    columns->setChildrenCollapsible(false);
+    columns->addWidget(left);
+    columns->addWidget(split);
+    columns->setStretchFactor(0, 0);
+    columns->setStretchFactor(1, 1);
+    columns->setSizes({560, 1040});
     connect(m_snapshots, &SnapshotPanel::edited, this, &MainWindow::markDirty);
     connect(m_snapshots, &SnapshotPanel::recalled, this, &MainWindow::scheduleRecallRefresh);
     qApp->installEventFilter(this); // Shift+1 / Shift+2: left tabs
-    setCentralWidget(split);
+    setCentralWidget(columns);
 
     m_contextHelp = new QLabel(statusBar());
     m_contextHelp->setObjectName(QStringLiteral("contextHelpStatus"));
@@ -795,8 +808,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     startOsc();
     startRemote();
     restoreGeometry(s.value("ui/geometry").toByteArray());
-    split->restoreState(s.value("ui/mainSplit3").toByteArray());
-    top->restoreState(s.value("ui/topSplit2").toByteArray());
+    columns->restoreState(s.value("ui/mainColumns").toByteArray());
+    split->restoreState(s.value("ui/mainSplit4").toByteArray());
+    top->restoreState(s.value("ui/topSplit3").toByteArray());
     fitToAvailableScreen();
 }
 
@@ -973,10 +987,13 @@ bool MainWindow::eventFilter(QObject *o, QEvent *e)
             int tab = -1;
             if (k->key() == Qt::Key_1 || k->key() == Qt::Key_Exclam) tab = 0;
             if (k->key() == Qt::Key_2 || k->key() == Qt::Key_At || k->key() == Qt::Key_QuoteDbl) tab = 1;
-            if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = 2;
-            if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = 3;
+            if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = m_leftTabs->indexOf(m_interactions);
+            if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = m_leftTabs->indexOf(m_logs);
             if (k->key() == Qt::Key_5 || k->key() == Qt::Key_Percent) tab = m_leftTabs->indexOf(m_controls);
-            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) tab = m_leftTabs->indexOf(m_showControl);
+            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) {
+                if (!k->isAutoRepeat()) openSequences();
+                return true;
+            }
             if (tab >= 0 && !k->isAutoRepeat()) {
                 m_leftTabs->setCurrentIndex(tab);
                 return true;
@@ -1168,6 +1185,8 @@ void MainWindow::buildMenus()
     seq->addSeparator();
     seq->addAction(QStringLiteral("Sequences…"), this, &MainWindow::openSequences);
     seq->addAction(QStringLiteral("Timelines…"), this, &MainWindow::openTimelines);
+    auto *show = seq->addAction(QStringLiteral("Open Show Control in Browser…"), this, &MainWindow::openShowControl);
+    show->setObjectName(QStringLiteral("openShowControlWeb"));
 
     QMenu *comp = menuBar()->addMenu(QStringLiteral("C&omposition"));
     comp->addAction(QStringLiteral("Composition Size (Composition tab)"), this, [this] { m_tabs->setCurrentWidget(m_tabs->widget(2)); });
@@ -2899,9 +2918,32 @@ void MainWindow::sequenceBack() { m_engine->sequencer().back(); }
 // The step's GO: its pre-wait, then its snapshot (recalled through the undo stack, see the recaller), then what follows
 void MainWindow::sequenceGoTo(int step) { m_engine->sequencer().goTo(step); }
 
+void MainWindow::openShowControl()
+{
+    quint16 port = 0;
+    if (m_remote && m_remoteThread->isRunning())
+        QMetaObject::invokeMethod(m_remote, [this, &port] {
+            if (m_remote->isRunning()) port = m_remote->port();
+        }, Qt::BlockingQueuedConnection);
+    if (!port) {
+        statusBar()->showMessage(QStringLiteral("Enable the remote server in Settings › OSC › Remote to open Show Control."), 8000);
+        return;
+    }
+    const QHostAddress binding(SettingsPanel::oscListen());
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(binding == QHostAddress::AnyIPv6 ? QStringLiteral("::1")
+                : binding.isNull() || binding == QHostAddress::Any || binding == QHostAddress::AnyIPv4
+                      ? QStringLiteral("127.0.0.1") : binding.toString());
+    url.setPort(port);
+    url.setPath(QStringLiteral("/show"));
+    QDesktopServices::openUrl(url);
+}
+
 void MainWindow::openSequences()
 {
-    m_seqWindow->show();
+    if (auto *page = m_leftTabs->findChild<QScrollArea *>(QStringLiteral("sequenceEditorScroll")))
+        m_leftTabs->setCurrentWidget(page);
     m_seqWindow->setFocus();
 }
 
@@ -3265,8 +3307,9 @@ void MainWindow::closeEvent(QCloseEvent *e)
     m_quitting = true;
     QSettings s;
     s.setValue("ui/geometry", saveGeometry());
-    if (auto *split = findChild<QSplitter *>("mainSplit3")) s.setValue("ui/mainSplit3", split->saveState());
-    if (auto *top = findChild<QSplitter *>("topSplit2")) s.setValue("ui/topSplit2", top->saveState());
+    if (auto *columns = findChild<QSplitter *>("mainColumns")) s.setValue("ui/mainColumns", columns->saveState());
+    if (auto *split = findChild<QSplitter *>("mainSplit4")) s.setValue("ui/mainSplit4", split->saveState());
+    if (auto *top = findChild<QSplitter *>("topSplit3")) s.setValue("ui/topSplit3", top->saveState());
     for (auto &[id, o] : m_outputs) o.window->hideOutput();
     // Normal exit: no recovery to offer on next launch.
     if (m_autosaveEnabled && !m_keepAutosave) QFile::remove(autosavePath());

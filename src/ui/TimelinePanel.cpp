@@ -1,4 +1,5 @@
 #include "TimelinePanel.h"
+#include "FittedTableHeader.h"
 #include "Commands.h"
 #include "Engine.h"
 #include "Widgets.h"
@@ -355,6 +356,7 @@ TimelineEditor::TimelineEditor(Engine *engine, QUndoStack *undo, QWidget *parent
     auto *how = new QLabel(QStringLiteral("Color lane: click to add · drag to move · double-click to edit color · right-click for transitions.\n"
                                           "Curve lane: click or draw keys · double-click to delete · right-click for curve and value.\n"
                                           "Event lane: click to add a flag (its action fires as the playhead reaches it) · drag to move · double-click to delete."));
+    how->setWordWrap(true);
     how->setStyleSheet("color:#8a8a90; font-size:11px;");
     bottom->addWidget(how, 1);
     mainLayout()->addLayout(bottom);
@@ -484,7 +486,8 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_overview->setCheckable(true);
     m_overview->setToolTip(QStringLiteral("Fold all the timelines: each one's run on a line, with its time and its transport. "
                                           "Double-click one to edit it"));
-    m_group = new QPushButton(QStringLiteral("Group"));
+    m_group = new QPushButton(QStringLiteral("▤"));
+    symbolButton(m_group);
     m_group->setObjectName(QStringLiteral("timelineGroup"));
     m_group->setToolTip(QStringLiteral("A new group of timelines: drag timelines (and groups) into it"));
     m_add = new QPushButton(QStringLiteral("+"));
@@ -508,6 +511,7 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_list = new TimelineList;
     m_list->setObjectName(QStringLiteral("timelineList"));
     m_list->setColumnCount(3);
+    m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Length")});
     m_list->setRootIsDecorated(true);
     m_list->setIndentation(12);
@@ -518,9 +522,9 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_list->setExpandsOnDoubleClick(false);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->header()->setStretchLastSection(false);
-    m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
+    new FittedTableHeader(m_list, m_list->header(), 1);
     m_list->setToolTip(QStringLiteral("Drag a timeline onto a step of a sequence (Play by default: the step can also pause, stop, rewind, "
                                       "seek or change its loop), or into a group\n"
                                       "Double-click or Return: rename · ⌘Return: play · Delete: delete · ⌘D: duplicate · ⌘G: new group"));

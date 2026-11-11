@@ -2081,13 +2081,14 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         auto *transport = new QHBoxLayout;
         for (QWidget *w : std::initializer_list<QWidget *>{m_play, m_pause, m_stop, m_rewind}) transport->addWidget(w);
         transport->addStretch();
-        transport->addWidget(durationLabel(false));
-        transport->addWidget(m_duration);
-        transport->addWidget(speedLabel(false));
-        transport->addWidget(m_speed);
-        transport->addWidget(m_loop);
-        transport->addWidget(m_repeat);
         v->addLayout(transport);
+        auto *timing = new QHBoxLayout;
+        timing->addWidget(durationLabel(false));
+        timing->addWidget(m_duration);
+        timing->addWidget(speedLabel(false));
+        timing->addWidget(m_speed);
+        timing->addStretch();
+        v->addLayout(timing);
         // The zoom: time (all the lanes) and values (each lane its own; the slider sets them all)
         auto *zoomRow = new QHBoxLayout;
         m_zoomX = new QSlider(Qt::Horizontal);
@@ -2100,7 +2101,11 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         m_zoomY->setToolTip(QStringLiteral("Vertical zoom: the values shown in every lane (Alt+wheel over a lane: that lane only)"));
         zoomRow->addWidget(gray(QStringLiteral("Zoom  Time")));
         zoomRow->addWidget(m_zoomX);
-        zoomRow->addSpacing(8);
+        zoomRow->addWidget(m_loop);
+        zoomRow->addWidget(m_repeat);
+        zoomRow->addStretch();
+        v->addLayout(zoomRow);
+        zoomRow = new QHBoxLayout;
         zoomRow->addWidget(gray(QStringLiteral("Values")));
         zoomRow->addWidget(m_zoomY);
         zoomRow->addWidget(m_fit);
@@ -2177,6 +2182,7 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     rulerRow->setSpacing(0);
     rulerRow->addSpacing(headerWidth());
     m_ruler = new TimeRuler;
+    m_ruler->setToolTip(QStringLiteral("Pan time with Shift + scroll or a middle-button drag."));
     rulerRow->addWidget(m_ruler, 1);
     rulerRow->addSpacing(bar);
     v->addLayout(rulerRow);
@@ -2420,7 +2426,7 @@ void AnimEditor::applyView()
         m_scrollX->setSingleStep(std::max(1, int(std::lround(span * 100))));
         m_scrollX->setValue(int(std::lround(m_t0 * 1000)));
         m_scrollX->setEnabled(span < d - 1e-9);
-        m_scrollX->setVisible(m_layout == Layout::Side || span < d - 1e-9); // narrow: only when zoomed in
+        m_scrollX->setVisible(m_layout != Layout::Side && span < d - 1e-9); // the timeline pans with the ruler or lanes
         m_filling = false;
         if (m_zoomX) {
             const QSignalBlocker b(m_zoomX);

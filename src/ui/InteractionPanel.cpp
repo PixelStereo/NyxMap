@@ -435,6 +435,11 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         if (on) refreshPatch();
     });
     auto *split = new QSplitter(Qt::Vertical);
+    split->setObjectName(QStringLiteral("interactionSplit"));
+    split->setChildrenCollapsible(false);
+    m_views->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    m_views->setMinimumHeight(100);
+    settingsBox->setMinimumHeight(140);
     split->addWidget(m_views);
     split->addWidget(settingsBox);
     split->setStretchFactor(0, 1);
@@ -1233,6 +1238,28 @@ void InteractionPanel::rebuildSettings()
     formBox->setLayout(form);
     m_settingsLayout->addWidget(formBox);
 
+    const auto section = [this](const QString &title) {
+        auto *heading = new QLabel(title);
+        heading->setStyleSheet(QStringLiteral("font-weight: 600; padding: 3px 6px;"));
+        auto *header = new QWidget;
+        auto *row = new QHBoxLayout(header);
+        row->setContentsMargins(0, 0, 6, 0);
+        row->addWidget(heading);
+        auto *line = new QWidget;
+        line->setFixedHeight(1);
+        line->setStyleSheet(QStringLiteral("background: palette(mid);"));
+        row->addWidget(line, 1, Qt::AlignVCenter);
+        m_settingsLayout->addWidget(header);
+        auto *body = new QWidget;
+        auto *fields = new QFormLayout(body);
+        fields->setContentsMargins(6, 3, 6, 6);
+        fields->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        fields->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        fields->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        m_settingsLayout->addWidget(body);
+        return fields;
+    };
+
     auto *name = new QLineEdit(it.name);
     {
         Interaction unnamed = it;
@@ -1279,6 +1306,7 @@ void InteractionPanel::rebuildSettings()
         });
         form->addRow(note(QStringLiteral("Each axis has its own input and mapping. For one OSC XY message, use the same address with arguments 0 and 1.")));
     }
+    form = section(QStringLiteral("Source"));
     auto *sourceButton = new QToolButton;
     sourceButton->setObjectName(QStringLiteral("interactionSource"));
     sourceButton->setText(interactionSourceName(it.source));
@@ -1697,11 +1725,12 @@ void InteractionPanel::rebuildSettings()
     }
 
     if (it.isAction() && root.xyInputs.empty()) {
-        buildActionSettings(form, it, editRoot);
+        buildActionSettings(section(QStringLiteral("Actions")), it, editRoot);
         m_settingsLayout->addStretch();
         return;
     }
 
+    form = section(QStringLiteral("Destination"));
     // All destination tabs use the same parameter picker.
     const auto makeTarget = [this](quint64 owner, const QString &path,
                                     std::function<void(quint64, const QString &)> change, bool scalarOnly = false) {
@@ -1830,6 +1859,7 @@ void InteractionPanel::rebuildSettings()
         });
     }
 
+    form = section(QStringLiteral("Mapping"));
     // What it does now
     m_inMeter = meter();
     m_outMeter = meter();
