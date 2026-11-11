@@ -340,16 +340,13 @@ std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
     return uses;
 }
 
-// Which layers are drawn this frame: shown (in a shown group), used as a source or as a mask by another,
-// previewed in the inspector or a preview view while switched on, viewports. The others are neither uploaded nor
-// rendered (their sound plays on). A layer switched off (or in a group switched off) is not computed for a preview:
-// only another layer that uses it keeps it rendered.
-// These sources can resume at their current transport time without replaying effects or shader feedback.
-static bool transparentStatelessPicture(const Layer &l)
+// An active effect may carry state or read from a layer that feeds back into it.
+// Keep these chains, live integrations and screen-space reflections warm.
+static bool needsContinuousPicture(const Layer &l, bool reflectionsEnabled)
 {
-    return l.opacity <= 0 && l.effects.empty() &&
-           (l.type == SourceType::Layer || l.type == SourceType::Video ||
-            l.type == SourceType::Image || l.type == SourceType::Text);
+    return l.type == SourceType::Tox || l.type == SourceType::Web ||
+           (l.generator && !l.generator->canSkipDraw()) || (reflectionsEnabled && l.scene3d && l.scene.reflections > 0) ||
+           (l.effectsEnabled && std::any_of(l.effects.begin(), l.effects.end(), [](const auto &fx) { return fx->enabled; }));
 }
 
 bool Engine::layerPreviewed(const Layer &l) const
@@ -359,20 +356,151 @@ bool Engine::layerPreviewed(const Layer &l) const
                                                [&](const auto &p) { return p.id == l.id; }));
 }
 
+void Engine::forEachRenderDependency(const Layer &l, const std::function<void(size_t, int)> &use) const
+{
+    auto add = [&](quint64 id, int stage = -1, bool viewport = false) {
+        const size_t row = renderLayerIndex(id);
+        if (row < m_layers.size() && (viewport || !m_layers[row]->isViewport)) use(row, stage);
+    };
+    if (l.type == SourceType::Layer) add(l.sourceLayer, -1, true);
+    if (l.effectsEnabled)
+        for (const auto &fx : l.effects)
+            if (fx->enabled) add(fx->maskLayer, fx->maskStage);
+    if (l.color.maskLayer && !l.color.effective().isIdentity()) add(l.color.maskLayer);
+    add(l.matte.layer);
+    forEachImageLayer(l, [&](quint64 id) { add(id); });
+    if (l.type == SourceType::Model && l.model) {
+        add(l.modelPicture, l.modelPictureStage);
+        if (l.modelDisplaceEnabled) add(l.modelDisplace, l.modelDisplaceStage);
+    }
+    if (l.scene3d) add(l.sceneEnvironment, l.sceneEnvironmentStage);
+}
+
 void Engine::markNeeded()
 {
-    for (auto &l : m_layers) {
-        l->referenced = false;
-        l->stagesWanted.clear();
+    const size_t n = m_layers.size();
+    m_renderChildren.resize(n);
+    for (auto &children : m_renderChildren) children.clear();
+    const std::vector<bool> leftOut = soloLeftOut();
+    const bool reflectionsEnabled = m_quality3d.reflections > 0;
+    bool soloHasSound = false;
+    QRectF outputBounds(0, 0, 1, 1); // the composition always exists, independently of viewport routing
+    const double cw = std::max(1, m_compSize.width()), ch = std::max(1, m_compSize.height());
+    for (size_t i = 0; i < n; ++i) {
+        Layer &l = *m_layers[i];
+        l.needed = l.referenced = false;
+        l.stagesWanted.clear();
+        l.soloHidden = leftOut[i];
+        soloHasSound = soloHasSound || (!leftOut[i] && l.audio && !l.isGroup && !l.isViewport);
+        const size_t parent = renderLayerIndex(l.parent);
+        l.parentEnabled = true;
+        if (parent < i) {
+            m_renderChildren[parent].push_back(i);
+            const Layer &group = *m_layers[parent];
+            l.parentEnabled = !group.isGroup || (group.enabled && group.parentEnabled);
+        }
+        if (l.isViewport && l.enabled && !l.testCard) {
+            const Mapping::Rect r = l.mapping.rect(m_compSize);
+            // A circumscribed square is a conservative bound for a rotated viewport.
+            const double side = r.angle == 0 ? 0 : std::hypot(r.w, r.h);
+            QRectF view(0, 0, (r.angle == 0 ? r.w : side) / cw, (r.angle == 0 ? r.h : side) / ch);
+            view.moveCenter(QPointF(r.center.x() / cw, r.center.y() / ch));
+            outputBounds = outputBounds.united(view);
+        }
     }
-    // The stages of the layers' effects their masks take (after an effect: kept as it is made)
-    for (auto &l : m_layers)
-        for (const auto &fx : l->effects)
-            if (fx->enabled && fx->maskLayer && fx->maskStage > 0) {
-                const int mi = indexOfId(fx->maskLayer);
-                if (mi >= 0) m_layers[size_t(mi)]->stagesWanted.insert(fx->maskStage);
+    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
+    for (size_t i = 0; i < n; ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
+
+    auto visiblePicture = [&](const Layer &l) {
+        if (!l.enabled || l.soloHidden || l.opacity <= 0.0f || !l.hasPicture() || l.isMappingZone) return false;
+        // Ordinary group members draw into the composition-sized group target.
+        const QRectF view = l.parent ? QRectF(0, 0, 1, 1) : outputBounds;
+        const Mapping &mapping = effectiveMapping(l);
+        if (view.contains(mapping.position)) return true; // common case; conservatively keep it
+        const QPointF first = mapping.corner(0);
+        double left = first.x(), right = left, top = first.y(), bottom = top;
+        for (int i = 1; i < 4; ++i) {
+            const QPointF p = mapping.corner(i);
+            left = std::min(left, p.x()); right = std::max(right, p.x());
+            top = std::min(top, p.y()); bottom = std::max(bottom, p.y());
+        }
+        if (!(right < view.left() - 1 / cw || left > view.right() + 1 / cw ||
+              bottom < view.top() - 1 / ch || top > view.bottom() + 1 / ch)) return true;
+        // The corner bounds are only exact for affine mapping. A pin or a
+        // warped mesh can pull pixels back into the output between corners.
+        return std::any_of(std::begin(mapping.pins), std::end(mapping.pins), [](const QPointF &p) { return !p.isNull(); }) ||
+               std::any_of(mapping.offsets.begin(), mapping.offsets.end(), [](const QPointF &p) { return !p.isNull(); });
+    };
+
+    std::function<void(size_t)> need;
+    const auto use = [&](size_t row, int stage) {
+        Layer &source = *m_layers[row];
+        source.referenced = true;
+        if (stage > 0) source.stagesWanted.insert(stage);
+        need(row);
+    };
+    std::function<void(size_t)> needModels = [&](size_t row) {
+        for (const size_t child : m_renderChildren[row]) {
+            Layer &member = *m_layers[child];
+            if (!member.enabled) continue;
+            if (member.merge3d) needModels(child);
+            else if (!member.soloHidden && member.type == SourceType::Model) need(child);
+        }
+    };
+    need = [&](size_t row) {
+        Layer &l = *m_layers[row];
+        if (l.needed) return; // dependency cycle
+        l.needed = true;
+        if (!l.isViewport || (l.enabled && !l.testCard)) forEachRenderDependency(l, use);
+        if (l.scene3d) needModels(row);
+        else if (l.isGroup && !l.merge3d)
+            for (const size_t child : m_renderChildren[row]) {
+                const Layer &member = *m_layers[child];
+                if (visiblePicture(member) || (member.enabled && !member.soloHidden && needsContinuousPicture(member, reflectionsEnabled)))
+                    need(child);
             }
-    for (auto &l : m_layers) // the stages no mask takes any more: their targets go
+    };
+
+    for (size_t i = 0; i < n; ++i) {
+        const Layer &l = *m_layers[i];
+        if (l.isViewport || (!l.parent && visiblePicture(l)) || layerPreviewed(l) ||
+            (l.enabled && l.parentEnabled && !l.soloHidden && needsContinuousPicture(l, reflectionsEnabled)))
+            need(i);
+    }
+    for (const auto &slot : m_previewSlots) {
+        const size_t row = renderLayerIndex(slot.id);
+        if (slot.sceneView && row < n && m_layers[row]->scene3d) needModels(row);
+    }
+    for (auto &[id, transition] : m_transitions) {
+        if (const size_t row = renderLayerIndex(id); row < n) {
+            need(row);
+            transition->from->parentEnabled = m_layers[row]->parentEnabled;
+        }
+        transition->from->needed = true;
+        forEachRenderDependency(*transition->from, use);
+    }
+    auto visionReference = [&](const Interaction &input) {
+        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands)) return;
+        if (const size_t row = renderLayerIndex(input.pixels.layer); row < n) use(row, -1);
+    };
+    if (m_visionSetupInput)
+        if (const size_t row = renderLayerIndex(m_visionSetupInput->pixels.layer); row < n) use(row, -1);
+    for (const auto &input : m_interactions)
+        if (input.enabled) {
+            visionReference(input);
+            for (const auto &axis : input.xyInputs) visionReference(axis);
+        }
+    for (const auto &node : m_interactionGraph.nodes)
+        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
+
+    const bool paused = timeScale() <= 0;
+    for (auto &l : m_layers) {
+        if (paused) {
+            if (l->needed && l->pictureCulled && !needsContinuousPicture(*l, reflectionsEnabled))
+                l->renderPaused = true;
+        } else {
+            l->pictureCulled = !l->needed && l->hasPicture();
+        }
         for (auto it = l->stageTargets.begin(); it != l->stageTargets.end();) {
             if (l->stagesWanted.count(it->first)) {
                 ++it;
@@ -381,91 +509,7 @@ void Engine::markNeeded()
             it->second.destroy();
             it = l->stageTargets.erase(it);
         }
-    auto refer = [this](const Layer &l) { // the layers its picture is made from
-        if (l.type == SourceType::Layer && l.sourceLayer && !transparentStatelessPicture(l)) {
-            const int si = indexOfId(l.sourceLayer);
-            if (si >= 0) m_layers[size_t(si)]->referenced = true;
-        }
-        for (const auto &fx : l.effects)
-            if (fx->enabled && fx->maskLayer) {
-                const int mi = indexOfId(fx->maskLayer);
-                if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-            }
-        if (l.color.enabled && l.color.maskLayer) {
-            const int mi = indexOfId(l.color.maskLayer);
-            if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-        }
-        if (l.matte.layer) {
-            const int mi = indexOfId(l.matte.layer);
-            if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-        }
-        forEachImageLayer(l, [&](quint64 id) {
-            const int si = indexOfId(id);
-            if (si >= 0) m_layers[size_t(si)]->referenced = true;
-        });
-        if (l.type == SourceType::Model || l.scene3d) // a 3D model's pictures, a scene's environment, at their stages
-            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage},
-                                            std::pair{l.sceneEnvironment, l.sceneEnvironmentStage}})
-                if (const int si = indexOfId(id); id && si >= 0) {
-                    m_layers[size_t(si)]->referenced = true;
-                    if (stage > 0) m_layers[size_t(si)]->stagesWanted.insert(stage);
-                }
-    };
-    auto visionReference = [this](const Interaction &input) {
-        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
-            return;
-        const int index = indexOfId(input.pixels.layer);
-        if (index >= 0)
-            m_layers[size_t(index)]->referenced = true;
-    };
-    if (m_visionSetupInput) visionReference(*m_visionSetupInput);
-    for (const auto &input : m_interactions)
-        if (input.enabled) {
-            visionReference(input);
-            for (const auto &axis : input.xyInputs)
-                visionReference(axis);
-        }
-    for (const auto &node : m_interactionGraph.nodes)
-        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
-    for (auto &l : m_layers) refer(*l);
-    auto followTransparentLink = [this](const Layer &root) {
-        const Layer *l = &root;
-        while (l->type == SourceType::Layer && l->sourceLayer && transparentStatelessPicture(*l)) {
-            const int si = indexOfId(l->sourceLayer);
-            if (si < 0) break;
-            Layer &source = *m_layers[size_t(si)];
-            if (source.referenced) break; // the source is itself a root below (also stops cycles)
-            source.referenced = true;
-            l = &source;
-        }
-    };
-    for (auto &[id, t] : m_transitions) {
-        refer(*t->from); // the outgoing source is drawn too, with what it uses
-        followTransparentLink(*t->from);
     }
-    for (const auto &l : m_layers)
-        if (l->referenced || layerPreviewed(*l) || m_transitions.count(l->id))
-            followTransparentLink(*l);
-    const std::vector<bool> leftOut = soloLeftOut();
-    // A solo plays all of what it holds, its sound too: the others' sound goes when it has one. A picture soloed under the
-    // music leaves the music on
-    bool soloHasSound = false;
-    for (size_t i = 0; i < m_layers.size(); ++i) {
-        m_layers[i]->soloHidden = leftOut[i];
-        soloHasSound = soloHasSound || (!leftOut[i] && m_layers[i]->audio && !m_layers[i]->isGroup && !m_layers[i]->isViewport);
-    }
-    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
-    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
-    // A group comes before its members: its verdict is known when they are reached
-    for (size_t i = 0; i < m_layers.size(); ++i) {
-        Layer &l = *m_layers[i];
-        const size_t parent = renderLayerIndex(l.parent);
-        const bool inShown = !l.parent || (parent < i && m_layers[parent]->isGroup && m_layers[parent]->needed);
-        const bool onscreen = !transparentStatelessPicture(l) || m_transitions.count(l.id);
-        l.needed = l.isViewport || l.referenced || layerPreviewed(l) ||
-                   (onscreen && l.enabled && inShown && !l.soloHidden);
-    }
-    for (auto &[id, t] : m_transitions) t->from->needed = true;
 }
 
 size_t Engine::renderLayerIndex(quint64 id) const
@@ -486,12 +530,6 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
     const size_t n = m_layers.size();
     enum { Todo = 0, Doing = 1, Done = 2 };
     m_renderMark.assign(n, Todo);
-    m_renderChildren.resize(n);
-    for (auto &children : m_renderChildren) children.clear();
-    const auto index = [this](quint64 id) { return renderLayerIndex(id); };
-    for (size_t i = 0; i < n; ++i)
-        if (const size_t parent = index(m_layers[i]->parent); parent < i)
-            m_renderChildren[parent].push_back(i);
     std::function<void(size_t)> render = [&](size_t i) {
         if (m_renderMark[i] != Todo) return; // done, or being rendered (cycle)
         if (only && !only->count(m_layers[i]->id)) { // held: its picture stays as it is
@@ -500,35 +538,10 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
         }
         m_renderMark[i] = Doing;
         Layer &l = *m_layers[i];
-        auto dependencies = [&](const Layer &d) { // the layers its picture is made from, before it
-            if (d.type == SourceType::Layer && d.sourceLayer) {
-                const size_t si = index(d.sourceLayer);
-                if (si < n) render(si);
-            }
-            if (d.type == SourceType::Model || d.scene3d) // a 3D model's pictures, a scene's environment
-                for (quint64 id : {d.modelPicture, d.modelDisplace, d.sceneEnvironment})
-                    if (const size_t si = index(id); si < n && !m_layers[si]->isViewport) render(si);
-            for (const auto &fx : d.effects) // the masks of its effects
-                if (fx->enabled && fx->maskLayer) {
-                    const size_t mi = index(fx->maskLayer);
-                    if (mi < n && !m_layers[mi]->isViewport) render(mi);
-                }
-            if (d.color.enabled && d.color.maskLayer) { // the mask of its color
-                const size_t mi = index(d.color.maskLayer);
-                if (mi < n && !m_layers[mi]->isViewport) render(mi);
-            }
-            if (d.matte.layer) { // its matte
-                const size_t mi = index(d.matte.layer);
-                if (mi < n && !m_layers[mi]->isViewport) render(mi);
-            }
-            forEachImageLayer(d, [&](quint64 id) { // the layers its shaders show as images
-                const size_t si = index(id);
-                if (si < n && !m_layers[si]->isViewport) render(si);
-            });
-        };
         const auto transition = l.isGroup || l.isViewport ? m_transitions.end() : m_transitions.find(l.id);
-        if (l.needed || transition != m_transitions.end()) dependencies(l);
-        if (transition != m_transitions.end()) dependencies(*transition->second->from); // the outgoing source's too
+        const auto dependency = [&](size_t row, int) { render(row); };
+        if (l.needed && (!l.isViewport || (l.enabled && !l.testCard))) forEachRenderDependency(l, dependency);
+        if (transition != m_transitions.end()) forEachRenderDependency(*transition->second->from, dependency);
         if (l.isViewport) {
             // What it sees: the items at the top of the list it shows, all rendered by now
             std::vector<Layer *> shown;
@@ -547,14 +560,11 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
             renderViewport(l, shown, rc, sameRouting);
         } else if (l.isGroup) {
             // Its direct contents, in list order (groups inside are rendered first, by the recursion)
-            const bool feedsEffects = l.effectsEnabled && std::any_of(l.effects.begin(), l.effects.end(),
-                                                                     [](const auto &fx) { return fx->enabled; });
-            const bool draw = l.needed && !l.merge3d &&
-                              (l.scene3d || l.opacity > 0.0f || l.referenced || layerPreviewed(l) || feedsEffects);
+            const bool draw = l.needed && !l.merge3d;
             std::vector<Layer *> members;
             if (draw) members.reserve(m_renderChildren[i].size());
             for (const size_t k : m_renderChildren[i]) {
-                render(k); // the children's generators and feedback keep running at zero group opacity
+                render(k);
                 if (draw) members.push_back(m_layers[k].get());
             }
             if (!draw) l.finalTex = l.rawTex = l.preFxTex = 0;
@@ -565,6 +575,7 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
             if (transition != m_transitions.end()) renderTransition(l, *transition->second, rc);
         }
         if (!l.isViewport) prepareMatte(l); // before it is composited (a viewport or a group draws it later)
+        if (l.needed) l.pictureCulled = false;
         m_renderMark[i] = Done;
     };
     for (size_t i = 0; i < n; ++i) render(i);
@@ -600,7 +611,11 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     if (l.isGroup) return;  // rendered from its members (renderGroup)
     if (l.is3dObject()) return; // drawn by its 3D scene (renderScene)
     if (l.ended) return; // Stop mode, after the end: nothing
-    if (!l.needed) return; // hidden, and used by no other layer
+    if (!l.needed) {
+        if (l.enabled && l.parentEnabled && !l.soloHidden && l.generator && l.generator->canSkipDraw())
+            l.generator->advanceWithoutDrawing(rc);
+        return;
+    }
     GLuint tex = 0;
     int w = 0, h = 0;
     switch (l.type) {
@@ -702,7 +717,8 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                 }
                 l.generator->setExtraTexture(QByteArrayLiteral("nyxmapSegments"), l.linesTex.tex);
             }
-            l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
+            const bool repeatFrame = l.pictureCulled && l.generator->canSkipDraw();
+            l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight, repeatFrame);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {
                 tex = l.generatorTarget.tex;
                 w = l.generatorTarget.w;
@@ -1639,15 +1655,6 @@ void Engine::frame(double dt)
     rc.drawPoints = [this](int count) { drawPoints(count); };
     rc.blit = [this](GLuint t, const RenderTarget &rt) { blit(t, rt); };
 
-    // Members of a hidden group are hidden (and silent) too, at any depth. A group comes before its contents.
-    {
-        std::map<quint64, bool> shown; // group id → visible, groups above included
-        for (auto &l : m_layers) {
-            const auto up = l->parent ? shown.find(l->parent) : shown.end();
-            l->parentEnabled = up == shown.end() || up->second;
-            if (l->isGroup) shown[l->id] = l->parentEnabled && l->enabled;
-        }
-    }
     if (!m_fadesManual) {
         const double k = timeScale(); // paused or slowed: the fades, transitions and timelines move at that pace
         stepShowRecalls(m_realDt * k);

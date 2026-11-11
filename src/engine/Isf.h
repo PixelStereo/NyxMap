@@ -143,7 +143,11 @@ public:
     void releaseGl();
 
     // Renders into `out` (size outW x outH). inputTex may be 0 (generator).
-    void render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW, int outH);
+    // A stateless generator can redraw its held frame without consuming time or events.
+    void render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW, int outH,
+                bool repeatFrame = false);
+    bool canSkipDraw() const { return m_canSkipDraw; }
+    void advanceWithoutDrawing(const IsfRenderContext &rc);
 
     bool setImageInput(int index, const QString &path, QString *err); // GL context current
     // Texture of the engine bound to the image input `name` at the next renders (0: back to its own image)
@@ -211,6 +215,7 @@ private:
 
     QString m_path, m_name, m_description, m_credit, m_error;
     bool m_isFilter = false;
+    bool m_canSkipDraw = false;
     std::vector<IsfInput> m_inputs;
     std::vector<IsfPass> m_passes;
     std::vector<IsfTarget> m_targets;
