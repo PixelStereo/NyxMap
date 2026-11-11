@@ -953,6 +953,7 @@ private:
     void releaseGarbage(const std::shared_ptr<Garbage> &g);
     void updateSource(Layer &l, double dt);
     void markNeeded(); // which layers are drawn this frame (shown, or used by another one)
+    void forEachRenderDependency(const Layer &layer, const std::function<void(size_t, int)> &use) const;
     // every layer, in dependency order; `only`: just these (by id), the others keep the frame they have
     void renderPass(const IsfRenderContext &rc, const std::set<quint64> *only = nullptr);
     size_t renderLayerIndex(quint64 id) const;

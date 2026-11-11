@@ -332,6 +332,7 @@ struct Layer {
     bool referenced = false; // used as a source by another layer: rendered even when hidden (every frame)
     bool needed = true;      // its picture is drawn this frame (shown, or referenced): uploaded and rendered
     bool renderPaused = false; // a picture loaded while paused: drawn once (the others hold their frame)
+    bool pictureCulled = false; // needs one draw if it becomes visible while paused
     // File missing on load: path and type are kept (save, media bin, relink)
     SourceType missingType = SourceType::None;
 
