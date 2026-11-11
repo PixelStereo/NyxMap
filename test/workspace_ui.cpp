@@ -533,9 +533,10 @@ int main(int argc, char **argv)
                     leftTabs->setCurrentWidget(sequencePane);
                     app.processEvents();
                     auto *steps = sequencePane->findChild<QTableWidget *>("sequenceSteps");
-                    check(sequencePane->widget()->width() <= sequencePane->viewport()->width() &&
-                              steps && steps->horizontalHeader()->length() <= steps->viewport()->width(),
-                          "the sequence editor and all step columns fit the narrow workspace");
+                    check(sequencePane->widget()->width() <= sequencePane->viewport()->width(),
+                          "the sequence editor fits its viewport");
+                    check(steps && steps->horizontalHeader()->length() <= steps->viewport()->width(),
+                          "the step columns fit the table viewport");
                 }
             }
             if (auto *showSplit = window.findChild<QSplitter *>("showLibrarySplit"))

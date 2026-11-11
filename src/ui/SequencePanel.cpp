@@ -649,7 +649,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_sequences->setMinimumContentsLength(8);
     m_sequences->setInsertPolicy(QComboBox::NoInsert);
     m_sequences->setCompleter(nullptr);
-    m_sequences->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_sequences->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_sequences->setToolTip(QStringLiteral("The sequence GO / Stop controls. Other sequences keep playing in the background. Type here to rename it."));
     m_add = new QPushButton(QStringLiteral("+"));
     m_add->setObjectName(QStringLiteral("sequenceNew"));
@@ -776,6 +776,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     // Steps
     m_status = new QLabel;
     m_status->setTextFormat(Qt::RichText);
+    m_status->setWordWrap(true);
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     flags->addWidget(m_status, 1);
     flags->addWidget(m_beatLabel);
     right->addWidget(new RecallProgressBar(m_engine));
@@ -867,6 +869,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_stepDel->setToolTip(QStringLiteral("Delete the selected steps"));
     m_up = new QPushButton(QStringLiteral("▲"));
     m_down = new QPushButton(QStringLiteral("▼"));
+    for (QPushButton *b : {m_stepDel, m_up, m_down}) symbolButton(b);
     for (QPushButton *b : {m_stepAdd, m_stepDel, m_up, m_down}) stb->addWidget(b);
     stb->addStretch();
     auto *stops = new QHBoxLayout;
