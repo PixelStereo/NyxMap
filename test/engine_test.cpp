@@ -2924,9 +2924,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
 
             // Pre-wait, post-wait, auto-follow / wait
             std::vector<int> fired;
-            e.sequencer().setRecaller([&](int mi, double) {
+            e.sequencer().setRecaller([&](int mi, double fadeOverride) {
                 fired.push_back(mi);
-                e.recallSnapshot(mi);
+                e.recallSnapshot(mi, fadeOverride);
             });
             Sequencer::Sequence seq;
             seq.name = "Waits";

@@ -885,7 +885,7 @@ void Sequencer::advance(double dt)
                 if (!r.fired && r.elapsed >= r.preWait) {
                     r.fired = true;
                     noteFired(r.elapsed - r.preWait); // how late the clock let it fire
-                    if (r.target.preset || r.target.snapshot) r.duration = stepDuration(r.target) + r.elapsed - r.preWait;
+                    if (r.target.preset) r.duration = stepDuration(r.target) + r.elapsed - r.preWait;
                     if (r.target.timeline) {
                         r.duration = stepDuration(r.target); // where the timeline is now
                         // A late Play starts now, not at the missed pre-wait deadline.
