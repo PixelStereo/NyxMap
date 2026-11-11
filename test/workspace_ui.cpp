@@ -540,6 +540,12 @@ int main(int argc, char **argv)
             check(tabs->count() == 3 && tabs->tabText(0) == "Snapshots" && tabs->tabText(1) == "Presets" && tabs->tabText(2) == "Timelines", "three named workspace tabs");
             auto *library = window.findChild<QWidget *>("showLibraryColumn");
             check(library && tabs->parentWidget() == library, "tabs belong only to the library column");
+            auto *leftArea = window.findChild<QScrollArea *>("mainLibraryScroll");
+            auto *leftTabs = leftArea ? qobject_cast<QTabWidget *>(leftArea->widget()) : nullptr;
+            auto *sequencePage = window.findChild<QScrollArea *>("sequenceEditorScroll");
+            check(leftTabs && sequencePage && leftTabs->indexOf(sequencePage) >= 0, "the sequence editor lives in the left column");
+            if (leftTabs && sequencePage) leftTabs->setCurrentWidget(sequencePage);
+            app.processEvents();
             const QPoint inspectorOrigin = pages->mapTo(&window, QPoint());
             for (int tab : {0, 1, 2, 0, 2, 1}) {
                 tabs->setCurrentIndex(tab); app.processEvents();

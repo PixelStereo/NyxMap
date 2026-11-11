@@ -130,6 +130,7 @@ private:
     void sequenceBack();
     void sequenceGoTo(int step);
     void openSequences();
+    void openShowControl();
     void setInOutAtPosition(bool in);
     void relinkMedia(const QString &from, const QString &to);
 
@@ -184,7 +185,6 @@ private:
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
     class RemoteServer *m_remote = nullptr;
-    class ShowControlPanel *m_showControl = nullptr;
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
