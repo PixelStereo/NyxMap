@@ -55,6 +55,8 @@ int runScene3dUiTests(Engine &engine)
                 "f 1 3 2\nf 1 4 3\nf 5 6 7\nf 5 7 8\nf 1 5 8\nf 1 8 4\nf 2 3 7\nf 2 7 6\nf 1 2 6\nf 1 6 5\nf 4 8 7\nf 4 7 3\n");
     }
     engine.newProject();
+    engine.setCompositionSize({480, 270});
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {480, 270});
     MainWindow window(&engine);
     window.setAutosaveEnabled(false);
     window.setQuiet(true);
@@ -745,6 +747,8 @@ int runScene3dUiTests(Engine &engine)
         window.grab().save(captures + "/scene3d-window.png");
     }
     engine.newProject();
+    engine.setCompositionSize({480, 270});
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {480, 270});
     const auto materialScene = engine.layerId(engine.addScene("Shared material UI"));
     const auto materialA = engine.layerId(engine.addLayer("Material A"));
     const auto materialB = engine.layerId(engine.addLayer("Material B"));
