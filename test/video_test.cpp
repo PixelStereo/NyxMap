@@ -820,32 +820,43 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         const bool opened = e.setLayerVideo(i, root + "/media/h264.mp4", &err);
         VCHECK(opened);
         if (!opened) return g_failures;
-        e.setParameter(e.layerId(i), "play_mode", QStringLiteral("loop"));
-        QElapsedTimer tm;
-        e.layer(i)->enabled = false;
-        tm.start();
-        while (tm.elapsed() < 1100) {
-            e.renderFrame();
-            QThread::msleep(20);
-        }
-        const auto decoded = e.layer(i)->video->metrics().decodedFrames;
-        const double heldClock = e.layer(i)->clock;
-        tm.restart();
-        while (tm.elapsed() < 500) {
-            e.renderFrame();
-            QThread::msleep(20);
-        }
-        VCHECK(e.layer(i)->clock > heldClock + 0.25);
-        VCHECK(e.layer(i)->video->metrics().decodedFrames <= decoded + 1);
-        e.layer(i)->enabled = true;
+        auto renderUntil = [&](const auto &ready) {
+            QElapsedTimer deadline;
+            deadline.start();
+            do {
+                e.renderFrame();
+                if (ready()) return true;
+                QThread::msleep(20);
+            } while (deadline.elapsed() < 5000);
+            return false;
+        };
+        e.setLayerPlayMode(i, PlayMode::Loop);
+        e.setLayerPlaying(i, true);
+        Layer &layer = *e.layer(i);
+        layer.enabled = false;
+        auto decoded = layer.video->metrics().decodedFrames;
+        double quietSince = layer.clock;
+        // The decoder can still be filling its queue when the layer goes idle.
+        // Start counting quiet time once that work has settled.
+        VCHECK(renderUntil([&] {
+            const auto frames = layer.video->metrics().decodedFrames;
+            if (!layer.videoDecodeIdle || frames != decoded) quietSince = layer.clock;
+            decoded = frames;
+            return layer.clock - quietSince >= 0.5;
+        }));
+        VCHECK(e.videoFramesShown(i) == 0);
+
+        // Hold the layer's playhead during the asynchronous seek so the
+        // expected first frame is independent of decoder and renderer speed.
+        e.setLayerPlaying(i, false);
+        const double wakeClock = layer.clock;
+        layer.enabled = true;
+        VCHECK(renderUntil([&] { return e.videoFramesShown(i) > 0 && layer.finalTex != 0; }));
+        VCHECK(std::abs(wakeClock - layer.frame.pts) <= 2.0 / layer.video->fps());
+
         const quint64 uploaded = e.videoFramesShown(i);
-        tm.restart();
-        while (e.videoFramesShown(i) == uploaded && tm.elapsed() < 3000) {
-            e.renderFrame();
-            QThread::msleep(20);
-        }
-        VCHECK(e.videoFramesShown(i) > uploaded && e.layer(i)->finalTex != 0);
-        VCHECK(std::abs(e.layer(i)->clock - e.layer(i)->frame.pts) < 0.3);
+        e.setLayerPlaying(i, true);
+        VCHECK(renderUntil([&] { return layer.clock > wakeClock && e.videoFramesShown(i) > uploaded; }));
     }
     // Decoded frames over the memory budget: every stream keeps its minimum ahead and none is dropped; once closed,
     // nothing is left counted
