@@ -157,26 +157,33 @@ void Engine::bindLayerImages(IsfInstance &inst)
 // 32-bit float RGBA (grey)
 void Engine::feedAudio(IsfInstance &inst)
 {
-    std::vector<float> values, rgba;
+    const quint64 frame = m_frameCount.load(std::memory_order_relaxed);
     for (IsfInput &in : inst.inputs()) {
         if (in.type != IsfInput::Audio && in.type != IsfInput::AudioFFT) continue;
+        if (in.loc < 0 && in.sizeLoc < 0 && in.rectLoc < 0) continue;
         const bool program = in.audioSource == IsfInput::Program;
-        int w;
-        if (in.type == IsfInput::Audio) {
-            w = AudioAnalysis::waveWidth(in.audioMax);
+        const bool waveform = in.type == IsfInput::Audio;
+        const int w = waveform ? AudioAnalysis::waveWidth(in.audioMax) : AudioAnalysis::spectrumWidth(in.audioMax);
+        auto &entry = m_isfAudioTextures[{program, waveform, w}];
+        if (!entry.texture.tex || entry.frame != frame) {
+            auto &values = m_isfAudioValues;
+            auto &rgba = m_isfAudioRgba;
             values.resize(size_t(2 * w));
-            AudioAnalysis::waveColumns(program ? m_audio->wave() : m_audioInput->wave(), in.audioMax, values.data());
-        } else {
-            w = AudioAnalysis::spectrumWidth(in.audioMax);
-            values.resize(size_t(2 * w));
-            AudioAnalysis::spectrumColumns(program ? m_audio->spectrum() : m_audioInput->spectrum(), in.audioMax, values.data());
+            if (waveform)
+                AudioAnalysis::waveColumns(program ? m_audio->wave() : m_audioInput->wave(), w, values.data());
+            else
+                AudioAnalysis::spectrumColumns(program ? m_audio->spectrum() : m_audioInput->spectrum(), w, values.data());
+            rgba.resize(values.size() * 4);
+            for (size_t k = 0; k < values.size(); ++k) {
+                rgba[4 * k] = rgba[4 * k + 1] = rgba[4 * k + 2] = values[k];
+                rgba[4 * k + 3] = 1.f;
+            }
+            entry.texture.uploadFloat(rgba.data(), w, 2);
+            entry.frame = frame;
         }
-        rgba.resize(values.size() * 4);
-        for (size_t k = 0; k < values.size(); ++k) {
-            rgba[4 * k] = rgba[4 * k + 1] = rgba[4 * k + 2] = values[k];
-            rgba[4 * k + 3] = 1.f;
-        }
-        in.imageTex.uploadFloat(rgba.data(), w, 2);
+        in.extTex = entry.texture.tex;
+        in.extW = w;
+        in.extH = 2;
     }
 }
 
@@ -233,8 +240,30 @@ void Engine::updateSource(Layer &l, double dt)
     if (l.audio)
         l.audio->setTransport(l.clock, l.playing, std::abs(l.speed) * timeScale(), l.timeline(), l.timelineId, l.audioGain(), m_frameStampNs);
     if (!l.video || timeScale() <= 0) return;
-    if (!l.videoTex) l.videoTex = std::make_unique<VideoTexture>();
-    l.videoTex->feed(*l.video); // upload buffers the decoder writes its next frames into
+    if (!l.needed && !l.video->isLive()) {
+        // Keep short cuts warm. After that, stop consuming the bounded queue so the decoder sleeps.
+        l.videoHiddenSeconds += m_realDt;
+        if (l.videoHiddenSeconds >= 0.75) {
+            l.videoDecodeIdle = true;
+            return;
+        }
+    } else {
+        l.videoHiddenSeconds = 0;
+        if (l.videoDecodeIdle) {
+            l.videoDecodeIdle = false;
+            const double frameStep = 1.0 / std::max(1.0, l.video->fps());
+            if (!l.ended && std::abs(l.clock - l.frame.pts) > 2.0 * frameStep) {
+                // One-shot keeps its last frame. Seeking to the exact out point would skip it.
+                const double seek = l.atEnd() ? std::max(0.0, l.clock - frameStep) : l.clock;
+                l.video->seek(seek);
+                l.frameUploaded = true; // hold the last uploaded picture while the decoder catches up
+            }
+        }
+    }
+    if (l.needed) {
+        if (!l.videoTex) l.videoTex = std::make_unique<VideoTexture>();
+        l.videoTex->feed(*l.video); // upload buffers the decoder writes its next frames into
+    }
     if (l.video->fetch(l.clock, l.frame)) l.frameUploaded = false;
     // Only a picture that is drawn goes to the GPU; a hidden layer's last frame waits to be shown
     if (!l.frameUploaded && l.needed) {
@@ -248,13 +277,10 @@ void Engine::updateSource(Layer &l, double dt)
 std::vector<bool> Engine::soloLeftOut() const
 {
     std::vector<bool> out(m_layers.size(), false);
+    if (std::none_of(m_layers.begin(), m_layers.end(), [](const auto &l) { return l->solo && !l->isViewport; }))
+        return out;
     std::map<quint64, const Layer *> byId;
-    bool anySolo = false;
-    for (const auto &l : m_layers) {
-        byId[l->id] = l.get();
-        anySolo = anySolo || (l->solo && !l->isViewport);
-    }
-    if (!anySolo) return out;
+    for (const auto &l : m_layers) byId.emplace(l->id, l.get());
     auto up = [&](quint64 id) -> const Layer * {
         const auto it = byId.find(id);
         return it == byId.end() ? nullptr : it->second;
@@ -314,24 +340,167 @@ std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
     return uses;
 }
 
-// Which layers are drawn this frame: shown (in a shown group), used as a source or as a mask by another,
-// previewed in the inspector or a preview view while switched on, viewports. The others are neither uploaded nor
-// rendered (their sound plays on). A layer switched off (or in a group switched off) is not computed for a preview:
-// only another layer that uses it keeps it rendered.
+// An active effect may carry state or read from a layer that feeds back into it.
+// Keep these chains, live integrations and screen-space reflections warm.
+static bool needsContinuousPicture(const Layer &l, bool reflectionsEnabled)
+{
+    return l.type == SourceType::Tox || l.type == SourceType::Web ||
+           (l.generator && !l.generator->canSkipDraw()) || (reflectionsEnabled && l.scene3d && l.scene.reflections > 0) ||
+           (l.effectsEnabled && std::any_of(l.effects.begin(), l.effects.end(), [](const auto &fx) { return fx->enabled; }));
+}
+
+bool Engine::layerPreviewed(const Layer &l) const
+{
+    return l.enabled && l.parentEnabled &&
+           (l.id == m_previewId || std::any_of(m_previewSlots.begin(), m_previewSlots.end(),
+                                               [&](const auto &p) { return p.id == l.id; }));
+}
+
+void Engine::forEachRenderDependency(const Layer &l, const std::function<void(size_t, int)> &use) const
+{
+    auto add = [&](quint64 id, int stage = -1, bool viewport = false) {
+        const size_t row = renderLayerIndex(id);
+        if (row < m_layers.size() && (viewport || !m_layers[row]->isViewport)) use(row, stage);
+    };
+    if (l.type == SourceType::Layer) add(l.sourceLayer, -1, true);
+    if (l.effectsEnabled)
+        for (const auto &fx : l.effects)
+            if (fx->enabled) add(fx->maskLayer, fx->maskStage);
+    if (l.color.maskLayer && !l.color.effective().isIdentity()) add(l.color.maskLayer);
+    add(l.matte.layer);
+    forEachImageLayer(l, [&](quint64 id) { add(id); });
+    if (l.type == SourceType::Model && l.model) {
+        add(l.modelPicture, l.modelPictureStage);
+        if (l.modelDisplaceEnabled) add(l.modelDisplace, l.modelDisplaceStage);
+    }
+    if (l.scene3d) add(l.sceneEnvironment, l.sceneEnvironmentStage);
+}
+
 void Engine::markNeeded()
 {
-    for (auto &l : m_layers) {
-        l->referenced = false;
-        l->stagesWanted.clear();
+    const size_t n = m_layers.size();
+    m_renderChildren.resize(n);
+    for (auto &children : m_renderChildren) children.clear();
+    const std::vector<bool> leftOut = soloLeftOut();
+    const bool reflectionsEnabled = m_quality3d.reflections > 0;
+    bool soloHasSound = false;
+    QRectF outputBounds(0, 0, 1, 1); // the composition always exists, independently of viewport routing
+    const double cw = std::max(1, m_compSize.width()), ch = std::max(1, m_compSize.height());
+    for (size_t i = 0; i < n; ++i) {
+        Layer &l = *m_layers[i];
+        l.needed = l.referenced = false;
+        l.stagesWanted.clear();
+        l.soloHidden = leftOut[i];
+        soloHasSound = soloHasSound || (!leftOut[i] && l.audio && !l.isGroup && !l.isViewport);
+        const size_t parent = renderLayerIndex(l.parent);
+        l.parentEnabled = true;
+        if (parent < i) {
+            m_renderChildren[parent].push_back(i);
+            const Layer &group = *m_layers[parent];
+            l.parentEnabled = !group.isGroup || (group.enabled && group.parentEnabled);
+        }
+        if (l.isViewport && l.enabled && !l.testCard) {
+            const Mapping::Rect r = l.mapping.rect(m_compSize);
+            // A circumscribed square is a conservative bound for a rotated viewport.
+            const double side = r.angle == 0 ? 0 : std::hypot(r.w, r.h);
+            QRectF view(0, 0, (r.angle == 0 ? r.w : side) / cw, (r.angle == 0 ? r.h : side) / ch);
+            view.moveCenter(QPointF(r.center.x() / cw, r.center.y() / ch));
+            outputBounds = outputBounds.united(view);
+        }
     }
-    // The stages of the layers' effects their masks take (after an effect: kept as it is made)
-    for (auto &l : m_layers)
-        for (const auto &fx : l->effects)
-            if (fx->enabled && fx->maskLayer && fx->maskStage > 0) {
-                const int mi = indexOfId(fx->maskLayer);
-                if (mi >= 0) m_layers[size_t(mi)]->stagesWanted.insert(fx->maskStage);
+    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
+    for (size_t i = 0; i < n; ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
+
+    auto visiblePicture = [&](const Layer &l) {
+        if (!l.enabled || l.soloHidden || l.opacity <= 0.0f || !l.hasPicture() || l.isMappingZone) return false;
+        // Ordinary group members draw into the composition-sized group target.
+        const QRectF view = l.parent ? QRectF(0, 0, 1, 1) : outputBounds;
+        const Mapping &mapping = effectiveMapping(l);
+        if (view.contains(mapping.position)) return true; // common case; conservatively keep it
+        const QPointF first = mapping.corner(0);
+        double left = first.x(), right = left, top = first.y(), bottom = top;
+        for (int i = 1; i < 4; ++i) {
+            const QPointF p = mapping.corner(i);
+            left = std::min(left, p.x()); right = std::max(right, p.x());
+            top = std::min(top, p.y()); bottom = std::max(bottom, p.y());
+        }
+        if (!(right < view.left() - 1 / cw || left > view.right() + 1 / cw ||
+              bottom < view.top() - 1 / ch || top > view.bottom() + 1 / ch)) return true;
+        // The corner bounds are only exact for affine mapping. A pin or a
+        // warped mesh can pull pixels back into the output between corners.
+        return std::any_of(std::begin(mapping.pins), std::end(mapping.pins), [](const QPointF &p) { return !p.isNull(); }) ||
+               std::any_of(mapping.offsets.begin(), mapping.offsets.end(), [](const QPointF &p) { return !p.isNull(); });
+    };
+
+    std::function<void(size_t)> need;
+    const auto use = [&](size_t row, int stage) {
+        Layer &source = *m_layers[row];
+        source.referenced = true;
+        if (stage > 0) source.stagesWanted.insert(stage);
+        need(row);
+    };
+    std::function<void(size_t)> needModels = [&](size_t row) {
+        for (const size_t child : m_renderChildren[row]) {
+            Layer &member = *m_layers[child];
+            if (!member.enabled) continue;
+            if (member.merge3d) needModels(child);
+            else if (!member.soloHidden && member.type == SourceType::Model) need(child);
+        }
+    };
+    need = [&](size_t row) {
+        Layer &l = *m_layers[row];
+        if (l.needed) return; // dependency cycle
+        l.needed = true;
+        if (!l.isViewport || (l.enabled && !l.testCard)) forEachRenderDependency(l, use);
+        if (l.scene3d) needModels(row);
+        else if (l.isGroup && !l.merge3d)
+            for (const size_t child : m_renderChildren[row]) {
+                const Layer &member = *m_layers[child];
+                if (visiblePicture(member) || (member.enabled && !member.soloHidden && needsContinuousPicture(member, reflectionsEnabled)))
+                    need(child);
             }
-    for (auto &l : m_layers) // the stages no mask takes any more: their targets go
+    };
+
+    for (size_t i = 0; i < n; ++i) {
+        const Layer &l = *m_layers[i];
+        if (l.isViewport || (!l.parent && visiblePicture(l)) || layerPreviewed(l) ||
+            (l.enabled && l.parentEnabled && !l.soloHidden && needsContinuousPicture(l, reflectionsEnabled)))
+            need(i);
+    }
+    for (const auto &slot : m_previewSlots) {
+        const size_t row = renderLayerIndex(slot.id);
+        if (slot.sceneView && row < n && m_layers[row]->scene3d) needModels(row);
+    }
+    for (auto &[id, transition] : m_transitions) {
+        if (const size_t row = renderLayerIndex(id); row < n) {
+            need(row);
+            transition->from->parentEnabled = m_layers[row]->parentEnabled;
+        }
+        transition->from->needed = true;
+        forEachRenderDependency(*transition->from, use);
+    }
+    auto visionReference = [&](const Interaction &input) {
+        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands)) return;
+        if (const size_t row = renderLayerIndex(input.pixels.layer); row < n) use(row, -1);
+    };
+    if (m_visionSetupInput)
+        if (const size_t row = renderLayerIndex(m_visionSetupInput->pixels.layer); row < n) use(row, -1);
+    for (const auto &input : m_interactions)
+        if (input.enabled) {
+            visionReference(input);
+            for (const auto &axis : input.xyInputs) visionReference(axis);
+        }
+    for (const auto &node : m_interactionGraph.nodes)
+        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
+
+    const bool paused = timeScale() <= 0;
+    for (auto &l : m_layers) {
+        if (paused) {
+            if (l->needed && l->pictureCulled && !needsContinuousPicture(*l, reflectionsEnabled))
+                l->renderPaused = true;
+        } else {
+            l->pictureCulled = !l->needed && l->hasPicture();
+        }
         for (auto it = l->stageTargets.begin(); it != l->stageTargets.end();) {
             if (l->stagesWanted.count(it->first)) {
                 ++it;
@@ -340,81 +509,15 @@ void Engine::markNeeded()
             it->second.destroy();
             it = l->stageTargets.erase(it);
         }
-    auto refer = [this](const Layer &l) { // the layers its picture is made from
-        if (l.type == SourceType::Layer && l.sourceLayer) {
-            const int si = indexOfId(l.sourceLayer);
-            if (si >= 0) m_layers[size_t(si)]->referenced = true;
-        }
-        for (const auto &fx : l.effects)
-            if (fx->enabled && fx->maskLayer) {
-                const int mi = indexOfId(fx->maskLayer);
-                if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-            }
-        if (l.color.enabled && l.color.maskLayer) {
-            const int mi = indexOfId(l.color.maskLayer);
-            if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-        }
-        if (l.matte.layer) {
-            const int mi = indexOfId(l.matte.layer);
-            if (mi >= 0) m_layers[size_t(mi)]->referenced = true;
-        }
-        forEachImageLayer(l, [&](quint64 id) {
-            const int si = indexOfId(id);
-            if (si >= 0) m_layers[size_t(si)]->referenced = true;
-        });
-        if (l.type == SourceType::Model || l.scene3d) // a 3D model's pictures, a scene's environment, at their stages
-            for (const auto &[id, stage] : {std::pair{l.modelPicture, l.modelPictureStage}, std::pair{l.modelDisplace, l.modelDisplaceStage},
-                                            std::pair{l.sceneEnvironment, l.sceneEnvironmentStage}})
-                if (const int si = indexOfId(id); id && si >= 0) {
-                    m_layers[size_t(si)]->referenced = true;
-                    if (stage > 0) m_layers[size_t(si)]->stagesWanted.insert(stage);
-                }
-    };
-    auto visionReference = [this](const Interaction &input) {
-        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands))
-            return;
-        const int index = indexOfId(input.pixels.layer);
-        if (index >= 0)
-            m_layers[size_t(index)]->referenced = true;
-    };
-    if (m_visionSetupInput) visionReference(*m_visionSetupInput);
-    for (const auto &input : m_interactions)
-        if (input.enabled) {
-            visionReference(input);
-            for (const auto &axis : input.xyInputs)
-                visionReference(axis);
-        }
-    for (const auto &node : m_interactionGraph.nodes)
-        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
-    for (auto &l : m_layers) refer(*l);
-    for (auto &[id, t] : m_transitions) refer(*t->from); // the outgoing source is drawn too, with what it uses
-    const std::vector<bool> leftOut = soloLeftOut();
-    // A solo plays all of what it holds, its sound too: the others' sound goes when it has one. A picture soloed under the
-    // music leaves the music on
-    bool soloHasSound = false;
-    for (size_t i = 0; i < m_layers.size(); ++i) {
-        m_layers[i]->soloHidden = leftOut[i];
-        soloHasSound = soloHasSound || (!leftOut[i] && m_layers[i]->audio && !m_layers[i]->isGroup && !m_layers[i]->isViewport);
     }
-    const bool anyLeftOut = std::find(leftOut.begin(), leftOut.end(), true) != leftOut.end();
-    for (size_t i = 0; i < m_layers.size(); ++i) m_layers[i]->soloMuted = anyLeftOut && soloHasSound && leftOut[i];
-    // A group comes before its members: its verdict is known when they are reached
-    std::map<quint64, bool> groupNeeded;
-    for (auto &lp : m_layers) {
-        Layer &l = *lp;
-        bool inShown = true;
-        if (l.parent) {
-            const auto g = groupNeeded.find(l.parent);
-            inShown = g != groupNeeded.end() && g->second;
-        }
-        const bool previewed =
-            l.id == m_previewId ||
-            std::any_of(m_previewSlots.begin(), m_previewSlots.end(), [&](const auto &p) { return p.id == l.id; });
-        l.needed = l.isViewport || l.referenced || (previewed && l.enabled && l.parentEnabled) ||
-                   (l.enabled && inShown && !l.soloHidden);
-        if (l.isGroup) groupNeeded[l.id] = l.needed;
-    }
-    for (auto &[id, t] : m_transitions) t->from->needed = true;
+}
+
+size_t Engine::renderLayerIndex(quint64 id) const
+{
+    if (!id) return m_layers.size();
+    const auto at = std::lower_bound(m_renderLayerIndices.begin(), m_renderLayerIndices.end(), id,
+                                     [](const auto &entry, quint64 key) { return entry.first < key; });
+    return at != m_renderLayerIndices.end() && at->first == id ? at->second : m_layers.size();
 }
 
 // One frame of every layer, in dependency order: a layer whose source is another layer is rendered after it,
@@ -435,62 +538,44 @@ void Engine::renderPass(const IsfRenderContext &rc, const std::set<quint64> *onl
         }
         m_renderMark[i] = Doing;
         Layer &l = *m_layers[i];
-        auto dependencies = [&](const Layer &d) { // the layers its picture is made from, before it
-            if (d.type == SourceType::Layer && d.sourceLayer) {
-                const int si = indexOfId(d.sourceLayer);
-                if (si >= 0) render(size_t(si));
-            }
-            if (d.type == SourceType::Model || d.scene3d) // a 3D model's pictures, a scene's environment
-                for (quint64 id : {d.modelPicture, d.modelDisplace, d.sceneEnvironment})
-                    if (const int si = indexOfId(id); id && si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
-            for (const auto &fx : d.effects) // the masks of its effects
-                if (fx->enabled && fx->maskLayer) {
-                    const int mi = indexOfId(fx->maskLayer);
-                    if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
-                }
-            if (d.color.enabled && d.color.maskLayer) { // the mask of its color
-                const int mi = indexOfId(d.color.maskLayer);
-                if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
-            }
-            if (d.matte.layer) { // its matte
-                const int mi = indexOfId(d.matte.layer);
-                if (mi >= 0 && !m_layers[size_t(mi)]->isViewport) render(size_t(mi));
-            }
-            forEachImageLayer(d, [&](quint64 id) { // the layers its shaders show as images
-                const int si = indexOfId(id);
-                if (si >= 0 && !m_layers[size_t(si)]->isViewport) render(size_t(si));
-            });
-        };
-        dependencies(l);
         const auto transition = l.isGroup || l.isViewport ? m_transitions.end() : m_transitions.find(l.id);
-        if (transition != m_transitions.end()) dependencies(*transition->second->from); // the outgoing source's too
+        const auto dependency = [&](size_t row, int) { render(row); };
+        if (l.needed && (!l.isViewport || (l.enabled && !l.testCard))) forEachRenderDependency(l, dependency);
+        if (transition != m_transitions.end()) forEachRenderDependency(*transition->second->from, dependency);
         if (l.isViewport) {
             // What it sees: the items at the top of the list it shows, all rendered by now
             std::vector<Layer *> shown;
+            bool sameRouting = !only && !m_compositionReuseTexture;
             for (size_t k = 0; k < n; ++k) {
                 Layer &o = *m_layers[k];
-                if (o.isViewport || o.parent || !o.shownIn(l.id)) continue;
+                if (o.isViewport || o.parent) continue;
+                const float routing = o.opacityIn(l.id);
+                if (sameRouting && !o.isMappingZone && o.enabled && !o.soloHidden && o.opacity > 0.0f)
+                    sameRouting = routing == 1.0f && o.blend != BlendMode::Difference;
+                if (!(routing > 0.0f)) continue;
                 render(k);
+                if (m_renderMark[k] != Done) sameRouting = false; // cyclic source: the composition may get a newer picture
                 shown.push_back(&o);
             }
-            renderViewport(l, shown, rc);
+            renderViewport(l, shown, rc, sameRouting);
         } else if (l.isGroup) {
             // Its direct contents, in list order (groups inside are rendered first, by the recursion)
+            const bool draw = l.needed && !l.merge3d;
             std::vector<Layer *> members;
-            for (size_t k = i + 1; k < n; ++k)
-                if (m_layers[k]->parent == l.id) {
-                    render(k);
-                    members.push_back(m_layers[k].get());
-                }
-            if (l.merge3d) l.finalTex = l.rawTex = l.preFxTex = 0; // no picture: its scene draws what it holds
-            else if (l.needed && l.scene3d) renderScene(l, members, rc);
-            else if (l.needed) renderGroup(l, members, rc);
-            else l.finalTex = l.rawTex = l.preFxTex = 0;
+            if (draw) members.reserve(m_renderChildren[i].size());
+            for (const size_t k : m_renderChildren[i]) {
+                render(k);
+                if (draw) members.push_back(m_layers[k].get());
+            }
+            if (!draw) l.finalTex = l.rawTex = l.preFxTex = 0;
+            else if (l.scene3d) renderScene(l, members, rc);
+            else renderGroup(l, members, rc);
         } else {
             renderLayer(l, rc);
             if (transition != m_transitions.end()) renderTransition(l, *transition->second, rc);
         }
         if (!l.isViewport) prepareMatte(l); // before it is composited (a viewport or a group draws it later)
+        if (l.needed) l.pictureCulled = false;
         m_renderMark[i] = Done;
     };
     for (size_t i = 0; i < n; ++i) render(i);
@@ -526,7 +611,11 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
     if (l.isGroup) return;  // rendered from its members (renderGroup)
     if (l.is3dObject()) return; // drawn by its 3D scene (renderScene)
     if (l.ended) return; // Stop mode, after the end: nothing
-    if (!l.needed) return; // hidden, and used by no other layer
+    if (!l.needed) {
+        if (l.enabled && l.parentEnabled && !l.soloHidden && l.generator && l.generator->canSkipDraw())
+            l.generator->advanceWithoutDrawing(rc);
+        return;
+    }
     GLuint tex = 0;
     int w = 0, h = 0;
     switch (l.type) {
@@ -628,7 +717,8 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                 }
                 l.generator->setExtraTexture(QByteArrayLiteral("nyxmapSegments"), l.linesTex.tex);
             }
-            l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight);
+            const bool repeatFrame = l.pictureCulled && l.generator->canSkipDraw();
+            l.generator->render(rc, 0, 0, 0, l.generatorTarget, l.genWidth, l.genHeight, repeatFrame);
             if (l.generatorTarget.ready(l.genWidth, l.genHeight)) {
                 tex = l.generatorTarget.tex;
                 w = l.generatorTarget.w;
@@ -991,7 +1081,7 @@ void Engine::prepareMatte(Layer &l)
         if (l.matteTarget.fbo) l.matteTarget.destroy();
         return;
     }
-    if (!l.needed) return; // not drawn this frame
+    if (!l.needed || !l.finalTex || l.opacity <= 0.0f) return; // only used to composite a visible picture
     l.matteTarget.ensure(m_compSize.width(), m_compSize.height());
     if (!l.matteTarget.ready(m_compSize.width(), m_compSize.height())) {
         l.matteTarget.destroy(); // no matte target: drawn without it rather than from a stale one
@@ -1015,11 +1105,11 @@ void Engine::prepareMatte(Layer &l)
     f->glUniform1f(m_compAspLoc, float(double(m_compSize.width()) / std::max(1, m_compSize.height())));
     f->glUniform1f(m_compOpacityLoc, m->opacity);
     f->glBindVertexArray(m_meshVao);
-    bindMesh(*m);
+    const bool mesh = bindMesh(*m);
     f->glUniform1i(m_compMaskOnLoc, bindCompositionMasks(*m) ? 1 : 0);
     f->glActiveTexture(GL_TEXTURE0);
     f->glBindTexture(GL_TEXTURE_2D, m->finalTex);
-    f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+    drawBoundMesh(mesh);
     f->glDisable(GL_BLEND);
     f->glBindVertexArray(0);
 }
@@ -1183,7 +1273,7 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
 
 // A viewport's picture: the part of the composition its Spatial places it on, drawn at its own size, then
 // with its own ROI, color and effects like a group.
-void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc)
+void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting)
 {
     v.finalTex = v.rawTex = v.preFxTex = 0;
     if (!v.enabled) return;
@@ -1205,6 +1295,10 @@ void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const I
     QRectF view(0, 0, r.w / cw, r.h / ch);
     view.moveCenter(QPointF(r.center.x() / cw, r.center.y() / ch));
     compositeLayers(v.groupTarget, shown, view, QColor(0, 0, 0, 0), v.id, r.angle);
+    // With identical geometry and routing, these blend modes produce the same RGB over either black clear.
+    if (sameRouting && size == m_compSize && r.angle == 0.0 && r.w == cw && r.h == ch &&
+        r.center.x() == cw * 0.5 && r.center.y() == ch * 0.5)
+        m_compositionReuseTexture = v.groupTarget.tex;
     processLayer(v, v.groupTarget.tex, v.groupTarget.w, v.groupTarget.h, true, rc);
 }
 
@@ -1317,7 +1411,7 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
             }
             f->glUniform1f(m_compOpacityLoc, opacity);
         }
-        bindMesh(l);
+        const bool mesh = bindMesh(l);
         const bool compMasks = bindCompositionMasks(l);
         f->glUniform1i(inDiff ? m_diffMaskOnLoc : m_compMaskOnLoc, compMasks ? 1 : 0);
         // Its matte in Composition space, on texture unit 3 (prepared this frame by prepareMatte)
@@ -1356,7 +1450,7 @@ void Engine::compositeLayers(const RenderTarget &target, const std::vector<Layer
                 f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             }
         }
-        f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+        drawBoundMesh(mesh);
         if (mip) f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // others sample it plainly
     }
     f->glBlendEquation(GL_FUNC_ADD);
@@ -1381,7 +1475,7 @@ void Engine::bindMeshBuffer(GLuint vbo)
 
 // A layer's mapped mesh lives in a vertex buffer of its own, rebuilt only when its mapping changes: no vertices
 // computed or sent every frame, and no draw waits for a shared buffer to be rewritten.
-void Engine::bindMesh(Layer &l)
+bool Engine::bindMesh(Layer &l)
 {
     auto f = gl();
     const Mapping &m = effectiveMapping(l), &was = l.meshShape;
@@ -1391,12 +1485,22 @@ void Engine::bindMesh(Layer &l)
     for (int i = 0; same && i < 4; ++i) same = was.pins[i] == m.pins[i];
     if (!l.meshVbo) f->glGenBuffers(1, &l.meshVbo);
     if (!same) {
-        m.buildVertices(kMeshSubdiv, m_meshScratch);
+        l.meshUsesGrid = std::any_of(std::begin(m.pins), std::end(m.pins), [](const QPointF &p) { return !p.isNull(); }) ||
+                         std::any_of(m.offsets.begin(), m.offsets.end(), [](const QPointF &p) { return !p.isNull(); });
+        m.buildVertices(l.meshUsesGrid ? kMeshSubdiv : 1, m_meshScratch);
         f->glBindBuffer(GL_ARRAY_BUFFER, l.meshVbo);
         f->glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(m_meshScratch.size() * sizeof(float)), m_meshScratch.data(), GL_DYNAMIC_DRAW);
         l.meshShape = m;
     }
     bindMeshBuffer(l.meshVbo);
+    return l.meshUsesGrid;
+}
+
+void Engine::drawBoundMesh(bool subdivided)
+{
+    auto f = gl();
+    if (subdivided) f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+    else f->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 // The whole composition, for the interface preview, then each viewport's output. The composition opacity and the
@@ -1422,10 +1526,17 @@ void Engine::composite()
     RenderTarget &out = m_output[m_back];
     out.ensure(m_compSize.width(), m_compSize.height());
     if (!out.fbo) return; // no valid target: the last published frame remains available
-    std::vector<Layer *> top;
-    for (auto &l : m_layers)
-        if (!l->parent && !l->isViewport) top.push_back(l.get());
-    compositeLayers(out, top, QRectF(0, 0, 1, 1), QColor(0, 0, 0, 255));
+    if (m_compositionReuseTexture && out.ready(m_compSize.width(), m_compSize.height())) {
+        f->glUseProgram(m_blitProgram);
+        f->glUniform1i(m_blitOpaqueLoc, 1);
+        blit(m_compositionReuseTexture, out);
+        f->glUniform1i(m_blitOpaqueLoc, 0);
+    } else {
+        std::vector<Layer *> top;
+        for (auto &l : m_layers)
+            if (!l->parent && !l->isViewport) top.push_back(l.get());
+        compositeLayers(out, top, QRectF(0, 0, 1, 1), QColor(0, 0, 0, 255));
+    }
     out.bind();
     applyOpacity();
 
@@ -1473,7 +1584,7 @@ void Engine::composite()
                 f->glBindVertexArray(m_meshVao);
                 bindMeshBuffer(m_meshVbo); // the whole frame, built once
                 f->glBindTexture(GL_TEXTURE_2D, v.finalTex);
-                f->glDrawElements(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT, nullptr);
+                drawBoundMesh(false);
                 f->glDisable(GL_BLEND);
                 f->glBindVertexArray(0);
             }
@@ -1544,21 +1655,24 @@ void Engine::frame(double dt)
     rc.drawPoints = [this](int count) { drawPoints(count); };
     rc.blit = [this](GLuint t, const RenderTarget &rt) { blit(t, rt); };
 
-    // Members of a hidden group are hidden (and silent) too, at any depth. A group comes before its contents.
-    {
-        std::map<quint64, bool> shown; // group id → visible, groups above included
-        for (auto &l : m_layers) {
-            const auto up = l->parent ? shown.find(l->parent) : shown.end();
-            l->parentEnabled = up == shown.end() || up->second;
-            if (l->isGroup) shown[l->id] = l->parentEnabled && l->enabled;
-        }
-    }
     if (!m_fadesManual) {
         const double k = timeScale(); // paused or slowed: the fades, transitions and timelines move at that pace
         stepShowRecalls(m_realDt * k);
     }
     stepInteractions(m_realDt); // after the animations: a controller moved wins (its own time: it follows the hand)
     followSequenceClocks();     // the steps a clock (a soundtrack's playhead, a timecode) got to: their GO
+    // Cues can replace or reorder layers. Reuse the sorted lookup while the ids stay in the same rows.
+    if (m_renderLayerIndices.size() != m_layers.size() ||
+        !std::all_of(m_renderLayerIndices.begin(), m_renderLayerIndices.end(), [this](const auto &entry) {
+            return m_layers[entry.second]->id == entry.first;
+        })) {
+        m_renderLayerIndices.clear();
+        m_renderLayerIndices.reserve(m_layers.size());
+        for (size_t i = 0; i < m_layers.size(); ++i)
+            m_renderLayerIndices.emplace_back(m_layers[i]->id, i);
+        std::sort(m_renderLayerIndices.begin(), m_renderLayerIndices.end());
+    }
+    m_renderLayerIndexActive = true;
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
@@ -1566,12 +1680,23 @@ void Engine::frame(double dt)
 
     // Retain the last source/effect outputs, including persistent ISF buffers and
     // live input textures. dt=0 alone would still execute feedback and FRAMEINDEX.
+    m_compositionReuseTexture = 0;
     if (scale > 0) {
         renderPass(rc);
         for (auto &l : m_layers) l->renderPaused = false;
     } else {
         renderPausedSources(rc);
     }
+    const quint64 frame = m_frameCount.load(std::memory_order_relaxed);
+    if (frame % 120 == 0)
+        for (auto it = m_isfAudioTextures.begin(); it != m_isfAudioTextures.end();) {
+            if (frame - it->second.frame <= 120) {
+                ++it;
+            } else {
+                it->second.texture.destroy();
+                it = m_isfAudioTextures.erase(it);
+            }
+        }
     composite();
     // Only a tiny visual tap crosses to the audio engine. All GL work stays on this thread; the device callback only reads
     // atomics and performs DSP. An instrument that listens to the picture listens to one viewport's output (its own
@@ -1691,6 +1816,7 @@ void Engine::frame(double dt)
             const auto tc = m_atc.find(l->id);
             atc.push_back(tc != m_atc.end() ? tc->second->now() : std::nullopt);
         }
+    m_renderLayerIndexActive = false;
     m_mutex.unlock();
     m_renderLockHold.record(RealtimeTiming::nowNs() - lockAcquired);
 
@@ -1750,26 +1876,37 @@ void Engine::frame(double dt)
     ++m_frameCount;
 }
 
-// The source preview, a few times per second. Read back without waiting: the picture asked for at one tick is
-// collected at the next one (a quarter of a second later at most), long finished by then.
+// Sample the inspector source at up to 15 Hz, even when rendering is uncapped.
+// Collect any pending picture as soon as the GPU signals its readback.
 void Engine::readSourcePreview()
 {
-    if (!m_previewId || (m_previewTick++ % 4) != 0) return; // a few times per second is enough
+    if (!m_previewId || (!m_previewPboId && m_frameStampNs < m_previewNextNs)) return;
     auto f = gl();
     if (m_previewPboId) {
-        QImage img(m_previewPboW, m_previewPboH, QImage::Format_RGBA8888);
-        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, m_previewPbo);
-        const GLsizeiptr bytes = GLsizeiptr(m_previewPboW) * m_previewPboH * 4;
-        if (const void *p = f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT)) {
-            memcpy(img.bits(), p, size_t(bytes));
-            f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-            std::lock_guard<std::mutex> lk(m_previewMutex);
-            m_previewImage = flippedVertically(img);
-            m_previewImageId = m_previewPboId;
+        const GLenum status = f->glClientWaitSync(m_previewFence, 0, 0);
+        if (status == GL_TIMEOUT_EXPIRED) return;
+        f->glDeleteSync(m_previewFence);
+        m_previewFence = nullptr;
+        if (status == GL_WAIT_FAILED) {
+            f->glDeleteBuffers(1, &m_previewPbo);
+            m_previewPbo = 0;
+        } else if (m_previewPboId == m_previewId) {
+            QImage img(m_previewPboW, m_previewPboH, QImage::Format_RGBA8888);
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, m_previewPbo);
+            const GLsizeiptr bytes = GLsizeiptr(m_previewPboW) * m_previewPboH * 4;
+            if (const void *p = f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT)) {
+                memcpy(img.bits(), p, size_t(bytes));
+                f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                std::lock_guard<std::mutex> lk(m_previewMutex);
+                m_previewImage = flippedVertically(img);
+                m_previewImageId = m_previewPboId;
+            }
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         }
-        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         m_previewPboId = 0;
     }
+    if (m_frameStampNs < m_previewNextNs) return;
+    m_previewNextNs = m_frameStampNs + 66'666'667;
     const Layer *l = nullptr;
     for (auto &x : m_layers)
         if (x->id == m_previewId) l = x.get();
@@ -1800,7 +1937,11 @@ void Engine::readSourcePreview()
     f->glUniform1i(m_prepUnpremulLoc, l->isGroup || l->isViewport ? 1 : 0);
     f->glUniform1i(m_prepMaskModeLoc, 0);
     drawQuad();
-    if (!m_previewPbo) f->glGenBuffers(1, &m_previewPbo);
+    if (!m_previewPbo) {
+        f->glGenBuffers(1, &m_previewPbo);
+        if (!m_previewPbo) return;
+        m_previewPboW = m_previewPboH = 0;
+    }
     f->glBindBuffer(GL_PIXEL_PACK_BUFFER, m_previewPbo);
     if (w != m_previewPboW || h != m_previewPboH) {
         f->glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(w) * h * 4, nullptr, GL_STREAM_READ);
@@ -1810,7 +1951,13 @@ void Engine::readSourcePreview()
     f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
     f->glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    m_previewPboId = l->id;
+    m_previewFence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (m_previewFence) {
+        m_previewPboId = l->id;
+    } else {
+        f->glDeleteBuffers(1, &m_previewPbo);
+        m_previewPbo = 0;
+    }
 }
 
 void Engine::renderFrame()

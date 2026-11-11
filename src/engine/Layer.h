@@ -332,6 +332,7 @@ struct Layer {
     bool referenced = false; // used as a source by another layer: rendered even when hidden (every frame)
     bool needed = true;      // its picture is drawn this frame (shown, or referenced): uploaded and rendered
     bool renderPaused = false; // a picture loaded while paused: drawn once (the others hold their frame)
+    bool pictureCulled = false; // needs one draw if it becomes visible while paused
     // File missing on load: path and type are kept (save, media bin, relink)
     SourceType missingType = SourceType::None;
 
@@ -339,6 +340,8 @@ struct Layer {
     std::unique_ptr<VideoDecoder> video;
     VideoFrame frame;                       // the last one fetched from the decoder
     bool frameUploaded = true;              // and already on the GPU
+    double videoHiddenSeconds = 0;
+    bool videoDecodeIdle = false;
     std::unique_ptr<VideoTexture> videoTex; // its picture (created in the render thread)
     // Mipmaps of its picture made for this frame of the video (a plain video: made again only for a new frame)
     GLuint mipTex = 0;
@@ -487,6 +490,7 @@ struct Layer {
     // Animations of its own numbers (one track each, on this layer): the Anim tab (see Engine::setLayerAnims)
     std::vector<Animation> anims;
     GLuint meshVbo = 0;  // its mesh's vertices (render thread)
+    bool meshUsesGrid = false;
     Mapping meshShape;   // the mapping they were built from
 
     // Transition used when a snapshot gives this layer another source (ISF with startImage, endImage, progress;

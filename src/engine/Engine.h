@@ -953,8 +953,11 @@ private:
     void releaseGarbage(const std::shared_ptr<Garbage> &g);
     void updateSource(Layer &l, double dt);
     void markNeeded(); // which layers are drawn this frame (shown, or used by another one)
+    void forEachRenderDependency(const Layer &layer, const std::function<void(size_t, int)> &use) const;
     // every layer, in dependency order; `only`: just these (by id), the others keep the frame they have
     void renderPass(const IsfRenderContext &rc, const std::set<quint64> *only = nullptr);
+    size_t renderLayerIndex(quint64 id) const;
+    bool layerPreviewed(const Layer &layer) const;
     void renderPausedSources(const IsfRenderContext &rc); // paused: the pictures loaded since, and what shows them
     void renderLayer(Layer &l, const IsfRenderContext &rc);
     void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
@@ -967,7 +970,7 @@ private:
                          quint64 viewport = 0, double angle = 0); // angle (degrees): the view turned about its center; viewport: the one drawn for (its share of each layer's opacity)
     std::map<std::pair<int, int>, MsaaBuffer> m_msaa; // by size (render thread)
     int m_maxSamples = 0;
-    void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc);
+    void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting);
     void composite();
     void readSourcePreview();
     void stepFade(double dt); // snapshot fades (render thread, lock held)
@@ -1003,7 +1006,8 @@ private:
     void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (GL context current)
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
-    void bindMesh(Layer &l);
+    bool bindMesh(Layer &l);
+    void drawBoundMesh(bool subdivided);
     // A layer's matte (Layer.h): the other layer as it is in the composition this frame (Composition space), or its
     // picture through the matte (Picture space)
     void prepareMatte(Layer &l);
@@ -1093,6 +1097,7 @@ private:
     RenderTarget m_dstCopy; // what is drawn so far, for Difference
     static inline std::atomic<bool> s_failDifferenceCopyForTests{false};
     GLint m_blitTexLoc = -1, m_compTexLoc = -1, m_compOpacityLoc = -1, m_compViewLoc = -1, m_presentTexLoc = -1;
+    GLint m_blitOpaqueLoc = -1;
     GLint m_prepRoiModeLoc = -1, m_prepRoiTriangleLoc = -1, m_prepRoiQuadLoc = -1;
     GLint m_prepTexLoc = -1, m_prepRoiLoc = -1, m_prepAddLoc = -1, m_prepRemoveLoc = -1, m_prepUnpremulLoc = -1, m_prepBalanceLoc = -1;
     GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
@@ -1118,7 +1123,15 @@ private:
                       const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
+    GLuint m_compositionReuseTexture = 0; // raw, full-size viewport rendered during this frame
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
+    struct IsfAudioTexture {
+        Texture2D texture;
+        quint64 frame = 0;
+    };
+    // Program/input, waveform/spectrum, and actual column count.
+    std::map<std::array<int, 3>, IsfAudioTexture> m_isfAudioTextures;
+    std::vector<float> m_isfAudioValues, m_isfAudioRgba;
     std::atomic<int> m_published{0};
     int m_back = 1;
 
@@ -1129,6 +1142,9 @@ private:
     std::map<quint64, std::shared_ptr<Material3D>> m_materials;
     std::vector<float> m_meshScratch;
     std::vector<uint8_t> m_renderMark; // render pass: layer already rendered this frame (reused, no allocation)
+    std::vector<std::pair<quint64, size_t>> m_renderLayerIndices;
+    bool m_renderLayerIndexActive = false; // only while frame() holds the lock after cue/interaction updates
+    std::vector<std::vector<size_t>> m_renderChildren;
 
     std::atomic<double> m_compositionSpeed{1.0};
     std::atomic<bool> m_paused{false}, m_emergencyHeld{false};
@@ -1149,9 +1165,11 @@ private:
 
     // Source preview
     quint64 m_previewId = 0;
-    int m_previewSide = 360, m_previewTick = 0;
+    int m_previewSide = 360;
+    int64_t m_previewNextNs = 0;
     RenderTarget m_previewTarget;
-    GLuint m_previewPbo = 0; // read back without waiting: mapped at the next preview tick
+    GLuint m_previewPbo = 0;
+    GLsync m_previewFence = nullptr; // map only after the GPU has finished writing
     int m_previewPboW = 0, m_previewPboH = 0;
     quint64 m_previewPboId = 0; // the layer the buffer holds (0: nothing pending)
     mutable std::mutex m_previewMutex;

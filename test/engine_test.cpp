@@ -1490,6 +1490,35 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK((m.pivot - QPointF(0.5, 0.5)).manhattanLength() < 1e-9);
     }
 
+    // Reusing a full-size viewport's raw RGB preserves the opaque composition and its fader.
+    {
+        e.newProject();
+        const QSize size(64, 32);
+        e.setCompositionSize(size);
+        e.fadeCompositionOpacity(0.7, 0);
+        e.setBlackout(false, 0);
+        const int viewport = e.viewports().first();
+        const quint64 viewportId = e.layerId(viewport);
+        e.setViewportSize(viewport, size);
+        e.layer(viewport)->mapping.setRect({QPointF(32, 16), 64, 32, 0}, size);
+        QImage source(64, 32, QImage::Format_ARGB32);
+        source.fill(qRgba(210, 150, 85, 128));
+        CHECK(source.save(tmp + "/partial_alpha.png"));
+        const int layer = e.addLayer("Partial alpha");
+        CHECK(e.setLayerImage(layer, tmp + "/partial_alpha.png", &err));
+        e.layer(layer)->opacity = 0.6f;
+        e.renderFrame();
+        const QImage reused = e.grabOutput();
+        // Change only the viewport routing to force independent compositing.
+        e.layer(layer)->viewportOpacity[viewportId] = 0.2f;
+        e.renderFrame();
+        const QImage separate = e.grabOutput();
+        CHECK(!reused.isNull() && reused == separate);
+        CHECK(separate.pixelColor(32, 16).red() > 30 && separate.pixelColor(32, 16).alpha() == 255);
+        CHECK(e.grabViewport(viewportId).pixelColor(32, 16).red() < separate.pixelColor(32, 16).red());
+        e.fadeCompositionOpacity(1, 0);
+    }
+
     // A viewport can be turned: its region is a rectangle of the composition rotated about its center
     {
         e.newProject();

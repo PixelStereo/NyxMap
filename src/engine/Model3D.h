@@ -370,7 +370,8 @@ private:
     static constexpr int kGlowLevels = 6;
     GLuint m_glowDownProgram = 0, m_glowUpProgram = 0, m_fogProgram = 0, m_fogBlurProgram = 0, m_postProgram = 0, m_rawSampler = 0;
     GLuint m_msBright = 0, m_bright = 0, m_glowTex[kGlowLevels] = {}, m_fogTex[2] = {}, m_final = 0, m_lookFbo = 0;
-    GLuint m_picture = 0; // what it gives: its final picture, or m_color with nothing over it
+    RenderTarget m_aaOutput; // composition-sized resolve of the high-quality 3D render
+    GLuint m_picture = 0; // the texture returned to composition
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
         GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
@@ -434,6 +435,11 @@ private:
         GLint u_viewProj = -1;
     } m_sceneUniforms;
     GLint m_unlitAt = -1, m_shadingAt = -1;
+    struct DepthUniforms {
+        GLint view = -1, projection = -1, displacement = -1, light = -1, farPlane = -1;
+    } m_depthUniforms, m_pointUniforms;
+    std::array<GLint, kMaxShadows> m_shadowPlaneAt{}, m_shadowMatrixAt{}, m_fogShadowMatrixAt{};
+    GLint m_targetLimit = 0, m_sampleLimit = 1;
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0;                          // its picture

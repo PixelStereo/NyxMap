@@ -623,7 +623,7 @@ void AudioStream::mixSource(float *out, int frames, double latency)
     Transport t = m_snapshot;
     t.gain = 1; // The layer fader is applied after its effect chain.
     if (m_synth) {
-        m_peak = m_synth->mix(out, frames, m_rate, t.playing, t.speed, t.gain);
+        m_synth->mix(out, frames, m_rate, t.playing, t.speed, t.gain);
         return;
     }
     if (m_capture) {
@@ -730,7 +730,6 @@ void AudioStream::mixSource(float *out, int frames, double latency)
     const float ramp = float(1.0 / (kFadeSeconds * m_rate));
 
     // 4. Mix (linear interpolation: the rate may differ slightly from 1)
-    float pk = 0;
     for (int i = 0; i < frames; ++i) {
         m_gain = m_gain < goal ? std::min(goal, m_gain + ramp) : std::max(goal, m_gain - ramp);
         if (m_aligning) continue;
@@ -744,7 +743,6 @@ void AudioStream::mixSource(float *out, int frames, double latency)
         const float r = (a[1] + (a[3] - a[1]) * f) * m_gain;
         out[i * 2] += l;
         out[i * 2 + 1] += r;
-        pk = std::max(pk, std::max(std::abs(l), std::abs(r)));
         m_bufPos += step > 0 ? step : 1.0;
     }
     if (m_fadingForSeek && m_gain <= 0) {
@@ -767,7 +765,6 @@ void AudioStream::mixSource(float *out, int frames, double latency)
         m_bufPos -= double(consumed);
         m_bufPts += double(consumed) / m_rate;
     }
-    m_peak = std::max(pk, m_peak.load() * 0.8f);
 }
 
 void AudioStream::mix(float *out, int frames, double latency)
@@ -775,7 +772,7 @@ void AudioStream::mix(float *out, int frames, double latency)
     if (!out || frames <= 0)
         return;
     constexpr int block = 1024;
-    std::array<float, block * 2> source{};
+    std::array<float, block * 2> source;
     float peak = 0;
     const float previousPeak = m_peak.load();
     for (int offset = 0; offset < frames; offset += block) {
@@ -791,16 +788,19 @@ void AudioStream::mix(float *out, int frames, double latency)
             m_postInitialized = true;
         }
         const float step = float(1. / (.008 * m_rate));
+        float blockPeak[2] = {};
         for (int i = 0; i < n; ++i) {
             m_postGain += std::clamp(target - m_postGain, -step, step);
             for (int c = 0; c < 2; ++c) {
                 float &value = source[size_t(i) * 2 + size_t(c)];
-                value = std::isfinite(value) ? value * m_postGain : 0.f;
+                value *= m_postGain;
+                if (!std::isfinite(value)) value = 0.f;
                 out[(offset + i) * 2 + c] += value;
-                peak = std::max(peak, std::abs(value));
+                blockPeak[c] = std::max(blockPeak[c], std::abs(value));
             }
         }
-        m_outMeter.update(source.data(), n, m_rate);
+        m_outMeter.updatePeaks(blockPeak[0], blockPeak[1], n, m_rate);
+        peak = std::max({peak, blockPeak[0], blockPeak[1]});
     }
     m_peak = std::max(peak, previousPeak * .8f);
 }

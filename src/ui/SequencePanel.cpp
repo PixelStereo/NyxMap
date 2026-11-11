@@ -22,6 +22,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextEdit>
@@ -49,15 +50,6 @@
 #include <QVBoxLayout>
 #include <cmath>
 
-static QString snapshotName(Engine *e, quint64 id)
-{
-    if (!id) return QStringLiteral("—");
-    const int i = e->indexOfSnapshot(id);
-    if (i < 0) return QStringLiteral("(snapshot gone)");
-    const Engine::Snapshot m = e->snapshot(i);
-    return QStringLiteral("%1  %2").arg(i + 1).arg(m.name);
-}
-
 // What a timeline step does
 static QString actionName(const Sequencer::Step &st)
 {
@@ -82,17 +74,20 @@ static QString actionName(const Sequencer::Step &st)
 static QString timelineName(Engine *e, quint64 id)
 {
     const int i = e->indexOfAnimation(id);
-    return i < 0 ? QStringLiteral("(timeline gone)") : e->animation(i).name;
+    return i < 0 ? QStringLiteral("(missing)") : e->animation(i).name;
 }
 
 // What a step does: its snapshot (with its number), or its timeline and the action on it
-static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = true)
+static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = true, bool withKind = true)
 {
+    auto label = [withKind](const QString &kind, const QString &name) {
+        return withKind ? QStringLiteral("%1 · %2").arg(kind, name) : name;
+    };
     if (!st.actions.empty()) {
         QStringList names;
         for (const auto &action : st.actions)
-            names << stepTarget(e, action, false);
-        return QStringLiteral("Group · %1 steps: %2").arg(st.actions.size()).arg(names.join(QStringLiteral(" + ")));
+            names << stepTarget(e, action, false, withKind);
+        return label(QStringLiteral("Group"), QStringLiteral("%1 steps: %2").arg(st.actions.size()).arg(names.join(QStringLiteral(" + "))));
     }
     if (st.sequence) {
         const int index = e->sequencer().indexOfSequence(st.sequence);
@@ -100,12 +95,14 @@ static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = 
     }
     if (st.preset) {
         const int index = e->indexOfPreset(st.preset);
-        return index < 0 ? QStringLiteral("(preset gone)") : QStringLiteral("Preset · %1").arg(e->preset(index).name);
+        return label(QStringLiteral("Preset"), index < 0 ? QStringLiteral("(missing)") : e->preset(index).name);
     }
-    if (st.timeline) return QStringLiteral("≋ %1 · %2").arg(timelineName(e, st.timeline), actionName(st));
-    if (numbered) return snapshotName(e, st.snapshot);
-    const int mi = e->indexOfSnapshot(st.snapshot);
-    return !st.snapshot ? QStringLiteral("—") : mi < 0 ? QStringLiteral("(snapshot gone)") : e->snapshot(mi).name;
+    if (st.timeline) return label(QStringLiteral("Timeline"), QStringLiteral("%1 · %2").arg(timelineName(e, st.timeline), actionName(st)));
+    if (!st.snapshot) return QStringLiteral("—");
+    const int index = e->indexOfSnapshot(st.snapshot);
+    if (index < 0) return label(QStringLiteral("Snapshot"), QStringLiteral("(missing)"));
+    const QString name = e->snapshot(index).name;
+    return label(QStringLiteral("Snapshot"), numbered ? QStringLiteral("%1  %2").arg(index + 1).arg(name) : name);
 }
 
 static bool targetGone(Engine *e, const Sequencer::Step &st)
@@ -300,14 +297,29 @@ static void normalizeFolders(Sequencer::Sequence &s)
 
 constexpr Qt::ItemFlags kRowFlags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
 enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColQuantize, ColNext, ColDescription, ColAt, ColTime, ColCount };
-constexpr int kStepOutlineRole = Qt::UserRole + 1;
+constexpr int kStepKindRole = Qt::UserRole + 1;
+constexpr int kStepDepthRole = Qt::UserRole + 2;
+constexpr int kStepExpandedRole = Qt::UserRole + 3;
+constexpr int kStepIndent = 16;
+constexpr int kDisclosureWidth = 26;
+using theme::CueKind;
 
-static void setStepOutline(QTableWidgetItem *item, const QString &kind, const QColor &color)
+static void setStepKind(QTableWidgetItem *item, CueKind kind)
 {
-    item->setData(kStepOutlineRole, color);
-    const QString description = item->toolTip().isEmpty() ? item->text().trimmed() : item->toolTip();
-    item->setToolTip(QStringLiteral("%1 · %2").arg(kind, description));
+    item->setData(kStepKindRole, int(kind));
     item->setData(Qt::AccessibleTextRole, item->toolTip());
+}
+
+static QChar stepInitial(CueKind kind)
+{
+    switch (kind) {
+    case CueKind::Snapshot: return QLatin1Char('S');
+    case CueKind::Preset: return QLatin1Char('P');
+    case CueKind::Timeline: return QLatin1Char('T');
+    case CueKind::Group: return QLatin1Char('G');
+    case CueKind::Sequence: return {};
+    }
+    return {};
 }
 
 
@@ -366,19 +378,6 @@ public:
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
     {
         paintCell(p, opt, idx);
-        if (const int role = idx.column() == ColSnapshot ? idx.data(Qt::UserRole).toInt() : 0) // a group and its steps: one line down them
-            p->fillRect(QRect(opt.rect.left(), opt.rect.top(), 3, opt.rect.height()), role <= 2 ? QColor(76, 217, 100, 170) : QColor(86, 156, 230, 200));
-        if (idx.column() == ColSnapshot) {
-            const QColor outline = idx.data(kStepOutlineRole).value<QColor>();
-            if (outline.isValid()) {
-                p->save();
-                p->setRenderHint(QPainter::Antialiasing);
-                p->setPen(QPen(outline, 1));
-                p->setBrush(Qt::NoBrush);
-                p->drawRoundedRect(QRectF(opt.rect).adjusted(4.5, 3.5, -4.5, -3.5), 3, 3);
-                p->restore();
-            }
-        }
         paintFrame(p, opt, idx);
     }
 
@@ -411,7 +410,7 @@ private:
     void paintCell(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
     {
         const int col = idx.column();
-        if (col == ColSnapshot && idx.data(kStepOutlineRole).isValid()) {
+        if (col == ColSnapshot && (idx.data(kStepKindRole).isValid() || idx.data(kStepDepthRole).toInt() > 0)) {
             QStyleOptionViewItem o(opt);
             initStyleOption(&o, idx);
             const QWidget *w = opt.widget;
@@ -419,11 +418,42 @@ private:
             const QString label = o.text;
             o.text.clear();
             style->drawControl(QStyle::CE_ItemViewItem, &o, p, w);
-            const QRect textRect = opt.rect.adjusted(10, 0, -9, 0);
             p->save();
-            p->setFont(o.font);
+            p->setClipRect(opt.rect, Qt::IntersectClip);
             const auto role = o.state.testFlag(QStyle::State_Selected) ? QPalette::HighlightedText : QPalette::Text;
-            p->setPen(o.palette.color(role));
+            const QColor ink = o.palette.color(role);
+            const int depth = idx.data(kStepDepthRole).toInt();
+            const int left = opt.rect.left() + depth * kStepIndent;
+            for (int d = 0; d < depth; ++d)
+                p->fillRect(QRect(opt.rect.left() + d * kStepIndent + 2, opt.rect.top(), 2, opt.rect.height()), QColor(139, 144, 153, 96));
+            int textLeft = left + 9;
+            if (const QVariant type = idx.data(kStepKindRole); type.isValid()) {
+                const auto kind = CueKind(type.toInt());
+                p->fillRect(QRect(left + 1, opt.rect.top() + 3, 3, opt.rect.height() - 6), theme::cueColor(kind));
+                if (const QVariant expanded = idx.data(kStepExpandedRole); expanded.isValid()) {
+                    const QPointF center(left + 15, opt.rect.center().y() + .5);
+                    const QPolygonF points = expanded.toBool()
+                        ? QPolygonF{center + QPointF(-5, -3), center + QPointF(5, -3), center + QPointF(0, 4)}
+                        : QPolygonF{center + QPointF(-3, -5), center + QPointF(4, 0), center + QPointF(-3, 5)};
+                    p->setRenderHint(QPainter::Antialiasing);
+                    p->setPen(Qt::NoPen);
+                    p->setBrush(ink);
+                    p->drawPolygon(points);
+                    textLeft = left + kDisclosureWidth;
+                }
+                if (const QChar initial = stepInitial(kind); !initial.isNull()) {
+                    QFont font = o.font;
+                    font.setPixelSize(17);
+                    font.setBold(true);
+                    p->setFont(font);
+                    p->setPen(ink);
+                    p->drawText(QRect(textLeft, opt.rect.top(), 17, opt.rect.height()), Qt::AlignCenter, QString(initial));
+                    textLeft += 21;
+                }
+            }
+            const QRect textRect = opt.rect.adjusted(textLeft - opt.rect.left(), 0, -6, 0);
+            p->setFont(o.font);
+            p->setPen(ink);
             p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, o.fontMetrics.elidedText(label, Qt::ElideRight, textRect.width()));
             p->restore();
             return;
@@ -974,8 +1004,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
             const QRect cell = m_steps->visualItemRect(m_steps->item(row, ColTime));
             openTimeEditor(row, m_steps->viewport()->mapFromGlobal(QCursor::pos()).x() > cell.center().x());
         }
-        if (col == ColSnapshot && actionOfRow(row) == kHeaderRow) return toggleFolder(row);
         if (col == ColSnapshot) {
+            if (actionOfRow(row) == kHeaderRow) return toggleFolder(row);
             Sequencer::Sequence s = m_engine->sequencer().sequence(m_engine->sequencer().current());
             const Sequencer::Step *st = stepAt(s, row);
             if (st && !st->actions.empty() && actionOfRow(row) < 0) {
@@ -987,15 +1017,6 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                 menu.exec(m_steps->viewport()->mapToGlobal(r.bottomLeft()));
             }
         }
-    });
-    connect(m_steps, &QTableWidget::cellClicked, this, [this](int row, int col) { // a group's triangle
-        if (col != ColSnapshot) return;
-        const int role = m_steps->item(row, col)->data(Qt::UserRole).toInt();
-        if (role != 1 && role != 3) return;
-        const QRect cell = m_steps->visualItemRect(m_steps->item(row, col));
-        const int x = m_steps->viewport()->mapFromGlobal(QCursor::pos()).x() - cell.left();
-        if (role == 3 && x < 22) toggleFolder(row);
-        else if (role == 1 && x < (m_folders[size_t(stepOfRow(row))] ? 60 : 22)) toggleFold(stepOfRow(row));
     });
     connect(m_steps, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         const int row = m_steps->rowAt(pos.y());
@@ -1544,10 +1565,11 @@ void SequenceWindow::refresh()
                 m_steps->setItem(row, c, cell);
             }
             auto *title = m_steps->item(row, ColSnapshot);
-            title->setText(QStringLiteral("%1  Group · %2 GOs").arg(closed ? QStringLiteral("▸") : QStringLiteral("▾")).arg(last - first + 1));
+            title->setText(QStringLiteral("%1 GOs").arg(last - first + 1));
             title->setToolTip(QStringLiteral("A group of %1 steps played one GO per step").arg(last - first + 1));
             title->setData(Qt::UserRole, 3);
-            setStepOutline(title, QStringLiteral("GO Group"), QColor(185, 142, 232));
+            title->setData(kStepExpandedRole, !closed);
+            setStepKind(title, CueKind::Group);
             QFont bold = title->font();
             bold.setBold(true);
             title->setFont(bold);
@@ -1558,22 +1580,22 @@ void SequenceWindow::refresh()
         auto *num = new QTableWidgetItem(child < 0 ? QString::number(k + 1) : QStringLiteral("%1.%2").arg(k + 1).arg(child + 1));
         num->setFlags(kRowFlags);
         num->setTextAlignment(Qt::AlignCenter);
-        QString target = stepTarget(m_engine, st);
-        if (isGroup && st.open) target = QStringLiteral("▾  Group · %1 steps").arg(st.actions.size());
-        else if (isGroup) target = QStringLiteral("▸  ") + target;
-        else if (child >= 0) target = QStringLiteral("      ") + target;
         const bool inFolder = s.steps[size_t(k)].folder != 0;
-        if (inFolder) target = QStringLiteral("      ") + target;
+        const QString target = isGroup && st.open ? QStringLiteral("%1 steps").arg(st.actions.size())
+                                                 : stepTarget(m_engine, st, true, false);
         auto *mem = new QTableWidgetItem(target);
         mem->setFlags(kRowFlags);
         mem->setData(Qt::UserRole, isGroup ? 1 : child >= 0 ? 2 : inFolder ? 4 : 0);
-        if (isGroup) setStepOutline(mem, QStringLiteral("Action Group"), QColor(185, 142, 232));
-        else if (st.sequence) setStepOutline(mem, QStringLiteral("Sequence"), QColor(100, 208, 173));
-        else if (st.preset) setStepOutline(mem, QStringLiteral("Preset"), QColor(232, 187, 103));
-        else if (st.timeline) setStepOutline(mem, QStringLiteral("Timeline"), QColor(86, 196, 255));
-        else if (st.snapshot) setStepOutline(mem, QStringLiteral("Snapshot"), QColor(241, 141, 156));
+        mem->setData(kStepDepthRole, int(inFolder) + int(child >= 0));
+        mem->setToolTip(stepTarget(m_engine, st));
+        if (isGroup) {
+            mem->setData(kStepExpandedRole, st.open);
+            setStepKind(mem, CueKind::Group);
+        } else if (st.sequence) setStepKind(mem, CueKind::Sequence);
+        else if (st.preset) setStepKind(mem, CueKind::Preset);
+        else if (st.timeline) setStepKind(mem, CueKind::Timeline);
+        else if (st.snapshot) setStepKind(mem, CueKind::Snapshot);
         if (targetGone(m_engine, st)) mem->setForeground(QColor(255, 120, 100));
-        else if (st.timeline) mem->setForeground(QColor(86, 196, 255));
         auto *pre = new QTableWidgetItem;
         pre->setData(Qt::EditRole, st.preWait);
         auto *action = new QTableWidgetItem;
@@ -2072,6 +2094,34 @@ void SequenceWindow::dropPlace(int y, int *top, int *action, quint64 *folder) co
 bool SequenceWindow::eventFilter(QObject *o, QEvent *e)
 {
     if (o != m_steps->viewport()) return QWidget::eventFilter(o, e);
+    if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
+        e->type() == QEvent::MouseButtonDblClick) {
+        const auto *mouse = static_cast<QMouseEvent *>(e);
+        if (mouse->button() == Qt::LeftButton) {
+            const QPoint pos = mouse->position().toPoint();
+            const QModelIndex index = m_steps->indexAt(pos);
+            bool disclosure = false;
+            if (index.column() == ColSnapshot && index.data(kStepExpandedRole).isValid()) {
+                const int offset = index.data(kStepDepthRole).toInt() * kStepIndent;
+                const int x = pos.x() - m_steps->visualRect(index).left() - offset;
+                disclosure = x >= 0 && x < kDisclosureWidth;
+            }
+            if (e->type() == QEvent::MouseButtonPress) {
+                m_disclosurePress = disclosure ? index : QModelIndex();
+                if (disclosure) return true;
+            } else if (e->type() == QEvent::MouseButtonDblClick && disclosure) {
+                return true;
+            } else if (e->type() == QEvent::MouseButtonRelease && m_disclosurePress.isValid()) {
+                const bool clicked = disclosure && m_disclosurePress == index;
+                m_disclosurePress = QModelIndex();
+                if (clicked) {
+                    if (actionOfRow(index.row()) == kHeaderRow) toggleFolder(index.row());
+                    else toggleFold(stepOfRow(index.row()));
+                }
+                return true;
+            }
+        }
+    }
     if (e->type() == QEvent::DragLeave) m_dropLine->hide();
     if (e->type() == QEvent::Drop) m_dropLine->hide();
     auto rowsDragged = [this](const QDropEvent *d) { return d->source() == m_steps; };
@@ -2158,7 +2208,6 @@ void SequenceWindow::refreshTransport()
             QColor color=palette().color(QPalette::Text);
             if (current) color=m_modified?QColor(QString::fromLatin1(kChanged)):kLive;
             else if (column==ColSnapshot && targetGone(m_engine,s.steps[size_t(step)])) color=QColor(255,120,100);
-            else if (column==ColSnapshot && s.steps[size_t(step)].timeline) color=QColor(86,196,255);
             item->setForeground(color);
         }
     }

@@ -12,7 +12,10 @@ From a single screen to a multi-output installation, design the image and run th
   <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
   <a href="#download"><img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge"></a>
   <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-GPLv3-24272C?style=for-the-badge"></a>
+  <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-read-24272C?style=for-the-badge"></a>
 </p>
+
+**[Read the NyxMap documentation](https://pixelstereo.github.io/NyxMap/)**
 
 </div>
 
@@ -78,12 +81,12 @@ Latest published build: **[v0.6.3](https://github.com/PixelStereo/NyxMap/release
 | :---: | :---: | :---: |
 | **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-macos-v0.6.3.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-windows-v0.6.3.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-linux-x86_64-v0.6.3.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-linux-x86_64-v0.6.3.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/build.md#get-started).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-linux-x86_64-v0.6.3.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).
 
-**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-Companion-v0.6.3.tgz)** — import it in Companion; [setup guide](docs/companion.md).
+**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.3/NyxMap-Companion-v0.6.3.tgz)** — import it in Companion; [setup guide](docs/integrations/companion.md).
 <!-- release-downloads:end -->
 
-Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/build.md) and the [known limitations](docs/README.md).
+Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/developers/build.md) and the [known limitations](docs/project/limitations.md).
 
 ## License
 

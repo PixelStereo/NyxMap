@@ -32,7 +32,7 @@ This path uses portable C++ on macOS, Windows and Linux. Verification in the clo
 is on Linux; native macOS/CoreAudio and Windows/device validation remain required.
 To regenerate the checked-in C++, install Faust 2.88.0 and run
 `scripts/generate_audio_dsp.sh` (`FAUST_LIB_PATH` can select a local library directory).
-See `audio-engine-research.md` for the evaluated alternatives and source links.
+See [Audio engine selection](../developers/audio-engine.md) for the evaluated alternatives and source links.
 
 ## FM, noise and granular parameters
 

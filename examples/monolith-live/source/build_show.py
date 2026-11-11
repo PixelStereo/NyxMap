@@ -4,10 +4,9 @@
     python3 examples/monolith-live/source/build_show.py [--autoplay]
 
 Everything that sounds runs in NyxMap's audio callback: Faust instruments with their envelopes and Audio FX, played by a
-timeline; the trip-hop edit of examples/demo goes through its own Audio FX under them. The pictures listen to the sound
-(Hits → Envelope), and a thread, a white line drawn from the waveform, runs from the first second to the last.
+rhythm timeline; the trip-hop edit of examples/demo goes through its own Audio FX under them. The pictures listen to the sound
+(Hits → Envelope). An internal timecode recalls the picture presets. A white waveform thread runs through the show.
 """
-import copy
 import json
 import math
 import random
@@ -253,16 +252,17 @@ key(TAPE_B, "volume", END * BAR + 1, 0, 0)
 # ---------------------------------------------------------------------------------------------------------------------
 # The pictures
 # ---------------------------------------------------------------------------------------------------------------------
-def shader(name):
-    return f"shaders/{name}.fs"
+def shader(name, kind="generators"):
+    filename = f"{name}.fs"
+    return {"path": filename, "relative_path": f"../../isf/{kind}/{filename}"}
 
 
 def generator(name, sh, params=None, blend="normal", opacity=1.0, size=(W, H), fx=()):
     lid = new_id()
     p = {"opacity": opacity, "blend_mode": blend}
     p.update({(k if k.startswith("param/") else f"param/{k}"): v for k, v in (params or {}).items()})
-    layers.append({"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "fx": [{"path": shader(f), "relative_path": shader(f)} for f in fx],
-                   "source": {"type": "isf", "path": shader(sh), "relative_path": shader(sh), "width": size[0], "height": size[1]}, "params": p})
+    layers.append({"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "fx": [shader(f, "effects") for f in fx],
+                   "source": {"type": "isf", **shader(sh), "width": size[0], "height": size[1]}, "params": p})
     return lid
 
 
@@ -274,7 +274,7 @@ WORLD = new_id()
 FX_NAMES = ["Kaleidoscope", "Zoom Volumetric", "Pixelate", "VHS Glitch", "FlipFlop", "Trails"]
 SEG = {n: n.replace(" ", "_") for n in FX_NAMES}
 layers.append({"id": WORLD, "name": "World", "enable": True, "locked": False, "viewports": {}, "group": True, "collapsed": True, "source": {"type": "none"},
-               "fx": [{"path": shader(n), "relative_path": shader(n)} for n in FX_NAMES],
+               "fx": [shader(n, "effects") for n in FX_NAMES],
                "params": {"opacity": 1, "blend_mode": "normal", "scale/x": 100, "scale/y": 100, "position/x": W / 2, "position/y": H / 2, "pivot/x": 50, "pivot/y": 50, "fx/enable": True,
                           **{f"fx/{SEG[n]}/enable": False for n in FX_NAMES}}})
 SOURCES = ["Sea", "Stage", "Lattice", "Bars", "Data", "Ridges", "Spectrum", "Waves"]
@@ -286,7 +286,7 @@ for k in range(14):
                    "params": {"opacity": 0, "blend_mode": "normal", "position/x": W / 2, "position/y": H / 2, "scale/x": 100, "scale/y": 100, "rotation": 0, "roi/left": 0, "roi/top": 0, "roi/right": 1, "roi/bottom": 1}})
 black = new_id()
 layers.append({"id": black, "name": "Black", "parent": WORLD, "enable": True, "locked": False, "viewports": {}, "fx": [],
-               "source": {"type": "isf", "path": shader("SolidColor"), "relative_path": shader("SolidColor"), "width": 64, "height": 64},
+               "source": {"type": "isf", **shader("SolidColor"), "width": 64, "height": 64},
                "params": {"opacity": 1, "blend_mode": "normal", "param/color/r": 0, "param/color/g": 0, "param/color/b": 0, "param/color/a": 1}})
 
 # The sources, under the world: what its windows show
@@ -373,7 +373,7 @@ SPOT = light("Beam", "spot", (0, 7, 0), (0.85, 1, 1), 160, look=(0, 0, 0), path=
 SPOT2 = light("Beam 2", "spot", (-5, 6, 3), (1, 0.55, 0.3), 90, look=(0, 2, 0), path=(2, 8, 5, -0.13), angle=9, falloff=0.3, rays=1.4)
 PANEL = light("Panel", "area", (0, 8, 0), (0.75, 0.95, 1), 26, size=(8, 3), rays=0)
 _id_noise = NOISE
-layers.append({"id": NOISE, "name": "Noise", "enable": True, "locked": False, "viewports": {}, "fx": [], "source": {"type": "isf", "path": shader("Simplex Noise"), "relative_path": shader("Simplex Noise"), "width": 1024, "height": 512},
+layers.append({"id": NOISE, "name": "Noise", "enable": True, "locked": False, "viewports": {}, "fx": [], "source": {"type": "isf", **shader("Simplex Noise"), "width": 1024, "height": 512},
                "params": {"opacity": 1, "blend_mode": "normal", "param/scale": 3.4, "param/octaves": 3, "param/speed": 0.8, "param/contrast": 1.4, "param/seed": 5}})
 ALL_SOURCES = {"Sea": SEA, "Stage": STAGE, "Lattice": LATTICE, "Bars": BARS, "Data": DATA, "Ridges": RIDGES, "Spectrum": SPECTRUM, "Waves": WAVES}
 for k, lid in enumerate(WINDOWS):
@@ -503,6 +503,7 @@ for win in WINDOWS:
     key(win, "opacity", 0, 0)
 last_on = set()
 seen = 0
+cut_names = {}
 for bar in range(END + 2):
     n = steps_of(bar)
     seq = SEQ_INTRO if bar < DROP else SEQ_DROP if bar < BREAK else SEQ_BREAK if bar < DROP2 else SEQ_BIG if bar < OUTRO else SEQ_OUT
@@ -523,7 +524,11 @@ for bar in range(END + 2):
             key(win, "rotation", at, rot)
             for side, v in zip(("left", "top", "right", "bottom"), roi):
                 key(win, f"roi/{side}", at, round(min(max(v, 0), 1), 4))
-        for win in last_on - now:
+        phase = ("Approach" if bar < DROP else "First impact" if bar < BREAK else "Fracture"
+                 if bar < DROP2 else "Second impact" if bar < OUTRO else "Afterimage")
+        sources = " + ".join(dict.fromkeys(WIN_SOURCES[win] for win, *_ in layout))
+        cut_names[round(at, 4)] = f"{bar + 1:02}.{s + 1} · {phase} · {sources}"
+        for win in sorted(last_on - now):
             key(win, "opacity", at, 0)
         last_on = now
         # What the world goes through, at this step: more and more of it
@@ -597,53 +602,90 @@ for k, (source, layer, param, lo, hi, decay) in enumerate(PITCH):
                          "filters": [{"type": "envelope", "a": 0.001, "b": decay, "c": 0, "d": 0.01}, {"type": "remap", "a": 0, "b": 1, "c": lo, "d": hi}]})
 
 layers.extend(SOUND_LAYERS)
-# Two timelines, one after the other: at the turn, the second tape starts
-TURN = round(DROP2 * BAR, 4)
+clock = new_id()
+layers.append({"id": clock, "name": "Show Timecode", "enable": True, "locked": False, "fx": [], "viewports": {},
+               "source": {"type": "text", "timecode": {"source": "internal", "internal": "free_run", "rate": "25"}},
+               "params": {"opacity": 0, "tc/play": False, "tc/position": 0, "tc/out": TOTAL, "tc/play_mode": "oneshot"}})
 
-
-def value_at(keys, t):
-    """The value of a track at t: what its keys make of it, for the track to go on from there in the next timeline."""
-    before = [k for k in keys if k[0] <= t]
-    after = [k for k in keys if k[0] > t]
-    if not before:
-        return keys[0][1]
-    a = before[-1]
-    if not after or len(after[0]) < 3 or after[0][2] == "hold" or isinstance(a[1], bool):
-        return a[1]
-    b = after[0]
-    return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0])
-
-
-first_tracks, second_tracks = [], []
-for (layer, param), keys in tracks.items():
-    keys.sort(key=lambda k: k[0])
-    early = [k for k in keys if k[0] < TURN]
-    late = [[round(k[0] - TURN, 4)] + k[1:] for k in keys if k[0] >= TURN]
-    if early:
-        first_tracks.append({"layer": layer, "param": param, "keys": early})
-    if late or len(keys) != len(early):
-        if not late or late[0][0] > 0:
-            late.insert(0, [0, value_at(keys, TURN), "hold"])
-        second_tracks.append({"layer": layer, "param": param, "keys": late})
-timeline_tracks = first_tracks + second_tracks
-timelines = [{"id": "1", "name": "The Piece · first tape", "duration": TURN, "loop": "once", "tracks": first_tracks},
-             {"id": "2", "name": "The Piece · second tape", "duration": round(TOTAL - TURN, 3), "loop": "once", "tracks": second_tracks}]
-states = []
+# Chords and discrete mixer changes belong to cues. Leave note lengths and sweeps in the score.
+drones = {D_LOW, D_FIFTH, D_OCT, D_HIGH, D_AIR}
 for layer in layers:
-    state = copy.deepcopy(layer)
-    state["included"] = True
-    if state["id"] == TAPE_A:
-        state["params"] = dict(state["params"], restart=True, play=True, play_mode="oneshot")
-    states.append(state)
-second_tape = copy.deepcopy(next(l for l in layers if l["id"] == TAPE_B))
-second_tape["included"] = True
-second_tape["params"] = dict(second_tape["params"], restart=True, play=True, play_mode="oneshot")
-others = [dict(copy.deepcopy(l), included=False) for l in layers if l["id"] != TAPE_B]
-snapshot2 = {"id": "2", "name": "Second tape", "fade": 0, "layers": others + [second_tape], "composition": {"included": False}, "interactions": []}
-snapshot = {"id": "1", "name": "Ready", "fade": 0, "layers": states, "composition": {"included": True, "opacity": 1, "volume": 0.7}, "interactions": [{"id": i["id"], "included": True, "enabled": i["enabled"]} for i in interactions]}
-steps = [{"text": "GO", "snapshot": "1", "description": "All of it plays from here, as it is made", "continue": "follow"}, {"text": "First tape", "timeline": "1", "action": "play", "continue": "follow"},
-         {"text": "Second tape starts", "snapshot": "2", "continue": "follow"}, {"text": "Second tape", "timeline": "2", "action": "play"}]
-project = {"app": "NyxMap", "format_version": 1, "composition": {"width": W, "height": H, "fps": 60, "speed": 1}, "audio": {"volume": 0.7}, "layers": layers, "interactions": interactions, "timelines": timelines, "presets": [], "snapshots": [snapshot, snapshot2], "snapshot_tree": ["1", "2"],
-           "sequences": [{"id": "1", "name": "Monolith Live", "loop": False, "steps": steps}], "current_sequence": 0, "startup_sequence": 0, "startup_step": 0, "startup_go": "--autoplay" in sys.argv, "ui": {"selected_layer": 0}}
+    if layer["id"] in drones:
+        layer["params"]["synth/gate"] = 0
+        key(layer["id"], "synth/gate", 0, 1)
+        key(layer["id"], "synth/gate", TOTAL - .05, 0)
+sound_ids = {layer["id"] for layer in SOUND_LAYERS}
+window_ids = set(WINDOWS)
+picture_changes = {}
+mix_changes = {}
+rhythm, mix, motion = [], [], []
+for (layer, param), keys in tracks.items():
+    points = {t: (value, *curve) for t, value, *curve in keys if t <= TOTAL}
+    track = {"layer": layer, "param": param, "keys": [[t, *point] for t, point in sorted(points.items())]}
+    address = (layer, param)
+    cut = (layer in window_ids or (layer == WORLD and param.startswith("fx/"))
+           or layer in {BARS, LATTICE, DATA, RIDGES, SEA}
+           or (layer == STAGE and param.startswith("camera/") and param != "camera/yaw"))
+    mixer_cut = ((layer in drones and param == "synth/frequency")
+                 or address in {(TAPE_A, DELAY), (TAPE_A, ROOM), (TAPE_B, ROOM_B),
+                                (TAPE_B, f"audio_fx/{TAPE_B}-highpass/cutoff")})
+    if cut or mixer_cut:
+        changes = picture_changes if cut else mix_changes
+        for t, (value, *_) in points.items():
+            changes.setdefault(t, {})[address] = value
+    elif layer not in sound_ids:
+        motion.append(track)
+    elif param.startswith("synth/") and layer != RISE:
+        rhythm.append(track)
+    else:
+        mix.append(track)
+
+timelines = [{"id": str(i), "name": name, "duration": TOTAL, "loop": "once", "tracks": group}
+             for i, (name, group) in enumerate((("Instrument score", rhythm), ("Mix and filter sweeps", mix),
+                                               ("Thread, camera and 3D motion", motion)), 1)]
+presets = []
+
+
+def preset(name, state):
+    id = str(len(presets) + 1)
+    values = [{"layer": layer, "path": param, "value": value} for (layer, param), value in sorted(state.items())]
+    presets.append({"id": id, "name": name, "fade": 0, "values": values})
+    return id
+
+
+start = preset("Start / rewind the show", {
+    (clock, "tc/position"): 0, (clock, "tc/play"): True, (TAPE_A, "restart"): True,
+    (TAPE_B, "play"): False, (FIL, "opacity"): 1,
+})
+steps = [{"text": "Start / rewind", "description": "Start the internal timecode, Tape A and the three score timelines.",
+          "closed": True, "actions": [
+              *[{"timeline": t["id"], "action": "stop"} for t in timelines],
+              {"preset": start},
+              *[{"timeline": t["id"], "action": "play"} for t in timelines],
+          ]}]
+turn = round(DROP2 * BAR, 4)
+mix_changes.setdefault(turn, {}).update({(TAPE_A, "play"): False, (TAPE_B, "restart"): True})
+look = {}
+for t in sorted(picture_changes.keys() | mix_changes.keys()):
+    look.update(picture_changes.get(t, {}))
+    name = cut_names.get(t, "Mixer cue")
+    if t == turn:
+        name += " · Tape B"
+    # Store all visibility states and the geometry of the windows that are on in this shot.
+    # This lets timecode chase a single preset without replaying earlier cues or rewinding audio.
+    values = {(layer, param): value for (layer, param), value in look.items()
+              if layer not in window_ids or param == "opacity" or look.get((layer, "opacity"), 0)}
+    values.update(mix_changes.get(t, {}))
+    steps.append({"preset": preset(name, values), "at": max(.04, t)})
+
+steps.append({"preset": preset("Black", {(FIL, "opacity"): 0, (WORLD, "opacity"): 0}),
+              "at": round(TOTAL - .04, 4)})
+project = {"app": "NyxMap", "format_version": 1, "composition": {"width": W, "height": H, "fps": 60, "speed": 1},
+           "audio": {"volume": 0.7}, "layers": layers, "interactions": interactions, "timelines": timelines,
+           "presets": presets, "snapshots": [],
+           "sequences": [{"id": "1", "name": "Monolith Live · Timecode", "loop": False, "tracking": False,
+                          "timecode": {"layer": clock, "param": "tc/position"}, "steps": steps}],
+           "current_sequence": 0, "startup_sequence": 0, "startup_step": 0, "startup_go": "--autoplay" in sys.argv,
+           "ui": {"selected_layer": 0}}
 (HERE / "Monolith Live.nyxmap").write_text(json.dumps(project, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-print(f"{len(layers)} layers, {len(interactions)} interactions, {sum(len(t['keys']) for t in timeline_tracks)} keys on {len(timeline_tracks)} tracks, {seen} images, {TOTAL:.1f} s")
+print(f"{len(steps) - 1} timed presets, {len(timelines)} timelines, {seen} images, {TOTAL:.1f} s")

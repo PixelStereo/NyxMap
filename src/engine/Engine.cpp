@@ -132,7 +132,7 @@ bool Engine::initialize(QString *err)
     f->glBindBuffer(GL_ARRAY_BUFFER, m_meshVbo);
     { // the whole frame (viewport outputs); each layer has a buffer of its own
         std::vector<float> full;
-        Mapping().buildVertices(kMeshSubdiv, full);
+        Mapping().buildVertices(1, full);
         f->glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(full.size() * sizeof(float)), full.data(), GL_STATIC_DRAW);
     }
     f->glEnableVertexAttribArray(0);
@@ -156,8 +156,9 @@ bool Engine::initialize(QString *err)
     const char *quadVs = "#version 330 core\nlayout(location=0) in vec2 a_pos; out vec2 v_uv;\n"
                          "void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }\n";
     m_blitProgram = compileProgram(quadVs,
-                                   "#version 330 core\nuniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
-                                   "void main(){ o = texture(u_tex, v_uv); }\n",
+                                   "#version 330 core\nuniform sampler2D u_tex; uniform bool u_opaque; in vec2 v_uv; out vec4 o;\n"
+                                   "void main(){ o = u_opaque ? vec4(texelFetch(u_tex, ivec2(gl_FragCoord.xy), 0).rgb, 1.0)"
+                                   " : texture(u_tex, v_uv); }\n",
                                    &log);
     // IEC sRGB transfer functions (Khronos Data Format, section 13.3).
     // Shared by native-source normalization (straight alpha) and opaque output.
@@ -230,6 +231,7 @@ bool Engine::initialize(QString *err)
         return false;
     }
     m_blitTexLoc = f->glGetUniformLocation(m_blitProgram, "u_tex");
+    m_blitOpaqueLoc = f->glGetUniformLocation(m_blitProgram, "u_opaque");
     m_presentTexLoc = f->glGetUniformLocation(m_presentProgram, "u_tex");
     m_publishing.initGl(&log);
     if (!m_sampler.initGl(&log)) {
@@ -586,12 +588,16 @@ void Engine::releaseAll()
     auto f = gl();
     for (RenderTarget &o : m_output) o.destroy();
     m_audioVisual.destroy();
+    for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
+    m_isfAudioTextures.clear();
     m_previewTarget.destroy();
     for (auto &slot : m_previewSlots) {
         for (auto &target : slot.target) target.destroy();
         for (auto &editor : slot.editor) if (editor) editor->releaseGl();
         for (auto &reader : slot.reader) if (reader) { gl()->glDeleteSync(reader); reader = nullptr; }
     }
+    if (m_previewFence) f->glDeleteSync(m_previewFence);
+    m_previewFence = nullptr;
     if (m_previewPbo) f->glDeleteBuffers(1, &m_previewPbo);
     m_previewPbo = 0;
     m_previewPboW = m_previewPboH = 0;
@@ -958,8 +964,10 @@ double Engine::blackoutFade() const
 void Engine::requestSourcePreview(quint64 layerId, int maxSide)
 {
     Lock lk(&m_mutex);
+    maxSide = std::clamp(maxSide, 16, 2048);
+    if (m_previewId != layerId || m_previewSide != maxSide) m_previewNextNs = 0;
     m_previewId = layerId;
-    m_previewSide = std::clamp(maxSide, 16, 2048);
+    m_previewSide = maxSide;
 }
 
 QImage Engine::sourcePreview(quint64 *layerId) const

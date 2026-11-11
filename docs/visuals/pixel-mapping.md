@@ -5,8 +5,8 @@ the composition's opacity and blackout) and streamed as DMX over Art-Net or sACN
 
 The fixtures are listed in the **Fixtures** tab on the left (next to Layers), their settings are in the **Fixture**
 inspector on the right, and the DMX outputs are in the **Composition** tab. All of it is saved in the project under
-`pixel_mapping`. Model: [Fixtures.h](../src/engine/Fixtures.h); network: [Dmx.h](../src/engine/Dmx.h); GPU sampling:
-[PixelSampler.h](../src/engine/PixelSampler.h); GDTF: [Gdtf.h](../src/engine/Gdtf.h).
+`pixel_mapping`. Model: [Fixtures.h](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/Fixtures.h); network: [Dmx.h](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/Dmx.h); GPU sampling:
+[PixelSampler.h](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/PixelSampler.h); GDTF: [Gdtf.h](https://github.com/PixelStereo/NyxMap/blob/main/src/engine/Gdtf.h).
 
 ## In the interface
 

@@ -1,46 +1,22 @@
 # Camera Inversa
 
-A one-minute audiovisual score for NyxMap. Seven native 3D ribs slide through
-the front frame and become the walls of a cavity. A splinter field interrupts the
-geometry in asymmetrical bursts. Moving shafts of light cut through the scene fog,
-while a separate smoke layer drifts across the chamber.
+A one-minute audiovisual score for NyxMap. Steel, smoke and an impossible aperture cut against asymmetric bass, dry contact noise and bowed-metal grains.
 
-Open **Camera Inversa.nyxmap** with the NyxMap ISF library available and the
-project's `audio/` directory alongside it.
+Open **Camera Inversa.nyxmap**, then press **GO** once in **Show Control** (Shift+6) to run **Reference (1:00)**. For performance, select **Live GO** and fire the ten animated cues yourself. Each new cue interrupts the previous motion. Use **Nero** to cut both picture and sound.
 
-- **Reference (1:00)** is selected on open. In **Show Control** (Shift+6), press
-  **GO** once. Nine cues take the score from isolated smoke to a corner close-up,
-  a burst of fragments at 0:25, a black cut at 0:34 and the cavity reveal at 0:37.
-  The image goes black at 0:57 and the sound ends at 1:00.
-- Select **Live GO** to send the cues by hand. The times in the cue descriptions
-  are suggested positions in the score. Each scene is also available as a preset.
-- **Controls** (Shift+5) gives you ten scene faders and five independent performance
-  controls. Camera angle, turbulence, grain transposition, room and the strike button
-  stay under your hand across scene changes.
+| Time | Cue | Cut |
+| --- | --- | --- |
+| 0:00 | Fessura | A horizontal slit opens onto steel and smoke. |
+| 0:05 | Diaframma | The frame turns square and an iris rushes the lens. |
+| 0:12 | Rilievo | The camera jumps wide. The ribs swing into the foreground. |
+| 0:19 | Negativo | White replaces black. Fins close across the frame and the bass drops out. |
+| 0:25 | Segnale rotto | RGB geometry shears apart over an irregular bass and contact-noise pattern. |
+| 0:33 | Vuoto | Three seconds of black and silence. |
+| 0:36 | Camera Inversa | The relief returns as a cavity. The camera accelerates through its lip. |
+| 0:45 | Caduta | The iris tumbles off-axis and debris cuts across it. |
+| 0:53 | Impronta | A vertical aperture breaks open into the last trace of smoke. |
+| 1:00 | Nero | End. |
 
-| Gesture | Controls |
-| --- | --- |
-| Bring the lip into focus | Wall reveal, Camera angle |
-| Invert the chamber | Relief ↔ cavity. Move slowly through the point where the ribs align in one plane. |
-| Bring in the broken section | Fracture / contact noise. This raises the contact-noise bursts, reveals the splinters and brings in Pixelate at higher levels. |
-| Change the physical scale | Sub level, Smoke density, Smoke turbulence. Low transients move the camera and drive the left searchlight. |
-| Thin the score into flecks or stretch it into a cloud | Granular level, Grain density, Grain duration, Grain transposition, Grain space |
-| Interrupt the texture | Hold and release Strike for a live FM attack. |
+In **Controls** (Shift+5), adjust the aperture level, camera orbit, relief depth, smoke, audio mix and grain shape during a cue. **Smoke turbulence**, **Grain transposition**, **Grain space**, **Rib torsion** and **Strike / hold** keep their settings across cues. Controls are also available over OSC at `/control/<key>`, for example `/control/depth` or `/control/twist`.
 
-The sub and fracture clock loops every 21 seconds. Irregular gated noise bursts
-share their timing with 3D cuts and changing mosaic sizes. The program mix drives
-the searchlights and the scale of the splinters. NyxMap synthesizes the audio in
-real time from FM, noise and granular voices. The bowed-metal sample is a
-synthesized excitation for the granular voice.
-
-The reusable `smoke.fs` generator lives in the standard ISF library under
-`isf/generators/`. It renders self-shaded smoke on transparency and exposes density,
-turbulence, rise speed, spread and tint. The chamber geometry, spotlights, fog and
-camera are editable in NyxMap's native 3D scene.
-
-The controls are also available at `/control/<key>` via NyxMap OSC. Examples include
-`/control/depth`, `/control/fracture` and `/control/strike`. Sliders
-take values from 0 to 1. Send 1 on strike press and 0 on release.
-
-Regenerate the project and audio recipes from the repository root with
-`python3 examples/camera-inversa/source/build_show.py`.
+The image uses native 3D geometry and lights, with `smoke.fs` from the standard ISF library as its sole shader. The audio is synthesized in NyxMap. Keep the `audio/` folder alongside the project. Regenerate both with `python3 examples/camera-inversa/source/build_show.py` from the repository root.

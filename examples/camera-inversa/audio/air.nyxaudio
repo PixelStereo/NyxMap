@@ -2,8 +2,8 @@
   "version": 1,
   "type": "pink",
   "gain": 0.16,
-  "attack": 0.8,
+  "attack": 0.3,
   "sustain": 1,
-  "release": 1.4,
+  "release": 0.26,
   "gate": 1
 }

@@ -69,7 +69,7 @@ TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not cov
 See `licenses/touchengine.txt` for the full Shared Use License. NyxMap is an independent integration; Derivative does
 not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
 Commercial or Pro licence. NyxMap neither installs nor activates that licence. Builders must explicitly opt in with
-`NYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [build instructions](docs/build.md#touchdesigner-components).
+`NYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON`; see [TouchDesigner components](docs/integrations/touchdesigner.md).
 
 ## Faust (GRAME)
 
