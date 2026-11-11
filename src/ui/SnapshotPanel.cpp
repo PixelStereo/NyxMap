@@ -1,4 +1,5 @@
 #include "SnapshotPanel.h"
+#include "FittedTableHeader.h"
 #include "AdaptiveSplitter.h"
 #include "Commands.h"
 #include "LibraryTree.h"
@@ -268,9 +269,9 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_list->setEditTriggers(QAbstractItemView::NoEditTriggers); // a double-click or Return renames
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->header()->setStretchLastSection(false);
-    m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
+    new FittedTableHeader(m_list, m_list->header(), 1);
     m_list->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
                                       "Drag to reorder, into a group, or onto a step of a sequence\n"
                                       "Green stripe and ▶: the snapshot recalled last; the green line under it: its fade"));
@@ -349,9 +350,9 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_presets->setSelectionMode(QAbstractItemView::SingleSelection);
     m_presets->setContextMenuPolicy(Qt::CustomContextMenu);
     m_presets->header()->setStretchLastSection(false);
-    m_presets->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_presets->setColumnWidth(0, 54); // room for the groups' indentation
     m_presets->setColumnWidth(2, 58);
+    new FittedTableHeader(m_presets, m_presets->header(), 1);
     m_presets->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
                                          "Drag to reorder or into a group · a preset holds only the values put in it"));
     pv->addWidget(new LibraryFilter(m_presets, QStringLiteral("presetFilter"), [this] { refreshPresets(); }));
@@ -440,11 +441,11 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_layers->setIndentation(12);
     m_layers->setUniformRowHeights(true);
     m_layers->setAlternatingRowColors(true);
-    m_layers->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_layers->header()->setStretchLastSection(false);
     m_layers->setColumnWidth(ColValue, 72);
     m_layers->setColumnWidth(ColTime, 53);
     m_layers->setColumnWidth(ColDelay, 53);
+    new FittedTableHeader(m_layers, m_layers->header(), 0);
     m_layers->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_layers->setToolTip(QStringLiteral("Unchecked layers are left alone when the snapshot is recalled; layers the snapshot "
                                         "does not know are hidden.\nClick a value to see it, change it and choose how it "
@@ -1912,11 +1913,11 @@ QWidget *SnapshotPanel::buildPresetView()
     m_presetValues->setRootIsDecorated(true);
     m_presetValues->setIndentation(12);
     m_presetValues->setAlternatingRowColors(true);
-    m_presetValues->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_presetValues->header()->setStretchLastSection(false);
     m_presetValues->setColumnWidth(1, 72);
     m_presetValues->setColumnWidth(2, 53);
     m_presetValues->setColumnWidth(3, 53);
+    new FittedTableHeader(m_presetValues, m_presetValues->header(), 0);
     m_presetValues->setContextMenuPolicy(Qt::CustomContextMenu);
     m_presetValues->setToolTip(QStringLiteral("What the preset holds. Time: Follow (the preset's fade), 0 (a cut) or seconds "
                                               "of its own. Delete: takes the value out."));

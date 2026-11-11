@@ -1,4 +1,5 @@
 #include "SequencePanel.h"
+#include "FittedTableHeader.h"
 #include "Engine.h"
 #include "SnapshotPanel.h"
 #include "StoredContent.h"
@@ -815,14 +816,15 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_steps->verticalHeader()->setVisible(false);
     m_steps->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_steps->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColSnapshot, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColDescription, QHeaderView::Stretch);
+    m_steps->setColumnWidth(ColSnapshot, 120);
+    m_steps->setColumnWidth(ColDescription, 120);
     m_steps->horizontalHeader()->setMinimumSectionSize(18);
     m_steps->setColumnWidth(ColNum, 40);
     m_steps->setObjectName(QStringLiteral("sequenceSteps"));
     m_steps->setAcceptDrops(true);
     m_steps->viewport()->setAcceptDrops(true);
     m_steps->viewport()->installEventFilter(this);
+    new FittedTableHeader(m_steps, m_steps->horizontalHeader(), ColDescription);
     m_steps->setDragEnabled(true);
     m_steps->setDragDropMode(QAbstractItemView::DragDrop);
     m_steps->setDropIndicatorShown(false); // its own line: steps go between rows, and into groups
@@ -2102,14 +2104,6 @@ void SequenceWindow::dropPlace(int y, int *top, int *action, quint64 *folder) co
 bool SequenceWindow::eventFilter(QObject *o, QEvent *e)
 {
     if (o != m_steps->viewport()) return QWidget::eventFilter(o, e);
-    if (e->type() == QEvent::Resize) {
-        const int width = m_steps->viewport()->width();
-        m_steps->setColumnWidth(ColNum, qBound(20, width / 13, 40));
-        m_steps->setColumnWidth(ColAt, qBound(28, width / 8, 70));
-        m_steps->setColumnWidth(ColQuantize, qBound(28, width / 8, 70));
-        m_steps->setColumnWidth(ColNext, qBound(28, width / 9, 56));
-        m_steps->setColumnWidth(ColTime, qBound(52, width / 3, 150));
-    }
     if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
         e->type() == QEvent::MouseButtonDblClick) {
         const auto *mouse = static_cast<QMouseEvent *>(e);

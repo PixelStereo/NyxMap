@@ -8,6 +8,7 @@
 #include "TimelineActivity.h"
 #include "TimelinePanel.h"
 #include <QHeaderView>
+#include <QMouseEvent>
 #include <QElapsedTimer>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -250,6 +251,24 @@ int runShowControlUiTests(Engine &engine)
                     if (steps->horizontalHeaderItem(c)->text() == title) return c;
                 return -1;
             };
+            auto *header = steps->horizontalHeader();
+            const int target = column("Target");
+            if (target >= 0 && header->isVisible()) {
+                const int oldWidth = header->sectionSize(target);
+                const QPoint start(header->sectionViewportPosition(target) + oldWidth - 1, header->height() / 2);
+                auto drag = [&](QEvent::Type type, QPoint position, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                    auto *view = header->viewport();
+                    QMouseEvent event(type, QPointF(position), QPointF(view->mapToGlobal(position)), button, buttons, Qt::NoModifier);
+                    qApp->sendEvent(view, &event);
+                };
+                drag(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+                drag(QEvent::MouseMove, start + QPoint(12, 0), Qt::NoButton, Qt::LeftButton);
+                drag(QEvent::MouseButtonRelease, start + QPoint(12, 0), Qt::LeftButton, Qt::NoButton);
+                check(header->sectionSize(target) > oldWidth, "dragging Target's right edge widens Target");
+                check(header->length() <= steps->viewport()->width(), "resizing keeps all columns in view");
+            } else {
+                check(false, "the target header is visible");
+            }
             check(column("Comment") < 0, "no comment column");
             const int quantize = column("Quantize"), timecode = column("Timecode");
             check(!steps->isColumnHidden(quantize) && steps->isColumnHidden(timecode), "without a clock: the quantize");

@@ -1,4 +1,5 @@
 #include "TimelinePanel.h"
+#include "FittedTableHeader.h"
 #include "Commands.h"
 #include "Engine.h"
 #include "Widgets.h"
@@ -521,9 +522,9 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_list->setExpandsOnDoubleClick(false);
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->header()->setStretchLastSection(false);
-    m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
+    new FittedTableHeader(m_list, m_list->header(), 1);
     m_list->setToolTip(QStringLiteral("Drag a timeline onto a step of a sequence (Play by default: the step can also pause, stop, rewind, "
                                       "seek or change its loop), or into a group\n"
                                       "Double-click or Return: rename · ⌘Return: play · Delete: delete · ⌘D: duplicate · ⌘G: new group"));
