@@ -1,4 +1,5 @@
 #include "SequencePanel.h"
+#include "FittedTableHeader.h"
 #include "Engine.h"
 #include "SnapshotPanel.h"
 #include "StoredContent.h"
@@ -644,9 +645,11 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_sequences = new QComboBox;
     m_sequences->setObjectName(QStringLiteral("sequenceMenu"));
     m_sequences->setEditable(true);
+    m_sequences->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_sequences->setMinimumContentsLength(8);
     m_sequences->setInsertPolicy(QComboBox::NoInsert);
     m_sequences->setCompleter(nullptr);
-    m_sequences->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_sequences->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_sequences->setToolTip(QStringLiteral("The sequence GO / Stop controls. Other sequences keep playing in the background. Type here to rename it."));
     m_add = new QPushButton(QStringLiteral("+"));
     m_add->setObjectName(QStringLiteral("sequenceNew"));
@@ -773,10 +776,13 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     // Steps
     m_status = new QLabel;
     m_status->setTextFormat(Qt::RichText);
+    m_status->setWordWrap(true);
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     flags->addWidget(m_status, 1);
     flags->addWidget(m_beatLabel);
     right->addWidget(new RecallProgressBar(m_engine));
     m_steps = new QTableWidget(0, ColCount);
+    m_steps->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre"),
                                         QStringLiteral("Action"), QStringLiteral("Post"), QStringLiteral("Quantize"),
                                         QStringLiteral("Next"), QStringLiteral("Description"), QStringLiteral("Timecode"), QStringLiteral("Time")});
@@ -812,14 +818,15 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_steps->verticalHeader()->setVisible(false);
     m_steps->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_steps->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColSnapshot, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColDescription, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setMinimumSectionSize(30);
+    m_steps->setColumnWidth(ColSnapshot, 120);
+    m_steps->setColumnWidth(ColDescription, 120);
+    m_steps->horizontalHeader()->setMinimumSectionSize(18);
     m_steps->setColumnWidth(ColNum, 40);
     m_steps->setObjectName(QStringLiteral("sequenceSteps"));
     m_steps->setAcceptDrops(true);
     m_steps->viewport()->setAcceptDrops(true);
     m_steps->viewport()->installEventFilter(this);
+    new FittedTableHeader(m_steps, m_steps->horizontalHeader(), ColDescription);
     m_steps->setDragEnabled(true);
     m_steps->setDragDropMode(QAbstractItemView::DragDrop);
     m_steps->setDropIndicatorShown(false); // its own line: steps go between rows, and into groups
@@ -862,19 +869,22 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_stepDel->setToolTip(QStringLiteral("Delete the selected steps"));
     m_up = new QPushButton(QStringLiteral("▲"));
     m_down = new QPushButton(QStringLiteral("▼"));
+    for (QPushButton *b : {m_stepDel, m_up, m_down}) symbolButton(b);
     for (QPushButton *b : {m_stepAdd, m_stepDel, m_up, m_down}) stb->addWidget(b);
     stb->addStretch();
+    auto *stops = new QHBoxLayout;
+    stops->addStretch();
     m_stop = new QPushButton(QStringLiteral("■ Stop"));
     m_stop->setToolTip(QStringLiteral("The selected sequence: its pre-waits and follows still to come are dropped "
                                       "(the snapshots already running go on; the other sequences keep playing)"));
     m_stop->setEnabled(false);
-    stb->addWidget(m_stop);
+    stops->addWidget(m_stop);
     connect(m_stop, &QPushButton::clicked, this, &SequenceWindow::stopRequested);
     m_stopAll = new QPushButton(QStringLiteral("■■ Stop all"));
     m_stopAll->setToolTip(QStringLiteral("The pre-waits and follows still to come in every sequence, those playing "
                                          "in the background too (the snapshots already running go on)"));
     m_stopAll->setEnabled(false);
-    stb->addWidget(m_stopAll);
+    stops->addWidget(m_stopAll);
     connect(m_stopAll, &QPushButton::clicked, this, &SequenceWindow::stopAllRequested);
     auto *runs = new QTimer(this);
     runs->setInterval(33);
@@ -885,6 +895,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
         box->setMinimumWidth(box->fontMetrics().horizontalAdvance(box->text()) + 28); // with its square
     right->addLayout(flags);
     right->addLayout(stb);
+    right->addLayout(stops);
 
     auto current = [this] { return m_engine->sequencer().current(); };
     connect(m_sequences, qOverload<int>(&QComboBox::activated), this, [this](int r) {
@@ -1622,7 +1633,9 @@ void SequenceWindow::refresh()
         quantize->setTextAlignment(Qt::AlignCenter);
         m_steps->setItem(row, ColQuantize, quantize);
         m_steps->setItem(row, ColNext, next);
-        m_steps->setItem(row, ColDescription, new QTableWidgetItem(st.description));
+        auto *description = new QTableWidgetItem(st.description);
+        description->setToolTip(st.description);
+        m_steps->setItem(row, ColDescription, description);
         auto *time = new QTableWidgetItem;
         time->setFlags(kRowFlags);
         const QString unitName = s.beats ? QStringLiteral(" beats") : QStringLiteral(" s");

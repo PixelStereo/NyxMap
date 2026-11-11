@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "AdaptiveSplitter.h"
 #include "NyxMapVersion.h"
 #include "PresetEditor.h"
 #include "Commands.h"
@@ -359,6 +360,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
 
     auto *top = new QSplitter(Qt::Horizontal);
     auto *left = workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll"));
+    connect(m_leftTabs, &QTabWidget::currentChanged, left, [this, left, sequencePage](int index) {
+        const bool sequences = m_leftTabs->widget(index) == sequencePage;
+        m_leftTabs->setSizePolicy(sequences ? QSizePolicy::Ignored : QSizePolicy::Preferred, QSizePolicy::Preferred);
+        left->setHorizontalScrollBarPolicy(sequences ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    });
     auto *center = new QWidget;
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
@@ -389,12 +395,13 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_workspaceTabs->setObjectName(QStringLiteral("showWorkspaceTabs"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
-    library->setMinimumWidth(340);
+    library->setMinimumWidth(302);
+
     auto *libraryLayout = new QVBoxLayout(library);
     libraryLayout->setContentsMargins(0, 0, 0, 0);
     m_workspaceTabs->setExpanding(true);
     m_workspaceTabs->setUsesScrollButtons(false);
-    m_workspaceTabs->setElideMode(Qt::ElideNone);
+    m_workspaceTabs->setElideMode(Qt::ElideRight);
     libraryLayout->addWidget(m_workspaceTabs);
     auto *libraryPages = new QStackedWidget;
     libraryPages->setObjectName(QStringLiteral("showLibraryPages"));
@@ -406,14 +413,19 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     workspacePages->addWidget(m_snapshots);
     workspacePages->addWidget(m_timelineWindow->workspace());
     m_timelineWindow->hide(); // retains the library/editor controller connections
-    auto *librarySplit = new QSplitter(Qt::Horizontal);
+    auto *librarySplit = new AdaptiveSplitter(730);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
-    librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
-    librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
+    auto *libraryScroll = workspacePane(library, QStringLiteral("showLibraryScroll"));
+    auto *editorScroll = workspacePane(workspacePages, QStringLiteral("showEditorScroll"));
+    for (auto *pane : {sequencePage, libraryScroll, editorScroll})
+        pane->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    libraryScroll->setMinimumWidth(316);
+    librarySplit->addWidget(libraryScroll);
+    librarySplit->addWidget(editorScroll);
     librarySplit->setStretchFactor(0, 0);
     librarySplit->setStretchFactor(1, 1);
-    librarySplit->setSizes({355, 825});
+    librarySplit->setSizes({316, 825});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -431,7 +443,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     split->setSizes({620, 340});
     split->setObjectName("mainSplit4");
     top->setObjectName("topSplit3");
-    auto *columns = new QSplitter(Qt::Horizontal);
+    auto *columns = new AdaptiveSplitter(620);
     columns->setObjectName("mainColumns");
     columns->setChildrenCollapsible(false);
     columns->addWidget(left);

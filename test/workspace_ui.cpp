@@ -44,6 +44,7 @@
 #include <QSettings>
 #include <QScreen>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QSurfaceFormat>
@@ -513,13 +514,33 @@ int main(int argc, char **argv)
                 status->setText(before);
             }
             auto *editor = window.findChild<QScrollArea *>("showEditorScroll");
-            check(editor && editor->horizontalScrollBar()->maximum() > 0,
-                  "wide show controls remain reachable through horizontal scrolling");
-            if (editor) {
-                editor->horizontalScrollBar()->setValue(editor->horizontalScrollBar()->maximum());
-                check(editor->horizontalScrollBar()->value() == editor->horizontalScrollBar()->maximum(),
-                      "the right edge of a wide editor is reachable in a tiled window");
+            auto *showList = window.findChild<QScrollArea *>("showLibraryScroll");
+            auto *sequencePane = window.findChild<QScrollArea *>("sequenceEditorScroll");
+            check(editor && showList && sequencePane &&
+                      !editor->horizontalScrollBar()->isVisible() && !showList->horizontalScrollBar()->isVisible() &&
+                      !sequencePane->horizontalScrollBar()->isVisible(),
+                  "show and sequence panes do not expose horizontal scrollbars");
+            if (editor && tabs) {
+                for (int mode : {0, 1, 2}) {
+                    tabs->setCurrentIndex(mode);
+                    app.processEvents();
+                    check(editor->widget()->width() <= editor->viewport()->width(),
+                          "the editor fits its viewport in every workspace mode");
+                }
             }
+            if (auto *leftArea = window.findChild<QScrollArea *>("mainLibraryScroll"); leftArea && sequencePane) {
+                if (auto *leftTabs = qobject_cast<QTabWidget *>(leftArea->widget())) {
+                    leftTabs->setCurrentWidget(sequencePane);
+                    app.processEvents();
+                    auto *steps = sequencePane->findChild<QTableWidget *>("sequenceSteps");
+                    check(sequencePane->widget()->width() <= sequencePane->viewport()->width(),
+                          "the sequence editor fits its viewport");
+                    check(steps && steps->horizontalHeader()->length() <= steps->viewport()->width(),
+                          "the step columns fit the table viewport");
+                }
+            }
+            if (auto *showSplit = window.findChild<QSplitter *>("showLibrarySplit"))
+                check(showSplit->orientation() == Qt::Vertical, "the narrow show workspace stacks its list and editor");
             // A saved window from a larger/disconnected screen must also recover.
             QWidget saved;
             saved.setGeometry(10000, 10000, 9000, 9000);
