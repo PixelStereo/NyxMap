@@ -293,8 +293,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // The sequence's state sent by OSC to a remote interface (Companion, TouchOSC…)
     m_feedback = new SequenceFeedback(m_engine, this);
     auto applyFeedback = [this] {
-        m_feedback->setTargets(SettingsPanel::feedbackTargets());
-        m_feedback->setEnabled(SettingsPanel::feedbackEnabled());
+        const auto targets = SettingsPanel::feedbackEnabledTargets();
+        m_feedback->setTargets(targets);
+        m_feedback->setEnabled(!targets.isEmpty());
     };
     applyFeedback();
     connect(m_settings, &SettingsPanel::feedbackChanged, this, applyFeedback);
@@ -332,7 +333,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs->addTab(m_interactions, QStringLiteral("Interactions"));
     m_controls = new ControlsPanel(m_engine, m_undo);
     m_leftTabs->addTab(m_controls, QStringLiteral("Controls"));
-    connect(m_controls, &ControlsPanel::oscInteractionRequested, m_interactions, &InteractionPanel::addControlOsc);
     connect(m_controls, &ControlsPanel::edited, this, &MainWindow::markDirty);
     // The menu at the top of the inspector: the layer, group or viewport picked there is selected, as a click in the list does
     connect(m_inspector, &LayerInspector::layerPickRequested, this, [this](quint64 id) {

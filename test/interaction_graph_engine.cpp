@@ -1,5 +1,9 @@
 #include "Engine.h"
 #include "OscCodec.h"
+#include "InteractionOutput.h"
+#include "SequenceFeedback.h"
+#include <atomic>
+#include <QThread>
 #include <QNetworkDatagram>
 #include <QUdpSocket>
 #include <QApplication>
@@ -128,6 +132,63 @@ int main(int argc, char **argv)
           messages.front().args.value(0).toInt() == 7 && messages.front().args.value(1).toString() == "cue" &&
           messages.front().args.value(3).toFloat() == 1.f, "OSC sender receives the saved custom packet on press");
     check(!receiver.hasPendingDatagrams(), "release does not send a second packet");
+    const auto mappingFor = [&](const InteractionOutput &output) {
+        auto route = Interaction::made(InteractionSource::Osc);
+        route.oscAddress = "/test/output";
+        route.param = output.path();
+        return route;
+    };
+    FixturePatch patch = engine.fixturePatch();
+    DmxOutput dmx;
+    dmx.id = 42;
+    dmx.name = "Test DMX";
+    patch.outputs.push_back(dmx);
+    engine.setFixturePatch(patch);
+    const auto midi = engine.addMidiOutput("Test MIDI");
+    std::atomic<int> cc{-1};
+    engine.timecodeRouter().setTestSink([&](quint64 id, const std::vector<uint8_t> &bytes) {
+        if (id == midi && bytes.size() == 3 && bytes[0] == 0xb1 && bytes[1] == 10) cc = bytes[2];
+    });
+    engine.addInteraction(mappingFor({"osc", message.oscDestination, "/mapping/out", {QStringLiteral("$value")}}));
+    engine.addInteraction(mappingFor({"dmx", "42", {}, {}, 9, 2}));
+    engine.addInteraction(mappingFor({"midi", QString::number(midi), {}, {}, 2, 10}));
+    event.address = "/test/output";
+    event.value = .5;
+    engine.feedInteraction(event);
+    engine.renderFrame();
+    app.processEvents();
+    messages.clear();
+    check((receiver.hasPendingDatagrams() || receiver.waitForReadyRead(2000)) &&
+          osc::decode(receiver.receiveDatagram().data(), messages) && messages.size() == 1 &&
+          messages.front().address == "/mapping/out" && messages.front().args.value(0).toFloat() == .5f,
+          "a mapping writes its filtered value to an OSC target");
+    const auto universe = engine.dmxUniverse(dmx.id, 2);
+    check(universe.size() == 512 && quint8(universe.at(8)) == 128, "a mapping writes to the selected DMX universe and channel");
+    for (int i = 0; i < 100 && cc == -1; ++i) QThread::msleep(5);
+    check(cc == 64, "a mapping sends MIDI CC to the selected output");
+    engine.timecodeRouter().setTestSink({});
+
+    SequenceFeedback feedback(&engine);
+    feedback.setTargets({message.oscDestination});
+    feedback.setEnabled(true);
+    const auto receivedControlFeedback = [&] {
+        bool received = false;
+        while (receiver.hasPendingDatagrams()) {
+            messages.clear();
+            if (osc::decode(receiver.receiveDatagram().data(), messages))
+                for (const auto &packet : messages)
+                    received |= packet.address == QLatin1Char('/') + action.sourceParam;
+        }
+        return received;
+    };
+    feedback.sendNow(false);
+    check(!receivedControlFeedback(), "an unchanged control sends no feedback");
+    engine.setControlValue(buttonId, 1);
+    feedback.sendNow(false);
+    check(receivedControlFeedback(), "a changed control is sent as OSC feedback");
+    feedback.sendNow(false);
+    check(!receivedControlFeedback(), "feedback does not resend the control's unchanged value");
+    feedback.setEnabled(false);
     engine.shutdown();
     return failures ? 1 : 0;
 }

@@ -116,6 +116,7 @@ public:
     // Tests: the MIDI messages for each MIDI output go here instead of its port (none: back to the ports)
     using Sink = std::function<void(quint64 midiOutput, const std::vector<uint8_t> &msg)>;
     void setTestSink(Sink sink);
+    void sendMidi(quint64 output, MtcSender::Message message);
 
 private:
     struct Port {
@@ -165,6 +166,7 @@ private:
     std::vector<MidiOutput> m_midi;
     std::vector<AudioChannelOutput> m_audio;
     Sink m_sink;
+    std::vector<std::pair<quint64, MtcSender::Message>> m_pendingMidi;
     std::map<quint64, QString> m_midiStatus, m_audioStatus; // written by the thread
 
     // The MIDI thread's own

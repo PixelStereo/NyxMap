@@ -346,22 +346,6 @@ void ControlsPanel::rebuild()
         auto *menu = new QMenu(gear);
         menu->addAction(QStringLiteral("Edit…"), this, [this, id] { editControl(id); });
         const QString path = QStringLiteral("control/") + c.key;
-        const auto addOsc = [this, id, path](QMenu *parent, const QString &title, const QString &component = {}) {
-            parent->addAction(title, this, [this, id, path, component, title] {
-                if (const auto control = m_engine->control(id)) {
-                    const QString name = component.isEmpty() ? control->name : control->name + QStringLiteral(" · ") + title;
-                    emit oscInteractionRequested(path + component, name, control->kind == ShowControl::Kind::Button);
-                }
-            });
-        };
-        if (c.kind == ShowControl::Kind::Color) {
-            auto *osc = menu->addMenu(QStringLiteral("Send OSC…"));
-            addOsc(osc, QStringLiteral("Red"), QStringLiteral("/r"));
-            addOsc(osc, QStringLiteral("Green"), QStringLiteral("/g"));
-            addOsc(osc, QStringLiteral("Blue"), QStringLiteral("/b"));
-        } else {
-            addOsc(menu, QStringLiteral("Send OSC…"));
-        }
         if (c.kind == ShowControl::Kind::Slider) {
             field->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(field, &QWidget::customContextMenuRequested, this, [this, field, path](const QPoint &pos) {

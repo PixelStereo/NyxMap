@@ -123,6 +123,30 @@ int main(int argc, char **argv)
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
 
+    FixturePatch patch = engine.fixturePatch();
+    DmxOutput dmx;
+    dmx.name = "Stage lights";
+    patch.outputs.push_back(dmx);
+    engine.setFixturePatch(patch);
+    engine.addMidiOutput("Stage MIDI");
+    auto *targetPicker = panel.findChild<QToolButton *>("interactionTargetParameter");
+    check(targetPicker && targetPicker->menu(), "the target picker offers a menu");
+    if (targetPicker && targetPicker->menu()) {
+        auto *menu = targetPicker->menu();
+        emit menu->aboutToShow();
+        const auto entries = menu->actions();
+        check(entries.size() >= 3 && entries[0]->text() == "OSC" && entries[1]->text() == "DMX" &&
+              entries[2]->text() == "MIDI", "network and MIDI outputs are at the root of the target menu");
+        const auto hasOutput = [&entries](int index, const QString &name) {
+            if (index >= entries.size() || !entries[index]->menu()) return false;
+            for (auto *action : entries[index]->menu()->actions())
+                if (action->text() == name && action->isEnabled()) return true;
+            return false;
+        };
+        check(hasOutput(1, "Stage lights") && hasOutput(2, "Stage MIDI"),
+              "DMX and MIDI menus show the outputs configured in Composition");
+    }
+
     auto *tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
     check(tabs && tabs->count() == 1 && tabs->tabText(0) == "Target 1", "Target 1 exists by default");
     check(panel.findChild<QWidget *>("sharedFiltersFrame"), "shared filters have their own frame");

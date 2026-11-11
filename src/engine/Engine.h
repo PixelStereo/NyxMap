@@ -1401,6 +1401,8 @@ private:
         int curve = 3;
     };
     std::vector<ActionFade> m_actionFades;
+    bool writeInteractionOutput(const QString &path, double value, bool action);
+    void sendInteractionOsc(const InteractionConsequence &c, double value);
     void runConsequence(const InteractionConsequence &c, double sourceValue); // lock held
     void feedControlAction(const QString &path, double value); // lock held
     void stepActionFades(double dt);
@@ -1444,6 +1446,10 @@ private:
     PixelSampler m_sampler{[this] { drawQuad(); }};
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;
+    using DmxOverrides = std::map<DmxKey, std::map<int, quint8>>;
+    DmxOverrides m_interactionDmx, m_actionDmx; // engine lock
+    DmxFrame m_fixtureDmx;
+    bool m_hadInteractionDmx = false;
     DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask

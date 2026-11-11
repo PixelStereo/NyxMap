@@ -45,7 +45,7 @@ public:
     static int oscQueryPort(); // TCP, OSCQuery (HTTP + WebSocket)
     static QString oscListen(); // the address OSC and OSCQuery listen on ("": every network interface)
     // The sequence's state sent by OSC to these "host:port" (on unless changed; 127.0.0.1:11111 by default)
-    static bool feedbackEnabled();
+    static QStringList feedbackEnabledTargets();
     static QStringList feedbackTargets();
 
     // The inspector's fields move with the values while a snapshot fades them (on unless changed); off, they
@@ -97,7 +97,7 @@ private:
     QComboBox *m_playMode = nullptr, *m_colorModels = nullptr, *m_transition = nullptr, *m_rate = nullptr,
               *m_samples = nullptr, *m_depth = nullptr;
     QCheckBox *m_mipmaps = nullptr, *m_hardware = nullptr;
-    QCheckBox *m_osc = nullptr, *m_feedback = nullptr;
+    QCheckBox *m_osc = nullptr;
     QTableWidget *m_feedbackTargets = nullptr;
     QSpinBox *m_oscPort = nullptr, *m_queryPort = nullptr;
     QLabel *m_oscStatus = nullptr, *m_remoteStatus = nullptr;

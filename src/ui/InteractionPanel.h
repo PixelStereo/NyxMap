@@ -39,7 +39,6 @@ public:
     static InteractionPanel *instance() { return s_instance; } // the application's (none in the tests)
     // A new interaction driving this value (a layer's id, 0: the composition), its source learnt of that kind (Internal:
     // chosen in its settings); the tab is shown
-    void addControlOsc(const QString &path, const QString &name, bool button);
     void learnFor(quint64 layer, const QString &path, InteractionSource kind);
     // An envelope on a value, in one go: what `source` hears (a hit, a key, a gate) shapes it from where it is now
     quint64 addEnvelope(quint64 layer, const QString &path, Interaction source);
@@ -64,6 +63,7 @@ private:
     // Layer menus mirror the bin, including nested groups.
     void fillLayerMenu(QMenu *menu, const std::function<void(QMenu *, quint64, const QString &)> &fill,
                        const QString &groupItem);
+    void fillOutputTargets(QMenu *menu, const QString &currentPath, const std::function<void(const QString &)> &select);
     void fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill);
     // An Action's settings: its conditions, what it does if true, if false (rebuildSettings)
     using EditFn = std::function<void(const QString &, const std::function<void(Interaction &)> &, const QString &)>;

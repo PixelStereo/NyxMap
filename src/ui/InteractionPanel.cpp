@@ -8,7 +8,9 @@
 #include "Osc.h"
 #include "OscCodec.h"
 #include "SequenceFeedback.h"
+#include "InteractionOutput.h"
 #include <QSettings>
+#include <QSpinBox>
 #include <QRegularExpression>
 #include <QCheckBox>
 #include <QUdpSocket>
@@ -543,6 +545,23 @@ std::optional<Interaction> InteractionPanel::selected() const
 QString InteractionPanel::targetLabel(quint64 layer, const QString &param) const
 {
     if (param.isEmpty()) return QStringLiteral("(no target)");
+    if (!layer) {
+        const auto output = InteractionOutput::fromPath(param);
+        if (output.protocol == "osc")
+            return QStringLiteral("OSC · %1 · %2").arg(output.destination, output.address);
+        if (output.protocol == "dmx") {
+            const auto patch = m_engine->fixturePatch();
+            const auto *entry = patch.findOutput(output.destination.toULongLong());
+            return QStringLiteral("DMX · %1 · %2/%3").arg(entry ? entry->name : QStringLiteral("(output gone)"))
+                .arg(output.number).arg(output.channel);
+        }
+        if (output.protocol == "midi") {
+            QString name = QStringLiteral("(output gone)");
+            for (const auto &entry : m_engine->midiOutputs())
+                if (entry.id == output.destination.toULongLong()) { name = entry.name; break; }
+            return QStringLiteral("MIDI · %1 · Ch %2 / CC %3").arg(name).arg(output.channel).arg(output.number);
+        }
+    }
     QString owner = QStringLiteral("Composition");
     if (layer) {
         Engine::Lock lk(&m_engine->mutex());
@@ -1963,7 +1982,7 @@ void InteractionPanel::rebuildSettings()
         target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         auto *targetMenu = new QMenu(target);
         target->setMenu(targetMenu);
-        connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, change, scalarOnly] {
+        connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, change, scalarOnly, path] {
             clearInteractionMenu(targetMenu);
             auto fill = [this, change, scalarOnly](QMenu *into, quint64 layer) {
                 std::vector<ParamInfo> params;
@@ -1997,6 +2016,8 @@ void InteractionPanel::rebuildSettings()
                     menu->addAction(text, this, [change, layer, path = p.path] { change(layer, path); });
                 }, true);
             };
+            fillOutputTargets(targetMenu, path, [change](const QString &output) { change(0, output); });
+            targetMenu->addSeparator();
             fillByOwner(targetMenu, fill);
         });
         return target;
@@ -2150,87 +2171,84 @@ void InteractionPanel::rebuildSettings()
 // ---------------------------------------------------------------------------
 // Action mode: the conditions on the source's value, then what is done when they become true, and false
 // ---------------------------------------------------------------------------
-static std::optional<InteractionConsequence> editOscMessage(QWidget *parent, InteractionConsequence current = {})
+void InteractionPanel::fillOutputTargets(QMenu *menu, const QString &currentPath,
+                                         const std::function<void(const QString &)> &select)
 {
-    QDialog dialog(parent);
-    dialog.setWindowTitle(QStringLiteral("Custom OSC Message"));
-    auto *form = new QFormLayout(&dialog);
-    QSettings settings;
-    const QString sendersKey = QStringLiteral("osc/customSenders");
-    QStringList saved = settings.value(sendersKey).toStringList();
-    auto *sender = new QComboBox;
-    sender->setEditable(true);
-    sender->setInsertPolicy(QComboBox::NoInsert);
-    sender->lineEdit()->setPlaceholderText(QStringLiteral("127.0.0.1:9000"));
-    auto candidates = saved + settings.value(QStringLiteral("osc/feedback/targets"), SequenceFeedback::defaultTargets()).toStringList();
-    candidates.removeDuplicates();
-    sender->addItems(candidates);
-    sender->setEditText(current.oscDestination);
-    auto *address = new QLineEdit(current.oscAddress);
-    address->setPlaceholderText(QStringLiteral("/my/message"));
-    auto *arguments = new QLineEdit(QString::fromUtf8(QJsonDocument(current.oscArguments).toJson(QJsonDocument::Compact)));
-    arguments->setToolTip(QStringLiteral(R"(JSON array of numbers, strings, booleans or null. Use "$value" for the live input.)"));
-    form->addRow(QStringLiteral("OSC Sender"), sender);
-    form->addRow(QStringLiteral("Address"), address);
-    form->addRow(QStringLiteral("Arguments"), arguments);
-    auto *help = new QLabel(QStringLiteral(R"(Use a JSON array. Example: [1, "$value"])"));
-    form->addRow(QString(), help);
-    auto *error = new QLabel;
-    error->setWordWrap(true);
-    form->addRow(error);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    form->addRow(buttons);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        current.oscDestination = sender->currentText().trimmed();
-        current.oscAddress = address->text().trimmed();
-        const auto json = QJsonDocument::fromJson(arguments->text().trimmed().toUtf8());
-        static const QRegularExpression addressPattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
-        if (!SequenceFeedback::parseTarget(current.oscDestination, nullptr, nullptr)) {
-            error->setText(QStringLiteral("Enter a sender as host:port."));
-        } else if (!addressPattern.match(current.oscAddress).hasMatch() || current.oscAddress.contains(QChar::Null)) {
-            error->setText(QStringLiteral("Enter an OSC address starting with /, without spaces or wildcards."));
-        } else if (!json.isArray()) {
-            error->setText(QStringLiteral("Enter a JSON array, or [] for a message without arguments."));
-        } else {
-            current.oscArguments = json.array();
-            for (const auto argument : current.oscArguments) {
-                if (argument.isObject() || argument.isArray() || argument.toString().contains(QChar::Null)) {
-                    error->setText(QStringLiteral("Use numbers, strings, booleans or null as arguments."));
-                    return;
-                }
+    const auto current = InteractionOutput::fromPath(currentPath);
+    const auto add = [this, current, select](QMenu *parent, const QString &label, InteractionOutput output, int universeMin = 0) {
+        parent->addAction(label, this, [this, label, current, output, universeMin, select]() mutable {
+            if (current.protocol == output.protocol && current.destination == output.destination) output = current;
+            QDialog dialog(this);
+            dialog.setWindowTitle(label);
+            auto *form = new QFormLayout(&dialog);
+            QLineEdit *address = nullptr, *arguments = nullptr;
+            QSpinBox *number = nullptr, *channel = nullptr;
+            if (output.protocol == "osc") {
+                address = new QLineEdit(output.address);
+                address->setPlaceholderText(QStringLiteral("/my/message"));
+                arguments = new QLineEdit(QString::fromUtf8(QJsonDocument(output.arguments).toJson(QJsonDocument::Compact)));
+                arguments->setToolTip(QStringLiteral(R"(JSON array. Use "$value" for the interaction value.)"));
+                form->addRow(QStringLiteral("OSC address"), address);
+                form->addRow(QStringLiteral("Arguments"), arguments);
+            } else {
+                const bool dmx = output.protocol == "dmx";
+                number = new QSpinBox;
+                number->setRange(dmx ? universeMin : 0, dmx ? (universeMin ? 63999 : 32767) : 127);
+                number->setValue(output.number);
+                channel = new QSpinBox;
+                channel->setRange(1, dmx ? 512 : 16);
+                channel->setValue(output.channel);
+                form->addRow(dmx ? QStringLiteral("Universe") : QStringLiteral("Controller (CC)"), number);
+                form->addRow(QStringLiteral("Channel"), channel);
             }
-            dialog.accept();
-        }
-    });
-    dialog.setMinimumWidth(380);
-    if (dialog.exec() != QDialog::Accepted) return std::nullopt;
-    saved.removeAll(current.oscDestination);
-    saved.prepend(current.oscDestination);
-    settings.setValue(sendersKey, saved.mid(0, 16));
-    return current;
-}
-
-void InteractionPanel::addControlOsc(const QString &path, const QString &name, bool button)
-{
-    const auto osc = editOscMessage(this);
-    if (!osc) return;
-    auto list = m_engine->interactions();
-    Interaction interaction = Interaction::made(InteractionSource::Internal);
-    interaction.id = 1;
-    for (const auto &existing : list) interaction.id = std::max(interaction.id, existing.id + 1);
-    interaction.name = QStringLiteral("%1 → OSC").arg(name);
-    interaction.sourceParam = path;
-    interaction.mode = InteractionMode::Action;
-    if (button) interaction.conditions.push_back(InteractionCondition{});
-    interaction.onTrue.push_back(*osc);
-    list.push_back(interaction);
-    commitList(list, QStringLiteral("Add Control OSC Interaction"));
-    emit showRequested();
-    m_kinds->button(int(InteractionSource::Internal))->click();
-    rebuildList();
-    select(interaction.id);
-    rebuildSettings();
+            auto *error = new QLabel;
+            error->setWordWrap(true);
+            form->addRow(error);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+            form->addRow(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+                if (address) {
+                    const auto value = address->text().trimmed();
+                    static const QRegularExpression pattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
+                    const auto json = QJsonDocument::fromJson(arguments->text().toUtf8());
+                    if (!pattern.match(value).hasMatch() || value.contains(QChar::Null) || !json.isArray()) {
+                        error->setText(QStringLiteral("Enter an OSC address and a JSON array of arguments."));
+                        return;
+                    }
+                    for (const auto &argument : json.array()) {
+                        if (argument.isArray() || argument.isObject() || argument.toString().contains(QChar::Null)) {
+                            error->setText(QStringLiteral("Use numbers, strings, booleans or null as arguments."));
+                            return;
+                        }
+                    }
+                    output.address = value;
+                    output.arguments = json.array();
+                } else {
+                    output.number = number->value();
+                    output.channel = channel->value();
+                }
+                dialog.accept();
+            });
+            dialog.setMinimumWidth(350);
+            if (dialog.exec() == QDialog::Accepted) select(output.path());
+        });
+    };
+    auto *osc = menu->addMenu(QStringLiteral("OSC"));
+    const auto senders = QSettings().value(QStringLiteral("osc/feedback/targets"), SequenceFeedback::defaultTargets()).toStringList();
+    for (const auto &sender : senders)
+        if (SequenceFeedback::parseTarget(sender, nullptr, nullptr))
+            add(osc, sender, {QStringLiteral("osc"), sender, {}, QJsonArray{QStringLiteral("$value")}});
+    if (osc->isEmpty()) osc->addAction(QStringLiteral("Add an OSC sender in Settings"))->setEnabled(false);
+    auto *dmx = menu->addMenu(QStringLiteral("DMX"));
+    for (const auto &output : m_engine->fixturePatch().outputs)
+        add(dmx, output.name, {QStringLiteral("dmx"), QString::number(output.id), {}, {}, 1, 1},
+            output.protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
+    if (dmx->isEmpty()) dmx->addAction(QStringLiteral("Add a DMX output in Composition"))->setEnabled(false);
+    auto *midi = menu->addMenu(QStringLiteral("MIDI"));
+    for (const auto &output : m_engine->midiOutputs())
+        add(midi, output.name, {QStringLiteral("midi"), QString::number(output.id), {}, {}, 1, 1});
+    if (midi->isEmpty()) midi->addAction(QStringLiteral("Add a MIDI output in Composition"))->setEnabled(false);
 }
 
 void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction &it, const EditFn &edit)
@@ -2320,42 +2338,18 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             auto *row = new QWidget;
             auto *h = new QHBoxLayout(row);
             h->setContentsMargins(0, 0, 0, 0);
-            if (c.sendsOsc()) {
-                auto *message = new QPushButton(QStringLiteral("%1  →  %2").arg(c.oscAddress, c.oscDestination));
-                message->setToolTip(QStringLiteral("Edit Custom OSC Message"));
-                h->addWidget(message, 1);
-                auto *remove = new QToolButton;
-                remove->setText(QStringLiteral("−"));
-                h->addWidget(remove);
-                form->addRow(QStringLiteral("Send OSC"), row);
-                connect(message, &QPushButton::clicked, this, [this, c, edit, listOf, i] {
-                    if (const auto change = editOscMessage(this, c)) {
-                        edit(QStringLiteral("Edit OSC Action"), [change, listOf, i](Interaction &x) {
-                            auto &actions = listOf(x);
-                            if (i < actions.size()) actions[i] = *change;
-                        }, {});
-                        rebuildSettings();
-                    }
-                });
-                connect(remove, &QToolButton::clicked, this, [this, edit, listOf, i] {
-                    edit(QStringLiteral("Remove OSC Action"), [listOf, i](Interaction &x) {
-                        auto &actions = listOf(x);
-                        if (i < actions.size()) actions.erase(actions.begin() + long(i));
-                    }, {});
-                    rebuildSettings();
-                });
-                continue;
-            }
+            const auto path = c.sendsOsc() ? InteractionOutput{QStringLiteral("osc"), c.oscDestination,
+                                                                  c.oscAddress, c.oscArguments}.path() : c.param;
             auto *target = new QToolButton;
             target->setObjectName(QStringLiteral("%1Target%2").arg(whenTrue ? "true" : "false").arg(i));
-            target->setText(targetLabel(c.layer, c.param));
+            target->setText(targetLabel(c.layer, path));
             target->setPopupMode(QToolButton::InstantPopup);
             target->setToolButtonStyle(Qt::ToolButtonTextOnly);
             target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             target->setToolTip(QStringLiteral("The value of the show it sets: an action (fired), a switch, a choice, a number"));
             auto *menu = new QMenu(target);
             target->setMenu(menu);
-            connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i] {
+            connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i, path] {
                 clearInteractionMenu(menu);
                 auto fill = [this, edit, listOf, i](QMenu *into, quint64 layer) {
                     std::vector<ParamInfo> params;
@@ -2372,12 +2366,31 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
                                 if (i >= l.size()) return;
                                 l[i].layer = layer; // its time and curve kept
                                 l[i].param = p.path;
+                                l[i].oscDestination.clear();
+                                l[i].oscAddress.clear();
+                                l[i].oscArguments = {};
                                 l[i].value = v;
                             }, QString());
                             rebuildSettings();
                         });
                     }, true);
                 };
+                fillOutputTargets(menu, path, [this, edit, listOf, i](const QString &output) {
+                    edit(QStringLiteral("Change Action Target"), [listOf, i, output](Interaction &x) {
+                        auto &list = listOf(x);
+                        if (i >= list.size()) return;
+                        auto &action = list[i];
+                        action.layer = 0;
+                        action.param = output;
+                        action.oscDestination.clear();
+                        action.oscAddress.clear();
+                        action.oscArguments = {};
+                        action.value = 1;
+                        action.time = 0;
+                    }, {});
+                    rebuildSettings();
+                });
+                menu->addSeparator();
                 fillByOwner(menu, fill);
             });
             h->addWidget(target, 2);
@@ -2390,7 +2403,13 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             };
             ParamInfo info;
             const bool known = !c.param.isEmpty() && m_engine->parameterInfo(c.layer, c.param, &info);
-            if (known && (info.type == ParamInfo::Type::Bool || info.type == ParamInfo::Type::Choice)) {
+            if (path.startsWith(QLatin1String("output/dmx/")) || path.startsWith(QLatin1String("output/midi/"))) {
+                auto *value = number(c.value);
+                value->setRange(0, 1);
+                value->setValue(c.value);
+                h->addWidget(value, 1);
+                connect(value, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setValue](double v) { setValue(v, {}); });
+            } else if (known && (info.type == ParamInfo::Type::Bool || info.type == ParamInfo::Type::Choice)) {
                 auto *value = new QComboBox;
                 value->setObjectName(QStringLiteral("%1Value%2").arg(whenTrue ? "true" : "false").arg(i));
                 if (info.type == ParamInfo::Type::Bool) value->addItems({QStringLiteral("Off"), QStringLiteral("On")});
@@ -2461,19 +2480,7 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
         }
         auto *add = new QPushButton(QStringLiteral("+ Action %1").arg(whenTrue ? QStringLiteral("if true") : QStringLiteral("if false")));
         add->setObjectName(whenTrue ? QStringLiteral("addTrueAction") : QStringLiteral("addFalseAction"));
-        auto *addOsc = new QPushButton(QStringLiteral("+ OSC Message"));
-        auto *buttons = new QHBoxLayout;
-        buttons->addWidget(add);
-        buttons->addWidget(addOsc);
-        form->addRow(QString(), buttons);
-        connect(addOsc, &QPushButton::clicked, this, [this, edit, listOf] {
-            if (const auto message = editOscMessage(this)) {
-                edit(QStringLiteral("Add OSC Action"), [listOf, message](Interaction &x) {
-                    listOf(x).push_back(*message);
-                }, {});
-                rebuildSettings();
-            }
-        });
+        form->addRow(QString(), add);
         connect(add, &QPushButton::clicked, this, [this, edit, listOf] {
             edit(QStringLiteral("Add Action"), [listOf](Interaction &x) { listOf(x).push_back(InteractionConsequence{}); }, QString());
             rebuildSettings();

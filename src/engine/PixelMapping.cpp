@@ -135,18 +135,31 @@ void Engine::stepPixelMapping()
         got = true;
     }
     if (got && count == m_fixturePoints.size()) {
-        DmxFrame frame = buildDmxFrame(m_fixtures, colors);
+        m_fixtureDmx = buildDmxFrame(m_fixtures, colors);
         auto looks = fixtureOutput(m_fixtures, colors);
-        m_dmx.submit(frame);
         std::lock_guard<std::mutex> lk(m_dmxMutex);
-        m_dmxLast = std::move(frame);
         m_fixtureLooks = std::move(looks);
     } else if (m_fixturePoints.empty()) {
         std::lock_guard<std::mutex> lk(m_dmxMutex);
         m_fixtureLooks.clear();
-        if (!m_dmxLast.empty()) {
-            m_dmxLast.clear();
-            m_dmx.submit({});
+        m_fixtureDmx.clear();
+    }
+    if (got || m_fixturePoints.empty() || !m_actionDmx.empty() || !m_interactionDmx.empty() || m_hadInteractionDmx) {
+        m_hadInteractionDmx = !m_interactionDmx.empty();
+        auto frame = m_fixtureDmx;
+        for (const auto *overrides : {&m_actionDmx, &m_interactionDmx}) {
+            for (const auto &[key, values] : *overrides) {
+                const auto *output = m_fixtures.findOutput(key.first);
+                if (!output || !output->enabled) continue;
+                auto &universe = frame[key];
+                if (universe.isEmpty()) universe = QByteArray(512, char(0));
+                for (const auto &[channel, value] : values) universe[channel] = char(value);
+            }
+        }
+        std::lock_guard<std::mutex> lk(m_dmxMutex);
+        if (frame != m_dmxLast) {
+            m_dmx.submit(frame);
+            m_dmxLast = std::move(frame);
         }
     }
     const RenderTarget &out = m_output[m_back];

@@ -5,7 +5,7 @@
 #include <QUdpSocket>
 #include <cmath>
 
-SequenceFeedback::SequenceFeedback(Engine *engine, QObject *parent) : QObject(parent), m_e(engine)
+SequenceFeedback::SequenceFeedback(Engine *engine, QObject *parent) : QObject(parent), m_e(engine), m_namespace(engine)
 {
     m_socket = new QUdpSocket(this);
     m_timer.setInterval(100);
@@ -36,10 +36,18 @@ bool SequenceFeedback::parseTarget(const QString &target, QString *host, quint16
 
 void SequenceFeedback::setTargets(const QStringList &targets)
 {
+    auto previous = std::move(m_targets);
     m_targets.clear();
     for (const QString &t : targets) {
         Target target;
         if (!parseTarget(t, &target.host, &target.port)) continue;
+        const auto existing = std::find_if(previous.begin(), previous.end(), [&](const Target &old) {
+            return old.host == target.host && old.port == target.port;
+        });
+        if (existing != previous.end() && !existing->address.isNull()) {
+            m_targets.push_back(*existing);
+            continue;
+        }
         if (target.host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0)
             target.address = QHostAddress(QHostAddress::LocalHost);
         else
@@ -51,11 +59,9 @@ void SequenceFeedback::setTargets(const QStringList &targets)
             QHostInfo::lookupHost(host, this, [this, host](const QHostInfo &info) {
                 for (Target &t : m_targets)
                     if (t.host == host && !info.addresses().isEmpty()) t.address = info.addresses().constFirst();
-                sendNow(true);
             });
         }
     }
-    sendNow(true);
 }
 
 void SequenceFeedback::setEnabled(bool on)
@@ -64,9 +70,10 @@ void SequenceFeedback::setEnabled(bool on)
     m_enabled = on;
     if (on) {
         m_timer.start();
-        sendNow(true);
+        sendNow(false);
     } else {
         m_timer.stop();
+        m_sent.clear();
     }
 }
 
@@ -79,8 +86,7 @@ void SequenceFeedback::setModified(bool on)
 
 void SequenceFeedback::tick()
 {
-    // Everything again every 2 seconds: an interface started late gets the whole state
-    sendNow(++m_ticks % 20 == 0);
+    sendNow(false);
 }
 
 static QString clockText(double t)
@@ -226,15 +232,35 @@ std::vector<osc::Message> SequenceFeedback::stateFor(Engine *engine, bool modifi
 void SequenceFeedback::sendNow(bool everything)
 {
     if (!m_enabled || m_targets.empty()) return;
+    auto messages = state();
+    QSet<QString> sequencePaths;
+    for (const auto &message : messages) sequencePaths.insert(message.address);
+    {
+        Engine::Lock lock(&m_e->mutex());
+        m_namespace.refresh();
+        for (const auto &path : m_namespace.paths()) {
+            if (sequencePaths.contains(path)) continue;
+            const auto *node = m_namespace.node(path);
+            if (!node || !node->get || !(node->access & 1)) continue;
+            osc::Message message{path, node->type, node->get()};
+            if (message.args.isEmpty()) continue;
+            for (qsizetype i = 0; i < message.types.size(); ++i)
+                if (message.types[i] == 'T' || message.types[i] == 'F')
+                    message.types[i] = message.args.value(i).toBool() ? QLatin1Char('T') : QLatin1Char('F');
+            messages.push_back(std::move(message));
+        }
+    }
+    QHash<QString, QByteArray> current;
     int count = 0;
-    for (const osc::Message &m : state()) {
-        auto it = m_sent.find(m.address);
-        if (!everything && it != m_sent.end() && it.value() == m.args) continue;
-        m_sent.insert(m.address, m.args);
-        const QByteArray packet = osc::encode(m);
-        for (const Target &t : m_targets)
-            if (!t.address.isNull()) m_socket->writeDatagram(packet, t.address, t.port);
+    for (const auto &message : messages) {
+        const auto packet = osc::encode(message);
+        const auto previous = m_sent.constFind(message.address);
+        current.insert(message.address, packet);
+        if (!everything && (previous == m_sent.cend() || previous.value() == packet)) continue;
+        for (const auto &target : m_targets)
+            if (!target.address.isNull()) m_socket->writeDatagram(packet, target.address, target.port);
         ++count;
     }
+    m_sent = std::move(current);
     if (count) emit sent(count);
 }

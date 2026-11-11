@@ -126,6 +126,9 @@ void Engine::clearProject()
         m_nextInteractionId = 1;
         m_nextPatchId = 1;
         m_fixtures = FixturePatch();
+        m_fixtureDmx.clear();
+        m_actionDmx.clear();
+        m_interactionDmx.clear();
         ++m_fixturesVersion;
         m_fixtureParamsDirty = true;
     }

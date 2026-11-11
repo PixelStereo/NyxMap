@@ -1,5 +1,6 @@
 // Engine: the interactions (Interactions.h) — their list, their sources' events, and the chains run each frame.
 #include "EngineInternal.h"
+#include "InteractionOutput.h"
 #include "Midi.h"
 #include "EventLog.h"
 #include "OscCodec.h"
@@ -148,7 +149,12 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
                 continue;
             }
             const auto last = m_graphLastOutputs.find(node.id);
-            if (!eventOnly && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            const bool dmx = !target.layer && target.param.startsWith(QLatin1String("output/dmx/"));
+            if (!eventOnly && !dmx && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            if (!target.layer && writeInteractionOutput(target.param, *value, false)) {
+                m_graphLastOutputs[node.id] = *value;
+                continue;
+            }
             m_graphLastOutputs[node.id] = *value;
             if (target.layer) {
                 const int index = indexOfId(target.layer);
@@ -525,57 +531,93 @@ void Engine::feedControlAction(const QString &path, double value)
     }
 }
 
+void Engine::sendInteractionOsc(const InteractionConsequence &c, double sourceValue)
+{
+    QString host;
+    quint16 port = 0;
+    static const QRegularExpression addressPattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
+    if (!SequenceFeedback::parseTarget(c.oscDestination, &host, &port) ||
+        !addressPattern.match(c.oscAddress).hasMatch() || c.oscAddress.contains(QChar::Null)) return;
+    osc::Message message{c.oscAddress, {}, {}};
+    for (const auto argument : c.oscArguments) {
+        QVariant value = argument.toVariant();
+        char tag = 'N';
+        if (argument.isString()) {
+            if (argument.toString() == QStringLiteral("$value")) {
+                tag = 'f';
+                value = sourceValue;
+            } else {
+                if (argument.toString().contains(QChar::Null)) return;
+                tag = 's';
+            }
+        } else if (argument.isDouble()) {
+            const double number = argument.toDouble();
+            tag = number >= std::numeric_limits<qint32>::min() && number <= std::numeric_limits<qint32>::max() &&
+                          std::trunc(number) == number ? 'i' : 'f';
+        } else if (argument.isBool()) {
+            tag = argument.toBool() ? 'T' : 'F';
+        } else if (!argument.isNull()) {
+            return;
+        }
+        message.types += QLatin1Char(tag);
+        message.args.push_back(value);
+    }
+    const QByteArray packet = osc::encode(message);
+    if (packet.size() > 65507) return;
+    QMetaObject::invokeMethod(this, [this, host, port, packet, address = c.oscAddress] {
+        const auto send = [this, port, packet, address](const QHostAddress &target) {
+            QUdpSocket socket;
+            if (socket.writeDatagram(packet, target, port) == packet.size() && EventLog::instance().wants(EventLog::OscOut)) {
+                EventLog::instance().append(EventLog::OscOut, address);
+                emit eventObserved(QStringLiteral("OSC OUT"), address);
+            }
+        };
+        const QHostAddress numeric(host);
+        if (!numeric.isNull()) send(numeric);
+        else if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) send(QHostAddress::LocalHost);
+        else QHostInfo::lookupHost(host, this, [send](const QHostInfo &info) {
+            if (!info.addresses().isEmpty()) send(info.addresses().constFirst());
+        });
+    }, Qt::QueuedConnection);
+}
+
+bool Engine::writeInteractionOutput(const QString &path, double value, bool action)
+{
+    const auto output = InteractionOutput::fromPath(path);
+    if (output.protocol.isEmpty()) return false;
+    if (!std::isfinite(value)) return true;
+    if (output.protocol == "osc") {
+        InteractionConsequence message;
+        message.oscDestination = output.destination;
+        message.oscAddress = output.address;
+        message.oscArguments = output.arguments;
+        sendInteractionOsc(message, value);
+    } else if (output.protocol == "dmx") {
+        const auto id = output.destination.toULongLong();
+        const auto *configured = m_fixtures.findOutput(id);
+        if (!configured || !configured->enabled) return true;
+        const bool sacn = configured->protocol == DmxOutput::Protocol::Sacn;
+        if (output.channel >= 1 && output.channel <= 512 &&
+            output.number >= (sacn ? 1 : 0) && output.number <= (sacn ? 63999 : 32767)) {
+            auto &values = action ? m_actionDmx : m_interactionDmx;
+            values[{id, output.number}][output.channel - 1] = quint8(std::lround(std::clamp(value, 0.0, 1.0) * 255));
+        }
+    } else if (output.channel >= 1 && output.channel <= 16 && output.number >= 0 && output.number <= 127) {
+        const auto id = output.destination.toULongLong();
+        m_tcRouter->sendMidi(id, {uint8_t(0xb0 | (output.channel - 1)), uint8_t(output.number),
+                                  uint8_t(std::lround(std::clamp(value, 0.0, 1.0) * 127))});
+    }
+    return true;
+}
+
 void Engine::runConsequence(const InteractionConsequence &c, double sourceValue)
 {
     if (c.sendsOsc()) {
-        QString host;
-        quint16 port = 0;
-        static const QRegularExpression addressPattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
-        if (!SequenceFeedback::parseTarget(c.oscDestination, &host, &port) ||
-            !addressPattern.match(c.oscAddress).hasMatch() || c.oscAddress.contains(QChar::Null)) return;
-        osc::Message message{c.oscAddress, {}, {}};
-        for (const auto argument : c.oscArguments) {
-            QVariant value = argument.toVariant();
-            char tag = 'N';
-            if (argument.isString()) {
-                if (argument.toString() == QStringLiteral("$value")) {
-                    tag = 'f';
-                    value = sourceValue;
-                } else {
-                    if (argument.toString().contains(QChar::Null)) return;
-                    tag = 's';
-                }
-            } else if (argument.isDouble()) {
-                const double number = argument.toDouble();
-                tag = number >= std::numeric_limits<qint32>::min() && number <= std::numeric_limits<qint32>::max() &&
-                              std::trunc(number) == number ? 'i' : 'f';
-            } else if (argument.isBool()) {
-                tag = argument.toBool() ? 'T' : 'F';
-            } else if (!argument.isNull()) {
-                return;
-            }
-            message.types += QLatin1Char(tag);
-            message.args.push_back(value);
-        }
-        const QByteArray packet = osc::encode(message);
-        if (packet.size() > 65507) return;
-        QMetaObject::invokeMethod(this, [this, host, port, packet, address = c.oscAddress] {
-            const auto send = [this, port, packet, address](const QHostAddress &target) {
-                QUdpSocket socket;
-                if (socket.writeDatagram(packet, target, port) == packet.size() && EventLog::instance().wants(EventLog::OscOut)) {
-                    EventLog::instance().append(EventLog::OscOut, address);
-                    emit eventObserved(QStringLiteral("OSC OUT"), address);
-                }
-            };
-            const QHostAddress numeric(host);
-            if (!numeric.isNull()) send(numeric);
-            else if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) send(QHostAddress::LocalHost);
-            else QHostInfo::lookupHost(host, this, [send](const QHostInfo &info) {
-                if (!info.addresses().isEmpty()) send(info.addresses().constFirst());
-            });
-        }, Qt::QueuedConnection);
+        sendInteractionOsc(c, sourceValue);
         return;
     }
+    const bool osc = c.param.startsWith(QLatin1String("output/osc/"));
+    if (!c.layer && writeInteractionOutput(c.param, osc ? sourceValue : c.value, true)) return;
     releaseFromFades(c.layer, c.param);
     Parameter *p = c.time > 0 ? findParameter(c.layer, c.param) : nullptr;
     const ParamInfo info = p ? p->info() : ParamInfo{};
@@ -590,6 +632,7 @@ void Engine::runConsequence(const InteractionConsequence &c, double sourceValue)
 
 void Engine::stepInteractions(double dt)
 {
+    m_interactionDmx.clear();
     std::vector<InteractionEvent> events;
     {
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
@@ -847,7 +890,9 @@ void Engine::stepInteractions(double dt)
         }
         const bool changed = fresh || colorMoved || !run.lastOut || std::abs(*run.lastOut - *out) > 1e-9;
         run.lastOut = out;
-        if (!changed) continue; // nothing new: the target is left to whatever else moves it
+        const bool dmx = !it.layer && it.param.startsWith(QLatin1String("output/dmx/"));
+        if (!changed && !dmx) continue; // nothing new: the target is left to whatever else moves it
+        if (!it.layer && writeInteractionOutput(it.param, *out, false)) continue;
         if (it.param.isEmpty()) continue; // no target yet: its source and its filters still shown moving
         if (it.layer) {
             const int li = indexOfId(it.layer);
