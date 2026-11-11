@@ -218,7 +218,7 @@ private:
 class RecallSnapshot : public QUndoCommand
 {
 public:
-    RecallSnapshot(Engine *e, int snapshot);
+    RecallSnapshot(Engine *e, int snapshot, double fadeOverride = -1);
     // Already recalled elsewhere (the cue clock), with the state it replaced: the first redo does nothing
     RecallSnapshot(Engine *e, int snapshot, const QJsonArray &before, const QJsonObject &beforeComposition,
                    const QJsonArray &beforeInteractions, const QJsonArray &beforeFixtures = {});
@@ -234,6 +234,7 @@ public:
 private:
     Engine *m_e;
     quint64 m_snapshot;
+    double m_fadeOverride = -1;
     QJsonArray m_before;
     QJsonObject m_beforeComposition;
     QJsonArray m_beforeInteractions;
@@ -355,13 +356,14 @@ private:
 class RecallPreset : public QUndoCommand
 {
 public:
-    RecallPreset(Engine *e, quint64 preset);
+    RecallPreset(Engine *e, quint64 preset, double fadeOverride = -1);
     void undo() override;
     void redo() override;
 
 private:
     Engine *m_e;
     quint64 m_preset;
+    double m_fadeOverride = -1;
     std::vector<Engine::PresetValue> m_before;
     std::map<quint64, int> m_parts;
     std::map<quint64, QJsonObject> m_layers;

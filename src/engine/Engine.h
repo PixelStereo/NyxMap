@@ -529,8 +529,8 @@ public:
     int addPreset(const Preset &p, int at = -1); // returns where it went
     void removePreset(int i);
     int indexOfPreset(quint64 id) const;
-    void recallPreset(int i);
-    double presetDuration(quint64 id) const;
+    void recallPreset(int i, double fadeOverride = -1);
+    double presetDuration(quint64 id, double fadeOverride = -1) const;
     void cancelParameterRecall(quint64 layer, const QString &path); // undo of an outstanding preset recall
     // A value as it is now, to put in a preset (an undefined value: it has none at that address)
     PresetValue presetValue(quint64 layer, const QString &path) const;
@@ -661,15 +661,15 @@ public:
     Sequencer &sequencer() { return *m_sequencer; }
     const Sequencer &sequencer() const { return *m_sequencer; }
     // A snapshot's action: its longest time (the fade, and the times of its own values)
-    double snapshotDuration(quint64 id) const;
+    double snapshotDuration(quint64 id, double fadeOverride = -1) const;
     // A step's action: its snapshot's, or the time its timeline will play (Play on a timeline that ends; else 0;
     double animationRemaining(quint64 id) const; // real seconds a timeline playing has left (infinity: not moving)
     // Real seconds a timeline told to play now will play (0: endless or gone; infinity: frozen, speed 0)
     double animationPlayTime(quint64 id) const;
-    void recallSnapshot(int i); // with its fade
+    void recallSnapshot(int i, double fadeOverride = -1); // with its fade
     // The same, found by its id: from another thread (the cue clock), where an index may change meanwhile (a snapshot
     // added or removed in the interface). false: gone
-    bool recallSnapshotById(quint64 id);
+    bool recallSnapshotById(quint64 id, double fadeOverride = -1);
     bool isFading() const;
     // The snapshot recalled last, and where its fade is (its longest time: values with times of their own included)
     struct RecallProgress {

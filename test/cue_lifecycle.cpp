@@ -23,7 +23,7 @@ int runCueLifecycleTests(Engine &engine)
     }
     auto reset = [&] {
         seq.clear(); fired.clear();
-        seq.setRecaller([&](int index) { fired.push_back(index); });
+        seq.setRecaller([&](int index, double) { fired.push_back(index); });
         Sequencer::Sequence s;
         for (int i = 0; i < 3; ++i) {
             Sequencer::Step step; step.snapshot = engine.snapshot(i).id;
@@ -79,13 +79,13 @@ int runCueLifecycleTests(Engine &engine)
     reset(); s = seq.sequence(0);
     s.steps[0].preWait = 1; s.steps[0].next = Sequencer::StepContinue::AutoFollow;
     seq.setSequence(0, s);
-    seq.setRecaller([&](int index) { fired.push_back(index); seq.stopAll(); });
+    seq.setRecaller([&](int index, double) { fired.push_back(index); seq.stopAll(); });
     seq.go(); seq.advance(1); seq.advance(10);
     check(fired == std::vector<int>({0}) && !seq.anyActive(), "STOP during recall cancels its already prepared follow");
 
     reset(); s = seq.sequence(0); s.steps[0].preWait = 1; s.steps[1].preWait = 1;
     seq.setSequence(0, s); seq.go(); seq.go();
-    seq.setRecaller([&](int index) { fired.push_back(index); seq.stopAll(); });
+    seq.setRecaller([&](int index, double) { fired.push_back(index); seq.stopAll(); });
     seq.advance(1);
     check(fired == std::vector<int>({0}), "STOP during first recall cancels remaining actions in the same batch");
 

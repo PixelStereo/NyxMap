@@ -325,7 +325,8 @@ SetStructure::SetStructure(Engine *e, const LayerTree &before, const LayerTree &
     setText(text);
 }
 
-RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(e->snapshot(snapshot).id)
+RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, double fadeOverride)
+    : m_e(e), m_snapshot(e->snapshot(snapshot).id), m_fadeOverride(fadeOverride)
 {
     m_before = e->captureRecallLayers(snapshot);
     m_beforeComposition = e->captureComposition();
@@ -348,7 +349,7 @@ void RecallSnapshot::redo()
     if (index < 0) return;
     if (m_first) {
         m_first = false;
-        if (!m_done) m_e->recallSnapshot(index);
+        if (!m_done) m_e->recallSnapshot(index, m_fadeOverride);
     } else {
         const Engine::Snapshot m = m_e->snapshot(index);
         if (!m.layers.isEmpty()) m_e->applyLayers(m.layers, 0, true);
@@ -480,7 +481,8 @@ void SetLayerAnim::apply(const std::optional<Animation> &a)
 
 // --- Presets -----------------------------------------------------------------
 
-RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
+RecallPreset::RecallPreset(Engine *e, quint64 preset, double fadeOverride)
+    : m_e(e), m_preset(preset), m_fadeOverride(fadeOverride)
 {
     Engine::Lock lock(&e->mutex()); // parameter outputs and animation clocks are one Undo state
     const Engine::Preset p = e->preset(e->indexOfPreset(preset));
@@ -549,7 +551,7 @@ void RecallPreset::undo()
 void RecallPreset::redo()
 {
     const int index = m_e->indexOfPreset(m_preset);
-    if (index >= 0) m_e->recallPreset(index);
+    if (index >= 0) m_e->recallPreset(index, m_fadeOverride);
 }
 
 static bool samePresets(const std::vector<Engine::Preset> &a, const std::vector<Engine::Preset> &b)

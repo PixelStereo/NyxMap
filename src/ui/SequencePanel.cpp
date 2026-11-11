@@ -570,7 +570,7 @@ class StepTimeEditor : public QFrame
 {
 public:
     StepTimeEditor(QWidget *parent, const QString &suffix, double pre, const QString &action, double post, bool postCounts,
-                   std::function<void(double, double)> apply)
+                   double defaultFade, double fadeOverride, std::function<void(double, double, double)> apply)
         : QFrame(parent, Qt::Popup), m_apply(std::move(apply))
     {
         setObjectName(QStringLiteral("stepTimeEditor"));
@@ -595,10 +595,22 @@ public:
         grid->addWidget(m_pre, 0, 1);
         grid->addWidget(new QLabel(QStringLiteral("Action")), 1, 0);
         auto *time = new QLabel(action);
-        time->setToolTip(QStringLiteral("The snapshot's time, or the time the timeline plays: set on them"));
+        time->setToolTip(QStringLiteral("The effective action time, including individual delays and fades"));
         grid->addWidget(time, 1, 1, Qt::AlignRight);
-        grid->addWidget(new QLabel(QStringLiteral("Post-wait")), 2, 0);
-        grid->addWidget(m_post, 2, 1);
+        if (defaultFade >= 0) {
+            m_override = new QCheckBox(QStringLiteral("Override fade"));
+            m_override->setObjectName(QStringLiteral("stepFadeOverride"));
+            m_override->setChecked(fadeOverride >= 0);
+            m_fade = field("stepFade", fadeOverride >= 0 ? fadeOverride : defaultFade);
+            m_fade->setSuffix(QStringLiteral(" s"));
+            m_fade->setEnabled(m_override->isChecked());
+            m_override->setToolTip(QStringLiteral("Replace the cue's default fade for this step. Individual times and delays still apply."));
+            connect(m_override, &QCheckBox::toggled, m_fade, &QWidget::setEnabled);
+            grid->addWidget(m_override, 2, 0);
+            grid->addWidget(m_fade, 2, 1);
+        }
+        grid->addWidget(new QLabel(QStringLiteral("Post-wait")), 3, 0);
+        grid->addWidget(m_post, 3, 1);
     }
     void focusOn(bool post)
     {
@@ -621,14 +633,17 @@ protected:
             m_applied = true;
             m_pre->interpretText();
             m_post->interpretText();
-            m_apply(m_pre->value(), m_post->value());
+            if (m_fade) m_fade->interpretText();
+            m_apply(m_pre->value(), m_post->value(), m_override && m_override->isChecked() ? m_fade->value() : -1);
         }
         deleteLater();
     }
 
 private:
     QDoubleSpinBox *m_pre, *m_post;
-    std::function<void(double, double)> m_apply;
+    QDoubleSpinBox *m_fade = nullptr;
+    QCheckBox *m_override = nullptr;
+    std::function<void(double, double, double)> m_apply;
     bool m_applied = false;
 };
 
@@ -1102,14 +1117,27 @@ void SequenceWindow::openTimeEditor(int row, bool post)
     if (!found) return;
     const Sequencer::Step &st = *found;
     const double length = m_engine->sequencer().stepDuration(st, s.beats ? m_engine->beatClock().secondsPerBeat() : 1.0);
+    double defaultFade = -1;
+    if (st.actions.empty() && !st.timeline && !st.sequence) {
+        if (st.preset) {
+            const int index = m_engine->indexOfPreset(st.preset);
+            if (index >= 0) defaultFade = m_engine->preset(index).fade;
+        } else if (st.snapshot) {
+            const int index = m_engine->indexOfSnapshot(st.snapshot);
+            if (index >= 0) defaultFade = m_engine->snapshot(index).fade;
+        }
+    }
     auto *editor = new StepTimeEditor(this, s.beats ? QStringLiteral(" beats") : QStringLiteral(" s"), st.preWait,
                                       QStringLiteral("%1 s").arg(seconds(length)), st.postWait,
-                                      actionOfRow(row) >= 0 || st.next != Sequencer::StepContinue::Wait, [this, cur, row](double pre, double postWait) {
+                                      actionOfRow(row) >= 0 || st.next != Sequencer::StepContinue::Wait,
+                                      defaultFade, st.fadeOverride, [this, cur, row, defaultFade](double pre, double postWait, double fadeOverride) {
         Sequencer::Sequence edited = m_engine->sequencer().sequence(cur);
         Sequencer::Step *target = stepAt(edited, row);
         if (!target) return;
         Sequencer::Step &step = *target;
-        if (step.preWait == pre && step.postWait == postWait) return;
+        if (defaultFade < 0) fadeOverride = step.fadeOverride;
+        if (step.preWait == pre && step.postWait == postWait && step.fadeOverride == fadeOverride) return;
+        step.fadeOverride = fadeOverride;
         step.preWait = pre;
         step.postWait = postWait;
         applySequence(cur, edited);

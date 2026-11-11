@@ -43,13 +43,13 @@ void Sequencer::shutdownClock()
     m_ticking = false;
 }
 
-void Sequencer::setRecaller(std::function<void(int snapshotIndex)> f)
+void Sequencer::setRecaller(std::function<void(int snapshotIndex, double fadeOverride)> f)
 {
     QMutexLocker lk(&m_mutex);
     m_recaller = std::move(f);
 }
 
-void Sequencer::setPresetRecaller(std::function<void(int)> f)
+void Sequencer::setPresetRecaller(std::function<void(int, double)> f)
 {
     QMutexLocker lk(&m_mutex);
     m_presetRecaller = std::move(f);
@@ -500,8 +500,8 @@ void Sequencer::playAtOnce(const std::vector<Step> &steps)
         }
         const int index = st.preset ? m_engine.indexOfPreset(st.preset) : m_engine.indexOfSnapshot(st.snapshot);
         if (index < 0) continue;
-        if (st.preset) m_engine.recallPreset(index);
-        else m_engine.recallSnapshot(index);
+        if (st.preset) m_engine.recallPreset(index, st.fadeOverride);
+        else m_engine.recallSnapshot(index, st.fadeOverride);
         m_engine.finishRecalls();
     }
 }
@@ -767,7 +767,7 @@ void Sequencer::tick()
     { QMutexLocker lock(&m_mutex); pending.swap(m_pendingSnapshots); }
     for (const auto &request : pending) {
         QMutexLocker dispatch(&m_dispatchMutex);
-        if (request.valid->load()) fireSnapshot(request.id);
+        if (request.valid->load()) fireSnapshot(request.id, request.fadeOverride);
     }
     advance(dt);
     bool empty;
@@ -781,9 +781,9 @@ void Sequencer::tick()
     }
 }
 
-void Sequencer::fireSnapshot(quint64 snapshotId)
+void Sequencer::fireSnapshot(quint64 snapshotId, double fadeOverride)
 {
-    std::function<void(int)> recaller;
+    std::function<void(int, double)> recaller;
     std::function<void(int, const RecallBefore &)> recorder;
     {
         QMutexLocker lk(&m_mutex);
@@ -794,8 +794,8 @@ void Sequencer::fireSnapshot(quint64 snapshotId)
         // The interface edits snapshots on this thread: the index stays the same until the recall
         const int mi = m_engine.indexOfSnapshot(snapshotId);
         if (mi < 0) return;
-        if (recaller) recaller(mi);
-        else m_engine.recallSnapshot(mi);
+        if (recaller) recaller(mi, fadeOverride);
+        else m_engine.recallSnapshot(mi, fadeOverride);
         return;
     }
     // The cue clock: by id only, the interface may add or remove a snapshot meanwhile (an index would then recall
@@ -812,7 +812,7 @@ void Sequencer::fireSnapshot(quint64 snapshotId)
         m_workTiming.total.add(double(applied - start) / 1e6);
     };
     if (!recorder) {
-        if (!m_engine.recallSnapshotById(snapshotId)) return;
+        if (!m_engine.recallSnapshotById(snapshotId, fadeOverride)) return;
         const qint64 done = FrameTiming::nowNs();
         recordWork(start, done); // no UI Undo recording, so capture time is zero
         return;
@@ -820,7 +820,7 @@ void Sequencer::fireSnapshot(quint64 snapshotId)
     RecallBefore before{m_engine.captureRecallLayersById(snapshotId), m_engine.captureComposition(), m_engine.captureInteractions(),
                         m_engine.captureFixtures()};
     const qint64 captured = FrameTiming::nowNs();
-    if (!m_engine.recallSnapshotById(snapshotId)) return;
+    if (!m_engine.recallSnapshotById(snapshotId, fadeOverride)) return;
     recordWork(captured, FrameTiming::nowNs());
     {
         QMutexLocker lock(&m_mutex);
@@ -885,7 +885,7 @@ void Sequencer::advance(double dt)
                 if (!r.fired && r.elapsed >= r.preWait) {
                     r.fired = true;
                     noteFired(r.elapsed - r.preWait); // how late the clock let it fire
-                    if (r.target.preset) r.duration = stepDuration(r.target) + r.elapsed - r.preWait;
+                    if (r.target.preset || r.target.snapshot) r.duration = stepDuration(r.target) + r.elapsed - r.preWait;
                     if (r.target.timeline) {
                         r.duration = stepDuration(r.target); // where the timeline is now
                         // A late Play starts now, not at the missed pre-wait deadline.
@@ -1010,17 +1010,17 @@ void Sequencer::advance(double dt)
             if (st.preset) {
                 const int index = m_engine.indexOfPreset(st.preset);
                 if (index < 0) continue;
-                std::function<void(int)> recaller;
+                std::function<void(int, double)> recaller;
                 { QMutexLocker lk(&m_mutex); recaller = m_presetRecaller; }
-                if (QThread::currentThread() == thread() && recaller) recaller(index);
-                else m_engine.recallPreset(index);
+                if (QThread::currentThread() == thread() && recaller) recaller(index, st.fadeOverride);
+                else m_engine.recallPreset(index, st.fadeOverride);
                 continue;
             }
             if (st.timeline) {
                 m_engine.controlAnimation(st.timeline, st.action, st.action == AnimAction::Speed ? st.speed : st.seekTime, st.loop, st.repeat);
                 continue;
             }
-            fireSnapshot(st.snapshot); // a step without its snapshot (gone): the position moves, nothing else
+            fireSnapshot(st.snapshot, st.fadeOverride); // a step without its snapshot (gone): the position moves, nothing else
         }
         {
             QMutexLocker lk(&m_mutex); // the Plays are issued: their steps follow the timelines from now on
@@ -1076,6 +1076,7 @@ QJsonObject Sequencer::stepToJson(const Step &st)
     }
     if (!st.description.isEmpty())
         o["description"] = st.description;
+    if (st.fadeOverride >= 0 && (st.snapshot || st.preset)) o["fade_override"] = st.fadeOverride;
     if (st.preWait > 0)
         o["pre_wait"] = st.preWait;
     if (st.postWait > 0)
@@ -1126,6 +1127,7 @@ Sequencer::Step Sequencer::stepFromJson(const QJsonObject &so)
         st.snapshot = 0;
     }
     st.description = so.value("description").toString();
+    st.fadeOverride = std::clamp(so.value("fade_override").toDouble(-1), -1.0, 3600.0);
     st.preWait = std::clamp(so.value("pre_wait").toDouble(0), 0.0, 3600.0);
     st.postWait = std::clamp(so.value("post_wait").toDouble(0), 0.0, 3600.0);
     st.quantize = std::clamp(so.value("quantize").toDouble(0), 0.0, 64.0);
@@ -1255,18 +1257,18 @@ double Sequencer::stepDuration(const Step &st, double unit) const
         return duration;
     }
     if (st.sequence) return 0; // starts an independent sequence, which owns its waits and follows
-    if (st.preset) return m_engine.presetDuration(st.preset);
-    if (!st.timeline) return m_engine.snapshotDuration(st.snapshot);
+    if (st.preset) return m_engine.presetDuration(st.preset, st.fadeOverride);
+    if (!st.timeline) return m_engine.snapshotDuration(st.snapshot, st.fadeOverride);
     return st.action == AnimAction::Play ? m_engine.animationPlayTime(st.timeline) : 0;
 }
 
 #include "Sequencer.moc"
 
 
-bool Sequencer::requestSnapshot(quint64 id)
+bool Sequencer::requestSnapshot(quint64 id, double fadeOverride)
 {
     if (m_engine.indexOfSnapshot(id) < 0 || !m_engine.isThreaded() || m_engine.fadesManual()) return false;
-    { QMutexLocker lock(&m_mutex); m_pendingSnapshots.push_back({id, commandTokenLocked(0)}); }
+    { QMutexLocker lock(&m_mutex); m_pendingSnapshots.push_back({id, fadeOverride, commandTokenLocked(0)}); }
     startTimer();
     return true;
 }
