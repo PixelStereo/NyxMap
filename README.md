@@ -15,6 +15,8 @@ From a single screen to a multi-output installation, design the image and run th
   <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-read-24272C?style=for-the-badge"></a>
 </p>
 
+**[Read the NyxMap documentation](https://pixelstereo.github.io/NyxMap/)**
+
 </div>
 
 <p align="center">
