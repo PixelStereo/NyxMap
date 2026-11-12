@@ -1701,9 +1701,11 @@ void Engine::frame(double dt)
     // Only a tiny visual tap crosses to the audio engine. All GL work stays on this thread; the device callback only reads
     // atomics and performs DSP. An instrument that listens to the picture listens to one viewport's output (its own
     // setting; the first viewport by default, the composition when the project has none): one read per viewport watched.
+    // The read never waits for the GPU: each picture goes to a pixel buffer, collected at a following frame once the
+    // GPU is done with it (the sound follows the picture a frame later).
     {
-        std::map<const RenderTarget *, std::array<float, 3>> seen;
-        auto watched = [this](const Layer &l) -> const RenderTarget * {
+        std::map<quint64, const RenderTarget *> seen; // by viewport (0: the composition)
+        auto watched = [this](const Layer &l) -> std::pair<quint64, const RenderTarget *> {
             const Layer *viewport = nullptr;
             for (const auto &candidate : m_layers) {
                 if (!candidate->isViewport) continue;
@@ -1713,38 +1715,78 @@ void Engine::frame(double dt)
                     break;
                 }
             }
-            return viewport ? &viewport->vpOut[viewport->vpBack] : &m_output[m_back];
+            if (viewport) return {viewport->id, &viewport->vpOut[viewport->vpBack]};
+            return {0, &m_output[m_back]};
         };
         for (const auto &layer : m_layers)
-            if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification()) seen[watched(*layer)] = {};
+            if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification()) seen.insert(watched(*layer));
+        auto *f = gl();
         if (!seen.empty()) {
-            auto *f = gl();
             GLint read = 0, draw = 0, pack = 0;
             f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
             f->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
             f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack);
             m_audioVisual.ensure(16, 16);
-            for (auto &[picture, rgb] : seen) {
-                if (!m_audioVisual.ready(16, 16) || !picture->fbo || picture->w <= 0 || picture->h <= 0) continue;
+            constexpr GLsizeiptr bytes = 16 * 16 * 4;
+            for (auto &[id, picture] : seen) {
+                AudioVisualTap &tap = m_audioVisualTaps[id];
+                tap.used = true;
+                // The reads the GPU finished, the older first: the newest one is kept
+                for (const int k : {tap.next, 1 - tap.next}) {
+                    if (!tap.fence[k]) continue;
+                    const GLenum status = f->glClientWaitSync(tap.fence[k], GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+                    if (status == GL_TIMEOUT_EXPIRED) continue;
+                    f->glDeleteSync(tap.fence[k]);
+                    tap.fence[k] = nullptr;
+                    if (status == GL_WAIT_FAILED) continue;
+                    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, tap.pbo[k]);
+                    if (const auto *pixels = static_cast<const unsigned char *>(
+                            f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT))) {
+                        std::array<float, 3> rgb{};
+                        for (size_t i = 0; i < size_t(bytes); i += 4)
+                            for (int c = 0; c < 3; ++c)
+                                rgb[size_t(c)] += pixels[i + size_t(c)] / (255.f * 16 * 16);
+                        f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                        tap.rgb = rgb;
+                    }
+                }
+                // This frame's picture, unless the GPU is two reads late (its buffer is still awaited)
+                if (tap.fence[tap.next] || !m_audioVisual.ready(16, 16) || !picture->fbo || picture->w <= 0 || picture->h <= 0)
+                    continue;
                 f->glBindFramebuffer(GL_READ_FRAMEBUFFER, picture->fbo);
                 f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_audioVisual.fbo);
                 f->glBlitFramebuffer(0, 0, picture->w, picture->h, 0, 0, 16, 16, GL_COLOR_BUFFER_BIT, GL_LINEAR);
                 f->glBindFramebuffer(GL_READ_FRAMEBUFFER, m_audioVisual.fbo);
-                f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                std::array<unsigned char, 16 * 16 * 4> pixels{};
-                f->glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                for (size_t i = 0; i < pixels.size(); i += 4)
-                    for (int c = 0; c < 3; ++c)
-                        rgb[size_t(c)] += pixels[i + size_t(c)] / (255.f * 16 * 16);
+                if (!tap.pbo[tap.next]) {
+                    f->glGenBuffers(1, &tap.pbo[tap.next]);
+                    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, tap.pbo[tap.next]);
+                    f->glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
+                } else {
+                    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, tap.pbo[tap.next]);
+                }
+                f->glPixelStorei(GL_PACK_ALIGNMENT, 4);
+                f->glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                tap.fence[tap.next] = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+                if (tap.fence[tap.next]) tap.next = 1 - tap.next;
             }
             f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(pack));
             f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(read));
             f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(draw));
             for (const auto &layer : m_layers)
                 if (layer->audio && layer->audio->generator() && layer->audio->generator()->sonification()) {
-                    const auto &rgb = seen[watched(*layer)];
+                    const auto &rgb = m_audioVisualTaps[watched(*layer).first].rgb;
                     layer->audio->generator()->setColor(rgb[0], rgb[1], rgb[2]);
                 }
+        }
+        // A viewport no longer listened to: its buffers go
+        for (auto it = m_audioVisualTaps.begin(); it != m_audioVisualTaps.end();) {
+            if (it->second.used) {
+                it->second.used = false;
+                ++it;
+            } else {
+                it->second.release(f);
+                it = m_audioVisualTaps.erase(it);
+            }
         }
     }
     stepVision();

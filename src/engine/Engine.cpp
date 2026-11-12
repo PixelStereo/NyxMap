@@ -588,6 +588,8 @@ void Engine::releaseAll()
     auto f = gl();
     for (RenderTarget &o : m_output) o.destroy();
     m_audioVisual.destroy();
+    for (auto &[id, tap] : m_audioVisualTaps) tap.release(f);
+    m_audioVisualTaps.clear();
     for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
     m_isfAudioTextures.clear();
     m_previewTarget.destroy();

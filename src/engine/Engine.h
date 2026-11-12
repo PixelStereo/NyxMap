@@ -1125,6 +1125,23 @@ private:
     RenderTarget m_output[2];
     GLuint m_compositionReuseTexture = 0; // raw, full-size viewport rendered during this frame
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
+    // What the sound hears of one viewport's picture (0: the composition): read through two pixel buffers, never waited for
+    struct AudioVisualTap {
+        GLuint pbo[2] = {0, 0};
+        GLsync fence[2] = {nullptr, nullptr};
+        int next = 0;               // the buffer the next read goes to
+        std::array<float, 3> rgb{}; // the mean color of the newest read the GPU finished
+        bool used = false;          // listened to this frame
+        void release(QOpenGLExtraFunctions *f)
+        {
+            for (GLsync &s : fence)
+                if (s) f->glDeleteSync(s);
+            for (GLuint &b : pbo)
+                if (b) f->glDeleteBuffers(1, &b);
+            *this = {};
+        }
+    };
+    std::map<quint64, AudioVisualTap> m_audioVisualTaps; // render thread only
     struct IsfAudioTexture {
         Texture2D texture;
         quint64 frame = 0;
