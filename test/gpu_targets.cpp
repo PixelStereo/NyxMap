@@ -5,8 +5,10 @@
 #include "Gl.h"
 #include "Publishing.h"
 #include <QImage>
+#include <QTemporaryDir>
 #include <QThread>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 
 int runGpuTargetTests(Engine &e)
@@ -254,6 +256,42 @@ void main() {
         f->glDeleteVertexArrays(1, &vao);
         f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     });
+    // A plain viewport is composited straight into its output; one whose picture is changed or shown elsewhere keeps
+    // a picture of its own. The output is the same either way
+    {
+        e.newProject();
+        e.setCompositionSize(QSize(32, 32));
+        QTemporaryDir dir;
+        QImage white(32, 32, QImage::Format_RGB32);
+        white.fill(Qt::white);
+        const QString path = dir.filePath("white.png");
+        QString error;
+        const int picture = e.addLayer("White");
+        check(white.save(path) && e.setLayerImage(picture, path, &error), "viewport test picture loaded");
+        const quint64 viewport = e.mainViewportId();
+        const auto red = [&] { return qRed(e.grabViewport(viewport).pixel(16, 16)); };
+        const auto direct = [&] { return e.layer(e.indexOfId(viewport))->vpDirect; };
+        for (int i = 0; i < 4; ++i) e.renderFrame();
+        check(direct() && red() > 250, "a plain viewport is composited straight into its output");
+        e.fadeCompositionOpacity(0.5, 0.0);
+        for (int i = 0; i < 6; ++i) e.renderFrame();
+        check(direct() && std::abs(red() - 128) < 4, "the composition opacity dims its output once, at every frame");
+        e.setPaused(true);
+        for (int i = 0; i < 8; ++i) e.renderFrame(); // every output buffer has come round more than once
+        check(direct() && std::abs(red() - 128) < 4, "paused: its output holds, not dimmed again at each frame");
+        e.setPaused(false);
+        e.fadeCompositionOpacity(1.0, 0.0);
+        check(e.setParameter(viewport, "opacity", 0.5), "viewport opacity set");
+        for (int i = 0; i < 4; ++i) e.renderFrame();
+        check(!direct() && std::abs(red() - 128) < 4, "a viewport with an opacity of its own keeps its own picture");
+        check(e.setParameter(viewport, "opacity", 1.0), "viewport opacity back");
+        for (int i = 0; i < 4; ++i) e.renderFrame();
+        check(direct() && red() > 250, "plain again: straight into its output again");
+        e.requestSourcePreview(viewport, 64); // the inspector shows the viewport's own picture
+        for (int i = 0; i < 4; ++i) e.renderFrame();
+        check(!direct() && red() > 250, "a viewport whose picture the inspector shows keeps its own picture");
+        e.requestSourcePreview(0, 64);
+    }
     e.newProject();
     return failures;
 }

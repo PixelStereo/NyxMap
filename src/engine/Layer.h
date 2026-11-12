@@ -450,6 +450,10 @@ struct Layer {
     // The published frame must remain intact while a delayed Syphon/Spout share copies
     // the previous frame: use a third render target only for delayed sharing.
     RenderTarget vpOut[3];
+    // Render thread. A plain viewport (no ROI, color, effect, mask, matte or output color of its own, at full opacity,
+    // its picture used by nothing else) is composited straight into its output: vpDirect, set by the frame that drew it
+    // so. vpPictureUsed: another layer, a shader, a model or the inspector's preview shows its picture this frame
+    bool vpDirect = false, vpPictureUsed = false;
     int vpBack = 1;
     std::atomic<int> vpPublished{0};
     static int nextViewportBack(int oldFront, int newFront, bool delayed)
