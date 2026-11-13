@@ -25,11 +25,15 @@ QImage imageOf(const std::vector<PixelAnalysis::Pixel> &pixels, int w, int h)
     }
     return image;
 }
-// The full-size path uses one byte-RGBA PBO per source. It never builds a list of per-pixel coordinates.
+// What the models see of a source: its picture drawn by the GPU at the size they are given (reduced unless a picture
+// made from it must keep the source's own size), rows top to bottom, then read through one byte-RGBA PBO per source,
+// without waiting. It never builds a list of per-pixel coordinates.
 struct FrameReadback {
     GLuint fbo = 0, pbo = 0;
+    GLuint scaledFbo = 0, scaledTex = 0; // the picture at the size read, top row first
     GLsync fence = nullptr;
-    QSize size;
+    QSize size;       // of the picture read (and of the pixel buffer)
+    QSize scaledSize; // of scaledTex
     qint64 submitted = 0;
 
     void release()
@@ -38,6 +42,8 @@ struct FrameReadback {
         if (fence) f->glDeleteSync(fence);
         if (pbo) f->glDeleteBuffers(1, &pbo);
         if (fbo) f->glDeleteFramebuffers(1, &fbo);
+        if (scaledFbo) f->glDeleteFramebuffers(1, &scaledFbo);
+        if (scaledTex) f->glDeleteTextures(1, &scaledTex);
         *this = {};
     }
 
@@ -57,9 +63,7 @@ struct FrameReadback {
         f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
         const auto bytes = GLsizeiptr(image.sizeInBytes());
         if (const auto *data = static_cast<const uchar *>(f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT))) {
-            for (int y = 0; y < size.height(); ++y)
-                std::memcpy(image.scanLine(y), data + qsizetype(size.height() - 1 - y) * image.bytesPerLine(),
-                            size_t(image.bytesPerLine()));
+            std::memcpy(image.bits(), data, size_t(bytes)); // already top row first (the GPU turned it over)
             if (!f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER)) image = {};
         } else {
             image = {};
@@ -69,36 +73,70 @@ struct FrameReadback {
         return image;
     }
 
-    void submit(const VisionRuntime::Texture &picture, qint64 now)
+    // `target`: the size the picture is read at
+    void submit(const VisionRuntime::Texture &picture, QSize target, qint64 now)
     {
-        if (fence || now - submitted < 66666666) return;
+        if (fence || now - submitted < 66666666 || target.isEmpty()) return;
         auto f = gl();
         if (!fbo) f->glGenFramebuffers(1, &fbo);
         if (!pbo) f->glGenBuffers(1, &pbo);
-        GLint previousFbo = 0, previousPbo = 0, alignment = 0;
-        f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousFbo);
+        GLint previousRead = 0, previousDraw = 0, previousPbo = 0, alignment = 0, previousTexture = 0;
+        f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousRead);
+        f->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDraw);
         f->glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPbo);
         f->glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+        f->glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+        if (scaledSize != target) {
+            if (!scaledTex) f->glGenTextures(1, &scaledTex);
+            f->glBindTexture(GL_TEXTURE_2D, scaledTex);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, target.width(), target.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            f->glBindTexture(GL_TEXTURE_2D, GLuint(previousTexture));
+            if (!scaledFbo) f->glGenFramebuffers(1, &scaledFbo);
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scaledFbo);
+            f->glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, scaledTex, 0);
+            scaledSize = f->glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE ? target : QSize();
+        }
         f->glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
         f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, picture.id, 0);
-        if (f->glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        if (scaledSize == target && f->glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            // Reduced and turned over in one copy on the GPU: the pixels come back top row first
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scaledFbo);
+            f->glBlitFramebuffer(0, 0, picture.width, picture.height, 0, target.height(), target.width(), 0,
+                                 GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, scaledFbo);
             f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
-            const QSize dimensions(picture.width, picture.height);
-            if (size != dimensions) {
-                size = dimensions;
+            if (size != target) {
+                size = target;
                 f->glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(qint64(size.width()) * size.height() * 4), nullptr, GL_STREAM_READ);
             }
             f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
             f->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             fence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         }
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
         f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         f->glPixelStorei(GL_PACK_ALIGNMENT, alignment);
         f->glBindBuffer(GL_PIXEL_PACK_BUFFER, GLuint(previousPbo));
-        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previousFbo));
+        f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previousRead));
+        f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(previousDraw));
         submitted = now;
     }
 };
+// The pictures drawn from the source's own pixels (the cutout) or at its size (the pose skeleton): the models are then
+// given the source at its own size. Any other analysis reads it reduced to this long side, far above what the
+// models work at
+constexpr unsigned kSourceSizedPictures = (1u << 3) | (1u << 4);
+constexpr int kModelLongSide = 960;
+QSize modelSize(int width, int height, unsigned pictures)
+{
+    const QSize source(width, height);
+    if ((pictures & kSourceSizedPictures) || std::max(width, height) <= kModelLongSide) return source;
+    return source.scaled(kModelLongSide, kModelLongSide, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
+}
 } // namespace
 struct VisionRuntime::Private {
     struct Input {
@@ -198,7 +236,8 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             continue;
         }
         if (request.tasks) {
-            const QSize dimensions(picture.width, picture.height);
+            // What the models are given: reduced on the GPU, unless a picture asked for keeps the source's size
+            const QSize dimensions = modelSize(picture.width, picture.height, request.pictures);
             if (dimensions != input.pictureSize) {
                 input.clearMasks();
                 input.readback.release();
@@ -208,7 +247,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
             QImage image = input.readback.collect(timestamp);
             if (!image.isNull() && image.size() == dimensions)
                 d->worker.submit(key, std::move(image), timestamp, request.tasks);
-            input.readback.submit(picture, now);
+            input.readback.submit(picture, dimensions, now);
         } else if (input.readback.fbo) {
             input.readback.release();
         }
@@ -258,7 +297,7 @@ void VisionRuntime::step(const std::vector<Request> &requests,
                     continue;
                 }
                 const auto &mask = frame.pictures[i];
-                if (!mask.isNull() && frame.preview.size() == QSize(picture.width, picture.height) &&
+                if (!mask.isNull() && frame.preview.size() == input.pictureSize &&
                     frame.timeNs > input.maskTimes[i] && now - frame.completedNs <= 500000000) {
                     input.masks[i].uploadImage(flippedVertically(mask));
                     input.maskTimes[i] = frame.timeNs;

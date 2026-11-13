@@ -182,14 +182,17 @@ int Engine::presetCount() const
 std::vector<Engine::Preset> Engine::presets() const
 {
     Lock lk(&m_mutex);
-    return m_presets;
+    std::vector<Preset> all;
+    for (const Preset &p : m_presets) all.push_back(resolveMedia(p));
+    return all;
 }
 
 void Engine::setPresets(const std::vector<Preset> &all)
 {
     {
         Lock lk(&m_mutex);
-        m_presets = all;
+        m_presets.clear();
+        for (const Preset &p : all) m_presets.push_back(linkMedia(p)); // their files: named by their Media Bin items
         for (const Preset &p : m_presets) m_nextPresetId = std::max(m_nextPresetId, p.id + 1);
     }
     emit presetsChanged();
@@ -198,7 +201,7 @@ void Engine::setPresets(const std::vector<Preset> &all)
 Engine::Preset Engine::preset(int i) const
 {
     Lock lk(&m_mutex);
-    return i >= 0 && i < int(m_presets.size()) ? m_presets[size_t(i)] : Preset();
+    return i >= 0 && i < int(m_presets.size()) ? resolveMedia(m_presets[size_t(i)]) : Preset();
 }
 
 int Engine::indexOfPreset(quint64 id) const
@@ -215,7 +218,7 @@ void Engine::setPreset(int i, const Preset &p)
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_presets.size())) return;
         const quint64 id = m_presets[size_t(i)].id;
-        m_presets[size_t(i)] = p;
+        m_presets[size_t(i)] = linkMedia(p);
         m_presets[size_t(i)].id = id;
     }
     emit presetsChanged();
@@ -226,7 +229,7 @@ int Engine::addPreset(const Preset &p, int at)
     {
         Lock lk(&m_mutex);
         if (at < 0 || at > int(m_presets.size())) at = int(m_presets.size());
-        Preset copy = p;
+        Preset copy = linkMedia(p);
         bool taken = !copy.id;
         for (const Preset &o : m_presets) taken = taken || o.id == copy.id;
         if (taken) copy.id = m_nextPresetId++;

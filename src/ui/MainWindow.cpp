@@ -2120,20 +2120,21 @@ void MainWindow::relinkMedia(const QString &from, const QString &to)
 {
     const QList<int> layers = m_engine->layersUsingMedia(from);
     QStringList errors;
-    if (!layers.isEmpty()) {
-        // A single undo step for all affected layers
-        m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
-        for (int i : layers) {
-            const QJsonObject before = m_engine->layerJson(i);
-            const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
-            QString err;
-            if (m_engine->relinkLayerMedia(i, from, to, &err))
-                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace"), beforeAnimations));
-            else if (!err.isEmpty()) errors << err;
-        }
-        m_undo->endMacro();
+    // A single undo step: the layers that show the file, and the Media Bin's item (what the snapshots and the
+    // presets name: they have the new file without being touched)
+    m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
+    for (int i : layers) {
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        QString err;
+        if (m_engine->relinkLayerMedia(i, from, to, &err))
+            m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace"), beforeAnimations));
+        else if (!err.isEmpty()) errors << err;
     }
+    const auto itemsBefore = m_engine->mediaItems();
     m_engine->relinkBinItem(from, to);
+    m_undo->push(new cmd::SetMediaItems(m_engine, itemsBefore, m_engine->mediaItems(), QStringLiteral("Replace")));
+    m_undo->endMacro();
     markDirty();
     refreshAll();
     if (!errors.isEmpty()) QMessageBox::warning(this, QStringLiteral("Relink"), errors.join('\n'));

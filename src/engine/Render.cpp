@@ -493,6 +493,27 @@ void Engine::markNeeded()
     for (const auto &node : m_interactionGraph.nodes)
         if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
 
+    // A viewport's own picture (not its output) shown by something else: a layer taking it as its source, a mask, a
+    // matte, a shader's image, a model, the vision, the inspector's source preview
+    for (auto &l : m_layers)
+        if (l->isViewport) l->vpPictureUsed = l->referenced || !l->stagesWanted.empty() || l->id == m_previewId;
+    const auto showsViewport = [&](quint64 id) {
+        const size_t row = renderLayerIndex(id);
+        if (row < n && m_layers[row]->isViewport) m_layers[row]->vpPictureUsed = true;
+    };
+    const auto showsViewports = [&](const Layer &l) {
+        showsViewport(l.sourceLayer);
+        showsViewport(l.matte.layer);
+        showsViewport(l.color.maskLayer);
+        for (const auto &fx : l.effects) showsViewport(fx->maskLayer);
+        forEachImageLayer(l, showsViewport);
+        showsViewport(l.modelPicture);
+        showsViewport(l.modelDisplace);
+        showsViewport(l.sceneEnvironment);
+    };
+    for (auto &l : m_layers) showsViewports(*l);
+    for (auto &[id, transition] : m_transitions) showsViewports(*transition->from);
+
     const bool paused = timeScale() <= 0;
     for (auto &l : m_layers) {
         if (paused) {
@@ -591,6 +612,10 @@ void Engine::renderPausedSources(const IsfRenderContext &rc)
         lp->renderPaused = false;
         for (const Layer *x = lp.get(); x && only.insert(x->id).second; x = x->parent ? layer(indexOfId(x->parent)) : nullptr) {}
     }
+    // A viewport composited straight into its output has no picture of its own to hold: it is composited again from
+    // its layers' held pictures (the output buffers rotate at every frame)
+    for (auto &vp : m_layers)
+        if (vp->isViewport && vp->vpDirect) only.insert(vp->id);
     if (only.empty()) return;
     for (auto &vp : m_layers) {
         if (!vp->isViewport) continue;
@@ -1276,6 +1301,7 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
 void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting)
 {
     v.finalTex = v.rawTex = v.preFxTex = 0;
+    v.vpDirect = false;
     if (!v.enabled) return;
     const QSize size = v.viewportSize();
     // Its test card: what goes to its screen, as it is (no ROI, color or effect)
@@ -1287,19 +1313,49 @@ void Engine::renderViewport(Layer &v, const std::vector<Layer *> &shown, const I
         v.finalH = v.rawH = v.preFxH = v.groupTarget.h;
         return;
     }
-    v.groupTarget.ensure(size.width(), size.height());
-    if (!v.groupTarget.ready(size.width(), size.height())) return;
     // Its region: a rectangle of the composition, upright or turned
     const Mapping::Rect r = v.mapping.rect(m_compSize);
     const double cw = std::max(1, m_compSize.width()), ch = std::max(1, m_compSize.height());
     QRectF view(0, 0, r.w / cw, r.h / ch);
     view.moveCenter(QPointF(r.center.x() / cw, r.center.y() / ch));
+    const bool whole = sameRouting && size == m_compSize && r.angle == 0.0 && r.w == cw && r.h == ch &&
+                       r.center.x() == cw * 0.5 && r.center.y() == ch * 0.5;
+    // A plain viewport: its layers composited straight into its output, over the black its screen shows. The blend
+    // modes give the same colors over opaque black as over a transparent canvas (Difference reads the canvas: not it).
+    // No picture of its own is made, un-premultiplied, then drawn into the output: two passes of its size less
+    if (viewportIsPlain(v, shown)) {
+        RenderTarget &out = v.vpOut[v.vpBack];
+        out.ensure(size.width(), size.height());
+        if (out.ready(size.width(), size.height())) {
+            compositeLayers(out, shown, view, QColor(0, 0, 0, 255), v.id, r.angle);
+            if (whole) m_compositionReuseTexture = out.tex;
+            v.finalTex = v.rawTex = v.preFxTex = out.tex;
+            v.finalW = v.rawW = v.preFxW = out.w;
+            v.finalH = v.rawH = v.preFxH = out.h;
+            v.vpDirect = true;
+            // The pictures it does without: their memory back
+            if (v.groupTarget.fbo) v.groupTarget.destroy();
+            if (v.prepTarget.fbo) v.prepTarget.destroy();
+            return;
+        }
+    }
+    v.groupTarget.ensure(size.width(), size.height());
+    if (!v.groupTarget.ready(size.width(), size.height())) return;
     compositeLayers(v.groupTarget, shown, view, QColor(0, 0, 0, 0), v.id, r.angle);
     // With identical geometry and routing, these blend modes produce the same RGB over either black clear.
-    if (sameRouting && size == m_compSize && r.angle == 0.0 && r.w == cw && r.h == ch &&
-        r.center.x() == cw * 0.5 && r.center.y() == ch * 0.5)
-        m_compositionReuseTexture = v.groupTarget.tex;
+    if (whole) m_compositionReuseTexture = v.groupTarget.tex;
     processLayer(v, v.groupTarget.tex, v.groupTarget.w, v.groupTarget.h, true, rc);
+}
+
+// Whether a viewport's output is its layers composited and nothing more (see renderViewport)
+bool Engine::viewportIsPlain(const Layer &v, const std::vector<Layer *> &shown) const
+{
+    if (v.vpPictureUsed || v.opacity != 1.0f || v.roiMode || v.roi.normalized() != Layer::fullRoi()) return false;
+    if (!v.color.effective().isIdentity() || v.matte.layer || masks::any(v.masks, Mask::Attach::Surface)) return false;
+    if (v.effectsEnabled && std::any_of(v.effects.begin(), v.effects.end(), [](const auto &fx) { return fx->enabled; })) return false;
+    const QString &targetSpace = v.outputSpace == QLatin1String("same") ? v.outputInputSpace : v.outputSpace;
+    if (targetSpace != v.outputInputSpace || v.outputExposure != 0) return false;
+    return std::none_of(shown.begin(), shown.end(), [](const Layer *l) { return l->blend == BlendMode::Difference; });
 }
 
 // Draws the layers into the target; `view` is the part of the composition the target shows
@@ -1547,6 +1603,11 @@ void Engine::composite()
         const QSize size = v.viewportSize();
         o.ensure(size.width(), size.height());
         if (!o.fbo) continue; // keep the previously published viewport frame
+        if (v.vpDirect && v.finalTex == o.tex) { // its layers were composited straight into it (renderViewport)
+            o.bind();
+            applyOpacity();
+            continue;
+        }
         o.clear(0, 0, 0, 1);
         if (v.finalTex && v.opacity > 0.0f) {
             const QString &targetSpace = v.outputSpace == QLatin1String("same") ? v.outputInputSpace : v.outputSpace;

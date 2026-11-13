@@ -60,6 +60,6 @@ demo = {"app": "NyxMap", "format_version": 1, "composition": {"width": 640, "hei
         {"path": os.path.join(isf, 'effects', 'ColorCorrection.fs'), "enable": True, "params": {"saturation": 0.3}},
         {"path": os.path.join(isf, 'effects', 'Soft Crop.fs'), "enable": True, "params": {"LeftFeather": 0.2, "RightFeather": 0.2}}], mapping=video_quad),
     layer('Act 2', {"type": "video", "path": os.path.join(root, 'out', 'missing', 'act2.mov'), "loop": True, "speed": 1, "playing": True}),
-], "bin": [{"path": os.path.join(media, 'bars.png')}], "ui": {"selected_layer": 1}}
+], "media": [{"id": "1", "path": os.path.join(media, 'bars.png'), "imported": True}], "ui": {"selected_layer": 1}}
 json.dump(demo, open(os.path.join(root, 'projects', 'demo.nyxmap'), 'w'), indent=1)
 print('ok')

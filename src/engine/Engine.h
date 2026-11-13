@@ -699,6 +699,22 @@ public:
     static QString defaultEasing(const QString &timingKey);
 
     // --- External media (media bin)
+    // The Media Bin is where the project's files are: each one an item, with an id and the place of its file. A
+    // snapshot, a preset and a layer in the project file name the item, never the file: once the item is given another
+    // file (Replace…), all of them have it.
+    struct MediaItem {
+        quint64 id = 0;
+        QString path;          // its file (a stream's URL, a live input's address)
+        bool imported = false; // put in the Media Bin by the user: listed even when nothing uses it
+    };
+    std::vector<MediaItem> mediaItems() const;
+    void setMediaItems(const std::vector<MediaItem> &items); // as they were (an undo)
+    quint64 mediaId(const QString &path) const;              // the item of this file, made when it has none (0: no path)
+    QString mediaPath(quint64 id) const;                     // empty: no such item
+    // A layer's state (layerJson, a snapshot's layer, a preset's part) with its files named by their items
+    // ("media") instead of their paths, and back. Both leave alone what is already so.
+    QJsonObject linkMedia(QJsonObject state) const;
+    QJsonObject resolveMedia(QJsonObject state) const;
     struct MediaRef {
         QString path;
         bool video = false;      // video file
@@ -971,6 +987,7 @@ private:
     std::map<std::pair<int, int>, MsaaBuffer> m_msaa; // by size (render thread)
     int m_maxSamples = 0;
     void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting);
+    bool viewportIsPlain(const Layer &v, const std::vector<Layer *> &shown) const;
     void composite();
     void readSourcePreview();
     void stepFade(double dt); // snapshot fades (render thread, lock held)
@@ -1440,7 +1457,12 @@ private:
 
     QString m_projectPath;
     IsfLibrary m_library;
-    QStringList m_binItems;
+    mutable std::vector<MediaItem> m_media; // the Media Bin's items (mediaId() makes one for a file that has none)
+    mutable quint64 m_nextMediaId = 1;
+    Snapshot linkMedia(Snapshot m) const;    // a snapshot as it is kept, and as it is given
+    Snapshot resolveMedia(Snapshot m) const;
+    Preset linkMedia(Preset p) const;
+    Preset resolveMedia(Preset p) const;
     QSet<QString> m_binStreamsUdp; // streams of the Media Bin loaded with RTSP over UDP
 
     // Publishing: the viewports' publishers (Publishing.h)

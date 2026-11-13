@@ -187,9 +187,16 @@ void sequenceTests(Engine &e, const QString &tmp)
     for (const Engine::CollectFile &f : plan.files)
         if (f.to.contains("/MEDIA/SEQUENCES/shot_seq/")) ++pictures;
     check(pictures == 7, "Collect Files copies the sequence's folder (every file in it)");
-    QString collectedPath;
-    for (const QJsonValue &v : plan.project.value("layers").toArray())
-        if (v.toObject().value("name").toString() == "Seq") collectedPath = v.toObject().value("source").toObject().value("path").toString();
+    // A project names its files by their Media Bin items: the layer's file is where its item says
+    auto fileOf = [](const QJsonObject &project, const QString &layerName) {
+        QString item;
+        for (const QJsonValue &v : project.value("layers").toArray())
+            if (v.toObject().value("name").toString() == layerName) item = v.toObject().value("source").toObject().value("media").toString();
+        for (const QJsonValue &v : project.value("media").toArray())
+            if (!item.isEmpty() && v.toObject().value("id").toString() == item) return v.toObject().value("path").toString();
+        return QString();
+    };
+    const QString collectedPath = fileOf(plan.project, "Seq");
     check(collectedPath.endsWith("/MEDIA/SEQUENCES/shot_seq") && plan.missing.isEmpty(), "the collected layer uses the copied folder");
     // A numbered frame used separately still has to exist inside the copied sequence.
     e.addBinItems({folder + "/shot0003.png"});
@@ -200,10 +207,7 @@ void sequenceTests(Engine &e, const QString &tmp)
     for (const auto &file : shared.files) if (file.from == folder + "/shot0003.png") ++copies;
     check(copies == 2, "a frame used as a still has both necessary collected copies");
     check(e.collect(shared, &err), "collect a sequence with a separately imported frame");
-    QString copiedFolder;
-    for (const auto &layer : shared.project.value("layers").toArray())
-        if (layer.toObject().value("name").toString() == "Seq")
-            copiedFolder = layer.toObject().value("source").toObject().value("path").toString();
+    const QString copiedFolder = fileOf(shared.project, "Seq");
     check(VideoDecoder::probe(copiedFolder, &info, &err, faster) && info.frames == 5,
           "the collected sequence remains contiguous and keeps all five frames");
     d.close(); e.newProject();
