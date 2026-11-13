@@ -152,7 +152,10 @@ void PresetEditor::addToNew(quint64 layer, const QStringList &paths)
         if (path == QLatin1String("geometry/mesh")) {
             Engine::Lock lock(&m_engine->mutex());
             if (const Layer *l = m_engine->layer(m_engine->indexOfId(layer))) p.geometry[QString::number(layer)] = l->mapping.meshJson();
-        } else p.values.push_back(m_engine->presetValue(layer, path));
+        } else {
+            p.values.push_back(m_engine->presetValue(layer, path));
+            if (Engine::isRecallAction(path)) p.values.back().value = true; // put in a preset to be made: on
+        }
     }
     capturePresetDrivers(p, layer, keep);
     quint64 id = 0;
@@ -195,7 +198,11 @@ void PresetEditor::addToPreset(quint64 target, quint64 layer, const QStringList 
                     continue;
                 }
                 const int k = p.indexOf(layer, path);
-                const Engine::PresetValue now = m_engine->presetValue(layer, path);
+                Engine::PresetValue now = m_engine->presetValue(layer, path);
+                if (Engine::isRecallAction(path)) { // an action: held as it is, on when new (its live value is always off)
+                    now.value = true;
+                    if (k >= 0) continue;
+                }
                 if (k >= 0) p.values[size_t(k)].value = now.value; // in already: its value now
                 else p.values.push_back(now);
             }
@@ -418,6 +425,7 @@ void PresetEditor::updateMarks()
                 const int k = preset.indexOf(t.layer, path);
                 if (k < 0) continue;
                 t.state = std::max(t.state, 1);
+                if (Engine::isRecallAction(path)) continue; // an action: nothing live to differ from
                 const QJsonValue now = m_engine->parameterValue(t.layer, path), was = preset.values[size_t(k)].value;
                 // An action has no value to compare (Rewind, Start): what is held is done, never "changed"
                 const bool same = now.isUndefined() || (now.isDouble() && was.isDouble() ? std::abs(now.toDouble() - was.toDouble()) < 1e-6 : now == was);
@@ -664,7 +672,7 @@ void PresetEditor::updateSnapshot(quint64 target, quint64 layer, const QStringLi
                 const QString key = part == Engine::PartSource ? "source" : part == Engine::PartEffects ? "fx" : part == Engine::PartMasks ? "masks" : part == Engine::PartViewports ? "viewports" : part == Engine::PartAnimations ? "anims" : "";
                 if (!key.isEmpty()) { if (live.contains(key)) state[key] = live.value(key); else state.remove(key); }
                 if (part == Engine::PartMasks) state["matte"] = live.value("matte");
-            } else if (path == QLatin1String("restart")) { // an action: a stored value stays, a new one starts checked
+            } else if (Engine::isRecallAction(path)) { // an action: a stored value stays, a new one starts checked
                 if (!params.contains(path)) params[path] = true;
             } else if (liveParams.contains(path)) params[path] = liveParams.value(path);
         }
