@@ -622,6 +622,8 @@ void PresetEditor::updateSnapshot(quint64 target, quint64 layer, const QStringLi
                 const QString key = part == Engine::PartSource ? "source" : part == Engine::PartEffects ? "fx" : part == Engine::PartMasks ? "masks" : part == Engine::PartViewports ? "viewports" : part == Engine::PartAnimations ? "anims" : "";
                 if (!key.isEmpty()) { if (live.contains(key)) state[key] = live.value(key); else state.remove(key); }
                 if (part == Engine::PartMasks) state["matte"] = live.value("matte");
+            } else if (path == QLatin1String("restart")) { // an action: a stored value stays, a new one starts checked
+                if (!params.contains(path)) params[path] = true;
             } else if (liveParams.contains(path)) params[path] = liveParams.value(path);
         }
         state["params"] = params;

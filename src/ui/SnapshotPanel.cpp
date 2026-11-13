@@ -1483,7 +1483,7 @@ void SnapshotPanel::updateSnapshot(int i)
                     auto params = it.value().toObject();
                     const auto now = live.value("params").toObject();
                     for (auto p = params.begin(); p != params.end(); ++p)
-                        if (now.contains(p.key()))
+                        if (now.contains(p.key()) && p.key() != QLatin1String("restart")) // an action: the stored value stays
                             p.value() = now.value(p.key());
                     it.value() = params;
                 } else if (live.contains(it.key()))
@@ -1514,11 +1514,12 @@ void SnapshotPanel::updateSnapshot(int i)
     }
     // Layers left out stay out; the times given to values are kept
     QSet<quint64> excluded;
-    QHash<quint64, QJsonValue> timing, easings, delays;
+    QHash<quint64, QJsonValue> timing, easings, delays, restarts;
     for (const QJsonValue &v : m.layers) {
         const QJsonObject o = v.toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (!o.value("included").toBool(true)) excluded.insert(id);
+        if (o.value("params").toObject().contains(QStringLiteral("restart"))) restarts.insert(id, o.value("params").toObject().value(QStringLiteral("restart")));
         if (o.contains("timing")) timing.insert(id, o.value("timing"));
         if (o.contains("easing")) easings.insert(id, o.value("easing"));
         if (o.contains("delay")) delays.insert(id, o.value("delay"));
@@ -1528,6 +1529,11 @@ void SnapshotPanel::updateSnapshot(int i)
         QJsonObject o = layers[k].toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (excluded.contains(id)) o["included"] = false;
+        if (restarts.contains(id)) { // what the snapshot holds (checked or not), not the live state
+            QJsonObject params = o.value("params").toObject();
+            params[QStringLiteral("restart")] = restarts.value(id);
+            o["params"] = params;
+        }
         if (timing.contains(id)) o["timing"] = timing.value(id);
         if (easings.contains(id)) o["easing"] = easings.value(id);
         if (delays.contains(id)) o["delay"] = delays.value(id);
