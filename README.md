@@ -75,15 +75,15 @@ Structure your artistic intent into flexible cues, timelines, and synchronized m
 ## Download
 
 <!-- release-downloads:start -->
-Latest published build: **[v0.6.4](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.4)**.
+Latest published build: **[v0.6.5](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.5)**.
 
 | macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
 | :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.4/NyxMap-macos-v0.6.4.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.4/NyxMap-windows-v0.6.4.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.4/NyxMap-linux-x86_64-v0.6.4.AppImage)** |
+| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.5/NyxMap-macos-v0.6.5.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.5/NyxMap-windows-v0.6.5.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.5/NyxMap-linux-x86_64-v0.6.5.AppImage)** |
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.4/NyxMap-linux-x86_64-v0.6.4.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).
+Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.5/NyxMap-linux-x86_64-v0.6.5.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).
 
-**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.4/NyxMap-Companion-v0.6.4.tgz)** — import it in Companion; [setup guide](docs/integrations/companion.md).
+**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.5/NyxMap-Companion-v0.6.5.tgz)** — import it in Companion; [setup guide](docs/integrations/companion.md).
 <!-- release-downloads:end -->
 
 Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/developers/build.md) and the [known limitations](docs/project/limitations.md).
