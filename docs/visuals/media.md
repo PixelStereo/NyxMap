@@ -2,6 +2,10 @@
 
 Media files, folders and streams go into the **Media Bin**, then onto a layer. This page covers the formats that need explanation; video playback internals are in [Video pipeline](../developers/video-pipeline.md).
 
+## Replacing a file
+
+The Media Bin is the one place that knows where each file is. Layers, snapshots, presets and the project file refer to the Media Bin's item, not to the file's path. **Media Bin › Replace…** gives an item another file: every layer showing it reloads, and every snapshot and preset that holds it recalls the new file, without being edited. A file that only a snapshot or a preset holds is listed in the Media Bin too, with what uses it.
+
 ## Photoshop files
 
 A `.psd` / `.psb` layer shows all its layers, or one chosen in its **Source** tab (RGB or grayscale, 8/16-bit). **All layers** uses the file's merged image when present; otherwise visible layers are composited with normal blending only.
