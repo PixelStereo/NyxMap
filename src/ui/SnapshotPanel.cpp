@@ -848,6 +848,7 @@ QJsonValue SnapshotPanel::liveValue(const MemField &f) const
     const int i = selected();
     if (i < 0 || f.path.isEmpty()) return QJsonValue(QJsonValue::Undefined);
     if (f.row >= 0 && f.path.size() == 2 && f.path[0] == QLatin1String("params")) {
+        if (Engine::isRecallAction(f.path[1])) return QJsonValue(QJsonValue::Undefined); // an action: no live state to compare or take
         const quint64 layer = rowObject(m_engine->snapshot(i), f.row).value("id").toString().toULongLong();
         return layer ? m_engine->parameterValue(layer, f.path[1]) : QJsonValue(QJsonValue::Undefined);
     }
@@ -1483,7 +1484,7 @@ void SnapshotPanel::updateSnapshot(int i)
                     auto params = it.value().toObject();
                     const auto now = live.value("params").toObject();
                     for (auto p = params.begin(); p != params.end(); ++p)
-                        if (now.contains(p.key()) && p.key() != QLatin1String("restart")) // an action: the stored value stays
+                        if (now.contains(p.key()) && !Engine::isRecallAction(p.key())) // an action: the stored value stays
                             p.value() = now.value(p.key());
                     it.value() = params;
                 } else if (live.contains(it.key()))
@@ -1514,12 +1515,15 @@ void SnapshotPanel::updateSnapshot(int i)
     }
     // Layers left out stay out; the times given to values are kept
     QSet<quint64> excluded;
-    QHash<quint64, QJsonValue> timing, easings, delays, restarts;
+    QHash<quint64, QJsonValue> timing, easings, delays;
+    QHash<quint64, QJsonObject> actions; // "Restart on Recall", as the snapshot holds it (checked or not)
     for (const QJsonValue &v : m.layers) {
         const QJsonObject o = v.toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (!o.value("included").toBool(true)) excluded.insert(id);
-        if (o.value("params").toObject().contains(QStringLiteral("restart"))) restarts.insert(id, o.value("params").toObject().value(QStringLiteral("restart")));
+        const QJsonObject held = o.value("params").toObject();
+        for (auto p = held.begin(); p != held.end(); ++p)
+            if (Engine::isRecallAction(p.key())) actions[id].insert(p.key(), p.value());
         if (o.contains("timing")) timing.insert(id, o.value("timing"));
         if (o.contains("easing")) easings.insert(id, o.value("easing"));
         if (o.contains("delay")) delays.insert(id, o.value("delay"));
@@ -1529,9 +1533,11 @@ void SnapshotPanel::updateSnapshot(int i)
         QJsonObject o = layers[k].toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (excluded.contains(id)) o["included"] = false;
-        if (restarts.contains(id)) { // what the snapshot holds (checked or not), not the live state
+        if (actions.contains(id)) { // what the snapshot holds, not the live value (always off)
             QJsonObject params = o.value("params").toObject();
-            params[QStringLiteral("restart")] = restarts.value(id);
+            const QJsonObject held = actions.value(id);
+            for (auto p = held.begin(); p != held.end(); ++p)
+                if (params.contains(p.key())) params[p.key()] = p.value();
             o["params"] = params;
         }
         if (timing.contains(id)) o["timing"] = timing.value(id);
@@ -2117,6 +2123,7 @@ void SnapshotPanel::connectPresets()
             for (auto &interaction : p.interactions)
                 for (const auto &live : m_engine->interactions()) if (live.id == interaction.id) interaction = live;
             for (Engine::PresetValue &v : p.values) {
+                if (Engine::isRecallAction(v.path)) continue; // an action: what the preset holds stays
                 const QJsonValue now = m_engine->presetValue(v.layer, v.path).value;
                 if (!now.isUndefined()) v.value = now;
             }
