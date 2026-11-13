@@ -203,8 +203,35 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
             scan(l->generator.get(), l->name);
             for (const auto &fx : l->effects) scan(fx.get(), l->name + QStringLiteral(" › ") + fx->name());
         }
-        for (const QString &p : m_binItems)
-            if (!isIsfFile(p)) add(p, kindOf(p), QString(), true); // shaders imported to the bin are in ISF > Generators
+        // What only a snapshot or a preset holds is listed too: its file can be replaced like any other
+        auto stored = [&](const QJsonObject &state, const QString &user) {
+            const QJsonObject source = state.value("source").toObject();
+            const QString type = source.value("type").toString();
+            auto file = [&](const QJsonValue &id, bool image) {
+                const QString path = mediaPath(id.toString().toULongLong());
+                if (path.isEmpty() || isIsfFile(path) || isAudioInputUri(path) || AudioGenerator::isRecipe(path) ||
+                    Model3D::isPrimitivePath(path) || !builtInIsfSource(path).isEmpty())
+                    return;
+                add(path, image ? (isVideoFile(path) ? VideoKind : ImageKind) : kindOf(path), user, false);
+            };
+            if (type == "video" || type == "image" || type == "audio" || type == "tox" || type == "model")
+                file(source.value("media"), false);
+            auto images = [&](const QJsonObject &shader) {
+                const QJsonObject inputs = shader.value("image_media").toObject();
+                for (auto it = inputs.begin(); it != inputs.end(); ++it) file(it.value(), true);
+            };
+            images(source);
+            for (const QJsonValue &fx : state.value("fx").toArray()) images(fx.toObject());
+        };
+        for (const Snapshot &m : m_snapshots)
+            for (const QJsonValue &v : m.layers)
+                if (v.toObject().value("included").toBool(true)) stored(v.toObject(), QStringLiteral("Snapshot “%1”").arg(m.name));
+        for (const Preset &p : m_presets)
+            for (auto it = p.categories.begin(); it != p.categories.end(); ++it)
+                stored(it.value().toObject(), QStringLiteral("Preset “%1”").arg(p.name));
+        for (const MediaItem &item : m_media)
+            if (item.imported && !isIsfFile(item.path)) // shaders imported to the bin are in ISF > Generators
+                add(item.path, kindOf(item.path), QString(), true);
     }
     for (MediaRef &r : out) r.missing = !isStreamUrl(r.path) && !QFileInfo::exists(r.path); // a stream: never missing
     return out;
@@ -213,7 +240,10 @@ std::vector<Engine::MediaRef> Engine::mediaUsage() const
 QStringList Engine::binItems() const
 {
     Lock lk(&m_mutex);
-    return m_binItems;
+    QStringList paths;
+    for (const MediaItem &item : m_media)
+        if (item.imported && !paths.contains(item.path)) paths << item.path;
+    return paths;
 }
 
 void Engine::addBinItems(const QStringList &paths)
@@ -223,15 +253,154 @@ void Engine::addBinItems(const QStringList &paths)
         if (p.isEmpty()) continue;
         const QString abs = isStreamUrl(p) ? p.trimmed() // an URL as it is (cleanPath would fold its "//")
                             : QFileInfo(p).isAbsolute() ? QDir::cleanPath(p) : QFileInfo(p).absoluteFilePath();
-        if (!m_binItems.contains(abs)) m_binItems << abs;
+        const quint64 id = mediaId(abs);
+        for (MediaItem &item : m_media)
+            if (item.id == id) item.imported = true;
     }
 }
 
+// Out of the list; the item stays, for what still names it (a snapshot, an undo)
 void Engine::removeBinItem(const QString &path)
 {
     Lock lk(&m_mutex);
-    m_binItems.removeAll(path);
+    for (MediaItem &item : m_media)
+        if (item.path == path) item.imported = false;
     m_binStreamsUdp.remove(path);
+}
+
+std::vector<Engine::MediaItem> Engine::mediaItems() const
+{
+    Lock lk(&m_mutex);
+    return m_media;
+}
+
+void Engine::setMediaItems(const std::vector<MediaItem> &items)
+{
+    Lock lk(&m_mutex);
+    m_media = items;
+    for (const MediaItem &item : m_media) m_nextMediaId = std::max(m_nextMediaId, item.id + 1);
+}
+
+quint64 Engine::mediaId(const QString &path) const
+{
+    if (path.isEmpty()) return 0;
+    Lock lk(&m_mutex);
+    for (const MediaItem &item : m_media)
+        if (item.path == path) return item.id;
+    m_media.push_back({m_nextMediaId, path, false});
+    return m_nextMediaId++;
+}
+
+QString Engine::mediaPath(quint64 id) const
+{
+    Lock lk(&m_mutex);
+    for (const MediaItem &item : m_media)
+        if (item.id == id) return item.path;
+    return {};
+}
+
+// The files of a layer's state: its source's (a live input's address too), its transition, its effects' and their
+// shaders' images, its audio effects'
+QJsonObject Engine::linkMedia(QJsonObject state) const
+{
+    auto id = [&](const QString &path) { return QString::number(mediaId(path)); }; // ids are strings: JSON numbers are doubles
+    auto file = [&](QJsonObject o, const char *key) {
+        const QString path = o.value(QLatin1String(key)).toString();
+        o.remove(QStringLiteral("relative_path"));
+        if (path.isEmpty()) return o;
+        o.remove(QLatin1String(key));
+        o["media"] = id(path);
+        return o;
+    };
+    auto shader = [&](QJsonObject o) {
+        o = file(o, "path");
+        if (o.contains("images")) {
+            QJsonObject images = o.value("images").toObject();
+            for (auto it = images.begin(); it != images.end(); ++it) it.value() = id(it.value().toString());
+            o.remove("images");
+            o["image_media"] = images;
+        }
+        return o;
+    };
+    if (state.contains("source")) {
+        QJsonObject source = state.value("source").toObject();
+        source = source.value("type").toString() == QLatin1String("input") ? file(source, "uri") : shader(source);
+        const QString transition = source.value("transition").toString();
+        source.remove("relative_transition");
+        if (!transition.isEmpty()) {
+            source.remove("transition");
+            source["transition_media"] = id(transition);
+        }
+        state["source"] = source;
+    }
+    for (const char *list : {"fx", "audio_fx"}) {
+        if (!state.contains(QLatin1String(list))) continue;
+        QJsonArray entries;
+        for (const QJsonValue &v : state.value(QLatin1String(list)).toArray()) entries.append(shader(v.toObject()));
+        state[QLatin1String(list)] = entries;
+    }
+    return state;
+}
+
+QJsonObject Engine::resolveMedia(QJsonObject state) const
+{
+    auto path = [&](const QJsonValue &id) { return mediaPath(id.toString().toULongLong()); };
+    auto file = [&](QJsonObject o, const char *key) {
+        if (!o.contains("media")) return o;
+        o[QLatin1String(key)] = path(o.value("media")); // an item that is gone: no file, shown as missing
+        o.remove("media");
+        return o;
+    };
+    auto shader = [&](QJsonObject o) {
+        o = file(o, "path");
+        if (o.contains("image_media")) {
+            QJsonObject images = o.value("image_media").toObject();
+            for (auto it = images.begin(); it != images.end(); ++it) it.value() = path(it.value());
+            o.remove("image_media");
+            o["images"] = images;
+        }
+        return o;
+    };
+    if (state.contains("source")) {
+        QJsonObject source = state.value("source").toObject();
+        source = source.value("type").toString() == QLatin1String("input") ? file(source, "uri") : shader(source);
+        if (source.contains("transition_media")) {
+            source["transition"] = path(source.value("transition_media"));
+            source.remove("transition_media");
+        }
+        state["source"] = source;
+    }
+    for (const char *list : {"fx", "audio_fx"}) {
+        if (!state.contains(QLatin1String(list))) continue;
+        QJsonArray entries;
+        for (const QJsonValue &v : state.value(QLatin1String(list)).toArray()) entries.append(shader(v.toObject()));
+        state[QLatin1String(list)] = entries;
+    }
+    return state;
+}
+
+Engine::Snapshot Engine::linkMedia(Snapshot m) const
+{
+    for (int k = 0; k < m.layers.size(); ++k) m.layers[k] = linkMedia(m.layers[k].toObject());
+    return m;
+}
+
+Engine::Snapshot Engine::resolveMedia(Snapshot m) const
+{
+    for (int k = 0; k < m.layers.size(); ++k) m.layers[k] = resolveMedia(m.layers[k].toObject());
+    return m;
+}
+
+Engine::Preset Engine::linkMedia(Preset p) const
+{
+    for (auto it = p.categories.begin(); it != p.categories.end(); ++it) it.value() = linkMedia(it.value().toObject());
+    return p;
+}
+
+Engine::Preset Engine::resolveMedia(Preset p) const
+{
+    for (auto it = p.categories.begin(); it != p.categories.end(); ++it) it.value() = resolveMedia(it.value().toObject());
+    return p;
 }
 
 void Engine::addBinStream(const QString &url, bool rtspTcp)
@@ -250,14 +419,17 @@ bool Engine::binStreamTcp(const QString &url) const
     return !m_binStreamsUdp.contains(url.trimmed());
 }
 
+// The item's file is another one from now on: what names the item (a snapshot, a preset) has it without being
+// touched. An item the new file had already stays: both name the same file.
 void Engine::relinkBinItem(const QString &from, const QString &to)
 {
-    Lock lk(&m_mutex);
-    const int i = m_binItems.indexOf(from);
-    if (i >= 0) {
-        if (m_binItems.contains(to)) m_binItems.removeAt(i);
-        else m_binItems[i] = to;
+    {
+        Lock lk(&m_mutex);
+        mediaId(from); // a file nothing had named yet: its item, for what names it later
+        for (MediaItem &item : m_media)
+            if (item.path == from) item.path = to;
     }
+    emit snapshotsChanged(); // what they show of their files
 }
 
 static bool isfUsesImage(const IsfInstance *inst, const QString &path)

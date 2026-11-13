@@ -77,7 +77,8 @@ void Engine::clearProject()
         m_materials.clear();
         m_visionReset = true;
         m_projectPath.clear();
-        m_binItems.clear();
+        m_media.clear();
+        m_nextMediaId = 1;
         m_binStreamsUdp.clear();
         m_snapshots.clear();
         m_nextSnapshotId = 1;
@@ -317,8 +318,9 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     return o;
 }
 
-void Engine::layerFromJson(int index, const QJsonObject &o, const QString &projectDir, QStringList *warnings)
+void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &projectDir, QStringList *warnings)
 {
+    const QJsonObject o = resolveMedia(stored); // a project names its files by their Media Bin items
     QString name;
     {
         Lock lk(&m_mutex);
@@ -609,16 +611,11 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
                                     {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()},
                                     {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections, m_quality3d.glow, m_quality3d.atmosphere}}};
         QJsonArray layers;
-        for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
+        for (const auto &l : m_layers) layers.append(linkMedia(layerToJson(*l, dir))); // files: by their Media Bin items
         root["layers"] = layers;
         QJsonArray materials;
         for (const auto &[id, material] : m_materials) materials.append(material->toJson(dir));
         root["materials"] = materials;
-        QJsonArray bin;
-        for (const QString &p : m_binItems)
-            bin.append(isStreamUrl(p) ? QJsonObject{{"path", p}, {"live", true}, {"rtsp_tcp", !m_binStreamsUdp.contains(p)}}
-                                      : QJsonObject{{"path", p}, {"relative_path", QDir(dir).relativeFilePath(p)}});
-        root["bin"] = bin;
         root["audio"] = QJsonObject{{"volume", double(m_audio->volume())}};
         QJsonArray mems;
         for (const Snapshot &m : m_snapshots) mems.append(snapshotToJson(m, dir));
@@ -627,6 +624,41 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray presets;
         for (const Preset &p : m_presets) presets.append(presetToJson(p));
         root["presets"] = presets;
+        // The Media Bin: the items the user put there, and those the layers, the snapshots and the presets name (one
+        // that only an undo still names is not kept). Where each file is: here, and nowhere else in the project.
+        QSet<quint64> named;
+        std::function<void(const QJsonValue &, bool)> names = [&](const QJsonValue &v, bool id) {
+            if (v.isString()) {
+                if (id) named.insert(v.toString().toULongLong());
+            } else if (v.isArray()) {
+                for (const QJsonValue &x : v.toArray()) names(x, false);
+            } else if (v.isObject()) {
+                const QJsonObject o = v.toObject();
+                for (auto it = o.begin(); it != o.end(); ++it) {
+                    if (it.key() == QLatin1String("image_media"))
+                        for (const QJsonValue &image : it.value().toObject()) names(image, true);
+                    else
+                        names(it.value(), it.key() == QLatin1String("media") || it.key() == QLatin1String("transition_media"));
+                }
+            }
+        };
+        names(layers, false);
+        names(mems, false);
+        for (const Preset &p : m_presets) names(p.categories, false);
+        QJsonArray media;
+        for (const MediaItem &item : m_media) {
+            if (!item.imported && !named.contains(item.id)) continue;
+            QJsonObject o{{"id", QString::number(item.id)}, {"path", item.path}};
+            if (item.imported) o["imported"] = true;
+            if (isStreamUrl(item.path)) {
+                o["live"] = true;
+                o["rtsp_tcp"] = !m_binStreamsUdp.contains(item.path);
+            } else if (QFileInfo(item.path).isAbsolute() && builtInIsfSource(item.path).isEmpty()) {
+                o["relative_path"] = QDir(dir).relativeFilePath(item.path);
+            }
+            media.append(o);
+        }
+        root["media"] = media;
         root["preset_tree"] = snapshotTreeToJson(m_presetTree);
         root["timeline_tree"] = snapshotTreeToJson(m_timelineTree);
         root["timelines"] = animationsToJson();
@@ -689,7 +721,7 @@ static QString projectPreflightError(const QJsonObject &root)
     // snapshot_tree is intentionally heterogeneous: snapshot leaves are
     // string IDs, while nested groups are objects with a children array.
     // Do not validate it as a homogeneous array of objects.
-    for (const QString &key : {QStringLiteral("layers"), QStringLiteral("bin"),
+    for (const QString &key : {QStringLiteral("layers"), QStringLiteral("media"),
                                QStringLiteral("snapshots"),
                                QStringLiteral("presets"), QStringLiteral("timelines"),
                                QStringLiteral("timecode_outputs"), QStringLiteral("midi_outputs"),
@@ -880,6 +912,22 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
                     material.name, material.paths[i].isEmpty() ? QString::fromLatin1(materialMapNames[i]) : material.paths[i]);
         restoreMaterial(material);
     }
+    // The Media Bin first: the layers, the snapshots and the presets name its items
+    for (const QJsonValue &v : root.value("media").toArray()) {
+        const QJsonObject item = v.toObject();
+        const bool live = item.value("live").toBool();
+        const QString file = item.value("path").toString();
+        MediaItem m;
+        m.id = item.value("id").toString().toULongLong();
+        m.path = !live && QFileInfo(file).isAbsolute() ? resolvePath(item, dir) : file; // a file: found again where it is
+        m.imported = item.value("imported").toBool();
+        if (!m.id || m.path.isEmpty()) continue;
+        Lock lk(&m_mutex);
+        if (std::any_of(m_media.begin(), m_media.end(), [&](const MediaItem &other) { return other.id == m.id; })) continue;
+        m_media.push_back(m);
+        m_nextMediaId = std::max(m_nextMediaId, m.id + 1);
+        if (live && !item.value("rtsp_tcp").toBool(true)) m_binStreamsUdp.insert(m.path);
+    }
     const QJsonArray layers = root.value("layers").toArray();
     {
         Lock lock(&m_mutex);
@@ -909,13 +957,6 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     {
         Lock lk(&m_mutex);
     }
-    QStringList bin;
-    for (const QJsonValue &v : root.value("bin").toArray()) {
-        const QJsonObject item = v.toObject();
-        if (item.value("live").toBool()) addBinStream(item.value("path").toString(), item.value("rtsp_tcp").toBool(true));
-        else bin << resolvePath(item, dir);
-    }
-    addBinItems(bin);
     const QJsonObject audio = root.value("audio").toObject();
     m_audio->setVolume(float(std::clamp(audio.value("volume").toDouble(1.0), 0.0, 2.0)));
     {
@@ -925,7 +966,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             bool taken = !m.id;
             for (const Snapshot &o : m_snapshots) taken = taken || o.id == m.id;
             if (taken) m.id = 0; // given below, after the saved ones
-            m_snapshots.push_back(m);
+            m_snapshots.push_back(linkMedia(m));
         }
         for (const Snapshot &m : m_snapshots) m_nextSnapshotId = std::max(m_nextSnapshotId, m.id + 1);
         for (Snapshot &m : m_snapshots)
@@ -950,7 +991,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             bool taken = !p.id;
             for (const Preset &o : m_presets) taken = taken || o.id == p.id;
             if (taken) p.id = 0;
-            m_presets.push_back(p);
+            m_presets.push_back(linkMedia(p));
         }
         for (const Preset &p : m_presets) m_nextPresetId = std::max(m_nextPresetId, p.id + 1);
         for (Preset &p : m_presets)

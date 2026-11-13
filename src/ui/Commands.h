@@ -201,6 +201,23 @@ private:
     bool m_first = true;
 };
 
+// The Media Bin's items as they were and as they are (a file replaced by another): applied by redo
+class SetMediaItems : public QUndoCommand
+{
+public:
+    SetMediaItems(Engine *e, std::vector<Engine::MediaItem> before, std::vector<Engine::MediaItem> after, const QString &text)
+        : m_e(e), m_before(std::move(before)), m_after(std::move(after))
+    {
+        setText(text);
+    }
+    void undo() override { m_e->setMediaItems(m_before); }
+    void redo() override { m_e->setMediaItems(m_after); }
+
+private:
+    Engine *m_e;
+    std::vector<Engine::MediaItem> m_before, m_after;
+};
+
 // Order and grouping of the layers (moves, groups); applied by redo
 class SetStructure : public QUndoCommand
 {

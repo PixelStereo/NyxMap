@@ -5477,6 +5477,121 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(!e.relinkLayerMedia(s1i, tmp + "/genB.fs", root + "/../isf/effects/Mask.fs", &err));
             CHECK(e.layer(s1i)->sourcePath == QDir::cleanPath(tmp + "/genB.fs"));
         }
+        // A snapshot, a preset and the project name the Media Bin's item, never the file: the item given another file
+        // (Replace…), they have it without being touched
+        {
+            e.newProject();
+            const QString fileA = tmp + "/linkA.mp4", fileB = tmp + "/linkB.mp4";
+            QFile::remove(fileA);
+            QFile::remove(fileB);
+            CHECK(QFile::copy(root + "/media/h264.mp4", fileA) && QFile::copy(root + "/media/h264.mp4", fileB));
+            const quint64 clip = e.layerId(e.addLayer("Linked"));
+            CHECK(e.setLayerVideo(e.indexOfId(clip), fileA, &err));
+            auto sourceOf = [&](const QJsonArray &layers) {
+                for (const QJsonValue &v : layers)
+                    if (v.toObject().value("id").toString().toULongLong() == clip) return v.toObject().value("source").toObject();
+                return QJsonObject();
+            };
+            Engine::Snapshot held;
+            held.name = "Held";
+            held.fade = 0;
+            held.layers = e.captureLayers();
+            const int si = e.addSnapshot(held);
+            Engine::Preset part;
+            part.name = "Source";
+            part.fade = 0;
+            part.categories[QStringLiteral("%1:%2").arg(clip).arg(int(Engine::PartSource))] =
+                QJsonObject{{"source", e.layerJson(e.indexOfId(clip)).value("source")}};
+            const int pi = e.addPreset(part);
+            auto presetSource = [&] { return e.preset(pi).categories.begin().value().toObject().value("source").toObject(); };
+            // Given with their paths (what the interface and a recall read)
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileA);
+            CHECK(presetSource().value("path").toString() == fileA);
+            const quint64 item = e.mediaId(fileA);
+            CHECK(item && e.mediaPath(item) == fileA && e.mediaId(fileA) == item);
+
+            // Replaced in the Media Bin: the layer shows the other file, the snapshot and the preset name it too
+            CHECK(e.relinkLayerMedia(e.indexOfId(clip), fileA, fileB, &err));
+            e.relinkBinItem(fileA, fileB);
+            CHECK(e.mediaPath(item) == fileB);
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileB);
+            CHECK(presetSource().value("path").toString() == fileB);
+            e.recallSnapshot(si);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileB && l->error.isEmpty());
+            }
+            CHECK(e.snapshotMatches(e.snapshot(si).id));
+
+            // A file only a snapshot names: listed in the Media Bin, and replaced there
+            CHECK(e.setLayerImage(e.indexOfId(clip), root + "/media/bars.png", &err));
+            bool listed = false;
+            for (const auto &r : e.mediaUsage())
+                listed |= r.path == fileB && r.video && r.users.size() == 2 && r.users[0].contains("Held");
+            CHECK(listed);
+            CHECK(e.layersUsingMedia(fileB).isEmpty());
+            e.relinkBinItem(fileB, fileA);
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileA);
+            e.recallSnapshot(si);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA && l->error.isEmpty());
+            }
+            e.recallPreset(pi);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA);
+            }
+
+            // In the project file: the file's place is written once, in the Media Bin; the layer, the snapshot and the
+            // preset name its item. An item nothing names any more is not written.
+            e.mediaId(tmp + "/nobody.mov");
+            CHECK(e.saveProject(tmp + "/linked.nyxmap", {}, &err));
+            QFile saved(tmp + "/linked.nyxmap");
+            CHECK(saved.open(QIODevice::ReadOnly));
+            const QByteArray text = saved.readAll();
+            saved.close();
+            const QJsonObject root_ = QJsonDocument::fromJson(text).object();
+            CHECK(text.count("linkA.mp4") == 2 && !text.contains("nobody.mov")); // its path and its relative path
+            QJsonObject savedItem;
+            for (const QJsonValue &v : root_.value("media").toArray())
+                if (v.toObject().value("path").toString() == fileA) savedItem = v.toObject();
+            CHECK(savedItem.value("id").toString().toULongLong() == item && savedItem.value("relative_path").toString() == "linkA.mp4");
+            const QJsonObject savedSnapshot = sourceOf(root_.value("snapshots").toArray()[0].toObject().value("layers").toArray());
+            CHECK(savedSnapshot.value("media").toString().toULongLong() == item && !savedSnapshot.contains("path"));
+            const QJsonObject savedLayer = sourceOf(root_.value("layers").toArray());
+            CHECK(savedLayer.value("media").toString().toULongLong() == item && !savedLayer.contains("path"));
+
+            // Read again: the same links; the file moved meanwhile is replaced once, for all of them
+            e.newProject();
+            QString warn;
+            CHECK(e.loadProject(tmp + "/linked.nyxmap", nullptr, &warn) && warn.isEmpty());
+            CHECK(e.mediaPath(item) == fileA && e.snapshotCount() == 1 && e.presetCount() == 1);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileA);
+            CHECK(e.preset(0).categories.begin().value().toObject().value("source").toObject().value("path").toString() == fileA);
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA && l->error.isEmpty());
+            }
+            for (int i : e.layersUsingMedia(fileA)) CHECK(e.relinkLayerMedia(i, fileA, fileB, &err));
+            e.relinkBinItem(fileA, fileB);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileB);
+            CHECK(e.snapshotMatches(e.snapshot(0).id));
+            // The items as they were (the undo of a replacement)
+            auto items = e.mediaItems();
+            for (auto &m : items) if (m.id == item) m.path = fileA;
+            e.setMediaItems(items);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileA);
+            e.newProject();
+            CHECK(e.mediaItems().empty());
+        }
         VideoDecoder::Info info;
         CHECK(VideoDecoder::probe(root + "/media/prores.mov", &info) && info.width == 1920 && info.codec == "prores");
     }

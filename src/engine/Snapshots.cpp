@@ -615,7 +615,7 @@ int Engine::snapshotCount() const
 Engine::Snapshot Engine::snapshot(int i) const
 {
     Lock lk(&m_mutex);
-    return i >= 0 && i < int(m_snapshots.size()) ? m_snapshots[size_t(i)] : Snapshot();
+    return i >= 0 && i < int(m_snapshots.size()) ? resolveMedia(m_snapshots[size_t(i)]) : Snapshot();
 }
 
 int Engine::indexOfSnapshot(quint64 id) const
@@ -632,7 +632,7 @@ void Engine::setSnapshot(int i, const Snapshot &m)
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_snapshots.size())) return;
         const quint64 id = m_snapshots[size_t(i)].id; // it keeps its identity
-        m_snapshots[size_t(i)] = m;
+        m_snapshots[size_t(i)] = linkMedia(m); // its files: named by their Media Bin items
         m_snapshots[size_t(i)].id = id;
     }
     emit snapshotsChanged();
@@ -643,7 +643,7 @@ int Engine::addSnapshot(const Snapshot &m, int at)
     {
         Lock lk(&m_mutex);
         if (at < 0 || at > int(m_snapshots.size())) at = int(m_snapshots.size());
-        Snapshot copy = m;
+        Snapshot copy = linkMedia(m);
         bool taken = !copy.id;
         for (const Snapshot &o : m_snapshots) taken = taken || o.id == copy.id;
         if (taken) copy.id = m_nextSnapshotId++;
@@ -923,7 +923,7 @@ bool Engine::recallSnapshotById(quint64 id, double fadeOverride)
         Lock lk(&m_mutex);
         i = indexOfSnapshot(id);
         if (i < 0) return false;
-        m = m_snapshots[size_t(i)];
+        m = resolveMedia(m_snapshots[size_t(i)]);
     }
     if (fadeOverride >= 0) m.fade = fadeOverride;
     recallSnapshotCopy(m, i);
@@ -1986,7 +1986,7 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     const int index = indexOfSnapshot(id);
     auto mismatch = [&](const QString &detail) { if (reason) *reason = detail; return false; };
     if (index < 0) return mismatch(QStringLiteral("Snapshot removed"));
-    const Snapshot &snapshot = m_snapshots[size_t(index)];
+    const Snapshot snapshot = resolveMedia(m_snapshots[size_t(index)]);
     std::set<std::pair<quint64, QString>> driven;
     auto collect = [&](const Animation &animation) {
         if (animation.state == AnimState::Stopped) return;
@@ -2115,7 +2115,8 @@ void Engine::setSnapshots(const std::vector<Snapshot> &all, const std::vector<Sn
 {
     {
         Lock lock(&m_mutex);
-        m_snapshots = all;
+        m_snapshots.clear();
+        for (const auto &snapshot : all) m_snapshots.push_back(linkMedia(snapshot));
         for (const auto &snapshot : all)
             m_nextSnapshotId = std::max(m_nextSnapshotId, snapshot.id + 1);
         m_snapshotTree = tree;
