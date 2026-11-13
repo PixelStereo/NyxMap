@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <functional>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUndoStack>
@@ -122,8 +123,24 @@ int main(int argc, char **argv)
     for (auto *candidate : lanes) if (candidate->isVisible()) lane = candidate;
     check(lane != nullptr, "timeline shows one RGB lane, with the numeric track kept separate");
     bool menuHasColor = false;
-    for (auto *menu : editor.findChildren<QMenu *>()) for (auto *action : menu->actions())
-        if (action->text() == "Color (RGB)") menuHasColor = true;
+    // The picker is the one menu of every value of the show: Layers ▸ the layer ▸ its colors, filled as each opens
+    for (auto *button : editor.findChildren<QPushButton *>("timelineParameter")) {
+        if (!button->menu()) continue;
+        emit button->menu()->aboutToShow();
+        for (auto *root : button->menu()->actions())
+            if (root->text() == "Layers" && root->menu())
+                for (auto *owner : root->menu()->actions())
+                    if (owner->text() == "RGB source" && owner->menu()) {
+                        emit owner->menu()->aboutToShow();
+                        std::function<void(QMenu *)> look = [&](QMenu *menu) {
+                            for (auto *action : menu->actions()) {
+                                if (action->text() == "Color (RGB)") menuHasColor = true;
+                                if (action->menu()) look(action->menu());
+                            }
+                        };
+                        look(owner->menu());
+                    }
+    }
     check(menuHasColor, "parameter picker offers the grouped text color");
     if (lane) {
         const QColor middle = colorAt(lane, lane->width() / 2, 48);

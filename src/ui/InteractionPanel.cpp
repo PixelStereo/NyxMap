@@ -15,6 +15,7 @@
 #include <QCheckBox>
 #include <QUdpSocket>
 #include "Engine.h"
+#include "ShowMenus.h"
 #include "Widgets.h"
 
 #include <QApplication>
@@ -166,13 +167,14 @@ class SetInteractions : public QUndoCommand
 {
 public:
     SetInteractions(Engine *e, std::vector<Interaction> before, std::vector<Interaction> after, const QString &text,
-                    const QString &mergeKey)
+                    const QString &mergeKey, std::optional<std::vector<InteractionGroup>> groupsAfter = std::nullopt)
         : QUndoCommand(text), m_e(e), m_before(std::move(before)), m_after(std::move(after)), m_key(mergeKey),
-          m_time(QDateTime::currentMSecsSinceEpoch())
+          m_time(QDateTime::currentMSecsSinceEpoch()), m_groupsBefore(e->interactionGroups()),
+          m_groupsAfter(groupsAfter ? *groupsAfter : m_groupsBefore)
     {
     }
-    void undo() override { m_e->setInteractions(m_before); }
-    void redo() override { m_e->setInteractions(m_after); }
+    void undo() override { m_e->setInteractions(m_before, m_groupsBefore); }
+    void redo() override { m_e->setInteractions(m_after, m_groupsAfter); }
     int id() const override { return m_key.isEmpty() ? -1 : 0x1A7E; }
     bool mergeWith(const QUndoCommand *other) override
     {
@@ -188,7 +190,25 @@ private:
     std::vector<Interaction> m_before, m_after;
     QString m_key;
     qint64 m_time;
+    std::vector<InteractionGroup> m_groupsBefore, m_groupsAfter;
 };
+
+// The list as a tree: dropping an interaction on a group puts it there, on the list's top level takes it out; a group goes in
+// another the same way. Said once dropped (the panel reads the tree back).
+class InteractionTree : public QTreeWidget
+{
+public:
+    std::function<void()> dropped;
+
+protected:
+    void dropEvent(QDropEvent *event) override
+    {
+        QTreeWidget::dropEvent(event);
+        if (dropped) dropped();
+    }
+};
+
+constexpr int kGroupRole = Qt::UserRole + 1; // an item of a group: its id (an interaction's item: 0)
 
 constexpr char kMime[] = "application/x-nyxmap-interaction-settings";
 const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi,  InteractionSource::Osc,
@@ -330,24 +350,41 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_search->setClearButtonEnabled(true);
     bar->addWidget(addButton);
     bar->addWidget(m_remove);
+    auto *groupButton = new QPushButton(QStringLiteral("▤"));
+    groupButton->setObjectName(QStringLiteral("interactionGroup"));
+    groupButton->setFixedWidth(32);
+    groupButton->setToolTip(QStringLiteral("A group of the selected interactions (none selected: an empty one), as the layers have: "
+                                           "drag interactions in and out to put the list in order"));
+    connect(groupButton, &QPushButton::clicked, this, [this] { groupSelected(); });
+    bar->addWidget(groupButton);
     bar->addWidget(m_learn);
 
     bar->addWidget(m_search, 1);
     v->addLayout(bar);
 
-    m_list = new QTreeWidget;
+    auto *tree = new InteractionTree;
+    tree->dropped = [this] { applyTree(); };
+    m_list = tree;
     m_list->setObjectName(QStringLiteral("interactionList"));
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
         auto *item = m_list->itemAt(point);
-        if (!item) return;
         QMenu menu(this);
-        if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, item->data(0, Qt::UserRole).toULongLong());
+        const quint64 group = item ? item->data(0, kGroupRole).toULongLong() : 0;
+        if (item && !group)
+            if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, item->data(0, Qt::UserRole).toULongLong());
+        fillGroupMenu(&menu, group);
         if (!menu.isEmpty()) menu.exec(m_list->viewport()->mapToGlobal(point));
     });
     m_list->setColumnCount(3);
     m_list->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Source"), QStringLiteral("Target")});
-    m_list->setRootIsDecorated(false);
+    m_list->setRootIsDecorated(true);
+    m_list->setIndentation(14);
+    m_list->setDragEnabled(true);
+    m_list->setAcceptDrops(true);
+    m_list->setDropIndicatorShown(true);
+    m_list->setDragDropMode(QAbstractItemView::InternalMove);
+    m_list->setDefaultDropAction(Qt::MoveAction);
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
@@ -402,6 +439,12 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         rebuildList();
     });
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildList(); });
+    connect(m_list, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem *item) {
+        if (!m_filling) m_collapsed.insert(item->data(0, kGroupRole).toULongLong());
+    });
+    connect(m_list, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *item) {
+        if (!m_filling) m_collapsed.remove(item->data(0, kGroupRole).toULongLong());
+    });
     connect(addButton, &QPushButton::clicked, this, [this, addButton] {
         if (const auto kind = shownKind()) {
             add(*kind);
@@ -427,6 +470,16 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     });
     connect(m_list, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int col) {
         if (m_filling || col != 0) return;
+        if (const quint64 group = item->data(0, kGroupRole).toULongLong()) { // a group renamed
+            auto groups = m_engine->interactionGroups();
+            for (InteractionGroup &g : groups)
+                if (g.id == group && !item->text(0).trimmed().isEmpty() && g.name != item->text(0).trimmed()) {
+                    g.name = item->text(0).trimmed();
+                    commitGroups(m_engine->interactions(), groups, QStringLiteral("Rename Interaction Group"));
+                    return;
+                }
+            return;
+        }
         const quint64 id = item->data(0, Qt::UserRole).toULongLong();
         for (Interaction it : m_engine->interactions()) {
             if (it.id == id && !item->text(0).trimmed().isEmpty() && it.name != item->text(0).trimmed()) { // renamed
@@ -544,43 +597,7 @@ std::optional<Interaction> InteractionPanel::selected() const
 
 QString InteractionPanel::targetLabel(quint64 layer, const QString &param) const
 {
-    if (param.isEmpty()) return QStringLiteral("(no target)");
-    if (!layer) {
-        const auto output = InteractionOutput::fromPath(param);
-        if (output.protocol == "osc")
-            return QStringLiteral("OSC · %1 · %2").arg(output.destination, output.address);
-        if (output.protocol == "dmx") {
-            const auto patch = m_engine->fixturePatch();
-            const auto *entry = patch.findOutput(output.destination.toULongLong());
-            return QStringLiteral("DMX · %1 · %2/%3").arg(entry ? entry->name : QStringLiteral("(output gone)"))
-                .arg(output.number).arg(output.channel);
-        }
-        if (output.protocol == "midi") {
-            QString name = QStringLiteral("(output gone)");
-            for (const auto &entry : m_engine->midiOutputs())
-                if (entry.id == output.destination.toULongLong()) { name = entry.name; break; }
-            return QStringLiteral("MIDI · %1 · Ch %2 / CC %3").arg(name).arg(output.channel).arg(output.number);
-        }
-    }
-    QString owner = QStringLiteral("Composition");
-    if (layer) {
-        Engine::Lock lk(&m_engine->mutex());
-        const int i = m_engine->indexOfId(layer);
-        const Layer *l = i >= 0 ? m_engine->layer(i) : nullptr;
-        owner = l ? l->name : QStringLiteral("(layer gone)");
-    }
-    ParamInfo info;
-    if (m_engine->parameterInfo(layer, param, &info))
-        return owner + QStringLiteral(" › ") + info.label;
-    // Complete ISF colors are grouped under the parent of their R/G/B/A
-    // scalar parameters. Keep old interaction targets readable too.
-    if (m_engine->parameterInfo(layer, param + QStringLiteral("/r"), &info)) {
-        const QString label = info.label.endsWith(QStringLiteral(" R")) ? info.label.chopped(2) : info.label;
-        return owner + QStringLiteral(" › ") + label;
-    }
-    for (const auto &point : m_engine->animatablePoints(layer))
-        if (point.path == param) return owner + QStringLiteral(" › ") + point.label;
-    return owner + QStringLiteral(" › ") + param;
+    return showmenu::valueLabel(m_engine, layer, param, QStringLiteral("(no target)"));
 }
 
 QString InteractionPanel::describe(const Interaction &it) const
@@ -597,7 +614,7 @@ QString InteractionPanel::describe(const Interaction &it) const
     case InteractionSource::Osc:
         return it.oscAddress.isEmpty() ? QStringLiteral("OSC (no address)")
                                        : QStringLiteral("OSC %1").arg(it.oscAddress) + (it.oscArgument ? QStringLiteral(" [%1]").arg(it.oscArgument) : QString());
-    case InteractionSource::Internal: return targetLabel(it.sourceLayer, it.sourceParam);
+    case InteractionSource::Internal: return showmenu::valueLabel(m_engine, it.sourceLayer, it.sourceParam, QStringLiteral("(no source)"));
     case InteractionSource::Pixels:
     case InteractionSource::Hands:
     case InteractionSource::Audio: {Interaction named=it;named.name.clear();return named.label();}
@@ -614,28 +631,194 @@ void InteractionPanel::rebuildList()
     m_list->clear();
     const std::optional<InteractionSource> kind = shownKind();
     const QString search = m_search->text().trimmed();
+    const bool filtered = kind || !search.isEmpty();
+    const auto groups = m_engine->interactionGroups();
+    // The groups first, each under its parent (parents come before: a cycle is left at the top level)
+    QHash<quint64, QTreeWidgetItem *> groupItems;
+    std::vector<InteractionGroup> pending = groups;
+    while (!pending.empty()) {
+        bool moved = false;
+        for (auto g = pending.begin(); g != pending.end();) {
+            QTreeWidgetItem *parent = g->parent ? groupItems.value(g->parent) : nullptr;
+            if (g->parent && !parent) { ++g; continue; }
+            auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_list);
+            item->setText(0, g->name);
+            item->setData(0, kGroupRole, QVariant::fromValue<quint64>(g->id));
+            item->setData(0, Qt::UserRole, QVariant::fromValue<quint64>(0));
+            item->setFlags((item->flags() | Qt::ItemIsEditable | Qt::ItemIsDropEnabled) & ~Qt::ItemIsUserCheckable);
+            item->setToolTip(0, QStringLiteral("A group of interactions (double-click to rename): drag interactions into it"));
+            QFont font = item->font(0);
+            font.setBold(true);
+            item->setFont(0, font);
+            groupItems.insert(g->id, item);
+            g = pending.erase(g);
+            moved = true;
+        }
+        if (!moved) break;
+    }
     QTreeWidgetItem *current = nullptr;
     for (const Interaction &it : m_engine->interactions()) {
-        if (kind && it.source != *kind) continue;
         const QString src = describe(it);
         const QString dst = it.isAction() ? QStringLiteral("Action · %1 if true · %2 if false").arg(it.onTrue.size()).arg(it.onFalse.size())
                                           : targetLabel(it.layer, it.param);
+        if (kind && it.source != *kind) continue;
         if (!search.isEmpty() && !it.name.contains(search, Qt::CaseInsensitive) && !src.contains(search, Qt::CaseInsensitive) &&
             !dst.contains(search, Qt::CaseInsensitive))
             continue;
-        auto *item = new QTreeWidgetItem(m_list, {it.name, kind ? src : interactionSourceName(it.source) + QStringLiteral(" · ") + src, dst});
+        QTreeWidgetItem *parent = it.group ? groupItems.value(it.group) : nullptr;
+        const QStringList columns{it.name, kind ? src : interactionSourceName(it.source) + QStringLiteral(" · ") + src, dst};
+        auto *item = parent ? new QTreeWidgetItem(parent, columns) : new QTreeWidgetItem(m_list, columns);
         item->setData(0, Qt::UserRole, QVariant::fromValue<quint64>(it.id));
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
+        item->setData(0, kGroupRole, QVariant::fromValue<quint64>(0));
+        item->setFlags((item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable) & ~Qt::ItemIsDropEnabled);
         item->setToolTip(0, QStringLiteral("On / off · its name (double-click to rename): its address in OSC "
                                            "(/interaction/<name>/…), in the presets and the snapshots"));
         item->setCheckState(0, it.enabled ? Qt::Checked : Qt::Unchecked);
         if (keepAll.contains(it.id)) item->setSelected(true);
         if (it.id == keep) current = item;
     }
+    // A filter shows only the groups that have something to show
+    if (filtered) {
+        std::function<bool(QTreeWidgetItem *)> prune = [&](QTreeWidgetItem *item) {
+            if (!item->data(0, kGroupRole).toULongLong()) return true;
+            for (int i = item->childCount() - 1; i >= 0; --i)
+                if (!prune(item->child(i))) delete item->takeChild(i);
+            return item->childCount() > 0;
+        };
+        for (int i = m_list->topLevelItemCount() - 1; i >= 0; --i)
+            if (!prune(m_list->topLevelItem(i))) delete m_list->takeTopLevelItem(i);
+    }
+    for (auto g = groupItems.begin(); g != groupItems.end(); ++g)
+        if (g.value()) g.value()->setExpanded(!m_collapsed.contains(g.key()));
     if (current) m_list->setCurrentItem(current, 0, QItemSelectionModel::NoUpdate);
     m_filling = false;
     m_remove->setEnabled(!m_list->selectedItems().isEmpty());
     if (selectedId() != m_shown) rebuildSettings();
+}
+
+void InteractionPanel::commitGroups(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups, const QString &text)
+{
+    m_committing = true;
+    m_undo->push(new SetInteractions(m_engine, m_engine->interactions(), list, text, QString(), groups));
+    m_committing = false;
+    emit edited();
+}
+
+// The tree after a drop: each interaction's group, each group's parent; the order too when nothing is filtered out of sight
+void InteractionPanel::applyTree()
+{
+    auto list = m_engine->interactions();
+    auto groups = m_engine->interactionGroups();
+    const bool complete = !shownKind() && m_search->text().trimmed().isEmpty();
+    std::vector<Interaction> ordered;
+    QHash<quint64, quint64> groupOf, parentOf;
+    std::vector<quint64> groupOrder;
+    std::function<void(QTreeWidgetItem *, quint64)> read = [&](QTreeWidgetItem *item, quint64 parent) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) {
+            parentOf.insert(g, parent);
+            groupOrder.push_back(g);
+            for (int i = 0; i < item->childCount(); ++i) read(item->child(i), g);
+        } else {
+            const quint64 id = item->data(0, Qt::UserRole).toULongLong();
+            groupOf.insert(id, parent);
+            for (const Interaction &it : list)
+                if (it.id == id) ordered.push_back(it);
+        }
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) read(m_list->topLevelItem(i), 0);
+    for (Interaction &it : list)
+        if (groupOf.contains(it.id)) it.group = groupOf.value(it.id);
+    for (InteractionGroup &g : groups)
+        if (parentOf.contains(g.id)) g.parent = parentOf.value(g.id);
+    if (complete && ordered.size() == list.size()) {
+        for (Interaction &o : ordered) o.group = groupOf.value(o.id);
+        list = ordered;
+        std::stable_sort(groups.begin(), groups.end(), [&](const InteractionGroup &a, const InteractionGroup &b) {
+            return std::find(groupOrder.begin(), groupOrder.end(), a.id) < std::find(groupOrder.begin(), groupOrder.end(), b.id);
+        });
+    }
+    commitGroups(list, groups, QStringLiteral("Arrange Interactions"));
+    QTimer::singleShot(0, this, [this] { rebuildList(); });
+}
+
+// A group of the selected interactions (none: an empty one, in the selected group)
+void InteractionPanel::groupSelected()
+{
+    auto list = m_engine->interactions();
+    auto groups = m_engine->interactionGroups();
+    QSet<quint64> ids;
+    quint64 parent = 0;
+    for (QTreeWidgetItem *item : m_list->selectedItems()) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) parent = g;
+        else ids.insert(item->data(0, Qt::UserRole).toULongLong());
+    }
+    InteractionGroup group;
+    for (const InteractionGroup &g : groups) group.id = std::max(group.id, g.id);
+    ++group.id;
+    group.name = QStringLiteral("Group %1").arg(group.id);
+    group.parent = parent;
+    groups.push_back(group);
+    for (Interaction &it : list)
+        if (ids.contains(it.id)) it.group = group.id;
+    commitGroups(list, groups, QStringLiteral("Add Interaction Group"));
+    rebuildList();
+}
+
+// Group, move to a group, rename, delete (what it holds goes to its parent)
+void InteractionPanel::fillGroupMenu(QMenu *menu, quint64 group)
+{
+    if (!menu->isEmpty()) menu->addSeparator();
+    menu->addAction(QStringLiteral("New Group"), this, [this] { groupSelected(); });
+    const auto groups = m_engine->interactionGroups();
+    if (!m_list->selectedItems().isEmpty() && !groups.empty()) {
+        auto *move = menu->addMenu(QStringLiteral("Move to Group"));
+        const auto moveTo = [this](quint64 target) {
+            auto list = m_engine->interactions();
+            QSet<quint64> ids;
+            for (QTreeWidgetItem *item : m_list->selectedItems())
+                if (!item->data(0, kGroupRole).toULongLong()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
+            for (Interaction &it : list)
+                if (ids.contains(it.id)) it.group = target;
+            commitGroups(list, m_engine->interactionGroups(), QStringLiteral("Move Interactions to Group"));
+        };
+        move->addAction(QStringLiteral("Top Level"), this, [moveTo] { moveTo(0); });
+        move->addSeparator();
+        showmenu::fillInteractionTree(move, m_engine, [](QMenu *, quint64, const QString &) {},
+                                      [moveTo](QMenu *into, quint64 id, const QString &, bool) {
+                                          into->addAction(QStringLiteral("This Group"), into, [moveTo, id] { moveTo(id); });
+                                      });
+    }
+    if (group) {
+        menu->addAction(QStringLiteral("Rename Group"), this, [this, group] {
+            if (auto *item = groupItem(group)) m_list->editItem(item, 0);
+        });
+        menu->addAction(QStringLiteral("Delete Group"), this, [this, group] {
+            auto list = m_engine->interactions();
+            auto groups = m_engine->interactionGroups();
+            quint64 parent = 0;
+            for (const InteractionGroup &g : groups)
+                if (g.id == group) parent = g.parent;
+            for (Interaction &it : list)
+                if (it.group == group) it.group = parent;
+            for (InteractionGroup &g : groups)
+                if (g.parent == group) g.parent = parent;
+            groups.erase(std::remove_if(groups.begin(), groups.end(), [group](const InteractionGroup &g) { return g.id == group; }), groups.end());
+            commitGroups(list, groups, QStringLiteral("Delete Interaction Group"));
+        });
+    }
+}
+
+QTreeWidgetItem *InteractionPanel::groupItem(quint64 group) const
+{
+    std::function<QTreeWidgetItem *(QTreeWidgetItem *)> find = [&](QTreeWidgetItem *item) -> QTreeWidgetItem * {
+        if (item->data(0, kGroupRole).toULongLong() == group) return item;
+        for (int i = 0; i < item->childCount(); ++i)
+            if (auto *found = find(item->child(i))) return found;
+        return nullptr;
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
+        if (auto *found = find(m_list->topLevelItem(i))) return found;
+    return nullptr;
 }
 
 Interaction InteractionPanel::heard(double low, double high)
@@ -715,21 +898,30 @@ void InteractionPanel::add(InteractionSource kind)
     quint64 id = 1;
     for (const Interaction &x : list) id = std::max(id, x.id + 1);
     it.id = id;
+    // In the group selected, if one is
+    for (QTreeWidgetItem *item : m_list->selectedItems()) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) { it.group = g; break; }
+        if (item->parent()) { it.group = item->parent()->data(0, kGroupRole).toULongLong(); break; }
+    }
     list.push_back(it);
     commitList(list, QStringLiteral("Add Interaction"));
     if (shownKind() && *shownKind() != kind) m_kinds->button(int(kind))->click();
     rebuildList();
-    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
-        if (m_list->topLevelItem(i)->data(0, Qt::UserRole).toULongLong() == id) {
+    std::function<void(QTreeWidgetItem *)> pick = [&](QTreeWidgetItem *item) {
+        if (item->data(0, Qt::UserRole).toULongLong() == id && !item->data(0, kGroupRole).toULongLong()) {
             m_list->clearSelection();
-            m_list->setCurrentItem(m_list->topLevelItem(i));
+            m_list->setCurrentItem(item);
         }
+        for (int i = 0; i < item->childCount(); ++i) pick(item->child(i));
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) pick(m_list->topLevelItem(i));
 }
 
 void InteractionPanel::removeSelected()
 {
     QSet<quint64> ids;
-    for (QTreeWidgetItem *item : m_list->selectedItems()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
+    for (QTreeWidgetItem *item : m_list->selectedItems())
+        if (!item->data(0, kGroupRole).toULongLong()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
     if (ids.isEmpty()) return;
     std::vector<Interaction> list = m_engine->interactions();
     list.erase(std::remove_if(list.begin(), list.end(), [&](const Interaction &x) { return ids.contains(x.id); }), list.end());
@@ -851,11 +1043,14 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
 
 void InteractionPanel::select(quint64 id)
 {
-    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
-        if (m_list->topLevelItem(i)->data(0, Qt::UserRole).toULongLong() == id) {
+    std::function<void(QTreeWidgetItem *)> pick = [&](QTreeWidgetItem *item) {
+        if (item->data(0, Qt::UserRole).toULongLong() == id && !item->data(0, kGroupRole).toULongLong()) {
             m_list->clearSelection();
-            m_list->setCurrentItem(m_list->topLevelItem(i));
+            m_list->setCurrentItem(item);
         }
+        for (int i = 0; i < item->childCount(); ++i) pick(item->child(i));
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) pick(m_list->topLevelItem(i));
 }
 
 // From a value anywhere (its right-click): a new interaction driving it, its source learnt (of that kind), or chosen
@@ -1033,54 +1228,7 @@ bool InteractionPanel::eventFilter(QObject *o, QEvent *e)
     return true;
 }
 
-static void clearInteractionMenu(QMenu *menu)
-{
-    for (QMenu *submenu : menu->findChildren<QMenu *>(QString(), Qt::FindDirectChildrenOnly)) delete submenu;
-    menu->clear();
-}
-
-void InteractionPanel::fillLayerMenu(QMenu *menu,
-                                     const std::function<void(QMenu *, quint64, const QString &)> &fill,
-                                     const QString &groupItem)
-{
-    LayerTree layers;
-    QHash<quint64, QString> names;
-    {
-        Engine::Lock lock(&m_engine->mutex());
-        layers = m_engine->structure();
-        for (int i = 0; i < m_engine->layerCount(); ++i)
-            if (const auto *layer = m_engine->layer(i)) names.insert(layer->id, layer->name);
-    }
-
-    QHash<quint64, QMenu *> groups;
-    groups.insert(0, menu);
-    for (const TreeNode &node : layers) {
-        auto *parent = groups.value(node.parent, menu);
-        const QString name = names.value(node.id);
-        if (node.isGroup()) {
-            auto *group = parent->addMenu(name);
-            groups.insert(node.id, group);
-            fill(group, node.id, groupItem);
-        } else {
-            fill(parent, node.id, name);
-        }
-    }
-}
-
-void InteractionPanel::fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill)
-{
-    const auto addOwner = [this, fill](QMenu *parent, quint64 id, const QString &name) {
-        auto *owner = parent->addMenu(name);
-        owner->addAction(QStringLiteral("Parameters"))->setEnabled(false);
-        connect(owner, &QMenu::aboutToShow, this, [owner, id, fill] {
-            clearInteractionMenu(owner);
-            fill(owner, id);
-            if (owner->isEmpty()) owner->addAction(QStringLiteral("No compatible parameters"))->setEnabled(false);
-        });
-    };
-    addOwner(menu, 0, QStringLiteral("Composition"));
-    fillLayerMenu(menu, addOwner, QStringLiteral("Group Parameters"));
-}
+static void clearInteractionMenu(QMenu *menu) { showmenu::clearMenu(menu); }
 
 std::pair<double, double> InteractionPanel::sourceSpan(const Interaction &it) const
 {
@@ -1424,7 +1572,12 @@ void InteractionPanel::rebuildSettings()
                 });
             };
             addLayer(menu, 0, QStringLiteral("No Layer"));
-            fillLayerMenu(menu, addLayer, QStringLiteral("Use This Group"));
+            menu->addSeparator();
+            showmenu::fillLayerTree(menu, m_engine, addLayer,
+                                    [addLayer](QMenu *into, quint64 id, const QString &name, bool isGroup) {
+                                        addLayer(into, id, isGroup ? QStringLiteral("Use This Group") : name);
+                                        into->addSeparator();
+                                    });
         });
         form->addRow(QStringLiteral("Layer"), source);
         attachPreset({source}, {QStringLiteral("source/vision/layer")});
@@ -1609,7 +1762,7 @@ void InteractionPanel::rebuildSettings()
     }
     case InteractionSource::Internal: {
         auto *source = new QToolButton;
-        source->setText(targetLabel(it.sourceLayer, it.sourceParam));
+        source->setText(showmenu::valueLabel(m_engine, it.sourceLayer, it.sourceParam, QStringLiteral("(no source)")));
         source->setPopupMode(QToolButton::InstantPopup);
         source->setToolButtonStyle(Qt::ToolButtonTextOnly);
         source->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -1618,9 +1771,10 @@ void InteractionPanel::rebuildSettings()
         source->setMenu(menu);
         connect(menu, &QMenu::aboutToShow, this, [this, menu, edit] {
             clearInteractionMenu(menu);
-            auto fill = [this, edit](QMenu *into, quint64 layer) {
+            auto fill = [this, edit](QMenu *into, const showmenu::Owner &owner) {
+                const quint64 layer = owner.layer();
                 std::vector<ParamInfo> params;
-                for (const ParamInfo &p : m_engine->parameters(layer))
+                for (const ParamInfo &p : showmenu::ofOwner(m_engine->parameters(layer), owner))
                     if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) &&
                         (p.isNumber() || p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice))
                         params.push_back(p);
@@ -1634,7 +1788,7 @@ void InteractionPanel::rebuildSettings()
                     });
                 }, true);
             };
-            fillByOwner(menu, fill);
+            showmenu::fillOwners(menu, m_engine, fill);
         });
         form->addRow(QStringLiteral("Follows"), source);
         attachPreset({source}, {QStringLiteral("source/internal")});
@@ -1984,9 +2138,10 @@ void InteractionPanel::rebuildSettings()
         target->setMenu(targetMenu);
         connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, change, scalarOnly, path] {
             clearInteractionMenu(targetMenu);
-            auto fill = [this, change, scalarOnly](QMenu *into, quint64 layer) {
+            auto fill = [this, change, scalarOnly](QMenu *into, const showmenu::Owner &owner) {
+                const quint64 layer = owner.layer();
                 std::vector<ParamInfo> params;
-                const std::vector<ParamInfo> available = m_engine->parameters(layer);
+                const std::vector<ParamInfo> available = showmenu::ofOwner(m_engine->parameters(layer), owner);
                 QSet<QString> writable;
                 for (const ParamInfo &p : available) {
                     if (!(p.access & ParamInfo::Write) || p.type == ParamInfo::Type::Text) continue;
@@ -2009,7 +2164,7 @@ void InteractionPanel::rebuildSettings()
                         color.animatable = false;
                         params.push_back(color);
                     }
-                    const auto points = m_engine->animatablePoints(layer);
+                    const auto points = showmenu::ofOwner(m_engine->animatablePoints(layer), owner);
                     params.insert(params.end(), points.begin(), points.end());
                 }
                 addParamMenu(into, params, [this, change, layer](QMenu *menu, const ParamInfo &p, const QString &text) {
@@ -2018,7 +2173,7 @@ void InteractionPanel::rebuildSettings()
             };
             fillOutputTargets(targetMenu, path, [change](const QString &output) { change(0, output); });
             targetMenu->addSeparator();
-            fillByOwner(targetMenu, fill);
+            showmenu::fillOwners(targetMenu, m_engine, fill);
         });
         return target;
     };
@@ -2351,9 +2506,10 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             target->setMenu(menu);
             connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i, path] {
                 clearInteractionMenu(menu);
-                auto fill = [this, edit, listOf, i](QMenu *into, quint64 layer) {
+                auto fill = [this, edit, listOf, i](QMenu *into, const showmenu::Owner &owner) {
+                    const quint64 layer = owner.layer();
                     std::vector<ParamInfo> params;
-                    for (const ParamInfo &p : m_engine->parameters(layer))
+                    for (const ParamInfo &p : showmenu::ofOwner(m_engine->parameters(layer), owner))
                         if ((p.access & ParamInfo::Write) && p.type != ParamInfo::Type::Text) params.push_back(p);
                     addParamMenu(into, params, [this, edit, listOf, i, layer](QMenu *m, const ParamInfo &p, const QString &text) {
                         m->addAction(text, this, [this, edit, listOf, i, layer, p] {
@@ -2391,7 +2547,7 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
                     rebuildSettings();
                 });
                 menu->addSeparator();
-                fillByOwner(menu, fill);
+                showmenu::fillOwners(menu, m_engine, fill);
             });
             h->addWidget(target, 2);
             // What it is set to, by the kind of value

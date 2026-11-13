@@ -11,6 +11,8 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
@@ -95,7 +97,7 @@ ControlsPanel::ControlsPanel(Engine *engine, QUndoStack *undo, QWidget *parent) 
     add->setToolTip(QStringLiteral("Make a slider, a switch, a selector, a button or a color of your own"));
     add->setPopupMode(QToolButton::InstantPopup);
     auto *menu = new QMenu(add);
-    for (int k = 0; k < 5; ++k)
+    for (int k = 0; k < ShowControl::kKindCount; ++k)
         menu->addAction(ShowControl::kindName(ShowControl::Kind(k)), this, [this, k] { addControl(k); })->setObjectName(QStringLiteral("controlsAdd%1").arg(k));
     add->setMenu(menu);
     head->addWidget(add);
@@ -143,6 +145,7 @@ void ControlsPanel::addControl(int kind)
     c.kind = ShowControl::Kind(kind);
     c.name = ShowControl::kindName(c.kind);
     if (c.kind == ShowControl::Kind::Choice) c.choices = {QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C")};
+    if (c.kind == ShowControl::Kind::Pad) c.def = c.value = c.value2 = 0.5; // the middle of its square
     const QJsonArray before = m_engine->controlsJson();
     if (!m_engine->addControl(c)) return;
     m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Add Control")));
@@ -158,11 +161,14 @@ void ControlsPanel::editControl(quint64 id)
     auto *form = new QFormLayout(&dialog);
     auto *name = new QLineEdit(current->name);
     form->addRow(QStringLiteral("Name"), name);
-    form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1").arg(current->key)));
+    if (current->kind == ShowControl::Kind::Pad)
+        form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1/x · /control/%1/y").arg(current->key)));
+    else if (current->kind != ShowControl::Kind::Group)
+        form->addRow(QStringLiteral("Address"), new QLabel(QStringLiteral("/control/%1").arg(current->key)));
     QDoubleSpinBox *min = nullptr, *max = nullptr, *step = nullptr, *def = nullptr;
     QLineEdit *unit = nullptr;
     QPlainTextEdit *choices = nullptr;
-    if (current->kind == ShowControl::Kind::Slider) {
+    if (current->kind == ShowControl::Kind::Slider || current->kind == ShowControl::Kind::Pad) {
         min = new QDoubleSpinBox;
         max = new QDoubleSpinBox;
         step = new QDoubleSpinBox;
@@ -179,6 +185,7 @@ void ControlsPanel::editControl(quint64 id)
         def->setValue(current->def);
         unit = new QLineEdit(current->unit);
         unit->setPlaceholderText(QStringLiteral("e.g. %, Hz, s"));
+        unit->setEnabled(current->kind == ShowControl::Kind::Slider);
         form->addRow(QStringLiteral("Minimum"), min);
         form->addRow(QStringLiteral("Maximum"), max);
         form->addRow(QStringLiteral("Step"), step);
@@ -231,167 +238,306 @@ void ControlsPanel::rebuild()
         m_list->addWidget(m_empty);
         m_empty->show();
     }
-    for (size_t index = 0; index < controls.size(); ++index) {
-        const ShowControl &c = controls[index];
-        const quint64 id = c.id;
-        auto *row = new QWidget;
-        row->setObjectName(QStringLiteral("controlRow"));
-        auto *h = new QHBoxLayout(row);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->setSpacing(6);
-        auto *name = new QStackedWidget;
-        name->setMinimumWidth(84);
-        name->setMaximumWidth(140);
-        auto *label = new ControlNameLabel(c.name);
-        label->setTextFormat(Qt::PlainText);
-        label->setObjectName(QStringLiteral("controlName"));
-        label->setToolTip(QStringLiteral("Double-click to rename · /control/%1").arg(c.key));
-        auto *editor = new QLineEdit(c.name);
-        editor->setObjectName(QStringLiteral("controlNameEditor"));
-        name->addWidget(label);
-        name->addWidget(editor);
-        h->addWidget(name);
-        label->edit = [name, label, editor] {
-            editor->setText(label->text());
-            name->setCurrentWidget(editor);
-            editor->setFocus();
-            editor->selectAll();
-        };
-        auto *cancel = new QShortcut(QKeySequence(Qt::Key_Escape), editor);
-        cancel->setContext(Qt::WidgetShortcut);
-        connect(cancel, &QShortcut::activated, name, [name, label] { name->setCurrentWidget(label); });
-        connect(editor, &QLineEdit::editingFinished, name, [this, id, name, label, editor] {
-            if (name->currentWidget() != editor) return;
-            const QString text = editor->text().trimmed();
-            name->setCurrentWidget(label);
-            auto control = m_engine->control(id);
-            if (!control || text.isEmpty() || control->name == text) return;
-            const auto before = m_engine->controlsJson();
-            control->name = text;
-            if (!m_engine->updateControl(id, *control)) return;
-            m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Rename Control")));
-            emit edited();
-        });
-        QWidget *field = nullptr;
-        switch (c.kind) {
-        case ShowControl::Kind::Slider: {
-            auto *s = new SliderField;
-            s->setObjectName(QStringLiteral("control_%1").arg(c.key));
-            s->setRange(c.min, c.max);
-            s->setDecimals(decimalsFor(c.step));
-            s->setSingleStep(c.step);
-            if (!c.unit.isEmpty()) s->setSuffix(c.unit);
-            s->setValue(c.value);
-            connect(s, &SliderField::valueEdited, this, [this, id](double v) { m_engine->setControlValue(id, v); });
-            field = s;
-            h->addWidget(s, 1);
-            break;
-        }
-        case ShowControl::Kind::Toggle: {
-            auto *f = new FlagBox(QString());
-            f->setObjectName(QStringLiteral("control_%1").arg(c.key));
-            f->setChecked(c.value >= 0.5);
-            connect(f, &QCheckBox::toggled, this, [this, id](bool on) {
-                if (!m_filling) m_engine->setControlValue(id, on ? 1.0 : 0.0);
-            });
-            field = f;
-            h->addWidget(f);
-            h->addStretch(1);
-            break;
-        }
-        case ShowControl::Kind::Choice: {
-            auto *b = new QComboBox;
-            b->setObjectName(QStringLiteral("control_%1").arg(c.key));
-            b->addItems(c.choices);
-            b->setCurrentIndex(int(c.value));
-            connect(b, qOverload<int>(&QComboBox::activated), this, [this, id](int k) { m_engine->setControlValue(id, k); });
-            field = b;
-            h->addWidget(b, 1);
-            break;
-        }
-        case ShowControl::Kind::Button: {
-            auto *b = new QPushButton(QStringLiteral("Hold"));
-            b->setObjectName(QStringLiteral("control_%1").arg(c.key));
-            b->setToolTip(QStringLiteral("1 while it is held down, 0 when let go: a gate for an Envelope, a flash, a strobe"));
-            connect(b, &QPushButton::pressed, this, [this, id] { m_engine->setControlValue(id, 1.0); });
-            connect(b, &QPushButton::released, this, [this, id] { m_engine->setControlValue(id, 0.0); });
-            field = b;
-            h->addWidget(b, 1);
-            break;
-        }
-        case ShowControl::Kind::Color: {
-            auto *b = new QPushButton;
-            b->setObjectName(QStringLiteral("control_%1").arg(c.key));
-            b->setMinimumHeight(24);
-            const QColor color = QColor::fromRgbF(float(c.rgb[0]), float(c.rgb[1]), float(c.rgb[2]));
-            b->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(color.name()));
-            connect(b, &QPushButton::clicked, this, [this, id, b] {
-                const auto now = m_engine->control(id);
-                if (!now) return;
-                const QColor start = QColor::fromRgbF(float(now->rgb[0]), float(now->rgb[1]), float(now->rgb[2]));
-                const QColor picked = ColorPicker::getColor(start, this, QStringLiteral("Control color"), QStringLiteral("controls/color"), false);
-                if (!picked.isValid()) return;
-                m_engine->setControlColor(id, picked.redF(), picked.greenF(), picked.blueF());
-                b->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(picked.name()));
-            });
-            field = b;
-            h->addWidget(b, 1);
-            break;
-        }
-        }
-        auto *gear = new QToolButton;
-        gear->setText(QStringLiteral("⋯"));
-        gear->setToolTip(QStringLiteral("Edit, move, duplicate, delete"));
-        gear->setPopupMode(QToolButton::InstantPopup);
-        auto *menu = new QMenu(gear);
-        menu->addAction(QStringLiteral("Edit…"), this, [this, id] { editControl(id); });
-        const QString path = QStringLiteral("control/") + c.key;
-        if (c.kind == ShowControl::Kind::Slider) {
-            field->setContextMenuPolicy(Qt::CustomContextMenu);
-            connect(field, &QWidget::customContextMenuRequested, this, [this, field, path](const QPoint &pos) {
-                auto *menu = new QMenu(field);
-                menu->setAttribute(Qt::WA_DeleteOnClose);
-                TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, {path}, field);
-                menu->popup(field->mapToGlobal(pos));
-            });
-        }
-        menu->addAction(QStringLiteral("Duplicate"), this, [this, id] {
-            const auto c = m_engine->control(id);
-            if (!c) return;
-            ShowControl copy = *c;
-            copy.name += QStringLiteral(" copy");
-            const QJsonArray before = m_engine->controlsJson();
-            if (!m_engine->addControl(copy)) return;
-            m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Duplicate Control")));
-            emit edited();
-        });
-        menu->addSeparator();
-        auto mover = [this, id](int delta) {
-            const auto list = m_engine->controls();
-            int at = -1;
-            for (int k = 0; k < int(list.size()); ++k) if (list[size_t(k)].id == id) at = k;
-            if (at < 0 || at + delta < 0 || at + delta >= int(list.size())) return;
-            const QJsonArray before = m_engine->controlsJson();
-            m_engine->moveControl(id, at + delta);
-            m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Move Control")));
-            emit edited();
-        };
-        menu->addAction(QStringLiteral("Move up"), this, [mover] { mover(-1); })->setEnabled(index > 0);
-        menu->addAction(QStringLiteral("Move down"), this, [mover] { mover(1); })->setEnabled(index + 1 < controls.size());
-        menu->addSeparator();
-        menu->addAction(QStringLiteral("Delete"), this, [this, id] {
-            const QJsonArray before = m_engine->controlsJson();
-            if (!m_engine->removeControl(id)) return;
-            m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Delete Control")));
-            emit edited();
-        });
-        gear->setMenu(menu);
-        h->addWidget(gear);
-        m_list->addWidget(row);
-        m_rows.push_back({id, field});
-    }
+    fillContainer(m_list, nullptr, 0, 1, controls);
     m_list->addStretch(1);
     m_filling = false;
+}
+
+// What a group (0: the page) holds, in the list's order: a control is a row, a group a frame. `grid`: where a group lays them
+// out in columns; none: the page, one under the other
+void ControlsPanel::fillContainer(QVBoxLayout *column, QGridLayout *grid, quint64 group, int columns, const std::vector<ShowControl> &all)
+{
+    std::vector<const ShowControl *> members;
+    for (const ShowControl &c : all)
+        if (c.group == group) members.push_back(&c);
+    int col = 0, row = 0;
+    for (size_t k = 0; k < members.size(); ++k) {
+        const ShowControl &c = *members[k];
+        const bool frame = c.kind == ShowControl::Kind::Group;
+        QWidget *w = frame ? makeGroup(c, members, k, all) : makeRow(c, members, k);
+        if (!grid) {
+            column->addWidget(w);
+            continue;
+        }
+        const int span = frame ? columns : std::min(std::max(c.span, 1), columns);
+        if (col + span > columns) {
+            col = 0;
+            ++row;
+        }
+        grid->addWidget(w, row, col, 1, span);
+        col += span;
+        if (col >= columns) {
+            col = 0;
+            ++row;
+        }
+    }
+}
+
+// A group: its name and gear, then its controls in its columns
+QWidget *ControlsPanel::makeGroup(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position,
+                                  const std::vector<ShowControl> &all)
+{
+    auto *frame = new QFrame;
+    frame->setObjectName(QStringLiteral("controlGroup"));
+    frame->setFrameShape(QFrame::StyledPanel);
+    auto *v = new QVBoxLayout(frame);
+    v->setContentsMargins(8, 4, 8, 8);
+    v->setSpacing(6);
+    auto *head = new QHBoxLayout;
+    head->addWidget(nameField(c), 1);
+    head->addWidget(gearButton(c, siblings, position, all));
+    v->addLayout(head);
+    auto *grid = new QGridLayout;
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(8);
+    grid->setVerticalSpacing(4);
+    for (int col = 0; col < c.columns; ++col) grid->setColumnStretch(col, 1);
+    v->addLayout(grid);
+    fillContainer(v, grid, c.id, c.columns, all);
+    return frame;
+}
+
+// Its name, in place (double-click)
+QWidget *ControlsPanel::nameField(const ShowControl &c)
+{
+    const quint64 id = c.id;
+    const bool group = c.kind == ShowControl::Kind::Group;
+    auto *name = new QStackedWidget;
+    name->setMinimumWidth(84);
+    if (!group) name->setMaximumWidth(140);
+    auto *label = new ControlNameLabel(c.name);
+    label->setTextFormat(Qt::PlainText);
+    label->setObjectName(QStringLiteral("controlName"));
+    if (group) label->setStyleSheet(QStringLiteral("font-weight:bold;"));
+    label->setToolTip(group ? QStringLiteral("Double-click to rename") : QStringLiteral("Double-click to rename · /control/%1").arg(c.key));
+    auto *editor = new QLineEdit(c.name);
+    editor->setObjectName(QStringLiteral("controlNameEditor"));
+    name->addWidget(label);
+    name->addWidget(editor);
+    label->edit = [name, label, editor] {
+        editor->setText(label->text());
+        name->setCurrentWidget(editor);
+        editor->setFocus();
+        editor->selectAll();
+    };
+    auto *cancel = new QShortcut(QKeySequence(Qt::Key_Escape), editor);
+    cancel->setContext(Qt::WidgetShortcut);
+    connect(cancel, &QShortcut::activated, name, [name, label] { name->setCurrentWidget(label); });
+    connect(editor, &QLineEdit::editingFinished, name, [this, id, name, label, editor] {
+        if (name->currentWidget() != editor) return;
+        const QString text = editor->text().trimmed();
+        name->setCurrentWidget(label);
+        auto control = m_engine->control(id);
+        if (!control || text.isEmpty() || control->name == text) return;
+        control->name = text;
+        applyControl(id, *control, QStringLiteral("Rename Control"));
+    });
+    return name;
+}
+
+// The control `id` replaced by `change`, as one undo step
+void ControlsPanel::applyControl(quint64 id, const ShowControl &change, const QString &text)
+{
+    const QJsonArray before = m_engine->controlsJson();
+    if (!m_engine->updateControl(id, change)) return;
+    m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), text));
+    emit edited();
+}
+
+// Its gear: edit, duplicate, where it is (up, down, its width, its group), delete
+QToolButton *ControlsPanel::gearButton(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position,
+                                       const std::vector<ShowControl> &all)
+{
+    const quint64 id = c.id;
+    const bool group = c.kind == ShowControl::Kind::Group;
+    auto *gear = new QToolButton;
+    gear->setText(QStringLiteral("⋯"));
+    gear->setToolTip(QStringLiteral("Edit, move, duplicate, delete"));
+    gear->setPopupMode(QToolButton::InstantPopup);
+    auto *menu = new QMenu(gear);
+    menu->addAction(QStringLiteral("Edit…"), this, [this, id] { editControl(id); });
+    menu->addAction(QStringLiteral("Duplicate"), this, [this, id] {
+        const auto c = m_engine->control(id);
+        if (!c) return;
+        ShowControl copy = *c;
+        copy.name += QStringLiteral(" copy");
+        const QJsonArray before = m_engine->controlsJson();
+        if (!m_engine->addControl(copy)) return;
+        m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Duplicate Control")));
+        emit edited();
+    });
+    menu->addSeparator();
+    // Up and down among what is beside it (the same group)
+    std::vector<quint64> order;
+    for (const ShowControl *s : siblings) order.push_back(s->id);
+    auto mover = [this, id, order, position, all](int delta) {
+        const size_t to = size_t(int(position) + delta);
+        if (to >= order.size()) return;
+        int at = -1;
+        for (int k = 0; k < int(all.size()); ++k)
+            if (all[size_t(k)].id == order[to]) at = k;
+        if (at < 0) return;
+        const QJsonArray before = m_engine->controlsJson();
+        m_engine->moveControl(id, at);
+        m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Move Control")));
+        emit edited();
+    };
+    menu->addAction(QStringLiteral("Move up"), this, [mover] { mover(-1); })->setEnabled(position > 0);
+    menu->addAction(QStringLiteral("Move down"), this, [mover] { mover(1); })->setEnabled(position + 1 < siblings.size());
+    // Its width in its group's columns; a group's own columns
+    const auto numbers = [this, id](QMenu *into, const QString &title, int current, std::function<void(ShowControl &, int)> set) {
+        auto *m = into->addMenu(title);
+        for (int n = 1; n <= 4; ++n) {
+            auto *a = m->addAction(QString::number(n), this, [this, id, n, set] {
+                if (auto control = m_engine->control(id)) {
+                    set(*control, n);
+                    applyControl(id, *control, QStringLiteral("Lay Out Control"));
+                }
+            });
+            a->setCheckable(true);
+            a->setChecked(n == current);
+        }
+    };
+    if (group) numbers(menu, QStringLiteral("Columns"), c.columns, [](ShowControl &x, int n) { x.columns = n; });
+    else if (c.group) numbers(menu, QStringLiteral("Width (columns)"), c.span, [](ShowControl &x, int n) { x.span = n; });
+    // Into a group, or out of one
+    auto *into = menu->addMenu(QStringLiteral("Move to Group"));
+    const auto moveTo = [this, id](quint64 target) {
+        if (auto control = m_engine->control(id)) {
+            control->group = target;
+            applyControl(id, *control, QStringLiteral("Move Control to Group"));
+        }
+    };
+    into->addAction(QStringLiteral("The Page"), this, [moveTo] { moveTo(0); })->setEnabled(c.group != 0);
+    bool any = false;
+    for (const ShowControl &g : all) {
+        if (g.kind != ShowControl::Kind::Group || g.id == id) continue;
+        // Not inside itself: a group does not go into one of its own
+        bool inside = false;
+        for (quint64 up = g.group; up && group; ) {
+            if (up == id) { inside = true; break; }
+            const auto parent = std::find_if(all.begin(), all.end(), [up](const ShowControl &x) { return x.id == up; });
+            up = parent == all.end() ? 0 : parent->group;
+        }
+        if (inside) continue;
+        any = true;
+        into->addAction(g.name, this, [moveTo, gid = g.id] { moveTo(gid); })->setEnabled(c.group != g.id);
+    }
+    if (!any) into->addAction(QStringLiteral("(no group yet: + New › Group)"))->setEnabled(false);
+    menu->addSeparator();
+    menu->addAction(group ? QStringLiteral("Delete Group (keeps its controls)") : QStringLiteral("Delete"), this, [this, id] {
+        const QJsonArray before = m_engine->controlsJson();
+        if (!m_engine->removeControl(id)) return;
+        m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Delete Control")));
+        emit edited();
+    });
+    gear->setMenu(menu);
+    return gear;
+}
+
+QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position)
+{
+    const quint64 id = c.id;
+    auto *row = new QWidget;
+    row->setObjectName(QStringLiteral("controlRow"));
+    auto *h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(6);
+    h->addWidget(nameField(c));
+    QWidget *field = nullptr;
+    switch (c.kind) {
+    case ShowControl::Kind::Group: break; // a frame: makeGroup
+    case ShowControl::Kind::Pad: {
+        auto *pad = new XyPad;
+        pad->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        pad->setRange(c.min, c.max);
+        pad->setDefault(c.def);
+        pad->setDecimals(decimalsFor(c.step));
+        pad->setValue(c.value, c.value2);
+        connect(pad, &XyPad::valueEdited, this, [this, id](double x, double y) { m_engine->setControlPoint(id, x, y); });
+        field = pad;
+        h->addWidget(pad, 1);
+        break;
+    }
+    case ShowControl::Kind::Slider: {
+        auto *s = new SliderField;
+        s->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        s->setRange(c.min, c.max);
+        s->setDecimals(decimalsFor(c.step));
+        s->setSingleStep(c.step);
+        if (!c.unit.isEmpty()) s->setSuffix(c.unit);
+        s->setValue(c.value);
+        connect(s, &SliderField::valueEdited, this, [this, id](double v) { m_engine->setControlValue(id, v); });
+        field = s;
+        h->addWidget(s, 1);
+        break;
+    }
+    case ShowControl::Kind::Toggle: {
+        auto *f = new FlagBox(QString());
+        f->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        f->setChecked(c.value >= 0.5);
+        connect(f, &QCheckBox::toggled, this, [this, id](bool on) {
+            if (!m_filling) m_engine->setControlValue(id, on ? 1.0 : 0.0);
+        });
+        field = f;
+        h->addWidget(f);
+        h->addStretch(1);
+        break;
+    }
+    case ShowControl::Kind::Choice: {
+        auto *b = new QComboBox;
+        b->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        b->addItems(c.choices);
+        b->setCurrentIndex(int(c.value));
+        connect(b, qOverload<int>(&QComboBox::activated), this, [this, id](int k) { m_engine->setControlValue(id, k); });
+        field = b;
+        h->addWidget(b, 1);
+        break;
+    }
+    case ShowControl::Kind::Button: {
+        auto *b = new QPushButton(QStringLiteral("Hold"));
+        b->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        b->setToolTip(QStringLiteral("1 while it is held down, 0 when let go: a gate for an Envelope, a flash, a strobe"));
+        connect(b, &QPushButton::pressed, this, [this, id] { m_engine->setControlValue(id, 1.0); });
+        connect(b, &QPushButton::released, this, [this, id] { m_engine->setControlValue(id, 0.0); });
+        field = b;
+        h->addWidget(b, 1);
+        break;
+    }
+    case ShowControl::Kind::Color: {
+        auto *b = new QPushButton;
+        b->setObjectName(QStringLiteral("control_%1").arg(c.key));
+        b->setMinimumHeight(24);
+        const QColor color = QColor::fromRgbF(float(c.rgb[0]), float(c.rgb[1]), float(c.rgb[2]));
+        b->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(color.name()));
+        connect(b, &QPushButton::clicked, this, [this, id, b] {
+            const auto now = m_engine->control(id);
+            if (!now) return;
+            const QColor start = QColor::fromRgbF(float(now->rgb[0]), float(now->rgb[1]), float(now->rgb[2]));
+            const QColor picked = ColorPicker::getColor(start, this, QStringLiteral("Control color"), QStringLiteral("controls/color"), false);
+            if (!picked.isValid()) return;
+            m_engine->setControlColor(id, picked.redF(), picked.greenF(), picked.blueF());
+            b->setStyleSheet(QStringLiteral("background:%1; border:1px solid #555;").arg(picked.name()));
+        });
+        field = b;
+        h->addWidget(b, 1);
+        break;
+    }
+    }
+    const QString path = QStringLiteral("control/") + c.key;
+    if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad) {
+        field->setContextMenuPolicy(Qt::CustomContextMenu);
+        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")} : QStringList{path};
+        connect(field, &QWidget::customContextMenuRequested, this, [this, field, paths](const QPoint &pos) {
+            auto *menu = new QMenu(field);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, paths, field);
+            menu->popup(field->mapToGlobal(pos));
+        });
+    }
+    h->addWidget(gearButton(c, siblings, position, m_engine->controls()));
+    m_rows.push_back({id, field});
+    return row;
 }
 
 void ControlsPanel::refreshValues()
@@ -403,7 +549,9 @@ void ControlsPanel::refreshValues()
         const auto it = std::find_if(controls.begin(), controls.end(), [&](const ShowControl &c) { return c.id == row.id; });
         if (it == controls.end()) continue;
         const ShowControl &c = *it;
-        if (auto *s = qobject_cast<SliderField *>(row.field.data())) {
+        if (auto *pad = qobject_cast<XyPad *>(row.field.data())) {
+            if (!pad->isDragging()) pad->setValue(c.value, c.value2);
+        } else if (auto *s = qobject_cast<SliderField *>(row.field.data())) {
             if (!s->isDragging()) {
                 const QSignalBlocker b(s);
                 s->setValue(c.value);

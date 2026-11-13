@@ -305,6 +305,94 @@ void ResetLabel::leaveEvent(QEvent *e)
 }
 
 // ---------------------------------------------------------------------------
+// XyPad
+// ---------------------------------------------------------------------------
+
+XyPad::XyPad(QWidget *parent) : QWidget(parent)
+{
+    setMinimumHeight(110);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+    setCursor(Qt::CrossCursor);
+    setToolTip(QStringLiteral("Drag: X across, Y upward · double-click: back to the default"));
+}
+
+void XyPad::setRange(double lo, double hi)
+{
+    m_lo = lo;
+    m_hi = hi > lo ? hi : lo + 1;
+    update();
+}
+
+void XyPad::setValue(double x, double y)
+{
+    if (m_dragging) return;
+    m_x = std::clamp(x, m_lo, m_hi);
+    m_y = std::clamp(y, m_lo, m_hi);
+    update();
+}
+
+QRectF XyPad::area() const { return QRectF(rect()).adjusted(4, 4, -4, -4); }
+
+void XyPad::drag(QPointF pos)
+{
+    const QRectF a = area();
+    const double nx = std::clamp((pos.x() - a.left()) / std::max(1.0, a.width()), 0.0, 1.0);
+    const double ny = std::clamp(1.0 - (pos.y() - a.top()) / std::max(1.0, a.height()), 0.0, 1.0);
+    const double x = m_lo + nx * (m_hi - m_lo), y = m_lo + ny * (m_hi - m_lo);
+    if (x == m_x && y == m_y) return;
+    m_x = x;
+    m_y = y;
+    update();
+    emit valueEdited(m_x, m_y);
+}
+
+void XyPad::mousePressEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_dragging = true;
+    drag(e->position());
+}
+
+void XyPad::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_dragging) drag(e->position());
+}
+
+void XyPad::mouseReleaseEvent(QMouseEvent *) { m_dragging = false; }
+
+void XyPad::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_x = m_y = std::clamp(m_default, m_lo, m_hi);
+    update();
+    emit valueEdited(m_x, m_y);
+}
+
+void XyPad::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF a = area();
+    p.setPen(QPen(QColor(70, 70, 78), 1));
+    p.setBrush(QColor(30, 30, 34));
+    p.drawRoundedRect(a, 5, 5);
+    p.setPen(QPen(QColor(55, 55, 62), 1));
+    p.drawLine(QPointF(a.center().x(), a.top()), QPointF(a.center().x(), a.bottom()));
+    p.drawLine(QPointF(a.left(), a.center().y()), QPointF(a.right(), a.center().y()));
+    const double nx = (m_x - m_lo) / (m_hi - m_lo), ny = (m_y - m_lo) / (m_hi - m_lo);
+    const QPointF dot(a.left() + nx * a.width(), a.bottom() - ny * a.height());
+    p.setPen(QPen(theme::accent(), 1));
+    p.drawLine(QPointF(dot.x(), a.top()), QPointF(dot.x(), a.bottom()));
+    p.drawLine(QPointF(a.left(), dot.y()), QPointF(a.right(), dot.y()));
+    p.setPen(Qt::NoPen);
+    p.setBrush(theme::accent());
+    p.drawEllipse(dot, 6, 6);
+    p.setPen(QColor(150, 150, 158));
+    p.drawText(a.adjusted(6, 4, -6, -4), Qt::AlignRight | Qt::AlignBottom,
+               QStringLiteral("%1 , %2").arg(m_x, 0, 'f', m_decimals).arg(m_y, 0, 'f', m_decimals));
+}
+
+// ---------------------------------------------------------------------------
 // RoiEditor
 // ---------------------------------------------------------------------------
 
@@ -511,7 +599,24 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
     }
     default: break;
     }
-    const QRectF nc(QPointF(l, t), QPointF(r, b));
+    QRectF nc(QPointF(l, t), QPointF(r, b));
+    if (m_keepProportions && m_drag >= 0 && m_drag < 4 && m_dragStart.height() > 0) {
+        // The side dragged leads; the other axis follows around its center, the opposite side staying where it was
+        const bool horizontal = m_drag % 2 == 0;
+        nc = keepRatio(nc, m_dragStart.width() / m_dragStart.height(), horizontal ? 0 : 1);
+        const QPointF center = m_dragStart.center();
+        if (horizontal) {
+            if (m_drag == 0) nc.moveRight(m_dragStart.right());
+            else nc.moveLeft(m_dragStart.left());
+            nc.moveCenter(QPointF(nc.center().x(), center.y()));
+        } else {
+            if (m_drag == 1) nc.moveBottom(m_dragStart.bottom());
+            else nc.moveTop(m_dragStart.top());
+            nc.moveCenter(QPointF(center.x(), nc.center().y()));
+        }
+        nc.translate(nc.left() < 0 ? -nc.left() : nc.right() > 1 ? 1 - nc.right() : 0,
+                     nc.top() < 0 ? -nc.top() : nc.bottom() > 1 ? 1 - nc.bottom() : 0);
+    }
     if (nc != m_roi) {
         m_roi = nc;
         update();
@@ -520,6 +625,17 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
 }
 
 void RoiEditor::mouseReleaseEvent(QMouseEvent *) { m_drag = -1; }
+
+QRectF RoiEditor::keepRatio(QRectF r, double ratio, int axis)
+{
+    ratio = std::max(ratio, 1e-3);
+    double w = r.width(), h = r.height();
+    if (axis == 0) h = w / ratio;
+    else w = h * ratio;
+    if (w > 1) { w = 1; h = w / ratio; }
+    if (h > 1) { h = 1; w = h * ratio; }
+    return QRectF(r.left(), r.top(), std::max(w, 0.01), std::max(h, 0.01));
+}
 
 // ---------------------------------------------------------------------------
 // ColorEditor

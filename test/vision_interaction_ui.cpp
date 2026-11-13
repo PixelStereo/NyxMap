@@ -61,7 +61,7 @@ int main(int argc, char **argv)
         auto *target = panel.findChild<QToolButton *>("interactionTargetParameter");
         require(target && target->menu(), "mapping target offers a menu");
         emit target->menu()->aboutToShow();
-        auto *outerTarget = submenu(target->menu(), "Outer Group");
+        auto *outerTarget = submenu(submenu(target->menu(), "Layers"), "Outer Group");
         auto *innerTarget = submenu(outerTarget, "Inner Group");
         auto *layerTarget = submenu(innerTarget, "Image Layer");
         require(layerTarget, "the target layer is inside its group");

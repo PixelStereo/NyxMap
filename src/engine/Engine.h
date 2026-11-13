@@ -352,7 +352,11 @@ public:
     InteractionGraph interactionGraph() const;
     bool setInteractionGraph(const InteractionGraph &graph, QString *error = nullptr);
     std::vector<Interaction> interactions() const;
-    void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one
+    void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one; the groups stay
+    // The folders of the list (InteractionGroup), with the list in one go (undo); a group with an unknown parent goes to the top level,
+    // an interaction in an unknown group too; ids 0 are given one
+    std::vector<InteractionGroup> interactionGroups() const;
+    void setInteractions(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups);
     quint64 addInteraction(const Interaction &it);              // its id
     bool setInteraction(const Interaction &it);                 // by its id
     void removeInteraction(quint64 id);
@@ -654,6 +658,7 @@ public:
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
     bool setControlValue(quint64 id, double value); // a number, a switch, an index; any thread
+    bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
     bool setControlColor(quint64 id, double r, double g, double b);
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
     BeatClock &beatClock() { return m_beatClock; }
@@ -1342,6 +1347,8 @@ private:
     void stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events);
     std::vector<Interaction> m_interactions; // under m_mutex
     quint64 m_nextInteractionId = 1;
+    std::vector<InteractionGroup> m_interactionGroups;
+    quint64 m_nextInteractionGroupId = 1;
     struct InteractionRun {
         InteractionProcessor proc, shared;
         std::optional<double> sharedOut;
@@ -1493,7 +1500,7 @@ private:
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
-    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1;
+    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1, m_maskMixLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
     GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
     GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)

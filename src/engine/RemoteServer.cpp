@@ -52,9 +52,15 @@ bool sameBytes(const QByteArray &a, const QByteArray &b)
 QList<double> valuesOf(const ShowControl &c)
 {
     if (c.kind == ShowControl::Kind::Color) return {c.rgb[0], c.rgb[1], c.rgb[2]};
+    if (c.kind == ShowControl::Kind::Pad) return {c.value, c.value2};
     return {c.value};
 }
-QJsonValue jsonOf(const QList<double> &v) { return v.size() == 3 ? QJsonValue(QJsonArray{v[0], v[1], v[2]}) : QJsonValue(v.value(0)); }
+QJsonValue jsonOf(const QList<double> &v)
+{
+    if (v.size() == 3) return QJsonArray{v[0], v[1], v[2]};
+    if (v.size() == 2) return QJsonArray{v[0], v[1]};
+    return v.value(0);
+}
 } // namespace
 
 QByteArray RemoteServer::page()
@@ -206,7 +212,16 @@ QByteArray RemoteServer::controlsMessage() const
     QJsonArray list;
     for (const ShowControl &c : m_e->controls()) {
         QJsonObject o{{"id", QString::number(c.id)}, {"name", c.name}, {"key", c.key}, {"kind", ShowControl::kindKey(c.kind)}};
+        if (c.group) o["group"] = QString::number(c.group);
+        o["span"] = c.span;
         switch (c.kind) {
+        case ShowControl::Kind::Group: o["columns"] = c.columns; break;
+        case ShowControl::Kind::Pad:
+            o["min"] = c.min;
+            o["max"] = c.max;
+            o["x"] = c.value;
+            o["y"] = c.value2;
+            break;
         case ShowControl::Kind::Slider:
             o["min"] = c.min;
             o["max"] = c.max;
@@ -331,7 +346,7 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         if (--c.budget < 0) return; // faster than any hand: dropped
         const QJsonObject o = QJsonDocument::fromJson(payload).object();
         const QString type = o.value("t").toString();
-        if (type != QLatin1String("set") && type != QLatin1String("color")) {
+        if (type != QLatin1String("set") && type != QLatin1String("color") && type != QLatin1String("point")) {
             onDesk(c, type, o);
             return;
         }
@@ -339,6 +354,9 @@ void RemoteServer::onFrame(Client &c, int opcode, const QByteArray &payload)
         if (!id) return;
         if (type == QLatin1String("set") && o.value("v").isDouble()) {
             if (m_e->setControlValue(id, o.value("v").toDouble())) emit controlMoved();
+        } else if (type == QLatin1String("point")) {
+            const QJsonArray xy = o.value("xy").toArray();
+            if (xy.size() == 2 && m_e->setControlPoint(id, xy[0].toDouble(), xy[1].toDouble())) emit controlMoved();
         } else if (type == QLatin1String("color")) {
             const QJsonArray rgb = o.value("rgb").toArray();
             if (rgb.size() == 3 && m_e->setControlColor(id, rgb[0].toDouble(), rgb[1].toDouble(), rgb[2].toDouble())) emit controlMoved();

@@ -8,6 +8,7 @@
 #include "Interactions.h"
 
 #include <QHash>
+#include <QSet>
 #include <QPointer>
 #include <QWidget>
 #include <functional>
@@ -60,11 +61,7 @@ private:
     std::optional<InteractionSource> shownKind() const; // the sub-tab's (none: All)
     void rebuildList();
     void rebuildSettings();
-    // Layer menus mirror the bin, including nested groups.
-    void fillLayerMenu(QMenu *menu, const std::function<void(QMenu *, quint64, const QString &)> &fill,
-                       const QString &groupItem);
     void fillOutputTargets(QMenu *menu, const QString &currentPath, const std::function<void(const QString &)> &select);
-    void fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill);
     // An Action's settings: its conditions, what it does if true, if false (rebuildSettings)
     using EditFn = std::function<void(const QString &, const std::function<void(Interaction &)> &, const QString &)>;
     void buildActionSettings(class QFormLayout *form, const Interaction &it, const EditFn &edit);
@@ -80,6 +77,12 @@ private:
     // form one step: a drag)
     void commit(const Interaction &it, const QString &text, const QString &mergeKey = QString());
     void commitList(const std::vector<Interaction> &list, const QString &text);
+    // The list and its groups together, as one undo step
+    void commitGroups(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups, const QString &text);
+    void applyTree();                      // the tree after a drop: the groups' contents read back
+    void groupSelected();                  // a group of the selection
+    void fillGroupMenu(QMenu *menu, quint64 group);
+    QTreeWidgetItem *groupItem(quint64 group) const;
     void add(InteractionSource kind);
     void removeSelected();
     QString targetLabel(quint64 layer, const QString &param) const;
@@ -120,5 +123,6 @@ private:
     bool m_filling = false;
     // Reused between meter polls; a busy engine leaves the display intact.
     std::vector<InteractionTelemetry> m_levelSample;
+    QSet<quint64> m_collapsed; // the groups folded (kept across the list being made again)
     QHash<int, QString> m_pressed; // keys held: the name they were pressed with (their modifiers may change since)
 };

@@ -184,6 +184,7 @@ public:
     // The mask layer's picture it takes: -1 its final picture, 0 its source (before its effects), k its picture after its
     // effect k (1 = the first). Its own layer can mask it, from a stage above it (its source, an effect before it)
     int maskStage = -1;
+    double mix = 1; // an effect: how much of its result goes on (1: all of it, 0: the picture it was given)
     bool maskOnly = false; // computed (a mask can take its picture), but the layer's picture goes on without it
     std::array<bool, 4> channels{{true, true, true, true}}; // an effect: the channels it changes (R G B A); the others
                                                             // keep the picture it was given
