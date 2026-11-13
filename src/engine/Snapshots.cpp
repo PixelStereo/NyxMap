@@ -698,6 +698,13 @@ QJsonArray Engine::captureLayers(bool withAnimated) const
             o["params"] = params;
         }
         o["included"] = true;
+        // A video starts again from its in point on recall: checked by default. The live value is always off (an
+        // action, not a state), so the default is what a new snapshot holds; an update keeps what the snapshot holds.
+        if (o.value("source").toObject().value("type").toString() == QLatin1String("video")) {
+            QJsonObject params = o.value("params").toObject();
+            params[QStringLiteral("restart")] = true;
+            o["params"] = params;
+        }
         a.append(o);
     }
     return a;

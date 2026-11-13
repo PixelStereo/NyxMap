@@ -3865,7 +3865,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 QJsonObject o = v.toObject();
                 const bool me = o.value("id").toString().toULongLong() == vid;
                 o["included"] = me;
-                if (me && edit) edit(o);
+                if (me) {
+                    // A video snapshot holds Restart on Recall by default: these ones are about play and pause alone
+                    QJsonObject p = o.value("params").toObject();
+                    p["restart"] = false;
+                    o["params"] = p;
+                    if (edit) edit(o);
+                }
                 m.layers.append(o);
             }
             return e.addSnapshot(m);
