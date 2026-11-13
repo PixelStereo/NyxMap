@@ -124,7 +124,8 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
             };
         };
         // Its speed and its loop mode, as its card has them (a speed change goes on from where it is: no jump)
-        add(base + "speed", cat + "Speed", T::Float).range(0, 10).limits(0, 10).step(0.01).byDefault(1.0).animatable().bind(
+        // These are for an interaction to drive (and the values to follow), not for a timeline to animate: not animatable
+        add(base + "speed", cat + "Speed", T::Float).range(0, 10).limits(0, 10).step(0.01).byDefault(1.0).animatable(false).bind(
             read([](const Animation &x) { return QVariant(x.speed); }, 1.0),
             [this, id](const QVariant &v) {
                 for (Animation &x : m_animations)
@@ -157,7 +158,7 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                 }
             const QString tbase = base + QStringLiteral("track/%1/").arg(k + 1);
             const QString tcat = cat + QStringLiteral("Track %1 · %2 › ").arg(k + 1).arg(what);
-            add(tbase + "value", tcat + "Value", T::Float).range(lo, hi).limits(-1e9, 1e9).readOnly().bind(
+            add(tbase + "value", tcat + "Value", T::Float).range(lo, hi).limits(-1e9, 1e9).readOnly().animatable(false).bind(
                 [this, id, k] {
                     for (const Animation &x : m_animations)
                         if (x.id == id && k < x.tracks.size()) {
@@ -169,7 +170,7 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                 nullptr);
             if (!track.oscillator) continue;
             auto numberOf = [&](const QString &name, const QString &label, double from, double to, double def, double AnimTrack::*field) {
-                add(tbase + name, tcat + label, T::Float).range(from, to).limits(-1e9, 1e9).step((to - from) / 100.0).byDefault(def).animatable().bind(
+                add(tbase + name, tcat + label, T::Float).range(from, to).limits(-1e9, 1e9).step((to - from) / 100.0).byDefault(def).animatable(false).bind(
                     [this, id, k, field] {
                         for (const Animation &x : m_animations)
                             if (x.id == id && k < x.tracks.size()) return QVariant(x.tracks[k].*field);
