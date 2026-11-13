@@ -30,7 +30,10 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
     };
     for (const Snapshot &s : m_snapshots) mix(1, s.id, s.name);
     for (const Preset &p : m_presets) mix(2, p.id, p.name);
-    for (const Animation &a : m_animations) mix(3, a.id, a.name);
+    for (const Animation &a : m_animations) {
+        mix(3, a.id, a.name);
+        for (size_t k = 0; k < a.tracks.size(); ++k) mix(7, a.id * 64 + k, a.tracks[k].param + (a.tracks[k].oscillator ? QStringLiteral("~") : QString()));
+    }
     key = (key ^ (m_controlsRevision + 0x51ed270b)) * 0x100000001b3ULL; // the controls' definitions
     if (key == m_showParamsKey && !m_showParams.empty()) return m_showParams;
     m_showParamsKey = key;
@@ -120,6 +123,68 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                 return none;
             };
         };
+        // Its speed and its loop mode, as its card has them (a speed change goes on from where it is: no jump)
+        add(base + "speed", cat + "Speed", T::Float).range(0, 10).limits(0, 10).step(0.01).byDefault(1.0).animatable().bind(
+            read([](const Animation &x) { return QVariant(x.speed); }, 1.0),
+            [this, id](const QVariant &v) {
+                for (Animation &x : m_animations)
+                    if (x.id == id) { controlLocked(&x, AnimAction::Speed, v.toDouble(), x.loop, x.repeat); return; }
+            });
+        {
+            const QStringList modes{QStringLiteral("once"), QStringLiteral("loop"), QStringLiteral("ping-pong")};
+            add(base + "loop", cat + "Loop Mode", T::Choice).choices(modes).byDefault(modes[1]).ramp(Parameter::Ramp::Cut).bind(
+                read([modes](const Animation &x) { return QVariant(modes.value(int(x.loop))); }, modes[1]),
+                [this, id, modes](const QVariant &v) {
+                    const int mode = int(modes.indexOf(v.toString()));
+                    if (mode < 0) return;
+                    for (Animation &x : m_animations)
+                        if (x.id == id) { controlLocked(&x, AnimAction::LoopMode, 0, AnimLoop(mode), x.repeat); return; }
+                });
+        }
+        // Each track: the value it gives now (to follow), and an oscillator's period, how far it goes, around what, from which
+        // point of the wave
+        for (size_t k = 0; k < a.tracks.size(); ++k) {
+            const AnimTrack &track = a.tracks[k];
+            if (track.event || track.color || track.isPoint() || track.param.isEmpty()) continue;
+            // The driven number's range and name (not asked of a value of the show itself: its list is being made)
+            double lo = 0, hi = 1;
+            QString what = track.param;
+            if (!isShowParam(track.param))
+                if (const Parameter *target = findParameter(track.layer, track.param); target && target->isNumber()) {
+                    lo = target->info().min;
+                    hi = target->info().max;
+                    what = target->info().name();
+                }
+            const QString tbase = base + QStringLiteral("track/%1/").arg(k + 1);
+            const QString tcat = cat + QStringLiteral("Track %1 · %2 › ").arg(k + 1).arg(what);
+            add(tbase + "value", tcat + "Value", T::Float).range(lo, hi).limits(-1e9, 1e9).readOnly().bind(
+                [this, id, k] {
+                    for (const Animation &x : m_animations)
+                        if (x.id == id && k < x.tracks.size()) {
+                            const double v = x.tracks[k].valueAt(x.position(), x.played());
+                            return std::isfinite(v) ? QVariant(v) : QVariant();
+                        }
+                    return QVariant();
+                },
+                nullptr);
+            if (!track.oscillator) continue;
+            auto numberOf = [&](const QString &name, const QString &label, double from, double to, double def, double AnimTrack::*field) {
+                add(tbase + name, tcat + label, T::Float).range(from, to).limits(-1e9, 1e9).step((to - from) / 100.0).byDefault(def).animatable().bind(
+                    [this, id, k, field] {
+                        for (const Animation &x : m_animations)
+                            if (x.id == id && k < x.tracks.size()) return QVariant(x.tracks[k].*field);
+                        return QVariant();
+                    },
+                    [this, id, k, field](const QVariant &v) {
+                        for (Animation &x : m_animations)
+                            if (x.id == id && k < x.tracks.size()) { x.tracks[k].*field = v.toDouble(); return; }
+                    });
+            };
+            numberOf("period", "Period (s)", 0.05, 60, 1, &AnimTrack::period);
+            numberOf("amplitude", "Amplitude", 0, hi - lo, 0.5 * (hi - lo), &AnimTrack::amplitude);
+            numberOf("center", "Center", lo, hi, 0.5 * (lo + hi), &AnimTrack::center);
+            numberOf("phase", "Phase", 0, 1, 0, &AnimTrack::phase);
+        }
         add(base + "playing", cat + "Playing", T::Bool).readOnly().bind(
             read([](const Animation &x) { return QVariant(x.state == AnimState::Playing); }, false), nullptr);
         // The pass it is in (1, 2…, as its card shows it; 0 stopped) and where it is within it (0..1, backwards on
@@ -181,6 +246,19 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                       }));
             break;
         }
+        case ShowControl::Kind::Group: break; // a frame of the page, not a value
+        case ShowControl::Kind::Pad:
+            for (int axis = 0; axis < 2; ++axis)
+                add(path + (axis == 0 ? "/x" : "/y"), label + (axis == 0 ? " X" : " Y"), T::Float)
+                    .range(control.min, control.max)
+                    .step(control.step)
+                    .byDefault(control.def)
+                    .animatable()
+                    .transient()
+                    .pointComponent(axis)
+                    .bind(read([axis](const ShowControl &c) { return QVariant(axis == 0 ? c.value : c.value2); }, 0.0),
+                          write([axis](ShowControl &c, const QVariant &v) { (axis == 0 ? c.value : c.value2) = c.clamped(v.toDouble()); }));
+            break;
         case ShowControl::Kind::Color:
             for (int k = 0; k < 3; ++k)
                 add(path + (k == 0 ? "/r" : k == 1 ? "/g" : "/b"), label + (k == 0 ? " (red)" : k == 1 ? " (green)" : " (blue)"), T::Float)

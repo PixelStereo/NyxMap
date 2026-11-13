@@ -1000,7 +1000,8 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
             }
             const bool masked = mask && maskTex;
             const bool someChannels = !std::all_of(fx->channels.begin(), fx->channels.end(), [](bool on) { return on; });
-            if (masked || someChannels) {
+            const bool partial = fx->mix < 1;
+            if (masked || someChannels || partial) {
                 RenderTarget &mixed = l.maskTarget[ping];
                 mixed.ensure(w, h);
                 if (!mixed.ready(w, h)) {
@@ -1021,6 +1022,7 @@ void Engine::processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied
                 }
                 f->glUniform1i(m_maskInvertLoc, fx->maskInvert ? 1 : 0);
                 f->glUniform1i(m_maskHasLoc, masked ? 1 : 0);
+                f->glUniform1f(m_maskMixLoc, GLfloat(std::clamp(fx->mix, 0.0, 1.0)));
                 f->glUniform4f(m_maskChannelsLoc, fx->channels[0] ? 1.f : 0.f, fx->channels[1] ? 1.f : 0.f,
                                fx->channels[2] ? 1.f : 0.f, fx->channels[3] ? 1.f : 0.f);
                 drawQuad();

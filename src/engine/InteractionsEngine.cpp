@@ -205,6 +205,24 @@ std::vector<Interaction> Engine::interactions() const
     return m_interactions;
 }
 
+std::vector<InteractionGroup> Engine::interactionGroups() const
+{
+    Lock lk(&m_mutex);
+    return m_interactionGroups;
+}
+
+void Engine::setInteractions(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups)
+{
+    {
+        Lock lk(&m_mutex);
+        m_interactionGroups = groups;
+        for (const InteractionGroup &g : m_interactionGroups) m_nextInteractionGroupId = std::max(m_nextInteractionGroupId, g.id + 1);
+        for (InteractionGroup &g : m_interactionGroups)
+            if (!g.id) g.id = m_nextInteractionGroupId++;
+    }
+    setInteractions(list);
+}
+
 void Engine::setInteractions(const std::vector<Interaction> &list)
 {
     {
@@ -217,6 +235,14 @@ void Engine::setInteractions(const std::vector<Interaction> &list)
         }
         m_interactions = list;
         nameInteractions(m_interactions);
+        // Groups whose parent is gone (or that would hold themselves) go to the top level; so do interactions of a gone group
+        for (InteractionGroup &g : m_interactionGroups) {
+            const auto parent = std::find_if(m_interactionGroups.begin(), m_interactionGroups.end(), [&](const auto &x) { return x.id == g.parent; });
+            if (parent == m_interactionGroups.end() || g.parent == g.id) g.parent = 0;
+        }
+        for (Interaction &it : m_interactions)
+            if (it.group && std::none_of(m_interactionGroups.begin(), m_interactionGroups.end(), [&](const auto &g) { return g.id == it.group; }))
+                it.group = 0;
         for (const Interaction &it : m_interactions) m_nextInteractionId = std::max(m_nextInteractionId, it.id + 1);
         for (Interaction &it : m_interactions)
             if (!it.id) it.id = m_nextInteractionId++;
@@ -1081,12 +1107,19 @@ void Engine::makeInteractionParams()
                 tHi = p->info().max;
             }
 
+        // Only what is in play for this interaction: the settings of its kind of source, its chain (a Mapping's, not an
+        // Action's), the alpha of a whole color target
+        const bool mapping = !it.isAction();
+        const bool wholeColor = !lookup(root.layer, root.param) && lookup(root.layer, root.param + QStringLiteral("/r"));
         flag(QStringLiteral("enable"), QStringLiteral("On"), true, [](Interaction &x) -> bool & { return x.enabled; });
-        number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 1, [](Interaction &x) -> double & { return x.master; })
-            .limits(0, 1)
-            .animatable();
-        flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"), false,
-             [](Interaction &x) -> bool & { return x.colorMapAlpha; });
+        if (mapping)
+            number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 1, [](Interaction &x) -> double & { return x.master; })
+                .limits(0, 1)
+                .animatable();
+        if (mapping && wholeColor)
+            flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"), false,
+                 [](Interaction &x) -> bool & { return x.colorMapAlpha; });
+        if (mapping && (it.source == InteractionSource::Midi || it.source == InteractionSource::Osc))
         add(QStringLiteral("takeover"), QStringLiteral("Takeover"), T::Choice)
             .choices({QStringLiteral("pickup"), QStringLiteral("jump")})
             .byDefault(QStringLiteral("jump"))
@@ -1102,7 +1135,7 @@ void Engine::makeInteractionParams()
                   });
         // Each filter in its order: on / off and its settings (a preset, a snapshot, OSC, a timeline reach them); what
         // the filters are, all together, below ("filters")
-        for (size_t k = 0; k < it.filters.size(); ++k) {
+        for (size_t k = 0; mapping && k < it.filters.size(); ++k) {
             const InteractionStage &f = it.filters[k];
             const QString path = QStringLiteral("filters/%1/").arg(k + 1);
             const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(f.displayName());
@@ -1217,46 +1250,60 @@ void Engine::makeInteractionParams()
              [](Interaction &x, const QString &v) { x.key = v; });
         text(QStringLiteral("source/midi/input"), QStringLiteral("MIDI Input"), [](const Interaction &x) { return x.midiPort; },
              [](Interaction &x, const QString &v) { x.midiPort = v; });
+        if (it.source == InteractionSource::Midi)
         whole(QStringLiteral("source/midi/channel"), QStringLiteral("MIDI Channel"), 0, 16, 0, [](Interaction &x) -> int & { return x.midiChannel; });
+        if (it.source == InteractionSource::Midi)
         choice(QStringLiteral("source/midi/message"), QStringLiteral("MIDI Message"),
                {QStringLiteral("cc"), QStringLiteral("note"), QStringLiteral("pitch_bend"), QStringLiteral("program")},
                [](const Interaction &x) { return int(x.midiMessage); },
                [](Interaction &x, int k) { x.midiMessage = MidiMessageKind(k); });
+        if (it.source == InteractionSource::Midi && it.midiMessage != MidiMessageKind::PitchBend)
         whole(QStringLiteral("source/midi/number"), QStringLiteral("MIDI Number"), 0, 127, 0, [](Interaction &x) -> int & { return x.midiNumber; });
         text(QStringLiteral("source/osc/address"), QStringLiteral("OSC Address"), [](const Interaction &x) { return x.oscAddress; },
              [](Interaction &x, const QString &v) { x.oscAddress = v; });
+        if (it.source == InteractionSource::Osc)
         whole(QStringLiteral("source/osc/argument"), QStringLiteral("OSC Argument"), 0, 63, 0, [](Interaction &x) -> int & { return x.oscArgument; });
         text(QStringLiteral("source/internal"), QStringLiteral("Follows"),
              [valueRef](const Interaction &x) { return valueRef(x.sourceLayer, x.sourceParam); },
              [parseRef](Interaction &x, const QString &v) { parseRef(v, &x.sourceLayer, &x.sourceParam); });
+        if (it.source == InteractionSource::Audio)
         number(QStringLiteral("source/audio/low"),QStringLiteral("Audio Low Hz"),20,20000,20,[](Interaction &x)->double &{return x.audioLow;}).limits(20,20000);
+        if (it.source == InteractionSource::Audio)
         number(QStringLiteral("source/audio/high"),QStringLiteral("Audio High Hz"),20,20000,20000,[](Interaction &x)->double &{return x.audioHigh;}).limits(20,20000);
+        if (it.source == InteractionSource::Audio && it.audioFeature == Interaction::AudioFeature::Hit)
         number(QStringLiteral("source/audio/sensitivity"),QStringLiteral("Audio Hit Sensitivity"),0,1,0.5,[](Interaction &x)->double &{return x.audioSensitivity;}).limits(0,1);
+        if (it.source == InteractionSource::Audio && it.audioFeature == Interaction::AudioFeature::Hit)
         number(QStringLiteral("source/audio/gap"),QStringLiteral("Audio Hit Minimum Gap"),0.04,2,0.08,[](Interaction &x)->double &{return x.audioGap;}).limits(0.04,2);
+        if (it.source == InteractionSource::Audio)
         choice(QStringLiteral("source/audio/feature"),QStringLiteral("Audio Measure"),{QStringLiteral("band"),QStringLiteral("level"),QStringLiteral("onset"),QStringLiteral("hit")},
             [](const Interaction &x){return int(x.audioFeature);},[](Interaction &x,int k){x.audioFeature=Interaction::AudioFeature(k);});
+        if (it.source == InteractionSource::Audio)
         choice(QStringLiteral("source/audio/input"),QStringLiteral("Audio Source"),{QStringLiteral("program"),QStringLiteral("input")},
             [](const Interaction &x){return x.audioInput?1:0;},[](Interaction &x,int k){x.audioInput=k==1;});
         text(
             QStringLiteral("source/vision/layer"), QStringLiteral("Image layer"),
             [](const Interaction &x) { return QString::number(x.pixels.layer); },
             [](Interaction &x, const QString &v) { x.pixels.layer = v.toULongLong(); });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/vision/tap"), QStringLiteral("Image tap"), {"prefx", "postfx"},
             [](const Interaction &x) { return std::clamp(x.pixels.tap, 1, 2) - 1; },
             [](Interaction &x, int n) { x.pixels.tap = n + 1; });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/pixels/channel"), QStringLiteral("Pixel channel"), PixelAnalysis::channelNames(),
             [](const Interaction &x) { return int(x.pixels.channel); },
             [](Interaction &x, int n) { x.pixels.channel = PixelAnalysis::Channel(n); });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/pixels/feature"), QStringLiteral("Pixel measure"), PixelAnalysis::featureNames(),
             [](const Interaction &x) { return int(x.pixelFeature); },
             [](Interaction &x, int n) { x.pixelFeature = PixelAnalysis::Feature(n); });
+        if (it.source == InteractionSource::Pixels)
         number(QStringLiteral("source/pixels/threshold"), QStringLiteral("Pixel active threshold"), 0, 1, .05,
                [](Interaction &x) -> double & { return x.pixels.threshold; })
             .limits(0, 1);
-        for (int component = 0; component < 4; ++component) {
+        for (int component = 0; it.source == InteractionSource::Pixels && component < 4; ++component) {
             const char *keys[] = {"x", "y", "width", "height"};
             add(QStringLiteral("source/pixels/roi/") + keys[component], QStringLiteral("Pixel ROI ") + keys[component],
                 T::Float)
@@ -1284,14 +1331,18 @@ void Engine::makeInteractionParams()
                         }
                     });
         }
+        if (it.source == InteractionSource::Hands)
         choice(
             QStringLiteral("source/hands/feature"), QStringLiteral("Hand measure"), HandTracking::featureNames(),
             [](const Interaction &x) { return int(x.handFeature); },
             [](Interaction &x, int n) { x.handFeature = HandTracking::Feature(n); });
+        if (it.source == InteractionSource::Hands)
         whole(QStringLiteral("source/hands/landmark"), QStringLiteral("MediaPipe landmark / blendshape index"), 0, 477, 0,
               [](Interaction &x) -> int & { return x.visionLandmark; });
+        if (it.source == InteractionSource::Hands)
         whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 3, 0,
               [](Interaction &x) -> int & { return x.handIndex; });
+        if (it.source == InteractionSource::Hands)
         number(QStringLiteral("source/hands/confidence"), QStringLiteral("Hand confidence"), .5, .99, .7,
                [](Interaction &x) -> double & { return x.handConfidence; })
             .limits(.5, .99);

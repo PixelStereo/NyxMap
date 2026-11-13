@@ -4,6 +4,7 @@
 #include "Engine.h"
 #include "GlDraw.h"
 #include "FixtureOverlay.h"
+#include "ShowMenus.h"
 #include "Widgets.h"
 #include <QComboBox>
 #include <QFontMetrics>
@@ -246,21 +247,36 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
         cell.source->setPopupMode(QToolButton::InstantPopup);
         auto *menu = new QMenu(cell.source);
         cell.source->setMenu(menu);
+        // The picture to look at: the composition, then the viewports, then the layers as the bin has them (groups, 3D
+        // scenes with their objects)
         connect(menu, &QMenu::aboutToShow, this, [this, slot, menu] {
-            menu->clear();
+            showmenu::clearMenu(menu);
             auto *composition = menu->addAction(QStringLiteral("Composition"));
             connect(composition, &QAction::triggered, this, [this, slot] { selectSource(slot, 0, QStringLiteral("Composition")); });
-            auto *layers = menu->addMenu(QStringLiteral("Layers"));
-            auto *viewports = menu->addMenu(QStringLiteral("Viewports"));
-            Engine::Lock lock(&m_engine->mutex());
-            for (int i = 0; i < m_engine->layerCount(); ++i) {
-                const auto *layer = m_engine->layer(i);
-                if (!layer) continue;
-                const quint64 id = layer->id;
-                const QString label = layer->scene3d ? layer->name + QStringLiteral(" (3D view)") : layer->name;
-                auto *action = (layer->isViewport ? viewports : layers)->addAction(label);
-                connect(action, &QAction::triggered, this, [this, slot, id, label] { selectSource(slot, id, label); });
-            }
+            const auto labelOf = [this](quint64 id, const QString &name) {
+                Engine::Lock lock(&m_engine->mutex());
+                const Layer *l = m_engine->layer(m_engine->indexOfId(id));
+                return l && l->scene3d ? name + QStringLiteral(" (3D view)") : name;
+            };
+            const auto leaf = [this, slot, labelOf](QMenu *into, quint64 id, const QString &name) {
+                const QString label = labelOf(id, name);
+                connect(into->addAction(label), &QAction::triggered, this, [this, slot, id, label] { selectSource(slot, id, label); });
+            };
+            // A layer holding others (a 3D scene with its objects) can be looked at too, above them; a group is only a folder
+            const auto container = [this, slot, labelOf](QMenu *into, quint64 id, const QString &name, bool isGroup) {
+                if (isGroup) return;
+                const QString label = labelOf(id, name);
+                connect(into->addAction(label), &QAction::triggered, this, [this, slot, id, label] { selectSource(slot, id, label); });
+                into->addSeparator();
+            };
+            auto *viewports = new QMenu(QStringLiteral("Viewports"), menu);
+            showmenu::fillLayerTree(viewports, m_engine, leaf, container, true);
+            if (viewports->isEmpty()) delete viewports;
+            else menu->addMenu(viewports);
+            auto *layers = new QMenu(QStringLiteral("Layers"), menu);
+            showmenu::fillLayerTree(layers, m_engine, leaf, container, false);
+            if (layers->isEmpty()) delete layers;
+            else menu->addMenu(layers);
         });
         column->addWidget(cell.source);
         cell.pages = new QStackedWidget;

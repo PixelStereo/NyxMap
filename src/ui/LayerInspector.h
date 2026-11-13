@@ -28,6 +28,7 @@ class QLineEdit;
 class RoiEditor;
 class ColorEditor;
 class QComboBox;
+class QCheckBox;
 class QToolButton;
 class QGroupBox;
 class ParamPanel;
@@ -162,6 +163,7 @@ private:
     QPointer<QButtonGroup> m_playButtons;
     QPointer<QComboBox> m_roiMode;
     QPointer<QWidget> m_roiRanges;
+    QPointer<QCheckBox> m_roiKeep;
     QPointer<RoiEditor> m_roi;
     QPointer<ColorEditor> m_colorAdd, m_colorRemove;
     std::vector<std::pair<QPointer<QPushButton>, QString>> m_textColors;

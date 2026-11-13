@@ -4,10 +4,17 @@
 
 The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, holds the operator's own values: a **Slider**
 (range, step, unit, default), a **Toggle**, a **Selector** (a list of choices), a **Button** (1 while it is held down) and a
-**Color**. **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
+**Color**, and a **2D Slider** (a square: two numbers, X and Y, moved by one gesture; double-click puts it back to its
+default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
-A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`), like a layer's opacity. So:
+**Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
+control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
+**⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same
+groups, columns and widths.
+
+A control is a value of the show, `control/<name>` (a color: `control/<name>/r`, `g`, `b`; a 2D slider: `control/<name>/x` and
+`y`, a point a timeline draws as an XY track), like a layer's opacity. So:
 
 * an **interaction follows it** (Source *Internal*, *Controls › name*) to drive anything: one control read by several
   interactions drives several things at once, each with its own filters (a Remap to invert, an Envelope, a Curve);
@@ -31,7 +38,7 @@ phone, a tablet or a browser on the same network, and enter the **PIN**. Each pa
 leads to `/control`.
 
 * **`http://<this machine>:8765/control`** shows each control as something a thumb can use (sliders, big switches, selector
-  buttons, hold buttons, color pickers), and follows the show live: what moves in NyxMap moves on the phone, and back.
+  buttons, hold buttons, color pickers, 2D sliders), and follows the show live: what moves in NyxMap moves on the phone, and back.
 * **`http://<this machine>:8765/show`** is the show desk: see [Show Control](#show-control) below.
 
 Safety, because it is a door into a show:

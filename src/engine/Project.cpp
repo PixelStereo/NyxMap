@@ -120,6 +120,7 @@ void Engine::clearProject()
         m_graphTargets.clear();
         m_graphLastOutputs.clear();
         m_interactions.clear();
+        m_interactionGroups.clear();
         m_interactionRun.clear();
         m_interactionFades.clear();
         m_actionFades.clear();
@@ -673,6 +674,11 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray interactions;
         for (const Interaction &it : m_interactions) interactions.append(it.toJson());
         root["interactions"] = interactions;
+        if (!m_interactionGroups.empty()) {
+            QJsonArray groups;
+            for (const InteractionGroup &g : m_interactionGroups) groups.append(g.toJson());
+            root["interaction_groups"] = groups;
+        }
         root["interaction_graph"] = m_interactionGraph.toJson();
         root["sequences"] = m_sequencer->toJson();
         root["clock"] = m_beatClock.toJson();
@@ -1019,7 +1025,9 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
                 it.id = 0; // given one
             interactions.push_back(it);
         }
-        setInteractions(interactions);
+        std::vector<InteractionGroup> groups;
+        for (const QJsonValue &v : root.value("interaction_groups").toArray()) groups.push_back(InteractionGroup::fromJson(v.toObject()));
+        setInteractions(interactions, groups);
     }
     if (root.contains("interaction_graph")) {
         InteractionGraph graph;

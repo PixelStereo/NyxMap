@@ -147,9 +147,21 @@ struct InteractionEvent {
     QString describe() const; // "MIDI · ch 1 · CC 7", "Key Space", "OSC /fader/1"
 };
 
+// A folder of the interactions list, as the layers' groups: it holds interactions and other groups (`parent`, 0: the list's
+// top level). Purely for putting the list in order: it changes nothing of how its interactions run.
+struct InteractionGroup {
+    quint64 id = 0;
+    QString name;
+    quint64 parent = 0;
+    bool operator==(const InteractionGroup &o) const { return id == o.id && name == o.name && parent == o.parent; }
+    QJsonObject toJson() const;
+    static InteractionGroup fromJson(const QJsonObject &o);
+};
+
 struct Interaction {
     quint64 id = 0;
     QString name; // its own (empty: described by its source and its target)
+    quint64 group = 0; // the InteractionGroup it is in (0: the list's top level)
     bool enabled = true;
     InteractionSource source = InteractionSource::Keyboard;
 

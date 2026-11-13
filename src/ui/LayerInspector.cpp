@@ -3264,12 +3264,24 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
     mode->setToolTip(QStringLiteral("Rectangle crops by four sides. Triangle cuts out three source points. Quad straightens four source corners."));
     head->addWidget(mode);
     m_roiMode = mode;
+    auto *keep = new QCheckBox(QStringLiteral("Keep proportions"));
+    keep->setObjectName(QStringLiteral("roiKeepProportions"));
+    keep->setToolTip(QStringLiteral("Rectangle: resizing a side scales the other axis too, so the cropped picture keeps its shape"));
+    keep->setChecked(QSettings().value(QStringLiteral("roi/keepProportions"), false).toBool());
+    keep->setVisible(s.roiMode == 0);
+    m_roiKeep = keep;
+    head->addWidget(keep);
     head->addStretch();
     v->addLayout(head);
     m_roi = new RoiEditor;
     m_roi->setAspect(s.aspect);
     m_roi->setRoi(s.roi);
     m_roi->setPolygon(s.roiMode, s.roiPoints);
+    m_roi->setKeepProportions(keep->isChecked());
+    connect(keep, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue(QStringLiteral("roi/keepProportions"), on);
+        if (m_roi) m_roi->setKeepProportions(on);
+    });
     v->addWidget(m_roi);
     m_animate->attach({title, m_roi.data()}, {"roi/left", "roi/top", "roi/right", "roi/bottom"});
     auto *ranges = new QWidget;
@@ -3293,6 +3305,7 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
             }
         }
         setValues(values, QStringLiteral("Change ROI Shape"));
+        if (m_roiKeep) m_roiKeep->setVisible(index == 0);
         refreshDynamic();
     });
     connect(m_roi, &RoiEditor::roiPointEdited, this, [this](int point, QPointF p) {
@@ -3337,10 +3350,27 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
         bars[1]->setValues(r.top() * 100, r.bottom() * 100);
         apply(r);
     });
-    auto fromBars = [apply, bars, editor] {
+    QPointer<QCheckBox> keepBox = keep;
+    auto fromBars = [apply, bars, editor, keepBox] {
         const double l = bars[0]->low() / 100, r = std::max(bars[0]->high() / 100, bars[0]->low() / 100 + 0.001);
         const double t = bars[1]->low() / 100, b = std::max(bars[1]->high() / 100, bars[1]->low() / 100 + 0.001);
-        const QRectF rect(QPointF(l, t), QPointF(std::min(r, 1.0), std::min(b, 1.0)));
+        QRectF rect(QPointF(l, t), QPointF(std::min(r, 1.0), std::min(b, 1.0)));
+        if (keepBox && keepBox->isChecked() && editor) {
+            // The axis that moved leads; the other follows around its center, so the shape of the crop stays
+            const QRectF before = editor->roi();
+            if (before.height() > 0 && before.width() > 0) {
+                const bool horizontal = std::abs(rect.width() - before.width()) >= std::abs(rect.height() - before.height());
+                const QPointF center = before.center();
+                rect = RoiEditor::keepRatio(rect, before.width() / before.height(), horizontal ? 0 : 1);
+                if (horizontal) rect.moveCenter(QPointF(rect.center().x(), center.y()));
+                else rect.moveCenter(QPointF(center.x(), rect.center().y()));
+                rect.translate(rect.left() < 0 ? -rect.left() : rect.right() > 1 ? 1 - rect.right() : 0,
+                               rect.top() < 0 ? -rect.top() : rect.bottom() > 1 ? 1 - rect.bottom() : 0);
+                QSignalBlocker b0(bars[0]), b1(bars[1]);
+                bars[0]->setValues(rect.left() * 100, rect.right() * 100);
+                bars[1]->setValues(rect.top() * 100, rect.bottom() * 100);
+            }
+        }
         if (editor) editor->setRoi(rect);
         apply(rect);
     };
@@ -4143,6 +4173,27 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
         }
     }
 
+    // Mix: how much of the effect goes on (1: all of it, 0: the picture it was given), dragged sideways
+    if (valid) {
+        const QString path = prefix + QStringLiteral("mix");
+        auto *mix = new NumberBox;
+        mix->setObjectName(QStringLiteral("fxMix"));
+        mix->setRange(0, 1);
+        mix->setDecimals(2);
+        mix->setSingleStep(0.01);
+        mix->setPrefix(QStringLiteral("Mix "));
+        mix->setValue(m_engine->parameterValue(m_layerId, path).toDouble(1.0));
+        mix->setToolTip(QStringLiteral("How much of the FX goes on: 1 = all of it, 0 = the picture it was given (drag sideways)"));
+        auto tint = [mix] { mix->setStyleSheet(mix->value() < 1 - 1e-6 ? QStringLiteral("color:#ffd27a;") : QString()); };
+        tint();
+        connect(mix, &QDoubleSpinBox::valueChanged, this, [this, path, tint](double x) {
+            setValue(path, x, QStringLiteral("Change FX Mix"));
+            tint();
+        });
+        m_animate->attach(mix, {path});
+        h->addWidget(mix);
+    }
+
     // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
     auto *mask = new QToolButton;
     mask->setObjectName(QStringLiteral("fxMask"));
@@ -4916,6 +4967,7 @@ void LayerInspector::refreshDynamic()
         }
         if (m_roiMode) m_roiMode->setCurrentIndex(roiMode);
         if (m_roiRanges) m_roiRanges->setVisible(roiMode == 0);
+        if (m_roiKeep) m_roiKeep->setVisible(roiMode == 0);
         if (m_colorAdd) m_colorAdd->setColor(add);
         if (m_colorRemove) m_colorRemove->setColor(remove);
         if (masksRev != m_masksRev) { // a snapshot (or OSC) changed them: the list and the fields follow

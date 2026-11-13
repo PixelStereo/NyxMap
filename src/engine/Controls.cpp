@@ -39,6 +39,28 @@ static void keyAll(std::vector<ShowControl> &list)
     }
 }
 
+// A control's group must be a Group of the list that is not itself nor inside it; a span and columns stay within 1..4
+static void tidyGroups(std::vector<ShowControl> &list)
+{
+    const auto find = [&](quint64 id) -> const ShowControl * {
+        for (const ShowControl &c : list)
+            if (c.id == id) return &c;
+        return nullptr;
+    };
+    for (ShowControl &c : list) {
+        c.span = std::clamp(c.span, 1, 4);
+        c.columns = std::clamp(c.columns, 1, 4);
+        const ShowControl *g = c.group ? find(c.group) : nullptr;
+        bool ok = g && g->kind == ShowControl::Kind::Group && g->id != c.id;
+        // Up the chain: it must not come back to this one
+        for (int depth = 0; ok && g && g->group && depth < 64; ++depth) {
+            if (g->group == c.id) ok = false;
+            g = find(g->group);
+        }
+        if (!ok) c.group = 0;
+    }
+}
+
 void Engine::remapControlKeys(const QHash<QString, QString> &keys)
 {
     if (keys.isEmpty()) return;
@@ -153,6 +175,7 @@ bool Engine::setControlsJson(const QJsonArray &a, QString *error, bool remapKeys
     for (ShowControl &c : next)
         if (!c.id) c.id = ++id;
     keyAll(next);
+    tidyGroups(next);
     {
         Lock lk(&m_mutex);
         if (remapKeys) {
@@ -187,10 +210,15 @@ quint64 Engine::addControl(const ShowControl &control)
         c.key.clear();
         if (c.name.trimmed().isEmpty()) c.name = ShowControl::kindName(c.kind);
         c.value = c.kind == ShowControl::Kind::Slider ? std::clamp(c.value, std::min(c.min, c.max), std::max(c.min, c.max)) : c.clamped(c.value);
+        if (c.kind == ShowControl::Kind::Pad) {
+            c.value2 = c.clamped(c.value2);
+            c.def = std::clamp(c.def, c.min, c.max);
+        }
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = {QStringLiteral("A"), QStringLiteral("B")};
         id = c.id;
         m_controls.push_back(std::move(c));
         keyAll(m_controls);
+        tidyGroups(m_controls);
         ++m_controlsRevision;
     }
     emit controlsChanged();
@@ -217,13 +245,15 @@ bool Engine::updateControl(quint64 id, const ShowControl &change)
             keyChanged = c.key != it->key;
             if (keyChanged) remapControlKeys({{it->key, c.key}});
         }
-        if (c.kind == ShowControl::Kind::Slider) {
+        if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad) {
             if (!(c.max > c.min)) c.max = c.min + 1;
             c.def = std::clamp(c.def, c.min, c.max);
         }
         if (c.kind == ShowControl::Kind::Choice && c.choices.isEmpty()) c.choices = it->choices;
-        c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider ? c.def : 0.0);
+        c.value = c.kind == it->kind ? c.clamped(c.value) : (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad ? c.def : 0.0);
+        c.value2 = c.kind == ShowControl::Kind::Pad ? (c.kind == it->kind ? c.clamped(c.value2) : c.def) : 0.0;
         *it = c;
+        tidyGroups(m_controls);
         ++m_controlsRevision;
     }
     emit controlsChanged();
@@ -242,7 +272,10 @@ bool Engine::removeControl(quint64 id)
         Lock lk(&m_mutex);
         auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
         if (it == m_controls.end()) return false;
+        const quint64 parent = it->group;
         m_controls.erase(it);
+        for (ShowControl &c : m_controls) // what a group held goes where the group was
+            if (c.group == id) c.group = parent;
         ++m_controlsRevision;
     }
     emit controlsChanged();
@@ -271,11 +304,28 @@ bool Engine::setControlValue(quint64 id, double value)
 {
     Lock lk(&m_mutex);
     auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
-    if (it == m_controls.end() || it->kind == ShowControl::Kind::Color || !std::isfinite(value)) return false;
+    if (it == m_controls.end() || it->kind == ShowControl::Kind::Color || it->kind == ShowControl::Kind::Group || !std::isfinite(value)) return false;
     const double next = it->clamped(value);
     if (it->value != next) {
         it->value = next;
-        feedControlAction(QStringLiteral("control/") + it->key, next);
+        feedControlAction(QStringLiteral("control/") + it->key + (it->kind == ShowControl::Kind::Pad ? QStringLiteral("/x") : QString()), next);
+    }
+    return true;
+}
+
+bool Engine::setControlPoint(quint64 id, double x, double y)
+{
+    Lock lk(&m_mutex);
+    auto it = std::find_if(m_controls.begin(), m_controls.end(), [id](const ShowControl &c) { return c.id == id; });
+    if (it == m_controls.end() || it->kind != ShowControl::Kind::Pad) return false;
+    const double v[2] = {x, y};
+    for (int axis = 0; axis < 2; ++axis) {
+        if (!std::isfinite(v[axis])) continue;
+        const double next = it->clamped(v[axis]);
+        double &field = axis == 0 ? it->value : it->value2;
+        if (field == next) continue;
+        field = next;
+        feedControlAction(QStringLiteral("control/") + it->key + (axis == 0 ? QStringLiteral("/x") : QStringLiteral("/y")), next);
     }
     return true;
 }

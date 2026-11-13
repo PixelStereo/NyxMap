@@ -94,6 +94,14 @@ For layer values, a successful animation or interaction write removes that addre
 
 MIDI, OSC and keyboard interactions normally write on fresh input or while their processed output changes. They do not permanently hold a value after one message. Audio is sampled every frame and can therefore keep overwriting automation. Internal interactions react to source changes. A grouped color interaction normally writes RGB; alpha requires explicit mapping. RGB pick-up waits for all mapped channels to meet their target.
 
+### Picking a value of the show
+
+An interaction's source (**Follows**), its targets and the values an action sets, a timeline track's target and the viewer's picture all use the same menu. It starts at the same roots, each with its elements below it: **Composition**, **Viewports**, **Layers** (as the bin has them, groups and 3D scenes included), **Interactions** (as their list has them, groups included) and **Timelines**.
+
+A **timeline** offers its transport, **Speed**, **Loop Mode** and, for each track, the **Value** it gives now (an Internal interaction can follow it) and, for an oscillator track, its **Period**, **Amplitude**, **Center** and **Phase**. An **interaction** offers only what is in play for it: its On switch, its source's settings (a MIDI interaction's channel and number, not a key's), and for a Mapping its master level, its pick-up and each filter's settings.
+
+Interactions can be put in **groups** (the ▤ button, or right-click › New Group) and dragged in and out, as layers are.
+
 A video or audio layer exposes where it plays as two read-only values an Internal interaction can follow: `playhead` (**Source › Playhead (s)**, seconds into the media) and `progress` (**Source › Progress**, 0 at the in point, 1 at the out point). For example, map a video's Progress to another layer's Position X to move it along with the playhead. Neither is saved or animated.
 
 ### Show actions and layer switches

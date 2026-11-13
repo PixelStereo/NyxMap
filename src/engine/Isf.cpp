@@ -377,6 +377,10 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
                                                            [self](const QVariant &v) { self->speed = v.toDouble(); });
     out.emplace_back(QStringLiteral("enable"), cat + QStringLiteral("Enable"), T::Bool);
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });
+    // How much of the effect goes on: a fade between the picture it was given and its result (under its mask and channels)
+    out.emplace_back(QStringLiteral("mix"), cat + QStringLiteral("Mix"), T::Float);
+    out.back().range(0, 1).byDefault(1.0).bind([self] { return self->mix; },
+                                                [self](const QVariant &v) { self->mix = std::clamp(v.toDouble(), 0.0, 1.0); });
     out.emplace_back(QStringLiteral("mask/invert"), cat + QStringLiteral("Invert Mask"), T::Bool);
     out.back().byDefault(false).bind([self] { return self->maskInvert; }, [self](const QVariant &v) { self->maskInvert = v.toBool(); });
     out.emplace_back(QStringLiteral("mask_only"), cat + QStringLiteral("Mask Only"), T::Bool);

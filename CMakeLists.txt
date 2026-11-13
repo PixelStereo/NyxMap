@@ -409,7 +409,7 @@ set(APP_SOURCES
   src/ui/SnapshotPanel.cpp
   src/ui/SequencePanel.cpp
   src/ui/TimelineActivity.cpp
-  src/ui/AnimEditor.cpp
+  src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp
   src/ui/ParamAnimPanel.cpp
   src/ui/TimelinePanel.cpp
   src/ui/Widgets.cpp
@@ -701,13 +701,13 @@ if(NYXMAP_TESTS)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)
   add_test(NAME isf_library COMMAND nyxmap_isf_library_test)
-  add_executable(nyxmap_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
+  add_executable(nyxmap_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_color_timeline_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_color_timeline_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME color_timeline_ui COMMAND nyxmap_color_timeline_ui_test)
   set_tests_properties(color_timeline_ui PROPERTIES TIMEOUT 30)
-  add_executable(nyxmap_timeline_events_ui_test test/timeline_events_ui.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
+  add_executable(nyxmap_timeline_events_ui_test test/timeline_events_ui.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
                  src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_timeline_events_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_timeline_events_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
@@ -807,22 +807,22 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_audio_analysis_concurrency_test PRIVATE Threads::Threads)
   add_test(NAME audio_analysis_concurrency COMMAND nyxmap_audio_analysis_concurrency_test)
   set_tests_properties(audio_analysis_concurrency PROPERTIES TIMEOUT 60)
-  add_executable(nyxmap_vision_interaction_ui_test test/vision_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+  add_executable(nyxmap_vision_interaction_ui_test test/vision_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_vision_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_vision_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME vision_interaction_ui COMMAND nyxmap_vision_interaction_ui_test)
   set_tests_properties(vision_interaction_ui PROPERTIES TIMEOUT 60)
-  add_executable(nyxmap_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+  add_executable(nyxmap_audio_interaction_ui_test test/audio_interaction_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_audio_interaction_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_audio_interaction_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME audio_interaction_ui COMMAND nyxmap_audio_interaction_ui_test)
-  add_executable(nyxmap_interaction_actions_ui_test test/interaction_actions_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+  add_executable(nyxmap_interaction_actions_ui_test test/interaction_actions_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_interaction_actions_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_actions_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME interaction_actions_ui COMMAND nyxmap_interaction_actions_ui_test)
   add_executable(nyxmap_animation_drivers_test test/animation_drivers.cpp src/ui/ParamAnimPanel.cpp
     src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp
-    src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+    src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_animation_drivers_test PRIVATE src/ui)
   target_link_libraries(nyxmap_animation_drivers_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME animation_drivers COMMAND nyxmap_animation_drivers_test)
@@ -835,7 +835,7 @@ if(NYXMAP_TESTS)
   add_executable(nyxmap_interaction_graph_test test/interaction_graph.cpp)
   target_link_libraries(nyxmap_interaction_graph_test PRIVATE nyxmap_engine)
   add_test(NAME interaction_graph COMMAND nyxmap_interaction_graph_test)
-  add_executable(nyxmap_interaction_filters_ui_test test/interaction_filters_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
+  add_executable(nyxmap_interaction_filters_ui_test test/interaction_filters_ui.cpp src/ui/InteractionPanel.cpp src/ui/AudioSpectrum.cpp src/ui/PresetEditor.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp)
   target_include_directories(nyxmap_interaction_filters_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_interaction_filters_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME interaction_filters_ui COMMAND nyxmap_interaction_filters_ui_test)
@@ -919,14 +919,14 @@ if(NYXMAP_TESTS)
   add_test(NAME color_parameter_ui COMMAND nyxmap_workspace_ui_test --color-animation)
   set_tests_properties(color_parameter_ui PROPERTIES TIMEOUT 60)
   add_test(NAME selection_ui COMMAND nyxmap_workspace_ui_test --selection) # not in the Valgrind job: see the test
-  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
+  add_executable(nyxmap_preview_ui_test test/preview_ui.cpp src/ui/PreviewWorkspace.cpp src/ui/ShowMenus.cpp src/ui/Scene3DView.cpp src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/FixtureOverlay.cpp
                  src/ui/GlDraw.cpp src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_preview_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_preview_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND nyxmap_preview_ui_test)
   add_executable(nyxmap_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
-                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
+                 src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/ShowMenus.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp
                  src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
   target_include_directories(nyxmap_fixture_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_fixture_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)

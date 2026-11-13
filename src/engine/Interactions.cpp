@@ -438,11 +438,28 @@ Interaction Interaction::made(InteractionSource s)
     return it;
 }
 
+QJsonObject InteractionGroup::toJson() const
+{
+    QJsonObject o{{"id", QString::number(id)}, {"name", name}};
+    if (parent) o["parent"] = QString::number(parent);
+    return o;
+}
+
+InteractionGroup InteractionGroup::fromJson(const QJsonObject &o)
+{
+    InteractionGroup g;
+    g.id = o.value("id").toString().toULongLong();
+    g.name = o.value("name").toString();
+    g.parent = o.value("parent").toString().toULongLong();
+    return g;
+}
+
 QJsonObject Interaction::toJson() const
 {
     QJsonObject o;
     o["id"] = QString::number(id); // ids are strings in files
     if (!name.isEmpty()) o["name"] = name;
+    if (group) o["group"] = QString::number(group);
     o["enabled"] = enabled;
     o["source"] = kSources[int(source)];
     switch (source) {
@@ -524,6 +541,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     Interaction it;
     it.id = o.value("id").toString().toULongLong();
     it.name = o.value("name").toString();
+    it.group = o.value("group").toString().toULongLong();
     it.enabled = o.value("enabled").toBool(true);
     it.source = InteractionSource(keyIndex(kSources, o.value("source").toString(), 0));
     it.key = o.value("key").toString();

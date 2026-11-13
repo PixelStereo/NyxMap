@@ -400,6 +400,19 @@ void OscNamespace::build()
                 n.set = [e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, std::lround(num(a[0])) - 1.0); };
                 break;
             }
+            case ShowControl::Kind::Group: break; // a frame of the page, not a value
+            case ShowControl::Kind::Pad: {
+                // A 2D slider: both numbers in one message, a float pair within its range
+                OscNode &n = add(path, "ff", 3, c.name);
+                n.range = {minMax(c.min, c.max), minMax(c.min, c.max)};
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    return QVariantList{v ? v->value : 0.0, v ? v->value2 : 0.0};
+                };
+                n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
+                break;
+            }
             case ShowControl::Kind::Color: {
                 OscNode &n = add(path, "fff", 3, c.name);
                 n.range = {minMax(0, 1), minMax(0, 1), minMax(0, 1)};

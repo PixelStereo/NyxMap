@@ -32,7 +32,7 @@ int runControlsUiTests(Engine &engine)
     pump();
     check(engine.controls().empty() && panel.findChildren<QWidget *>("controlRow").isEmpty(), "no control yet");
     auto *add = panel.findChild<QToolButton *>("controlsAdd");
-    check(add && add->menu() && add->menu()->actions().size() == 5, "a menu of the five kinds");
+    check(add && add->menu() && add->menu()->actions().size() == 7, "a menu of the seven kinds (a 2D slider and a group too)");
     if (!add) return failures;
     for (int k = 0; k < 5; ++k) {
         add->menu()->actions().at(k)->trigger();
