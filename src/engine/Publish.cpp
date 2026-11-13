@@ -1,4 +1,6 @@
 #include "Publish.h"
+
+#include <cstring>
 #include "NetVideo.h"
 
 #include <QCoreApplication>
@@ -134,6 +136,34 @@ void CpuSendThread::submit(CpuFrame *f)
     m_cv.notify_all();
 }
 
+void CpuSendThread::lend(const LentFrame &f)
+{
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (m_lent) m_returned |= 1u << m_lent->token; // not copied yet: the newer picture takes its place
+        m_lent = f;
+    }
+    m_cv.notify_all();
+}
+
+unsigned CpuSendThread::takeReturned()
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    const unsigned returned = m_returned;
+    m_returned = 0;
+    return returned;
+}
+
+void CpuSendThread::recall()
+{
+    std::unique_lock<std::mutex> lk(m_mutex);
+    if (m_lent) {
+        m_returned |= 1u << m_lent->token;
+        m_lent.reset();
+    }
+    m_idle.wait(lk, [&] { return !m_copying; });
+}
+
 void CpuSendThread::setPublishers(std::vector<std::shared_ptr<CpuPublisher>> pubs)
 {
     {
@@ -149,7 +179,7 @@ void CpuSendThread::run()
 {
     std::unique_lock<std::mutex> lk(m_mutex);
     for (;;) {
-        m_cv.wait(lk, [&] { return m_quit || m_changed || m_pending; });
+        m_cv.wait(lk, [&] { return m_quit || m_changed || m_pending || m_lent; });
         if (m_quit) break;
         if (m_changed) {
             // Old publishers are destroyed here, before their last buffer is reused. The ones kept may still read
@@ -169,6 +199,42 @@ void CpuSendThread::run()
             if (m_inflight) {
                 m_free.push_back(m_inflight);
                 m_inflight = nullptr;
+            }
+            continue;
+        }
+        if (m_lent) {
+            // The picture copied out of the GPU's buffer here, not in the render thread; it then waits its turn as
+            // the pending frame (in place of an older one not sent yet)
+            const LentFrame lent = *m_lent;
+            m_lent.reset();
+            m_copying = true;
+            CpuFrame *copy = nullptr;
+            if (!m_free.empty()) {
+                copy = m_free.back();
+                m_free.pop_back();
+            } else {
+                copy = m_pending;
+                m_pending = nullptr;
+            }
+            lk.unlock();
+            if (copy) {
+                copy->bgra.resize(lent.bytes);
+                std::memcpy(copy->bgra.data(), lent.data, lent.bytes);
+                copy->width = lent.width;
+                copy->height = lent.height;
+                copy->stride = lent.stride;
+                copy->timestamp100ns = lent.timestamp100ns;
+                copy->fpsN = lent.fpsN;
+                copy->fpsD = lent.fpsD;
+                copy->timecode = lent.timecode;
+            }
+            lk.lock();
+            m_copying = false;
+            m_returned |= 1u << lent.token;
+            m_idle.notify_all();
+            if (copy) {
+                if (m_pending) m_free.push_back(m_pending);
+                m_pending = copy;
             }
             continue;
         }
