@@ -353,6 +353,11 @@ protected:
         QTableWidget::paintEvent(e);
         QPainter p(viewport());
         const QColor accent = theme::accent();
+        if (rows && rows->empty()) { // nothing yet: say what to do
+            p.setPen(QColor(136, 136, 142));
+            p.drawText(viewport()->rect().adjusted(16, 16, -16, -16), Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                       QStringLiteral("No layers yet.\nClick + Layer, or drop a video, an image, a sound or a shader here."));
+        }
         // Each row a band of its kind's colour; each group a fine line around all it holds
         if (rows) {
             const int bandX = columnViewportPosition(ColName), width = viewport()->width();
@@ -427,7 +432,9 @@ static QToolButton *barButton(const QString &text, const QString &tip)
     auto *b = new QToolButton;
     b->setText(text);
     b->setToolTip(tip);
-    b->setMinimumSize(30, 24);
+    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    b->setMinimumHeight(24);
+    b->setMinimumWidth(text.size() <= 2 ? 30 : 0); // a symbol is a square; a word has its own width
     return b;
 }
 
@@ -439,15 +446,15 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
 
     auto *bar = new QHBoxLayout;
     auto *title = new QLabel(QStringLiteral("<b>Layers</b>"));
-    auto *add = barButton(QStringLiteral("+"), QStringLiteral("New Layer (empty: drop a media onto it)"));
-    auto *group = barButton(QStringLiteral("⊞"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
-    auto *vp = barButton(QStringLiteral("▭"), QStringLiteral("New Viewport: another window onto the composition, "
+    auto *add = barButton(QStringLiteral("+ Layer"), QStringLiteral("New Layer (empty: drop a media onto it)"));
+    auto *group = barButton(QStringLiteral("Group"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
+    auto *vp = barButton(QStringLiteral("Viewport"), QStringLiteral("New Viewport: another window onto the composition, "
                                                              "with its own size, screen and publishing"));
     auto *scene = barButton(QStringLiteral("3D"), QStringLiteral("3D: a new 3D scene (with a light), or a light in the selected "
                                                                  "scene. Models: drop an FBX, glTF or OBJ onto a layer or a scene"));
     scene->setObjectName(QStringLiteral("layer3dButton"));
-    auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected layers (Del)"));
-    auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
+    auto *remove = barButton(QStringLiteral("Delete"), QStringLiteral("Delete the selected layers (Del)"));
+    auto *dup = barButton(QStringLiteral("Duplicate"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
     auto *up = barButton(QStringLiteral("▲"), QStringLiteral("Move Up (Ctrl+])"));
     auto *down = barButton(QStringLiteral("▼"), QStringLiteral("Move Down (Ctrl+[)"));
     (void)title;
@@ -470,7 +477,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
     m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback"), QStringLiteral("Audio")});
+                                        QStringLiteral("Opacity"), QStringLiteral("Blend"), QStringLiteral("Playback"), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -478,6 +485,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
+    m_table->horizontalHeaderItem(ColBlend)->setToolTip(QStringLiteral("Blend Mode"));
     m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -491,27 +499,26 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setMouseTracking(true); // the handles' hand
     auto *h = m_table->horizontalHeader();
     h->setHighlightSections(false);
+    // The name takes the room that is left; the others are as wide as what they show, so no header or cell is cut
+    h->setStretchLastSection(false);
     h->setSectionResizeMode(ColHandle, QHeaderView::Fixed);
     m_table->setColumnWidth(ColHandle, 16);
     h->setSectionResizeMode(ColVisible, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColVisible, 30);
+    m_table->setColumnWidth(ColVisible, 28);
     h->setSectionResizeMode(ColLock, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColLock, 28);
+    m_table->setColumnWidth(ColLock, 26);
     h->setSectionResizeMode(ColSolo, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColSolo, 26);
-    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColName, 170);
+    m_table->setColumnWidth(ColSolo, 24);
+    h->setSectionResizeMode(ColName, QHeaderView::Stretch);
     h->setSectionResizeMode(ColEffects, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColEffects, 34);
+    m_table->setColumnWidth(ColEffects, 32);
     h->setSectionResizeMode(ColOpacity, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColOpacity, 150);
-    h->setSectionResizeMode(ColBlend, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColBlend, 66);
-    h->setSectionResizeMode(ColPlayback, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColPlayback, 150);
+    m_table->setColumnWidth(ColOpacity, 108);
+    h->setSectionResizeMode(ColBlend, QHeaderView::ResizeToContents);
+    h->setSectionResizeMode(ColPlayback, QHeaderView::ResizeToContents);
     h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColAudio, 92);
+    m_table->setColumnWidth(ColAudio, 64);
+    h->setMinimumSectionSize(16);
     h->moveSection(h->visualIndex(ColAudio), h->visualIndex(ColName) + 1);
     m_table->setColumnHidden(ColAudio, true);
     h->setStretchLastSection(true);
