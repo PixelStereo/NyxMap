@@ -2,7 +2,6 @@
 #include "Engine.h"
 
 #include <QGuiApplication>
-#include <QPointer>
 #include <QKeyEvent>
 #include <QScreen>
 #include <QSurfaceFormat>
@@ -41,41 +40,25 @@ void OutputWindow::sync()
     m_engine->setViewportExposed(m_viewport, exposed, px, hz);
 }
 
-// Fullscreen takes a Space of its own on macOS, as any other application does. Leaving it is asynchronous
-// there — macOS animates the exit and only then closes the Space — so whatever has to happen next
-// (hide, or show windowed) waits for it instead of hiding the window mid-animation, which used to
-// leave an empty Space behind.
+// Fullscreen is instant everywhere: on macOS a borderless window covering its screen above the menu bar
+// and the Dock (no Space of its own, so no animation to wait for), elsewhere showFullScreen.
 void OutputWindow::showOn(QScreen *screen, bool fullscreen)
-{
-#ifdef Q_OS_MACOS
-    if (macIsFullScreen(this)) {
-        QPointer<OutputWindow> self = this;
-        QScreen *target = screen;
-        macExitFullScreen(this, [self, target, fullscreen] {
-            if (self) self->showOnNow(target, fullscreen);
-        });
-        return;
-    }
-#endif
-    showOnNow(screen, fullscreen);
-}
-
-void OutputWindow::showOnNow(QScreen *screen, bool fullscreen)
 {
     if (!screen) screen = QGuiApplication::primaryScreen();
     hideNow();
     setScreen(screen);
     if (fullscreen) {
-        setGeometry(screen->geometry());
         setCursor(Qt::BlankCursor);
 #ifdef Q_OS_MACOS
-        // The window must exist and be on screen before macOS can send it to its own Space.
-        macPrepareFullScreen(this);
+        setFlags(flags() | Qt::FramelessWindowHint);
+        setGeometry(screen->geometry());
         show();
+        macSetCoversScreen(this, true); // once the native window exists and is shown
         raise();
         requestActivate();
-        macEnterFullScreen(this);
+        m_coversScreen = true;
 #else
+        setGeometry(screen->geometry());
         showFullScreen();
 #endif
     } else {
@@ -89,20 +72,6 @@ void OutputWindow::showOnNow(QScreen *screen, bool fullscreen)
 
 void OutputWindow::hideOutput()
 {
-#ifdef Q_OS_MACOS
-    if (macIsFullScreen(this)) {
-        // The render thread lets go now; the window is hidden once the Space has closed.
-        if (m_lastExposed) {
-            m_lastExposed = false;
-            m_engine->setViewportExposed(m_viewport, false, m_lastSize);
-        }
-        QPointer<OutputWindow> self = this;
-        macExitFullScreen(this, [self] {
-            if (self) self->hideNow();
-        });
-        return;
-    }
-#endif
     hideNow();
 }
 
@@ -110,15 +79,6 @@ void OutputWindow::dispose()
 {
     m_engine->setViewportWindow(m_viewport, nullptr);
     m_viewport = 0;
-#ifdef Q_OS_MACOS
-    if (macIsFullScreen(this)) {
-        QPointer<OutputWindow> self = this;
-        macExitFullScreen(this, [self] {
-            if (self) self->deleteLater();
-        });
-        return;
-    }
-#endif
     deleteLater();
 }
 
@@ -141,6 +101,13 @@ void OutputWindow::hideNow()
         m_engine->setViewportExposed(m_viewport, false, m_lastSize);
     }
     hide();
+#ifdef Q_OS_MACOS
+    if (m_coversScreen) { // back to a framed window at the normal level, for a later windowed show
+        m_coversScreen = false;
+        macSetCoversScreen(this, false);
+        setFlags(flags() & ~Qt::FramelessWindowHint);
+    }
+#endif
 }
 
 void OutputWindow::exposeEvent(QExposeEvent *e)
