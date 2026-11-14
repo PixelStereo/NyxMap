@@ -15,22 +15,12 @@ reserves are renamed. The effect logic is unchanged.
 Sand…) draw into a persistent ISF buffer, `feedbackBuffer`, which holds the previous frame when read, then show it
 in a second pass. `uHasFeedback` is false on the first frame, as in Ghost Arcade.
 
-**Not ported (17)** — they need what ISF does not provide (WebGPU compute, 3D meshes, a camera mask):
+**3D effects.** The Geometric 3D and Advanced 3D effects (String Orb, Disco Mirror Ball, Tube Lattice, Lissajous Knot,
+Geometric Tile Pro…) map the layer onto 3D objects by ray casting in the fragment shader: they are ISF filters like
+the others, with Ghost Arcade's shared GLSL blocks inlined.
 
-- `gpuFluidSim`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `eulerianMagnify`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `blobTrack`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `blobContour`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `blobHeatmap`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `stringOrb`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `sphereWireframe`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `voxelCubeCluster`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `mobiusLattice`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `crystalShardField`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `tubeLattice`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `discoMirrorBall`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `lissajousKnot`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `helixParticleStream`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `donutConstellation`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `geometricTilePro`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `auraField`: needs other textures: uNativeMask
+**Not ported (3)** — no GLSL shader to adapt:
+
+- `gpuFluidSim`: WebGPU compute fluid simulation
+- `eulerianMagnify`: temporal band-pass over many previous frames, run outside the shader
+- `auraField`: needs the person-segmentation mask of the phone camera

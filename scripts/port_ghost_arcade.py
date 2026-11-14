@@ -19,9 +19,14 @@ renderer = repo / "src/lib/renderer"
 shaders = {}
 for path in [renderer / "shaders.ts", *sorted((renderer / "shaders").glob("*.ts"))]:
     text = path.read_text()
-    for m in re.finditer(r"export const (\w+)\s*=\s*/\*\s*glsl\s*\*/\s*`([\s\S]*?)`;", text):
-        if "${" not in m.group(2):
-            shaders[m.group(1)] = m.group(2)
+    # Every GLSL template of the file, exported or not: shared blocks are spliced in with ${name}
+    # (a few shaders, premiumPack2Shader for one, have no /* glsl */ tag)
+    blocks = dict(re.findall(r"(?:export )?const (\w+)\s*=\s*(?:/\*\s*glsl\s*\*/\s*)?`([\s\S]*?)`;", text))
+    for name, source in blocks.items():
+        for _ in range(4):
+            source = re.sub(r"\$\{(\w+)\}", lambda m: blocks.get(m.group(1), m.group(0)), source)
+        if "${" not in source:
+            shaders[name] = source
 
 effects_ts = (renderer / "effects.ts").read_text()
 
