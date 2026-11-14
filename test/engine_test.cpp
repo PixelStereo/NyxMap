@@ -3903,6 +3903,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         std::printf("       restart on recall: position %.3f s, playing %d\n", position(), int(playing()));
         CHECK(playing() && position() < 0.1);
         CHECK(e.parameterValue(vid, "restart").toBool() == false); // an action, not a state
+        {
+            // What a snapshot holds of Restart on Recall: on for a new snapshot, never for the undo of a recall
+            const auto restartIn = [&](const QJsonArray &layers) {
+                for (const QJsonValue &v : layers)
+                    if (v.toObject().value("id").toString() == QString::number(vid))
+                        return v.toObject().value("params").toObject().value("restart").toBool();
+                return false;
+            };
+            CHECK(restartIn(e.captureLayers()));
+            CHECK(!restartIn(e.captureLayers(true)));
+            CHECK(Engine::isRecallAction(QStringLiteral("restart")) && Engine::isRecallAction(QStringLiteral("clock/restart")) &&
+                  !Engine::isRecallAction(QStringLiteral("play")));
+        }
         // In / out points and the play state in a preset (recalled at once)
         Engine::Preset pr;
         pr.name = QStringLiteral("Range");
