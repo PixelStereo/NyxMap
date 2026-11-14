@@ -348,6 +348,23 @@ int main(int argc, char **argv)
         nestedGroupTests(engine, check);
         MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
         window.show(); app.processEvents();
+        // The presets' Edit mode from the menu and its shortcut (⌘E / Ctrl+E), the Edit button following
+        {
+            auto *action = window.findChild<QAction *>("presetEditAction");
+            auto *button = window.findChild<QPushButton *>("presetEdit");
+            check(action && action->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_E) && action->isCheckable(), "Preset Edit Mode is on Cmd/Ctrl+E");
+            if (action && PresetEditor::instance()) {
+                action->trigger();
+                check(PresetEditor::instance()->editing() && (!button || button->isChecked()), "the shortcut enters Edit mode and the button follows");
+                action->trigger();
+                check(!PresetEditor::instance()->editing() && (!button || !button->isChecked()), "and leaves it");
+                if (button) {
+                    button->setChecked(true);
+                    check(action->isChecked(), "the button and the menu agree");
+                    button->setChecked(false);
+                }
+            }
+        }
         auto *defaultColorView = window.findChild<QComboBox *>("defaultColorPickerView");
         check(defaultColorView && defaultColorView->currentData().toInt() == int(ColorPicker::HSL), "Settings defaults to HSL");
         if (defaultColorView) {
