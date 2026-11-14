@@ -648,6 +648,84 @@ bool Engine::setLayerLight(int i)
     return true;
 }
 
+// A Path of a 3D scene (the layer goes into its scene with setStructure)
+bool Engine::setLayerPath(int i)
+{
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Path;
+        l->path3d = Path3D();
+        l->modelPlacement = ModelPlacement();
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
+}
+
+namespace {
+// The 3D scene a layer is in (itself for a scene), through its Merge 3Ds (lock held)
+template <typename Find> const Layer *sceneOfLayer(const Layer *o, Find layerOfId)
+{
+    while (o && !o->scene3d) o = o->parent ? layerOfId(o->parent) : nullptr;
+    return o;
+}
+}
+
+bool Engine::setLightPath(int i, quint64 shape)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Light) return false;
+        if (shape) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *s = find(shape);
+            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != sceneOfLayer(l, find)) return false;
+        }
+        l->lightPath = shape;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setCameraPath(int i, quint64 shape)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !l->scene3d) return false;
+        if (shape) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *s = find(shape);
+            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != l) return false;
+        }
+        l->cameraPath = shape;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setCameraLookAt(int i, quint64 object)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !l->scene3d) return false;
+        if (object) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *o = find(object);
+            if (!o || !o->is3dObject() || sceneOfLayer(o, find) != l) return false;
+        }
+        l->cameraLookAt = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
 quint64 Engine::newIdLocked()
 {
     for (const auto &l : m_layers) {

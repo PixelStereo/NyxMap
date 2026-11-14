@@ -59,6 +59,10 @@ private:
         quint64 id = 0;
         bool light = false;
         bool merge = false;
+        bool isPath3d = false;                              // a Path:
+        std::vector<QVector3D> path3dPoints;              // its points, world
+        std::vector<std::vector<QVector3D>> path3dLines;  // its lines, world
+        QVector3D axes[3];                               // a Merge 3D's (an Empty's) axes, world
         QMatrix4x4 parent; // the Merge 3Ds it is in: its values are in their space
         quint64 parentId = 0;
         int lightType = 1;

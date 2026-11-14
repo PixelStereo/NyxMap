@@ -470,9 +470,13 @@ void Engine::applyAnimation(Animation &a, double dt)
 void Engine::stepAnimations(double dt)
 {
     dt = std::max(0.0, dt);
-    for (auto &lp : m_layers) // the lights going around their paths
-        if (lp->type == SourceType::Light && lp->light.pathShape && lp->light.pathSpeed != 0)
-            lp->light.pathTravel = std::fmod(lp->light.pathTravel + double(lp->light.pathSpeed) * dt, 1.0);
+    // The lights and cameras going along their paths (2: an open path goes there and back)
+    for (auto &lp : m_layers) {
+        if (lp->type == SourceType::Light && (lp->light.pathShape || lp->lightPath) && lp->light.pathSpeed != 0)
+            lp->light.pathTravel = std::fmod(lp->light.pathTravel + double(lp->light.pathSpeed) * dt, 2.0);
+        if (lp->scene3d && lp->cameraPath && lp->scene.cameraPathSpeed != 0)
+            lp->scene.cameraPathTravel = std::fmod(lp->scene.cameraPathTravel + double(lp->scene.cameraPathSpeed) * dt, 2.0);
+    }
     // The layers' own numbers first: a timeline playing the same number wins
     for (auto &lp : m_layers) {
         Layer &l = *lp;
