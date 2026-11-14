@@ -80,6 +80,8 @@ uses the background confidence from the multiclass selfie model. **MediaPipe Bod
 **MediaPipe Pose Skeleton** renders the body as a transparent texture with OpenPose COCO-18 joint order. Indexed measurements expose the normalized hand, face and pose landmarks,
 world coordinates for hands and pose, pose landmark visibility, face blendshape scores, facial transformation matrix components and left/right handedness scores.
 
+The **Aura Field** effect (in the Ghost Arcade effects) takes such a mask layer in its **Vision mask** input. With **Use Vision mask** ticked, the aura wraps the person instead of every edge in the image.
+
 Existing hand mappings keep their feature and source IDs. Replace the former ONNX folder with the new model folder.
 Model errors are shown in the interaction. Pixel analysis and motion masks remain available independently.
 

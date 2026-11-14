@@ -127,7 +127,7 @@ catalog_ts = (repo / "src/lib/effects/effectCatalog.ts").read_text()
 catalog = {m.group(1): (m.group(2), m.group(3), m.group(4)) for m in re.finditer(
     r"type: '(\w+)', label: '([^']*)', category: '([^']*)',\s*description: '((?:[^'\\]|\\.)*)'", catalog_ts)}
 
-BASE = {"uTexture", "uResolution", "uTime", "uFeedback", "uHasFeedback"}
+BASE = {"uTexture", "uResolution", "uTime", "uFeedback", "uHasFeedback", "uNativeMask", "uHasNativeMask"}
 SOURCE_HINT = re.compile(r"shadertoy|adapted from|ported from|inspired by|\bcredits?\b|\bauthor|copyright|licen[sc]e|"
                          r"https?://|iquilezles", re.I)
 AUDIO = re.compile(r"audio|beat|bass|treble|\bmid\b|fft|spectrum|level", re.I)
@@ -165,7 +165,11 @@ for t, (label, category, description) in catalog.items():
             m = re.match(r"(\w+)\s*(\[[^\]]*\])?$", item)
             if m:
                 uniforms.append((decl.group(1), m.group(1), m.group(2)))
-    samplers = [n for ty, n, _ in uniforms if ty.startswith("sampler") and n not in ("uTexture", "uFeedback")]
+    samplers = [n for ty, n, _ in uniforms
+                if ty.startswith("sampler") and n not in ("uTexture", "uFeedback", "uNativeMask")]
+    # uNativeMask is Ghost Arcade's phone person mask: an ISF image input, fed in NyxMap by a layer whose
+    # source is a MediaPipe Foreground Mask
+    vision_mask = any(n == "uNativeMask" for _, n, _ in uniforms)
     # uFeedback is the effect's own previous output: an ISF persistent pass provides it
     feedback = any(n == "uFeedback" for _, n, _ in uniforms)
     if samplers:
@@ -254,6 +258,17 @@ for t, (label, category, description) in catalog.items():
     body = re.sub(r"\btexture\s*\(\s*uTexture\s*,", "IMG_NORM_PIXEL(inputImage,", body)
     # The layer passed to a helper function (sampler2D parameter): the ISF image is a sampler2D too
     body = re.sub(r"\buTexture\b", "inputImage", body)
+    if vision_mask:
+        inputs += [{"NAME": "useVisionMask", "LABEL": "Use Vision mask", "TYPE": "bool", "DEFAULT": False},
+                   {"NAME": "visionMask", "LABEL": "Vision mask (a MediaPipe Foreground Mask layer)", "TYPE": "image"}]
+        defines.append("#define uHasNativeMask (useVisionMask ? 1.0 : 0.0)")
+        body = re.sub(r"\btexture2D\s*\(\s*uNativeMask\s*,", "ghostVisionMask(", body)
+        if re.search(r"\buNativeMask\b", body):
+            skipped.append((t, "uses the Vision mask in a way the port does not handle"))
+            continue
+        # A white mask with the confidence as alpha, or a grey opaque one: both give the confidence
+        body = ("vec4 ghostVisionMask(vec2 uv) {\n    vec4 m = IMG_NORM_PIXEL(visionMask, uv);\n"
+                "    return vec4(min(m.r, m.a));\n}\n\n") + body
     if feedback:
         body = re.sub(r"\btexture2D\s*\(\s*uFeedback\s*,", "IMG_NORM_PIXEL(feedbackBuffer,", body)
         body = re.sub(r"\buFeedback\b", "feedbackBuffer", body)
