@@ -304,7 +304,9 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
             const ModelPlacement &p = l->modelPlacement;
             if (l->merge3d) {
                 o.merge = true;
-                o.position = parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+                const QMatrix4x4 frame = m_engine->followFrame(*l, parent); // on its Path, with its Follow Path FX
+                o.parent = frame;
+                o.position = frame.map(QVector3D(p.position[0], p.position[1], p.position[2]));
                 o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
                 o.scale = p.scale;
@@ -312,10 +314,10 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 for (int a = 0; a < 3; ++a) {
                     QVector3D unit;
                     unit[a] = 1;
-                    o.axes[a] = (parent * p.transform()).mapVector(unit);
+                    o.axes[a] = (frame * p.transform()).mapVector(unit);
                 }
                 out.push_back(o);
-                if (l->enabled) collect(l->id, parent * p.transform(), l->id);
+                if (l->enabled) collect(l->id, frame * p.transform(), l->id);
                 continue;
             }
             if (l->type == SourceType::Path) {
@@ -340,6 +342,23 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 out.push_back(o);
                 continue;
             }
+            if (l->type == SourceType::Camera) {
+                o.camera = true;
+                o.name = l->name;
+                const Layer *scene = m_engine->layer(m_engine->indexOfId(m_scene));
+                o.active = scene && scene->activeCamera == l->id;
+                const SceneSettings view = m_engine->cameraView(*l, scene ? scene->scene : SceneSettings());
+                o.position = m_engine->cameraPosition(*l);
+                o.target = QVector3D(view.target[0], view.target[1], view.target[2]);
+                o.fov = view.fov;
+                o.direction = (o.target - o.position).normalized();
+                o.rotation = QVector3D(l->camera.pitch, l->camera.yaw, 0);
+                o.looks = l->camera.lookAt;
+                o.lookingAt = o.target;
+                o.radius = 0.15f;
+                out.push_back(o);
+                continue;
+            }
             if (l->type == SourceType::Light) {
                 o.light = true;
                 o.lightType = l->light.type;
@@ -351,22 +370,25 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.looks = placed.lookAt;
                 o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
                 o.direction = Camera3D::aim(placed.yaw, placed.pitch);
-                if (!l->lightPath) // along a Path: the shape draws its path itself
+                if (!(l->followEnabled && l->followPath)) // along a Path (its FX): the Path draws itself
                     for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {
-                if (l->modelTransformFxEnabled) o.parent = parent * l->modelTransformFx.transform();
+                o.parent = m_engine->followFrame(*l, parent); // on its Path, with its Follow Path FX
+                if (l->modelTransformFxEnabled) o.parent = o.parent * l->modelTransformFx.transform();
                 o.position = o.parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
                 o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
                 o.scale = p.scale;
-                if (l->model) { // its bounds, placed: what a click picks
-                    const QMatrix4x4 m = o.parent * l->model->matrix(p);
-                    const QVector3D c = m.map(l->model->center());
+                if (const auto model = m_engine->modelOf(*l)) { // its bounds (an Instance: its original's), placed
+                    ModelPlacement placed = p;
+                    if (const Layer *o = l->instanceOf ? m_engine->originalOf(*l) : nullptr) placed.fit = o->modelPlacement.fit;
+                    const QMatrix4x4 m = o.parent * model->matrix(placed);
+                    const QVector3D c = m.map(model->center());
                     o.position = c;
-                    o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());
-                    o.reach = l->model->radius() * std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
+                    o.radius = std::max(0.05f, (m.map(model->center() + QVector3D(model->radius(), 0, 0)) - c).length());
+                    o.reach = model->radius() * std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
                 }
             }
             out.push_back(o);
@@ -410,7 +432,7 @@ int Scene3DView::hitHandle(const Object &o, QPointF at) const
     if (m_mode == Mode::Rotate) {
         int best = -1;
         double bestD = 7;
-        const int axes = o.light ? 2 : 3; // a light turns on its yaw (Y) and pitch (X)
+        const int axes = o.aims() ? 2 : 3; // a light or a camera turns on its yaw (Y) and pitch (X)
         for (int a = 0; a < axes; ++a) {
             const auto pts = ring(o, a);
             for (size_t k = 0; k + 1 < pts.size(); ++k)
@@ -418,7 +440,7 @@ int Scene3DView::hitHandle(const Object &o, QPointF at) const
         }
         return best;
     }
-    if (m_mode == Mode::Scale && !o.light && std::hypot(at.x() - c.x(), at.y() - c.y()) < 8) return 3; // all of it
+    if (m_mode == Mode::Scale && !o.aims() && std::hypot(at.x() - c.x(), at.y() - c.y()) < 8) return 3; // all of it
     int best = -1;
     double bestD = 8;
     for (int a = 0; a < 3; ++a) {
@@ -430,6 +452,10 @@ int Scene3DView::hitHandle(const Object &o, QPointF at) const
 
 QString Scene3DView::pathOf(const Object &o, const QString &what, int axis) const
 {
+    if (o.camera) {
+        if (what == QLatin1String("rotation")) return axis == 1 ? QStringLiteral("camera3d/yaw") : QStringLiteral("camera3d/pitch");
+        return QStringLiteral("camera3d/position/") + kAxisName[axis];
+    }
     if (o.light) {
         if (what == QLatin1String("rotation")) return axis == 1 ? QStringLiteral("light/yaw") : QStringLiteral("light/pitch");
         return QStringLiteral("light/position/") + kAxisName[axis];
@@ -446,9 +472,10 @@ void Scene3DView::beginEdit(const Object &o)
     QStringList paths;
     for (int a = 0; a < 3; ++a) {
         paths << pathOf(o, QStringLiteral("position"), a);
-        if (!o.light) paths << pathOf(o, QStringLiteral("rotation"), a) << pathOf(o, QStringLiteral("scale"), a);
+        if (!o.aims()) paths << pathOf(o, QStringLiteral("rotation"), a) << pathOf(o, QStringLiteral("scale"), a);
     }
     if (o.light) paths << QStringLiteral("light/yaw") << QStringLiteral("light/pitch");
+    if (o.camera) paths << QStringLiteral("camera3d/yaw") << QStringLiteral("camera3d/pitch");
     else paths << pathOf(o, QStringLiteral("scale"), 3);
     for (const QString &p : paths) m_before.push_back({p, m_engine->parameterValue(o.id, p).toDouble()});
 }
@@ -521,8 +548,44 @@ void Scene3DView::paintGround(QPainter &p)
 void Scene3DView::paintOverlay(QPainter &p)
 {
     p.setRenderHint(QPainter::Antialiasing);
-    // The scene's camera: its frustum toward its target
-    {
+    // A camera's frustum toward its target, its name beside it
+    const auto frustum = [&](const QVector3D &eye, const QVector3D &target, float fov, const QColor &ink, const QString &label) {
+        const QSize comp = m_engine->compositionSize();
+        const float aspect = float(comp.width()) / float(std::max(1, comp.height()));
+        const float distance = std::max(0.01f, (target - eye).length());
+        const QVector3D fwd = (target - eye).normalized();
+        QVector3D right = QVector3D::crossProduct(fwd, {0, 1, 0});
+        if (right.lengthSquared() < 1e-8f) right = QVector3D(1, 0, 0);
+        right.normalize();
+        const QVector3D up = QVector3D::crossProduct(right, fwd);
+        const float d = std::min(0.6f, distance * 0.25f), hh = std::tan(qDegreesToRadians(fov) / 2) * d, hw = hh * aspect;
+        const QVector3D corner[4] = {eye + fwd * d - right * hw + up * hh, eye + fwd * d + right * hw + up * hh,
+                                     eye + fwd * d + right * hw - up * hh, eye + fwd * d - right * hw - up * hh};
+        bool fe;
+        const QPointF e2 = project(eye, &fe);
+        if (!fe) return;
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(ink, 1.4));
+        QPointF c2[4];
+        for (int k = 0; k < 4; ++k) c2[k] = project(corner[k]);
+        for (int k = 0; k < 4; ++k) {
+            p.drawLine(e2, c2[k]);
+            p.drawLine(c2[k], c2[(k + 1) % 4]);
+        }
+        p.setPen(QPen(ink, 1, Qt::DashLine));
+        p.drawLine(e2, project(target));
+        p.setPen(ink);
+        p.drawText(e2 + QPointF(8, -6), label);
+    };
+    bool hasActive = false;
+    for (const Object &o : objects()) hasActive = hasActive || (o.camera && o.active);
+    for (const Object &o : objects()) {
+        if (!o.camera) continue;
+        const QColor ink = o.id == m_selected ? kSelected : o.active ? kCamera : QColor(kCamera.red(), kCamera.green(), kCamera.blue(), 130);
+        frustum(o.position, o.target, o.fov, ink, o.active ? o.name + QStringLiteral(" (seen through)") : o.name);
+    }
+    // The scene's own orbit camera, when it is seen through it
+    if (!hasActive) {
         const SceneSettings s = sceneCamera();
         const QSize comp = m_engine->compositionSize();
         const float aspect = float(comp.width()) / float(std::max(1, comp.height()));
@@ -741,7 +804,7 @@ void Scene3DView::paintOverlay(QPainter &p)
         bool front;
         const QPointF c = project(o.position, &front);
         if (!front) break;
-        if (!o.light && !o.merge && !o.isPath3d) { // its bounds, as a circle
+        if (!o.aims() && !o.merge && !o.isPath3d) { // its bounds, as a circle
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             p.setPen(QPen(kSelected, 1, Qt::DotLine));
             p.setBrush(Qt::NoBrush);
@@ -750,7 +813,7 @@ void Scene3DView::paintOverlay(QPainter &p)
         }
         const int active = m_drag == Drag::Handle ? m_axis : m_hover;
         if (m_mode == Mode::Rotate) {
-            for (int a = 0; a < (o.light ? 2 : 3); ++a) {
+            for (int a = 0; a < (o.aims() ? 2 : 3); ++a) {
                 const auto pts = ring(o, a);
                 p.setPen(QPen(kAxis[a], a == active ? 3 : 1.6));
                 for (size_t k = 0; k + 1 < pts.size(); ++k) p.drawLine(pts[k], pts[k + 1]);
@@ -761,10 +824,10 @@ void Scene3DView::paintOverlay(QPainter &p)
                 p.setPen(QPen(kAxis[a], a == active ? 3.5 : 2));
                 p.drawLine(c, e);
                 p.setBrush(kAxis[a]);
-                if (m_mode == Mode::Scale && !o.light) p.drawRect(QRectF(e - QPointF(4, 4), QSizeF(8, 8)));
+                if (m_mode == Mode::Scale && !o.aims()) p.drawRect(QRectF(e - QPointF(4, 4), QSizeF(8, 8)));
                 else p.drawEllipse(e, 4, 4);
             }
-            if (m_mode == Mode::Scale && !o.light) {
+            if (m_mode == Mode::Scale && !o.aims()) {
                 p.setPen(QPen(Qt::white, active == 3 ? 2.5 : 1.2));
                 p.setBrush(QColor(255, 255, 255, 60));
                 p.drawRect(QRectF(c - QPointF(6, 6), QSizeF(12, 12)));
@@ -815,11 +878,11 @@ void Scene3DView::mousePressEvent(QMouseEvent *e)
         const QPointF c = project(o.position, &front);
         if (!front) continue;
         double r = 10;
-        if (!o.light && !o.merge && !o.isPath3d) {
+        if (!o.aims() && !o.merge && !o.isPath3d) {
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             r = std::max(8.0, std::hypot(edge.x() - c.x(), edge.y() - c.y()));
         }
-        const float dist = (o.position - eye).length() - (o.light || o.merge || o.isPath3d ? 1000 : 0); // over a model
+        const float dist = (o.position - eye).length() - (o.aims() || o.merge || o.isPath3d ? 1000 : 0); // over a model
         if (std::hypot(e->position().x() - c.x(), e->position().y() - c.y()) <= r && dist < nearest) {
             nearest = dist;
             picked = o.id;
@@ -866,7 +929,7 @@ void Scene3DView::mouseMoveEvent(QMouseEvent *e)
             turn = std::remainder(turn, 360.0);
             const QVector3D axis = axisOf(o, m_axis);
             const float toward = QVector3D::dotProduct(axis, cameraNow().eye - o.position) >= 0 ? 1 : -1;
-            const double base = o.light ? (m_axis == 1 ? o.rotation.y() : o.rotation.x()) : o.rotation[m_axis];
+            const double base = o.aims() ? (m_axis == 1 ? o.rotation.y() : o.rotation.x()) : o.rotation[m_axis];
             m_engine->setParameter(o.id, pathOf(o, QStringLiteral("rotation"), m_axis), base + turn * toward);
         } else {
             const int axisIndex = std::min(m_axis, 2);

@@ -198,9 +198,15 @@ struct SceneSettings {
     // colour of what is lit evenly. The lights show in it, stopped by the models (LightSettings::rays)
     float fogDensity = 0, fogBase = 0, fogFalloff = 0.3f, fogReach = 30;
     std::array<float, 3> fogColor{{0.02f, 0.022f, 0.025f}};
-    // Along a Path (Layer::cameraPath): where on it (0 to 1), turns per second, how far its speed has taken it
-    float cameraPathPosition = 0, cameraPathSpeed = 0;
-    double cameraPathTravel = 0; // not kept in a project
+};
+
+// A camera object of a scene (Layer type Camera; its position is its layer's ModelPlacement): where it points, its
+// field of view. A scene is seen through the one it chooses (Layer::activeCamera), or its own orbit camera
+struct CameraSettings {
+    float yaw = 30, pitch = -15; // where it points when it looks at nothing (degrees)
+    float fov = 45;
+    bool lookAt = true;                     // it looks at an object (Layer::lookAtObject) or at this point
+    std::array<float, 3> lookPoint{{0, 0, 0}};
 };
 
 // What a frame of 3D may cost, the composition's for all its scenes: 0 off, 1 low, 2 medium, 3 high (antialiasing: off, 2×,

@@ -24,6 +24,9 @@ struct Path3D {
     std::vector<std::vector<QVector3D>> linesLocal() const;
     bool isPath() const { return kind == Circle || kind == Rectangle || kind == Line || kind == Spiral; }
     bool isClosed() const { return kind == Circle || kind == Rectangle; }
+    // Which way each point faces, for copies turned along it: along the path (a circle, a rectangle, a line, a spiral),
+    // outward from its middle (a sphere), up (a grid, random points)
+    std::vector<QVector3D> directionsLocal() const;
     // On its path at an even pace: 0 to 1 once around a closed one; an open one goes to its end at 1 and back at 2.
     // Its middle when it is not a path
     QVector3D along(double t) const;

@@ -835,7 +835,7 @@ void LayerInspector::rebuild()
         tv->setContentsMargins(0, 0, 0, 0);
         tv->setSpacing(8);
         tv->addWidget(buildSource(s));
-        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Path && !s.merge3d) { // a sound, a 3D
+        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Path && s.type != SourceType::Camera && !s.merge3d) { // a sound, a 3D
                                                                                                            // object: no picture
             tv->addWidget(separator());
             tv->addWidget(buildCompositing(s));
@@ -880,11 +880,13 @@ void LayerInspector::rebuild()
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
     tabs->setStyleSheet(theme::tabStyle());
     bool scene3d = false, merge3d = false;
+    quint64 instanceOf = 0; // an Instance: its original
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d;
+        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d, instanceOf = l->instanceOf;
     }
-    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || s.type == SourceType::Path || merge3d;
+    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || s.type == SourceType::Path ||
+                          s.type == SourceType::Camera || merge3d;
     if (scene3d) {
         auto *both = new QWidget;
         auto *bv = new QVBoxLayout(both);
@@ -895,12 +897,31 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
     if (object3d && s.type != SourceType::Model)
-        tabs->addTab(page(build3d({merge3d ? QStringLiteral("merge/") : s.type == SourceType::Path ? QStringLiteral("path/")
-                                                                                                    : QStringLiteral("light/")})),
+    {
+        tabs->addTab(page(build3d(merge3d                          ? QStringList{QStringLiteral("merge/")}
+                                  : s.type == SourceType::Path   ? QStringList{QStringLiteral("path/")}
+                                  : s.type == SourceType::Camera ? QStringList{QStringLiteral("camera3d/")}
+                                                                 : QStringList{QStringLiteral("light/")})),
                      QStringLiteral("3D"));
+        if (s.type != SourceType::Path) { // its 3D FX
+            const int t = tabs->addTab(page(buildFollowPathFx()), QStringLiteral("FX"));
+            tabs->setTabToolTip(t, QStringLiteral("3D FX: Follow Path moves it along a Path of its scene"));
+        }
+    }
     const bool hasSource = !s.isGroup && !s.isViewport && (!object3d || s.type == SourceType::Model);
-    if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
-    if (s.type == SourceType::Model) {
+    if (hasSource && instanceOf) tabs->addTab(page(buildInstanceSource()), QStringLiteral("Source"));
+    else if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
+    if (s.type == SourceType::Model && instanceOf) { // an Instance: its own place, colours (with Own Material) and 3D FX
+        tabs->addTab(page(build3d({QStringLiteral("model/instance/"), QStringLiteral("model/material/")})), QStringLiteral("Material"));
+        tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/")})),
+                     QStringLiteral("Spatial"));
+        auto *effects = new QWidget;
+        auto *fx = new QVBoxLayout(effects);
+        fx->addWidget(build3d({QStringLiteral("model/transform_fx/")}));
+        fx->addWidget(buildDuplicateFx());
+        fx->addWidget(buildFollowPathFx());
+        tabs->addTab(page(effects), QStringLiteral("FX"));
+    } else if (s.type == SourceType::Model) {
         auto *surface = new QWidget;
         auto *layout = new QVBoxLayout(surface);
         layout->addWidget(buildModelLayers());
@@ -908,7 +929,8 @@ void LayerInspector::rebuild()
         layout->addWidget(new MaterialPanel(m_engine, m_undo, [this, id = s.id] { return m_engine->indexOfId(id); },
                                           [this] { emit projectEdited(); }, surface, surfaceParams));
         tabs->addTab(page(surface), QStringLiteral("Material"));
-        tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/"), QStringLiteral("model/fit")})), QStringLiteral("Spatial"));
+        tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/"),
+                                   QStringLiteral("model/fit")})), QStringLiteral("Spatial"));
         auto *effects = new QWidget;
         auto *fx = new QVBoxLayout(effects);
         auto *displace = new QGroupBox(QStringLiteral("Displace Source"));
@@ -925,6 +947,8 @@ void LayerInspector::rebuild()
                        [this](quint64 id, int st, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, st); });
         fx->addWidget(displace);
         fx->addWidget(build3d({QStringLiteral("model/displace/"), QStringLiteral("model/transform_fx/"), QStringLiteral("model/bend")}));
+        fx->addWidget(buildDuplicateFx());
+        fx->addWidget(buildFollowPathFx());
         tabs->addTab(page(effects), QStringLiteral("FX"));
     }
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
@@ -1154,9 +1178,28 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         kind = QStringLiteral("3D Model");
         name = QFileInfo(s.sourcePath).fileName();
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer); l && l->model)
-            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(l->model->meshCount()).arg(l->model->triangleCount());
+        const Layer *l = m_engine->layer(m_layer);
+        if (const Layer *o = l && l->instanceOf ? m_engine->originalOf(*l) : nullptr) {
+            kind = QStringLiteral("Instance");
+            name = o->name;
+            d << QStringLiteral("the meshes and material of \"%1\": edit it and this follows").arg(o->name);
+        } else if (l && l->instanceOf) {
+            kind = QStringLiteral("Instance");
+            d << QStringLiteral("its original is gone");
+        }
+        if (const auto m = l ? m_engine->modelOf(*l) : nullptr)
+            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(m->meshCount()).arg(m->triangleCount());
         d << QStringLiteral("drawn by its 3D scene");
+        break;
+    }
+    case SourceType::Camera: {
+        kind = QStringLiteral("Camera");
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) {
+            const Layer *scene = m_engine->layer(m_engine->sceneOfObject(m_layer));
+            d << (scene && scene->activeCamera == l->id ? QStringLiteral("its scene is seen through it")
+                                                        : QStringLiteral("not the one its scene is seen through (Scene tab › Seen Through)"));
+        }
         break;
     }
     case SourceType::Path: {
@@ -1260,7 +1303,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
     // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose; a 3D
     // object has no picture of its own)
-    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Path) {
+    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Path && s.type != SourceType::Camera) {
         auto *row = new QHBoxLayout;
         auto *label = new ResetLabel(QStringLiteral("Transition"), [this] {
             setProp(cmd::SetLayerProp::Transition, QString());
@@ -1344,6 +1387,83 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
 // The Source tab: what the source is made of and how it plays — the media's transport and sound, the generator's
 // parameters and resolution, the text and its style, the tap of a layer used as the source
+// The Duplicate 3D FX of a model or an Instance: a copy on every point of a Path of its scene (any kind: a grid, a
+// sphere, random points as well as a circle or a spiral), then its on/off, alignment, size and variations
+QWidget *LayerInspector::buildDuplicateFx()
+{
+    auto *box = new QGroupBox(QStringLiteral("Duplicate"));
+    box->setObjectName(QStringLiteral("duplicateFx"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("duplicatePath"));
+    pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        current = l->duplicatePath;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o->type == SourceType::Path && sceneOf(o) == sceneOf(l))
+                pick->addItem(QStringLiteral("%1 (%2 points)").arg(o->name).arg(o->path3d.pointCount()), QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("A Path of the scene: a copy on each of its points. Its point count is the number of copies; "
+                                    "the copies share this model's meshes"));
+    form->addRow(QStringLiteral("On the Points of"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Duplicate On"), [&] { m_engine->setDuplicatePath(m_layer, id); });
+        emit layerChanged();
+    });
+    auto *v = new QWidget;
+    auto *layout = new QVBoxLayout(v);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(box);
+    layout->addWidget(build3d({QStringLiteral("duplicate/")}));
+    return v;
+}
+
+// An Instance's original: any model of the project (a primitive, an FBX, an OBJ, a glTF)
+QWidget *LayerInspector::buildInstanceSource()
+{
+    auto *box = new QGroupBox(QStringLiteral("Instance"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("instanceOf"));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        current = l->instanceOf;
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o != l && o->type == SourceType::Model && o->model && !o->instanceOf) pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    if (pick->findData(QVariant(qulonglong(current))) < 0) pick->addItem(QStringLiteral("(gone)"), QVariant(qulonglong(current)));
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setEnabled(!m_locked);
+    pick->setToolTip(QStringLiteral("The model it shows: its meshes, material, picture and displacement. Edit it, and every instance "
+                                    "of it changes; this one keeps its own place and 3D FX"));
+    form->addRow(QStringLiteral("Instance of"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Instance Of"), [&] { m_engine->setLayerInstance(m_layer, id); });
+        emit layerChanged();
+    });
+    return box;
+}
+
 QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
 {
     auto *g = new QWidget;
@@ -4515,11 +4635,13 @@ void LayerInspector::addLightLookAt(QFormLayout *form)
     pick->setObjectName(QStringLiteral("lightLookAtObject"));
     pick->addItem(QStringLiteral("The point below"), QVariant(qulonglong(0)));
     quint64 current = 0;
+    bool camera = false;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
         if (!l) return;
-        current = l->lightLookAt;
+        camera = l->type == SourceType::Camera;
+        current = camera ? l->lookAtObject : l->lightLookAt;
         const auto sceneOf = [this](const Layer *o) {
             while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
             return o;
@@ -4530,64 +4652,88 @@ void LayerInspector::addLightLookAt(QFormLayout *form)
         }
     }
     pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
-    pick->setToolTip(QStringLiteral("A model, a light or a Merge 3D of its scene: the light follows it wherever it goes"));
+    pick->setToolTip(QStringLiteral("A 3D object of its scene (an Empty, a primitive, an FBX or OBJ model, a light…): it keeps "
+                                    "pointing at it wherever it goes"));
     form->addRow(QStringLiteral("Object"), pick);
-    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+    connect(pick, &QComboBox::activated, this, [this, pick, camera](int i) {
         const quint64 id = pick->itemData(i).toULongLong();
-        editSource(QStringLiteral("Light Looks At"), [&] { m_engine->setLightLookAt(m_layer, id); });
+        editSource(camera ? QStringLiteral("Camera Looks At") : QStringLiteral("Light Looks At"),
+                   [&] { camera ? m_engine->setCameraLookAt(m_layer, id) : m_engine->setLightLookAt(m_layer, id); });
         emit layerChanged();
     });
 }
 
-// A light's or a scene camera's path: a Path of its scene to travel along (a circle, a rectangle, a line, a spiral).
-// The camera also gets what it looks at while it travels: an object of its scene, or its target point
-void LayerInspector::addPathPicker(QFormLayout *form, bool camera)
+// The Follow Path 3D FX of a model, a Merge 3D (an Empty), a camera or a light: the Path of its scene it travels along
+// (a circle, a rectangle, a line or a spiral), then its on/off, position, speed and orientation
+QWidget *LayerInspector::buildFollowPathFx()
 {
-    auto *path = new QComboBox;
-    path->setObjectName(camera ? QStringLiteral("cameraPath") : QStringLiteral("lightPath"));
-    path->addItem(camera ? QStringLiteral("None (it orbits its target)") : QStringLiteral("Its own (the Shape below)"), QVariant(qulonglong(0)));
-    QComboBox *look = nullptr;
-    if (camera) {
-        look = new QComboBox;
-        look->setObjectName(QStringLiteral("cameraLookAt"));
-        look->addItem(QStringLiteral("Its target point"), QVariant(qulonglong(0)));
-    }
-    quint64 currentPath = 0, currentLook = 0;
+    auto *box = new QGroupBox(QStringLiteral("Follow Path"));
+    box->setObjectName(QStringLiteral("followPathFx"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("followPath"));
+    quint64 current = 0;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
-        if (!l) return;
-        currentPath = camera ? l->cameraPath : l->lightPath;
-        currentLook = l->cameraLookAt;
+        if (!l) return box;
+        current = l->followPath;
+        pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
         const auto sceneOf = [this](const Layer *o) {
             while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
             return o;
         };
-        const Layer *scene = sceneOf(l);
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *o = m_engine->layer(i);
-            if (!o || o == l || !o->is3dObject() || sceneOf(o) != scene) continue;
-            if (o->type == SourceType::Path && o->path3d.isPath()) path->addItem(o->name, QVariant(qulonglong(o->id)));
-            if (look) look->addItem(o->name, QVariant(qulonglong(o->id)));
+            if (o && o != l && o->type == SourceType::Path && o->path3d.isPath() && sceneOf(o) == sceneOf(l))
+                pick->addItem(o->name, QVariant(qulonglong(o->id)));
         }
     }
-    path->setCurrentIndex(std::max(0, path->findData(QVariant(qulonglong(currentPath)))));
-    path->setToolTip(QStringLiteral("A Path of the scene (circle, rectangle, line, spiral) to travel along: its Path Position "
-                                    "and Path Speed place it on it"));
-    form->addRow(camera ? QStringLiteral("Camera Path") : QStringLiteral("Path › Path"), path);
-    connect(path, &QComboBox::activated, this, [this, path, camera](int i) {
-        const quint64 id = path->itemData(i).toULongLong();
-        editSource(camera ? QStringLiteral("Camera Path") : QStringLiteral("Light Path"),
-                   [&] { camera ? m_engine->setCameraPath(m_layer, id) : m_engine->setLightPath(m_layer, id); });
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("A Path of the scene (circle, rectangle, line, spiral) to travel along: Position and Speed "
+                                    "place it on it"));
+    form->addRow(QStringLiteral("Path"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Follow Path"), [&] { m_engine->setFollowPath(m_layer, id); });
         emit layerChanged();
     });
-    if (!look) return;
-    look->setCurrentIndex(std::max(0, look->findData(QVariant(qulonglong(currentLook)))));
-    look->setToolTip(QStringLiteral("While on its path, the camera looks at this object (an Empty, a model…) or at its target point"));
-    form->addRow(QStringLiteral("Camera Looks At"), look);
-    connect(look, &QComboBox::activated, this, [this, look](int i) {
-        const quint64 id = look->itemData(i).toULongLong();
-        editSource(QStringLiteral("Camera Looks At"), [&] { m_engine->setCameraLookAt(m_layer, id); });
+    auto *v = new QWidget;
+    auto *layout = new QVBoxLayout(v);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(box);
+    layout->addWidget(build3d({QStringLiteral("follow/")}));
+    return v;
+}
+
+// The Camera object a scene is seen through, or its own orbit camera (the settings above)
+void LayerInspector::addActiveCameraPicker(QFormLayout *form)
+{
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("activeCamera"));
+    pick->addItem(QStringLiteral("Its own (the orbit camera above)"), QVariant(qulonglong(0)));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        current = l->activeCamera;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o->type == SourceType::Camera && sceneOf(o) == l) pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("The camera the scene's picture is seen through: one of its Camera objects, or its own"));
+    form->addRow(QStringLiteral("Seen Through"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Active Camera"), [&] { m_engine->setActiveCamera(m_layer, id); });
         emit layerChanged();
     });
 }
@@ -4849,8 +4995,8 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
         m_animate->attach({label, field}, {path});
         m_3dFields.push_back({field, path});
         if (path == QLatin1String("light/lookat")) addLightLookAt(form);
-        if (path == QLatin1String("light/path/shape")) addPathPicker(form, false);
-        if (path == QLatin1String("camera/target/z")) addPathPicker(form, true);
+        if (path == QLatin1String("camera3d/lookat")) addLightLookAt(form); // a camera's: the same choice
+        if (path == QLatin1String("camera/target/z")) addActiveCameraPicker(form);
     }
     v->addStretch();
     return w;

@@ -17,6 +17,10 @@ A model can:
 
 `model/shading` shows a model as made, smooth (its normals averaged where faces meet) or flat (its facets show).
 
+### Instances
+
+An **Instance** (**Layer › New Instance of the Selected Model**) shows another model's meshes and material: a primitive, an FBX, an OBJ or a glTF. Its triangles are not built or loaded again, and editing the original (its material, picture, displacement, shading or detail) changes every instance of it. An instance has its own place (Spatial tab), its own 3D FX (Transform 3D, Follow Path) and, with **Own Material** (`model/instance/own_material`), its own colour, metal and roughness. An instance of an instance shows the original; its Source tab sets which model it shows.
+
 ## Materials
 
 Lighting is physically based, in linear light, with ACES tone mapping.
@@ -55,16 +59,23 @@ A **Path** (**Layer › New Path**, or **Media Bin › 3D Primitives › Path** 
 
 It is drawn in the 3D view (its points and lines), not in the scene's picture; **Shown in the 3D View** hides it there too.
 
-A circle, a rectangle, a line or a spiral is also a **path**:
+A circle, a rectangle, a line or a spiral is also a **path**, which 3D objects travel along with the **Follow Path** 3D FX. A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.
 
-- a light travels along it: its 3D tab › **Path › Path**, then `light/path/position` (0 to 1) and `light/path/speed` (turns per second);
-- so does the scene's camera: the Scene tab › **Camera Path**, `camera/path/position` and `camera/path/speed`, looking at **Camera Looks At** (an object of the scene, an Empty for one) or at its target point.
+## Follow Path (3D FX)
 
-A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.
+A model, a Merge 3D or an Empty, a camera or a light has a **Follow Path** 3D FX (its **FX** tab): choose a Path of the scene, turn it on (`follow/enabled`), place the object on it (`follow/position`, 0 to 1) and set it moving (`follow/speed`, turns per second). **Turned Along It** (`follow/orient`) turns the object to face the way it goes. A camera or a light sits on the path's point; a model's or a Merge 3D's own transform applies from there, so a Merge 3D on a path carries everything it holds.
+
+## Duplicate (3D FX)
+
+A model or an Instance has a **Duplicate** 3D FX (its **FX** tab): a copy on every point of a Path of its scene, of any kind (a grid, a sphere, random points, a circle, a spiral…). The Path's point count is the number of copies; move or animate the Path and the copies follow. **Copies** turns each one along the path (or outward on a sphere) or leaves it as it is; **Copy Size**, **Size Variation** and **Turn Variation** (with a **Seed**) vary them. The copies share the model's meshes: drawn again, not built again. With Duplicate on, the copies stand on the Path's points (the model's own Follow Path does not apply); its own transform applies to each copy.
+
+## Cameras
+
+A **Camera** (**Layer › Add Camera to 3D Scene**, or **Media Bin › 3D Primitives › Camera** dropped onto a scene) is a 3D object: a scene can have several. The scene is seen through the one chosen in its Scene tab › **Seen Through** (the first camera added is chosen), or through its own orbit camera. A camera looks at a point or at any 3D object of its scene (**Look At** › Object: an Empty, a primitive, an FBX or OBJ model, a light…), or points by its yaw and pitch (`camera3d/…`), and can follow a Path with its Follow Path FX. The 3D view draws every camera, the one the scene is seen through brighter.
 
 ## Empty
 
-An **Empty** (**Layer › New Empty**, or **Media Bin › 3D Primitives › Empty**) is a Merge 3D: a point of the scene with its axes, to place objects under, or for a light or the camera to look at.
+An **Empty** (**Layer › New Empty**, or **Media Bin › 3D Primitives › Empty**) is a Merge 3D: a point of the scene with its axes, to place objects under, for a light or a camera to look at, or to carry objects along a Path.
 
 ## Merge 3D
 
