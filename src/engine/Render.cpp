@@ -1,3 +1,4 @@
+#include <random>
 // Engine: one frame — the sources are updated, every layer is rendered in dependency order, the
 // composition is assembled, then read back for the interface preview and for publishing.
 #include <QJsonArray>
@@ -1279,6 +1280,47 @@ QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
     return frame;
 }
 
+std::vector<QMatrix4x4> Engine::duplicateFrames(const Layer &model, const QMatrix4x4 &frame)
+{
+    const Layer *path = model.duplicateEnabled && model.duplicatePath ? layer(indexOfId(model.duplicatePath)) : nullptr;
+    if (!path || path->type != SourceType::Path) return {frame};
+    // On the Path's points, where the Path is (whatever holds the model); its Follow Path does not apply then
+    const QMatrix4x4 m = pathMatrix(*path);
+    const auto points = path->path3d.pointsLocal();
+    const auto ways = path->path3d.directionsLocal();
+    std::mt19937 rng{static_cast<uint32_t>(model.duplicateSeed)};
+    std::uniform_real_distribution<float> unit(0.f, 1.f);
+    std::vector<QMatrix4x4> out;
+    out.reserve(points.size());
+    for (size_t k = 0; k < points.size(); ++k) {
+        QMatrix4x4 copy;
+        copy.translate(m.map(points[k]));
+        if (model.duplicateAlign == 1) { // its +Z the way the point goes, +Y up (on a sphere: its +Y outward)
+            QVector3D way = m.mapVector(ways[k]);
+            if (way.lengthSquared() > 1e-12f) {
+                way.normalize();
+                const bool outward = path->path3d.kind == Path3D::Sphere || !path->path3d.isPath();
+                QVector3D up = outward ? way : QVector3D(0, 1, 0);
+                QVector3D ahead = outward ? QVector3D(0, 0, 1) : way;
+                if (std::abs(QVector3D::dotProduct(up, ahead)) > 0.999f) ahead = QVector3D(1, 0, 0);
+                const QVector3D right = QVector3D::crossProduct(up, ahead).normalized();
+                ahead = QVector3D::crossProduct(right, up);
+                QMatrix4x4 turn;
+                turn.setColumn(0, QVector4D(right, 0));
+                turn.setColumn(1, QVector4D(up, 0));
+                turn.setColumn(2, QVector4D(ahead, 0));
+                copy *= turn;
+            }
+        }
+        const float spin = (unit(rng) * 2 - 1) * model.duplicateRandomRotation;
+        const float size = model.duplicateScale * (1 + (unit(rng) * 2 - 1) * model.duplicateRandomScale);
+        copy.rotate(spin, 0, 1, 0);
+        copy.scale(std::max(0.001f, size));
+        out.push_back(copy);
+    }
+    return out;
+}
+
 QVector3D Engine::cameraPosition(const Layer &camera)
 {
     const ModelPlacement &p = camera.modelPlacement;
@@ -1405,10 +1447,12 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
                 mid = 0;
             }
             if (look == m) model->setDetail(placement.meshDetail(displacement != 0));
-            items.push_back({model, placement, pic ? stagePicture(*pic, look->modelPictureStage) : 0,
-                             displacement, amount, mid,
-                             m->modelTransformFxEnabled ? followFrame(*m, parent) * m->modelTransformFx.transform()
-                                                        : followFrame(*m, parent)});
+            const GLuint picture = pic ? stagePicture(*pic, look->modelPictureStage) : 0;
+            // Its Duplicate FX: a copy on each point of its Path (the same meshes, drawn again, not built again)
+            for (QMatrix4x4 frame : duplicateFrames(*m, followFrame(*m, parent))) {
+                if (m->modelTransformFxEnabled) frame *= m->modelTransformFx.transform();
+                items.push_back({model, placement, picture, displacement, amount, mid, frame});
+            }
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
         }

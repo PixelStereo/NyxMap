@@ -508,7 +508,8 @@ int Engine::sceneTriangles(int scene) const
         for (const auto &l : m_layers) {
             if (l->parent != holder || !l->enabled) continue;
             if (l->merge3d) walk(l->id);
-            else if (const auto m = l->type == SourceType::Model ? modelOf(*l) : nullptr) total += m->triangleCount();
+            else if (const auto m = l->type == SourceType::Model ? modelOf(*l) : nullptr) // every copy of its Duplicate FX
+                total += m->triangleCount() * int(const_cast<Engine *>(this)->duplicateFrames(*l, QMatrix4x4()).size());
         }
     };
     walk(top->id);
@@ -765,6 +766,23 @@ bool Engine::setCameraLookAt(int i, quint64 object)
             if (!o || o == l || !o->is3dObject() || sceneOfLayer(o, find) != sceneOfLayer(l, find)) return false;
         }
         l->lookAtObject = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setDuplicatePath(int i, quint64 path)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Model) return false;
+        if (path) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *p = find(path);
+            if (!p || p->type != SourceType::Path || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
+        }
+        l->duplicatePath = path;
     }
     emit layersChanged();
     return true;

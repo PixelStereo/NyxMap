@@ -775,6 +775,21 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
+        // Its Duplicate 3D FX: a copy on every point of a Path
+        flag("duplicate/enabled", "Duplicate › Enabled", false, &duplicateEnabled).ramp(Parameter::Ramp::Cut);
+        static const QStringList kAlign{QStringLiteral("as it is"), QStringLiteral("turned along the path")};
+        add("duplicate/align", "Duplicate › Copies", T::Choice)
+            .choices(kAlign)
+            .byDefault(kAlign.value(1))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([self] { return QVariant(kAlign.value(self->duplicateAlign)); },
+                  [self](const QVariant &v) { self->duplicateAlign = std::max(0, int(kAlign.indexOf(v.toString()))); });
+        f3("duplicate/scale", "Duplicate › Copy Size", 0.01, 4, 1, &duplicateScale).step(0.01).limits(0.001, 100);
+        f3("duplicate/random_scale", "Duplicate › Size Variation", 0, 1, 0, &duplicateRandomScale).step(0.01);
+        f3("duplicate/random_rotation", "Duplicate › Turn Variation (°)", 0, 180, 0, &duplicateRandomRotation).step(0.1);
+        add("duplicate/seed", "Duplicate › Seed", T::Int).range(0, 99999).byDefault(1).ramp(Parameter::Ramp::Cut)
+            .bind([self] { return QVariant(self->duplicateSeed); },
+                  [self](const QVariant &v) { self->duplicateSeed = std::clamp(v.toInt(), 0, 99999); });
         if (instanceOf) // an Instance: its original's material, or its own colours
             flag("model/instance/own_material", "Instance › Own Material", false, &instanceOwnMaterial).ramp(Parameter::Ramp::Cut);
         if (instanceOf || material || (model && model->isPrimitive())) {

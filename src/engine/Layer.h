@@ -426,6 +426,14 @@ struct Layer {
     // original's GPU meshes): Engine::modelOf
     quint64 instanceOf = 0;
     bool instanceOwnMaterial = false;
+    // Its Duplicate 3D FX (a model or an Instance): a copy on every point of a Path of its scene, when the FX is on
+    bool duplicateEnabled = false;
+    quint64 duplicatePath = 0;
+    int duplicateAlign = 1;            // 0 as it is, 1 turned the way each point faces (Path3D::directionsLocal)
+    float duplicateScale = 1;          // every copy's size
+    float duplicateRandomScale = 0;    // 0 to 1: how much each copy's size varies
+    float duplicateRandomRotation = 0; // degrees: how far each copy turns at random around its up
+    int duplicateSeed = 1;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
     quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
     quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)

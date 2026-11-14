@@ -140,6 +140,11 @@ public:
     bool setActiveCamera(int scene, quint64 camera);
     // The 3D object of its scene a camera looks at (0: its Look At point); refused: itself, or what is not in its scene
     bool setCameraLookAt(int camera, quint64 object);
+    // The Path of its scene whose points a model or an Instance is copied on, in its Duplicate FX (0: none)
+    bool setDuplicatePath(int index, quint64 path);
+    // A model's frames with its Duplicate FX on: one per copy (its own transform applies within each); without it, just
+    // `frame` (lock held)
+    std::vector<QMatrix4x4> duplicateFrames(const Layer &model, const QMatrix4x4 &frame);
     // The Path of its scene a model, a Merge 3D, a camera or a light travels along in its Follow Path FX (0: none)
     bool setFollowPath(int index, quint64 path);
     // Where a 3D object's own transform starts: on its Path when it follows one (turned along it with Follow Orient),

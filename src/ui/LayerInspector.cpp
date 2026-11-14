@@ -918,6 +918,7 @@ void LayerInspector::rebuild()
         auto *effects = new QWidget;
         auto *fx = new QVBoxLayout(effects);
         fx->addWidget(build3d({QStringLiteral("model/transform_fx/")}));
+        fx->addWidget(buildDuplicateFx());
         fx->addWidget(buildFollowPathFx());
         tabs->addTab(page(effects), QStringLiteral("FX"));
     } else if (s.type == SourceType::Model) {
@@ -946,6 +947,7 @@ void LayerInspector::rebuild()
                        [this](quint64 id, int st, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, st); });
         fx->addWidget(displace);
         fx->addWidget(build3d({QStringLiteral("model/displace/"), QStringLiteral("model/transform_fx/"), QStringLiteral("model/bend")}));
+        fx->addWidget(buildDuplicateFx());
         fx->addWidget(buildFollowPathFx());
         tabs->addTab(page(effects), QStringLiteral("FX"));
     }
@@ -1385,6 +1387,50 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
 // The Source tab: what the source is made of and how it plays — the media's transport and sound, the generator's
 // parameters and resolution, the text and its style, the tap of a layer used as the source
+// The Duplicate 3D FX of a model or an Instance: a copy on every point of a Path of its scene (any kind: a grid, a
+// sphere, random points as well as a circle or a spiral), then its on/off, alignment, size and variations
+QWidget *LayerInspector::buildDuplicateFx()
+{
+    auto *box = new QGroupBox(QStringLiteral("Duplicate"));
+    box->setObjectName(QStringLiteral("duplicateFx"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("duplicatePath"));
+    pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        current = l->duplicatePath;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o->type == SourceType::Path && sceneOf(o) == sceneOf(l))
+                pick->addItem(QStringLiteral("%1 (%2 points)").arg(o->name).arg(o->path3d.pointCount()), QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setToolTip(QStringLiteral("A Path of the scene: a copy on each of its points. Its point count is the number of copies; "
+                                    "the copies share this model's meshes"));
+    form->addRow(QStringLiteral("On the Points of"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Duplicate On"), [&] { m_engine->setDuplicatePath(m_layer, id); });
+        emit layerChanged();
+    });
+    auto *v = new QWidget;
+    auto *layout = new QVBoxLayout(v);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(box);
+    layout->addWidget(build3d({QStringLiteral("duplicate/")}));
+    return v;
+}
+
 // An Instance's original: any model of the project (a primitive, an FBX, an OBJ, a glTF)
 QWidget *LayerInspector::buildInstanceSource()
 {

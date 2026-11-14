@@ -182,6 +182,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     if (l.isMappingZone) o["is_mapping_zone"] = true;
     if (l.mappingZone) o["mapping_zone"] = QString::number(l.mappingZone);
     if (l.followPath) o["follow_path"] = QString::number(l.followPath); // a 3D object along a Path of its scene
+    if (l.duplicatePath) o["duplicate_path"] = QString::number(l.duplicatePath); // a model copied on a Path's points
     if (l.parent) o["parent"] = QString::number(l.parent);
     if (l.isGroup) {
         o["group"] = true;
@@ -356,6 +357,7 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
             l->activeCamera = o.value("active_camera").toString().toULongLong();
         }
         l->followPath = o.value("follow_path").toString().toULongLong(); // the Path it travels along
+        l->duplicatePath = o.value("duplicate_path").toString().toULongLong(); // the Path its copies are on
         l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
