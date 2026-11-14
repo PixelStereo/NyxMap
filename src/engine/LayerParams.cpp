@@ -797,12 +797,12 @@ const std::vector<Parameter *> &Layer::parameters()
         for (int a = 0; a < 3; ++a)
             f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
     }
-    if (type == SourceType::Shape) {
-        Shape3D *sh = &shape;
-        const Shape3D d;
+    if (type == SourceType::Path) {
+        Path3D *sh = &path3d;
+        const Path3D d;
         ModelPlacement *mp = &modelPlacement;
-        static const QStringList kinds = Shape3D::kindNames();
-        add("shape/kind", "Shape 3D › Kind", T::Choice)
+        static const QStringList kinds = Path3D::kindNames();
+        add("path/kind", "Path › Kind", T::Choice)
             .choices(kinds)
             .byDefault(kinds.value(d.kind))
             .ramp(Parameter::Ramp::Cut)
@@ -812,22 +812,22 @@ const std::vector<Parameter *> &Layer::parameters()
             add(path, label, T::Int).range(lo, hi).byDefault(def).ramp(Parameter::Ramp::Cut)
                 .bind([field] { return QVariant(*field); }, [field, lo, hi](const QVariant &v) { *field = std::clamp(v.toInt(), lo, hi); });
         };
-        count("shape/points", "Shape 3D › Points", 1, 4096, d.points, &sh->points);
-        count("shape/columns", "Shape 3D › Grid Columns", 1, 256, d.columns, &sh->columns);
-        count("shape/rows", "Shape 3D › Grid Rows", 1, 256, d.rows, &sh->rows);
-        count("shape/seed", "Shape 3D › Random Seed", 0, 99999, d.seed, &sh->seed);
-        f3("shape/width", "Shape 3D › Width", 0, 40, d.width, &sh->width).step(0.01).limits(0, 1000);
-        f3("shape/depth", "Shape 3D › Depth", 0, 40, d.depth, &sh->depth).step(0.01).limits(0, 1000);
-        f3("shape/height", "Shape 3D › Height", -40, 40, d.height, &sh->height).step(0.01).limits(-1000, 1000);
-        f3("shape/turns", "Shape 3D › Spiral Turns", 0, 32, d.turns, &sh->turns).step(0.01);
-        flag("shape/show", "Shape 3D › Shown in the 3D View", d.show, &sh->show).ramp(Parameter::Ramp::Cut);
+        count("path/points", "Path › Points", 1, 4096, d.points, &sh->points);
+        count("path/columns", "Path › Grid Columns", 1, 256, d.columns, &sh->columns);
+        count("path/rows", "Path › Grid Rows", 1, 256, d.rows, &sh->rows);
+        count("path/seed", "Path › Random Seed", 0, 99999, d.seed, &sh->seed);
+        f3("path/width", "Path › Width", 0, 40, d.width, &sh->width).step(0.01).limits(0, 1000);
+        f3("path/depth", "Path › Depth", 0, 40, d.depth, &sh->depth).step(0.01).limits(0, 1000);
+        f3("path/height", "Path › Height", -40, 40, d.height, &sh->height).step(0.01).limits(-1000, 1000);
+        f3("path/turns", "Path › Spiral Turns", 0, 32, d.turns, &sh->turns).step(0.01);
+        flag("path/show", "Path › Shown in the 3D View", d.show, &sh->show).ramp(Parameter::Ramp::Cut);
         for (int a = 0; a < 3; ++a)
-            f3("shape/position/" + xyz[a], "Shape 3D › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
+            f3("path/position/" + xyz[a], "Path › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
         for (int a = 0; a < 3; ++a)
-            f3("shape/rotation/" + xyz[a], "Shape 3D › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
-        f3("shape/scale/all", "Shape 3D › Scale", 0.01, 10, 1, &mp->scale).step(0.01).limits(0.001, 1000);
+            f3("path/rotation/" + xyz[a], "Path › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("path/scale/all", "Path › Scale", 0.01, 10, 1, &mp->scale).step(0.01).limits(0.001, 1000);
         for (int a = 0; a < 3; ++a)
-            f3("shape/scale/" + xyz[a], "Shape 3D › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(0.001, 1000);
+            f3("path/scale/" + xyz[a], "Path › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(0.001, 1000);
     }
     if (type == SourceType::Light) {
         LightSettings *lt = &light;

@@ -648,8 +648,8 @@ bool Engine::setLayerLight(int i)
     return true;
 }
 
-// A Shape 3D of a 3D scene (the layer goes into its scene with setStructure)
-bool Engine::setLayerShape(int i)
+// A Path of a 3D scene (the layer goes into its scene with setStructure)
+bool Engine::setLayerPath(int i)
 {
     std::shared_ptr<Garbage> g;
     {
@@ -657,8 +657,8 @@ bool Engine::setLayerShape(int i)
         Layer *l = layer(i);
         if (!l || l->isGroup || l->isViewport) return false;
         g = detachSource(*l);
-        l->type = SourceType::Shape;
-        l->shape = Shape3D();
+        l->type = SourceType::Path;
+        l->path3d = Path3D();
         l->modelPlacement = ModelPlacement();
     }
     releaseGarbage(g);
@@ -684,7 +684,7 @@ bool Engine::setLightPath(int i, quint64 shape)
         if (shape) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
             const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Shape || sceneOfLayer(s, find) != sceneOfLayer(l, find)) return false;
+            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != sceneOfLayer(l, find)) return false;
         }
         l->lightPath = shape;
     }
@@ -701,7 +701,7 @@ bool Engine::setCameraPath(int i, quint64 shape)
         if (shape) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
             const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Shape || sceneOfLayer(s, find) != l) return false;
+            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != l) return false;
         }
         l->cameraPath = shape;
     }

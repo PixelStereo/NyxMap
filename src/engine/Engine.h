@@ -130,14 +130,14 @@ public:
     int sceneTrianglesComputed(int scene) const;
     int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
-    bool setLayerShape(int index);                       // the layer becomes a Shape 3D of a 3D scene (Shape3D.h)
-    // The Shape 3D a light travels along (0: its own path); refused: what is not a Shape 3D of its scene
+    bool setLayerPath(int index);                       // the layer becomes a Path of a 3D scene (Path3D.h)
+    // The Path a light travels along (0: its own path); refused: what is not a Path of its scene
     bool setLightPath(int index, quint64 shape);
-    // A scene's camera along a Shape 3D (0: it orbits its target), looking at an object of the scene (0: its target)
+    // A scene's camera along a Path (0: it orbits its target), looking at an object of the scene (0: its target)
     bool setCameraPath(int scene, quint64 shape);
     bool setCameraLookAt(int scene, quint64 object);
-    // A Shape 3D's place in its scene: its own placement under its Merge 3Ds (lock held)
-    QMatrix4x4 shapeMatrix(const Layer &shape);
+    // A Path's place in its scene: its own placement under its Merge 3Ds (lock held)
+    QMatrix4x4 pathMatrix(const Layer &shape);
     // A scene's camera as it is drawn: along its path and looking at its object when it has them (lock held)
     SceneSettings placedCamera(const Layer &scene);
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model

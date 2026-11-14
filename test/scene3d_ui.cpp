@@ -399,10 +399,10 @@ int runScene3dUiTests(Engine &engine)
             for (QTreeWidgetItem *found : tree->findItems("3D Primitives", Qt::MatchStartsWith | Qt::MatchRecursive))
                 for (int k = 0; k < found->childCount(); ++k) primitives << found->child(k)->text(0);
         primitives.sort();
-        if (primitives != QStringList({"Empty", "Primitive 3D", "Shape 3D"}))
+        if (primitives != QStringList({"Empty", "Path", "Primitive 3D"}))
             std::printf("3D Primitives: %s\n", qPrintable(primitives.join(", ")));
-        check(primitives == QStringList({"Empty", "Primitive 3D", "Shape 3D"}),
-              "the Media Bin offers one configurable 3D primitive, a Shape 3D and an Empty");
+        check(primitives == QStringList({"Empty", "Path", "Primitive 3D"}),
+              "the Media Bin offers one configurable 3D primitive, a Path and an Empty");
         check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
     } else {
         check(false, "the Media Bin");

@@ -187,7 +187,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         o["collapsed"] = l.collapsed;
         if (l.scene3d) { o["scene3d"] = true; o["default_material"] = QString::number(l.sceneDefaultMaterial); }
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
-        if (l.scene3d && l.cameraPath) o["camera_path"] = QString::number(l.cameraPath); // its camera along a Shape 3D
+        if (l.scene3d && l.cameraPath) o["camera_path"] = QString::number(l.cameraPath); // its camera along a Path
         if (l.scene3d && l.cameraLookAt) o["camera_look_at"] = QString::number(l.cameraLookAt);
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
             o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
@@ -253,10 +253,10 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Light:
         src["type"] = "light";
         if (l.lightLookAt) src["look_at"] = QString::number(l.lightLookAt);
-        if (l.lightPath) src["path"] = QString::number(l.lightPath); // the Shape 3D it travels along
+        if (l.lightPath) src["path"] = QString::number(l.lightPath); // the Path it travels along
         break;
-    case SourceType::Shape: // its settings and place: its params
-        src["type"] = "shape";
+    case SourceType::Path: // its settings and place: its params
+        src["type"] = "path";
         break;
     case SourceType::Web:
         src = l.web.toJson();
@@ -434,8 +434,8 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
             l->lightLookAt = src.value("look_at").toString().toULongLong();
             l->lightPath = src.value("path").toString().toULongLong();
         }
-    } else if (type == "shape") {
-        setLayerShape(index);
+    } else if (type == "path") {
+        setLayerPath(index);
     } else if (type == "model") {
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
@@ -833,7 +833,7 @@ static QString projectPreflightError(const QJsonObject &root)
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
                  type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox") &&
-                 type != QLatin1String("model") && type != QLatin1String("light") && type != QLatin1String("shape")))
+                 type != QLatin1String("model") && type != QLatin1String("light") && type != QLatin1String("path")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {

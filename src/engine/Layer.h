@@ -1,7 +1,7 @@
 #pragma once
 #include <set>
 #include "Model3D.h"
-#include "Shape3D.h"
+#include "Path3D.h"
 #include "Anim.h"
 #include "AudioStream.h"
 #include "ClockGenerator.h"
@@ -39,7 +39,7 @@
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
 // `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light, Shape };
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light, Path };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
@@ -67,11 +67,11 @@ inline QString clockGeneratorPath(ClockKind k)
 {
     return k == ClockKind::Countdown ? kCountdownGeneratorPath : k == ClockKind::Stopwatch ? kChronometerGeneratorPath : kClockGeneratorPath;
 }
-// Built-in 3D objects of the Media Bin's 3D Primitives, dropped onto a 3D scene: a Shape 3D (Shape3D.h) and an Empty
+// Built-in 3D objects of the Media Bin's 3D Primitives, dropped onto a 3D scene: a Path (Path3D.h) and an Empty
 // (a Merge 3D: a point to place, hold or aim at)
-inline const QString kShape3dPath = QStringLiteral("/NyxMap/3D Objects/Shape 3D");
+inline const QString kPath3dPath = QStringLiteral("/NyxMap/3D Objects/Path");
 inline const QString kEmpty3dPath = QStringLiteral("/NyxMap/3D Objects/Empty");
-inline bool isShape3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kShape3dPath); }
+inline bool isPath3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kPath3dPath); }
 inline bool isEmpty3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kEmpty3dPath); }
 // The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
 inline const QString kWebGeneratorPath = QStringLiteral("/NyxMap/Generators/Web Page");
@@ -428,16 +428,16 @@ struct Layer {
     quint64 sceneEnvironment = 0;
     int sceneEnvironmentStage = -1;
     LightSettings light;
-    // A light: the Shape 3D of its scene it travels along (0: its own path, LightSettings::pathShape)
+    // A light: the Path of its scene it travels along (0: its own path, LightSettings::pathShape)
     quint64 lightPath = 0;
-    // A Shape 3D (type Shape): points laid out by a rule, placed by modelPlacement (Shape3D.h)
-    Shape3D shape;
-    // A 3D scene's camera: the Shape 3D it travels along (0: it orbits its target), and what it looks at then
+    // A Path (type Path): points laid out by a rule, placed by modelPlacement (Path3D.h)
+    Path3D path3d;
+    // A 3D scene's camera: the Path it travels along (0: it orbits its target), and what it looks at then
     // (0: its target point)
     quint64 cameraPath = 0, cameraLookAt = 0;
     bool is3dObject() const
     {
-        return type == SourceType::Model || type == SourceType::Light || type == SourceType::Shape || merge3d;
+        return type == SourceType::Model || type == SourceType::Light || type == SourceType::Path || merge3d;
     }
 
     // TouchDesigner component: native SDK access stays on the render thread.

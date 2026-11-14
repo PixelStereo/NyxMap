@@ -1,4 +1,4 @@
-#include "Shape3D.h"
+#include "Path3D.h"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -6,25 +6,25 @@
 namespace {
 constexpr double kTau = 6.283185307179586;
 
-// The path a shape's points follow, finely enough to travel along at an even pace
-std::vector<QVector3D> pathOf(const Shape3D &s, int samples)
+// The line a Path's points follow, finely enough to travel along at an even pace
+std::vector<QVector3D> pathOf(const Path3D &s, int samples)
 {
     std::vector<QVector3D> p;
     const float w = std::abs(s.width), d = std::abs(s.depth);
     switch (s.kind) {
-    case Shape3D::Circle:
+    case Path3D::Circle:
         for (int k = 0; k <= samples; ++k) {
             const double a = kTau * k / samples;
             p.emplace_back(float(std::cos(a)) * w / 2, 0.f, float(std::sin(a)) * d / 2);
         }
         break;
-    case Shape3D::Rectangle:
+    case Path3D::Rectangle:
         p = {{-w / 2, 0, -d / 2}, {w / 2, 0, -d / 2}, {w / 2, 0, d / 2}, {-w / 2, 0, d / 2}, {-w / 2, 0, -d / 2}};
         break;
-    case Shape3D::Line:
+    case Path3D::Line:
         p = {{-w / 2, 0, 0}, {w / 2, 0, 0}};
         break;
-    case Shape3D::Spiral:
+    case Path3D::Spiral:
         for (int k = 0; k <= samples; ++k) {
             const double t = double(k) / samples, a = kTau * s.turns * t;
             p.emplace_back(float(std::cos(a) * t) * w / 2, float(t - 0.5) * s.height, float(std::sin(a) * t) * d / 2);
@@ -54,19 +54,19 @@ QVector3D atLength(const std::vector<QVector3D> &line, double t)
 }
 }
 
-QStringList Shape3D::kindNames()
+QStringList Path3D::kindNames()
 {
     return {QStringLiteral("circle"), QStringLiteral("rectangle"), QStringLiteral("line"), QStringLiteral("grid"),
             QStringLiteral("spiral"), QStringLiteral("sphere"), QStringLiteral("random")};
 }
 
-int Shape3D::pointCount() const
+int Path3D::pointCount() const
 {
     if (kind == Grid) return std::max(1, columns) * std::max(1, rows);
     return std::max(1, points);
 }
 
-std::vector<QVector3D> Shape3D::pointsLocal() const
+std::vector<QVector3D> Path3D::pointsLocal() const
 {
     std::vector<QVector3D> out;
     const int n = std::max(1, points);
@@ -108,7 +108,7 @@ std::vector<QVector3D> Shape3D::pointsLocal() const
     return out;
 }
 
-std::vector<std::vector<QVector3D>> Shape3D::linesLocal() const
+std::vector<std::vector<QVector3D>> Path3D::linesLocal() const
 {
     std::vector<std::vector<QVector3D>> out;
     if (isPath()) {
@@ -126,7 +126,7 @@ std::vector<std::vector<QVector3D>> Shape3D::linesLocal() const
     return out;
 }
 
-QVector3D Shape3D::along(double t) const
+QVector3D Path3D::along(double t) const
 {
     if (!isPath()) return {};
     if (isClosed()) t -= std::floor(t);

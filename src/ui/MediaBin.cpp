@@ -324,7 +324,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     primitive->setText(1, QStringLiteral("3D primitive"));
     primitive->setText(3, QStringLiteral("Not applicable"));
     primitive->setToolTip(0, QStringLiteral("Add a 3D primitive. Choose its shape in the object's Source tab."));
-    auto *shape3d = generator(m_primitives, QStringLiteral("Shape 3D"), kShape3dPath);
+    auto *shape3d = generator(m_primitives, QStringLiteral("Path"), kPath3dPath);
     shape3d->setText(1, QStringLiteral("3D points"));
     shape3d->setText(3, QStringLiteral("Not applicable"));
     shape3d->setToolTip(0, QStringLiteral("Points laid out by a rule (circle, rectangle, line, grid, spiral, sphere, random): a path "

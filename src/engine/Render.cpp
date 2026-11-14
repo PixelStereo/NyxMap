@@ -1227,7 +1227,7 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
-QMatrix4x4 Engine::shapeMatrix(const Layer &shape)
+QMatrix4x4 Engine::pathMatrix(const Layer &shape)
 {
     QMatrix4x4 parent;
     for (quint64 up = shape.parent; up;) {
@@ -1243,8 +1243,8 @@ SceneSettings Engine::placedCamera(const Layer &scene)
 {
     SceneSettings s = scene.scene;
     const Layer *path = scene.cameraPath ? layer(indexOfId(scene.cameraPath)) : nullptr;
-    if (!path || path->type != SourceType::Shape || !path->shape.isPath()) return s;
-    const QVector3D eye = shapeMatrix(*path).map(path->shape.along(double(s.cameraPathPosition) + s.cameraPathTravel));
+    if (!path || path->type != SourceType::Path || !path->path3d.isPath()) return s;
+    const QVector3D eye = pathMatrix(*path).map(path->path3d.along(double(s.cameraPathPosition) + s.cameraPathTravel));
     const Layer *looked = scene.cameraLookAt ? layer(indexOfId(scene.cameraLookAt)) : nullptr;
     const QVector3D target = looked ? placeOf3dObject(*looked) : QVector3D(s.target[0], s.target[1], s.target[2]);
     QVector3D from = eye - target; // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
@@ -1257,10 +1257,10 @@ SceneSettings Engine::placedCamera(const Layer &scene)
 
 QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
 {
-    // Along a Shape 3D of its scene: where the shape is, whatever holds the light
+    // Along a Path of its scene: where the shape is, whatever holds the light
     if (const Layer *path = light.lightPath ? layer(indexOfId(light.lightPath)) : nullptr;
-        path && path->type == SourceType::Shape && path->shape.isPath())
-        return shapeMatrix(*path).map(path->shape.along(double(light.light.pathPosition) + light.light.pathTravel));
+        path && path->type == SourceType::Path && path->path3d.isPath())
+        return pathMatrix(*path).map(path->path3d.along(double(light.light.pathPosition) + light.light.pathTravel));
     return parent.map(light.light.located());
 }
 
@@ -1274,7 +1274,7 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
         up = g->parent;
     }
     if (object.type == SourceType::Light) return lightPosition(object, parent);
-    if (object.type == SourceType::Shape) return shapeMatrix(object).map(QVector3D());
+    if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
     if (object.model) {
         if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
         return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());

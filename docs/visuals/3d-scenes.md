@@ -49,15 +49,15 @@ A scene's environment is a layer's picture — an HDRI (`.hdr` or `.exr`, loaded
 
 An HDR image layer (`.hdr`, `.exr`, half or float) keeps its file as read, linear and unclipped: its **HDR file** stage (chosen by default) lights the scene with its full range (a sun far above 1), while its own picture in the composition stays clipped to 0–1 like any layer's (8 or 16-bit normalized). The environment's levels are blurred copies, not convolved.
 
-## Shape 3D
+## Path
 
-A **Shape 3D** (**Layer › New Shape 3D**, or **Media Bin › 3D Primitives › Shape 3D** dropped onto a scene) is a set of points laid out by a rule, as a SOP in TouchDesigner: **circle**, **rectangle**, **line**, **grid**, **spiral**, **sphere** or **random** (in a box). Its 3D tab sets its kind, how many points (`shape/points`; a grid's `shape/columns` and `shape/rows`), its size (`shape/width`, `depth`, `height`), a spiral's turns, the random points' seed, and its place (`shape/position`, `rotation`, `scale`), under its Merge 3Ds like any 3D object.
+A **Path** (**Layer › New Path**, or **Media Bin › 3D Primitives › Path** dropped onto a scene) is a set of points laid out by a rule, as a SOP in TouchDesigner: **circle**, **rectangle**, **line**, **grid**, **spiral**, **sphere** or **random** (in a box). Its 3D tab sets its kind, how many points (`path/points`; a grid's `path/columns` and `path/rows`), its size (`path/width`, `depth`, `height`), a spiral's turns, the random points' seed, and its place (`path/position`, `rotation`, `scale`), under its Merge 3Ds like any 3D object.
 
 It is drawn in the 3D view (its points and lines), not in the scene's picture; **Shown in the 3D View** hides it there too.
 
 A circle, a rectangle, a line or a spiral is also a **path**:
 
-- a light travels along it: its 3D tab › **Path › Shape 3D**, then `light/path/position` (0 to 1) and `light/path/speed` (turns per second);
+- a light travels along it: its 3D tab › **Path › Path**, then `light/path/position` (0 to 1) and `light/path/speed` (turns per second);
 - so does the scene's camera: the Scene tab › **Camera Path**, `camera/path/position` and `camera/path/speed`, looking at **Camera Looks At** (an object of the scene, an Empty for one) or at its target point.
 
 A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.

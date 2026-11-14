@@ -198,7 +198,7 @@ struct SceneSettings {
     // colour of what is lit evenly. The lights show in it, stopped by the models (LightSettings::rays)
     float fogDensity = 0, fogBase = 0, fogFalloff = 0.3f, fogReach = 30;
     std::array<float, 3> fogColor{{0.02f, 0.022f, 0.025f}};
-    // Along a Shape 3D (Layer::cameraPath): where on it (0 to 1), turns per second, how far its speed has taken it
+    // Along a Path (Layer::cameraPath): where on it (0 to 1), turns per second, how far its speed has taken it
     float cameraPathPosition = 0, cameraPathSpeed = 0;
     double cameraPathTravel = 0; // not kept in a project
 };
