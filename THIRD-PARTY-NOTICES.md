@@ -24,6 +24,10 @@ library).
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
+**Ghost Arcade effects.** The shaders in `isf/effects/Ghost Arcade` are adapted from the effects of
+[Ghost Arcade](https://github.com/riskcapital/ghost-arcade) (riskcapital), under the GNU AGPL v3, and stay under it.
+Their origin and what changed are in that folder's `README.md`.
+
 **NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's AGPL licence: it is provided by Vizrt NDI AB
 under the NDI SDK License Agreement. These terms apply to the NDI components only, never to NyxMap's own code, which
 stays under the AGPL with or without them. You may not modify the NDI components, reverse engineer, disassemble or
