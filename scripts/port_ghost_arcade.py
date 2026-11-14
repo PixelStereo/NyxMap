@@ -1,4 +1,4 @@
-"""Port Ghost Arcade's single-pass GLSL effects to ISF 2.0 filters (isf/effects/Ghost Arcade).
+"""Port Ghost Arcade's GLSL effects (single pass, or with a persistent feedback pass) to ISF 2.0 filters (isf/effects/Ghost Arcade).
 
 Usage: python3 scripts/port_ghost_arcade.py <ghost-arcade checkout> "isf/effects/Ghost Arcade"
 
@@ -19,9 +19,14 @@ renderer = repo / "src/lib/renderer"
 shaders = {}
 for path in [renderer / "shaders.ts", *sorted((renderer / "shaders").glob("*.ts"))]:
     text = path.read_text()
-    for m in re.finditer(r"export const (\w+)\s*=\s*/\*\s*glsl\s*\*/\s*`([\s\S]*?)`;", text):
-        if "${" not in m.group(2):
-            shaders[m.group(1)] = m.group(2)
+    # Every GLSL template of the file, exported or not: shared blocks are spliced in with ${name}
+    # (a few shaders, premiumPack2Shader for one, have no /* glsl */ tag)
+    blocks = dict(re.findall(r"(?:export )?const (\w+)\s*=\s*(?:/\*\s*glsl\s*\*/\s*)?`([\s\S]*?)`;", text))
+    for name, source in blocks.items():
+        for _ in range(4):
+            source = re.sub(r"\$\{(\w+)\}", lambda m: blocks.get(m.group(1), m.group(0)), source)
+        if "${" not in source:
+            shaders[name] = source
 
 effects_ts = (renderer / "effects.ts").read_text()
 
@@ -122,7 +127,7 @@ catalog_ts = (repo / "src/lib/effects/effectCatalog.ts").read_text()
 catalog = {m.group(1): (m.group(2), m.group(3), m.group(4)) for m in re.finditer(
     r"type: '(\w+)', label: '([^']*)', category: '([^']*)',\s*description: '((?:[^'\\]|\\.)*)'", catalog_ts)}
 
-BASE = {"uTexture", "uResolution", "uTime"}
+BASE = {"uTexture", "uResolution", "uTime", "uFeedback", "uHasFeedback", "uNativeMask", "uHasNativeMask"}
 SOURCE_HINT = re.compile(r"shadertoy|adapted from|ported from|inspired by|\bcredits?\b|\bauthor|copyright|licen[sc]e|"
                          r"https?://|iquilezles", re.I)
 AUDIO = re.compile(r"audio|beat|bass|treble|\bmid\b|fft|spectrum|level", re.I)
@@ -160,7 +165,13 @@ for t, (label, category, description) in catalog.items():
             m = re.match(r"(\w+)\s*(\[[^\]]*\])?$", item)
             if m:
                 uniforms.append((decl.group(1), m.group(1), m.group(2)))
-    samplers = [n for ty, n, _ in uniforms if ty.startswith("sampler") and n != "uTexture"]
+    samplers = [n for ty, n, _ in uniforms
+                if ty.startswith("sampler") and n not in ("uTexture", "uFeedback", "uNativeMask")]
+    # uNativeMask is Ghost Arcade's phone person mask: an ISF image input, fed in NyxMap by a layer whose
+    # source is a MediaPipe Foreground Mask
+    vision_mask = any(n == "uNativeMask" for _, n, _ in uniforms)
+    # uFeedback is the effect's own previous output: an ISF persistent pass provides it
+    feedback = any(n == "uFeedback" for _, n, _ in uniforms)
     if samplers:
         skipped.append((t, "needs other textures: " + ", ".join(samplers)))
         continue
@@ -245,9 +256,26 @@ for t, (label, category, description) in catalog.items():
     body = re.sub(r"^\s*precision\s+\w+\s+float\s*;[^\n]*\n", "", body, flags=re.M)
     body = re.sub(r"\btexture2D\s*\(\s*uTexture\s*,", "IMG_NORM_PIXEL(inputImage,", body)
     body = re.sub(r"\btexture\s*\(\s*uTexture\s*,", "IMG_NORM_PIXEL(inputImage,", body)
-    if re.search(r"\buTexture\b", body):
-        skipped.append((t, "passes the texture to a function"))
-        continue
+    # The layer passed to a helper function (sampler2D parameter): the ISF image is a sampler2D too
+    body = re.sub(r"\buTexture\b", "inputImage", body)
+    if vision_mask:
+        inputs += [{"NAME": "useVisionMask", "LABEL": "Use Vision mask", "TYPE": "bool", "DEFAULT": False},
+                   {"NAME": "visionMask", "LABEL": "Vision mask (a MediaPipe Foreground Mask layer)", "TYPE": "image"}]
+        defines.append("#define uHasNativeMask (useVisionMask ? 1.0 : 0.0)")
+        body = re.sub(r"\btexture2D\s*\(\s*uNativeMask\s*,", "ghostVisionMask(", body)
+        if re.search(r"\buNativeMask\b", body):
+            skipped.append((t, "uses the Vision mask in a way the port does not handle"))
+            continue
+        # A white mask with the confidence as alpha, or a grey opaque one: both give the confidence
+        body = ("vec4 ghostVisionMask(vec2 uv) {\n    vec4 m = IMG_NORM_PIXEL(visionMask, uv);\n"
+                "    return vec4(min(m.r, m.a));\n}\n\n") + body
+    if feedback:
+        body = re.sub(r"\btexture2D\s*\(\s*uFeedback\s*,", "IMG_NORM_PIXEL(feedbackBuffer,", body)
+        body = re.sub(r"\buFeedback\b", "feedbackBuffer", body)
+        if not re.search(r"\bvoid\s+main\s*\(", body):
+            skipped.append((t, "no main function to wrap"))
+            continue
+        body = re.sub(r"\bvoid\s+main\s*\(", "void ghostArcadeEffect(", body, count=1)
     lines = body.split("\n")
     indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
     body = "\n".join(l[indent:] for l in lines).strip("\n")
@@ -265,12 +293,21 @@ for t, (label, category, description) in catalog.items():
         "CATEGORIES": [category, "Ghost Arcade"],
         "INPUTS": inputs,
     }
+    if feedback:
+        # Pass 0 draws the effect into a persistent buffer, which holds its previous frame when read;
+        # pass 1 shows it.
+        header["PASSES"] = [{"TARGET": "feedbackBuffer", "PERSISTENT": True, "FLOAT": True}, {}]
     prelude = ["#define vUv isf_FragNormCoord", "#define uTime TIME", "#define uResolution RENDERSIZE", *defines]
+    if feedback:
+        prelude.append("#define uHasFeedback (FRAMEINDEX > 0 ? 1.0 : 0.0)")
     text = "/*" + json.dumps(header, indent=4, ensure_ascii=False) + "*/\n\n"
     text += "// Ported from Ghost Arcade (" + const + ") by Pixel Stereo. Licensed under the AGPL-3.0.\n"
     if hints:
         text += "// Source notes kept from the original:\n" + "\n".join("//   " + h.lstrip("/ ") for h in hints) + "\n"
     text += "\n".join(prelude) + "\n\n" + body + "\n"
+    if feedback:
+        text += ("\nvoid main() {\n    if (PASSINDEX == 0) ghostArcadeEffect();\n"
+                 "    else gl_FragColor = IMG_NORM_PIXEL(feedbackBuffer, isf_FragNormCoord);\n}\n")
     safe = re.sub(r"[\\/:*?\"<>|]", "-", label)
     (out / f"{safe}.fs").write_text(text)
     written.append((t, safe, category, bool(hints)))
