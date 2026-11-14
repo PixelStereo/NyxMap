@@ -681,17 +681,62 @@ int runScene3dUiTests(Engine &engine)
                     for (auto *label : inspector.findChildren<QLabel *>()) shown << label->text();
                     for (const char *name : {"Spot Falloff", "Shadows", "Shadow Softness"})
                         check(shown.filter(QLatin1String(name)).size() > 0, "a light's setting in the inspector");
-                    // What it looks at and the path it goes around
+                    // What it looks at, and the Path it goes along (one of the Paths of its scene, chosen as what it looks at is)
                     auto *follow = inspector.findChild<QComboBox *>("lightLookAtObject");
-                    auto *shape = inspector.findChild<QComboBox *>("param3d:light/path/shape");
+                    auto *pathPick = inspector.findChild<QComboBox *>("lightPath");
                     check(inspector.findChild<QCheckBox *>("param3d:light/lookat") && inspector.findChild<SliderField *>("param3d:light/lookpoint/x"),
                           "a light's inspector has its Look At");
-                    check(shape && shape->findData("circle") >= 0 && shape->findData("rectangle") >= 0 &&
-                              inspector.findChild<SliderField *>("param3d:light/path/speed"),
-                          "a light's inspector has its path");
+                    check(pathPick && pathPick->itemText(0) == "None" && !inspector.findChild<QComboBox *>("param3d:light/path/shape"),
+                          "a light's inspector chooses a Path, not a drawn circle or rectangle");
+                    {   // Choosing a Path: the light gets its Follow Path FX (one undo step); None takes it away
+                        const quint64 scene3d = parentOf(drawn);
+                        const int trackAt = engine.addLayer("Track", engine.indexOfId(scene3d) + 1);
+                        const quint64 trackId = engine.layerId(trackAt);
+                        engine.setLayerPath(trackAt);
+                        engine.setStructure(tree::intoGroup(engine.structure(), {trackId}, scene3d));
+                        inspector.setLayer(engine.indexOfId(drawn)); // the rows moved
+                        inspector.rebuild();
+                        pump();
+                        auto *pick = inspector.findChild<QComboBox *>("lightPath");
+                        const int row = pick ? pick->findData(QVariant(qulonglong(trackId))) : -1;
+                        check(row > 0, "a Path of the scene can be chosen for the light");
+                        const auto followed = [&] {
+                            Engine::Lock lk(&engine.mutex());
+                            const Fx3dEntry *e = engine.layer(engine.indexOfId(drawn))->fx3dFirst(Fx3d::FollowPath);
+                            return e ? e->s.layer : quint64(0);
+                        };
+                        if (row > 0) {
+                            const int undoBefore = inspectorUndo.count();
+                            emit pick->activated(row);
+                            pump();
+                            check(followed() == trackId && inspectorUndo.count() == undoBefore + 1, "the light follows it, as one step");
+                            inspector.rebuild();
+                            pump();
+                            check(inspector.findChild<SliderField *>(QStringLiteral("param3d:fx3d/%1/speed").arg(engine.fx3dOfKind(engine.indexOfId(drawn), Fx3d::FollowPath))),
+                                  "its position and speed on the Path are there");
+                            inspectorUndo.undo();
+                            pump();
+                            check(followed() == 0, "undo: no Path again");
+                            inspectorUndo.redo();
+                            pump();
+                            inspector.rebuild();
+                            pump();
+                            if (auto *again = inspector.findChild<QComboBox *>("lightPath")) {
+                                emit again->activated(0);
+                                pump();
+                                check(!engine.fx3dOfKind(engine.indexOfId(drawn), Fx3d::FollowPath), "None: the Follow Path goes");
+                            }
+                        }
+                        engine.removeLayer(engine.indexOfId(trackId));
+                        inspector.setLayer(engine.indexOfId(drawn));
+                        inspector.rebuild();
+                        pump();
+                    }
+                    follow = inspector.findChild<QComboBox *>("lightLookAtObject"); // the inspector was built again
                     const int cubeThere = follow ? follow->findData(QVariant(qulonglong(layer))) : -1;
                     check(cubeThere > 0, "it can look at the scene's other objects");
                     if (cubeThere > 0) {
+                        const int undoMark = inspectorUndo.count();
                         emit follow->activated(cubeThere);
                         const auto looksAt = [&] {
                             Engine::Lock lk(&engine.mutex());
@@ -699,7 +744,7 @@ int runScene3dUiTests(Engine &engine)
                             return l ? l->lightLookAt : 0;
                         };
                         check(looksAt() == layer, "choosing an object: the light looks at it");
-                        check(inspectorUndo.count() == 1, "one undo step");
+                        check(inspectorUndo.count() == undoMark + 1, "one undo step");
                         inspectorUndo.undo();
                         check(looksAt() == 0, "undo: it does not any more");
                     }
@@ -749,29 +794,11 @@ int runScene3dUiTests(Engine &engine)
                         return view->grabFramebuffer();
                     };
                     const QImage bare = shot();
-                    engine.setParameter(drawn, "light/path/shape", QStringLiteral("circle"));
-                    const QImage circle = shot();
-                    engine.setParameter(drawn, "light/path/shape", QStringLiteral("rectangle"));
-                    const QImage rectangle = shot();
-                    engine.setParameter(drawn, "light/path/shape", QStringLiteral("none"));
                     engine.setParameter(drawn, "light/lookat", true);
                     const QImage looking = shot();
                     engine.setParameter(drawn, "light/lookat", false);
-                    check(different(bare, circle) > 200, "a circle path shows in the 3D view");
-                    { // around its position, the light on it: opposite the light, the line
-                        const qreal scale = qreal(circle.width()) / view->width();
-                        const QPointF across = view->project({1.5f - 2, 2, 0}) * scale;
-                        int seen = 0;
-                        for (int j = -3; j <= 3; ++j)
-                            for (int i = -3; i <= 3; ++i)
-                                seen += circle.pixel(int(across.x()) + i, int(across.y()) + j) != bare.pixel(int(across.x()) + i, int(across.y()) + j);
-                        check(seen > 0, "a path goes around the light's position, not around where it is now");
-                    }
-                    check(different(circle, rectangle) > 200, "a rectangle path is drawn as one");
                     check(different(bare, looking) > 50, "what a light looks at shows in the 3D view");
                     if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) {
-                        circle.save(captures + "/light-path-circle.png");
-                        rectangle.save(captures + "/light-path-rectangle.png");
                         looking.save(captures + "/light-looking.png");
                     }
                     view->setCamera(cam);

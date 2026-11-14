@@ -183,6 +183,8 @@ private:
     QWidget *build3dFxChain();                           // a 3D object's FX: a list (none by default), + / − / order, settings below
     void show3dFxParams();                               // the settings of the 3D FX selected in that list
     QWidget *build3dFxSettings(Fx3d kind, quint64 fxId);
+    QWidget *buildLightPath();                           // a light's Path: one of its scene's, chosen like what it looks at
+    void chooseLightPath(quint64 path);                  // 0: none (its Follow Path FX goes)
     QWidget *buildDisplaceFx(quint64 fxId);              // a Displace FX: the picture whose luminance pushes the points
     QWidget *buildPathFx(Fx3d kind, quint64 fxId);       // a Duplicate or Follow Path FX: its Path
     QWidget *buildInstanceSource();                      // an Instance's original
