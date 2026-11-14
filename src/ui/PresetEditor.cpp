@@ -5,6 +5,8 @@
 
 #include <QAbstractButton>
 #include <QEvent>
+#include <QFontMetrics>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <algorithm>
@@ -16,6 +18,7 @@
 
 static PresetEditor *s_instance = nullptr;
 static const QColor kIn(76, 217, 100), kChanged(255, 159, 10), kDriven(135, 206, 250);
+static const QColor kOut(235, 64, 52); // Edit mode: a value that can go in the selected preset and is not in it
 
 PresetEditor::PresetEditor(Engine *engine, QUndoStack *undo, QObject *parent)
     : QObject(parent), m_engine(engine), m_undo(undo)
@@ -344,10 +347,31 @@ protected:
             const QPoint at = t.widget->mapTo(win, QPoint(0, 0));
             const QRegion seen = t.widget->visibleRegion().translated(at);
             const QRect line(at.x(), at.y() + t.widget->height() - 2, t.widget->width(), 2);
-            const QColor c = t.state == 2 ? kChanged : t.state == 1 ? kIn : kDriven;
+            const QColor c = t.state == 3 ? kOut : t.state == 2 ? kChanged : t.state == 1 ? kIn : kDriven;
             for (const QRect &r : seen.intersected(line)) p.fillRect(r, c);
         }
+        if (!m_editor->m_editing) return;
+        // The whole window says it: a red frame, and a badge with the preset and the way out
+        const QRect frame = rect().adjusted(1, 1, -2, -2);
+        p.setPen(QPen(kOut, 3));
+        p.drawRect(frame);
+        const QString text = m_editor->m_selected ? QStringLiteral("PRESET EDIT · %1 · %2 to leave").arg(m_editor->m_editingName, shortcutText())
+                                                  : QStringLiteral("PRESET EDIT · select a preset · %1 to leave").arg(shortcutText());
+        QFont f = font();
+        f.setBold(true);
+        f.setPointSizeF(f.pointSizeF() * 0.95);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const QRect badge(width() - fm.horizontalAdvance(text) - 34, height() - fm.height() - 16, fm.horizontalAdvance(text) + 20,
+                          fm.height() + 8);
+        p.setPen(Qt::NoPen);
+        p.setBrush(kOut);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.drawRoundedRect(badge, 5, 5);
+        p.setPen(Qt::white);
+        p.drawText(badge, Qt::AlignCenter, text);
     }
+    static QString shortcutText() { return QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText); }
 
 private:
     PresetEditor *m_editor;
@@ -367,6 +391,7 @@ void PresetEditor::updateMarks()
         return false;
     };
     QWidget *window = nullptr;
+    m_editingName = pi >= 0 ? (preset.name.isEmpty() ? QStringLiteral("Preset %1").arg(pi + 1) : preset.name) : QString();
     const std::vector<Interaction> interactions = m_engine->interactions();
     for (Tracked &t : m_tracked) {
         t.state = 0;
@@ -394,9 +419,12 @@ void PresetEditor::updateMarks()
                 if (k < 0) continue;
                 t.state = std::max(t.state, 1);
                 const QJsonValue now = m_engine->parameterValue(t.layer, path), was = preset.values[size_t(k)].value;
-                const bool same = now.isDouble() && was.isDouble() ? std::abs(now.toDouble() - was.toDouble()) < 1e-6 : now == was;
+                // An action has no value to compare (Rewind, Start): what is held is done, never "changed"
+                const bool same = now.isUndefined() || (now.isDouble() && was.isDouble() ? std::abs(now.toDouble() - was.toDouble()) < 1e-6 : now == was);
                 if (!same) t.state = 2;
             }
+        // Not in it, and it could be: red, so that what is left out shows as much as what is in
+        if (m_editing && pi >= 0 && t.state == 0 && (t.name || !hasName(t)) && !stored(t.layer, t.paths).isEmpty()) t.state = 3;
         if (!window && t.widget) window = t.widget->window();
     }
     if (window && (!m_overlay || m_overlay->parentWidget() != window)) {
@@ -409,6 +437,14 @@ void PresetEditor::updateMarks()
         m_overlay->raise();
         m_overlay->update();
     }
+}
+
+int PresetEditor::mark(const QWidget *w)
+{
+    updateMarks();
+    for (const Tracked &t : m_tracked)
+        if (t.widget == w) return t.state;
+    return -1;
 }
 
 std::vector<std::pair<QString, QStringList>> PresetEditor::layerValues(Engine *engine, quint64 layer)
@@ -514,6 +550,12 @@ void PresetEditor::fillCategoryMenu(QMenu *menu, quint64 layer, const QString &c
     QStringList paths;
     for (const auto &group : layerValues(m_engine, layer))
         if (group.first == category || (category == QLatin1String("Anim") && !group.second.isEmpty())) paths += group.second;
+    // A whole category is its values: its actions (Rewind, Start…) go in one by one, when asked
+    paths.erase(std::remove_if(paths.begin(), paths.end(), [&](const QString &p) {
+                    ParamInfo info;
+                    return m_engine->parameterInfo(layer, p, &info) && info.action;
+                }),
+                paths.end());
     if (category == QLatin1String("Spatial")) paths << QStringLiteral("geometry/mesh");
     int part = 0;
     if (category == QLatin1String("Source")) part = Engine::PartSource;
