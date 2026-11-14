@@ -508,7 +508,7 @@ int Engine::sceneTriangles(int scene) const
         for (const auto &l : m_layers) {
             if (l->parent != holder || !l->enabled) continue;
             if (l->merge3d) walk(l->id);
-            else if (l->model) total += l->model->triangleCount();
+            else if (const auto m = l->type == SourceType::Model ? modelOf(*l) : nullptr) total += m->triangleCount();
         }
     };
     walk(top->id);
@@ -692,6 +692,48 @@ bool Engine::setLayerCamera(int i)
     releaseGarbage(g);
     emit layersChanged();
     return true;
+}
+
+bool Engine::setLayerInstance(int i, quint64 original)
+{
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        const Layer *o = layer(indexOfId(original));
+        if (o) o = originalOf(*o);
+        if (!l || !o || o == l || l->isGroup || l->isViewport || o->type != SourceType::Model || !o->model) return false;
+        const quint64 root = o->id;
+        g = detachSource(*l);
+        l->type = SourceType::Model;
+        l->sourcePath.clear();
+        l->instanceOf = root;
+        l->instanceOwnMaterial = false;
+        l->modelPlacement = ModelPlacement();
+        l->modelPlacement.fit = o->modelPlacement.fit;
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
+}
+
+const Layer *Engine::originalOf(const Layer &model) const
+{
+    const auto find = [this](quint64 id) -> const Layer * {
+        for (const auto &l : m_layers)
+            if (l->id == id) return l.get();
+        return nullptr;
+    };
+    const Layer *o = &model;
+    for (int hops = 0; o && o->instanceOf && hops < 16; ++hops) o = find(o->instanceOf);
+    return o && !o->instanceOf && o->type == SourceType::Model ? o : nullptr;
+}
+
+std::shared_ptr<Model3D> Engine::modelOf(const Layer &model) const
+{
+    if (!model.instanceOf) return model.model;
+    const Layer *o = originalOf(model);
+    return o ? o->model : nullptr;
 }
 
 bool Engine::setActiveCamera(int i, quint64 camera)
@@ -1404,6 +1446,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->toxPlayer = std::move(l.toxPlayer);
     l.tox = ToxSettings();
     g->model = std::move(l.model);
+    l.instanceOf = 0;
+    l.instanceOwnMaterial = false;
     l.modelPlacement = ModelPlacement();
     l.modelTransformFx = ModelPlacement();
     l.modelTransformFxEnabled = false;

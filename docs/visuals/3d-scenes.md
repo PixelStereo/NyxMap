@@ -17,6 +17,10 @@ A model can:
 
 `model/shading` shows a model as made, smooth (its normals averaged where faces meet) or flat (its facets show).
 
+### Instances
+
+An **Instance** (**Layer › New Instance of the Selected Model**) shows another model's meshes and material: a primitive, an FBX, an OBJ or a glTF. Its triangles are not built or loaded again, and editing the original (its material, picture, displacement, shading or detail) changes every instance of it. An instance has its own place (Spatial tab), its own 3D FX (Transform 3D, Follow Path) and, with **Own Material** (`model/instance/own_material`), its own colour, metal and roughness. An instance of an instance shows the original; its Source tab sets which model it shows.
+
 ## Materials
 
 Lighting is physically based, in linear light, with ACES tone mapping.

@@ -242,6 +242,11 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         src["type"] = "tox";
         break;
     case SourceType::Model:
+        if (l.instanceOf) { // an Instance: its original (its own material, a param)
+            src["type"] = "instance";
+            src["of"] = QString::number(l.instanceOf);
+            break;
+        }
         src["type"] = "model";
         if (l.model && !l.model->hiddenObjects().isEmpty()) src["hidden_objects"] = QJsonArray::fromStringList(l.model->hiddenObjects());
         if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
@@ -438,6 +443,12 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
         }
     } else if (type == "path") {
         setLayerPath(index);
+    } else if (type == "instance") { // its original may come later in the file: the id is kept, checked when drawn
+        Lock lk(&m_mutex);
+        if (Layer *l = layer(index)) {
+            l->type = SourceType::Model;
+            l->instanceOf = src.value("of").toString().toULongLong();
+        }
     } else if (type == "camera") {
         setLayerCamera(index);
         Lock lk(&m_mutex); // what it looks at: a layer of this project (ids kept), checked when drawn
@@ -840,7 +851,7 @@ static QString projectPreflightError(const QJsonObject &root)
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
                  type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox") &&
                  type != QLatin1String("model") && type != QLatin1String("light") && type != QLatin1String("path") &&
-                 type != QLatin1String("camera")))
+                 type != QLatin1String("camera") && type != QLatin1String("instance")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {

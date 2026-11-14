@@ -444,7 +444,11 @@ void Engine::markNeeded()
             Layer &member = *m_layers[child];
             if (!member.enabled) continue;
             if (member.merge3d) needModels(child);
-            else if (!member.soloHidden && member.type == SourceType::Model) need(child);
+            else if (!member.soloHidden && member.type == SourceType::Model) {
+                need(child);
+                if (const Layer *o = member.instanceOf ? originalOf(member) : nullptr) // what it shows: its original's
+                    if (const int row = indexOfId(o->id); row >= 0) need(size_t(row));
+            }
         }
     };
     need = [&](size_t row) {
@@ -1329,9 +1333,11 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
     if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
     if (object.type == SourceType::Camera) return cameraPosition(object);
     parent = followFrame(object, parent);
-    if (object.model) {
+    if (const auto model = object.type == SourceType::Model ? modelOf(object) : nullptr) {
         if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
-        return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+        ModelPlacement p = object.modelPlacement;
+        if (const Layer *o = object.instanceOf ? originalOf(object) : nullptr) p.fit = o->modelPlacement.fit;
+        return (parent * model->matrix(p)).map(model->center());
     }
     const ModelPlacement &p = object.modelPlacement;
     return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
@@ -1366,22 +1372,40 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             continue;
         }
         if (!m->enabled || m->soloHidden) continue;
-        if (m->type == SourceType::Model && m->model) {
-            m->model->setSmooth(m->modelPlacement.shading == 1);
-            const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
-            const Layer *disp = m->modelDisplaceEnabled && m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
-            auto placement = m->modelPlacement;
-            if (m->material) m_materialTextures.apply(*m->material, placement);
-            GLuint displacement = disp ? stagePicture(*disp, m->modelDisplaceStage) : 0;
+        if (m->type == SourceType::Model && (m->model || m->instanceOf)) {
+            // What it looks like: its own, or (an Instance) its original's: the same meshes, material, picture,
+            // displacement, shading and detail; its own transform, 3D FX and, with its own material, colours
+            const Layer *look = m->instanceOf ? originalOf(*m) : m;
+            const std::shared_ptr<Model3D> model = look ? look->model : nullptr;
+            if (!model) continue;
+            if (look == m) model->setSmooth(m->modelPlacement.shading == 1); // an original sets its shared mesh
+            const Layer *pic = look->modelPicture ? layer(indexOfId(look->modelPicture)) : nullptr;
+            const Layer *disp = look->modelDisplaceEnabled && look->modelDisplace ? layer(indexOfId(look->modelDisplace)) : nullptr;
+            auto placement = look->modelPlacement;
+            if (look != m) {
+                const ModelPlacement &own = m->modelPlacement;
+                placement.position = own.position;
+                placement.rotation = own.rotation;
+                placement.scale = own.scale;
+                placement.axisScale = own.axisScale;
+                if (m->instanceOwnMaterial) {
+                    placement.color = own.color;
+                    placement.metal = own.metal;
+                    placement.rough = own.rough;
+                    placement.unlit = own.unlit;
+                }
+            }
+            if (look->material && !(look != m && m->instanceOwnMaterial)) m_materialTextures.apply(*look->material, placement);
+            GLuint displacement = disp ? stagePicture(*disp, look->modelDisplaceStage) : 0;
             float amount = placement.displaceAmount, mid = placement.displaceMid;
             if (!displacement && placement.materialTextures[HeightMap]) {
                 displacement = placement.materialTextures[HeightMap];
                 placement.materialHeight = true;
-                amount = m->material->height;
+                amount = look->material->height;
                 mid = 0;
             }
-            m->model->setDetail(placement.meshDetail(displacement != 0));
-            items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
+            if (look == m) model->setDetail(placement.meshDetail(displacement != 0));
+            items.push_back({model, placement, pic ? stagePicture(*pic, look->modelPictureStage) : 0,
                              displacement, amount, mid,
                              m->modelTransformFxEnabled ? followFrame(*m, parent) * m->modelTransformFx.transform()
                                                         : followFrame(*m, parent)});

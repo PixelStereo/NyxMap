@@ -880,9 +880,10 @@ void LayerInspector::rebuild()
     // Tabs that read as tabs (as the ones above): the current one lighter, underlined with the accent
     tabs->setStyleSheet(theme::tabStyle());
     bool scene3d = false, merge3d = false;
+    quint64 instanceOf = 0; // an Instance: its original
     {
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d;
+        if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d, instanceOf = l->instanceOf;
     }
     const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || s.type == SourceType::Path ||
                           s.type == SourceType::Camera || merge3d;
@@ -908,8 +909,18 @@ void LayerInspector::rebuild()
         }
     }
     const bool hasSource = !s.isGroup && !s.isViewport && (!object3d || s.type == SourceType::Model);
-    if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
-    if (s.type == SourceType::Model) {
+    if (hasSource && instanceOf) tabs->addTab(page(buildInstanceSource()), QStringLiteral("Source"));
+    else if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
+    if (s.type == SourceType::Model && instanceOf) { // an Instance: its own place, colours (with Own Material) and 3D FX
+        tabs->addTab(page(build3d({QStringLiteral("model/instance/"), QStringLiteral("model/material/")})), QStringLiteral("Material"));
+        tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/")})),
+                     QStringLiteral("Spatial"));
+        auto *effects = new QWidget;
+        auto *fx = new QVBoxLayout(effects);
+        fx->addWidget(build3d({QStringLiteral("model/transform_fx/")}));
+        fx->addWidget(buildFollowPathFx());
+        tabs->addTab(page(effects), QStringLiteral("FX"));
+    } else if (s.type == SourceType::Model) {
         auto *surface = new QWidget;
         auto *layout = new QVBoxLayout(surface);
         layout->addWidget(buildModelLayers());
@@ -1165,8 +1176,17 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         kind = QStringLiteral("3D Model");
         name = QFileInfo(s.sourcePath).fileName();
         Engine::Lock lk(&m_engine->mutex());
-        if (const Layer *l = m_engine->layer(m_layer); l && l->model)
-            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(l->model->meshCount()).arg(l->model->triangleCount());
+        const Layer *l = m_engine->layer(m_layer);
+        if (const Layer *o = l && l->instanceOf ? m_engine->originalOf(*l) : nullptr) {
+            kind = QStringLiteral("Instance");
+            name = o->name;
+            d << QStringLiteral("the meshes and material of \"%1\": edit it and this follows").arg(o->name);
+        } else if (l && l->instanceOf) {
+            kind = QStringLiteral("Instance");
+            d << QStringLiteral("its original is gone");
+        }
+        if (const auto m = l ? m_engine->modelOf(*l) : nullptr)
+            d << QStringLiteral("%1 mesh(es) · %2 triangles").arg(m->meshCount()).arg(m->triangleCount());
         d << QStringLiteral("drawn by its 3D scene");
         break;
     }
@@ -1365,6 +1385,39 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
 // The Source tab: what the source is made of and how it plays — the media's transport and sound, the generator's
 // parameters and resolution, the text and its style, the tap of a layer used as the source
+// An Instance's original: any model of the project (a primitive, an FBX, an OBJ, a glTF)
+QWidget *LayerInspector::buildInstanceSource()
+{
+    auto *box = new QGroupBox(QStringLiteral("Instance"));
+    auto *form = new QFormLayout(box);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("instanceOf"));
+    quint64 current = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        current = l->instanceOf;
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o != l && o->type == SourceType::Model && o->model && !o->instanceOf) pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    if (pick->findData(QVariant(qulonglong(current))) < 0) pick->addItem(QStringLiteral("(gone)"), QVariant(qulonglong(current)));
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setEnabled(!m_locked);
+    pick->setToolTip(QStringLiteral("The model it shows: its meshes, material, picture and displacement. Edit it, and every instance "
+                                    "of it changes; this one keeps its own place and 3D FX"));
+    form->addRow(QStringLiteral("Instance of"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+        const quint64 id = pick->itemData(i).toULongLong();
+        editSource(QStringLiteral("Instance Of"), [&] { m_engine->setLayerInstance(m_layer, id); });
+        emit layerChanged();
+    });
+    return box;
+}
+
 QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
 {
     auto *g = new QWidget;

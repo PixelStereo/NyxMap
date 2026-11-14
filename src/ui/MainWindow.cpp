@@ -1170,6 +1170,8 @@ void MainWindow::buildMenus()
                      [this] { createMerge3d(QStringLiteral("Empty")); });
     layer->addAction(QStringLiteral("New Path (points and paths: circle, grid, spiral…)"), this, &MainWindow::addPathToScene);
     layer->addAction(QStringLiteral("Add Camera to 3D Scene"), this, &MainWindow::addCameraToScene);
+    layer->addAction(QStringLiteral("New Instance of the Selected Model (same meshes, its own place)"), this,
+                     &MainWindow::createInstance);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1508,6 +1510,12 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
                 r.source = QStringLiteral("TouchDesigner ") + QFileInfo(l->sourcePath).fileName();
                 break;
             case SourceType::Model:
+                if (l->instanceOf) {
+                    const Layer *o = m_engine->originalOf(*l);
+                    r.source = o ? QStringLiteral("instance of %1").arg(o->name) : QStringLiteral("instance (its original is gone)");
+                    r.error = r.error || !o;
+                    break;
+                }
                 r.source = QStringLiteral("3D model ") + QFileInfo(l->sourcePath).fileName() +
                            (l->model ? QStringLiteral(" · %1 triangles").arg(l->model->triangleCount()) : QString());
                 break;
@@ -2666,6 +2674,7 @@ void MainWindow::fill3dMenu(QMenu *menu)
     menu->addAction(QStringLiteral("New Empty"), this, [this] { createMerge3d(QStringLiteral("Empty")); })->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Path"), this, &MainWindow::addPathToScene)->setEnabled(inScene);
     menu->addAction(QStringLiteral("Add Camera to 3D Scene"), this, &MainWindow::addCameraToScene)->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Instance of the Selected Model"), this, &MainWindow::createInstance)->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Primitive 3D"), this, [this, inScene] {
         const QString path = Model3D::primitivePath(QStringLiteral("Cube"));
         int target = currentLayer();
@@ -2877,6 +2886,47 @@ void MainWindow::addCameraToScene()
     selectLayer(m_engine->indexOfId(id));
     statusBar()->showMessage(first ? QStringLiteral("Camera added: its scene is now seen through it (Scene tab › Seen Through).")
                                    : QStringLiteral("Camera added: choose it in the scene's Scene tab › Seen Through."), 5000);
+}
+
+// An Instance of the model selected (of its original, for an instance), beside it: the same meshes and material, its own
+// place and 3D FX. Edit the original, and every instance follows
+void MainWindow::createInstance()
+{
+    const int cur = currentLayer();
+    quint64 original = 0;
+    QString name;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(cur);
+        const Layer *o = l && l->type == SourceType::Model ? m_engine->originalOf(*l) : nullptr;
+        if (o && o->model) original = o->id, name = o->name;
+    }
+    if (!original) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D model (a primitive, an FBX, an OBJ…) to make an instance of it."), 4000);
+        return;
+    }
+    const LayerTree t = m_engine->structure();
+    const quint64 holder = t[size_t(cur)].parent;
+    if (!holder) return;
+    if (refuseLocked(tree::indexOf(t, holder))) return;
+    int count = 0;
+    for (int k = 0; k < m_engine->layerCount(); ++k) {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(k); l && l->instanceOf == original) ++count;
+    }
+    m_undo->beginMacro(QStringLiteral("New Instance"));
+    const int li = m_engine->addLayer(QStringLiteral("%1 Instance %2").arg(name).arg(count + 1), cur);
+    m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("New Instance")));
+    const QJsonObject before = m_engine->layerJson(li);
+    m_engine->setLayerInstance(li, original);
+    m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("New Instance"), {}));
+    const quint64 id = m_engine->layerId(li);
+    const LayerTree now = m_engine->structure();
+    const LayerTree after = tree::intoGroup(now, {id}, holder);
+    if (after != now) m_undo->push(new cmd::SetStructure(m_engine, now, after, QStringLiteral("Into 3D Scene")));
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(id));
+    statusBar()->showMessage(QStringLiteral("Instance of \"%1\": move it, give it its own FX; edit the original and it follows.").arg(name), 5000);
 }
 
 void MainWindow::addLightToScene()
