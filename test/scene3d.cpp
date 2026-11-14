@@ -1121,26 +1121,9 @@ int runScene3dTests(Engine &engine)
         items[0].model->releaseGl();
     }
 
-    // A light's Look At and path
+    // A light's Look At, and the Path it travels along (a Path object of its scene, as a Follow Path FX)
     {
-        LightSettings l;
-        l.position = {{1, 2, 3}};
         const auto near = [](const QVector3D &a, const QVector3D &b) { return (a - b).length() < 1e-3f; };
-        check(near(l.located(), QVector3D(1, 2, 3)) && l.pathOutline().empty(), "no path: a light stays at its position");
-        l.pathShape = 1; // a circle, 4 across, around its position
-        check(near(l.pathPoint(0), QVector3D(3, 2, 3)) && near(l.pathPoint(0.25), QVector3D(1, 2, 5)) && near(l.pathPoint(1.5), QVector3D(-1, 2, 3)),
-              "around a circle, in the X Z plane");
-        l.pathRotation = {{90, 0, 0}};
-        check(near(l.pathPoint(0.25), QVector3D(1, 0, 3)), "its path tilted in 3D");
-        l.pathRotation = {{0, 0, 0}};
-        l.pathShape = 2; // a rectangle: 6 by 2
-        l.pathWidth = 6;
-        l.pathDepth = 2;
-        check(near(l.pathPoint(0), QVector3D(-2, 2, 2)) && near(l.pathPoint(6.0 / 16), QVector3D(4, 2, 2)) && near(l.pathPoint(8.0 / 16), QVector3D(4, 2, 4)) &&
-                  near(l.pathPoint(14.0 / 16), QVector3D(-2, 2, 4)) && near(l.pathPoint(3.0 / 16), QVector3D(1, 2, 2)),
-              "along a rectangle's sides, at an even pace");
-        check(l.pathOutline().size() == 5 && near(l.pathOutline().front(), l.pathOutline().back()), "its outline is closed");
-
         const quint64 stage = engine.layerId(engine.addScene("Light paths"));
         const int boxAt = engine.addLayer("Box", engine.indexOfId(stage) + 1);
         const quint64 boxId = engine.layerId(boxAt);
@@ -1182,20 +1165,28 @@ int runScene3dTests(Engine &engine)
             check(engine.layer(engine.indexOfId(lampId))->lightLookAt == boxId, "what it looks at is kept with the layer");
         }
         engine.setParameter(lampId, "light/lookat", false);
-        engine.setParameter(lampId, "light/path/shape", QStringLiteral("circle"));
+        // The Path is an object of the scene: a circle 4 across, 4 up; the light is on it from where it starts
+        const int ringAt = engine.addLayer("Ring", engine.indexOfId(stage) + 1);
+        const quint64 ringId = engine.layerId(ringAt);
+        check(engine.setLayerPath(ringAt), "a Path object for the light");
+        engine.setStructure(tree::intoGroup(engine.structure(), {ringId}, stage));
+        engine.setParameter(ringId, "path/position/y", 4.0);
+        check(!engine.setFollowPath(engine.indexOfId(lampId), boxId), "a light follows a Path, not another object");
+        check(engine.setFollowPath(engine.indexOfId(lampId), ringId), "a light follows the Path chosen");
         const QVector3D start(2, 4, 0);
         const auto at = [&](const LightSettings &light) { return QVector3D(light.position[0], light.position[1], light.position[2]); };
         check(near(at(placed()), start), "it goes on its path from its position");
-        engine.setParameter(lampId, "light/path/position", 0.5);
+        engine.setParameter(lampId, fxPath(engine, lampId, Fx3d::FollowPath, "position"), 0.5);
         check(near(at(placed()), QVector3D(-2, 4, 0)), "the path's position places it");
-        engine.setParameter(lampId, "light/path/position", 0.0);
-        engine.setParameter(lampId, "light/path/speed", 1.0);
+        engine.setParameter(lampId, fxPath(engine, lampId, Fx3d::FollowPath, "position"), 0.0);
+        engine.setParameter(lampId, fxPath(engine, lampId, Fx3d::FollowPath, "speed"), 1.0);
         engine.renderFrame();
         const QVector3D first = at(placed());
         QThread::msleep(40);
         engine.renderFrame();
         check(!near(at(placed()), first), "its speed takes it along");
-        engine.setParameter(lampId, "light/path/speed", 0.0);
+        engine.setParameter(lampId, fxPath(engine, lampId, Fx3d::FollowPath, "speed"), 0.0);
+        engine.removeLayer(engine.indexOfId(ringId));
         engine.removeLayer(engine.indexOfId(mergeId));
         engine.removeLayer(engine.indexOfId(lampId));
         engine.removeLayer(engine.indexOfId(stage));

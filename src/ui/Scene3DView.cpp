@@ -379,8 +379,6 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.looks = placed.lookAt;
                 o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
                 o.direction = Camera3D::aim(placed.yaw, placed.pitch);
-                if (!l->fx3dOn(Fx3d::FollowPath)) // along a Path (its FX): the Path draws itself
-                    for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {

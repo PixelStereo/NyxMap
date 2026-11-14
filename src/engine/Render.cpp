@@ -1397,7 +1397,7 @@ QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
         const QMatrix4x4 frame = followFrame(light, parent);
         if (frame != parent) return frame.map(QVector3D());
     }
-    return parent.map(light.light.located());
+    return parent.map(QVector3D(light.light.position[0], light.light.position[1], light.light.position[2]));
 }
 
 QVector3D Engine::placeOf3dObject(const Layer &object)

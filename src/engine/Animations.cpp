@@ -472,8 +472,6 @@ void Engine::stepAnimations(double dt)
     dt = std::max(0.0, dt);
     // The lights and cameras going along their paths (2: an open path goes there and back)
     for (auto &lp : m_layers) {
-        if (lp->type == SourceType::Light && lp->light.pathShape && lp->light.pathSpeed != 0)
-            lp->light.pathTravel = std::fmod(lp->light.pathTravel + double(lp->light.pathSpeed) * dt, 2.0);
         for (Fx3dEntry &fx : lp->fx3d) {
             if (!fx.enabled) continue;
             if (fx.kind == Fx3d::FollowPath && fx.s.layer && fx.s.speed != 0) // a 3D object's Follow Path FX
