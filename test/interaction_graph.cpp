@@ -1,6 +1,8 @@
 #include "InteractionGraph.h"
 #include <cstdio>
-int main()
+#include <chrono>
+#include <cstring>
+int main(int argc, char **argv)
 {
     int failures = 0;
     auto check = [&](bool value, const char *reason) { if (!value) { ++failures; std::printf("FAIL: %s\n", reason); } };
@@ -68,6 +70,15 @@ int main()
     check(processor.configure(mixGraph), "disconnected input retains port identity");
     processor.input(2, 4); processor.step(.01);
     check(processor.value(3) == 4, "B remains B after removing A");
+    mixGraph.edges = {{1, 3, 0}};
+    mixGraph.nodes[2].selectedInput = 0;
+    check(processor.configure(mixGraph), "selector with A only compiles");
+    processor.input(1, 7); processor.step(.01);
+    check(processor.value(3) == 7, "A does not require a connected B");
+    mixGraph.nodes[2].selectedInput = 1;
+    check(processor.configure(mixGraph), "select disconnected B");
+    processor.step(.01);
+    check(!processor.value(3), "unconnected selection produces no stale signal");
     InteractionGraph toggle;
     Interaction toggleSettings;
     toggleSettings.filters = {InteractionStage::made(InteractionFilter::Toggle)};
@@ -78,5 +89,27 @@ int main()
     }
     processor.step(1. / 60);
     check(processor.value(3) == 0., "two presses in one frame toggle twice");
+    if (!failures && argc > 1 && std::strcmp(argv[1], "--benchmark") == 0) {
+        InteractionGraph load;
+        load.nodes.push_back({1, Kind::Source, {}});
+        quint64 next = 2;
+        for (int branch = 0; branch < 256; ++branch) {
+            Interaction settings;
+            settings.filters = {InteractionStage::made(InteractionFilter::Damper)};
+            const auto filter = next++;
+            load.nodes.push_back({filter, Kind::Filter, settings});
+            load.edges.push_back({1, filter});
+            for (int target = 0; target < 4; ++target) {
+                load.nodes.push_back({next, Kind::Destination, {}});
+                load.edges.push_back({filter, next++});
+            }
+        }
+        processor.configure(load);
+        for (int i = 0; i < 100; ++i) { processor.input(1, i % 2); processor.step(1. / 120); }
+        const auto begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10000; ++i) { processor.input(1, i % 2); processor.step(1. / 120); }
+        const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - begin).count() / 10000;
+        std::printf("Graph CPU benchmark: %zu nodes, 256 shared dampers, 1024 destinations, %.3f us/step (10000 steps)\n", load.nodes.size(), us);
+    }
     return failures ? 1 : 0;
 }

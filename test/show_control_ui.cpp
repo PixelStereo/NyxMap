@@ -1,3 +1,4 @@
+#include <QAction>
 // The Show Control tab: the desk follows the sequence, GO, GO BACK and the stops play it, the cue stack and the libraries launch,
 // and it follows what something else plays.
 #include "Engine.h"
@@ -7,6 +8,7 @@
 #include "TimelineActivity.h"
 #include "TimelinePanel.h"
 #include <QHeaderView>
+#include <QMouseEvent>
 #include <QElapsedTimer>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -121,7 +123,7 @@ int runShowControlUiTests(Engine &engine)
         if (b->text().startsWith("LAYER CONTROL")) b->click();
     check(layers == 1, "LAYER CONTROL leads to the layers");
 
-    // In the window: a tab of the left pane, after the others
+    // The desktop keeps sequence editing on the left and opens the show desk in a browser.
     {
         MainWindow window(&engine);
         window.setQuiet(true);
@@ -132,15 +134,30 @@ int runShowControlUiTests(Engine &engine)
         int index = -1;
         for (auto *candidate : window.findChildren<QTabWidget *>())
             for (int k = 0; k < candidate->count(); ++k)
-                if (candidate->tabText(k) == QLatin1String("Show Control")) { left = candidate; index = k; }
-        check(left && index == left->count() - 1, "the window has a Show Control tab, the last on the left");
+                if (candidate->tabText(k) == QLatin1String("Sequences")) { left = candidate; index = k; }
+        check(left && index > 0 && index + 1 < left->count() &&
+                  left->tabText(index - 1) == "Controls" && left->tabText(index + 1) == "Logs",
+              "Sequences sits between Controls and Logs");
+        check(!window.findChild<ShowControlPanel *>(), "the desktop window leaves Show Control to the browser");
+        check(window.findChild<QAction *>("openShowControlWeb"), "the Sequence menu can open the web desk");
         if (left) {
             left->setCurrentIndex(index);
             qApp->processEvents();
-            check(left->currentWidget()->findChild<QPushButton *>("showGo") != nullptr, "and it shows the desk");
-            for (auto *b : left->currentWidget()->findChildren<QPushButton *>())
-                if (b->text().startsWith("LAYER CONTROL")) b->click();
-            check(left->currentIndex() == 1, "LAYER CONTROL opens the Layers tab");
+            check(left->currentWidget()->findChild<SequenceWindow *>(), "the sequence editor is in the left tab");
+        }
+        auto *columns = window.findChild<QSplitter *>("mainColumns");
+        check(columns && columns->orientation() == Qt::Horizontal &&
+                  columns->widget(0)->height() == columns->widget(1)->height(),
+              "the left column spans the full height of the workspace");
+        if (auto *interactions = window.findChild<QSplitter *>("interactionSplit")) {
+            if (left && index >= 2) left->setCurrentIndex(index - 2);
+            qApp->processEvents();
+            interactions->setSizes({0, 1000});
+            check(interactions->sizes().value(0) >= 100, "the interaction list cannot collapse");
+            interactions->setSizes({180, 540});
+            if (left) left->setCurrentIndex(index);
+        } else {
+            check(false, "the interaction splitter is present");
         }
         // The steps with a menu of the sequences on top and their properties under them: no tabs, no Timelines button
         auto *sequences = window.findChild<SequenceWindow *>();
@@ -234,6 +251,24 @@ int runShowControlUiTests(Engine &engine)
                     if (steps->horizontalHeaderItem(c)->text() == title) return c;
                 return -1;
             };
+            auto *header = steps->horizontalHeader();
+            const int target = column("Target");
+            if (target >= 0 && header->isVisible()) {
+                const int oldWidth = header->sectionSize(target);
+                const QPoint start(header->sectionViewportPosition(target) + oldWidth - 1, header->height() / 2);
+                auto drag = [&](QEvent::Type type, QPoint position, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                    auto *view = header->viewport();
+                    QMouseEvent event(type, QPointF(position), QPointF(view->mapToGlobal(position)), button, buttons, Qt::NoModifier);
+                    qApp->sendEvent(view, &event);
+                };
+                drag(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+                drag(QEvent::MouseMove, start + QPoint(12, 0), Qt::NoButton, Qt::LeftButton);
+                drag(QEvent::MouseButtonRelease, start + QPoint(12, 0), Qt::LeftButton, Qt::NoButton);
+                check(header->sectionSize(target) > oldWidth, "dragging Target's right edge widens Target");
+                check(header->length() <= steps->viewport()->width(), "resizing keeps all columns in view");
+            } else {
+                check(false, "the target header is visible");
+            }
             check(column("Comment") < 0, "no comment column");
             const int quantize = column("Quantize"), timecode = column("Timecode");
             check(!steps->isColumnHidden(quantize) && steps->isColumnHidden(timecode), "without a clock: the quantize");
@@ -255,9 +290,12 @@ int runShowControlUiTests(Engine &engine)
         auto *librarySplit = window.findChild<QSplitter *>("showLibrarySplit");
         check(tabsBar && library && librarySplit, "the library");
         if (tabsBar && library && librarySplit) {
-            librarySplit->setSizes({library->minimumWidth(), 2000});
-            qApp->processEvents();
             auto *pane = window.findChild<QScrollArea *>("showLibraryScroll");
+            if (pane && librarySplit->orientation() == Qt::Horizontal) {
+                librarySplit->setSizes({0, librarySplit->width()});
+                qApp->processEvents();
+                check(pane->width() == pane->minimumWidth(), "the library column can shrink to its minimum");
+            }
             check(pane && !pane->horizontalScrollBar()->isVisible(), "no scroll bar under the library");
             for (int tab = 0; tab < tabsBar->count(); ++tab) {
                 tabsBar->setCurrentIndex(tab);
@@ -266,12 +304,13 @@ int runShowControlUiTests(Engine &engine)
                 for (auto *b : library->findChildren<QPushButton *>())
                     if (b->isVisible()) {
                         const QRect r(b->mapTo(library, QPoint(0, 0)), b->size());
+                        if (!library->rect().contains(r))
+                            qWarning() << "Library button outside layout" << tab << b->text() << r << library->rect();
                         check(library->rect().contains(r), "the bar fits the narrowest library");
                     }
                 for (auto *list : library->findChildren<QTreeWidget *>())
                     if (list->isVisible()) check(!list->horizontalScrollBar()->isVisible(), "the list has no horizontal scroll bar");
             }
-            check(library->width() <= 355, "as narrow as asked");
             tabsBar->setCurrentIndex(0);
         }
         // All the timelines folded on a line each, from the Timelines list; the same bar as the others

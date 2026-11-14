@@ -15,6 +15,18 @@ static void require(bool value, const char *message)
     if (!value)
         throw std::runtime_error(message);
 }
+static double mix(Engine &engine, int layer);
+// The sound hears a picture once the GPU has handed it over, a frame or more after it was drawn: frames are rendered
+// until it does (false: it never did)
+static bool rendersUntilHeard(Engine &engine, quint64 soundId)
+{
+    for (int frame = 0; frame < 30; ++frame) {
+        engine.renderFrame();
+        if (mix(engine, engine.indexOfId(soundId)) > 0) return true;
+    }
+    return false;
+}
+
 static double mix(Engine &engine, int layer)
 {
     double energy = 0;
@@ -72,10 +84,8 @@ int main(int argc, char **argv)
         std::cerr << "stage: black energy\n";
         require(mix(engine, sound) == 0, "black composition is silent");
         require(engine.setLayerImage(engine.indexOfId(pictureId), white, &error), "change visual source");
-        std::cerr << "stage: render frame\n";
-        engine.renderFrame();
         std::cerr << "stage: white energy\n";
-        require(mix(engine, sound) > 0, "live rendered white composition drives audio");
+        require(rendersUntilHeard(engine, soundId), "live rendered white composition drives audio");
         // The analysis is per viewport: a second viewport that does not show the picture sees black
         {
             const quint64 main = engine.mainViewportId();
@@ -89,9 +99,7 @@ int main(int argc, char **argv)
             engine.renderFrame();
             require(mix(engine, engine.indexOfId(soundId)) < 1e-9, "the viewport that shows black is silent (the smoothing of the color has died away)");
             require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), main), "choose the first viewport by id");
-            engine.renderFrame();
-            engine.renderFrame();
-            require(mix(engine, engine.indexOfId(soundId)) > 0, "the viewport that shows white sounds");
+            require(rendersUntilHeard(engine, soundId), "the viewport that shows white sounds");
             require(engine.setLayerSonificationViewport(engine.indexOfId(soundId), secondId), "second again");
             const auto saved = engine.layerJson(engine.indexOfId(soundId));
             require(saved.value("sonification_viewport").toString().toULongLong() == secondId, "the choice is in the layer state");

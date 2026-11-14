@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "type": "granular",
+  "source": "bowed-metal.wav",
+  "grainMs": 110,
+  "density": 12,
+  "pitch": 1,
+  "gain": 0.26,
+  "attack": 0.06,
+  "sustain": 1,
+  "release": 0.24,
+  "gate": 1
+}

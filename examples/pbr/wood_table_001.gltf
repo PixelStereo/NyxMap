@@ -1,0 +1,48 @@
+{
+    "asset": {
+        "version": "2.0"
+    },
+    "images": [
+        {
+            "uri": "textures/wood_table_001_diff_1k.jpg"
+        },
+        {
+            "uri": "textures/wood_table_001_nor_gl_1k.jpg"
+        },
+        {
+            "uri": "textures/wood_table_001_arm_1k.jpg"
+        }
+    ],
+    "textures": [
+        {
+            "source": 0
+        },
+        {
+            "source": 1
+        },
+        {
+            "source": 2
+        }
+    ],
+    "materials": [
+        {
+            "name": "Wood Grain",
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {
+                    "index": 0
+                },
+                "metallicRoughnessTexture": {
+                    "index": 2
+                },
+                "metallicFactor": 0,
+                "roughnessFactor": 1
+            },
+            "normalTexture": {
+                "index": 1
+            },
+            "occlusionTexture": {
+                "index": 2
+            }
+        }
+    ]
+}

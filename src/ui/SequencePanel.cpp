@@ -1,6 +1,8 @@
 #include "SequencePanel.h"
+#include "FittedTableHeader.h"
 #include "Engine.h"
 #include "SnapshotPanel.h"
+#include "StoredContent.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
 
@@ -21,8 +23,11 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPlainTextEdit>
+#include <QMap>
 #include <QPushButton>
 #include <QSet>
 #include "LibraryTree.h"
@@ -45,15 +50,6 @@
 #include <QUndoStack>
 #include <QVBoxLayout>
 #include <cmath>
-
-static QString snapshotName(Engine *e, quint64 id)
-{
-    if (!id) return QStringLiteral("—");
-    const int i = e->indexOfSnapshot(id);
-    if (i < 0) return QStringLiteral("(snapshot gone)");
-    const Engine::Snapshot m = e->snapshot(i);
-    return QStringLiteral("%1  %2").arg(i + 1).arg(m.name);
-}
 
 // What a timeline step does
 static QString actionName(const Sequencer::Step &st)
@@ -79,17 +75,20 @@ static QString actionName(const Sequencer::Step &st)
 static QString timelineName(Engine *e, quint64 id)
 {
     const int i = e->indexOfAnimation(id);
-    return i < 0 ? QStringLiteral("(timeline gone)") : e->animation(i).name;
+    return i < 0 ? QStringLiteral("(missing)") : e->animation(i).name;
 }
 
 // What a step does: its snapshot (with its number), or its timeline and the action on it
-static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = true)
+static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = true, bool withKind = true)
 {
+    auto label = [withKind](const QString &kind, const QString &name) {
+        return withKind ? QStringLiteral("%1 · %2").arg(kind, name) : name;
+    };
     if (!st.actions.empty()) {
         QStringList names;
         for (const auto &action : st.actions)
-            names << stepTarget(e, action, false);
-        return QStringLiteral("Group · %1 steps: %2").arg(st.actions.size()).arg(names.join(QStringLiteral(" + ")));
+            names << stepTarget(e, action, false, withKind);
+        return label(QStringLiteral("Group"), QStringLiteral("%1 steps: %2").arg(st.actions.size()).arg(names.join(QStringLiteral(" + "))));
     }
     if (st.sequence) {
         const int index = e->sequencer().indexOfSequence(st.sequence);
@@ -97,12 +96,14 @@ static QString stepTarget(Engine *e, const Sequencer::Step &st, bool numbered = 
     }
     if (st.preset) {
         const int index = e->indexOfPreset(st.preset);
-        return index < 0 ? QStringLiteral("(preset gone)") : QStringLiteral("Preset · %1").arg(e->preset(index).name);
+        return label(QStringLiteral("Preset"), index < 0 ? QStringLiteral("(missing)") : e->preset(index).name);
     }
-    if (st.timeline) return QStringLiteral("≋ %1 · %2").arg(timelineName(e, st.timeline), actionName(st));
-    if (numbered) return snapshotName(e, st.snapshot);
-    const int mi = e->indexOfSnapshot(st.snapshot);
-    return !st.snapshot ? QStringLiteral("—") : mi < 0 ? QStringLiteral("(snapshot gone)") : e->snapshot(mi).name;
+    if (st.timeline) return label(QStringLiteral("Timeline"), QStringLiteral("%1 · %2").arg(timelineName(e, st.timeline), actionName(st)));
+    if (!st.snapshot) return QStringLiteral("—");
+    const int index = e->indexOfSnapshot(st.snapshot);
+    if (index < 0) return label(QStringLiteral("Snapshot"), QStringLiteral("(missing)"));
+    const QString name = e->snapshot(index).name;
+    return label(QStringLiteral("Snapshot"), numbered ? QStringLiteral("%1  %2").arg(index + 1).arg(name) : name);
 }
 
 static bool targetGone(Engine *e, const Sequencer::Step &st)
@@ -297,6 +298,31 @@ static void normalizeFolders(Sequencer::Sequence &s)
 
 constexpr Qt::ItemFlags kRowFlags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
 enum StepCol { ColNum, ColSnapshot, ColPre, ColAction, ColPost, ColQuantize, ColNext, ColDescription, ColAt, ColTime, ColCount };
+constexpr int kStepKindRole = Qt::UserRole + 1;
+constexpr int kStepDepthRole = Qt::UserRole + 2;
+constexpr int kStepExpandedRole = Qt::UserRole + 3;
+constexpr int kStepIndent = 16;
+constexpr int kDisclosureWidth = 26;
+using theme::CueKind;
+
+static void setStepKind(QTableWidgetItem *item, CueKind kind)
+{
+    item->setData(kStepKindRole, int(kind));
+    item->setData(Qt::AccessibleTextRole, item->toolTip());
+}
+
+static QChar stepInitial(CueKind kind)
+{
+    switch (kind) {
+    case CueKind::Snapshot: return QLatin1Char('S');
+    case CueKind::Preset: return QLatin1Char('P');
+    case CueKind::Timeline: return QLatin1Char('T');
+    case CueKind::Group: return QLatin1Char('G');
+    case CueKind::Sequence: return {};
+    }
+    return {};
+}
+
 
 // The time columns (pre-wait, action, post-wait) filling as their time goes by, the continuation as a word;
 // the waits are edited with the app's number field, the continuation with a menu
@@ -353,8 +379,6 @@ public:
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override
     {
         paintCell(p, opt, idx);
-        if (const int role = idx.column() == ColSnapshot ? idx.data(Qt::UserRole).toInt() : 0) // a group and its steps: one line down them
-            p->fillRect(QRect(opt.rect.left(), opt.rect.top(), 3, opt.rect.height()), role <= 2 ? QColor(76, 217, 100, 170) : QColor(86, 156, 230, 200));
         paintFrame(p, opt, idx);
     }
 
@@ -387,6 +411,54 @@ private:
     void paintCell(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
     {
         const int col = idx.column();
+        if (col == ColSnapshot && (idx.data(kStepKindRole).isValid() || idx.data(kStepDepthRole).toInt() > 0)) {
+            QStyleOptionViewItem o(opt);
+            initStyleOption(&o, idx);
+            const QWidget *w = opt.widget;
+            auto *style = w ? w->style() : QApplication::style();
+            const QString label = o.text;
+            o.text.clear();
+            style->drawControl(QStyle::CE_ItemViewItem, &o, p, w);
+            p->save();
+            p->setClipRect(opt.rect, Qt::IntersectClip);
+            const auto role = o.state.testFlag(QStyle::State_Selected) ? QPalette::HighlightedText : QPalette::Text;
+            const QColor ink = o.palette.color(role);
+            const int depth = idx.data(kStepDepthRole).toInt();
+            const int left = opt.rect.left() + depth * kStepIndent;
+            for (int d = 0; d < depth; ++d)
+                p->fillRect(QRect(opt.rect.left() + d * kStepIndent + 2, opt.rect.top(), 2, opt.rect.height()), QColor(139, 144, 153, 96));
+            int textLeft = left + 9;
+            if (const QVariant type = idx.data(kStepKindRole); type.isValid()) {
+                const auto kind = CueKind(type.toInt());
+                p->fillRect(QRect(left + 1, opt.rect.top() + 3, 3, opt.rect.height() - 6), theme::cueColor(kind));
+                if (const QVariant expanded = idx.data(kStepExpandedRole); expanded.isValid()) {
+                    const QPointF center(left + 15, opt.rect.center().y() + .5);
+                    const QPolygonF points = expanded.toBool()
+                        ? QPolygonF{center + QPointF(-5, -3), center + QPointF(5, -3), center + QPointF(0, 4)}
+                        : QPolygonF{center + QPointF(-3, -5), center + QPointF(4, 0), center + QPointF(-3, 5)};
+                    p->setRenderHint(QPainter::Antialiasing);
+                    p->setPen(Qt::NoPen);
+                    p->setBrush(ink);
+                    p->drawPolygon(points);
+                    textLeft = left + kDisclosureWidth;
+                }
+                if (const QChar initial = stepInitial(kind); !initial.isNull()) {
+                    QFont font = o.font;
+                    font.setPixelSize(17);
+                    font.setBold(true);
+                    p->setFont(font);
+                    p->setPen(ink);
+                    p->drawText(QRect(textLeft, opt.rect.top(), 17, opt.rect.height()), Qt::AlignCenter, QString(initial));
+                    textLeft += 21;
+                }
+            }
+            const QRect textRect = opt.rect.adjusted(textLeft - opt.rect.left(), 0, -6, 0);
+            p->setFont(o.font);
+            p->setPen(ink);
+            p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, o.fontMetrics.elidedText(label, Qt::ElideRight, textRect.width()));
+            p->restore();
+            return;
+        }
         if (col != ColTime && col != ColNext) {
             QStyledItemDelegate::paint(p, opt, idx);
             return;
@@ -499,7 +571,7 @@ class StepTimeEditor : public QFrame
 {
 public:
     StepTimeEditor(QWidget *parent, const QString &suffix, double pre, const QString &action, double post, bool postCounts,
-                   std::function<void(double, double)> apply)
+                   double defaultFade, double fadeOverride, std::function<void(double, double, double)> apply)
         : QFrame(parent, Qt::Popup), m_apply(std::move(apply))
     {
         setObjectName(QStringLiteral("stepTimeEditor"));
@@ -524,10 +596,22 @@ public:
         grid->addWidget(m_pre, 0, 1);
         grid->addWidget(new QLabel(QStringLiteral("Action")), 1, 0);
         auto *time = new QLabel(action);
-        time->setToolTip(QStringLiteral("The snapshot's time, or the time the timeline plays: set on them"));
+        time->setToolTip(QStringLiteral("The effective action time, including individual delays and fades"));
         grid->addWidget(time, 1, 1, Qt::AlignRight);
-        grid->addWidget(new QLabel(QStringLiteral("Post-wait")), 2, 0);
-        grid->addWidget(m_post, 2, 1);
+        if (defaultFade >= 0) {
+            m_override = new QCheckBox(QStringLiteral("Override fade"));
+            m_override->setObjectName(QStringLiteral("stepFadeOverride"));
+            m_override->setChecked(fadeOverride >= 0);
+            m_fade = field("stepFade", fadeOverride >= 0 ? fadeOverride : defaultFade);
+            m_fade->setSuffix(QStringLiteral(" s"));
+            m_fade->setEnabled(m_override->isChecked());
+            m_override->setToolTip(QStringLiteral("Replace the cue's default fade for this step. Individual times and delays still apply."));
+            connect(m_override, &QCheckBox::toggled, m_fade, &QWidget::setEnabled);
+            grid->addWidget(m_override, 2, 0);
+            grid->addWidget(m_fade, 2, 1);
+        }
+        grid->addWidget(new QLabel(QStringLiteral("Post-wait")), 3, 0);
+        grid->addWidget(m_post, 3, 1);
     }
     void focusOn(bool post)
     {
@@ -550,14 +634,17 @@ protected:
             m_applied = true;
             m_pre->interpretText();
             m_post->interpretText();
-            m_apply(m_pre->value(), m_post->value());
+            if (m_fade) m_fade->interpretText();
+            m_apply(m_pre->value(), m_post->value(), m_override && m_override->isChecked() ? m_fade->value() : -1);
         }
         deleteLater();
     }
 
 private:
     QDoubleSpinBox *m_pre, *m_post;
-    std::function<void(double, double)> m_apply;
+    QDoubleSpinBox *m_fade = nullptr;
+    QCheckBox *m_override = nullptr;
+    std::function<void(double, double, double)> m_apply;
     bool m_applied = false;
 };
 
@@ -573,9 +660,11 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_sequences = new QComboBox;
     m_sequences->setObjectName(QStringLiteral("sequenceMenu"));
     m_sequences->setEditable(true);
+    m_sequences->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_sequences->setMinimumContentsLength(8);
     m_sequences->setInsertPolicy(QComboBox::NoInsert);
     m_sequences->setCompleter(nullptr);
-    m_sequences->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_sequences->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_sequences->setToolTip(QStringLiteral("The sequence GO / Stop controls. Other sequences keep playing in the background. Type here to rename it."));
     m_add = new QPushButton(QStringLiteral("+"));
     m_add->setObjectName(QStringLiteral("sequenceNew"));
@@ -702,10 +791,13 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     // Steps
     m_status = new QLabel;
     m_status->setTextFormat(Qt::RichText);
+    m_status->setWordWrap(true);
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     flags->addWidget(m_status, 1);
     flags->addWidget(m_beatLabel);
     right->addWidget(new RecallProgressBar(m_engine));
     m_steps = new QTableWidget(0, ColCount);
+    m_steps->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_steps->setHorizontalHeaderLabels({QStringLiteral("#"), QStringLiteral("Target"), QStringLiteral("Pre"),
                                         QStringLiteral("Action"), QStringLiteral("Post"), QStringLiteral("Quantize"),
                                         QStringLiteral("Next"), QStringLiteral("Description"), QStringLiteral("Timecode"), QStringLiteral("Time")});
@@ -741,14 +833,15 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     m_steps->verticalHeader()->setVisible(false);
     m_steps->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_steps->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColSnapshot, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setSectionResizeMode(ColDescription, QHeaderView::Stretch);
-    m_steps->horizontalHeader()->setMinimumSectionSize(30);
+    m_steps->setColumnWidth(ColSnapshot, 120);
+    m_steps->setColumnWidth(ColDescription, 120);
+    m_steps->horizontalHeader()->setMinimumSectionSize(18);
     m_steps->setColumnWidth(ColNum, 40);
     m_steps->setObjectName(QStringLiteral("sequenceSteps"));
     m_steps->setAcceptDrops(true);
     m_steps->viewport()->setAcceptDrops(true);
     m_steps->viewport()->installEventFilter(this);
+    new FittedTableHeader(m_steps, m_steps->horizontalHeader(), ColDescription);
     m_steps->setDragEnabled(true);
     m_steps->setDragDropMode(QAbstractItemView::DragDrop);
     m_steps->setDropIndicatorShown(false); // its own line: steps go between rows, and into groups
@@ -774,25 +867,39 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                            [this] { if (m_steps->currentRow() >= 0) emit goToRequested(stepOfRow(m_steps->currentRow())); },
                            [this] { removeSteps(); }, [this] { duplicateSteps(); }, [this] { groupSteps(); }});
     right->addWidget(m_steps, 1);
+    m_stepChanges = new QPlainTextEdit;
+    m_stepChanges->setObjectName(QStringLiteral("sequenceStepChanges"));
+    m_stepChanges->setReadOnly(true);
+    m_stepChanges->setFocusPolicy(Qt::NoFocus);
+    m_stepChanges->setMaximumHeight(110);
+    m_stepChanges->setToolTip(QStringLiteral("Stored changes from the preceding steps in this sequence. Selecting a row never recalls it."));
+    m_stepChanges->hide();
+    right->addWidget(m_stepChanges);
+    connect(m_steps, &QTableWidget::currentCellChanged, this, [this] {
+        if (!m_filling) refreshStepChanges();
+    });
     auto *stb = new QHBoxLayout;
     m_stepAdd = new QPushButton(QStringLiteral("+ Step"));
     m_stepDel = new QPushButton(QStringLiteral("−"));
     m_stepDel->setToolTip(QStringLiteral("Delete the selected steps"));
     m_up = new QPushButton(QStringLiteral("▲"));
     m_down = new QPushButton(QStringLiteral("▼"));
+    for (QPushButton *b : {m_stepDel, m_up, m_down}) symbolButton(b);
     for (QPushButton *b : {m_stepAdd, m_stepDel, m_up, m_down}) stb->addWidget(b);
     stb->addStretch();
+    auto *stops = new QHBoxLayout;
+    stops->addStretch();
     m_stop = new QPushButton(QStringLiteral("■ Stop"));
     m_stop->setToolTip(QStringLiteral("The selected sequence: its pre-waits and follows still to come are dropped "
                                       "(the snapshots already running go on; the other sequences keep playing)"));
     m_stop->setEnabled(false);
-    stb->addWidget(m_stop);
+    stops->addWidget(m_stop);
     connect(m_stop, &QPushButton::clicked, this, &SequenceWindow::stopRequested);
     m_stopAll = new QPushButton(QStringLiteral("■■ Stop all"));
     m_stopAll->setToolTip(QStringLiteral("The pre-waits and follows still to come in every sequence, those playing "
                                          "in the background too (the snapshots already running go on)"));
     m_stopAll->setEnabled(false);
-    stb->addWidget(m_stopAll);
+    stops->addWidget(m_stopAll);
     connect(m_stopAll, &QPushButton::clicked, this, &SequenceWindow::stopAllRequested);
     auto *runs = new QTimer(this);
     runs->setInterval(33);
@@ -803,6 +910,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
         box->setMinimumWidth(box->fontMetrics().horizontalAdvance(box->text()) + 28); // with its square
     right->addLayout(flags);
     right->addLayout(stb);
+    right->addLayout(stops);
 
     auto current = [this] { return m_engine->sequencer().current(); };
     connect(m_sequences, qOverload<int>(&QComboBox::activated), this, [this](int r) {
@@ -869,7 +977,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                 ParamInfo info;
                 if (m_engine->parameterInfo(id, QString::fromLatin1(path), &info))
                     menu->addAction(QStringLiteral("%1 › %2").arg(name, info.label.section(QStringLiteral(" › "), -1)), this,
-                                    [choose, id, path] { choose(id, QString::fromLatin1(path)); });
+                                    [choose, layerId = id, path] { choose(layerId, QString::fromLatin1(path)); });
             }
     });
     connect(m_tracking, &QCheckBox::toggled, this, [this, current](bool on) {
@@ -922,8 +1030,8 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
             const QRect cell = m_steps->visualItemRect(m_steps->item(row, ColTime));
             openTimeEditor(row, m_steps->viewport()->mapFromGlobal(QCursor::pos()).x() > cell.center().x());
         }
-        if (col == ColSnapshot && actionOfRow(row) == kHeaderRow) return toggleFolder(row);
         if (col == ColSnapshot) {
+            if (actionOfRow(row) == kHeaderRow) return toggleFolder(row);
             Sequencer::Sequence s = m_engine->sequencer().sequence(m_engine->sequencer().current());
             const Sequencer::Step *st = stepAt(s, row);
             if (st && !st->actions.empty() && actionOfRow(row) < 0) {
@@ -935,15 +1043,6 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
                 menu.exec(m_steps->viewport()->mapToGlobal(r.bottomLeft()));
             }
         }
-    });
-    connect(m_steps, &QTableWidget::cellClicked, this, [this](int row, int col) { // a group's triangle
-        if (col != ColSnapshot) return;
-        const int role = m_steps->item(row, col)->data(Qt::UserRole).toInt();
-        if (role != 1 && role != 3) return;
-        const QRect cell = m_steps->visualItemRect(m_steps->item(row, col));
-        const int x = m_steps->viewport()->mapFromGlobal(QCursor::pos()).x() - cell.left();
-        if (role == 3 && x < 22) toggleFolder(row);
-        else if (role == 1 && x < (m_folders[size_t(stepOfRow(row))] ? 60 : 22)) toggleFold(stepOfRow(row));
     });
     connect(m_steps, &QTableWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
         const int row = m_steps->rowAt(pos.y());
@@ -1029,14 +1128,27 @@ void SequenceWindow::openTimeEditor(int row, bool post)
     if (!found) return;
     const Sequencer::Step &st = *found;
     const double length = m_engine->sequencer().stepDuration(st, s.beats ? m_engine->beatClock().secondsPerBeat() : 1.0);
+    double defaultFade = -1;
+    if (st.actions.empty() && !st.timeline && !st.sequence) {
+        if (st.preset) {
+            const int index = m_engine->indexOfPreset(st.preset);
+            if (index >= 0) defaultFade = m_engine->preset(index).fade;
+        } else if (st.snapshot) {
+            const int index = m_engine->indexOfSnapshot(st.snapshot);
+            if (index >= 0) defaultFade = m_engine->snapshot(index).fade;
+        }
+    }
     auto *editor = new StepTimeEditor(this, s.beats ? QStringLiteral(" beats") : QStringLiteral(" s"), st.preWait,
                                       QStringLiteral("%1 s").arg(seconds(length)), st.postWait,
-                                      actionOfRow(row) >= 0 || st.next != Sequencer::StepContinue::Wait, [this, cur, row](double pre, double postWait) {
+                                      actionOfRow(row) >= 0 || st.next != Sequencer::StepContinue::Wait,
+                                      defaultFade, st.fadeOverride, [this, cur, row, defaultFade](double pre, double postWait, double fadeOverride) {
         Sequencer::Sequence edited = m_engine->sequencer().sequence(cur);
         Sequencer::Step *target = stepAt(edited, row);
         if (!target) return;
         Sequencer::Step &step = *target;
-        if (step.preWait == pre && step.postWait == postWait) return;
+        if (defaultFade < 0) fadeOverride = step.fadeOverride;
+        if (step.preWait == pre && step.postWait == postWait && step.fadeOverride == fadeOverride) return;
+        step.fadeOverride = fadeOverride;
         step.preWait = pre;
         step.postWait = postWait;
         applySequence(cur, edited);
@@ -1119,6 +1231,13 @@ void SequenceWindow::fillStepMenu(QMenu *menu, int row)
     Sequencer::Sequence shown = cs;
     if (const Sequencer::Step *st = stepAt(shown, row); st && st->timeline)
         fillActionMenu(menu->addMenu(QStringLiteral("Timeline action")), row);
+    if (const auto *step = stepAt(shown, row); step && (step->snapshot || step->preset)) {
+        auto *simplify = menu->addAction(QStringLiteral("Simplify Against Previous Cue"), this,
+                                         [this, row] { simplifyStep(row); });
+        const int index = stepOfRow(row);
+        simplify->setEnabled(actionOfRow(row) < 0 && index > 0 &&
+                             (cs.steps[size_t(index - 1)].snapshot || cs.steps[size_t(index - 1)].preset));
+    }
     menu->addSeparator();
     menu->addAction(QStringLiteral("Insert empty step before"), this, [this, row] { row < 0 ? addStep(-1, 0) : insertStep(row, true); });
     menu->addAction(QStringLiteral("Insert empty step after"), this,
@@ -1296,6 +1415,126 @@ void SequenceWindow::pollClock()
     m_beatLabel->setText(clock.source() == BeatClock::Source::External ? QStringLiteral("ext ") + dots : dots);
 }
 
+namespace {
+using CueValues = QMap<QPair<QString, QString>, QJsonValue>;
+
+QString cueValueText(const QJsonValue &value)
+{
+    if (value.isUndefined()) return QStringLiteral("—");
+    if (value.isArray()) return QStringLiteral("[%1 items]").arg(value.toArray().size());
+    if (value.isObject()) {
+        const auto object = value.toObject();
+        const auto path = object.value("path").toString();
+        if (!path.isEmpty()) return path;
+        return object.value("type").toString(QStringLiteral("{settings}"));
+    }
+    if (value.isString()) return value.toString().simplified();
+    const QByteArray json = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+    return QString::fromUtf8(json.mid(1, json.size() - 2));
+}
+} // namespace
+
+void SequenceWindow::refreshStepChanges()
+{
+    const int row = m_steps->currentRow(), index = stepOfRow(row), child = actionOfRow(row);
+    const auto sequence = m_engine->sequencer().sequence(m_engine->sequencer().current());
+    const bool selected = index >= 0 && index < int(sequence.steps.size()) && child != kHeaderRow;
+    m_stepChanges->setVisible(selected);
+    if (!selected) return;
+
+    CueValues values;
+    QMap<QString, QString> owners;
+    QStringList actions;
+    auto layerOwner = [&](quint64 id) {
+        if (!id) return QStringLiteral("Composition");
+        const QString key = QStringLiteral("Layer %1").arg(id);
+        if (!owners.contains(key)) {
+            Engine::Lock lock(&m_engine->mutex());
+            const auto *layer = m_engine->layer(m_engine->indexOfId(id));
+            if (layer) owners[key] = layer->name;
+        }
+        return key;
+    };
+    auto put = [&](const QString &owner, const QJsonObject &params) {
+        for (auto it = params.begin(); it != params.end(); ++it)
+            values[{owner, it.key()}] = it.value();
+    };
+    auto apply = [&](const Sequencer::Step &step, bool report) {
+        if (step.preset) {
+            const int i = m_engine->indexOfPreset(step.preset);
+            if (i < 0) { if (report) actions << stepTarget(m_engine, step); return; }
+            const auto preset = m_engine->preset(i);
+            for (const auto &value : preset.values)
+                values[{layerOwner(value.layer), value.path}] = value.value;
+            put(QStringLiteral("Preset structure"), preset.categories);
+            put(QStringLiteral("Mapping"), preset.geometry);
+        } else if (step.snapshot) {
+            const int i = m_engine->indexOfSnapshot(step.snapshot);
+            if (i < 0) { if (report) actions << stepTarget(m_engine, step); return; }
+            const auto snapshot = m_engine->snapshot(i);
+            for (const auto &entry : snapshot.layers) {
+                const auto layer = entry.toObject();
+                if (!layer.value("included").toBool(true) || layer.value("viewport").toBool()) continue;
+                const QString owner = layerOwner(layer.value("id").toString().toULongLong());
+                put(owner, layer.value("params").toObject());
+                for (const QString &field : {QStringLiteral("enable"), QStringLiteral("source"), QStringLiteral("fx"),
+                                             QStringLiteral("parent"), QStringLiteral("mesh"), QStringLiteral("masks"),
+                                             QStringLiteral("matte"), QStringLiteral("viewports"), QStringLiteral("anims")}) {
+                    if (layer.contains(field)) values[{owner, field}] = layer.value(field);
+                }
+            }
+            if (snapshot.composition.value("included").toBool(true))
+                for (const QString &field : {QStringLiteral("opacity"), QStringLiteral("volume")})
+                    if (snapshot.composition.contains(field))
+                        values[{QStringLiteral("Composition"), field}] = snapshot.composition.value(field);
+            for (const auto &[kind, entries] : {std::pair{QStringLiteral("Interaction"), snapshot.interactions},
+                                               std::pair{QStringLiteral("Fixture"), snapshot.fixtures}}) {
+                for (const auto &entry : entries) {
+                    const auto object = entry.toObject();
+                    if (!object.value("included").toBool(true)) continue;
+                    const QString owner = kind + QLatin1Char(' ') + object.value("id").toString();
+                    owners[owner] = object.value("name").toString(owner);
+                    put(owner, object.value("params").toObject());
+                    if (object.contains("enabled")) values[{owner, QStringLiteral("enabled")}] = object.value("enabled");
+                }
+            }
+        } else if (step.timeline || step.sequence) {
+            if (report) actions << stepTarget(m_engine, step);
+            if (step.sequence) values.clear(); // its execution is independent of this cue list
+            const int timeline = m_engine->indexOfAnimation(step.timeline);
+            if (timeline >= 0)
+                for (const auto &track : m_engine->animation(timeline).tracks)
+                    if (track.enabled)
+                        for (const auto &path : track.drivenParams()) values.remove({layerOwner(track.layer), path});
+        }
+    };
+    auto applyStep = [&](const Sequencer::Step &step, bool report) {
+        if (step.actions.empty()) apply(step, report);
+        else for (const auto &action : step.actions) apply(action, report);
+    };
+    for (int i = 0; i < index; ++i) applyStep(sequence.steps[size_t(i)], false);
+    const CueValues before = values;
+    const auto &step = sequence.steps[size_t(index)];
+    if (child >= 0 && child < int(step.actions.size())) apply(step.actions[size_t(child)], true);
+    else applyStep(step, true);
+
+    QStringList lines{index == 0 ? QStringLiteral("Changes · first GO")
+                                : QStringLiteral("Changes · compared with the state after GO %1").arg(index)};
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        const QJsonValue old = before.value(it.key(), QJsonValue::Undefined);
+        if (old == it.value()) continue;
+        const auto &[owner, path] = it.key();
+        const QString afterText = cueValueText(it.value());
+        const QString beforeText = cueValueText(old);
+        lines << QStringLiteral("%1 · %2    %3").arg(owners.value(owner, owner), path,
+            beforeText == afterText ? QStringLiteral("changed") : beforeText + QStringLiteral(" → ") + afterText);
+    }
+    lines.append(actions);
+    if (lines.size() == 1) lines << QStringLiteral("No stored changes.");
+    const QString text = lines.join(QLatin1Char('\n'));
+    if (m_stepChanges->toPlainText() != text) m_stepChanges->setPlainText(text);
+}
+
 void SequenceWindow::refresh()
 {
     m_filling = true;
@@ -1365,9 +1604,11 @@ void SequenceWindow::refresh()
                 m_steps->setItem(row, c, cell);
             }
             auto *title = m_steps->item(row, ColSnapshot);
-            title->setText(QStringLiteral("%1  Group · %2 GOs").arg(closed ? QStringLiteral("▸") : QStringLiteral("▾")).arg(last - first + 1));
+            title->setText(QStringLiteral("%1 GOs").arg(last - first + 1));
             title->setToolTip(QStringLiteral("A group of %1 steps played one GO per step").arg(last - first + 1));
             title->setData(Qt::UserRole, 3);
+            title->setData(kStepExpandedRole, !closed);
+            setStepKind(title, CueKind::Group);
             QFont bold = title->font();
             bold.setBold(true);
             title->setFont(bold);
@@ -1378,17 +1619,22 @@ void SequenceWindow::refresh()
         auto *num = new QTableWidgetItem(child < 0 ? QString::number(k + 1) : QStringLiteral("%1.%2").arg(k + 1).arg(child + 1));
         num->setFlags(kRowFlags);
         num->setTextAlignment(Qt::AlignCenter);
-        QString target = stepTarget(m_engine, st);
-        if (isGroup && st.open) target = QStringLiteral("▾  Group · %1 steps").arg(st.actions.size());
-        else if (isGroup) target = QStringLiteral("▸  ") + target;
-        else if (child >= 0) target = QStringLiteral("      ") + target;
         const bool inFolder = s.steps[size_t(k)].folder != 0;
-        if (inFolder) target = QStringLiteral("      ") + target;
+        const QString target = isGroup && st.open ? QStringLiteral("%1 steps").arg(st.actions.size())
+                                                 : stepTarget(m_engine, st, true, false);
         auto *mem = new QTableWidgetItem(target);
         mem->setFlags(kRowFlags);
         mem->setData(Qt::UserRole, isGroup ? 1 : child >= 0 ? 2 : inFolder ? 4 : 0);
+        mem->setData(kStepDepthRole, int(inFolder) + int(child >= 0));
+        mem->setToolTip(stepTarget(m_engine, st));
+        if (isGroup) {
+            mem->setData(kStepExpandedRole, st.open);
+            setStepKind(mem, CueKind::Group);
+        } else if (st.sequence) setStepKind(mem, CueKind::Sequence);
+        else if (st.preset) setStepKind(mem, CueKind::Preset);
+        else if (st.timeline) setStepKind(mem, CueKind::Timeline);
+        else if (st.snapshot) setStepKind(mem, CueKind::Snapshot);
         if (targetGone(m_engine, st)) mem->setForeground(QColor(255, 120, 100));
-        else if (st.timeline) mem->setForeground(QColor(86, 196, 255));
         auto *pre = new QTableWidgetItem;
         pre->setData(Qt::EditRole, st.preWait);
         auto *action = new QTableWidgetItem;
@@ -1415,7 +1661,9 @@ void SequenceWindow::refresh()
         quantize->setTextAlignment(Qt::AlignCenter);
         m_steps->setItem(row, ColQuantize, quantize);
         m_steps->setItem(row, ColNext, next);
-        m_steps->setItem(row, ColDescription, new QTableWidgetItem(st.description));
+        auto *description = new QTableWidgetItem(st.description);
+        description->setToolTip(st.description);
+        m_steps->setItem(row, ColDescription, description);
         auto *time = new QTableWidgetItem;
         time->setFlags(kRowFlags);
         const QString unitName = s.beats ? QStringLiteral(" beats") : QStringLiteral(" s");
@@ -1448,6 +1696,7 @@ void SequenceWindow::refresh()
     if (keep >= 0 && keep < m_steps->rowCount()) m_steps->setCurrentCell(keep, ColSnapshot);
     refreshTransport();
     m_filling = false;
+    refreshStepChanges();
 }
 
 void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline, quint64 preset, quint64 sequence, quint64 folder)
@@ -1886,6 +2135,34 @@ void SequenceWindow::dropPlace(int y, int *top, int *action, quint64 *folder) co
 bool SequenceWindow::eventFilter(QObject *o, QEvent *e)
 {
     if (o != m_steps->viewport()) return QWidget::eventFilter(o, e);
+    if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
+        e->type() == QEvent::MouseButtonDblClick) {
+        const auto *mouse = static_cast<QMouseEvent *>(e);
+        if (mouse->button() == Qt::LeftButton) {
+            const QPoint pos = mouse->position().toPoint();
+            const QModelIndex index = m_steps->indexAt(pos);
+            bool disclosure = false;
+            if (index.column() == ColSnapshot && index.data(kStepExpandedRole).isValid()) {
+                const int offset = index.data(kStepDepthRole).toInt() * kStepIndent;
+                const int x = pos.x() - m_steps->visualRect(index).left() - offset;
+                disclosure = x >= 0 && x < kDisclosureWidth;
+            }
+            if (e->type() == QEvent::MouseButtonPress) {
+                m_disclosurePress = disclosure ? index : QModelIndex();
+                if (disclosure) return true;
+            } else if (e->type() == QEvent::MouseButtonDblClick && disclosure) {
+                return true;
+            } else if (e->type() == QEvent::MouseButtonRelease && m_disclosurePress.isValid()) {
+                const bool clicked = disclosure && m_disclosurePress == index;
+                m_disclosurePress = QModelIndex();
+                if (clicked) {
+                    if (actionOfRow(index.row()) == kHeaderRow) toggleFolder(index.row());
+                    else toggleFold(stepOfRow(index.row()));
+                }
+                return true;
+            }
+        }
+    }
     if (e->type() == QEvent::DragLeave) m_dropLine->hide();
     if (e->type() == QEvent::Drop) m_dropLine->hide();
     auto rowsDragged = [this](const QDropEvent *d) { return d->source() == m_steps; };
@@ -1972,7 +2249,6 @@ void SequenceWindow::refreshTransport()
             QColor color=palette().color(QPalette::Text);
             if (current) color=m_modified?QColor(QString::fromLatin1(kChanged)):kLive;
             else if (column==ColSnapshot && targetGone(m_engine,s.steps[size_t(step)])) color=QColor(255,120,100);
-            else if (column==ColSnapshot && s.steps[size_t(step)].timeline) color=QColor(86,196,255);
             item->setForeground(color);
         }
     }
@@ -2010,7 +2286,116 @@ public:
             engine->sequencer().setSequence(engine->sequencer().indexOfSequence(id), after);
     }
 };
+class SimplifyCueEdit : public QUndoCommand {
+    Engine *engine;
+    quint64 sequenceId;
+    Sequencer::Sequence before, after;
+    std::vector<Engine::Preset> oldPresets, newPresets;
+
+public:
+    SimplifyCueEdit(Engine *e, quint64 id, Sequencer::Sequence original, Sequencer::Sequence simplified,
+                    std::vector<Engine::Preset> oldList, std::vector<Engine::Preset> newList)
+        : QUndoCommand(QStringLiteral("Simplify Cue")), engine(e), sequenceId(id),
+          before(std::move(original)), after(std::move(simplified)),
+          oldPresets(std::move(oldList)), newPresets(std::move(newList))
+    {}
+    void undo() override
+    {
+        auto &seq = engine->sequencer();
+        seq.setSequence(seq.indexOfSequence(sequenceId), before);
+        engine->setPresets(oldPresets);
+    }
+    void redo() override
+    {
+        engine->setPresets(newPresets);
+        auto &seq = engine->sequencer();
+        seq.setSequence(seq.indexOfSequence(sequenceId), after);
+    }
+};
 } // namespace
+void SequenceWindow::simplifyStep(int row)
+{
+    auto &seq = m_engine->sequencer();
+    const int index = seq.current(), stepIndex = stepOfRow(row);
+    const auto before = seq.sequence(index);
+    auto after = before;
+    auto *step = stepAt(after, row);
+    if (!step || actionOfRow(row) >= 0 || stepIndex <= 0 || (!step->snapshot && !step->preset))
+        return;
+
+    auto stored = [this](const Sequencer::Step &cue) {
+        if (cue.preset)
+            return m_engine->preset(m_engine->indexOfPreset(cue.preset));
+        const auto snapshot = m_engine->snapshot(m_engine->indexOfSnapshot(cue.snapshot));
+        auto preset = StoredContent::toPreset(snapshot);
+        preset.id = snapshot.id;
+        preset.name = snapshot.name;
+        return preset;
+    };
+    auto simplified = stored(*step);
+    if (!stored(before.steps[size_t(stepIndex - 1)]).id || !simplified.id)
+        return;
+
+    // Fold the stored cues in playback order. A timeline, sub-sequence or
+    // simultaneous group makes the resulting parameter values unknown.
+    Engine::Preset previous;
+    for (int i = 0; i < stepIndex; ++i) {
+        const auto &cue = before.steps[size_t(i)];
+        if (cue.timeline || cue.sequence || !cue.actions.empty()) {
+            previous = {};
+            continue;
+        }
+        const auto next = stored(cue);
+        for (auto category = next.categories.constBegin(); category != next.categories.constEnd(); ++category) {
+            const int parts = category.key().section(':', 1).toInt();
+            if (!(parts & (Engine::PartSource | Engine::PartEffects)) ||
+                previous.categories.value(category.key()) == category.value())
+                continue;
+            const quint64 layer = category.key().section(':', 0, 0).toULongLong();
+            auto &values = previous.values;
+            values.erase(std::remove_if(values.begin(), values.end(), [layer, parts](const auto &value) {
+                return value.layer == layer && (Engine::partOf(value.path) & parts);
+            }), values.end());
+        }
+        StoredContent::merge(previous, next);
+    }
+
+    const bool removed = StoredContent::simplify(simplified, previous);
+    if (step->preset && !removed) return;
+
+    auto oldList = m_engine->presets();
+    auto newList = oldList;
+    int references = 0;
+    if (step->preset) {
+        const quint64 id = step->preset;
+        for (int i = 0; i < seq.count(); ++i)
+            for (const auto &cue : seq.sequence(i).steps) {
+                references += cue.preset == id;
+                for (const auto &action : cue.actions) references += action.preset == id;
+            }
+    }
+    if (step->preset && references == 1) {
+        newList[size_t(m_engine->indexOfPreset(step->preset))] = simplified;
+    } else {
+        // A delta depends on its predecessor. Leave any other use of the original intact.
+        simplified.id = 0;
+        simplified.name += QStringLiteral(" · Simplified");
+        const int added = m_engine->addPreset(simplified);
+        simplified = m_engine->preset(added);
+        newList.push_back(simplified);
+        step->snapshot = 0;
+        step->preset = simplified.id;
+    }
+    auto *edit = new SimplifyCueEdit(m_engine, seq.sequenceId(index), before, after, oldList, newList);
+    if (m_undo)
+        m_undo->push(edit);
+    else {
+        edit->redo();
+        delete edit;
+    }
+    emit edited();
+}
+
 void SequenceWindow::applySequence(int index, const Sequencer::Sequence &sequence, const QString &text)
 {
     auto &sequencer = m_engine->sequencer();

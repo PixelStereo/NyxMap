@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine.h"
+#include <QPersistentModelIndex>
 #include <QWidget>
 
 class Engine;
@@ -7,6 +8,7 @@ class QComboBox;
 class QLabel;
 class QPushButton;
 class QTableWidget;
+class QPlainTextEdit;
 class QCheckBox;
 class QToolButton;
 class QTimer;
@@ -72,14 +74,17 @@ signals:
     void edited();                // the sequences changed: the project is modified
 
 protected:
-    bool eventFilter(QObject *o, QEvent *e) override; // snapshots dropped onto the steps
+    bool eventFilter(QObject *o, QEvent *e) override; // disclosure clicks and drops onto the steps
 
 private:
+    void refreshStepChanges();
+    QPlainTextEdit *m_stepChanges = nullptr;
     void addStep(int at, quint64 snapshot, quint64 timeline = 0, quint64 preset = 0, quint64 sequence = 0, quint64 folder = 0);
     void setStepSnapshot(int row, quint64 snapshot);
     void setStepTimeline(int row, quint64 timeline); // Play, unless it was already a timeline step
     void setStepLibraryTarget(int row, quint64 preset, quint64 sequence);
     void fillActionMenu(QMenu *menu, int row);
+    void simplifyStep(int row);
     void removeSteps();
     void applySequence(int index, const Sequencer::Sequence &sequence,
                        const QString &text = QStringLiteral("Edit Sequence"));
@@ -111,6 +116,7 @@ private:
     QPushButton *m_tap, *m_clockRun;
     QLabel *m_beatLabel;
     QTableWidget *m_steps;
+    QPersistentModelIndex m_disclosurePress;
     QLabel *m_status; // the step played, and whether something changed since
     bool m_modified = false;
     QPushButton *m_add, *m_dup, *m_del, *m_stepAdd, *m_stepDel, *m_up, *m_down, *m_stop, *m_stopAll, *m_go, *m_back;

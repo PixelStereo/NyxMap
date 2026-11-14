@@ -17,12 +17,17 @@ struct Publishing::Publication {
     std::unique_ptr<CpuSendThread> sender;
     PublishState states[kPublishKindCount]; // guarded by m_stateMutex
     RenderTarget readback;
-    GLuint pbo[2] = {0, 0};
-    GLsync fence[2] = {nullptr, nullptr}; // the read back into each buffer, done
-    int pboIndex = 0, pboW = 0, pboH = 0;
-    bool pboPending = false;
-    double pboTime = 0;
-    std::optional<Timecode> pboTc; // the timecode of the picture in the pending PBO
+    // The pixel buffers the pictures are read back into. Each one in turn: free; being written by the GPU (its fence
+    // tells when it is done); then mapped and lent to the send thread, which copies it and gives it back
+    static constexpr int kPbos = 3;
+    enum class PboState { Free, Reading, Lent };
+    GLuint pbo[kPbos] = {0, 0, 0};
+    GLsync fence[kPbos] = {nullptr, nullptr, nullptr};
+    PboState pboState[kPbos] = {PboState::Free, PboState::Free, PboState::Free};
+    double pboTime[kPbos] = {0, 0, 0};
+    std::optional<Timecode> pboTc[kPbos]; // the timecode of the picture in each buffer
+    int pboW = 0, pboH = 0;
+    int reading = -1; // the buffer the last picture was read into (-1: none)
     int announcedRate = 0;
     double rateSince = 0;
 };
@@ -212,7 +217,6 @@ void Publishing::apply(Publication &pub, const PublishSettings &s)
         if (pub.tap) pubs.push_back(pub.tap);
         if (!pubs.empty() && !pub.sender) pub.sender = std::make_unique<CpuSendThread>();
         if (pub.sender) pub.sender->setPublishers(std::move(pubs));
-        pub.pboPending = false;
     }
 }
 
@@ -229,8 +233,13 @@ void Publishing::releasePublication(Publication &pub)
             gl()->glDeleteSync(s);
             s = nullptr;
         }
-    if (pub.pbo[0]) gl()->glDeleteBuffers(2, pub.pbo);
-    pub.pbo[0] = pub.pbo[1] = 0;
+    // The send thread is gone: nothing reads the mapped buffers any more (deleting one unmaps it)
+    if (pub.pbo[0]) gl()->glDeleteBuffers(Publication::kPbos, pub.pbo);
+    for (int k = 0; k < Publication::kPbos; ++k) {
+        pub.pbo[k] = 0;
+        pub.pboState[k] = Publication::PboState::Free;
+    }
+    pub.reading = -1;
 }
 
 bool Publishing::sharing() const
@@ -282,27 +291,48 @@ void Publishing::readback(quint64 viewport, const RenderTarget &out, double fps,
         }
     }
 
+    using PboState = Publication::PboState;
+    auto f = gl();
+    // The buffers the send thread is done with: unmapped, free again
+    auto takeBack = [&] {
+        if (!pub.sender) return;
+        const unsigned returned = pub.sender->takeReturned();
+        for (int k = 0; k < Publication::kPbos; ++k)
+            if ((returned & (1u << k)) && pub.pboState[k] == PboState::Lent) {
+                f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pub.pbo[k]);
+                f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                pub.pboState[k] = PboState::Free;
+            }
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    };
+    takeBack();
+    // A read not collected (no publisher any more, the GPU late): its buffer is free again
+    auto dropReading = [&] {
+        if (pub.reading < 0) return;
+        if (pub.fence[pub.reading]) f->glDeleteSync(pub.fence[pub.reading]);
+        pub.fence[pub.reading] = nullptr;
+        if (pub.pboState[pub.reading] == PboState::Reading) pub.pboState[pub.reading] = PboState::Free;
+        pub.reading = -1;
+    };
     if (!pub.sender || !pub.sender->hasPublishers() || !out.tex) {
-        pub.pboPending = false;
+        dropReading();
         return;
     }
-    auto f = gl();
     const int w = out.w, h = out.h;
     const GLsizeiptr bytes = GLsizeiptr(w) * h * 4;
     if (!pub.pbo[0] || w != pub.pboW || h != pub.pboH) {
-        if (!pub.pbo[0]) f->glGenBuffers(2, pub.pbo);
+        // Another size: the send thread lets go of the buffers it reads before they are made again
+        pub.sender->recall();
+        takeBack();
+        dropReading();
+        if (!pub.pbo[0]) f->glGenBuffers(Publication::kPbos, pub.pbo);
         for (GLuint b : pub.pbo) {
             f->glBindBuffer(GL_PIXEL_PACK_BUFFER, b);
             f->glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
         }
-        for (GLsync &s : pub.fence)
-            if (s) {
-                f->glDeleteSync(s);
-                s = nullptr;
-            }
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         pub.pboW = w;
         pub.pboH = h;
-        pub.pboPending = false;
     }
     pub.readback.ensure(w, h);
     // On allocation failure ensure() deliberately preserves its old
@@ -313,7 +343,7 @@ void Publishing::readback(quint64 viewport, const RenderTarget &out, double fps,
         return; // keep the last successfully sent picture; retry next frame
     }
 
-    // 1) Current frame flipped (top-to-bottom rows), then read back asynchronously into a PBO
+    // 1) Current frame flipped (top-to-bottom rows)
     pub.readback.bind();
     f->glDisable(GL_BLEND);
     f->glUseProgram(m_flipProgram);
@@ -321,50 +351,70 @@ void Publishing::readback(quint64 viewport, const RenderTarget &out, double fps,
     f->glBindTexture(GL_TEXTURE_2D, out.tex);
     f->glUniform1i(m_flipTexLoc, 0);
     m_drawQuad();
-    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pub.pbo[pub.pboIndex]);
-    f->glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    f->glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
-    if (pub.fence[pub.pboIndex]) f->glDeleteSync(pub.fence[pub.pboIndex]);
-    pub.fence[pub.pboIndex] = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
-    // 2) Previous frame, normally available by now: copied to the send thread. Its read back not done yet (the GPU
-    // late): waited for 2 ms at most, then that frame is not sent (counted) rather than the render thread held up
-    // by the mapping
-    bool ready = pub.pboPending;
-    if (ready && pub.fence[1 - pub.pboIndex]) {
-        const GLenum r = f->glClientWaitSync(pub.fence[1 - pub.pboIndex], GL_SYNC_FLUSH_COMMANDS_BIT, 2000000);
-        ready = r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED;
-        if (!ready) ++m_readbacksSkipped;
-    }
-    if (ready) {
-        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pub.pbo[1 - pub.pboIndex]);
-        const void *ptr = f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT);
-        if (ptr) {
-            if (CpuFrame *cf = pub.sender->acquire()) {
-                cf->bgra.resize(size_t(bytes));
-                std::memcpy(cf->bgra.data(), ptr, size_t(bytes));
-                cf->width = w;
-                cf->height = h;
-                cf->stride = w * 4;
-                cf->timestamp100ns = qint64(pub.pboTime);
-                cf->timecode = pub.pboTc;
+    // 2) Previous frame, normally available by now: its buffer mapped and lent to the send thread, which copies it
+    // (the render thread no longer copies the picture). Its read back not done yet (the GPU late): waited for 2 ms at
+    // most, then that frame is not sent (counted) rather than the render thread held up by the mapping
+    if (pub.reading >= 0) {
+        const int k = pub.reading;
+        bool ready = true;
+        if (pub.fence[k]) {
+            const GLenum r = f->glClientWaitSync(pub.fence[k], GL_SYNC_FLUSH_COMMANDS_BIT, 2000000);
+            ready = r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED;
+        }
+        if (ready) {
+            if (pub.fence[k]) f->glDeleteSync(pub.fence[k]);
+            pub.fence[k] = nullptr;
+            pub.reading = -1;
+            pub.pboState[k] = PboState::Free;
+            f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pub.pbo[k]);
+            if (const void *ptr = f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT)) {
+                LentFrame lent;
+                lent.data = static_cast<const uint8_t *>(ptr);
+                lent.bytes = size_t(bytes);
+                lent.token = k;
+                lent.width = w;
+                lent.height = h;
+                lent.stride = w * 4;
+                lent.timestamp100ns = qint64(pub.pboTime[k]);
+                lent.timecode = pub.pboTc[k];
                 // Announced frame rate: only changes if the new value holds for 2 s
                 const int rate = standardRate(fps);
                 const double nowS = m_clock.nsecsElapsed() / 1e9;
                 if (pub.announcedRate == 0) pub.announcedRate = rate;
                 if (rate == pub.announcedRate) pub.rateSince = nowS;
                 else if (nowS - pub.rateSince > 2.0) pub.announcedRate = rate;
-                cf->fpsN = pub.announcedRate;
-                cf->fpsD = 1;
-                pub.sender->submit(cf);
+                lent.fpsN = pub.announcedRate;
+                lent.fpsD = 1;
+                pub.pboState[k] = PboState::Lent;
+                pub.sender->lend(lent);
+                takeBack(); // the one it replaced, if the send thread is late
             }
-            f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        } else {
+            ++m_readbacksSkipped;
+            dropReading();
         }
+    }
+
+    // 3) Current frame read back asynchronously into a free buffer. None free (the send thread still copies one, the
+    // next waits): this frame is not sent
+    int target = -1;
+    for (int k = 0; k < Publication::kPbos && target < 0; ++k)
+        if (pub.pboState[k] == PboState::Free) target = k;
+    if (target >= 0) {
+        pub.readback.bind();
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, pub.pbo[target]);
+        f->glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        f->glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+        if (pub.fence[target]) f->glDeleteSync(pub.fence[target]);
+        pub.fence[target] = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        pub.pboState[target] = PboState::Reading;
+        pub.pboTime[target] = double(m_clock.nsecsElapsed() / 100);
+        pub.pboTc[target] = tc;
+        pub.reading = target;
+    } else {
+        ++m_readbacksSkipped;
     }
     f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    pub.pboTime = double(m_clock.nsecsElapsed() / 100);
-    pub.pboTc = tc;
-    pub.pboPending = true;
-    pub.pboIndex = 1 - pub.pboIndex;
 }

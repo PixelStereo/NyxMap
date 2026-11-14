@@ -377,6 +377,16 @@ void TimecodeRouter::openAudio(qint64 now, std::map<quint64, QString> &status)
 }
 
 // MTC: a thread of its own, stepping each millisecond while a timecode goes to a MIDI output (nothing else may hold it up)
+void TimecodeRouter::sendMidi(quint64 output, MtcSender::Message message)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_pendingMidi.size() >= 4096) return;
+        m_pendingMidi.emplace_back(output, std::move(message));
+    }
+    m_wake.notify_all();
+}
+
 void TimecodeRouter::runMidi()
 {
 #ifdef _WIN32
@@ -390,10 +400,11 @@ void TimecodeRouter::runMidi()
     for (;;) {
         std::vector<Stream> streams;
         std::vector<MidiOutput> midi;
+        std::vector<std::pair<quint64, MtcSender::Message>> pending;
         bool changed = false;
         {
             std::unique_lock<std::mutex> lk(m_mutex);
-            const auto wakeUp = [this] { return m_stop || m_dirtyMidi; };
+            const auto wakeUp = [this] { return m_stop || m_dirtyMidi || !m_pendingMidi.empty(); };
             // Each millisecond while sending; otherwise now and then, to open a port plugged in since
             m_wake.wait_for(lk, m_running.empty() ? std::chrono::milliseconds(500) : std::chrono::milliseconds(1), wakeUp);
             if (m_stop) break;
@@ -404,12 +415,23 @@ void TimecodeRouter::runMidi()
                 changed = true;
             }
             sink = m_sink;
+            pending.swap(m_pendingMidi);
         }
         const qint64 now = clock.elapsed();
         if (changed) reconfigureMidi(streams, midi, bool(sink));
 
         std::map<quint64, QString> ms;
         openPorts(now, bool(sink), ms);
+        for (const auto &[id, message] : pending) {
+            const auto output = m_midiNow.find(id);
+            if (output == m_midiNow.end()) continue;
+            if (sink) {
+                sink(id, message);
+                continue;
+            }
+            const auto port = m_ports.find(portKey(output->second));
+            if (port != m_ports.end() && port->second.out) port->second.out->send(message);
+        }
 
         for (Running &r : m_running) {
             const std::optional<TcReading> reading = r.stream.clock->reading();

@@ -251,6 +251,31 @@ RemoveLayer::RemoveLayer(Engine *e, int index) : m_e(e), m_index(index)
 void RemoveLayer::undo() { m_e->insertLayerJson(m_index, m_json); }
 void RemoveLayer::redo() { m_e->removeLayer(m_index); }
 
+RemoveLayers::RemoveLayers(Engine *e, QList<int> rows) : m_e(e)
+{
+    std::sort(rows.begin(), rows.end());
+    for (int row : rows) m_layers.emplace_back(row, m_e->layerJson(row));
+    setText(rows.size() > 1 ? QStringLiteral("Delete %1 Layers").arg(rows.size()) : QStringLiteral("Delete Layer"));
+}
+
+void RemoveLayers::undo()
+{
+    for (const auto &[row, state] : m_layers) m_e->insertLayerJson(row, state);
+}
+
+void RemoveLayers::redo()
+{
+    QList<int> rows;
+    for (const auto &entry : m_layers) rows.append(entry.first);
+    const auto removed = m_e->removeLayers(rows);
+    if (removed.size() != rows.size()) {
+        m_layers.erase(std::remove_if(m_layers.begin(), m_layers.end(), [&](const auto &entry) {
+            return !removed.contains(entry.first);
+        }), m_layers.end());
+    }
+    if (m_layers.empty()) setObsolete(true);
+}
+
 MoveLayer::MoveLayer(Engine *e, int from, int to) : m_e(e), m_from(from), m_to(to)
 {
     setText(QStringLiteral("Reorder Layers"));
@@ -300,7 +325,8 @@ SetStructure::SetStructure(Engine *e, const LayerTree &before, const LayerTree &
     setText(text);
 }
 
-RecallSnapshot::RecallSnapshot(Engine *e, int snapshot) : m_e(e), m_snapshot(e->snapshot(snapshot).id)
+RecallSnapshot::RecallSnapshot(Engine *e, int snapshot, double fadeOverride)
+    : m_e(e), m_snapshot(e->snapshot(snapshot).id), m_fadeOverride(fadeOverride)
 {
     m_before = e->captureRecallLayers(snapshot);
     m_beforeComposition = e->captureComposition();
@@ -323,7 +349,7 @@ void RecallSnapshot::redo()
     if (index < 0) return;
     if (m_first) {
         m_first = false;
-        if (!m_done) m_e->recallSnapshot(index);
+        if (!m_done) m_e->recallSnapshot(index, m_fadeOverride);
     } else {
         const Engine::Snapshot m = m_e->snapshot(index);
         if (!m.layers.isEmpty()) m_e->applyLayers(m.layers, 0, true);
@@ -455,7 +481,8 @@ void SetLayerAnim::apply(const std::optional<Animation> &a)
 
 // --- Presets -----------------------------------------------------------------
 
-RecallPreset::RecallPreset(Engine *e, quint64 preset) : m_e(e), m_preset(preset)
+RecallPreset::RecallPreset(Engine *e, quint64 preset, double fadeOverride)
+    : m_e(e), m_preset(preset), m_fadeOverride(fadeOverride)
 {
     Engine::Lock lock(&e->mutex()); // parameter outputs and animation clocks are one Undo state
     const Engine::Preset p = e->preset(e->indexOfPreset(preset));
@@ -524,7 +551,7 @@ void RecallPreset::undo()
 void RecallPreset::redo()
 {
     const int index = m_e->indexOfPreset(m_preset);
-    if (index >= 0) m_e->recallPreset(index);
+    if (index >= 0) m_e->recallPreset(index, m_fadeOverride);
 }
 
 static bool samePresets(const std::vector<Engine::Preset> &a, const std::vector<Engine::Preset> &b)

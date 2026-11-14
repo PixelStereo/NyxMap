@@ -220,8 +220,10 @@ int runInteractionFilterTests(Engine &e)
             outs.push_back(*p.step(it, 1.0 / 60));
         }
         check(outs == std::vector<double>({0, 1, 1, 0, 0}), "toggle: each press the other state");
+        it.filters.front().name = QStringLiteral("Latch the strobe");
         const Interaction again = Interaction::fromJson(it.toJson());
-        check(again.filters == it.filters, "written and read back");
+        check(again.filters == it.filters && again.filters.front().displayName() == "Latch the strobe",
+              "filter settings and custom label are written and read back");
         Interaction r = it;
         r.filters = {InteractionStage::remap(-2, 5, 10, 20)};
         const Interaction back = Interaction::fromJson(r.toJson());

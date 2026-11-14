@@ -1,4 +1,5 @@
 #include "Widgets.h"
+#include "Mapping.h"
 #include "ColorPicker.h"
 #include <QDateTime>
 #include <QSpinBox>
@@ -106,6 +107,18 @@ QString theme::tabStyle()
                           "QTabBar::tab:disabled { color:#777782; border-color:#44444e; }"
                           "QTabWidget::pane { border:1px solid #62626e; }")
         .arg(css());
+}
+
+QColor theme::cueColor(CueKind kind)
+{
+    switch (kind) {
+    case CueKind::Snapshot: return QColor(172, 190, 207);
+    case CueKind::Preset: return QColor(112, 142, 169);
+    case CueKind::Timeline: return QColor(102, 178, 173);
+    case CueKind::Group: return QColor(184, 121, 101);
+    case CueKind::Sequence: return QColor(139, 144, 153);
+    }
+    return {};
 }
 
 namespace autoselect {
@@ -292,6 +305,94 @@ void ResetLabel::leaveEvent(QEvent *e)
 }
 
 // ---------------------------------------------------------------------------
+// XyPad
+// ---------------------------------------------------------------------------
+
+XyPad::XyPad(QWidget *parent) : QWidget(parent)
+{
+    setMinimumHeight(110);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+    setCursor(Qt::CrossCursor);
+    setToolTip(QStringLiteral("Drag: X across, Y upward · double-click: back to the default"));
+}
+
+void XyPad::setRange(double lo, double hi)
+{
+    m_lo = lo;
+    m_hi = hi > lo ? hi : lo + 1;
+    update();
+}
+
+void XyPad::setValue(double x, double y)
+{
+    if (m_dragging) return;
+    m_x = std::clamp(x, m_lo, m_hi);
+    m_y = std::clamp(y, m_lo, m_hi);
+    update();
+}
+
+QRectF XyPad::area() const { return QRectF(rect()).adjusted(4, 4, -4, -4); }
+
+void XyPad::drag(QPointF pos)
+{
+    const QRectF a = area();
+    const double nx = std::clamp((pos.x() - a.left()) / std::max(1.0, a.width()), 0.0, 1.0);
+    const double ny = std::clamp(1.0 - (pos.y() - a.top()) / std::max(1.0, a.height()), 0.0, 1.0);
+    const double x = m_lo + nx * (m_hi - m_lo), y = m_lo + ny * (m_hi - m_lo);
+    if (x == m_x && y == m_y) return;
+    m_x = x;
+    m_y = y;
+    update();
+    emit valueEdited(m_x, m_y);
+}
+
+void XyPad::mousePressEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_dragging = true;
+    drag(e->position());
+}
+
+void XyPad::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_dragging) drag(e->position());
+}
+
+void XyPad::mouseReleaseEvent(QMouseEvent *) { m_dragging = false; }
+
+void XyPad::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    m_x = m_y = std::clamp(m_default, m_lo, m_hi);
+    update();
+    emit valueEdited(m_x, m_y);
+}
+
+void XyPad::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF a = area();
+    p.setPen(QPen(QColor(70, 70, 78), 1));
+    p.setBrush(QColor(30, 30, 34));
+    p.drawRoundedRect(a, 5, 5);
+    p.setPen(QPen(QColor(55, 55, 62), 1));
+    p.drawLine(QPointF(a.center().x(), a.top()), QPointF(a.center().x(), a.bottom()));
+    p.drawLine(QPointF(a.left(), a.center().y()), QPointF(a.right(), a.center().y()));
+    const double nx = (m_x - m_lo) / (m_hi - m_lo), ny = (m_y - m_lo) / (m_hi - m_lo);
+    const QPointF dot(a.left() + nx * a.width(), a.bottom() - ny * a.height());
+    p.setPen(QPen(theme::accent(), 1));
+    p.drawLine(QPointF(dot.x(), a.top()), QPointF(dot.x(), a.bottom()));
+    p.drawLine(QPointF(a.left(), dot.y()), QPointF(a.right(), dot.y()));
+    p.setPen(Qt::NoPen);
+    p.setBrush(theme::accent());
+    p.drawEllipse(dot, 6, 6);
+    p.setPen(QColor(150, 150, 158));
+    p.drawText(a.adjusted(6, 4, -6, -4), Qt::AlignRight | Qt::AlignBottom,
+               QStringLiteral("%1 , %2").arg(m_x, 0, 'f', m_decimals).arg(m_y, 0, 'f', m_decimals));
+}
+
+// ---------------------------------------------------------------------------
 // RoiEditor
 // ---------------------------------------------------------------------------
 
@@ -328,6 +429,26 @@ void RoiEditor::setRoi(const QRectF &r)
     update();
 }
 
+void RoiEditor::setPolygon(int mode, const std::array<QPointF, 4> &points)
+{
+    if (mode != m_roiMode) m_drag = -1;
+    if (m_drag >= 0 || (mode == m_roiMode && points == m_roiPoints)) return;
+    m_roiMode = mode;
+    m_roiPoints = points;
+    setToolTip(mode ? QStringLiteral("Drag the numbered points on the source image")
+                    : QStringLiteral("Drag a side to crop the image, or drag inside to move the rectangle"));
+    update();
+}
+
+QPolygonF RoiEditor::polygon() const
+{
+    const QRectF pic = picture();
+    QPolygonF result;
+    for (int i = 0; i < (m_roiMode == 1 ? 3 : 4); ++i)
+        result << QPointF(pic.left() + m_roiPoints[i].x() * pic.width(), pic.top() + m_roiPoints[i].y() * pic.height());
+    return result;
+}
+
 int RoiEditor::heightForWidth(int w) const { return std::clamp(int(std::lround((w - 16) / m_aspect)) + 16, 80, 400); }
 
 QRectF RoiEditor::picture() const
@@ -354,6 +475,25 @@ void RoiEditor::paintEvent(QPaintEvent *)
     } else {
         p.drawImage(pic, m_image);
     }
+    if (m_roiMode) {
+        const QPolygonF shape = polygon();
+        QPainterPath outside;
+        outside.addRect(pic);
+        outside.addPolygon(shape);
+        outside.setFillRule(Qt::OddEvenFill);
+        p.fillPath(outside, QColor(0, 0, 0, 150));
+        p.setPen(QPen(theme::accent(), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolygon(shape);
+        if (isEnabled()) for (int i = 0; i < shape.size(); ++i) {
+            p.setBrush(theme::accent());
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(shape[i], 8, 8);
+            p.setPen(QColor(20, 20, 25));
+            p.drawText(QRectF(shape[i] - QPointF(8, 8), QSizeF(16, 16)), Qt::AlignCenter, QString::number(i + 1));
+        }
+        return;
+    }
     const QRectF c(pic.left() + m_roi.left() * pic.width(), pic.top() + m_roi.top() * pic.height(),
                    m_roi.width() * pic.width(), m_roi.height() * pic.height());
     // Unused part dimmed
@@ -379,6 +519,12 @@ void RoiEditor::paintEvent(QPaintEvent *)
 
 int RoiEditor::hit(QPointF p) const
 {
+    if (m_roiMode) {
+        const auto shape = polygon();
+        for (int i = 0; i < shape.size(); ++i)
+            if (QLineF(shape[i], p).length() <= 10) return i;
+        return -1;
+    }
     const QRectF pic = picture();
     const QRectF c(pic.left() + m_roi.left() * pic.width(), pic.top() + m_roi.top() * pic.height(),
                    m_roi.width() * pic.width(), m_roi.height() * pic.height());
@@ -413,6 +559,21 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
 {
     const QRectF pic = picture();
     const QPointF n((e->position().x() - pic.left()) / pic.width(), (e->position().y() - pic.top()) / pic.height());
+    if (m_roiMode) {
+        if (m_drag < 0) {
+            setCursor(hit(e->position()) >= 0 ? Qt::OpenHandCursor : Qt::ArrowCursor);
+            return;
+        }
+        const QPointF point(std::clamp(n.x(), 0.0, 1.0), std::clamp(n.y(), 0.0, 1.0));
+        auto points = m_roiPoints;
+        points[m_drag] = point;
+        if (points != m_roiPoints && validRoiPolygon(points.data(), m_roiMode == 1 ? 3 : 4)) {
+            m_roiPoints = points;
+            update();
+            emit roiPointEdited(m_drag, point);
+        }
+        return;
+    }
     if (m_drag < 0) {
         const int h = hit(e->position());
         setCursor(h == 0 || h == 2 ? Qt::SizeHorCursor : h == 1 || h == 3 ? Qt::SizeVerCursor : h == 4 ? Qt::SizeAllCursor
@@ -438,7 +599,24 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
     }
     default: break;
     }
-    const QRectF nc(QPointF(l, t), QPointF(r, b));
+    QRectF nc(QPointF(l, t), QPointF(r, b));
+    if (m_keepProportions && m_drag >= 0 && m_drag < 4 && m_dragStart.height() > 0) {
+        // The side dragged leads; the other axis follows around its center, the opposite side staying where it was
+        const bool horizontal = m_drag % 2 == 0;
+        nc = keepRatio(nc, m_dragStart.width() / m_dragStart.height(), horizontal ? 0 : 1);
+        const QPointF center = m_dragStart.center();
+        if (horizontal) {
+            if (m_drag == 0) nc.moveRight(m_dragStart.right());
+            else nc.moveLeft(m_dragStart.left());
+            nc.moveCenter(QPointF(nc.center().x(), center.y()));
+        } else {
+            if (m_drag == 1) nc.moveBottom(m_dragStart.bottom());
+            else nc.moveTop(m_dragStart.top());
+            nc.moveCenter(QPointF(center.x(), nc.center().y()));
+        }
+        nc.translate(nc.left() < 0 ? -nc.left() : nc.right() > 1 ? 1 - nc.right() : 0,
+                     nc.top() < 0 ? -nc.top() : nc.bottom() > 1 ? 1 - nc.bottom() : 0);
+    }
     if (nc != m_roi) {
         m_roi = nc;
         update();
@@ -447,6 +625,17 @@ void RoiEditor::mouseMoveEvent(QMouseEvent *e)
 }
 
 void RoiEditor::mouseReleaseEvent(QMouseEvent *) { m_drag = -1; }
+
+QRectF RoiEditor::keepRatio(QRectF r, double ratio, int axis)
+{
+    ratio = std::max(ratio, 1e-3);
+    double w = r.width(), h = r.height();
+    if (axis == 0) h = w / ratio;
+    else w = h * ratio;
+    if (w > 1) { w = 1; h = w / ratio; }
+    if (h > 1) { h = 1; w = h * ratio; }
+    return QRectF(r.left(), r.top(), std::max(w, 0.01), std::max(h, 0.01));
+}
 
 // ---------------------------------------------------------------------------
 // ColorEditor

@@ -199,13 +199,17 @@ public:
             }
             std::optional<double> value;
             if (node.kind == Kind::Mix || node.kind == Kind::Select) {
-                if (m_inputs[i].size() == 2) {
-                    auto a = m_inputs[i][0] == missing ? std::nullopt : m_values[m_inputs[i][0]];
-                    auto b = m_inputs[i][1] == missing ? std::nullopt : m_values[m_inputs[i][1]];
-                    if (node.kind == Kind::Select) value = node.selectedInput == 0 ? a : b;
-                    else if (a && b) value = *a * (1 - std::clamp(node.mix, 0.0, 1.0)) + *b * std::clamp(node.mix, 0.0, 1.0);
+                auto inputAt = [&](size_t port) -> std::optional<double> {
+                    return port >= m_inputs[i].size() || m_inputs[i][port] == missing
+                        ? std::nullopt : m_values[m_inputs[i][port]];
+                };
+                if (node.kind == Kind::Select) value = inputAt(node.selectedInput == 0 ? 0 : 1);
+                else {
+                    const auto a = inputAt(0), b = inputAt(1);
+                    const double mix = std::clamp(node.mix, 0.0, 1.0);
+                    if (a && b) value = *a * (1 - mix) + *b * mix;
                 }
-                m_values[i] = value;
+                m_values[i] = value && std::isfinite(*value) ? value : std::nullopt;
                 continue;
             }
             for (size_t parent : m_inputs[i]) {
@@ -216,7 +220,7 @@ public:
                 else if (node.kind == Kind::Minimum) *value = std::min(*value, *m_values[parent]);
                 else if (node.kind == Kind::Multiply) *value *= *m_values[parent];
             }
-            if (node.kind == Kind::Filter && node.settings.enabled && value) {
+            if ((node.kind == Kind::Filter || node.kind == Kind::Destination) && node.settings.enabled && value) {
                 m_processors[i].input(node.settings, *value);
                 value = m_processors[i].step(node.settings, dt);
             }

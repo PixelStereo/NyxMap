@@ -1,15 +1,21 @@
 #include "InteractionPanel.h"
-#include "InteractionGraphWorkspace.h"
 #include "AdsrCurve.h"
-#include "InteractionPatch.h"
-#include <QStackedWidget>
 #include "TimelinePanel.h"
 #include "AudioSpectrum.h"
 #include <QDoubleSpinBox>
 #include "AnimEditor.h"
 #include "PresetEditor.h"
 #include "Osc.h"
+#include "OscCodec.h"
+#include "SequenceFeedback.h"
+#include "InteractionOutput.h"
+#include <QSettings>
+#include <QSpinBox>
+#include <QRegularExpression>
+#include <QCheckBox>
+#include <QUdpSocket>
 #include "Engine.h"
+#include "ShowMenus.h"
 #include "Widgets.h"
 
 #include <QApplication>
@@ -19,10 +25,10 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QKeySequenceEdit>
@@ -42,6 +48,8 @@
 #include <QSplitter>
 #include <QButtonGroup>
 #include <QTimer>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUndoCommand>
@@ -54,17 +62,119 @@
 // ---------------------------------------------------------------------------
 namespace {
 
+void showVisionSetup(QWidget *parent, Engine *engine, const Interaction &input, const QString &category)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("MediaPipe Setup · %1").arg(category));
+    const QString prefix = QStringLiteral("/mediapipe/%1/").arg(osc::safeName(category).toLower());
+    const auto address = [&prefix](const QString &key) { return prefix + osc::safeName(key); };
+    dialog.resize(930, 570);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *split = new QSplitter(Qt::Horizontal, &dialog);
+    auto *preview = new QLabel;
+    preview->setAlignment(Qt::AlignCenter);
+    preview->setMinimumSize(280, 180);
+    preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    split->addWidget(preview);
+    auto *meters = new QTreeWidget;
+    meters->setRootIsDecorated(false);
+    meters->setHeaderLabels({QStringLiteral("Signal"), QStringLiteral("Live value"), QStringLiteral("Send OSC")});
+    meters->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    meters->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    split->addWidget(meters);
+    split->setSizes({480, 450});
+    layout->addWidget(split, 1);
+    auto *status = new QLabel;
+    status->setWordWrap(true);
+    layout->addWidget(status);
+    auto *output = new QHBoxLayout;
+    auto *armed = new QCheckBox(QStringLiteral("Send selected signals"));
+    auto *host = new QLineEdit(QStringLiteral("127.0.0.1"));
+    host->setPlaceholderText(QStringLiteral("Destination IP"));
+    auto *port = new QSpinBox;
+    port->setRange(1, 65535);
+    port->setValue(1234);
+    output->addWidget(armed);
+    output->addWidget(host);
+    output->addWidget(port);
+    layout->addLayout(output);
+    layout->addWidget(new QLabel(QStringLiteral("OSC · %1<signal>").arg(prefix)));
+
+    QUdpSocket socket;
+    struct Row { QTreeWidgetItem *item; QProgressBar *meter; };
+    QMap<QString, Row> rows;
+    QTimer timer;
+    auto refresh = [&] {
+        const auto frame = engine->visionPreview(input.pixels, true);
+        if (frame.isNull()) preview->clear();
+        else preview->setPixmap(QPixmap::fromImage(frame).scaled(preview->size(), Qt::KeepAspectRatio,
+                                                                 Qt::SmoothTransformation));
+        const auto expressions = engine->visionSignals(input);
+        for (auto it = expressions.begin(); it != expressions.end(); ++it) {
+            if (rows.contains(it.key())) continue;
+            auto *item = new QTreeWidgetItem(meters, {it.key()});
+            item->setCheckState(2, Qt::Unchecked);
+            item->setToolTip(0, address(it.key()));
+            auto *meter = new QProgressBar;
+            meter->setRange(0, 1000);
+            meters->setItemWidget(item, 1, meter);
+            rows.insert(it.key(), {item, meter});
+        }
+        const QHostAddress destination(host->text().trimmed());
+        const bool sending = armed->isChecked() && !destination.isNull();
+        int sent = 0;
+        bool failed = false;
+        for (auto it = rows.begin(); it != rows.end(); ++it) {
+            const double value = expressions.value(it.key()).toDouble();
+            it->meter->setValue(qRound(1000 * std::clamp(value, 0.0, 1.0)));
+            it->meter->setFormat(expressions.isEmpty() ? QStringLiteral("—") : QString::number(value, 'f', 3));
+            if (sending && !expressions.isEmpty() && it->item->checkState(2) == Qt::Checked) {
+                const auto packet = osc::encode({address(it.key()), QStringLiteral("f"), {value}});
+                if (socket.writeDatagram(packet, destination, quint16(port->value())) < 0) failed = true;
+                else ++sent;
+            }
+        }
+        QString message = engine->visionStatus(input.pixels, true);
+        if (expressions.isEmpty()) message += QStringLiteral(" · Waiting for signals");
+        else if (expressions.value("Face · Count").toInt(-1) == 0)
+            message += QStringLiteral(" · No face detected");
+        if (armed->isChecked() && destination.isNull()) message += QStringLiteral(" · Enter a valid destination IP");
+        if (sent) message += QStringLiteral(" · OSC sent: %1").arg(sent);
+        if (failed) message += QStringLiteral(" · OSC send failed");
+        status->setText(message);
+    };
+    QObject::connect(&timer, &QTimer::timeout, &dialog, refresh);
+    timer.start(50);
+    engine->setVisionSetupInput(input);
+    refresh();
+    dialog.exec();
+    engine->setVisionSetupInput(std::nullopt);
+}
+
+class SetTargetRoutes : public QUndoCommand
+{
+public:
+    SetTargetRoutes(Engine *engine, InteractionGraph after, const QString &text)
+        : QUndoCommand(text), m_engine(engine), m_before(engine->interactionGraph()), m_after(std::move(after)) {}
+    void undo() override { m_engine->setInteractionGraph(m_before); }
+    void redo() override { m_engine->setInteractionGraph(m_after); }
+private:
+    Engine *m_engine;
+    InteractionGraph m_before, m_after;
+};
+
 class SetInteractions : public QUndoCommand
 {
 public:
     SetInteractions(Engine *e, std::vector<Interaction> before, std::vector<Interaction> after, const QString &text,
-                    const QString &mergeKey)
+                    const QString &mergeKey, std::optional<std::vector<InteractionGroup>> groupsAfter = std::nullopt)
         : QUndoCommand(text), m_e(e), m_before(std::move(before)), m_after(std::move(after)), m_key(mergeKey),
-          m_time(QDateTime::currentMSecsSinceEpoch())
+          m_time(QDateTime::currentMSecsSinceEpoch()), m_groupsBefore(e->interactionGroups()),
+          m_groupsAfter(groupsAfter ? *groupsAfter : m_groupsBefore)
     {
     }
-    void undo() override { m_e->setInteractions(m_before); }
-    void redo() override { m_e->setInteractions(m_after); }
+    void undo() override { m_e->setInteractions(m_before, m_groupsBefore); }
+    void redo() override { m_e->setInteractions(m_after, m_groupsAfter); }
     int id() const override { return m_key.isEmpty() ? -1 : 0x1A7E; }
     bool mergeWith(const QUndoCommand *other) override
     {
@@ -80,7 +190,25 @@ private:
     std::vector<Interaction> m_before, m_after;
     QString m_key;
     qint64 m_time;
+    std::vector<InteractionGroup> m_groupsBefore, m_groupsAfter;
 };
+
+// The list as a tree: dropping an interaction on a group puts it there, on the list's top level takes it out; a group goes in
+// another the same way. Said once dropped (the panel reads the tree back).
+class InteractionTree : public QTreeWidget
+{
+public:
+    std::function<void()> dropped;
+
+protected:
+    void dropEvent(QDropEvent *event) override
+    {
+        QTreeWidget::dropEvent(event);
+        if (dropped) dropped();
+    }
+};
+
+constexpr int kGroupRole = Qt::UserRole + 1; // an item of a group: its id (an interaction's item: 0)
 
 constexpr char kMime[] = "application/x-nyxmap-interaction-settings";
 const InteractionSource kKinds[] = {InteractionSource::Keyboard, InteractionSource::Midi,  InteractionSource::Osc,
@@ -98,6 +226,30 @@ protected:
     {
         if (pressed && e->button() == Qt::LeftButton) pressed();
         QFrame::mousePressEvent(e);
+    }
+};
+
+class FilterNameLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> rename;
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton) event->accept();
+        else QLabel::mousePressEvent(event);
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && rename) {
+            event->accept();
+            rename();
+        } else {
+            QLabel::mouseDoubleClickEvent(event);
+        }
     }
 };
 
@@ -179,7 +331,7 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     auto *bar = new QHBoxLayout;
     auto *addButton = new QPushButton(QStringLiteral("+"));
     addButton->setFixedWidth(32);
-    addButton->setToolTip(QStringLiteral("A new interaction; choose its category with Source"));
+    addButton->setToolTip(QStringLiteral("Add an interaction of the current category, or choose a category in All"));
     m_remove = new QPushButton(QStringLiteral("−"));
     m_remove->setFixedWidth(32);
     m_remove->setToolTip(QStringLiteral("Remove the selected interactions"));
@@ -198,29 +350,41 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_search->setClearButtonEnabled(true);
     bar->addWidget(addButton);
     bar->addWidget(m_remove);
+    auto *groupButton = new QPushButton(QStringLiteral("▤"));
+    groupButton->setObjectName(QStringLiteral("interactionGroup"));
+    groupButton->setFixedWidth(32);
+    groupButton->setToolTip(QStringLiteral("A group of the selected interactions (none selected: an empty one), as the layers have: "
+                                           "drag interactions in and out to put the list in order"));
+    connect(groupButton, &QPushButton::clicked, this, [this] { groupSelected(); });
+    bar->addWidget(groupButton);
     bar->addWidget(m_learn);
-    auto *nodes = new QToolButton;
-    nodes->setObjectName(QStringLiteral("interactionNodes"));
-    nodes->setText(QStringLiteral("Nodes"));
-    nodes->setCheckable(true);
-    nodes->setToolTip(QStringLiteral("The same interactions as nodes and cables"));
-    bar->addWidget(nodes);
+
     bar->addWidget(m_search, 1);
     v->addLayout(bar);
 
-    m_list = new QTreeWidget;
+    auto *tree = new InteractionTree;
+    tree->dropped = [this] { applyTree(); };
+    m_list = tree;
     m_list->setObjectName(QStringLiteral("interactionList"));
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
         auto *item = m_list->itemAt(point);
-        if (!item) return;
         QMenu menu(this);
-        if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, item->data(0, Qt::UserRole).toULongLong());
+        const quint64 group = item ? item->data(0, kGroupRole).toULongLong() : 0;
+        if (item && !group)
+            if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, item->data(0, Qt::UserRole).toULongLong());
+        fillGroupMenu(&menu, group);
         if (!menu.isEmpty()) menu.exec(m_list->viewport()->mapToGlobal(point));
     });
     m_list->setColumnCount(3);
     m_list->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Source"), QStringLiteral("Target")});
-    m_list->setRootIsDecorated(false);
+    m_list->setRootIsDecorated(true);
+    m_list->setIndentation(14);
+    m_list->setDragEnabled(true);
+    m_list->setAcceptDrops(true);
+    m_list->setDropIndicatorShown(true);
+    m_list->setDragDropMode(QAbstractItemView::InternalMove);
+    m_list->setDefaultDropAction(Qt::MoveAction);
     m_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_list->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
@@ -253,65 +417,13 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     m_scroll = scroll;
     sv->addWidget(scroll, 1);
 
-    m_patch = new InteractionPatch;
-    m_patch->onSelect = [this](quint64 id) { select(id); };
-    m_patch->onToggle = [this](quint64 id) {
-        for (Interaction it : m_engine->interactions())
-            if (it.id == id) {
-                it.enabled = !it.enabled;
-                commit(it, it.enabled ? QStringLiteral("Enable Interaction") : QStringLiteral("Disable Interaction"));
-                rebuildList();
-                return;
-            }
-    };
-    m_patch->onRemove = [this](quint64 id) {
-        std::vector<Interaction> list = m_engine->interactions();
-        list.erase(std::remove_if(list.begin(), list.end(), [id](const Interaction &it) { return it.id == id; }), list.end());
-        commitList(list, QStringLiteral("Remove Interaction"));
-        rebuildList();
-    };
-    m_patch->onMenu = [this](quint64 id, const QPoint &at) { patchMenu(id, at); };
-    m_patch->onConnect = [this](quint64 from, quint64 to) {
-        for (const Interaction &it : m_engine->interactions())
-            if (it.id == to) {
-                connectSource(from, it.layer, it.param);
-                return;
-            }
-    };
-    m_patch->onConnectElsewhere = [this](quint64 from, const QPoint &at) { patchConnectElsewhere(from, at); };
-    auto *patchScroll = new QScrollArea;
-    patchScroll->setWidgetResizable(true);
-    patchScroll->setFrameShape(QFrame::NoFrame);
-    patchScroll->setWidget(m_patch);
-    m_views = new QStackedWidget;
-    m_views->addWidget(m_list);
-    m_views->addWidget(patchScroll);
-    auto *branches = new InteractionGraphWorkspace(engine, undo);
-    m_views->addWidget(branches);
-    auto *routing = new QToolButton;
-    routing->setText(QStringLiteral("Routing"));
-    routing->setPopupMode(QToolButton::InstantPopup);
-    auto *routes = new QMenu(routing);
-    routing->setMenu(routes);
-    routes->addAction(QStringLiteral("Show routing graph"), this, [this] { m_views->setCurrentIndex(2); });
-    for (bool filter : {false, true}) {
-        auto *action = routes->addAction(filter ? QStringLiteral("Add filtered destination") : QStringLiteral("Add destination"));
-        connect(routes, &QMenu::aboutToShow, action, [this, action] {
-            auto it = selected(); action->setEnabled(it && !it->isAction() && it->xyInputs.empty());
-        });
-        connect(action, &QAction::triggered, this, [this, branches, filter] {
-            branches->addBranch(selectedId(), filter);
-            m_views->setCurrentIndex(2);
-        });
-    }
-    bar->insertWidget(bar->count() - 1, routing);
-
-    connect(nodes, &QToolButton::toggled, this, [this](bool on) {
-        m_views->setCurrentIndex(on ? 1 : 0);
-        if (on) refreshPatch();
-    });
     auto *split = new QSplitter(Qt::Vertical);
-    split->addWidget(m_views);
+    split->setObjectName(QStringLiteral("interactionSplit"));
+    split->setChildrenCollapsible(false);
+    m_list->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    m_list->setMinimumHeight(100);
+    settingsBox->setMinimumHeight(140);
+    split->addWidget(m_list);
     split->addWidget(settingsBox);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 3);
@@ -327,9 +439,21 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
         rebuildList();
     });
     connect(m_search, &QLineEdit::textChanged, this, [this] { rebuildList(); });
-    connect(addButton, &QPushButton::clicked, this, [this] {
-        m_kinds->button(kInteractionSourceCount)->click();
-        add(InteractionSource::Keyboard);
+    connect(m_list, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem *item) {
+        if (!m_filling) m_collapsed.insert(item->data(0, kGroupRole).toULongLong());
+    });
+    connect(m_list, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *item) {
+        if (!m_filling) m_collapsed.remove(item->data(0, kGroupRole).toULongLong());
+    });
+    connect(addButton, &QPushButton::clicked, this, [this, addButton] {
+        if (const auto kind = shownKind()) {
+            add(*kind);
+            return;
+        }
+        QMenu menu;
+        for (const auto kind : kKinds)
+            menu.addAction(interactionSourceName(kind), this, [this, kind] { add(kind); });
+        menu.exec(addButton->mapToGlobal(QPoint(0, addButton->height())));
     });
     connect(m_remove, &QPushButton::clicked, this, &InteractionPanel::removeSelected);
     connect(m_learn, &QToolButton::toggled, this, [this](bool on) {
@@ -346,6 +470,16 @@ InteractionPanel::InteractionPanel(Engine *engine, QUndoStack *undo, QWidget *pa
     });
     connect(m_list, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int col) {
         if (m_filling || col != 0) return;
+        if (const quint64 group = item->data(0, kGroupRole).toULongLong()) { // a group renamed
+            auto groups = m_engine->interactionGroups();
+            for (InteractionGroup &g : groups)
+                if (g.id == group && !item->text(0).trimmed().isEmpty() && g.name != item->text(0).trimmed()) {
+                    g.name = item->text(0).trimmed();
+                    commitGroups(m_engine->interactions(), groups, QStringLiteral("Rename Interaction Group"));
+                    return;
+                }
+            return;
+        }
         const quint64 id = item->data(0, Qt::UserRole).toULongLong();
         for (Interaction it : m_engine->interactions()) {
             if (it.id == id && !item->text(0).trimmed().isEmpty() && it.name != item->text(0).trimmed()) { // renamed
@@ -463,26 +597,7 @@ std::optional<Interaction> InteractionPanel::selected() const
 
 QString InteractionPanel::targetLabel(quint64 layer, const QString &param) const
 {
-    if (param.isEmpty()) return QStringLiteral("(no target)");
-    QString owner = QStringLiteral("Composition");
-    if (layer) {
-        Engine::Lock lk(&m_engine->mutex());
-        const int i = m_engine->indexOfId(layer);
-        const Layer *l = i >= 0 ? m_engine->layer(i) : nullptr;
-        owner = l ? l->name : QStringLiteral("(layer gone)");
-    }
-    ParamInfo info;
-    if (m_engine->parameterInfo(layer, param, &info))
-        return owner + QStringLiteral(" › ") + info.label;
-    // Complete ISF colors are grouped under the parent of their R/G/B/A
-    // scalar parameters. Keep old interaction targets readable too.
-    if (m_engine->parameterInfo(layer, param + QStringLiteral("/r"), &info)) {
-        const QString label = info.label.endsWith(QStringLiteral(" R")) ? info.label.chopped(2) : info.label;
-        return owner + QStringLiteral(" › ") + label;
-    }
-    for (const auto &point : m_engine->animatablePoints(layer))
-        if (point.path == param) return owner + QStringLiteral(" › ") + point.label;
-    return owner + QStringLiteral(" › ") + param;
+    return showmenu::valueLabel(m_engine, layer, param, QStringLiteral("(no target)"));
 }
 
 QString InteractionPanel::describe(const Interaction &it) const
@@ -499,7 +614,7 @@ QString InteractionPanel::describe(const Interaction &it) const
     case InteractionSource::Osc:
         return it.oscAddress.isEmpty() ? QStringLiteral("OSC (no address)")
                                        : QStringLiteral("OSC %1").arg(it.oscAddress) + (it.oscArgument ? QStringLiteral(" [%1]").arg(it.oscArgument) : QString());
-    case InteractionSource::Internal: return targetLabel(it.sourceLayer, it.sourceParam);
+    case InteractionSource::Internal: return showmenu::valueLabel(m_engine, it.sourceLayer, it.sourceParam, QStringLiteral("(no source)"));
     case InteractionSource::Pixels:
     case InteractionSource::Hands:
     case InteractionSource::Audio: {Interaction named=it;named.name.clear();return named.label();}
@@ -516,60 +631,194 @@ void InteractionPanel::rebuildList()
     m_list->clear();
     const std::optional<InteractionSource> kind = shownKind();
     const QString search = m_search->text().trimmed();
+    const bool filtered = kind || !search.isEmpty();
+    const auto groups = m_engine->interactionGroups();
+    // The groups first, each under its parent (parents come before: a cycle is left at the top level)
+    QHash<quint64, QTreeWidgetItem *> groupItems;
+    std::vector<InteractionGroup> pending = groups;
+    while (!pending.empty()) {
+        bool moved = false;
+        for (auto g = pending.begin(); g != pending.end();) {
+            QTreeWidgetItem *parent = g->parent ? groupItems.value(g->parent) : nullptr;
+            if (g->parent && !parent) { ++g; continue; }
+            auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_list);
+            item->setText(0, g->name);
+            item->setData(0, kGroupRole, QVariant::fromValue<quint64>(g->id));
+            item->setData(0, Qt::UserRole, QVariant::fromValue<quint64>(0));
+            item->setFlags((item->flags() | Qt::ItemIsEditable | Qt::ItemIsDropEnabled) & ~Qt::ItemIsUserCheckable);
+            item->setToolTip(0, QStringLiteral("A group of interactions (double-click to rename): drag interactions into it"));
+            QFont font = item->font(0);
+            font.setBold(true);
+            item->setFont(0, font);
+            groupItems.insert(g->id, item);
+            g = pending.erase(g);
+            moved = true;
+        }
+        if (!moved) break;
+    }
     QTreeWidgetItem *current = nullptr;
     for (const Interaction &it : m_engine->interactions()) {
-        if (kind && it.source != *kind) continue;
         const QString src = describe(it);
         const QString dst = it.isAction() ? QStringLiteral("Action · %1 if true · %2 if false").arg(it.onTrue.size()).arg(it.onFalse.size())
                                           : targetLabel(it.layer, it.param);
+        if (kind && it.source != *kind) continue;
         if (!search.isEmpty() && !it.name.contains(search, Qt::CaseInsensitive) && !src.contains(search, Qt::CaseInsensitive) &&
             !dst.contains(search, Qt::CaseInsensitive))
             continue;
-        auto *item = new QTreeWidgetItem(m_list, {it.name, kind ? src : interactionSourceName(it.source) + QStringLiteral(" · ") + src, dst});
+        QTreeWidgetItem *parent = it.group ? groupItems.value(it.group) : nullptr;
+        const QStringList columns{it.name, kind ? src : interactionSourceName(it.source) + QStringLiteral(" · ") + src, dst};
+        auto *item = parent ? new QTreeWidgetItem(parent, columns) : new QTreeWidgetItem(m_list, columns);
         item->setData(0, Qt::UserRole, QVariant::fromValue<quint64>(it.id));
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
+        item->setData(0, kGroupRole, QVariant::fromValue<quint64>(0));
+        item->setFlags((item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable) & ~Qt::ItemIsDropEnabled);
         item->setToolTip(0, QStringLiteral("On / off · its name (double-click to rename): its address in OSC "
                                            "(/interaction/<name>/…), in the presets and the snapshots"));
         item->setCheckState(0, it.enabled ? Qt::Checked : Qt::Unchecked);
         if (keepAll.contains(it.id)) item->setSelected(true);
         if (it.id == keep) current = item;
     }
+    // A filter shows only the groups that have something to show
+    if (filtered) {
+        std::function<bool(QTreeWidgetItem *)> prune = [&](QTreeWidgetItem *item) {
+            if (!item->data(0, kGroupRole).toULongLong()) return true;
+            for (int i = item->childCount() - 1; i >= 0; --i)
+                if (!prune(item->child(i))) delete item->takeChild(i);
+            return item->childCount() > 0;
+        };
+        for (int i = m_list->topLevelItemCount() - 1; i >= 0; --i)
+            if (!prune(m_list->topLevelItem(i))) delete m_list->takeTopLevelItem(i);
+    }
+    for (auto g = groupItems.begin(); g != groupItems.end(); ++g)
+        if (g.value()) g.value()->setExpanded(!m_collapsed.contains(g.key()));
     if (current) m_list->setCurrentItem(current, 0, QItemSelectionModel::NoUpdate);
     m_filling = false;
     m_remove->setEnabled(!m_list->selectedItems().isEmpty());
     if (selectedId() != m_shown) rebuildSettings();
-    refreshPatch();
 }
 
-void InteractionPanel::refreshPatch()
+void InteractionPanel::commitGroups(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups, const QString &text)
 {
-    if (!m_patch) return;
-    std::vector<InteractionPatch::Link> links;
-    const std::optional<InteractionSource> kind = shownKind();
-    for (const Interaction &it : m_engine->interactions()) {
-        if (kind && it.source != *kind) continue;
-        InteractionPatch::Link link;
-        link.id = it.id;
-        link.source = describe(it);
-        link.target = it.isAction() ? QStringLiteral("Action · %1").arg(it.label()) : targetLabel(it.layer, it.param);
-        link.enabled = it.enabled;
-        link.action = it.isAction();
-        QStringList names;
-        for (const InteractionStage &f : it.filters) {
-            if (!f.enabled) continue;
-            if (f.kind == InteractionFilter::Envelope && !link.envelope) {
-                link.envelope = true;
-                link.attack = f.a;
-                link.decay = f.b;
-                link.sustain = f.c;
-                link.release = f.d;
-            }
-            names << interactionFilterName(f.kind);
+    m_committing = true;
+    m_undo->push(new SetInteractions(m_engine, m_engine->interactions(), list, text, QString(), groups));
+    m_committing = false;
+    emit edited();
+}
+
+// The tree after a drop: each interaction's group, each group's parent; the order too when nothing is filtered out of sight
+void InteractionPanel::applyTree()
+{
+    auto list = m_engine->interactions();
+    auto groups = m_engine->interactionGroups();
+    const bool complete = !shownKind() && m_search->text().trimmed().isEmpty();
+    std::vector<Interaction> ordered;
+    QHash<quint64, quint64> groupOf, parentOf;
+    std::vector<quint64> groupOrder;
+    std::function<void(QTreeWidgetItem *, quint64)> read = [&](QTreeWidgetItem *item, quint64 parent) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) {
+            parentOf.insert(g, parent);
+            groupOrder.push_back(g);
+            for (int i = 0; i < item->childCount(); ++i) read(item->child(i), g);
+        } else {
+            const quint64 id = item->data(0, Qt::UserRole).toULongLong();
+            groupOf.insert(id, parent);
+            for (const Interaction &it : list)
+                if (it.id == id) ordered.push_back(it);
         }
-        link.chain = names.isEmpty() ? QStringLiteral("direct") : names.join(QStringLiteral(" · "));
-        links.push_back(link);
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) read(m_list->topLevelItem(i), 0);
+    for (Interaction &it : list)
+        if (groupOf.contains(it.id)) it.group = groupOf.value(it.id);
+    for (InteractionGroup &g : groups)
+        if (parentOf.contains(g.id)) g.parent = parentOf.value(g.id);
+    if (complete && ordered.size() == list.size()) {
+        for (Interaction &o : ordered) o.group = groupOf.value(o.id);
+        list = ordered;
+        std::stable_sort(groups.begin(), groups.end(), [&](const InteractionGroup &a, const InteractionGroup &b) {
+            return std::find(groupOrder.begin(), groupOrder.end(), a.id) < std::find(groupOrder.begin(), groupOrder.end(), b.id);
+        });
     }
-    m_patch->setLinks(std::move(links), selectedId());
+    commitGroups(list, groups, QStringLiteral("Arrange Interactions"));
+    QTimer::singleShot(0, this, [this] { rebuildList(); });
+}
+
+// A group of the selected interactions (none: an empty one, in the selected group)
+void InteractionPanel::groupSelected()
+{
+    auto list = m_engine->interactions();
+    auto groups = m_engine->interactionGroups();
+    QSet<quint64> ids;
+    quint64 parent = 0;
+    for (QTreeWidgetItem *item : m_list->selectedItems()) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) parent = g;
+        else ids.insert(item->data(0, Qt::UserRole).toULongLong());
+    }
+    InteractionGroup group;
+    for (const InteractionGroup &g : groups) group.id = std::max(group.id, g.id);
+    ++group.id;
+    group.name = QStringLiteral("Group %1").arg(group.id);
+    group.parent = parent;
+    groups.push_back(group);
+    for (Interaction &it : list)
+        if (ids.contains(it.id)) it.group = group.id;
+    commitGroups(list, groups, QStringLiteral("Add Interaction Group"));
+    rebuildList();
+}
+
+// Group, move to a group, rename, delete (what it holds goes to its parent)
+void InteractionPanel::fillGroupMenu(QMenu *menu, quint64 group)
+{
+    if (!menu->isEmpty()) menu->addSeparator();
+    menu->addAction(QStringLiteral("New Group"), this, [this] { groupSelected(); });
+    const auto groups = m_engine->interactionGroups();
+    if (!m_list->selectedItems().isEmpty() && !groups.empty()) {
+        auto *move = menu->addMenu(QStringLiteral("Move to Group"));
+        const auto moveTo = [this](quint64 target) {
+            auto list = m_engine->interactions();
+            QSet<quint64> ids;
+            for (QTreeWidgetItem *item : m_list->selectedItems())
+                if (!item->data(0, kGroupRole).toULongLong()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
+            for (Interaction &it : list)
+                if (ids.contains(it.id)) it.group = target;
+            commitGroups(list, m_engine->interactionGroups(), QStringLiteral("Move Interactions to Group"));
+        };
+        move->addAction(QStringLiteral("Top Level"), this, [moveTo] { moveTo(0); });
+        move->addSeparator();
+        showmenu::fillInteractionTree(move, m_engine, [](QMenu *, quint64, const QString &) {},
+                                      [moveTo](QMenu *into, quint64 id, const QString &, bool) {
+                                          into->addAction(QStringLiteral("This Group"), into, [moveTo, id] { moveTo(id); });
+                                      });
+    }
+    if (group) {
+        menu->addAction(QStringLiteral("Rename Group"), this, [this, group] {
+            if (auto *item = groupItem(group)) m_list->editItem(item, 0);
+        });
+        menu->addAction(QStringLiteral("Delete Group"), this, [this, group] {
+            auto list = m_engine->interactions();
+            auto groups = m_engine->interactionGroups();
+            quint64 parent = 0;
+            for (const InteractionGroup &g : groups)
+                if (g.id == group) parent = g.parent;
+            for (Interaction &it : list)
+                if (it.group == group) it.group = parent;
+            for (InteractionGroup &g : groups)
+                if (g.parent == group) g.parent = parent;
+            groups.erase(std::remove_if(groups.begin(), groups.end(), [group](const InteractionGroup &g) { return g.id == group; }), groups.end());
+            commitGroups(list, groups, QStringLiteral("Delete Interaction Group"));
+        });
+    }
+}
+
+QTreeWidgetItem *InteractionPanel::groupItem(quint64 group) const
+{
+    std::function<QTreeWidgetItem *(QTreeWidgetItem *)> find = [&](QTreeWidgetItem *item) -> QTreeWidgetItem * {
+        if (item->data(0, kGroupRole).toULongLong() == group) return item;
+        for (int i = 0; i < item->childCount(); ++i)
+            if (auto *found = find(item->child(i))) return found;
+        return nullptr;
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
+        if (auto *found = find(m_list->topLevelItem(i))) return found;
+    return nullptr;
 }
 
 Interaction InteractionPanel::heard(double low, double high)
@@ -617,57 +866,6 @@ quint64 InteractionPanel::addEnvelope(quint64 layer, const QString &path, Intera
     return id;
 }
 
-void InteractionPanel::connectSource(quint64 from, quint64 layer, const QString &path)
-{
-    std::vector<Interaction> list = m_engine->interactions();
-    const auto found = std::find_if(list.begin(), list.end(), [from](const Interaction &it) { return it.id == from; });
-    if (found == list.end()) return;
-    Interaction copy = *found;
-    quint64 id = 1;
-    for (const Interaction &x : list) id = std::max(id, x.id + 1);
-    copy.id = id;
-    copy.name.clear();
-    copy.mode = InteractionMode::Mapping;
-    copy.onTrue.clear();
-    copy.onFalse.clear();
-    copy.xyInputs.clear();
-    copy.filters = envelopeChain(m_engine, layer, path);
-    copy.takeover = Takeover::Jump;
-    m_engine->configureInteractionTarget(copy, layer, path);
-    list.push_back(copy);
-    commitList(list, QStringLiteral("Add Cable"));
-    rebuildList();
-    select(id);
-}
-
-void InteractionPanel::patchMenu(quint64 id, const QPoint &at)
-{
-    QMenu menu(this);
-    menu.addAction(QStringLiteral("On / Off"), this, [this, id] { m_patch->onToggle(id); });
-    menu.addAction(QStringLiteral("Remove"), this, [this, id] { m_patch->onRemove(id); });
-    if (auto *editor = PresetEditor::instance()) editor->fillInteractionMenu(&menu, id);
-    menu.exec(at);
-}
-
-void InteractionPanel::patchConnectElsewhere(quint64 from, const QPoint &at)
-{
-    QMenu menu(this);
-    for (int i = 0; i < m_engine->layerCount(); ++i) {
-        const quint64 layer = m_engine->layerId(i);
-        QString name;
-        {
-            Engine::Lock lk(&m_engine->mutex());
-            if (const Layer *l = m_engine->layer(i)) name = l->name;
-        }
-        const std::vector<ParamInfo> params = m_engine->animatableParams(layer);
-        if (params.empty()) continue;
-        QMenu *sub = menu.addMenu(name);
-        for (const ParamInfo &p : params)
-            sub->addAction(p.label, this, [this, from, layer, path = p.path] { connectSource(from, layer, path); });
-    }
-    menu.exec(at);
-}
-
 void InteractionPanel::commitList(const std::vector<Interaction> &list, const QString &text)
 {
     m_committing = true;
@@ -700,21 +898,30 @@ void InteractionPanel::add(InteractionSource kind)
     quint64 id = 1;
     for (const Interaction &x : list) id = std::max(id, x.id + 1);
     it.id = id;
+    // In the group selected, if one is
+    for (QTreeWidgetItem *item : m_list->selectedItems()) {
+        if (const quint64 g = item->data(0, kGroupRole).toULongLong()) { it.group = g; break; }
+        if (item->parent()) { it.group = item->parent()->data(0, kGroupRole).toULongLong(); break; }
+    }
     list.push_back(it);
     commitList(list, QStringLiteral("Add Interaction"));
     if (shownKind() && *shownKind() != kind) m_kinds->button(int(kind))->click();
     rebuildList();
-    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
-        if (m_list->topLevelItem(i)->data(0, Qt::UserRole).toULongLong() == id) {
+    std::function<void(QTreeWidgetItem *)> pick = [&](QTreeWidgetItem *item) {
+        if (item->data(0, Qt::UserRole).toULongLong() == id && !item->data(0, kGroupRole).toULongLong()) {
             m_list->clearSelection();
-            m_list->setCurrentItem(m_list->topLevelItem(i));
+            m_list->setCurrentItem(item);
         }
+        for (int i = 0; i < item->childCount(); ++i) pick(item->child(i));
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) pick(m_list->topLevelItem(i));
 }
 
 void InteractionPanel::removeSelected()
 {
     QSet<quint64> ids;
-    for (QTreeWidgetItem *item : m_list->selectedItems()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
+    for (QTreeWidgetItem *item : m_list->selectedItems())
+        if (!item->data(0, kGroupRole).toULongLong()) ids.insert(item->data(0, Qt::UserRole).toULongLong());
     if (ids.isEmpty()) return;
     std::vector<Interaction> list = m_engine->interactions();
     list.erase(std::remove_if(list.begin(), list.end(), [&](const Interaction &x) { return ids.contains(x.id); }), list.end());
@@ -753,11 +960,6 @@ void InteractionPanel::refreshLevels()
         const QString state = !value || value->met < 0 ? QStringLiteral("— (no value yet)")
                             : value->met ? QStringLiteral("TRUE") : QStringLiteral("FALSE");
         if (m_actionState->text() != state) m_actionState->setText(state);
-    }
-    if (m_patch && m_views->currentIndex() == 1) { // the cables light up with what goes through them
-        std::map<quint64, double> levels;
-        for (const auto &level : m_levelSample) levels[level.id] = std::abs(level.input);
-        m_patch->setLevels(levels);
     }
     if (m_copy) m_copy->setEnabled(m_shown != 0);
     if (m_paste) m_paste->setEnabled(QApplication::clipboard()->mimeData() && QApplication::clipboard()->mimeData()->hasFormat(kMime) &&
@@ -841,11 +1043,14 @@ void InteractionPanel::applyLearned(const InteractionEvent &ev)
 
 void InteractionPanel::select(quint64 id)
 {
-    for (int i = 0; i < m_list->topLevelItemCount(); ++i)
-        if (m_list->topLevelItem(i)->data(0, Qt::UserRole).toULongLong() == id) {
+    std::function<void(QTreeWidgetItem *)> pick = [&](QTreeWidgetItem *item) {
+        if (item->data(0, Qt::UserRole).toULongLong() == id && !item->data(0, kGroupRole).toULongLong()) {
             m_list->clearSelection();
-            m_list->setCurrentItem(m_list->topLevelItem(i));
+            m_list->setCurrentItem(item);
         }
+        for (int i = 0; i < item->childCount(); ++i) pick(item->child(i));
+    };
+    for (int i = 0; i < m_list->topLevelItemCount(); ++i) pick(m_list->topLevelItem(i));
 }
 
 // From a value anywhere (its right-click): a new interaction driving it, its source learnt (of that kind), or chosen
@@ -1023,13 +1228,7 @@ bool InteractionPanel::eventFilter(QObject *o, QEvent *e)
     return true;
 }
 
-void InteractionPanel::fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill)
-{
-    fill(menu->addMenu(QStringLiteral("Composition")), 0);
-    Engine::Lock lk(&m_engine->mutex());
-    for (int i = 0; i < m_engine->layerCount(); ++i)
-        if (const Layer *l = m_engine->layer(i); l && !l->isGroup) fill(menu->addMenu(l->name), l->id);
-}
+static void clearInteractionMenu(QMenu *menu) { showmenu::clearMenu(menu); }
 
 std::pair<double, double> InteractionPanel::sourceSpan(const Interaction &it) const
 {
@@ -1054,6 +1253,7 @@ void InteractionPanel::rebuildSettings()
 {
     const std::optional<Interaction> cur = selected();
     if (!cur || cur->id != m_shown || cur->xyInputs.empty()) m_xyAxis = 0;
+    if (!cur || cur->id != m_shown) m_targetTab = 0;
     m_shown = cur ? cur->id : 0;
     m_inMeter = m_outMeter = nullptr;
     m_actionState = nullptr;
@@ -1102,6 +1302,28 @@ void InteractionPanel::rebuildSettings()
     formBox->setLayout(form);
     m_settingsLayout->addWidget(formBox);
 
+    const auto section = [this](const QString &title) {
+        auto *heading = new QLabel(title);
+        heading->setStyleSheet(QStringLiteral("font-weight: 600; padding: 3px 6px;"));
+        auto *header = new QWidget;
+        auto *row = new QHBoxLayout(header);
+        row->setContentsMargins(0, 0, 6, 0);
+        row->addWidget(heading);
+        auto *line = new QWidget;
+        line->setFixedHeight(1);
+        line->setStyleSheet(QStringLiteral("background: palette(mid);"));
+        row->addWidget(line, 1, Qt::AlignVCenter);
+        m_settingsLayout->addWidget(header);
+        auto *body = new QWidget;
+        auto *fields = new QFormLayout(body);
+        fields->setContentsMargins(6, 3, 6, 6);
+        fields->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        fields->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        fields->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        m_settingsLayout->addWidget(body);
+        return fields;
+    };
+
     auto *name = new QLineEdit(it.name);
     {
         Interaction unnamed = it;
@@ -1148,6 +1370,7 @@ void InteractionPanel::rebuildSettings()
         });
         form->addRow(note(QStringLiteral("Each axis has its own input and mapping. For one OSC XY message, use the same address with arguments 0 and 1.")));
     }
+    form = section(QStringLiteral("Source"));
     auto *sourceButton = new QToolButton;
     sourceButton->setObjectName(QStringLiteral("interactionSource"));
     sourceButton->setText(interactionSourceName(it.source));
@@ -1327,29 +1550,36 @@ void InteractionPanel::rebuildSettings()
         const bool hands = it.source == InteractionSource::Hands;
         form->addRow(note(QStringLiteral("1 · Choose an image layer (camera, video or mask), then 2 · Map "
                                          "its analysis below. Masks are separate Motion Difference FX.")));
-        auto *source = new QComboBox;
+        auto *source = new QToolButton;
         source->setObjectName(QStringLiteral("visionSource"));
-        source->addItem(QStringLiteral("Choose a layer…"), QStringLiteral("0"));
-        {
+        source->setPopupMode(QToolButton::InstantPopup);
+        source->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        QString sourceName = QStringLiteral("Choose a layer…");
+        if (it.pixels.layer) {
             Engine::Lock lock(&m_engine->mutex());
-            for (int i = 0; i < m_engine->layerCount(); ++i) {
-                const auto *l = m_engine->layer(i);
-                if (l)
-                    source->addItem(l->name, QString::number(l->id));
-            }
+            const auto *layer = m_engine->layer(m_engine->indexOfId(it.pixels.layer));
+            sourceName = layer ? layer->name : QStringLiteral("Missing layer %1").arg(it.pixels.layer);
         }
-        int selected = source->findData(QString::number(it.pixels.layer));
-        if (selected < 0) {
-            source->addItem(QStringLiteral("Missing layer %1").arg(it.pixels.layer), QString::number(it.pixels.layer));
-            selected = source->count() - 1;
-        }
-        source->setCurrentIndex(selected);
-        form->addRow(QStringLiteral("Layer"), source);
-        connect(source, qOverload<int>(&QComboBox::activated), this, [this, edit, source](int index) {
-            const auto id = source->itemData(index).toString().toULongLong();
-            edit(QStringLiteral("Change Image Analysis Source"), [id](Interaction &x) { x.pixels.layer = id; });
-            rebuildSettings();
+        source->setText(sourceName);
+        auto *menu = new QMenu(source);
+        source->setMenu(menu);
+        connect(menu, &QMenu::aboutToShow, this, [this, menu, edit] {
+            clearInteractionMenu(menu);
+            const auto addLayer = [this, edit](QMenu *parent, quint64 id, const QString &label) {
+                parent->addAction(label, this, [this, edit, id] {
+                    edit(QStringLiteral("Change Image Analysis Source"), [id](Interaction &x) { x.pixels.layer = id; });
+                    rebuildSettings();
+                });
+            };
+            addLayer(menu, 0, QStringLiteral("No Layer"));
+            menu->addSeparator();
+            showmenu::fillLayerTree(menu, m_engine, addLayer,
+                                    [addLayer](QMenu *into, quint64 id, const QString &name, bool isGroup) {
+                                        addLayer(into, id, isGroup ? QStringLiteral("Use This Group") : name);
+                                        into->addSeparator();
+                                    });
         });
+        form->addRow(QStringLiteral("Layer"), source);
         attachPreset({source}, {QStringLiteral("source/vision/layer")});
         auto *tap = new QComboBox;
         tap->setObjectName(QStringLiteral("visionTap"));
@@ -1397,51 +1627,76 @@ void InteractionPanel::rebuildSettings()
                     QStringLiteral("pixel_threshold"));
             });
             attachPreset({threshold}, {QStringLiteral("source/pixels/threshold")});
-            const char *labels[] = {"x", "y", "width", "height"};
-            const double values[] = {it.pixels.roi.x(), it.pixels.roi.y(), it.pixels.roi.width(),
-                                     it.pixels.roi.height()};
-            for (int c = 0; c < 4; ++c) {
-                auto *number = new QDoubleSpinBox;
-                number->setObjectName(QStringLiteral("pixelROI_") + labels[c]);
-                number->setRange(0, 1);
-                number->setDecimals(3);
-                number->setSingleStep(.01);
-                number->setValue(values[c]);
-                number->setKeyboardTracking(false);
-                form->addRow(QStringLiteral("ROI ") + labels[c], number);
-                connect(number, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [edit, c](double value) {
-                    edit(
-                        QStringLiteral("Change Pixel ROI"),
-                        [value, c](Interaction &x) {
-                            const auto r = x.pixels.roi;
-                            x.pixels.roi = QRectF(c == 0 ? value : r.x(), c == 1 ? value : r.y(),
-                                                  c == 2 ? value : r.width(), c == 3 ? value : r.height())
-                                               .intersected(QRectF(0, 0, 1, 1));
-                        },
-                        QStringLiteral("pixel_roi"));
-                });
-                attachPreset({number}, {QStringLiteral("source/pixels/roi/") + labels[c]});
-            }
         } else {
-            auto *hand = new QComboBox;
-            hand->setObjectName(QStringLiteral("trackedHand"));
-            hand->addItems({QStringLiteral("Tracked hand 1"), QStringLiteral("Tracked hand 2")});
-            hand->setCurrentIndex(it.handIndex);
-            form->addRow(QStringLiteral("Hand"), hand);
-            connect(hand, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Tracked Hand"), [value](Interaction &x) { x.handIndex = value; });
+            const auto task = [](HandTracking::Feature measure) {
+                const unsigned kind = HandTracking::taskFor(measure);
+                return kind == 2 ? 1u : kind; // hand landmarks and gestures share a category
+            };
+            const auto currentTask = task(it.handFeature);
+            const auto names = HandTracking::featureNames();
+            auto *category = new QComboBox;
+            category->setObjectName(QStringLiteral("visionCategory"));
+            category->addItem(QStringLiteral("Hands"), 1u);
+            category->addItem(QStringLiteral("Face"), 4u);
+            category->addItem(QStringLiteral("Body"), 8u);
+            category->addItem(QStringLiteral("Objects"), 16u);
+            category->addItem(QStringLiteral("Segmentation"), 32u);
+            category->addItem(QStringLiteral("Face detection"), 64u);
+            category->addItem(QStringLiteral("Image classification"), 128u);
+            category->setCurrentIndex(category->findData(currentTask));
+            form->addRow(QStringLiteral("Category"), category);
+            auto changeMeasure = [this, edit](HandTracking::Feature measure) {
+                edit(QStringLiteral("Change MediaPipe Measure"), [measure](Interaction &x) { x.handFeature = measure; });
+                rebuildSettings();
+            };
+            connect(category, qOverload<int>(&QComboBox::activated), this,
+                    [category, task, names, changeMeasure](int index) {
+                const auto chosen = category->itemData(index).toUInt();
+                for (int i = 0; i < names.size(); ++i) {
+                    const auto measure = HandTracking::Feature(i);
+                    if (task(measure) == chosen) {
+                        changeMeasure(measure);
+                        return;
+                    }
+                }
             });
-            attachPreset({hand}, {QStringLiteral("source/hands/index")});
             auto *feature = new QComboBox;
             feature->setObjectName(QStringLiteral("handFeature"));
-            feature->addItems(HandTracking::featureNames());
-            feature->setCurrentIndex(int(it.handFeature));
+            for (int i = 0; i < names.size(); ++i)
+                if (task(HandTracking::Feature(i)) == currentTask)
+                    feature->addItem(names[i], i);
+            feature->setCurrentIndex(feature->findData(int(it.handFeature)));
             form->addRow(QStringLiteral("Measure"), feature);
-            connect(feature, qOverload<int>(&QComboBox::activated), this, [edit](int value) {
-                edit(QStringLiteral("Change Hand Measure"),
-                     [value](Interaction &x) { x.handFeature = HandTracking::Feature(value); });
+            connect(feature, qOverload<int>(&QComboBox::activated), this, [feature, changeMeasure](int index) {
+                changeMeasure(HandTracking::Feature(feature->itemData(index).toInt()));
             });
             attachPreset({feature}, {QStringLiteral("source/hands/feature")});
+            if (currentTask == 1) {
+                auto *hand = new QComboBox;
+                hand->setObjectName(QStringLiteral("trackedHand"));
+                hand->addItem(HandTracking::taskFor(it.handFeature) == 2 ? QStringLiteral("Any tracked hand")
+                                                                        : QStringLiteral("First tracked"), 0);
+                if (it.handIndex == 1) hand->addItem(QStringLiteral("Second tracked"), 1);
+                hand->addItem(QStringLiteral("Left"), 2);
+                hand->addItem(QStringLiteral("Right"), 3);
+                hand->setCurrentIndex(hand->findData(it.handIndex));
+                form->addRow(QStringLiteral("Hand"), hand);
+                connect(hand, qOverload<int>(&QComboBox::activated), this, [edit, hand](int index) {
+                    const int selection = hand->itemData(index).toInt();
+                    edit(QStringLiteral("Change Tracked Hand"), [selection](Interaction &x) { x.handIndex = selection; });
+                });
+                attachPreset({hand}, {QStringLiteral("source/hands/index")});
+            }
+            auto *landmark = new QSpinBox;
+            landmark->setRange(0, 477);
+            landmark->setValue(it.visionLandmark);
+            landmark->setKeyboardTracking(false);
+            landmark->setToolTip(QStringLiteral("MediaPipe index for landmark, world-coordinate and blendshape measurements"));
+            form->addRow(QStringLiteral("Landmark / blendshape index"), landmark);
+            connect(landmark, qOverload<int>(&QSpinBox::valueChanged), this, [edit](int value) {
+                edit(QStringLiteral("Change MediaPipe Landmark"), [value](Interaction &x) { x.visionLandmark = value; });
+            });
+            attachPreset({landmark}, {QStringLiteral("source/hands/landmark")});
             auto *confidence = new QDoubleSpinBox;
             confidence->setRange(.5, .99);
             confidence->setDecimals(2);
@@ -1453,29 +1708,29 @@ void InteractionPanel::rebuildSettings()
                 edit(QStringLiteral("Change Hand Confidence"), [value](Interaction &x) { x.handConfidence = value; });
             });
             attachPreset({confidence}, {QStringLiteral("source/hands/confidence")});
-            auto *models = new QPushButton(QStringLiteral("Choose hand models folder…"));
-            form->addRow(models);
-            connect(models, &QPushButton::clicked, this, [this] {
-                const auto directory = QFileDialog::getExistingDirectory(
-                    this, QStringLiteral("OpenCV Zoo hand model directory"), m_engine->handModelsDirectory());
-                if (!directory.isEmpty()) {
-                    m_engine->setHandModelsDirectory(directory);
-                    rebuildSettings();
+            auto *setup = new QPushButton(QStringLiteral("Setup…"));
+            setup->setObjectName(QStringLiteral("visionSetup"));
+            form->addRow(setup);
+            connect(setup, &QPushButton::clicked, this, [this, category] {
+                if (const auto root = this->selected()) {
+                    const auto &input = m_xyAxis == 1 && !root->xyInputs.empty() ? root->xyInputs.front() : *root;
+                    showVisionSetup(this, m_engine, input, category->currentText());
                 }
             });
-            form->addRow(note(QStringLiteral("Local OpenCV DNN / MediaPipe: two verified ONNX models. Download with "
-                                             "scripts/download_hand_models.py; no images leave this computer.")));
         }
         auto *status = new QLabel;
         status->setWordWrap(true);
         status->setObjectName(QStringLiteral("visionStatus"));
         form->addRow(status);
-        auto *preview = new QLabel;
-        preview->setObjectName(QStringLiteral("visionPreview"));
-        preview->setMinimumHeight(80);
-        preview->setMaximumHeight(200);
-        preview->setAlignment(Qt::AlignCenter);
-        form->addRow(preview);
+        QLabel *preview = nullptr;
+        if (!hands) {
+            preview = new QLabel;
+            preview->setObjectName(QStringLiteral("visionPreview"));
+            preview->setMinimumHeight(80);
+            preview->setMaximumHeight(200);
+            preview->setAlignment(Qt::AlignCenter);
+            form->addRow(preview);
+        }
         auto *timer = new QTimer(status);
         const auto settings = it.pixels;
         auto refresh = [this, status, preview, settings, hands] {
@@ -1485,7 +1740,8 @@ void InteractionPanel::rebuildSettings()
                 current = input.pixels;
             }
             status->setText(m_engine->visionStatus(current, hands));
-            auto image = m_engine->visionPreview(current, hands);
+            if (!preview) return;
+            auto image = m_engine->visionPreview(current);
             if (!image.isNull()) {
                 if (!hands && current.roi != QRectF(0, 0, 1, 1)) {
                     QPainter painter(&image);
@@ -1506,7 +1762,7 @@ void InteractionPanel::rebuildSettings()
     }
     case InteractionSource::Internal: {
         auto *source = new QToolButton;
-        source->setText(targetLabel(it.sourceLayer, it.sourceParam));
+        source->setText(showmenu::valueLabel(m_engine, it.sourceLayer, it.sourceParam, QStringLiteral("(no source)")));
         source->setPopupMode(QToolButton::InstantPopup);
         source->setToolButtonStyle(Qt::ToolButtonTextOnly);
         source->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -1514,10 +1770,11 @@ void InteractionPanel::rebuildSettings()
         auto *menu = new QMenu(source);
         source->setMenu(menu);
         connect(menu, &QMenu::aboutToShow, this, [this, menu, edit] {
-            menu->clear();
-            auto fill = [&](QMenu *into, quint64 layer) {
+            clearInteractionMenu(menu);
+            auto fill = [this, edit](QMenu *into, const showmenu::Owner &owner) {
+                const quint64 layer = owner.layer();
                 std::vector<ParamInfo> params;
-                for (const ParamInfo &p : m_engine->parameters(layer))
+                for (const ParamInfo &p : showmenu::ofOwner(m_engine->parameters(layer), owner))
                     if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) &&
                         (p.isNumber() || p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice))
                         params.push_back(p);
@@ -1529,9 +1786,9 @@ void InteractionPanel::rebuildSettings()
                         });
                         rebuildSettings();
                     });
-                });
+                }, true);
             };
-            fillByOwner(menu, fill);
+            showmenu::fillOwners(menu, m_engine, fill);
         });
         form->addRow(QStringLiteral("Follows"), source);
         attachPreset({source}, {QStringLiteral("source/internal")});
@@ -1540,63 +1797,460 @@ void InteractionPanel::rebuildSettings()
     }
 
     if (it.isAction() && root.xyInputs.empty()) {
-        buildActionSettings(form, it, editRoot);
+        buildActionSettings(section(QStringLiteral("Actions")), it, editRoot);
         m_settingsLayout->addStretch();
         return;
     }
 
-    // The target
-    auto *target = new QToolButton;
-    target->setText(targetLabel(it.layer, it.param));
-    target->setPopupMode(QToolButton::InstantPopup);
-    target->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    target->setToolTip(QStringLiteral("The value of the show it drives: a number, a switch, a choice or an action"));
-    auto *targetMenu = new QMenu(target);
-    target->setMenu(targetMenu);
-    connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, editRoot] {
-        targetMenu->clear();
-        auto fill = [&](QMenu *into, quint64 layer) {
-            std::vector<ParamInfo> params;
-            const std::vector<ParamInfo> available = m_engine->parameters(layer);
-            QSet<QString> writable;
-            for (const ParamInfo &p : available) {
-                if (!(p.access & ParamInfo::Write) || p.type == ParamInfo::Type::Text) continue;
-                writable.insert(p.path);
-                params.push_back(p);
-            }
-            // Add one selectable composite target above its individually
-            // addressable channels (e.g. param/color as well as /r, /g, /b).
-            for (const ParamInfo &p : available) {
-                if (!p.path.endsWith(QStringLiteral("/r"))) continue;
-                const QString base = p.path.chopped(2);
-                if (!writable.contains(base + QStringLiteral("/r")) ||
-                    !writable.contains(base + QStringLiteral("/g")) ||
-                    !writable.contains(base + QStringLiteral("/b")) ||
-                    writable.contains(base)) continue;
-                ParamInfo color = p;
-                color.path = base;
-                if (color.label.endsWith(QStringLiteral(" R"))) color.label.chop(2);
-                color.animatable = false;
-                params.push_back(color);
-            }
-            const auto points = m_engine->animatablePoints(layer);
-            params.insert(params.end(), points.begin(), points.end());
-            addParamMenu(into, params, [this, editRoot, layer](QMenu *m, const ParamInfo &p, const QString &text) {
-                m->addAction(text, this, [this, editRoot, layer, p] {
-                    editRoot(QStringLiteral("Change Interaction Target"), [this, layer, p](Interaction &x) {
-                        m_engine->configureInteractionTarget(x, layer, p.path);
-                    });
-                    m_xyAxis = 0;
-                    rebuildSettings();
-                    rebuildList();
-                });
+    const auto filterStack = [&](const Interaction &it, const EditFn &change, const QString &title, bool live, bool common,
+                                 double srcLo, double srcHi, double tgtLo, double tgtHi) {
+        const auto edit = [change](const QString &text, const std::function<void(Interaction &)> &fn, const QString &merge = {}) {
+            change(text, fn, merge);
+        };
+        int *selection = common ? &m_sharedSelectedFilter : &m_selectedFilter;
+        const auto preset = [this, live](std::initializer_list<QWidget *> widgets, const QStringList &paths) {
+            if (live) attachPreset(widgets, paths);
+        };
+        // Filters, in a frame, as a layer's effects: + adds one (of the kind chosen), − removes the one selected, ▲ ▼ move
+        // it; each one on or off, its settings under its name, any value. A click on a filter selects it
+        const int count = int(it.filters.size());
+        *selection = count ? std::clamp(*selection, 0, count - 1) : -1;
+        auto *frame = new QFrame;
+        frame->setObjectName(common ? QStringLiteral("sharedFiltersFrame") : QStringLiteral("filtersFrame"));
+        frame->setStyleSheet(QStringLiteral("QFrame#filtersFrame, QFrame#sharedFiltersFrame { border:1px solid #3c3c43; border-radius:4px; }"));
+        auto *fv = new QVBoxLayout(frame);
+        fv->setContentsMargins(6, 4, 6, 6);
+        fv->setSpacing(4);
+        auto *bar = new QHBoxLayout;
+        auto *filtersLabel = new QLabel(title);
+        filtersLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        filtersLabel->setToolTip(QStringLiteral("Applied one after the other, from the top, between the source range and the master level"));
+        auto tool = [common](const QString &text, const QString &tip, const char *name) {
+            auto *b = new QToolButton;
+            b->setObjectName((common ? QStringLiteral("shared_") : QString()) + QString::fromLatin1(name));
+            b->setText(text);
+            b->setToolTip(tip);
+            b->setMinimumWidth(26);
+            return b;
+        };
+        auto *addFilter = tool(QStringLiteral("+"), QStringLiteral("Add a filter (at the end)"), "addFilter");
+        auto *removeFilter = tool(QStringLiteral("−"), QStringLiteral("Remove the selected filter"), "removeFilter");
+        auto *upFilter = tool(QStringLiteral("▲"), QStringLiteral("Move the selected filter up (applied earlier)"), "filterUp");
+        auto *downFilter = tool(QStringLiteral("▼"), QStringLiteral("Move the selected filter down (applied later)"), "filterDown");
+        removeFilter->setEnabled(*selection >= 0);
+        upFilter->setEnabled(*selection > 0);
+        downFilter->setEnabled(*selection >= 0 && *selection + 1 < count);
+        addFilter->setPopupMode(QToolButton::InstantPopup);
+        addFilter->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0; }")); // a plain +
+        auto *addMenu = new QMenu(addFilter);
+        addFilter->setMenu(addMenu);
+        const InteractionFilter overTime[] = {InteractionFilter::Average, InteractionFilter::WeightedAverage, InteractionFilter::AttackRelease,
+                                              InteractionFilter::Damper, InteractionFilter::PulseDetection, InteractionFilter::Delay,
+                                              InteractionFilter::Speed, InteractionFilter::Envelope};
+        const InteractionFilter onValue[] = {InteractionFilter::Remap, InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
+                                             InteractionFilter::Steps, InteractionFilter::Threshold, InteractionFilter::Toggle};
+        auto offer = [this, edit, addMenu, count, selection, srcLo, srcHi, tgtLo, tgtHi](InteractionFilter kind) {
+            addMenu->addAction(interactionFilterName(kind), this, [this, edit, kind, count, selection, srcLo, srcHi, tgtLo, tgtHi] {
+                m_revealCurve = kind == InteractionFilter::Curve;
+                *selection = count; // the new one
+                // A Remap: from what the source gives to what the target takes, as they usually go
+                const InteractionStage made = kind == InteractionFilter::Remap ? InteractionStage::remap(srcLo, srcHi, tgtLo, tgtHi)
+                                                                               : InteractionStage::made(kind);
+                edit(QStringLiteral("Add Filter"), [made](Interaction &x) { x.filters.push_back(made); });
+                rebuildSettings();
             });
         };
-        fillByOwner(targetMenu, fill);
-    });
-    form->addRow(QStringLiteral("Target"), target);
-    attachPreset({target}, {QStringLiteral("target")});
+        addMenu->addSection(QStringLiteral("On the value"));
+        for (InteractionFilter k : onValue) offer(k);
+        addMenu->addSection(QStringLiteral("Over time"));
+        for (InteractionFilter k : overTime) offer(k);
+        bar->addWidget(filtersLabel);
+        bar->addStretch();
+        for (QToolButton *b : {addFilter, removeFilter, upFilter, downFilter}) bar->addWidget(b);
+        fv->addLayout(bar);
+        preset({filtersLabel}, {QStringLiteral("filters")});
+        if (it.filters.empty()) fv->addWidget(note(QStringLiteral("No filters. Add one with +.")));
+        connect(removeFilter, &QToolButton::clicked, this, [this, edit, selection] {
+            const int k = *selection;
+            edit(QStringLiteral("Remove Filter"), [k](Interaction &x) {
+                if (k >= 0 && k < int(x.filters.size())) x.filters.erase(x.filters.begin() + k);
+            });
+            rebuildSettings();
+        });
+        auto move = [this, edit, selection](int by) {
+            const int k = *selection, to = k + by;
+            edit(QStringLiteral("Move Filter"), [k, to](Interaction &x) {
+                if (k >= 0 && to >= 0 && k < int(x.filters.size()) && to < int(x.filters.size())) std::swap(x.filters[size_t(k)], x.filters[size_t(to)]);
+            });
+            *selection = to; // it stays selected
+            rebuildSettings();
+        };
+        connect(upFilter, &QToolButton::clicked, this, [move] { move(-1); });
+        connect(downFilter, &QToolButton::clicked, this, [move] { move(1); });
+
+        auto editStage = [edit](size_t k, const QString &text, const std::function<void(InteractionStage &)> &fn, const QString &merge = QString()) {
+            edit(text, [k, fn](Interaction &x) {
+                if (k < x.filters.size()) fn(x.filters[k]);
+            }, merge);
+        };
+        // The range each filter's meter shows: as the value goes there — the source's at first, a Remap's Out after it, 0..1
+        // after what gives 0..1 (a curve, steps, a threshold, a toggle, a pulse, a speed), a Clamp's; otherwise as before
+        std::pair<double, double> span{srcLo, srcHi};
+        for (size_t k = 0; k < it.filters.size(); ++k) {
+            const InteractionStage &f = it.filters[k];
+            if (f.enabled) switch (f.kind) {
+            case InteractionFilter::Remap: span = {std::min(f.c, f.d), std::max(f.c, f.d)}; break;
+            case InteractionFilter::Clamp: span = {std::min(f.a, f.b), std::max(f.a, f.b)}; break;
+            case InteractionFilter::Curve:
+            case InteractionFilter::Steps:
+            case InteractionFilter::Threshold:
+            case InteractionFilter::Toggle:
+            case InteractionFilter::PulseDetection:
+            case InteractionFilter::Envelope:
+            case InteractionFilter::Speed: span = {0.0, 1.0}; break;
+            default: break;
+            }
+            const QString base = QStringLiteral("filters/%1/").arg(k + 1);
+            const bool selected = int(k) == *selection;
+            auto *block = new ClickFrame;
+            block->setObjectName(QStringLiteral("filterBlock%1").arg(k));
+            block->setStyleSheet(selected ? QStringLiteral("QFrame#filterBlock%1 { background:#2e2e35; border-left:2px solid %2; }").arg(k).arg(theme::css())
+                                          : QStringLiteral("QFrame#filterBlock%1 { border-left:2px solid transparent; }").arg(k));
+            block->pressed = [this, k, selection] {
+                if (*selection == int(k)) return;
+                *selection = int(k);
+                QTimer::singleShot(0, this, [this] { rebuildSettings(); }); // after the click
+            };
+            auto *bf = new QFormLayout(block);
+            bf->setContentsMargins(6, 3, 2, 3);
+            bf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            bf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+            const QString type = interactionFilterName(f.kind);
+            const QString title = f.name.isEmpty() ? type : QStringLiteral("%1 (%2)").arg(f.name, type);
+            auto *on = new FlagBox(QString());
+            on->setAccessibleName(QStringLiteral("Enable %1").arg(title));
+            on->setObjectName(QStringLiteral("filterOn%1").arg(k));
+            on->setChecked(f.enabled);
+            on->setToolTip(QStringLiteral("On / off (off: the value goes through unchanged)"));
+            auto *header = new QHBoxLayout;
+            header->addWidget(on);
+            auto *label = new FilterNameLabel(QStringLiteral("%1 · %2").arg(k + 1).arg(title));
+            label->setTextFormat(Qt::PlainText);
+            label->setObjectName(QStringLiteral("filterName%1").arg(k));
+            label->setToolTip(QStringLiteral("Double-click to rename"));
+            header->addWidget(label);
+            header->addStretch();
+            bf->addRow(header);
+            label->rename = [this, editStage, k, oldName = f.name] {
+                bool accepted = false;
+                const QString name = QInputDialog::getText(this, QStringLiteral("Rename Filter"),
+                    QStringLiteral("Name (empty uses the filter type)"), QLineEdit::Normal, oldName, &accepted).trimmed();
+                if (!accepted || name == oldName) return;
+                editStage(k, QStringLiteral("Rename Filter"), [name](InteractionStage &stage) { stage.name = name; });
+                rebuildSettings();
+            };
+            preset({on}, {base + QStringLiteral("enable")});
+            {
+                // What comes out of it now: a meter in its range, and the number
+                auto *bar = meter();
+                bar->setObjectName(QStringLiteral("filterMeter%1").arg(k));
+                bar->setToolTip(QStringLiteral("What comes out of this filter (the bar: from %1 to %2)").arg(span.first).arg(span.second));
+                auto *number = new QLabel(QStringLiteral("—"));
+                number->setObjectName(QStringLiteral("filterValue%1").arg(k));
+                number->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                number->setMinimumWidth(64);
+                number->setStyleSheet(QStringLiteral("color:#999; font-size:11px;"));
+                auto *row = new QHBoxLayout;
+                row->addWidget(bar, 1);
+                row->addWidget(number);
+                bf->addRow(row);
+                if (live) m_stageMeters.push_back({bar, number, span});
+                else { bar->hide(); number->hide(); }
+            }
+            connect(on, &QCheckBox::toggled, this, [editStage, k](bool v) {
+                editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) { s.enabled = v; });
+            });
+
+            if (f.kind == InteractionFilter::Math) {
+                auto *op = new QComboBox;
+                op->setObjectName(QStringLiteral("filterOp%1").arg(k));
+                for (int o = 0; o < kMathOpCount; ++o) op->addItem(mathOpName(MathOp(o)), o);
+                op->setCurrentIndex(int(f.op));
+                op->setToolTip(QStringLiteral("x: the value coming in (0..1 after the source range, any value after another filter); a: the value below"));
+                bf->addRow(QStringLiteral("Operation"), op);
+                preset({op}, {QStringLiteral("filters")});
+                connect(op, qOverload<int>(&QComboBox::activated), this, [this, editStage, k](int o) {
+                    editStage(k, QStringLiteral("Change Filter"), [o](InteractionStage &s) { s.op = MathOp(o); });
+                    rebuildSettings();
+                });
+            }
+            for (int which = 0; which < kFilterSettingCount; ++which) {
+                const FilterSetting fs = interactionFilterSetting(f.kind, which);
+                if (fs.name.isEmpty() || (f.kind == InteractionFilter::Math && !mathOpUsesValue(f.op))) continue;
+                // (a Remap's In slides over the source's range, its Out over the target's)
+                const double span = f.kind == InteractionFilter::Remap ? (which < 2 ? srcHi - srcLo : tgtHi - tgtLo) : fs.max - fs.min;
+                auto *field = chainNumber(f.setting(which), span, f.kind == InteractionFilter::Steps ? 0 : 3);
+                field->setObjectName(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)));
+                field->setSuffix(fs.suffix);
+                field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+                // Reset: its default (a Remap: the source's or the target's end)
+                const double def = f.kind != InteractionFilter::Remap ? fs.def : which == 0 ? srcLo : which == 1 ? srcHi : which == 2 ? tgtLo : tgtHi;
+                auto *label = new ResetLabel(fs.name, [editStage, field, k, which, def] {
+                    const QSignalBlocker quiet(field);
+                    field->setValue(def);
+                    editStage(k, QStringLiteral("Reset Filter"), [which, def](InteractionStage &s) { s.setting(which) = def; });
+                });
+                bf->addRow(label, field);
+                preset({label, field}, {base + QChar('a' + which)});
+                connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [editStage, k, which](double v) {
+                    editStage(k, QStringLiteral("Change Filter"), [which, v](InteractionStage &s) { s.setting(which) = v; },
+                              QStringLiteral("filter%1/%2").arg(k).arg(which));
+                });
+            }
+            if (f.kind == InteractionFilter::Envelope) { // in the hand: its fields below follow
+                auto *curve = new AdsrCurve;
+                curve->longest = 5;
+                AdsrCurve::Values shape;
+                shape.attack = f.a;
+                shape.decay = f.b;
+                shape.sustain = f.c;
+                shape.release = f.d;
+                curve->setValues(shape);
+                curve->edited = [editStage, block, k](const AdsrCurve::Values &v) {
+                    const double values[4] = {v.attack, v.decay, v.sustain, v.release};
+                    for (int which = 0; which < 4; ++which)
+                        if (auto *field = block->findChild<QDoubleSpinBox *>(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)))) {
+                            const QSignalBlocker quiet(field);
+                            field->setValue(values[which]);
+                        }
+                    editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) {
+                        s.a = v.attack;
+                        s.b = v.decay;
+                        s.c = v.sustain;
+                        s.d = v.release;
+                    }, QStringLiteral("filter%1/curve").arg(k));
+                };
+                bf->addRow(curve);
+            }
+            if (f.kind == InteractionFilter::Curve) {
+                // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first
+                // curve's playhead where its input is now
+                auto *straight = new QPushButton(QStringLiteral("Straight"));
+                straight->setToolTip(QStringLiteral("Back to a straight line"));
+                bf->addRow(QString(), straight);
+                connect(straight, &QPushButton::clicked, this, [this, editStage, k] {
+                    editStage(k, QStringLiteral("Reset Curve"), [](InteractionStage &s) { s.curve = Interaction::straightCurve(); });
+                    rebuildSettings();
+                });
+                auto *lane = new CurveLane;
+                lane->setObjectName(QStringLiteral("filterCurve%1").arg(k));
+                lane->setTrack(f.curve, 1.0, 0.0, 1.0);
+                lane->setView(-0.03, 1.03, -0.08, 1.08);
+                lane->setFixedHeight(200);
+                lane->setToolTip(QStringLiteral("Across: what comes in · up: what goes out. Click to add a key, drag it, "
+                                                "double-click to remove it; right-click: its curve (easing, Bézier, hold)"));
+                bf->addRow(lane);
+                if (live && !m_lane) m_lane = lane;
+                // Its right-click is its keys' own (their easing): only Edit mode (a click on its title) puts it in a preset
+                if (PresetEditor *pe = live ? PresetEditor::instance() : nullptr) pe->track(lane, 0, {QStringLiteral("interaction/%1/filters").arg(it.id)});
+                if (m_revealCurve && k + 1 == it.filters.size()) { // just added: shown
+                    m_revealCurve = false;
+                    QTimer::singleShot(60, this, [this] { // once laid out
+                        if (!m_scroll) return;
+                        m_settings->adjustSize();
+                        m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum());
+                    });
+                }
+                connect(lane, &CurveLane::edited, this, [editStage, k](const AnimTrack &t, int gesture) {
+                    editStage(k, QStringLiteral("Edit Curve"), [t](InteractionStage &s) {
+                        s.curve.keys = t.keys;
+                        for (AnimKey &key : s.curve.keys) key.t = std::clamp(key.t, 0.0, 1.0);
+                    }, gesture ? QStringLiteral("curve%1/%2").arg(k).arg(gesture) : QString());
+                });
+            }
+            fv->addWidget(block);
+        }
+        return frame;
+    };
+    const auto saveTargets = [this](InteractionGraph graph, const QString &text) {
+        m_committing = true;
+        m_undo->push(new SetTargetRoutes(m_engine, std::move(graph), text));
+        m_committing = false;
+        emit edited();
+    };
+    auto graph = m_engine->interactionGraph();
+    std::vector<quint64> targets{0};
+    if (root.xyInputs.empty()) {
+        QSet<quint64> reachable;
+        for (const auto &node : graph.nodes)
+            if (node.mapping == id && node.kind == InteractionGraph::Kind::Source) reachable.insert(node.id);
+        qsizetype previous;
+        do {
+            previous = reachable.size();
+            for (const auto &edge : graph.edges)
+                if (reachable.contains(edge.from)) reachable.insert(edge.to);
+        } while (reachable.size() != previous);
+        for (const auto &node : graph.nodes)
+            if (node.kind == InteractionGraph::Kind::Destination && reachable.contains(node.id)) targets.push_back(node.id);
+
+        Interaction settings;
+        settings.filters = root.sharedFilters;
+        const EditFn editShared = [editRoot](const QString &text, const auto &fn, const QString &merge) {
+            editRoot(text, [&](Interaction &x) {
+                Interaction common;
+                common.filters = x.sharedFilters;
+                fn(common);
+                x.sharedFilters = std::move(common.filters);
+            }, merge.isEmpty() ? merge : QStringLiteral("shared/") + merge);
+        };
+        m_settingsLayout->addWidget(filterStack(settings, editShared, QStringLiteral("Shared filters · before all targets"),
+                                               false, true, srcLo, srcHi, srcLo, srcHi));
+    }
+    const auto selectedTarget = std::find(targets.begin(), targets.end(), m_targetTab);
+    const int active = selectedTarget == targets.end() ? 0 : int(selectedTarget - targets.begin());
+    const quint64 extraTarget = targets[size_t(active)];
+    EditFn editTarget = edit;
+    if (extraTarget) {
+        for (const auto &node : graph.nodes)
+            if (node.id == extraTarget) { it = node.settings; break; }
+        editTarget = [this, extraTarget, saveTargets](const QString &text, const auto &fn, const QString &) {
+            auto routes = m_engine->interactionGraph();
+            for (auto &node : routes.nodes)
+                if (node.id == extraTarget) {
+                    fn(node.settings);
+                    saveTargets(std::move(routes), text);
+                    return;
+                }
+        };
+    }
+    const auto targetRange = extraTarget ? targetSpan(it, 0) : tgtSpan;
+    m_outSpan = targetRange;
+    form = section(QStringLiteral("Targets"));
+    // All destination tabs use the same parameter picker.
+    const auto makeTarget = [this](quint64 owner, const QString &path,
+                                    std::function<void(quint64, const QString &)> change, bool scalarOnly = false) {
+        auto *target = new QToolButton;
+        target->setObjectName(QStringLiteral("interactionTargetParameter"));
+        target->setText(targetLabel(owner, path));
+        target->setPopupMode(QToolButton::InstantPopup);
+        target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto *targetMenu = new QMenu(target);
+        target->setMenu(targetMenu);
+        connect(targetMenu, &QMenu::aboutToShow, this, [this, targetMenu, change, scalarOnly, path] {
+            clearInteractionMenu(targetMenu);
+            auto fill = [this, change, scalarOnly](QMenu *into, const showmenu::Owner &owner) {
+                const quint64 layer = owner.layer();
+                std::vector<ParamInfo> params;
+                const std::vector<ParamInfo> available = showmenu::ofOwner(m_engine->parameters(layer), owner);
+                QSet<QString> writable;
+                for (const ParamInfo &p : available) {
+                    if (!(p.access & ParamInfo::Write) || p.type == ParamInfo::Type::Text) continue;
+                    writable.insert(p.path);
+                    params.push_back(p);
+                }
+                if (!scalarOnly) {
+                    // Add one selectable composite target above its individually
+                    // addressable channels (e.g. param/color as well as /r, /g, /b).
+                    for (const ParamInfo &p : available) {
+                        if (!p.path.endsWith(QStringLiteral("/r"))) continue;
+                        const QString base = p.path.chopped(2);
+                        if (!writable.contains(base + QStringLiteral("/r")) ||
+                            !writable.contains(base + QStringLiteral("/g")) ||
+                            !writable.contains(base + QStringLiteral("/b")) ||
+                            writable.contains(base)) continue;
+                        ParamInfo color = p;
+                        color.path = base;
+                        if (color.label.endsWith(QStringLiteral(" R"))) color.label.chop(2);
+                        color.animatable = false;
+                        params.push_back(color);
+                    }
+                    const auto points = showmenu::ofOwner(m_engine->animatablePoints(layer), owner);
+                    params.insert(params.end(), points.begin(), points.end());
+                }
+                addParamMenu(into, params, [this, change, layer](QMenu *menu, const ParamInfo &p, const QString &text) {
+                    menu->addAction(text, this, [change, layer, path = p.path] { change(layer, path); });
+                }, true);
+            };
+            fillOutputTargets(targetMenu, path, [change](const QString &output) { change(0, output); });
+            targetMenu->addSeparator();
+            showmenu::fillOwners(targetMenu, m_engine, fill);
+        });
+        return target;
+    };
+    auto *target = makeTarget(it.layer, it.param, [this, editRoot, editTarget, extraTarget](quint64 layer, const QString &path) {
+        if (extraTarget)
+            editTarget(QStringLiteral("Change Interaction Target"), [layer, path](Interaction &x) {
+                x.layer = layer;
+                x.param = path;
+            }, {});
+        else
+            editRoot(QStringLiteral("Change Interaction Target"), [this, layer, path](Interaction &x) {
+                m_engine->configureInteractionTarget(x, layer, path);
+            });
+        m_xyAxis = 0;
+        rebuildSettings();
+        rebuildList();
+    }, extraTarget != 0);
+    if (!extraTarget) attachPreset({target}, {QStringLiteral("target")});
+    if (root.xyInputs.empty()) {
+        auto *tabs = new QTabWidget;
+        tabs->setObjectName(QStringLiteral("interactionTargetTabs"));
+        for (size_t i = 0; i < targets.size(); ++i)
+            tabs->addTab(new QWidget, QStringLiteral("Target %1").arg(i + 1));
+        tabs->setCurrentIndex(active);
+        auto *page = new QFormLayout(tabs->currentWidget());
+        page->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->addRow(note(QStringLiteral("Right-click a tab to add a target.")));
+        form->addRow(tabs);
+        form = page;
+        auto *tabBar = tabs->tabBar();
+        tabBar->setToolTip(QStringLiteral("Right-click a target tab to add or remove a target"));
+        tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(tabBar, &QWidget::customContextMenuRequested, this, [this, tabBar, id, targets, saveTargets](const QPoint &pos) {
+            const int index = tabBar->tabAt(pos);
+            if (index < 0) return;
+            QMenu menu;
+            menu.addAction(QStringLiteral("Add Target"), this, [this, id, saveTargets] {
+                auto routes = m_engine->interactionGraph();
+                quint64 next = 1, source = 0;
+                for (const auto &node : routes.nodes) {
+                    next = std::max(next, node.id + 1);
+                    if (node.mapping == id && node.kind == InteractionGraph::Kind::Source &&
+                        node.settings.sourceParam == QStringLiteral("shared")) source = node.id;
+                }
+                if (!source) {
+                    source = next++;
+                    Interaction settings;
+                    settings.source = InteractionSource::Internal;
+                    settings.sourceParam = QStringLiteral("shared");
+                    routes.nodes.push_back({source, InteractionGraph::Kind::Source, settings});
+                    routes.nodes.back().mapping = id;
+                }
+                routes.nodes.push_back({next, InteractionGraph::Kind::Destination, {}});
+                routes.edges.push_back({source, next});
+                m_targetTab = next;
+                saveTargets(std::move(routes), QStringLiteral("Add Interaction Target"));
+                rebuildSettings();
+            });
+            if (index > 0) menu.addAction(QStringLiteral("Remove Target"), this, [this, node = targets[size_t(index)], saveTargets] {
+                auto routes = m_engine->interactionGraph();
+                routes.nodes.erase(std::remove_if(routes.nodes.begin(), routes.nodes.end(),
+                                                  [node](const auto &n) { return n.id == node; }), routes.nodes.end());
+                routes.edges.erase(std::remove_if(routes.edges.begin(), routes.edges.end(),
+                                                  [node](const auto &e) { return e.to == node; }), routes.edges.end());
+                if (m_targetTab == node) m_targetTab = 0;
+                saveTargets(std::move(routes), QStringLiteral("Remove Interaction Target"));
+                rebuildSettings();
+            });
+            menu.exec(tabBar->mapToGlobal(pos));
+        });
+        connect(tabs, &QTabWidget::currentChanged, this, [this, targets](int index) {
+            if (index < 0) return;
+            m_targetTab = targets[size_t(index)];
+            QTimer::singleShot(0, this, [this] { rebuildSettings(); });
+        });
+    }
+    form->addRow(QStringLiteral("Parameter"), target);
 
     // Whole-color targets expose an explicit alpha opt-in. By default a
     // Chataigne RGBA packet changes RGB but keeps the layer's existing alpha.
@@ -1606,28 +2260,30 @@ void InteractionPanel::rebuildSettings()
                             m_engine->parameterInfo(it.layer, it.param + QStringLiteral("/g"), &colorPart) &&
                             m_engine->parameterInfo(it.layer, it.param + QStringLiteral("/b"), &colorPart) &&
                             m_engine->parameterInfo(it.layer, it.param + QStringLiteral("/a"), &colorPart);
-    if (wholeColor) {
+    if (!extraTarget && wholeColor) {
         auto *mapAlpha = new FlagBox(QStringLiteral("Map alpha (RGBA)"));
         mapAlpha->setChecked(it.colorMapAlpha);
         mapAlpha->setToolTip(QStringLiteral("Off: preserve the target's opacity (recommended). "
                                            "On: use the fourth incoming OSC component as alpha, including zero."));
         form->addRow(QString(), mapAlpha);
         attachPreset({mapAlpha}, {QStringLiteral("color/map_alpha")});
-        connect(mapAlpha, &QCheckBox::toggled, this, [edit](bool on) {
-            edit(QStringLiteral("Change Color Alpha Mapping"), [on](Interaction &x) { x.colorMapAlpha = on; });
+        connect(mapAlpha, &QCheckBox::toggled, this, [editTarget](bool on) {
+            editTarget(QStringLiteral("Change Color Alpha Mapping"), [on](Interaction &x) { x.colorMapAlpha = on; }, {});
         });
     }
 
     // What it does now
-    m_inMeter = meter();
-    m_outMeter = meter();
-    m_inMeter->setToolTip(QStringLiteral("The source, within its usual range"));
-    m_outMeter->setToolTip(QStringLiteral("The result, after the filters and the master level, within the target's range"));
-    auto *meters = new QVBoxLayout;
-    meters->setSpacing(3);
-    meters->addWidget(m_inMeter);
-    meters->addWidget(m_outMeter);
-    form->addRow(QStringLiteral("In / Out"), meters);
+    if (!extraTarget) {
+        m_inMeter = meter();
+        m_outMeter = meter();
+        m_inMeter->setToolTip(QStringLiteral("The source, within its usual range"));
+        m_outMeter->setToolTip(QStringLiteral("The result, after the filters and the master level, within the target's range"));
+        auto *meters = new QVBoxLayout;
+        meters->setSpacing(3);
+        meters->addWidget(m_inMeter);
+        meters->addWidget(m_outMeter);
+        form->addRow(QStringLiteral("In / Out"), meters);
+    }
 
     // The chain
     auto *master = new SliderField;
@@ -1638,14 +2294,14 @@ void InteractionPanel::rebuildSettings()
     master->setTicks(10);
     master->setSnaps({0, 100});
     master->setValue(it.master * 100);
-    auto *masterLabel = new ResetLabel(QStringLiteral("Master Level"), [edit, master] {
+    auto *masterLabel = new ResetLabel(QStringLiteral("Master Level"), [editTarget, master] {
         master->setValue(100);
-        edit(QStringLiteral("Reset Master Level"), [](Interaction &x) { x.master = 1; });
+        editTarget(QStringLiteral("Reset Master Level"), [](Interaction &x) { x.master = 1; }, {});
     });
     form->addRow(masterLabel, master);
-    attachPreset({masterLabel, master}, {QStringLiteral("master")});
-    connect(master, &SliderField::valueEdited, this, [edit](double v) {
-        edit(QStringLiteral("Change Master Level"), [v](Interaction &x) { x.master = v / 100.0; }, QStringLiteral("master"));
+    if (!extraTarget) attachPreset({masterLabel, master}, {QStringLiteral("master")});
+    connect(master, &SliderField::valueEdited, this, [editTarget](double v) {
+        editTarget(QStringLiteral("Change Master Level"), [v](Interaction &x) { x.master = v / 100.0; }, QStringLiteral("master"));
     });
 
     auto *takeover = new QComboBox;
@@ -1656,257 +2312,100 @@ void InteractionPanel::rebuildSettings()
                                         "it waits for the controller to meet it · Jump: it sets it at once"));
     auto *takeoverLabel = new QLabel(QStringLiteral("Takeover"));
     form->addRow(takeoverLabel, takeover);
-    attachPreset({takeoverLabel, takeover}, {QStringLiteral("takeover")});
-    connect(takeover, qOverload<int>(&QComboBox::activated), this, [edit, takeover](int) {
+    if (!extraTarget) attachPreset({takeoverLabel, takeover}, {QStringLiteral("takeover")});
+    connect(takeover, qOverload<int>(&QComboBox::activated), this, [editTarget, takeover](int) {
         const Takeover t = Takeover(takeover->currentData().toInt());
-        edit(QStringLiteral("Change Takeover"), [t](Interaction &x) { x.takeover = t; });
+        editTarget(QStringLiteral("Change Takeover"), [t](Interaction &x) { x.takeover = t; }, {});
     });
 
-    // Filters, in a frame, as a layer's effects: + adds one (of the kind chosen), − removes the one selected, ▲ ▼ move
-    // it; each one on or off, its settings under its name, any value. A click on a filter selects it
-    const int count = int(it.filters.size());
-    m_selectedFilter = count ? std::clamp(m_selectedFilter, 0, count - 1) : -1;
-    auto *frame = new QFrame;
-    frame->setObjectName(QStringLiteral("filtersFrame"));
-    frame->setStyleSheet(QStringLiteral("QFrame#filtersFrame { border:1px solid #3c3c43; border-radius:4px; }"));
-    auto *fv = new QVBoxLayout(frame);
-    fv->setContentsMargins(6, 4, 6, 6);
-    fv->setSpacing(4);
-    auto *bar = new QHBoxLayout;
-    auto *filtersLabel = new QLabel(QStringLiteral("<b>Filters</b>"));
-    filtersLabel->setToolTip(QStringLiteral("Applied one after the other, from the top, between the source range and the master level"));
-    auto tool = [](const QString &text, const QString &tip, const char *name) {
-        auto *b = new QToolButton;
-        b->setObjectName(QString::fromLatin1(name));
-        b->setText(text);
-        b->setToolTip(tip);
-        b->setMinimumWidth(26);
-        return b;
-    };
-    auto *addFilter = tool(QStringLiteral("+"), QStringLiteral("Add a filter (at the end)"), "addFilter");
-    auto *removeFilter = tool(QStringLiteral("−"), QStringLiteral("Remove the selected filter"), "removeFilter");
-    auto *upFilter = tool(QStringLiteral("▲"), QStringLiteral("Move the selected filter up (applied earlier)"), "filterUp");
-    auto *downFilter = tool(QStringLiteral("▼"), QStringLiteral("Move the selected filter down (applied later)"), "filterDown");
-    removeFilter->setEnabled(m_selectedFilter >= 0);
-    upFilter->setEnabled(m_selectedFilter > 0);
-    downFilter->setEnabled(m_selectedFilter >= 0 && m_selectedFilter + 1 < count);
-    addFilter->setPopupMode(QToolButton::InstantPopup);
-    addFilter->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; width: 0; }")); // a plain +
-    auto *addMenu = new QMenu(addFilter);
-    addFilter->setMenu(addMenu);
-    const InteractionFilter overTime[] = {InteractionFilter::Average, InteractionFilter::WeightedAverage, InteractionFilter::AttackRelease,
-                                          InteractionFilter::Damper, InteractionFilter::PulseDetection, InteractionFilter::Delay,
-                                          InteractionFilter::Speed, InteractionFilter::Envelope};
-    const InteractionFilter onValue[] = {InteractionFilter::Remap, InteractionFilter::Curve, InteractionFilter::Math, InteractionFilter::Clamp,
-                                         InteractionFilter::Steps, InteractionFilter::Threshold, InteractionFilter::Toggle};
-    auto offer = [this, edit, addMenu, count, srcLo, srcHi, tgtLo, tgtHi](InteractionFilter kind) {
-        addMenu->addAction(interactionFilterName(kind), this, [this, edit, kind, count, srcLo, srcHi, tgtLo, tgtHi] {
-            m_revealCurve = kind == InteractionFilter::Curve;
-            m_selectedFilter = count; // the new one
-            // A Remap: from what the source gives to what the target takes, as they usually go
-            const InteractionStage made = kind == InteractionFilter::Remap ? InteractionStage::remap(srcLo, srcHi, tgtLo, tgtHi)
-                                                                           : InteractionStage::made(kind);
-            edit(QStringLiteral("Add Filter"), [made](Interaction &x) { x.filters.push_back(made); });
-            rebuildSettings();
-        });
-    };
-    addMenu->addSection(QStringLiteral("On the value"));
-    for (InteractionFilter k : onValue) offer(k);
-    addMenu->addSection(QStringLiteral("Over time"));
-    for (InteractionFilter k : overTime) offer(k);
-    bar->addWidget(filtersLabel);
-    bar->addStretch();
-    for (QToolButton *b : {addFilter, removeFilter, upFilter, downFilter}) bar->addWidget(b);
-    fv->addLayout(bar);
-    attachPreset({filtersLabel}, {QStringLiteral("filters")});
-    if (it.filters.empty()) fv->addWidget(note(QStringLiteral("None: the value goes straight to the master level.")));
-    connect(removeFilter, &QToolButton::clicked, this, [this, edit] {
-        const int k = m_selectedFilter;
-        edit(QStringLiteral("Remove Filter"), [k](Interaction &x) {
-            if (k >= 0 && k < int(x.filters.size())) x.filters.erase(x.filters.begin() + k);
-        });
-        rebuildSettings();
-    });
-    auto move = [this, edit](int by) {
-        const int k = m_selectedFilter, to = k + by;
-        edit(QStringLiteral("Move Filter"), [k, to](Interaction &x) {
-            if (k >= 0 && to >= 0 && k < int(x.filters.size()) && to < int(x.filters.size())) std::swap(x.filters[size_t(k)], x.filters[size_t(to)]);
-        });
-        m_selectedFilter = to; // it stays selected
-        rebuildSettings();
-    };
-    connect(upFilter, &QToolButton::clicked, this, [move] { move(-1); });
-    connect(downFilter, &QToolButton::clicked, this, [move] { move(1); });
-
-    auto editStage = [edit](size_t k, const QString &text, const std::function<void(InteractionStage &)> &fn, const QString &merge = QString()) {
-        edit(text, [k, fn](Interaction &x) {
-            if (k < x.filters.size()) fn(x.filters[k]);
-        }, merge);
-    };
-    // The range each filter's meter shows: as the value goes there — the source's at first, a Remap's Out after it, 0..1
-    // after what gives 0..1 (a curve, steps, a threshold, a toggle, a pulse, a speed), a Clamp's; otherwise as before
-    std::pair<double, double> span{srcLo, srcHi};
-    for (size_t k = 0; k < it.filters.size(); ++k) {
-        const InteractionStage &f = it.filters[k];
-        if (f.enabled) switch (f.kind) {
-        case InteractionFilter::Remap: span = {std::min(f.c, f.d), std::max(f.c, f.d)}; break;
-        case InteractionFilter::Clamp: span = {std::min(f.a, f.b), std::max(f.a, f.b)}; break;
-        case InteractionFilter::Curve:
-        case InteractionFilter::Steps:
-        case InteractionFilter::Threshold:
-        case InteractionFilter::Toggle:
-        case InteractionFilter::PulseDetection:
-        case InteractionFilter::Envelope:
-        case InteractionFilter::Speed: span = {0.0, 1.0}; break;
-        default: break;
-        }
-        const QString base = QStringLiteral("filters/%1/").arg(k + 1);
-        const bool selected = int(k) == m_selectedFilter;
-        auto *block = new ClickFrame;
-        block->setObjectName(QStringLiteral("filterBlock%1").arg(k));
-        block->setStyleSheet(selected ? QStringLiteral("QFrame#filterBlock%1 { background:#2e2e35; border-left:2px solid %2; }").arg(k).arg(theme::css())
-                                      : QStringLiteral("QFrame#filterBlock%1 { border-left:2px solid transparent; }").arg(k));
-        block->pressed = [this, k] {
-            if (m_selectedFilter == int(k)) return;
-            m_selectedFilter = int(k);
-            QTimer::singleShot(0, this, [this] { rebuildSettings(); }); // after the click
-        };
-        auto *bf = new QFormLayout(block);
-        bf->setContentsMargins(6, 3, 2, 3);
-        bf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        bf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        auto *on = new FlagBox(QStringLiteral("%1 · %2").arg(k + 1).arg(interactionFilterName(f.kind)));
-        on->setObjectName(QStringLiteral("filterOn%1").arg(k));
-        on->setChecked(f.enabled);
-        on->setToolTip(QStringLiteral("On / off (off: the value goes through unchanged)"));
-        bf->addRow(on);
-        attachPreset({on}, {base + QStringLiteral("enable")});
-        {
-            // What comes out of it now: a meter in its range, and the number
-            auto *bar = meter();
-            bar->setObjectName(QStringLiteral("filterMeter%1").arg(k));
-            bar->setToolTip(QStringLiteral("What comes out of this filter (the bar: from %1 to %2)").arg(span.first).arg(span.second));
-            auto *number = new QLabel(QStringLiteral("—"));
-            number->setObjectName(QStringLiteral("filterValue%1").arg(k));
-            number->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            number->setMinimumWidth(64);
-            number->setStyleSheet(QStringLiteral("color:#999; font-size:11px;"));
-            auto *row = new QHBoxLayout;
-            row->addWidget(bar, 1);
-            row->addWidget(number);
-            bf->addRow(row);
-            m_stageMeters.push_back({bar, number, span});
-        }
-        connect(on, &QCheckBox::toggled, this, [editStage, k](bool v) {
-            editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) { s.enabled = v; });
-        });
-
-        if (f.kind == InteractionFilter::Math) {
-            auto *op = new QComboBox;
-            op->setObjectName(QStringLiteral("filterOp%1").arg(k));
-            for (int o = 0; o < kMathOpCount; ++o) op->addItem(mathOpName(MathOp(o)), o);
-            op->setCurrentIndex(int(f.op));
-            op->setToolTip(QStringLiteral("x: the value coming in (0..1 after the source range, any value after another filter); a: the value below"));
-            bf->addRow(QStringLiteral("Operation"), op);
-            attachPreset({op}, {QStringLiteral("filters")});
-            connect(op, qOverload<int>(&QComboBox::activated), this, [this, editStage, k](int o) {
-                editStage(k, QStringLiteral("Change Filter"), [o](InteractionStage &s) { s.op = MathOp(o); });
-                rebuildSettings();
-            });
-        }
-        for (int which = 0; which < kFilterSettingCount; ++which) {
-            const FilterSetting fs = interactionFilterSetting(f.kind, which);
-            if (fs.name.isEmpty() || (f.kind == InteractionFilter::Math && !mathOpUsesValue(f.op))) continue;
-            // (a Remap's In slides over the source's range, its Out over the target's)
-            const double span = f.kind == InteractionFilter::Remap ? (which < 2 ? srcHi - srcLo : tgtHi - tgtLo) : fs.max - fs.min;
-            auto *field = chainNumber(f.setting(which), span, f.kind == InteractionFilter::Steps ? 0 : 3);
-            field->setObjectName(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)));
-            field->setSuffix(fs.suffix);
-            field->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            // Reset: its default (a Remap: the source's or the target's end)
-            const double def = f.kind != InteractionFilter::Remap ? fs.def : which == 0 ? srcLo : which == 1 ? srcHi : which == 2 ? tgtLo : tgtHi;
-            auto *label = new ResetLabel(fs.name, [editStage, field, k, which, def] {
-                const QSignalBlocker quiet(field);
-                field->setValue(def);
-                editStage(k, QStringLiteral("Reset Filter"), [which, def](InteractionStage &s) { s.setting(which) = def; });
-            });
-            bf->addRow(label, field);
-            attachPreset({label, field}, {base + QChar('a' + which)});
-            connect(field, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [editStage, k, which](double v) {
-                editStage(k, QStringLiteral("Change Filter"), [which, v](InteractionStage &s) { s.setting(which) = v; },
-                          QStringLiteral("filter%1/%2").arg(k).arg(which));
-            });
-        }
-        if (f.kind == InteractionFilter::Envelope) { // in the hand: its fields below follow
-            auto *curve = new AdsrCurve;
-            curve->longest = 5;
-            AdsrCurve::Values shape;
-            shape.attack = f.a;
-            shape.decay = f.b;
-            shape.sustain = f.c;
-            shape.release = f.d;
-            curve->setValues(shape);
-            curve->edited = [editStage, block, k](const AdsrCurve::Values &v) {
-                const double values[4] = {v.attack, v.decay, v.sustain, v.release};
-                for (int which = 0; which < 4; ++which)
-                    if (auto *field = block->findChild<QDoubleSpinBox *>(QStringLiteral("filter%1%2").arg(k).arg(QChar('a' + which)))) {
-                        const QSignalBlocker quiet(field);
-                        field->setValue(values[which]);
-                    }
-                editStage(k, QStringLiteral("Change Filter"), [v](InteractionStage &s) {
-                    s.a = v.attack;
-                    s.b = v.decay;
-                    s.c = v.sustain;
-                    s.d = v.release;
-                }, QStringLiteral("filter%1/curve").arg(k));
-            };
-            bf->addRow(curve);
-        }
-        if (f.kind == InteractionFilter::Curve) {
-            // The animations' curve editor, its whole square shown (0..1 in, 0..1 out, a margin around); the first
-            // curve's playhead where its input is now
-            auto *straight = new QPushButton(QStringLiteral("Straight"));
-            straight->setToolTip(QStringLiteral("Back to a straight line"));
-            bf->addRow(QString(), straight);
-            connect(straight, &QPushButton::clicked, this, [this, editStage, k] {
-                editStage(k, QStringLiteral("Reset Curve"), [](InteractionStage &s) { s.curve = Interaction::straightCurve(); });
-                rebuildSettings();
-            });
-            auto *lane = new CurveLane;
-            lane->setObjectName(QStringLiteral("filterCurve%1").arg(k));
-            lane->setTrack(f.curve, 1.0, 0.0, 1.0);
-            lane->setView(-0.03, 1.03, -0.08, 1.08);
-            lane->setFixedHeight(200);
-            lane->setToolTip(QStringLiteral("Across: what comes in · up: what goes out. Click to add a key, drag it, "
-                                            "double-click to remove it; right-click: its curve (easing, Bézier, hold)"));
-            bf->addRow(lane);
-            if (!m_lane) m_lane = lane;
-            // Its right-click is its keys' own (their easing): only Edit mode (a click on its title) puts it in a preset
-            if (PresetEditor *pe = PresetEditor::instance()) pe->track(lane, 0, {QStringLiteral("interaction/%1/filters").arg(it.id)});
-            if (m_revealCurve && k + 1 == it.filters.size()) { // just added: shown
-                m_revealCurve = false;
-                QTimer::singleShot(60, this, [this] { // once laid out
-                    if (!m_scroll) return;
-                    m_settings->adjustSize();
-                    m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum());
-                });
-            }
-            connect(lane, &CurveLane::edited, this, [editStage, k](const AnimTrack &t, int gesture) {
-                editStage(k, QStringLiteral("Edit Curve"), [t](InteractionStage &s) {
-                    s.curve.keys = t.keys;
-                    for (AnimKey &key : s.curve.keys) key.t = std::clamp(key.t, 0.0, 1.0);
-                }, gesture ? QStringLiteral("curve%1/%2").arg(k).arg(gesture) : QString());
-            });
-        }
-        fv->addWidget(block);
-    }
-    form->addRow(frame);
+    form->addRow(filterStack(it, editTarget, QStringLiteral("Target filters"), !extraTarget, false,
+                             srcLo, srcHi, targetRange.first, targetRange.second));
     m_settingsLayout->addStretch();
 }
 
 // ---------------------------------------------------------------------------
 // Action mode: the conditions on the source's value, then what is done when they become true, and false
 // ---------------------------------------------------------------------------
+void InteractionPanel::fillOutputTargets(QMenu *menu, const QString &currentPath,
+                                         const std::function<void(const QString &)> &select)
+{
+    const auto current = InteractionOutput::fromPath(currentPath);
+    const auto add = [this, current, select](QMenu *parent, const QString &label, InteractionOutput output, int universeMin = 0) {
+        parent->addAction(label, this, [this, label, current, output, universeMin, select]() mutable {
+            if (current.protocol == output.protocol && current.destination == output.destination) output = current;
+            QDialog dialog(this);
+            dialog.setWindowTitle(label);
+            auto *form = new QFormLayout(&dialog);
+            QLineEdit *address = nullptr, *arguments = nullptr;
+            QSpinBox *number = nullptr, *channel = nullptr;
+            if (output.protocol == "osc") {
+                address = new QLineEdit(output.address);
+                address->setPlaceholderText(QStringLiteral("/my/message"));
+                arguments = new QLineEdit(QString::fromUtf8(QJsonDocument(output.arguments).toJson(QJsonDocument::Compact)));
+                arguments->setToolTip(QStringLiteral(R"(JSON array. Use "$value" for the interaction value.)"));
+                form->addRow(QStringLiteral("OSC address"), address);
+                form->addRow(QStringLiteral("Arguments"), arguments);
+            } else {
+                const bool dmx = output.protocol == "dmx";
+                number = new QSpinBox;
+                number->setRange(dmx ? universeMin : 0, dmx ? (universeMin ? 63999 : 32767) : 127);
+                number->setValue(output.number);
+                channel = new QSpinBox;
+                channel->setRange(1, dmx ? 512 : 16);
+                channel->setValue(output.channel);
+                form->addRow(dmx ? QStringLiteral("Universe") : QStringLiteral("Controller (CC)"), number);
+                form->addRow(QStringLiteral("Channel"), channel);
+            }
+            auto *error = new QLabel;
+            error->setWordWrap(true);
+            form->addRow(error);
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+            form->addRow(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+                if (address) {
+                    const auto value = address->text().trimmed();
+                    static const QRegularExpression pattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
+                    const auto json = QJsonDocument::fromJson(arguments->text().toUtf8());
+                    if (!pattern.match(value).hasMatch() || value.contains(QChar::Null) || !json.isArray()) {
+                        error->setText(QStringLiteral("Enter an OSC address and a JSON array of arguments."));
+                        return;
+                    }
+                    for (const auto &argument : json.array()) {
+                        if (argument.isArray() || argument.isObject() || argument.toString().contains(QChar::Null)) {
+                            error->setText(QStringLiteral("Use numbers, strings, booleans or null as arguments."));
+                            return;
+                        }
+                    }
+                    output.address = value;
+                    output.arguments = json.array();
+                } else {
+                    output.number = number->value();
+                    output.channel = channel->value();
+                }
+                dialog.accept();
+            });
+            dialog.setMinimumWidth(350);
+            if (dialog.exec() == QDialog::Accepted) select(output.path());
+        });
+    };
+    auto *osc = menu->addMenu(QStringLiteral("OSC"));
+    const auto senders = QSettings().value(QStringLiteral("osc/feedback/targets"), SequenceFeedback::defaultTargets()).toStringList();
+    for (const auto &sender : senders)
+        if (SequenceFeedback::parseTarget(sender, nullptr, nullptr))
+            add(osc, sender, {QStringLiteral("osc"), sender, {}, QJsonArray{QStringLiteral("$value")}});
+    if (osc->isEmpty()) osc->addAction(QStringLiteral("Add an OSC sender in Settings"))->setEnabled(false);
+    auto *dmx = menu->addMenu(QStringLiteral("DMX"));
+    for (const auto &output : m_engine->fixturePatch().outputs)
+        add(dmx, output.name, {QStringLiteral("dmx"), QString::number(output.id), {}, {}, 1, 1},
+            output.protocol == DmxOutput::Protocol::Sacn ? 1 : 0);
+    if (dmx->isEmpty()) dmx->addAction(QStringLiteral("Add a DMX output in Composition"))->setEnabled(false);
+    auto *midi = menu->addMenu(QStringLiteral("MIDI"));
+    for (const auto &output : m_engine->midiOutputs())
+        add(midi, output.name, {QStringLiteral("midi"), QString::number(output.id), {}, {}, 1, 1});
+    if (midi->isEmpty()) midi->addAction(QStringLiteral("Add a MIDI output in Composition"))->setEnabled(false);
+}
+
 void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction &it, const EditFn &edit)
 {
     m_inMeter = meter();
@@ -1994,20 +2493,23 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             auto *row = new QWidget;
             auto *h = new QHBoxLayout(row);
             h->setContentsMargins(0, 0, 0, 0);
+            const auto path = c.sendsOsc() ? InteractionOutput{QStringLiteral("osc"), c.oscDestination,
+                                                                  c.oscAddress, c.oscArguments}.path() : c.param;
             auto *target = new QToolButton;
             target->setObjectName(QStringLiteral("%1Target%2").arg(whenTrue ? "true" : "false").arg(i));
-            target->setText(targetLabel(c.layer, c.param));
+            target->setText(targetLabel(c.layer, path));
             target->setPopupMode(QToolButton::InstantPopup);
             target->setToolButtonStyle(Qt::ToolButtonTextOnly);
             target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             target->setToolTip(QStringLiteral("The value of the show it sets: an action (fired), a switch, a choice, a number"));
             auto *menu = new QMenu(target);
             target->setMenu(menu);
-            connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i] {
-                menu->clear();
-                auto fill = [&](QMenu *into, quint64 layer) {
+            connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, listOf, i, path] {
+                clearInteractionMenu(menu);
+                auto fill = [this, edit, listOf, i](QMenu *into, const showmenu::Owner &owner) {
+                    const quint64 layer = owner.layer();
                     std::vector<ParamInfo> params;
-                    for (const ParamInfo &p : m_engine->parameters(layer))
+                    for (const ParamInfo &p : showmenu::ofOwner(m_engine->parameters(layer), owner))
                         if ((p.access & ParamInfo::Write) && p.type != ParamInfo::Type::Text) params.push_back(p);
                     addParamMenu(into, params, [this, edit, listOf, i, layer](QMenu *m, const ParamInfo &p, const QString &text) {
                         m->addAction(text, this, [this, edit, listOf, i, layer, p] {
@@ -2020,13 +2522,32 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
                                 if (i >= l.size()) return;
                                 l[i].layer = layer; // its time and curve kept
                                 l[i].param = p.path;
+                                l[i].oscDestination.clear();
+                                l[i].oscAddress.clear();
+                                l[i].oscArguments = {};
                                 l[i].value = v;
                             }, QString());
                             rebuildSettings();
                         });
-                    });
+                    }, true);
                 };
-                fillByOwner(menu, fill);
+                fillOutputTargets(menu, path, [this, edit, listOf, i](const QString &output) {
+                    edit(QStringLiteral("Change Action Target"), [listOf, i, output](Interaction &x) {
+                        auto &list = listOf(x);
+                        if (i >= list.size()) return;
+                        auto &action = list[i];
+                        action.layer = 0;
+                        action.param = output;
+                        action.oscDestination.clear();
+                        action.oscAddress.clear();
+                        action.oscArguments = {};
+                        action.value = 1;
+                        action.time = 0;
+                    }, {});
+                    rebuildSettings();
+                });
+                menu->addSeparator();
+                showmenu::fillOwners(menu, m_engine, fill);
             });
             h->addWidget(target, 2);
             // What it is set to, by the kind of value
@@ -2038,7 +2559,13 @@ void InteractionPanel::buildActionSettings(QFormLayout *form, const Interaction 
             };
             ParamInfo info;
             const bool known = !c.param.isEmpty() && m_engine->parameterInfo(c.layer, c.param, &info);
-            if (known && (info.type == ParamInfo::Type::Bool || info.type == ParamInfo::Type::Choice)) {
+            if (path.startsWith(QLatin1String("output/dmx/")) || path.startsWith(QLatin1String("output/midi/"))) {
+                auto *value = number(c.value);
+                value->setRange(0, 1);
+                value->setValue(c.value);
+                h->addWidget(value, 1);
+                connect(value, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [setValue](double v) { setValue(v, {}); });
+            } else if (known && (info.type == ParamInfo::Type::Bool || info.type == ParamInfo::Type::Choice)) {
                 auto *value = new QComboBox;
                 value->setObjectName(QStringLiteral("%1Value%2").arg(whenTrue ? "true" : "false").arg(i));
                 if (info.type == ParamInfo::Type::Bool) value->addItems({QStringLiteral("Off"), QStringLiteral("On")});

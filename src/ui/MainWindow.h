@@ -1,4 +1,6 @@
 #pragma once
+#include <QElapsedTimer>
+#include <QPointer>
 #include "LayerTree.h"
 #include <QJsonObject>
 #include <QMainWindow>
@@ -62,6 +64,7 @@ private:
     void fitToAvailableScreen();
     void buildMenus();
     void refreshLayerList();
+    void refreshLayerListFromEngine(bool wait);
     void scheduleRecallRefresh();
     void refreshViewports();
     void updateCoTargets(); // the inspectors edit the whole selection of their list
@@ -69,6 +72,9 @@ private:
     QList<int> selectedRows() const; // the selection the layer actions act on (layers, or viewports in their tab)
     void refreshAll();
     void selectLayer(int index);
+    void syncLayerSelection(int row, bool focusInspector);
+    void fillZonesMenu(QMenu *menu, int row);
+    void assignZone(const QList<quint64> &layers, quint64 zone);
     void toggleSolo(int row); // a setup aid: not undone, not saved
     int currentLayer() const;
     void statusTick();
@@ -112,6 +118,8 @@ private:
     void moveCurrentLayer(int delta);
     void useLayerAsSource(int target, int sourceRow);
     void layerContextMenu(int row, const QPoint &globalPos);
+    void copyLayers(bool cut);
+    void pasteLayers();
     void copyLayerParams(int row);                             // into m_paramClipboard
     void pasteAttributesDialog(); // Paste Attributes…: the parts chosen (as last time) onto the selected layers
     void pasteLayerParams(int parts, const QString &what);     // Engine::LayerParts, onto the selected layers
@@ -122,6 +130,7 @@ private:
     void sequenceBack();
     void sequenceGoTo(int step);
     void openSequences();
+    void openShowControl();
     void setInOutAtPosition(bool in);
     void relinkMedia(const QString &from, const QString &to);
 
@@ -170,19 +179,21 @@ private:
     };
     std::map<quint64, Output> m_outputs;      // by viewport id
     std::map<quint64, int> m_modesBefore;     // modes before ⌘F / ⌘⇧F, to go back to
-    QLabel *m_status = nullptr;
+    void showContextHelp(QWidget *widget, QString text);
+    QLabel *m_contextHelp = nullptr;
+    QPointer<QWidget> m_helpWidget;
     OscServer *m_osc = nullptr;
     QThread *m_oscThread = nullptr;
     class RemoteServer *m_remote = nullptr;
-    class ShowControlPanel *m_showControl = nullptr;
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
-    QTimer m_statusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
+    QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
+    QTimer m_previewTimer;
+    QElapsedTimer m_previewClock;
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
             *m_blackoutAction = nullptr;
     int m_listedRows = 0; // rows the layer list had (0: empty, a layer chosen as it fills)
-    int m_lastSelected = -1;
     QJsonObject m_paramClipboard;       // layer parameters copied with the right-click menu
     QString m_paramClipboardName;       // the layer they come from (shown in the menu)
 

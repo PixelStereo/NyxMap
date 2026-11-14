@@ -7,6 +7,9 @@
 #include <QSize>
 #include <QSizeF>
 #include <vector>
+// Points are in winding order. Reject collapsed edges and folded quads.
+bool validRoiPolygon(const QPointF *points, int count);
+
 struct Homography {
     double a = 1, b = 0, c = 0, d = 0, e = 1, f = 0, g = 0, h = 0;
     static Homography squareToQuad(const QPointF q[4]); // q: TL, TR, BR, BL

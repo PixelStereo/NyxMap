@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "type": "white",
+  "gain": 0.32,
+  "attack": 0.002,
+  "decay": 0.053,
+  "sustain": 0.1,
+  "release": 0.055,
+  "gate": 0
+}

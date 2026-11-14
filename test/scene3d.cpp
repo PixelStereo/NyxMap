@@ -1,10 +1,14 @@
 #include "Engine.h"
 #include "ImageFile.h"
+#include "MaterialX.h"
 #include "Model3D.h"
+#include <QBuffer>
 #include <QColor>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QHash>
 #include <QImage>
 #include <QJsonObject>
@@ -54,6 +58,17 @@ int runScene3dTests(Engine &engine)
     Model3D gltf;
     QString error;
     check(gltf.load(triangle, &error) && gltf.meshCount() == 1 && gltf.triangleCount() == 1, "a glTF is read (inline buffer, no normals)");
+
+    const QString fbx = QFileInfo(QString::fromUtf8(__FILE__)).absoluteDir().filePath(
+        "../third_party/ufbx/misc/ufbx_testcases/maya_cube_7100_binary.fbx");
+    Model3D whole, filtered;
+    if (whole.load(fbx, &error) && !whole.objects().empty()) {
+        QStringList hidden;
+        for (const auto &object : whole.objects()) hidden << object.first;
+        check(whole.triangleCount() > 0 && filtered.load(fbx, &error, hidden) &&
+              filtered.triangleCount() == 0 && filtered.center() == whole.center() &&
+              filtered.radius() == whole.radius(), "FBX visibility filters triangles without changing its fit");
+    } else check(false, "read FBX object names");
 
     // The built-in primitives: each one read, unwrapped, about a unit in size
     for (const QString &name : Model3D::primitives()) {
@@ -396,6 +411,7 @@ int runScene3dTests(Engine &engine)
             engine.setParameter(smooth, "model/position/x", -1.1);
             engine.setParameter(smooth, "model/material/metal", 1.0);
             engine.setParameter(smooth, "model/material/rough", 0.08);
+            engine.setModelMaterial(engine.indexOfId(smooth), engine.addMaterial("Reflector"));
             engine.setParameter(smooth, "model/material/color/r", 0.95);
             engine.setParameter(smooth, "model/material/color/g", 0.95);
             engine.setParameter(smooth, "model/material/color/b", 0.95);
@@ -407,6 +423,7 @@ int runScene3dTests(Engine &engine)
                 engine.setParameter(id, "model/position/x", x);
                 engine.setParameter(id, "model/material/metal", metal);
                 engine.setParameter(id, "model/material/rough", rough);
+                engine.setModelMaterial(engine.indexOfId(id), engine.addMaterial("Surface sample"));
                 engine.setParameter(id, "model/material/color/r", metal > 0 ? 1.0 : 0.8);
                 engine.setParameter(id, "model/material/color/g", metal > 0 ? 0.75 : 0.25);
                 engine.setParameter(id, "model/material/color/b", metal > 0 ? 0.35 : 0.2);
@@ -573,6 +590,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "camera/pitch", 25.0);
         engine.setParameter(floorId, "model/material/rough", 0.03);
         engine.setParameter(floorId, "model/material/metal", 1.0);
+        check(engine.setModelMaterial(engine.indexOfId(caster), engine.addMaterial("Red caster")), "give the reflecting object its own material");
         engine.setParameter(caster, "model/material/color/r", 1.0);
         engine.setParameter(caster, "model/material/color/g", 0.1);
         engine.setParameter(caster, "model/material/color/b", 0.1);
@@ -598,14 +616,21 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "scene/studio", 0.0);
         engine.setParameter(caster, "model/position/x", 0.6);
         engine.setParameter(caster, "model/position/y", 1.0);
+        // The reflection test changed the camera and material. Compare shadow
+        // quality against a fresh unshadowed image of this same configuration.
+        engine.setParameter(stage, "camera/pitch", 89.0);
+        engine.setParameter(spot, "light/shadow", false);
+        const int qualityWithout = levels(112);
+        check(qualityWithout > 40, "shadow quality reference is lit");
+        engine.setParameter(spot, "light/shadow", true);
         for (const char *level : {"low", "high", "medium"}) {
             engine.setParameter(0, "quality3d/shadows", QString::fromLatin1(level));
-            check(lite || levels(112) < without - 10, "shadows at each level of quality");
+            check(lite || levels(112) < qualityWithout - 10, "shadows at each level of quality");
         }
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("off"));
         const int shadowsOff = levels(112);
-        check(std::abs(shadowsOff - without) < 12, "shadows off: none");
-        if (std::abs(shadowsOff - without) >= 12) std::printf("  off %d, without %d, aside %d\n", shadowsOff, without, levels(100));
+        check(std::abs(shadowsOff - qualityWithout) < 12, "shadows off: none");
+        if (std::abs(shadowsOff - qualityWithout) >= 12) std::printf("  off %d, reference %d, aside %d\n", shadowsOff, qualityWithout, levels(100));
         engine.setParameter(0, "quality3d/shadows", QStringLiteral("medium"));
         for (const char *level : {"off", "2x", "8x", "4x"}) {
             engine.setParameter(0, "quality3d/antialiasing", QString::fromLatin1(level));
@@ -699,6 +724,33 @@ int runScene3dTests(Engine &engine)
         check(different(made, picture()) > 30, "smooth: the cube's edges are rounded");
         engine.setParameter(box, "model/shading", QStringLiteral("as made"));
         check(different(made, picture()) < 6, "as made: as it was");
+        const int heightAt = engine.addLayer("Smooth shading height");
+        const quint64 height = engine.layerId(heightAt);
+        check(engine.setLayerIsf(heightAt, white, &err), "a constant height map for the sphere");
+        engine.setParameter(height, "enable", false);
+        check(engine.setModelDisplace(engine.indexOfId(ball), height, &err), "displace the shaded sphere");
+        engine.setParameter(ball, "model/displace/amount", 0.2);
+        engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
+        // A dim lamp: a bright one saturates the sphere and hides the shading. What tells the two shadings apart is a small
+        // shift of tone over the whole sphere, so count every pixel that changes at all, against a flat picture drawn twice.
+        engine.setParameter(lamp, "light/intensity", 1.5);
+        const auto changed = [](const QImage &x, const QImage &y) {
+            int count = 0;
+            for (int j = 0; j < x.height(); ++j)
+                for (int i = 0; i < x.width(); ++i) count += x.pixel(i, j) != y.pixel(i, j);
+            return count;
+        };
+        const QImage displacedFlat = picture();
+        const int steady = changed(displacedFlat, picture());
+        engine.setParameter(ball, "model/shading", QStringLiteral("smooth"));
+        const int interpolated = changed(displacedFlat, picture());
+        check(steady < 20, "a displaced sphere drawn twice looks the same");
+        check(interpolated > 300 && interpolated > 10 * steady, "smooth shading interpolates normals even with displacement");
+        engine.setParameter(lamp, "light/intensity", 25.0);
+        check(engine.setModelDisplace(engine.indexOfId(ball), 0, &err), "clear the live height input before testing the scene cache");
+        engine.setParameter(ball, "model/shading", QStringLiteral("as made"));
+        engine.removeLayer(engine.indexOfId(height));
+
         // The count: what it holds, shown
         const int sceneRow = engine.indexOfId(stage);
         const auto triangleOf = [&](quint64 id) {
@@ -780,6 +832,13 @@ int runScene3dTests(Engine &engine)
             return engine.grabOutput().pixelColor(x, y).lightness() > 12;
         };
         check(lit(64, 64), "what it holds is drawn by the scene");
+        engine.setParameter(cubeId, "model/transform_fx/position/x", .5);
+        engine.setParameter(cubeId, "model/transform_fx/enabled", true);
+        check(!lit(64, 64) && lit(86, 64), "Transform 3D modifier moves the rendered mesh");
+        check(engine.parameterValue(cubeId, "model/position/x").toDouble() == 0.0, "modifier leaves Spatial values intact");
+        engine.setParameter(cubeId, "model/transform_fx/enabled", false);
+        check(lit(64, 64), "bypassing Transform 3D restores placement");
+
         // Each moves what it holds, and they add up: 4 away at 40° of view, 0.5 is 22 pixels of 128
         engine.setParameter(outer, "merge/position/x", 0.5);
         check(!lit(64, 64) && lit(64 + 22, 64), "a Merge 3D moves what it holds");
@@ -1007,6 +1066,48 @@ int runScene3dTests(Engine &engine)
             check(!inkAt(qRgb(0, 0, 255), 40), "simple: no picture");
             g->glDeleteTextures(1, &picture);
             plain.releaseGl();
+
+            const auto renderer = QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER)));
+            if (!Scene3D::lite(renderer)) {
+                one[0].picture = 0;
+                one[0].placement.unlit = true;
+                camera.fogDensity = .08f;
+                camera.glow = 0;
+                Scene3DQuality quality;
+                quality.shadows = quality.contact = quality.reflections = quality.glow = 0;
+                Scene3D output;
+                const auto render = [&](int resolution, int aa) {
+                    quality.antialiasing = aa;
+                    return output.draw(camera, one, {}, resolution, resolution, 0, false, quality);
+                };
+                const auto native = read(render(size, 1), size, size);
+                const auto twice = read(render(size * 2, 1), size * 2, size * 2);
+                const GLuint highTexture = render(size, 3);
+                g->glBindTexture(GL_TEXTURE_2D, highTexture);
+                GLint width = 0;
+                g->glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                g->glBindTexture(GL_TEXTURE_2D, 0);
+                check(width == size, "3D supersampling returns a composition-sized picture");
+                const auto high = read(highTexture, size, size);
+                int mismatches = 0, differentEdges = 0;
+                for (int y = 0; y < size; ++y)
+                    for (int x = 0; x < size; ++x) {
+                        const int expected = (qRed(twice.pixel(2*x, 2*y)) + qRed(twice.pixel(2*x+1, 2*y)) +
+                                              qRed(twice.pixel(2*x, 2*y+1)) + qRed(twice.pixel(2*x+1, 2*y+1)) + 2) / 4;
+                        const int pixel = qRed(high.pixel(x, y));
+                        mismatches += std::abs(pixel - expected) > 2;
+                        differentEdges += std::abs(pixel - qRed(native.pixel(x, y))) > 12;
+                    }
+                check(mismatches == 0 && differentEdges > 20, "high-quality 3D resolves the fogged render after supersampling");
+                for (int frame = 0; frame < 4; ++frame) render(size, 3);
+                const int frames = output.framesDrawn();
+                const int bits = renderBits();
+                setRenderBits(bits == 8 ? 16 : 8);
+                render(size, 3);
+                setRenderBits(bits);
+                check(output.framesDrawn() == frames + 1, "changing output precision refreshes the resolved 3D picture");
+                output.releaseGl();
+            }
             one[0].model->releaseGl();
         }
         g->glDeleteTextures(1, &hdr);
@@ -1390,5 +1491,184 @@ int runScene3dTests(Engine &engine)
         }
     }
 
+    {
+        engine.newProject();
+        const auto scene = engine.layerId(engine.addScene("Material scene"));
+        const auto a = engine.layerId(engine.addLayer("Material A"));
+        const auto b = engine.layerId(engine.addLayer("Material B"));
+        check(engine.setLayerModel(engine.indexOfId(a), Model3D::primitivePath("Cube"), &error), "material cube");
+        check(engine.setLayerModel(engine.indexOfId(b), Model3D::primitivePath("Sphere"), &error), "material sphere");
+        engine.setStructure(tree::intoGroup(engine.structure(), {a, b}, scene));
+        quint64 material = 0;
+        {
+            Engine::Lock lock(&engine.mutex());
+            material = engine.layer(engine.indexOfId(a))->modelMaterial;
+            check(material != 0 && engine.layer(engine.indexOfId(b))->modelMaterial == material,
+                  "new objects share their scene default material");
+        }
+        check(engine.setModelMaterial(engine.indexOfId(b), material), "share a material within the scene");
+        check(engine.setParameter(a, "model/material/color/r", .25), "edit shared material color");
+        check(std::abs(engine.parameterValue(b, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material updates both objects");
+        const auto otherScene = engine.layerId(engine.addScene("Other scene"));
+        const auto other = engine.layerId(engine.addLayer("Other object"));
+        check(engine.setLayerModel(engine.indexOfId(other), Model3D::primitivePath("Cube"), &error), "other scene model");
+        engine.setStructure(tree::intoGroup(engine.structure(), {other}, otherScene));
+        check(engine.setModelMaterial(engine.indexOfId(other), material), "project material can be shared across scenes");
+        check(engine.layer(engine.indexOfId(other))->material == engine.layer(engine.indexOfId(a))->material, "cross-scene objects share the same resource");
+        check(!engine.setModelPicture(engine.indexOfId(a), otherScene, &error), "shared material texture cannot feed back through another scene");
+        check(!engine.removeUnusedMaterial(material), "cannot delete a material referenced in several scenes");
+        const int clone = engine.duplicateLayer(engine.indexOfId(a));
+        check(clone >= 0 && engine.layer(clone)->modelMaterial == material, "duplicating an object preserves its material reference");
+        Engine::Snapshot materialLook;
+        materialLook.name = "Material references";
+        materialLook.fade = 0;
+        materialLook.layers = engine.captureLayers();
+        const int materialSnapshot = engine.addSnapshot(materialLook);
+        const auto temporaryMaterial = engine.addMaterial("Temporary");
+        check(engine.setModelMaterial(engine.indexOfId(b), temporaryMaterial), "change material before snapshot recall");
+        engine.recallSnapshot(materialSnapshot);
+        check(engine.layer(engine.indexOfId(b))->modelMaterial == material &&
+              engine.layer(engine.indexOfId(b))->material == engine.layer(engine.indexOfId(other))->material,
+              "snapshot restores shared material identity across scenes");
+        const auto unused = engine.addMaterial("Unused");
+        check(engine.removeUnusedMaterial(unused), "unused project material can be removed");
+        const QString project = dir.filePath("materials.nyxmap");
+        check(engine.saveProject(project, {}, &error), "save shared materials");
+        check(engine.loadProject(project, nullptr, &error), "load shared materials");
+        check(std::abs(engine.parameterValue(a, "model/material/color/r").toDouble() - .25) < 1e-6, "shared material value persists");
+        check(engine.setParameter(b, "model/material/rough", .33), "edit restored shared material");
+        check(std::abs(engine.parameterValue(a, "model/material/rough").toDouble() - .33) < 1e-6, "restored objects still share one resource");
+        check(std::abs(engine.parameterValue(other, "model/material/rough").toDouble() - .33) < 1e-6, "restored cross-scene reference remains shared");
+        engine.newProject();
+    }
+    {
+        const QString imagePath = dir.filePath("red.png");
+        QImage image(8, 8, QImage::Format_RGBA8888);
+        image.fill(Qt::red);
+        check(image.save(imagePath), "write material texture");
+        QFile xml(dir.filePath("surface.mtlx"));
+        check(xml.open(QIODevice::WriteOnly), "write MaterialX fixture");
+        xml.write(R"xml(<materialx version="1.38">
+<nodegraph name="Maps">
+  <input name="Repeat" type="vector2" value="2, 3"/>
+  <constant name="UV"><input name="value" interfacename="Repeat"/></constant>
+  <tiledimage name="Image"><input name="file" value="red.png"/><input name="uvtiling" nodename="UV"/></tiledimage>
+  <output name="Color" nodename="Image"/>
+  <displacement name="Displace"><input name="displacement" nodename="Image"/><input name="scale" value="0"/></displacement>
+  <output name="Height" nodename="Displace"/>
+</nodegraph>
+<surfacematerial name="Material"><input name="surfaceshader" nodename="Surface"/><input name="displacementshader" nodegraph="Maps" output="Height"/></surfacematerial>
+<standard_surface name="Surface">
+  <input name="base_color" nodegraph="Maps" output="Color" value="0, 0, 0"/>
+  <input name="base_color" value="0, 0, 0"/>
+  <input name="specular_roughness" nodegraph="Maps" output="Color" value="0"/>
+</standard_surface>
+</materialx>)xml");
+        xml.close();
+
+        Material3D material;
+        check(importMaterialX(xml.fileName(), material, &error), qPrintable(error));
+        check(material.paths[BaseColorMap] == imagePath && material.rough == 1 &&
+              material.uvTiling == std::array<float, 2>{{2, 3}}, "MaterialX resolves wired inputs, relative images and graph tiling");
+        check(!material.images[HeightMap].isNull() && material.height == 0, "a disabled displacement preserves its image");
+        auto restored = Material3D::fromJson(material.toJson(dir.path()), dir.path());
+        check(!restored.images[BaseColorMap].isNull() && restored.toJson() == material.toJson(), "PBR maps survive project JSON");
+
+        const auto scene = engine.layerId(engine.addScene("Mapped scene"));
+        const auto object = engine.layerId(engine.addLayer("Mapped cube"));
+        check(engine.setLayerModel(engine.indexOfId(object), Model3D::primitivePath("Cube"), &error), "create mapped object");
+        engine.setStructure(tree::intoGroup(engine.structure(), {object}, scene));
+        material.id = engine.layer(engine.indexOfId(object))->modelMaterial;
+        *engine.materials().at(material.id) = material;
+        engine.renderFrame();
+        const auto output = engine.grabOutput();
+        if (!output.isNull()) {
+            const QColor pixel = output.pixelColor(output.width() / 2, output.height() / 2);
+            check(pixel.red() > pixel.green() + 15 && pixel.red() > pixel.blue() + 15, "a MaterialX base map reaches the rendered object");
+        } else {
+            check(false, "read material render");
+        }
+        engine.newProject();
+    }
+    {
+        QImage packed(2, 2, QImage::Format_RGBA8888);
+        packed.fill(QColor(32, 96, 224));
+        QByteArray png;
+        QBuffer bytes(&png);
+        bytes.open(QIODevice::WriteOnly);
+        check(packed.save(&bytes, "PNG"), "encode glTF packed texture");
+        QFile gltfFile(dir.filePath("surface.gltf"));
+        check(gltfFile.open(QIODevice::WriteOnly), "write glTF material fixture");
+        gltfFile.write(R"({"asset":{"version":"2.0"},"images":[{"name":"packed.png","uri":"data:image/png;base64,)" + png.toBase64() + R"("}],
+"textures":[{"source":0}],"materials":[{"name":"Mapped","occlusionTexture":{"index":0},
+"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0},"metallicFactor":0.8,"roughnessFactor":0.5}},
+{"name":"Solid"}]})");
+        gltfFile.close();
+        auto imported = importGltfMaterials(gltfFile.fileName(), &error);
+        check(imported.size() == 2, "glTF material library reads all surfaces in a file without geometry");
+        if (imported.size() == 2) {
+            auto &material = imported.front();
+            check(material.name == "Mapped" && imported.back().name == "Solid" &&
+                  std::abs(material.metal - .8f) < 1e-6f && material.rough == .5f, "glTF keeps names and factors");
+            const auto scene = engine.layerId(engine.addScene("glTF Materials"));
+            const auto sphere = engine.layerId(engine.addLayer("Sphere"));
+            check(engine.setLayerModel(engine.indexOfId(sphere), Model3D::primitivePath("Sphere"), &error), "create a sphere primitive");
+            engine.setStructure(tree::intoGroup(engine.structure(), {sphere}, scene));
+            material.id = engine.addMaterial(material.name);
+            *engine.materials().at(material.id) = material;
+            check(engine.setModelMaterial(engine.indexOfId(sphere), material.id), "assign an imported glTF material to a primitive");
+            const QString project = dir.filePath("gltf-material.nyxmap");
+            check(engine.saveProject(project, {}, &error), "save the imported surface");
+            check(gltfFile.remove(), "remove the source glTF");
+            check(engine.loadProject(project, nullptr, &error), "open the project without the glTF");
+            const auto *layer = engine.layer(engine.indexOfId(sphere));
+            check(layer && layer->material && layer->modelMaterial == material.id, "the primitive keeps its imported material");
+            if (layer && layer->material) {
+                check(layer->material->embeddedMapNames[RoughnessMap] == "packed.png",
+                      "the imported map keeps its source image name");
+                const auto &maps = layer->material->images;
+                check(!maps[OcclusionMap].isNull() && maps[OcclusionMap].pixelColor(0, 0).red() == 32 &&
+                      !maps[RoughnessMap].isNull() && maps[RoughnessMap].pixelColor(0, 0).red() == 96 &&
+                      !maps[MetallicMap].isNull() && maps[MetallicMap].pixelColor(0, 0).red() == 224,
+                      "packed occlusion, roughness and metallic channels survive saving and reopening");
+            }
+        }
+        engine.newProject();
+    }
+    {
+        const auto a = engine.layerId(engine.addLayer("Water"));
+        const auto b = engine.layerId(engine.addLayer("Embers"));
+        check(engine.setParameter(a, "position/x", 120), "position the first layer");
+        const auto zone = engine.layerId(engine.addMappingZone(engine.indexOfId(a), "Moving flat"));
+        auto at = [&](quint64 id) { return engine.layer(engine.indexOfId(id)); };
+        check(zone && engine.setMappingZone(a, zone, at(a)->mapping) && engine.setMappingZone(b, zone, at(b)->mapping),
+              "two layers reference the same zone");
+        if (zone) {
+            check(&engine.effectiveMapping(*at(a)) == &at(zone)->mapping &&
+                  &engine.effectiveMapping(*at(b)) == &at(zone)->mapping, "both layers use the zone geometry");
+            Engine::Preset open;
+            open.name = "Open flat";
+            open.fade = 2;
+            open.values.push_back({zone, "position/x", 300});
+            engine.setFadesManual(true);
+            engine.recallPreset(engine.addPreset(open));
+            engine.advanceFades(1);
+            check(std::abs(engine.effectiveMapping(*at(a)).position.x() * engine.compositionSize().width() - 210) < .01,
+                  "a preset interpolates the shared zone pose");
+            engine.advanceFades(1);
+            const QString project = dir.filePath("mapping-zones.nyxmap");
+            check(engine.saveProject(project, {}, &error) && engine.loadProject(project, nullptr, &error),
+                  "zone project round trips");
+            check(at(a) && at(b) && at(zone) && &engine.effectiveMapping(*at(a)) == &at(zone)->mapping &&
+                  &engine.effectiveMapping(*at(b)) == &at(zone)->mapping, "both stable zone links survive reopening");
+            if (at(b)) {
+                const Mapping pose = engine.effectiveMapping(*at(b));
+                check(engine.setMappingZone(b, 0, pose) && !at(b)->mappingZone && at(b)->mapping == pose,
+                      "unlink keeps the current shared pose");
+            }
+            engine.setFadesManual(false);
+        }
+        engine.newProject();
+    }
     return failures;
 }

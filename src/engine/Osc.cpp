@@ -265,14 +265,15 @@ void OscNamespace::build()
     }
     {
         // Frame rate of the render (0: the refresh rate of the screen); what is measured is under /fps/measured
-        OscNode &n = add("/composition/fps", "f", 3, "Frame Rate (0 = screen refresh)");
-        n.range = {minMax(0, 240)};
+        OscNode &n = add("/composition/fps", "f", 3, "Frame Rate (-2 = uncapped, 0 = screen refresh)");
+        n.range = {minMax(-2, 240)};
         n.clip = "both";
         n.get = [e] { return QVariantList{e->effectiveRender().frameRate}; };
         n.set = [e](const QVariantList &a) {
             if (a.isEmpty()) return false;
             Engine::RenderSettings r = e->renderSettings();
-            r.frameRate = std::clamp(num(a[0]), 0.0, 240.0);
+            const double requested = num(a[0]);
+            r.frameRate = requested == Engine::RenderSettings::UncappedFrameRate ? requested : std::clamp(requested, 0.0, 240.0);
             e->setRenderSettings(r);
             return true;
         };
@@ -397,6 +398,19 @@ void OscNamespace::build()
                 n.clip = "both";
                 n.get = [e, id] { const auto v = e->control(id); return QVariantList{int(v ? v->value : 0) + 1}; };
                 n.set = [e, id](const QVariantList &a) { return !a.isEmpty() && e->setControlValue(id, std::lround(num(a[0])) - 1.0); };
+                break;
+            }
+            case ShowControl::Kind::Group: break; // a frame of the page, not a value
+            case ShowControl::Kind::Pad: {
+                // A 2D slider: both numbers in one message, a float pair within its range
+                OscNode &n = add(path, "ff", 3, c.name);
+                n.range = {minMax(c.min, c.max), minMax(c.min, c.max)};
+                n.clip = "both";
+                n.get = [e, id] {
+                    const auto v = e->control(id);
+                    return QVariantList{v ? v->value : 0.0, v ? v->value2 : 0.0};
+                };
+                n.set = [e, id](const QVariantList &a) { return a.size() >= 2 && e->setControlPoint(id, num(a[0]), num(a[1])); };
                 break;
             }
             case ShowControl::Kind::Color: {

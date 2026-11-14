@@ -4,7 +4,7 @@
 // /sequence/stop, /sequence/stop_all, /sequence/step <n>.
 //
 // Sent at each cue (GO, GO BACK, a follow, an edit) and, while a step's time goes by, ten times a second — only the
-// values that changed; everything again every 2 seconds, for an interface started late.
+// values that changed.
 //
 //   /sequence/name s                 the selected sequence
 //   /sequence/index i                its number (1 = first, 0: none)
@@ -35,7 +35,7 @@
 #include <QVariant>
 #include <vector>
 
-#include "OscCodec.h"
+#include "Osc.h"
 
 class Engine;
 class QUdpSocket;
@@ -76,6 +76,6 @@ private:
     std::vector<Target> m_targets;
     bool m_enabled = false, m_modified = false;
     QTimer m_timer;
-    int m_ticks = 0;
-    QHash<QString, QVariantList> m_sent; // last value sent per address
+    OscNamespace m_namespace;
+    QHash<QString, QByteArray> m_sent; // last encoded value per address
 };

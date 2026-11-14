@@ -75,7 +75,17 @@ enum class LayerTap {
     PreFx = 0,  // after its ROI and color, before its effect chain
     PostFx = 1, // after its effect chain (its own mapping and opacity are not part of it)
     Source = 2, // its source's own picture, as decoded or generated: before its ROI, its color and its effects
+    MediaPipeMask = 3, // foreground alpha inferred from the post-FX picture
+    MediaPipeHair = 4,
+    MediaPipeParts = 5,
+    MediaPipeCutout = 6,
+    MediaPipePose = 7,
+    MediaPipeLandscape = 8,
+    MediaPipeHairDetail = 9,
+    MediaPipeDeepLab = 10,
+    MediaPipePartsForeground = 11,
 };
+inline bool isMediaPipeTap(LayerTap tap) { return tap >= LayerTap::MediaPipeMask && tap <= LayerTap::MediaPipePartsForeground; }
 QString layerTapName(LayerTap t); // "Source", "Pre-FX", "Post-FX"
 QString layerTapKey(LayerTap t);
 LayerTap layerTapFromKey(const QString &k);
@@ -276,6 +286,7 @@ struct Layer {
     // Viewport
     bool isViewport = false;
     int vpWidth = 1920, vpHeight = 1080; // size of its picture, in pixels
+    QString vpResolvedScreen;            // actual screen name, refreshed by the output window controller
     QString vpScreen;                    // screen it is shown on (empty: the main one)
     int vpMode = 0;                      // 0 hidden, 1 windowed, 2 fullscreen
     bool testCard = false;               // a viewport shows its test card instead (a setup aid: not saved)
@@ -300,6 +311,8 @@ struct Layer {
     float opacity = 1.0f;
     BlendMode blend = BlendMode::Normal;
 
+    int roiMode = 0; // 0 rectangle, 1 triangle, 2 quad
+    std::array<QPointF, 4> roiPoints{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
     QRectF roi{0, 0, 1, 1};      // part of the source picture used (normalized, origin top left)
     ColorAdjust color;
     bool effectsEnabled = true;   // general switch of the effect chain
@@ -319,6 +332,7 @@ struct Layer {
     bool referenced = false; // used as a source by another layer: rendered even when hidden (every frame)
     bool needed = true;      // its picture is drawn this frame (shown, or referenced): uploaded and rendered
     bool renderPaused = false; // a picture loaded while paused: drawn once (the others hold their frame)
+    bool pictureCulled = false; // needs one draw if it becomes visible while paused
     // File missing on load: path and type are kept (save, media bin, relink)
     SourceType missingType = SourceType::None;
 
@@ -326,6 +340,8 @@ struct Layer {
     std::unique_ptr<VideoDecoder> video;
     VideoFrame frame;                       // the last one fetched from the decoder
     bool frameUploaded = true;              // and already on the GPU
+    double videoHiddenSeconds = 0;
+    bool videoDecodeIdle = false;
     std::unique_ptr<VideoTexture> videoTex; // its picture (created in the render thread)
     // Mipmaps of its picture made for this frame of the video (a plain video: made again only for a new frame)
     GLuint mipTex = 0;
@@ -389,6 +405,12 @@ struct Layer {
     std::shared_ptr<Scene3D> sceneRenderer; // render thread
     std::shared_ptr<Model3D> model;
     ModelPlacement modelPlacement;
+
+    quint64 sceneDefaultMaterial = 0;
+    quint64 modelMaterial = 0;
+    ModelPlacement modelTransformFx;
+    bool modelTransformFxEnabled = false, modelDisplaceEnabled = false;
+    std::shared_ptr<Material3D> material;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
     quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
     quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)
@@ -428,6 +450,10 @@ struct Layer {
     // The published frame must remain intact while a delayed Syphon/Spout share copies
     // the previous frame: use a third render target only for delayed sharing.
     RenderTarget vpOut[3];
+    // Render thread. A plain viewport (no ROI, color, effect, mask, matte or output color of its own, at full opacity,
+    // its picture used by nothing else) is composited straight into its output: vpDirect, set by the frame that drew it
+    // so. vpPictureUsed: another layer, a shader, a model or the inspector's preview shows its picture this frame
+    bool vpDirect = false, vpPictureUsed = false;
     int vpBack = 1;
     std::atomic<int> vpPublished{0};
     static int nextViewportBack(int oldFront, int newFront, bool delayed)
@@ -463,9 +489,12 @@ struct Layer {
     int rawW = 0, rawH = 0;
 
     Mapping mapping;
+    bool isMappingZone = false;
+    quint64 mappingZone = 0; // stable layer id of a geometry-only Zone in the same canvas
     // Animations of its own numbers (one track each, on this layer): the Anim tab (see Engine::setLayerAnims)
     std::vector<Animation> anims;
     GLuint meshVbo = 0;  // its mesh's vertices (render thread)
+    bool meshUsesGrid = false;
     Mapping meshShape;   // the mapping they were built from
 
     // Transition used when a snapshot gives this layer another source (ISF with startImage, endImage, progress;

@@ -1,4 +1,6 @@
 #include "SnapshotPanel.h"
+#include "FittedTableHeader.h"
+#include "AdaptiveSplitter.h"
 #include "Commands.h"
 #include "LibraryTree.h"
 #include <QKeySequence>
@@ -40,7 +42,7 @@
 #include <cmath>
 #include <functional>
 
-static const QSize kThumb(160, 90);
+static const QSize kThumb(112, 63);
 
 // Roles of the trees
 enum {
@@ -207,7 +209,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
 {
     auto *h = new QHBoxLayout(this);
     h->setContentsMargins(8, 4, 8, 4);
-    auto *split = new QSplitter(Qt::Horizontal);
+    auto *split = new AdaptiveSplitter(560);
     split->setChildrenCollapsible(false);
     h->addWidget(split);
 
@@ -227,7 +229,8 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_go = new QPushButton(QStringLiteral("PLAY ▶"));
     m_go->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 8px; }");
     m_go->setToolTip(QStringLiteral("Recall the selected snapshot (⌘Return in the list)"));
-    m_newGroup = new QPushButton(QStringLiteral("Group"));
+    m_newGroup = new QPushButton(QStringLiteral("▤"));
+    symbolButton(m_newGroup);
     m_newGroup->setToolTip(QStringLiteral("A new group of snapshots: drag snapshots (and groups) into it"));
     bar->addWidget(m_newGroup);
     bar->addWidget(m_store);
@@ -252,6 +255,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         },
         [this] { return m_filling; },
         [this] { return m_engine->newSnapshotGroupId(); }});
+    m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_list->setColumnCount(3);
     m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_list->setRootIsDecorated(true);
@@ -266,9 +270,9 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_list->setEditTriggers(QAbstractItemView::NoEditTriggers); // a double-click or Return renames
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_list->header()->setStretchLastSection(false);
-    m_list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
+    new FittedTableHeader(m_list, m_list->header(), 1);
     m_list->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
                                       "Drag to reorder, into a group, or onto a step of a sequence\n"
                                       "Green stripe and ▶: the snapshot recalled last; the green line under it: its fade"));
@@ -315,7 +319,8 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_presetGo = new QPushButton(QStringLiteral("PLAY ▶"));
     m_presetGo->setStyleSheet("QPushButton { font-weight:bold; background:#2f6b3a; color:white; padding:3px 8px; }");
     m_presetGo->setToolTip(QStringLiteral("Recall the selected preset (⌘Return in the list)"));
-    m_presetGroup = new QPushButton(QStringLiteral("Group"));
+    m_presetGroup = new QPushButton(QStringLiteral("▤"));
+    symbolButton(m_presetGroup);
     m_presetGroup->setObjectName(QStringLiteral("presetGroup"));
     m_presetGroup->setToolTip(QStringLiteral("A new group of presets: drag presets (and groups) into it"));
     pbar->addWidget(m_presetEdit);
@@ -338,6 +343,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         [this] { return m_engine->newSnapshotGroupId(); }});
     connect(m_presetGroup, &QPushButton::clicked, this, [this] { m_presetGroups->newGroup(); });
     m_presets->setObjectName(QStringLiteral("presetList"));
+    m_presets->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_presets->setColumnCount(3);
     m_presets->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_presets->setRootIsDecorated(true);
@@ -348,9 +354,9 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_presets->setSelectionMode(QAbstractItemView::SingleSelection);
     m_presets->setContextMenuPolicy(Qt::CustomContextMenu);
     m_presets->header()->setStretchLastSection(false);
-    m_presets->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_presets->setColumnWidth(0, 54); // room for the groups' indentation
     m_presets->setColumnWidth(2, 58);
+    new FittedTableHeader(m_presets, m_presets->header(), 1);
     m_presets->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
                                          "Drag to reorder or into a group · a preset holds only the values put in it"));
     pv->addWidget(new LibraryFilter(m_presets, QStringLiteral("presetFilter"), [this] { refreshPresets(); }));
@@ -422,7 +428,6 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     duplicateSnapshot->setToolTip(QStringLiteral("Duplicate snapshot (Ctrl/Cmd+D)"));
     duplicateSnapshot->setObjectName("snapshotDuplicate");
     bar->insertWidget(bar->indexOf(m_update) + 1, duplicateSnapshot);
-    fitText(m_newGroup);
     fitText(m_update);
     fitText(m_go, 22);
     connect(duplicateSnapshot, &QPushButton::clicked, this, [this] { duplicateSelected(false); });
@@ -433,23 +438,24 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     iv->addLayout(head);
     m_layers = new QTreeWidget;
     m_layers->setObjectName(QStringLiteral("snapshotValues"));
+    m_layers->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_layers->setColumnCount(4);
     m_layers->setHeaderLabels({QStringLiteral("Layer / value"), QStringLiteral("Value"), QStringLiteral("Time"), QStringLiteral("Delay")});
     m_layers->setRootIsDecorated(true);
     m_layers->setIndentation(12);
     m_layers->setUniformRowHeights(true);
     m_layers->setAlternatingRowColors(true);
-    m_layers->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_layers->header()->setStretchLastSection(false);
-    m_layers->setColumnWidth(ColValue, 96);
-    m_layers->setColumnWidth(ColTime, 64);
-    m_layers->setColumnWidth(ColDelay, 64);
+    m_layers->setColumnWidth(ColValue, 72);
+    m_layers->setColumnWidth(ColTime, 53);
+    m_layers->setColumnWidth(ColDelay, 53);
+    new FittedTableHeader(m_layers, m_layers->header(), 0);
     m_layers->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_layers->setToolTip(QStringLiteral("Unchecked layers are left alone when the snapshot is recalled; layers the snapshot "
                                         "does not know are hidden.\nClick a value to see it, change it and choose how it "
                                         "gets there (right)."));
     auto *contentTools = new QHBoxLayout;
-    for (auto tool : {std::pair<const char *, int>{"Copy", 0}, {"Cut", 1}, {"Paste", 2}, {"Remove elements", 3}}) {
+    for (auto tool : {std::pair<const char *, int>{"Copy", 0}, {"Cut", 1}, {"Paste", 2}, {"Remove", 3}}) {
         auto *button = new QPushButton(QString::fromLatin1(tool.first));
         button->setToolTip(QStringLiteral("Edit stored snapshot elements; the live show stays unchanged. Select "
                                           "multiple rows with Shift or Ctrl/Cmd."));
@@ -465,7 +471,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     }
     iv->addLayout(contentTools);
     iv->addWidget(m_layers, 1);
-    m_inspector->setMinimumWidth(340);
+
     m_middle = new QStackedWidget;
     m_middle->setObjectName(QStringLiteral("snapshotPresetInspector"));
     m_middle->addWidget(m_inspector);
@@ -484,7 +490,6 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     duplicatePreset->setObjectName(QStringLiteral("presetDuplicate"));
     pbar->insertWidget(pbar->indexOf(m_presetUpdate) + 1, duplicatePreset);
     fitText(m_presetEdit);
-    fitText(m_presetGroup);
     fitText(m_presetUpdate);
     fitText(m_presetGo, 22);
     connect(duplicatePreset, &QPushButton::clicked, this, [this] { duplicateSelected(true); });
@@ -494,12 +499,12 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_detail = new QWidget;
     m_detailLayout = new QVBoxLayout(m_detail);
     m_detailLayout->setContentsMargins(8, 0, 0, 0);
-    m_detail->setMinimumWidth(240);
+
     split->addWidget(m_detail);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 2);
     split->setStretchFactor(2, 1);
-    split->setSizes({245, 480, 260});
+    split->setSizes({480, 260});
     connectPresets();
     setupContentEditing();
 
@@ -1460,11 +1465,11 @@ void SnapshotPanel::store()
     emit edited();
 }
 
-void SnapshotPanel::recall(int i)
+void SnapshotPanel::recall(int i, double fadeOverride)
 {
     if (i < 0 || i >= m_engine->snapshotCount()) return;
-    if (m_engine->sequencer().requestSnapshot(m_engine->snapshot(i).id)) return;
-    m_undo->push(new cmd::RecallSnapshot(m_engine, i));
+    if (m_engine->sequencer().requestSnapshot(m_engine->snapshot(i).id, fadeOverride)) return;
+    m_undo->push(new cmd::RecallSnapshot(m_engine, i, fadeOverride));
     emit recalled();
 }
 
@@ -1482,7 +1487,7 @@ void SnapshotPanel::updateSnapshot(int i)
                     auto params = it.value().toObject();
                     const auto now = live.value("params").toObject();
                     for (auto p = params.begin(); p != params.end(); ++p)
-                        if (now.contains(p.key()))
+                        if (now.contains(p.key()) && p.key() != QLatin1String("restart")) // an action: the stored value stays
                             p.value() = now.value(p.key());
                     it.value() = params;
                 } else if (live.contains(it.key()))
@@ -1513,11 +1518,12 @@ void SnapshotPanel::updateSnapshot(int i)
     }
     // Layers left out stay out; the times given to values are kept
     QSet<quint64> excluded;
-    QHash<quint64, QJsonValue> timing, easings, delays;
+    QHash<quint64, QJsonValue> timing, easings, delays, restarts;
     for (const QJsonValue &v : m.layers) {
         const QJsonObject o = v.toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (!o.value("included").toBool(true)) excluded.insert(id);
+        if (o.value("params").toObject().contains(QStringLiteral("restart"))) restarts.insert(id, o.value("params").toObject().value(QStringLiteral("restart")));
         if (o.contains("timing")) timing.insert(id, o.value("timing"));
         if (o.contains("easing")) easings.insert(id, o.value("easing"));
         if (o.contains("delay")) delays.insert(id, o.value("delay"));
@@ -1527,6 +1533,11 @@ void SnapshotPanel::updateSnapshot(int i)
         QJsonObject o = layers[k].toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (excluded.contains(id)) o["included"] = false;
+        if (restarts.contains(id)) { // what the snapshot holds (checked or not), not the live state
+            QJsonObject params = o.value("params").toObject();
+            params[QStringLiteral("restart")] = restarts.value(id);
+            o["params"] = params;
+        }
         if (timing.contains(id)) o["timing"] = timing.value(id);
         if (easings.contains(id)) o["easing"] = easings.value(id);
         if (delays.contains(id)) o["delay"] = delays.value(id);
@@ -1906,21 +1917,22 @@ QWidget *SnapshotPanel::buildPresetView()
     v->addLayout(buttons);
     m_presetValues = new QTreeWidget;
     m_presetValues->setObjectName(QStringLiteral("presetValues"));
+    m_presetValues->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_presetValues->setColumnCount(4);
     m_presetValues->setHeaderLabels({QStringLiteral("Layer / value"), QStringLiteral("Value"), QStringLiteral("Time"), QStringLiteral("Delay")});
     m_presetValues->setRootIsDecorated(true);
     m_presetValues->setIndentation(12);
     m_presetValues->setAlternatingRowColors(true);
-    m_presetValues->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_presetValues->header()->setStretchLastSection(false);
-    m_presetValues->setColumnWidth(1, 96);
-    m_presetValues->setColumnWidth(2, 84);
-    m_presetValues->setColumnWidth(3, 84);
+    m_presetValues->setColumnWidth(1, 72);
+    m_presetValues->setColumnWidth(2, 53);
+    m_presetValues->setColumnWidth(3, 53);
+    new FittedTableHeader(m_presetValues, m_presetValues->header(), 0);
     m_presetValues->setContextMenuPolicy(Qt::CustomContextMenu);
     m_presetValues->setToolTip(QStringLiteral("What the preset holds. Time: Follow (the preset's fade), 0 (a cut) or seconds "
                                               "of its own. Delete: takes the value out."));
     auto *contentTools = new QHBoxLayout;
-    for (auto tool : {std::pair<const char *, int>{"Copy", 0}, {"Cut", 1}, {"Paste", 2}, {"Remove elements", 3}}) {
+    for (auto tool : {std::pair<const char *, int>{"Copy", 0}, {"Cut", 1}, {"Paste", 2}, {"Remove", 3}}) {
         auto *button = new QPushButton(QString::fromLatin1(tool.first));
         contentTools->addWidget(button);
         connect(button, &QPushButton::clicked, this, [this, action = tool.second] {
@@ -1932,7 +1944,7 @@ QWidget *SnapshotPanel::buildPresetView()
                 copyContents(true, action == 1);
         });
     }
-    auto *addElements = new QPushButton(QStringLiteral("Add elements"));
+    auto *addElements = new QPushButton(QStringLiteral("+ Add"));
     addElements->setObjectName(QStringLiteral("presetAddElements"));
     addElements->setToolTip(QStringLiteral("Add any value to this preset: of the composition, a layer or an interaction, as it is now"));
     contentTools->addWidget(addElements);

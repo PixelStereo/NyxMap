@@ -15,6 +15,11 @@ header a { font-size:13px; color:var(--text); text-decoration:none; white-space:
 #state.ok::before { content:"● "; color:#46c46a; }
 #state.bad::before { content:"● "; color:#e5564a; }
 main { display:grid; gap:12px; padding:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+.group { grid-column:1/-1; background:transparent; border:1px solid var(--line); border-radius:12px; padding:10px 12px 12px; }
+.group h2 { margin:0 0 10px; font-size:14px; font-weight:600; color:var(--dim); }
+.group .grid { display:grid; gap:12px; }
+.pad { position:relative; width:100%; aspect-ratio:1/1; max-height:60vh; border-radius:10px; border:1px solid var(--line); background:#2d2d34; touch-action:none; user-select:none; -webkit-user-select:none; }
+.pad i { position:absolute; width:22px; height:22px; margin:-11px 0 0 -11px; border-radius:50%; background:var(--accent); pointer-events:none; }
 .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
 .card label { display:flex; justify-content:space-between; gap:8px; margin-bottom:10px; color:var(--dim); font-size:14px; }
 .card label b { color:var(--text); font-weight:600; }
@@ -65,7 +70,7 @@ inline constexpr char kScript[] = R"JS(
     ws.onopen = () => { opened = true; failures = 0; sessionStorage.setItem('nyxmap-pin', pin); state('connected', 'ok'); };
     ws.onmessage = e => {
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
-      if (m.t === 'controls') { controls = m.list || []; $('#title').textContent = m.title || 'NyxMap'; values = {}; controls.forEach(c => { values[c.id] = c.kind === 'color' ? c.rgb : c.value; }); render(); }
+      if (m.t === 'controls') { controls = m.list || []; $('#title').textContent = m.title || 'NyxMap'; values = {}; controls.forEach(c => { values[c.id] = c.kind === 'color' ? c.rgb : c.kind === 'pad' ? [c.x, c.y] : c.value; }); render(); }
       else if (m.t === 'values') { Object.assign(values, m.v || {}); update(); }
     };
     ws.onclose = () => {
@@ -77,7 +82,7 @@ inline constexpr char kScript[] = R"JS(
   function render() {
     const list = $('#list'); list.hidden = false; list.textContent = '';
     if (!controls.length) { list.appendChild(el('div', '', 'No control yet. Make some in NyxMap › Controls.')).id = 'empty'; return; }
-    for (const c of controls) {
+    const makeCard = c => {
       const card = el('div', 'card'); card.dataset.id = c.id;
       const head = el('label'); head.appendChild(el('span', '', c.name)); const val = el('b', 'val', ''); head.appendChild(val);
       if (c.kind !== 'slider') val.hidden = true;
@@ -106,13 +111,38 @@ inline constexpr char kScript[] = R"JS(
         p.addEventListener('change', () => send({ t: 'color', id: c.id, rgb: unhex(p.value) }));
         p.addEventListener('focus', () => active.add(c.id)); p.addEventListener('blur', () => active.delete(c.id));
         card.appendChild(p);
+      } else if (c.kind === 'pad') {
+        const pad = el('div', 'pad'), dot = el('i'); pad.appendChild(dot);
+        const lo = c.min, span = c.max - c.min;
+        const at = e => { const r = pad.getBoundingClientRect(); const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height)); return [lo + x * span, lo + y * span]; };
+        const move = e => { const v = at(e); values[c.id] = v; update(); throttled(c.id, () => send({ t: 'point', id: c.id, xy: v })); };
+        pad.addEventListener('pointerdown', e => { e.preventDefault(); pad.setPointerCapture(e.pointerId); active.add(c.id); move(e); });
+        pad.addEventListener('pointermove', e => { if (active.has(c.id)) move(e); });
+        const end = e => { if (!active.has(c.id)) return; active.delete(c.id); send({ t: 'point', id: c.id, xy: at(e) }); };
+        pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', () => active.delete(c.id));
+        card.appendChild(pad);
       }
-      list.appendChild(card);
-    }
+      return card;
+    };
+    // The page as the operator laid it out: groups are frames with their own columns, a control may take several of them
+    const children = {}; controls.forEach(c => { (children[c.group || 0] = children[c.group || 0] || []).push(c); });
+    const build = (parent, gid, cols) => {
+      for (const c of children[gid] || []) {
+        if (c.kind === 'group') {
+          const box = el('section', 'group'); box.appendChild(el('h2', '', c.name));
+          const grid = el('div', 'grid'); grid.style.gridTemplateColumns = 'repeat(' + c.columns + ',minmax(0,1fr))';
+          box.appendChild(grid); build(grid, c.id, c.columns); parent.appendChild(box);
+        } else {
+          const card = makeCard(c); if (cols) card.style.gridColumn = 'span ' + Math.min(c.span || 1, cols); parent.appendChild(card);
+        }
+      }
+    };
+    build(list, 0, 0);
     update();
   }
   function update() {
     for (const c of controls) {
+      if (c.kind === 'group') continue;
       const card = document.querySelector('.card[data-id="' + c.id + '"]'); if (!card) continue;
       const v = values[c.id];
       if (c.kind === 'slider') { const r = card.querySelector('input'); if (!active.has(c.id)) r.value = v; card.querySelector('.val').textContent = fmt(c, active.has(c.id) ? r.value : v); }
@@ -120,6 +150,7 @@ inline constexpr char kScript[] = R"JS(
       else if (c.kind === 'button') { card.querySelector('button').classList.toggle('on', v >= 0.5); }
       else if (c.kind === 'choice') { card.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === Math.round(v))); }
       else if (c.kind === 'color') { if (!active.has(c.id)) card.querySelector('input').value = hex(v); }
+      else if (c.kind === 'pad') { const d = card.querySelector('.pad i'), span = c.max - c.min; d.style.left = ((v[0] - c.min) / span * 100) + '%'; d.style.top = ((1 - (v[1] - c.min) / span) * 100) + '%'; }
     }
   }
   // Whether it asks a code: the server says (it says nothing else before the code)

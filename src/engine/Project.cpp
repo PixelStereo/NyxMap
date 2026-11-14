@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <cmath>
 
 static constexpr int kProjectFormat = 1; // the project file's format: the version that writes it reads only this one
@@ -73,9 +74,11 @@ void Engine::clearProject()
     {
         Lock lk(&m_mutex);
         old.swap(m_layers);
+        m_materials.clear();
         m_visionReset = true;
         m_projectPath.clear();
-        m_binItems.clear();
+        m_media.clear();
+        m_nextMediaId = 1;
         m_binStreamsUdp.clear();
         m_snapshots.clear();
         m_nextSnapshotId = 1;
@@ -117,6 +120,7 @@ void Engine::clearProject()
         m_graphTargets.clear();
         m_graphLastOutputs.clear();
         m_interactions.clear();
+        m_interactionGroups.clear();
         m_interactionRun.clear();
         m_interactionFades.clear();
         m_actionFades.clear();
@@ -124,6 +128,9 @@ void Engine::clearProject()
         m_nextInteractionId = 1;
         m_nextPatchId = 1;
         m_fixtures = FixturePatch();
+        m_fixtureDmx.clear();
+        m_actionDmx.clear();
+        m_interactionDmx.clear();
         ++m_fixturesVersion;
         m_fixtureParamsDirty = true;
     }
@@ -172,11 +179,13 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     QJsonObject o;
     // Ids are strings: JSON numbers are doubles
     o["id"] = QString::number(l.id);
+    if (l.isMappingZone) o["is_mapping_zone"] = true;
+    if (l.mappingZone) o["mapping_zone"] = QString::number(l.mappingZone);
     if (l.parent) o["parent"] = QString::number(l.parent);
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
-        if (l.scene3d) o["scene3d"] = true; // its camera and light: its params
+        if (l.scene3d) { o["scene3d"] = true; o["default_material"] = QString::number(l.sceneDefaultMaterial); }
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
             o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
@@ -232,6 +241,8 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         break;
     case SourceType::Model:
         src["type"] = "model";
+        if (l.model && !l.model->hiddenObjects().isEmpty()) src["hidden_objects"] = QJsonArray::fromStringList(l.model->hiddenObjects());
+        if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
         if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
         if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
         if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where their pictures are taken
@@ -308,8 +319,9 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     return o;
 }
 
-void Engine::layerFromJson(int index, const QJsonObject &o, const QString &projectDir, QStringList *warnings)
+void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &projectDir, QStringList *warnings)
 {
+    const QJsonObject o = resolveMedia(stored); // a project names its files by their Media Bin items
     QString name;
     {
         Lock lk(&m_mutex);
@@ -321,9 +333,12 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         l->masks = masks::fromJson(o.value("masks").toArray());
         ++l->masksRevision;
         l->matte = LayerMatte::fromJson(o.value("matte").toObject());
+        l->isMappingZone = o.value("is_mapping_zone").toBool(false);
+        l->mappingZone = l->isMappingZone ? 0 : o.value("mapping_zone").toString().toULongLong();
         l->isGroup = o.value("group").toBool(false);
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
+        l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
             const QJsonObject env = o.value("environment").toObject();
@@ -410,13 +425,17 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
             if (Layer *l = layer(index)) {
+                l->modelMaterial = src.value("material").toString().toULongLong();
+                l->material.reset();
                 l->modelPicture = src.value("picture").toString().toULongLong();
                 l->modelDisplace = src.value("displace").toString().toULongLong();
                 l->modelPictureStage = src.value("picture_stage").toInt(-1);
                 l->modelDisplaceStage = src.value("displace_stage").toInt(-1);
             }
         }
-        const bool ok = setLayerModel(index, path, &err);
+        QStringList hidden;
+        for (const auto &key : src.value("hidden_objects").toArray()) if (key.isString()) hidden << key.toString();
+        const bool ok = setLayerModel(index, path, &err, hidden);
         if (!ok && warnings) *warnings << name + ": " + missingMessage(path, err);
         if (!ok) {
             Lock lk(&m_mutex);
@@ -537,7 +556,10 @@ void Engine::layerFromJson(int index, const QJsonObject &o, const QString &proje
     Lock lk(&m_mutex);
     Layer *l = layer(index);
     if (o.contains("mesh")) l->mapping.setMeshJson(o.value("mesh").toObject());
-    parametersFromJson(l->parameters(), o.value("params").toObject(), &l->extraParams);
+    const auto layerParams = o.value("params").toObject();
+    parametersFromJson(l->parameters(), layerParams, &l->extraParams);
+    if (l->type == SourceType::Model && !layerParams.contains("model/displace/enabled"))
+        l->modelDisplaceEnabled = l->modelDisplace != 0;
     if (l->hasTransport()) {
         // Played or paused: its parameter (a snapshot that restarts it plays it)
         const QJsonObject params = o.value("params").toObject();
@@ -590,13 +612,11 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
                                     {"fps", renderSettings().frameRate}, {"speed", m_compositionSpeed.load()},
                                     {"quality_3d", QJsonArray{m_quality3d.antialiasing, m_quality3d.shadows, m_quality3d.contact, m_quality3d.reflections, m_quality3d.glow, m_quality3d.atmosphere}}};
         QJsonArray layers;
-        for (const auto &l : m_layers) layers.append(layerToJson(*l, dir));
+        for (const auto &l : m_layers) layers.append(linkMedia(layerToJson(*l, dir))); // files: by their Media Bin items
         root["layers"] = layers;
-        QJsonArray bin;
-        for (const QString &p : m_binItems)
-            bin.append(isStreamUrl(p) ? QJsonObject{{"path", p}, {"live", true}, {"rtsp_tcp", !m_binStreamsUdp.contains(p)}}
-                                      : QJsonObject{{"path", p}, {"relative_path", QDir(dir).relativeFilePath(p)}});
-        root["bin"] = bin;
+        QJsonArray materials;
+        for (const auto &[id, material] : m_materials) materials.append(material->toJson(dir));
+        root["materials"] = materials;
         root["audio"] = QJsonObject{{"volume", double(m_audio->volume())}};
         QJsonArray mems;
         for (const Snapshot &m : m_snapshots) mems.append(snapshotToJson(m, dir));
@@ -605,6 +625,41 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray presets;
         for (const Preset &p : m_presets) presets.append(presetToJson(p));
         root["presets"] = presets;
+        // The Media Bin: the items the user put there, and those the layers, the snapshots and the presets name (one
+        // that only an undo still names is not kept). Where each file is: here, and nowhere else in the project.
+        QSet<quint64> named;
+        std::function<void(const QJsonValue &, bool)> names = [&](const QJsonValue &v, bool id) {
+            if (v.isString()) {
+                if (id) named.insert(v.toString().toULongLong());
+            } else if (v.isArray()) {
+                for (const QJsonValue &x : v.toArray()) names(x, false);
+            } else if (v.isObject()) {
+                const QJsonObject o = v.toObject();
+                for (auto it = o.begin(); it != o.end(); ++it) {
+                    if (it.key() == QLatin1String("image_media"))
+                        for (const QJsonValue &image : it.value().toObject()) names(image, true);
+                    else
+                        names(it.value(), it.key() == QLatin1String("media") || it.key() == QLatin1String("transition_media"));
+                }
+            }
+        };
+        names(layers, false);
+        names(mems, false);
+        for (const Preset &p : m_presets) names(p.categories, false);
+        QJsonArray media;
+        for (const MediaItem &item : m_media) {
+            if (!item.imported && !named.contains(item.id)) continue;
+            QJsonObject o{{"id", QString::number(item.id)}, {"path", item.path}};
+            if (item.imported) o["imported"] = true;
+            if (isStreamUrl(item.path)) {
+                o["live"] = true;
+                o["rtsp_tcp"] = !m_binStreamsUdp.contains(item.path);
+            } else if (QFileInfo(item.path).isAbsolute() && builtInIsfSource(item.path).isEmpty()) {
+                o["relative_path"] = QDir(dir).relativeFilePath(item.path);
+            }
+            media.append(o);
+        }
+        root["media"] = media;
         root["preset_tree"] = snapshotTreeToJson(m_presetTree);
         root["timeline_tree"] = snapshotTreeToJson(m_timelineTree);
         root["timelines"] = animationsToJson();
@@ -619,6 +674,11 @@ QJsonObject Engine::projectToJson(const QString &dir, const QJsonObject &uiState
         QJsonArray interactions;
         for (const Interaction &it : m_interactions) interactions.append(it.toJson());
         root["interactions"] = interactions;
+        if (!m_interactionGroups.empty()) {
+            QJsonArray groups;
+            for (const InteractionGroup &g : m_interactionGroups) groups.append(g.toJson());
+            root["interaction_groups"] = groups;
+        }
         root["interaction_graph"] = m_interactionGraph.toJson();
         root["sequences"] = m_sequencer->toJson();
         root["clock"] = m_beatClock.toJson();
@@ -667,7 +727,7 @@ static QString projectPreflightError(const QJsonObject &root)
     // snapshot_tree is intentionally heterogeneous: snapshot leaves are
     // string IDs, while nested groups are objects with a children array.
     // Do not validate it as a homogeneous array of objects.
-    for (const QString &key : {QStringLiteral("layers"), QStringLiteral("bin"),
+    for (const QString &key : {QStringLiteral("layers"), QStringLiteral("media"),
                                QStringLiteral("snapshots"),
                                QStringLiteral("presets"), QStringLiteral("timelines"),
                                QStringLiteral("timecode_outputs"), QStringLiteral("midi_outputs"),
@@ -850,10 +910,43 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     }
     const QString dir = QFileInfo(path).absolutePath();
     QStringList warnings;
+    for (const auto &value : root.value("materials").toArray()) {
+        const auto material = Material3D::fromJson(value.toObject(), dir);
+        for (int i = 0; i < MaterialMapCount; ++i)
+            if (material.images[i].isNull() && (!material.paths[i].isEmpty() || !material.embeddedMaps[i].isEmpty()))
+                warnings << QStringLiteral("%1: cannot load material image %2").arg(
+                    material.name, material.paths[i].isEmpty() ? QString::fromLatin1(materialMapNames[i]) : material.paths[i]);
+        restoreMaterial(material);
+    }
+    // The Media Bin first: the layers, the snapshots and the presets name its items
+    for (const QJsonValue &v : root.value("media").toArray()) {
+        const QJsonObject item = v.toObject();
+        const bool live = item.value("live").toBool();
+        const QString file = item.value("path").toString();
+        MediaItem m;
+        m.id = item.value("id").toString().toULongLong();
+        m.path = !live && QFileInfo(file).isAbsolute() ? resolvePath(item, dir) : file; // a file: found again where it is
+        m.imported = item.value("imported").toBool();
+        if (!m.id || m.path.isEmpty()) continue;
+        Lock lk(&m_mutex);
+        if (std::any_of(m_media.begin(), m_media.end(), [&](const MediaItem &other) { return other.id == m.id; })) continue;
+        m_media.push_back(m);
+        m_nextMediaId = std::max(m_nextMediaId, m.id + 1);
+        if (live && !item.value("rtsp_tcp").toBool(true)) m_binStreamsUdp.insert(m.path);
+    }
     const QJsonArray layers = root.value("layers").toArray();
-    for (int i = 0; i < layers.size(); ++i) {
-        int idx = addLayer(QString(), layerCount());
-        layerFromJson(idx, layers[i].toObject(), dir, &warnings);
+    {
+        Lock lock(&m_mutex);
+        for (const auto &entry : layers)
+            m_nextId = std::max(m_nextId, entry.toObject().value("id").toString().toULongLong() + 1);
+    }
+    {
+        // The layer list is incomplete here. Publish it once after the project and its references are restored.
+        const QSignalBlocker batch(this);
+        for (const auto &entry : layers) {
+            const int idx = addLayer(QString(), layerCount());
+            layerFromJson(idx, entry.toObject(), dir, &warnings);
+        }
     }
     {
         Lock lk(&m_mutex);
@@ -870,13 +963,6 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
     {
         Lock lk(&m_mutex);
     }
-    QStringList bin;
-    for (const QJsonValue &v : root.value("bin").toArray()) {
-        const QJsonObject item = v.toObject();
-        if (item.value("live").toBool()) addBinStream(item.value("path").toString(), item.value("rtsp_tcp").toBool(true));
-        else bin << resolvePath(item, dir);
-    }
-    addBinItems(bin);
     const QJsonObject audio = root.value("audio").toObject();
     m_audio->setVolume(float(std::clamp(audio.value("volume").toDouble(1.0), 0.0, 2.0)));
     {
@@ -886,7 +972,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             bool taken = !m.id;
             for (const Snapshot &o : m_snapshots) taken = taken || o.id == m.id;
             if (taken) m.id = 0; // given below, after the saved ones
-            m_snapshots.push_back(m);
+            m_snapshots.push_back(linkMedia(m));
         }
         for (const Snapshot &m : m_snapshots) m_nextSnapshotId = std::max(m_nextSnapshotId, m.id + 1);
         for (Snapshot &m : m_snapshots)
@@ -911,7 +997,7 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
             bool taken = !p.id;
             for (const Preset &o : m_presets) taken = taken || o.id == p.id;
             if (taken) p.id = 0;
-            m_presets.push_back(p);
+            m_presets.push_back(linkMedia(p));
         }
         for (const Preset &p : m_presets) m_nextPresetId = std::max(m_nextPresetId, p.id + 1);
         for (Preset &p : m_presets)
@@ -939,7 +1025,9 @@ bool Engine::loadProject(const QString &path, QJsonObject *uiState, QString *err
                 it.id = 0; // given one
             interactions.push_back(it);
         }
-        setInteractions(interactions);
+        std::vector<InteractionGroup> groups;
+        for (const QJsonValue &v : root.value("interaction_groups").toArray()) groups.push_back(InteractionGroup::fromJson(v.toObject()));
+        setInteractions(interactions, groups);
     }
     if (root.contains("interaction_graph")) {
         InteractionGraph graph;

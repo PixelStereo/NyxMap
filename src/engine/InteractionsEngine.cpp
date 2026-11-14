@@ -1,7 +1,13 @@
 // Engine: the interactions (Interactions.h) — their list, their sources' events, and the chains run each frame.
 #include "EngineInternal.h"
+#include "InteractionOutput.h"
 #include "Midi.h"
 #include "EventLog.h"
+#include "OscCodec.h"
+#include "SequenceFeedback.h"
+#include <QHostInfo>
+#include <QRegularExpression>
+#include <QUdpSocket>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -36,7 +42,7 @@ static bool sameInputBinding(const Interaction &a, const Interaction &b)
            a.oscArgument == b.oscArgument && a.sourceLayer == b.sourceLayer && a.sourceParam == b.sourceParam &&
            a.audioLow == b.audioLow && a.audioHigh == b.audioHigh && a.audioFeature == b.audioFeature &&
            a.audioInput == b.audioInput && a.pixels == b.pixels && a.pixelFeature == b.pixelFeature &&
-           a.handFeature == b.handFeature && a.handIndex == b.handIndex && a.handConfidence == b.handConfidence &&
+           a.visionLandmark == b.visionLandmark && a.handFeature == b.handFeature && a.handIndex == b.handIndex && a.handConfidence == b.handConfidence &&
            a.layer == b.layer && a.param == b.param;
 }
 
@@ -107,8 +113,10 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
         if (node.mapping) {
             const auto definition = std::find_if(m_interactions.begin(), m_interactions.end(), [&](const auto &it) { return it.id == node.mapping; });
             const auto run = m_interactionRun.find(node.mapping);
-            if (definition != m_interactions.end() && definition->enabled && run != m_interactionRun.end() && run->second.lastOut)
-                m_graphProcessor.input(node.id, *run->second.lastOut);
+            const auto value = run == m_interactionRun.end() ? std::optional<double>{}
+                : source.sourceParam == QStringLiteral("shared") ? run->second.sharedOut : run->second.lastOut;
+            if (definition != m_interactions.end() && definition->enabled && !definition->isAction() && value)
+                m_graphProcessor.input(node.id, *value);
             else m_graphProcessor.clearInput(node.id);
         } else if (source.source == InteractionSource::Internal) {
             if (const auto *parameter = findParameter(source.sourceLayer, source.sourceParam))
@@ -141,7 +149,12 @@ void Engine::stepInteractionGraph(double dt, const std::vector<InteractionEvent>
                 continue;
             }
             const auto last = m_graphLastOutputs.find(node.id);
-            if (!eventOnly && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            const bool dmx = !target.layer && target.param.startsWith(QLatin1String("output/dmx/"));
+            if (!eventOnly && !dmx && last != m_graphLastOutputs.end() && std::abs(last->second - *value) <= 1e-9) continue;
+            if (!target.layer && writeInteractionOutput(target.param, *value, false)) {
+                m_graphLastOutputs[node.id] = *value;
+                continue;
+            }
             m_graphLastOutputs[node.id] = *value;
             if (target.layer) {
                 const int index = indexOfId(target.layer);
@@ -192,6 +205,24 @@ std::vector<Interaction> Engine::interactions() const
     return m_interactions;
 }
 
+std::vector<InteractionGroup> Engine::interactionGroups() const
+{
+    Lock lk(&m_mutex);
+    return m_interactionGroups;
+}
+
+void Engine::setInteractions(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups)
+{
+    {
+        Lock lk(&m_mutex);
+        m_interactionGroups = groups;
+        for (const InteractionGroup &g : m_interactionGroups) m_nextInteractionGroupId = std::max(m_nextInteractionGroupId, g.id + 1);
+        for (InteractionGroup &g : m_interactionGroups)
+            if (!g.id) g.id = m_nextInteractionGroupId++;
+    }
+    setInteractions(list);
+}
+
 void Engine::setInteractions(const std::vector<Interaction> &list)
 {
     {
@@ -204,6 +235,14 @@ void Engine::setInteractions(const std::vector<Interaction> &list)
         }
         m_interactions = list;
         nameInteractions(m_interactions);
+        // Groups whose parent is gone (or that would hold themselves) go to the top level; so do interactions of a gone group
+        for (InteractionGroup &g : m_interactionGroups) {
+            const auto parent = std::find_if(m_interactionGroups.begin(), m_interactionGroups.end(), [&](const auto &x) { return x.id == g.parent; });
+            if (parent == m_interactionGroups.end() || g.parent == g.id) g.parent = 0;
+        }
+        for (Interaction &it : m_interactions)
+            if (it.group && std::none_of(m_interactionGroups.begin(), m_interactionGroups.end(), [&](const auto &g) { return g.id == it.group; }))
+                it.group = 0;
         for (const Interaction &it : m_interactions) m_nextInteractionId = std::max(m_nextInteractionId, it.id + 1);
         for (Interaction &it : m_interactions)
             if (!it.id) it.id = m_nextInteractionId++;
@@ -283,7 +322,7 @@ bool Engine::interactionLevels(quint64 id, double *level, double *output, double
     Lock lk(&m_mutex);
     const auto r = m_interactionRun.find(id);
     if (r == m_interactionRun.end() || !r->second.proc.level()) return false;
-    if (level) *level = *r->second.proc.level();
+    if (level) *level = r->second.shared.level().value_or(*r->second.proc.level());
     if (output) *output = r->second.proc.output().value_or(*r->second.proc.level());
     if (curveIn) *curveIn = r->second.proc.curveInput().value_or(*r->second.proc.level());
     return true;
@@ -296,10 +335,14 @@ bool Engine::sampleInteractionLevels(std::vector<InteractionLevel> *out) const
     out->clear();
     out->reserve(m_interactionRun.size());
     for (const auto &[id, run] : m_interactionRun) {
-        const auto level = run.proc.level();
+        const auto level = run.shared.level() ? run.shared.level() : run.proc.level();
         if (!level && !run.xyY.level()) continue;
         const double x = level.value_or(0);
-        out->push_back({id, x, run.proc.output().value_or(x), run.proc.curveInput().value_or(x)});
+        auto &activity = out->emplace_back();
+        activity.id = id;
+        activity.input = x;
+        activity.output = run.proc.output().value_or(x);
+        activity.curveInput = run.proc.curveInput().value_or(x);
         if (run.actionMet) out->back().met = *run.actionMet ? 1 : 0;
         out->back().stages = run.proc.stageOutputs();
         out->back().yStages = run.xyY.stageOutputs();
@@ -498,8 +541,109 @@ void Engine::updateMidiInputs()
 // ---------------------------------------------------------------------------
 // An Action's value: a number with a time goes there from where it is, a step each frame (stepActionFades); the rest,
 // at once. Either way, what was moving it (a snapshot's fade, another action's) lets go.
-void Engine::runConsequence(const InteractionConsequence &c)
+void Engine::feedControlAction(const QString &path, double value)
 {
+    for (const auto &interaction : m_interactions) {
+        if (!interaction.enabled || !interaction.isAction() || interaction.source != InteractionSource::Internal ||
+            interaction.sourceLayer != 0 || interaction.sourceParam != path) continue;
+        InteractionEvent event;
+        event.source = InteractionSource::Internal;
+        event.address = path;
+        event.value = value;
+        std::lock_guard<std::mutex> lock(m_interactionEventsMutex);
+        if (m_interactionEvents.size() < 8192) m_interactionEvents.push_back(event);
+        else m_interactionEventsDropped.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+}
+
+void Engine::sendInteractionOsc(const InteractionConsequence &c, double sourceValue)
+{
+    QString host;
+    quint16 port = 0;
+    static const QRegularExpression addressPattern(QStringLiteral("^/[^\\s#*,?\\[\\]{}]+$"));
+    if (!SequenceFeedback::parseTarget(c.oscDestination, &host, &port) ||
+        !addressPattern.match(c.oscAddress).hasMatch() || c.oscAddress.contains(QChar::Null)) return;
+    osc::Message message{c.oscAddress, {}, {}};
+    for (const auto argument : c.oscArguments) {
+        QVariant value = argument.toVariant();
+        char tag = 'N';
+        if (argument.isString()) {
+            if (argument.toString() == QStringLiteral("$value")) {
+                tag = 'f';
+                value = sourceValue;
+            } else {
+                if (argument.toString().contains(QChar::Null)) return;
+                tag = 's';
+            }
+        } else if (argument.isDouble()) {
+            const double number = argument.toDouble();
+            tag = number >= std::numeric_limits<qint32>::min() && number <= std::numeric_limits<qint32>::max() &&
+                          std::trunc(number) == number ? 'i' : 'f';
+        } else if (argument.isBool()) {
+            tag = argument.toBool() ? 'T' : 'F';
+        } else if (!argument.isNull()) {
+            return;
+        }
+        message.types += QLatin1Char(tag);
+        message.args.push_back(value);
+    }
+    const QByteArray packet = osc::encode(message);
+    if (packet.size() > 65507) return;
+    QMetaObject::invokeMethod(this, [this, host, port, packet, address = c.oscAddress] {
+        const auto send = [this, port, packet, address](const QHostAddress &target) {
+            QUdpSocket socket;
+            if (socket.writeDatagram(packet, target, port) == packet.size() && EventLog::instance().wants(EventLog::OscOut)) {
+                EventLog::instance().append(EventLog::OscOut, address);
+                emit eventObserved(QStringLiteral("OSC OUT"), address);
+            }
+        };
+        const QHostAddress numeric(host);
+        if (!numeric.isNull()) send(numeric);
+        else if (host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) send(QHostAddress::LocalHost);
+        else QHostInfo::lookupHost(host, this, [send](const QHostInfo &info) {
+            if (!info.addresses().isEmpty()) send(info.addresses().constFirst());
+        });
+    }, Qt::QueuedConnection);
+}
+
+bool Engine::writeInteractionOutput(const QString &path, double value, bool action)
+{
+    const auto output = InteractionOutput::fromPath(path);
+    if (output.protocol.isEmpty()) return false;
+    if (!std::isfinite(value)) return true;
+    if (output.protocol == "osc") {
+        InteractionConsequence message;
+        message.oscDestination = output.destination;
+        message.oscAddress = output.address;
+        message.oscArguments = output.arguments;
+        sendInteractionOsc(message, value);
+    } else if (output.protocol == "dmx") {
+        const auto id = output.destination.toULongLong();
+        const auto *configured = m_fixtures.findOutput(id);
+        if (!configured || !configured->enabled) return true;
+        const bool sacn = configured->protocol == DmxOutput::Protocol::Sacn;
+        if (output.channel >= 1 && output.channel <= 512 &&
+            output.number >= (sacn ? 1 : 0) && output.number <= (sacn ? 63999 : 32767)) {
+            auto &values = action ? m_actionDmx : m_interactionDmx;
+            values[{id, output.number}][output.channel - 1] = quint8(std::lround(std::clamp(value, 0.0, 1.0) * 255));
+        }
+    } else if (output.channel >= 1 && output.channel <= 16 && output.number >= 0 && output.number <= 127) {
+        const auto id = output.destination.toULongLong();
+        m_tcRouter->sendMidi(id, {uint8_t(0xb0 | (output.channel - 1)), uint8_t(output.number),
+                                  uint8_t(std::lround(std::clamp(value, 0.0, 1.0) * 127))});
+    }
+    return true;
+}
+
+void Engine::runConsequence(const InteractionConsequence &c, double sourceValue)
+{
+    if (c.sendsOsc()) {
+        sendInteractionOsc(c, sourceValue);
+        return;
+    }
+    const bool osc = c.param.startsWith(QLatin1String("output/osc/"));
+    if (!c.layer && writeInteractionOutput(c.param, osc ? sourceValue : c.value, true)) return;
     releaseFromFades(c.layer, c.param);
     Parameter *p = c.time > 0 ? findParameter(c.layer, c.param) : nullptr;
     const ParamInfo info = p ? p->info() : ParamInfo{};
@@ -514,6 +658,7 @@ void Engine::runConsequence(const InteractionConsequence &c)
 
 void Engine::stepInteractions(double dt)
 {
+    m_interactionDmx.clear();
     std::vector<InteractionEvent> events;
     {
         std::lock_guard<std::mutex> lk(m_interactionEventsMutex);
@@ -573,11 +718,25 @@ void Engine::stepInteractions(double dt)
                                      : it.audioFeature == Interaction::AudioFeature::Hit ? run.proc.hit(fluxes[it.audioInput], it, dt)
                                                                                           : audio.onset);
             } else if (it.source == InteractionSource::Internal) {
+                const bool control = it.sourceLayer == 0 && it.sourceParam.startsWith(QLatin1String("control/"));
+                if (control) {
+                    for (const auto &event : events) {
+                        if (event.source == InteractionSource::Internal && event.address == it.sourceParam) {
+                            run.lastInternal = event.value;
+                            values.push_back(event.value);
+                        }
+                    }
+                }
                 if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
                     const double x = src->asNumber();
                     if (std::isfinite(x) && !(x == run.lastInternal)) {
+                        const auto oscOnly = [](const auto &actions) {
+                            return std::all_of(actions.begin(), actions.end(), [](const auto &action) { return action.sendsOsc(); });
+                        };
+                        const bool initialOsc = control && !std::isfinite(run.lastInternal) &&
+                                                oscOnly(it.onTrue) && oscOnly(it.onFalse);
                         run.lastInternal = x;
-                        values.push_back(x);
+                        if (!initialOsc) values.push_back(x);
                     }
                 }
             } else {
@@ -589,7 +748,7 @@ void Engine::stepInteractions(double dt)
                 run.proc.input(it, x); // shown (In)
                 if (it.conditions.empty()) { // no test: each value the source gives does the "if true" actions
                     run.actionMet = true;
-                    for (const InteractionConsequence &c : it.onTrue) runConsequence(c);
+                    for (const InteractionConsequence &c : it.onTrue) runConsequence(c, x);
                     journal(QStringLiteral("interaction"), QStringLiteral("%1 true").arg(it.id));
                     continue;
                 }
@@ -598,7 +757,7 @@ void Engine::stepInteractions(double dt)
                 if (!first && *run.actionMet == met) continue; // only when the answer changes
                 run.actionMet = met;
                 if (first && !met) continue; // nothing was true before: nothing to undo
-                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse) runConsequence(c);
+                for (const InteractionConsequence &c : met ? it.onTrue : it.onFalse) runConsequence(c, x);
                 journal(QStringLiteral("interaction"), QStringLiteral("%1 %2").arg(it.id).arg(met ? QStringLiteral("true") : QStringLiteral("false")));
             }
             continue;
@@ -679,35 +838,48 @@ void Engine::stepInteractions(double dt)
         // A whole color: each channel through the chain, but a Toggle (a channel is not pressed)
         auto colorChain = [](const Interaction &from) {
             Interaction chain = from;
+            chain.filters.insert(chain.filters.begin(), from.sharedFilters.begin(), from.sharedFilters.end());
             chain.filters.erase(std::remove_if(chain.filters.begin(), chain.filters.end(),
                                                [](const InteractionStage &f) { return f.kind == InteractionFilter::Toggle; }),
                                 chain.filters.end());
             return chain;
         };
+        Interaction shared;
+        shared.filters = it.sharedFilters;
+        const auto feed = [&](double value) {
+            run.shared.input(shared, value);
+            if (shared.filters.empty()) {
+                run.sharedOut = value;
+                run.proc.input(it, value);
+            } else {
+                run.sharedOut = run.shared.step(shared, 0);
+                if (run.sharedOut) run.proc.input(it, *run.sharedOut);
+            }
+        };
         unsigned rises = 0;
         if (it.source == InteractionSource::Pixels || it.source == InteractionSource::Hands) {
-            run.proc.input(it, visionValue(it));
+            feed(visionValue(it));
             fresh = true;
         } else if (it.source == InteractionSource::Audio) {
             const AudioAnalysis::Values &audio=audios[it.audioInput];
             const double x=it.audioFeature==Interaction::AudioFeature::Band?bandValue(it.audioInput,float(it.audioLow),float(it.audioHigh)):
                 it.audioFeature==Interaction::AudioFeature::Level?audio.level:
                 it.audioFeature==Interaction::AudioFeature::Hit?run.proc.hit(fluxes[it.audioInput],it,dt):audio.onset;
-            run.proc.input(it,x);
+            feed(x);
             fresh=true;
         } else if (it.source == InteractionSource::Internal) {
             if (const Parameter *src = findParameter(it.sourceLayer, it.sourceParam)) {
                 const double x = src->asNumber();
                 if (std::isfinite(x) && !(x == run.lastInternal)) {
                     run.lastInternal = x;
-                    run.proc.input(it, x);
+                    feed(x);
                     fresh = true;
                 }
             }
         } else {
             for (const InteractionEvent &e : events)
                 if (it.matches(e)) {
-                    run.proc.input(it, e.value);
+                    feed(e.value);
                     if (eachValue) {
                         const auto value = run.proc.step(it, 0);
                         if (eventTrigger) {
@@ -725,6 +897,9 @@ void Engine::stepInteractions(double dt)
                     fresh = true;
                 }
         }
+        const auto sharedValue = run.shared.step(shared, dt);
+        if (sharedValue && sharedValue != run.sharedOut) run.proc.input(it, *sharedValue);
+        run.sharedOut = sharedValue;
         const std::optional<double> out = run.proc.step(it, dt);
         if (!out) continue;
         // A whole color: its channels move on too (a filter keeps moving them after the last message); the alpha
@@ -741,7 +916,9 @@ void Engine::stepInteractions(double dt)
         }
         const bool changed = fresh || colorMoved || !run.lastOut || std::abs(*run.lastOut - *out) > 1e-9;
         run.lastOut = out;
-        if (!changed) continue; // nothing new: the target is left to whatever else moves it
+        const bool dmx = !it.layer && it.param.startsWith(QLatin1String("output/dmx/"));
+        if (!changed && !dmx) continue; // nothing new: the target is left to whatever else moves it
+        if (!it.layer && writeInteractionOutput(it.param, *out, false)) continue;
         if (it.param.isEmpty()) continue; // no target yet: its source and its filters still shown moving
         if (it.layer) {
             const int li = indexOfId(it.layer);
@@ -930,12 +1107,19 @@ void Engine::makeInteractionParams()
                 tHi = p->info().max;
             }
 
+        // Only what is in play for this interaction: the settings of its kind of source, its chain (a Mapping's, not an
+        // Action's), the alpha of a whole color target
+        const bool mapping = !it.isAction();
+        const bool wholeColor = !lookup(root.layer, root.param) && lookup(root.layer, root.param + QStringLiteral("/r"));
         flag(QStringLiteral("enable"), QStringLiteral("On"), true, [](Interaction &x) -> bool & { return x.enabled; });
-        number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 1, [](Interaction &x) -> double & { return x.master; })
-            .limits(0, 1)
-            .animatable();
-        flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"), false,
-             [](Interaction &x) -> bool & { return x.colorMapAlpha; });
+        if (mapping)
+            number(QStringLiteral("master"), QStringLiteral("Master Level"), 0, 1, 1, [](Interaction &x) -> double & { return x.master; })
+                .limits(0, 1)
+                .animatable();
+        if (mapping && wholeColor)
+            flag(QStringLiteral("color/map_alpha"), QStringLiteral("Map Color Alpha"), false,
+                 [](Interaction &x) -> bool & { return x.colorMapAlpha; });
+        if (mapping && (it.source == InteractionSource::Midi || it.source == InteractionSource::Osc))
         add(QStringLiteral("takeover"), QStringLiteral("Takeover"), T::Choice)
             .choices({QStringLiteral("pickup"), QStringLiteral("jump")})
             .byDefault(QStringLiteral("jump"))
@@ -951,10 +1135,10 @@ void Engine::makeInteractionParams()
                   });
         // Each filter in its order: on / off and its settings (a preset, a snapshot, OSC, a timeline reach them); what
         // the filters are, all together, below ("filters")
-        for (size_t k = 0; k < it.filters.size(); ++k) {
+        for (size_t k = 0; mapping && k < it.filters.size(); ++k) {
             const InteractionStage &f = it.filters[k];
             const QString path = QStringLiteral("filters/%1/").arg(k + 1);
-            const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(interactionFilterName(f.kind));
+            const QString name = QStringLiteral("Filter %1 %2 › ").arg(k + 1).arg(f.displayName());
             flag(path + QStringLiteral("enable"), name + QStringLiteral("On"), true, [k](Interaction &x) -> bool & {
                 static bool gone = false; // the filters changed meanwhile (the list is made again)
                 return k < x.filters.size() ? x.filters[k].enabled : gone;
@@ -1066,46 +1250,60 @@ void Engine::makeInteractionParams()
              [](Interaction &x, const QString &v) { x.key = v; });
         text(QStringLiteral("source/midi/input"), QStringLiteral("MIDI Input"), [](const Interaction &x) { return x.midiPort; },
              [](Interaction &x, const QString &v) { x.midiPort = v; });
+        if (it.source == InteractionSource::Midi)
         whole(QStringLiteral("source/midi/channel"), QStringLiteral("MIDI Channel"), 0, 16, 0, [](Interaction &x) -> int & { return x.midiChannel; });
+        if (it.source == InteractionSource::Midi)
         choice(QStringLiteral("source/midi/message"), QStringLiteral("MIDI Message"),
                {QStringLiteral("cc"), QStringLiteral("note"), QStringLiteral("pitch_bend"), QStringLiteral("program")},
                [](const Interaction &x) { return int(x.midiMessage); },
                [](Interaction &x, int k) { x.midiMessage = MidiMessageKind(k); });
+        if (it.source == InteractionSource::Midi && it.midiMessage != MidiMessageKind::PitchBend)
         whole(QStringLiteral("source/midi/number"), QStringLiteral("MIDI Number"), 0, 127, 0, [](Interaction &x) -> int & { return x.midiNumber; });
         text(QStringLiteral("source/osc/address"), QStringLiteral("OSC Address"), [](const Interaction &x) { return x.oscAddress; },
              [](Interaction &x, const QString &v) { x.oscAddress = v; });
+        if (it.source == InteractionSource::Osc)
         whole(QStringLiteral("source/osc/argument"), QStringLiteral("OSC Argument"), 0, 63, 0, [](Interaction &x) -> int & { return x.oscArgument; });
         text(QStringLiteral("source/internal"), QStringLiteral("Follows"),
              [valueRef](const Interaction &x) { return valueRef(x.sourceLayer, x.sourceParam); },
              [parseRef](Interaction &x, const QString &v) { parseRef(v, &x.sourceLayer, &x.sourceParam); });
+        if (it.source == InteractionSource::Audio)
         number(QStringLiteral("source/audio/low"),QStringLiteral("Audio Low Hz"),20,20000,20,[](Interaction &x)->double &{return x.audioLow;}).limits(20,20000);
+        if (it.source == InteractionSource::Audio)
         number(QStringLiteral("source/audio/high"),QStringLiteral("Audio High Hz"),20,20000,20000,[](Interaction &x)->double &{return x.audioHigh;}).limits(20,20000);
+        if (it.source == InteractionSource::Audio && it.audioFeature == Interaction::AudioFeature::Hit)
         number(QStringLiteral("source/audio/sensitivity"),QStringLiteral("Audio Hit Sensitivity"),0,1,0.5,[](Interaction &x)->double &{return x.audioSensitivity;}).limits(0,1);
+        if (it.source == InteractionSource::Audio && it.audioFeature == Interaction::AudioFeature::Hit)
         number(QStringLiteral("source/audio/gap"),QStringLiteral("Audio Hit Minimum Gap"),0.04,2,0.08,[](Interaction &x)->double &{return x.audioGap;}).limits(0.04,2);
+        if (it.source == InteractionSource::Audio)
         choice(QStringLiteral("source/audio/feature"),QStringLiteral("Audio Measure"),{QStringLiteral("band"),QStringLiteral("level"),QStringLiteral("onset"),QStringLiteral("hit")},
             [](const Interaction &x){return int(x.audioFeature);},[](Interaction &x,int k){x.audioFeature=Interaction::AudioFeature(k);});
+        if (it.source == InteractionSource::Audio)
         choice(QStringLiteral("source/audio/input"),QStringLiteral("Audio Source"),{QStringLiteral("program"),QStringLiteral("input")},
             [](const Interaction &x){return x.audioInput?1:0;},[](Interaction &x,int k){x.audioInput=k==1;});
         text(
             QStringLiteral("source/vision/layer"), QStringLiteral("Image layer"),
             [](const Interaction &x) { return QString::number(x.pixels.layer); },
             [](Interaction &x, const QString &v) { x.pixels.layer = v.toULongLong(); });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/vision/tap"), QStringLiteral("Image tap"), {"prefx", "postfx"},
             [](const Interaction &x) { return std::clamp(x.pixels.tap, 1, 2) - 1; },
             [](Interaction &x, int n) { x.pixels.tap = n + 1; });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/pixels/channel"), QStringLiteral("Pixel channel"), PixelAnalysis::channelNames(),
             [](const Interaction &x) { return int(x.pixels.channel); },
             [](Interaction &x, int n) { x.pixels.channel = PixelAnalysis::Channel(n); });
+        if (it.source == InteractionSource::Pixels)
         choice(
             QStringLiteral("source/pixels/feature"), QStringLiteral("Pixel measure"), PixelAnalysis::featureNames(),
             [](const Interaction &x) { return int(x.pixelFeature); },
             [](Interaction &x, int n) { x.pixelFeature = PixelAnalysis::Feature(n); });
+        if (it.source == InteractionSource::Pixels)
         number(QStringLiteral("source/pixels/threshold"), QStringLiteral("Pixel active threshold"), 0, 1, .05,
                [](Interaction &x) -> double & { return x.pixels.threshold; })
             .limits(0, 1);
-        for (int component = 0; component < 4; ++component) {
+        for (int component = 0; it.source == InteractionSource::Pixels && component < 4; ++component) {
             const char *keys[] = {"x", "y", "width", "height"};
             add(QStringLiteral("source/pixels/roi/") + keys[component], QStringLiteral("Pixel ROI ") + keys[component],
                 T::Float)
@@ -1133,12 +1331,18 @@ void Engine::makeInteractionParams()
                         }
                     });
         }
+        if (it.source == InteractionSource::Hands)
         choice(
             QStringLiteral("source/hands/feature"), QStringLiteral("Hand measure"), HandTracking::featureNames(),
             [](const Interaction &x) { return int(x.handFeature); },
             [](Interaction &x, int n) { x.handFeature = HandTracking::Feature(n); });
-        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 1, 0,
+        if (it.source == InteractionSource::Hands)
+        whole(QStringLiteral("source/hands/landmark"), QStringLiteral("MediaPipe landmark / blendshape index"), 0, 477, 0,
+              [](Interaction &x) -> int & { return x.visionLandmark; });
+        if (it.source == InteractionSource::Hands)
+        whole(QStringLiteral("source/hands/index"), QStringLiteral("Tracked hand"), 0, 3, 0,
               [](Interaction &x) -> int & { return x.handIndex; });
+        if (it.source == InteractionSource::Hands)
         number(QStringLiteral("source/hands/confidence"), QStringLiteral("Hand confidence"), .5, .99, .7,
                [](Interaction &x) -> double & { return x.handConfidence; })
             .limits(.5, .99);

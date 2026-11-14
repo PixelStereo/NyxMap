@@ -110,8 +110,19 @@ public:
     Layer *layer(int i);
     int indexOf(const Layer *l) const;
 
+    const Layer *mappingZoneFor(const Layer &layer) const; // caller holds the engine lock
+    const Mapping &effectiveMapping(const Layer &layer) const;
+    int addMappingZone(int from, const QString &name);
+    bool setMappingZone(quint64 layer, quint64 zone, const Mapping &local);
     int addLayer(const QString &name = {}, int at = 0); // index 0 = top layer
     int addGroup(const QString &name = {}, int at = 0);  // empty group (members are moved in with setStructure)
+    int sceneOfObject(int index) const;
+    quint64 addMaterial(const QString &name = {});
+    const std::map<quint64, std::shared_ptr<Material3D>> &materials() const { return m_materials; }
+    void restoreMaterial(const Material3D &material);
+    bool removeUnusedMaterial(quint64 id);
+    bool setModelMaterial(int object, quint64 material);
+    void resolveMaterials(); // lock-safe, called after hierarchy / project edits
     int addScene(const QString &name = {}, int at = 0);  // an empty 3D Scene (Model3D.h): a group of 3D objects
     Scene3DQuality quality3d() const { Lock lk(&m_mutex); return m_quality3d; } // the composition's, for all its 3D scenes
     // A 3D scene's triangles, in all its shown models; those its last frame computed in all its passes (shadows too)
@@ -135,9 +146,11 @@ public:
     GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
+    QList<int> removeLayers(const QList<int> &rows); // returns the original indices actually removed
     void moveLayer(int from, int to);
     // Duplicates a layer before itself (a group with its members); returns the index of the copy (the group's).
     int duplicateLayer(int i);
+    int insertLayerCopies(int at, const std::vector<QJsonObject> &states);
 
     // --- Structure: order and groups (see LayerTree.h). Members immediately follow their group.
     quint64 layerId(int i) const;
@@ -262,7 +275,8 @@ public:
     // --- Rendering: frame rate and antialiasing. A project chooses them (Composition tab), or takes the machine's
     // defaults (Settings): -1 in a project means "the default".
     struct RenderSettings {
-        double frameRate = -1; // frames per second; 0: the refresh rate of the screen
+        static constexpr double UncappedFrameRate = -2;
+        double frameRate = -1; // -1: machine default; 0: screen refresh; positive: fixed FPS
         int samples = -1;      // multisampling of the mapped edges: 0 / 1 off, 2, 4, 8
         int mipmaps = -1;      // smooth pictures drawn smaller than they are (mipmaps): 0 off, 1 on
         int depth = -1;        // bits per channel of the render: 10 (RGBA16, the default) or 8 (lighter)
@@ -338,7 +352,11 @@ public:
     InteractionGraph interactionGraph() const;
     bool setInteractionGraph(const InteractionGraph &graph, QString *error = nullptr);
     std::vector<Interaction> interactions() const;
-    void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one
+    void setInteractions(const std::vector<Interaction> &list); // the whole list (undo); ids 0 are given one; the groups stay
+    // The folders of the list (InteractionGroup), with the list in one go (undo); a group with an unknown parent goes to the top level,
+    // an interaction in an unknown group too; ids 0 are given one
+    std::vector<InteractionGroup> interactionGroups() const;
+    void setInteractions(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups);
     quint64 addInteraction(const Interaction &it);              // its id
     bool setInteraction(const Interaction &it);                 // by its id
     void removeInteraction(quint64 id);
@@ -515,8 +533,8 @@ public:
     int addPreset(const Preset &p, int at = -1); // returns where it went
     void removePreset(int i);
     int indexOfPreset(quint64 id) const;
-    void recallPreset(int i);
-    double presetDuration(quint64 id) const;
+    void recallPreset(int i, double fadeOverride = -1);
+    double presetDuration(quint64 id, double fadeOverride = -1) const;
     void cancelParameterRecall(quint64 layer, const QString &path); // undo of an outstanding preset recall
     // A value as it is now, to put in a preset (an undefined value: it has none at that address)
     PresetValue presetValue(quint64 layer, const QString &path) const;
@@ -633,13 +651,14 @@ public:
     std::vector<ShowControl> controls() const;
     std::optional<ShowControl> control(quint64 id) const;
     QJsonArray controlsJson() const;
-    bool setControlsJson(const QJsonArray &a, QString *error = nullptr); // replaces them all (undo, project, a remote)
+    bool setControlsJson(const QJsonArray &a, QString *error = nullptr, bool remapKeys = false); // replaces them all (undo, project, a remote)
     quint64 controlsRevision() const { return m_controlsRevision; } // changes with the list or a definition, not a value
     quint64 addControl(const ShowControl &control); // its id (0: too many); its key is made from its name
-    bool updateControl(quint64 id, const ShowControl &change); // its address (key) stays
+    bool updateControl(quint64 id, const ShowControl &change); // a new name also updates the OSC key
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
     bool setControlValue(quint64 id, double value); // a number, a switch, an index; any thread
+    bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
     bool setControlColor(quint64 id, double r, double g, double b);
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
     BeatClock &beatClock() { return m_beatClock; }
@@ -647,15 +666,15 @@ public:
     Sequencer &sequencer() { return *m_sequencer; }
     const Sequencer &sequencer() const { return *m_sequencer; }
     // A snapshot's action: its longest time (the fade, and the times of its own values)
-    double snapshotDuration(quint64 id) const;
+    double snapshotDuration(quint64 id, double fadeOverride = -1) const;
     // A step's action: its snapshot's, or the time its timeline will play (Play on a timeline that ends; else 0;
     double animationRemaining(quint64 id) const; // real seconds a timeline playing has left (infinity: not moving)
     // Real seconds a timeline told to play now will play (0: endless or gone; infinity: frozen, speed 0)
     double animationPlayTime(quint64 id) const;
-    void recallSnapshot(int i); // with its fade
+    void recallSnapshot(int i, double fadeOverride = -1); // with its fade
     // The same, found by its id: from another thread (the cue clock), where an index may change meanwhile (a snapshot
     // added or removed in the interface). false: gone
-    bool recallSnapshotById(quint64 id);
+    bool recallSnapshotById(quint64 id, double fadeOverride = -1);
     bool isFading() const;
     // The snapshot recalled last, and where its fade is (its longest time: values with times of their own included)
     struct RecallProgress {
@@ -685,6 +704,22 @@ public:
     static QString defaultEasing(const QString &timingKey);
 
     // --- External media (media bin)
+    // The Media Bin is where the project's files are: each one an item, with an id and the place of its file. A
+    // snapshot, a preset and a layer in the project file name the item, never the file: once the item is given another
+    // file (Replace…), all of them have it.
+    struct MediaItem {
+        quint64 id = 0;
+        QString path;          // its file (a stream's URL, a live input's address)
+        bool imported = false; // put in the Media Bin by the user: listed even when nothing uses it
+    };
+    std::vector<MediaItem> mediaItems() const;
+    void setMediaItems(const std::vector<MediaItem> &items); // as they were (an undo)
+    quint64 mediaId(const QString &path) const;              // the item of this file, made when it has none (0: no path)
+    QString mediaPath(quint64 id) const;                     // empty: no such item
+    // A layer's state (layerJson, a snapshot's layer, a preset's part) with its files named by their items
+    // ("media") instead of their paths, and back. Both leave alone what is already so.
+    QJsonObject linkMedia(QJsonObject state) const;
+    QJsonObject resolveMedia(QJsonObject state) const;
     struct MediaRef {
         QString path;
         bool video = false;      // video file
@@ -706,7 +741,9 @@ public:
     static bool isVideoFile(const QString &path);
     static bool isToxFile(const QString &path);
     bool setLayerTox(int index, const QString &path, const ToxSettings &settings = {}, QString *error = nullptr);
-    bool setLayerModel(int index, const QString &path, QString *error = nullptr); // a 3D model (FBX, glTF, GLB, OBJ)
+    bool setLayerPrimitive(int layer, const QString &path); // change shape, preserving placement and animation targets
+    bool setLayerModel(int index, const QString &path, QString *error = nullptr, const QStringList &hidden = {});
+    bool setModelHiddenObjects(int index, const QStringList &hidden); // a 3D model (FBX, glTF, GLB, OBJ)
     bool setLayerToxInput(int index, const QString &input, quint64 layerId, QString *error = nullptr);
     static bool isImageFile(const QString &path);
     static bool isAudioFile(const QString &path);
@@ -794,6 +831,11 @@ public:
     QString glVersion() const { return m_glVersion; }
     QString glVendor() const { return m_glVendor; }
     quint64 windowFrames(quint64 viewport); // pictures the viewport's window was given (tests)
+    // Manual rendering tests only. The output context and its back buffer are current before swap.
+    void setWindowDrawProbeForTests(std::function<void(quint64, QSize)> probe) {
+        Q_ASSERT(!m_threaded);
+        m_windowDrawProbe = std::move(probe);
+    }
     void setViewportWindow(quint64 viewport, QWindow *w);
     // refreshHz: its screen's (0: not known). The render keeps that pace while the window is shown, and counts its
     // missed deadlines against it, not against the main screen's
@@ -811,9 +853,10 @@ public:
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
     void waitForFrame(QOpenGLExtraFunctions *f) const;
+    void setVisionSetupInput(std::optional<Interaction> input);
+    QJsonObject visionSignals(const Interaction &input) const;
     QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
     QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
-    static bool handTrackingAvailable();
     QString handModelsDirectory() const;
     void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }
@@ -924,15 +967,18 @@ private:
     void renderLoop();
     void runPendingTasks();
     void frame(double dt);
-    bool presentViewports(); // every viewport whose window is on screen (false: none)
+    bool presentViewports(bool syncToDisplay = true); // every viewport whose window is on screen (false: none)
     void releaseLayer(Layer &l);
     void releaseAll();
     std::shared_ptr<Garbage> detachSource(Layer &l);
     void releaseGarbage(const std::shared_ptr<Garbage> &g);
     void updateSource(Layer &l, double dt);
     void markNeeded(); // which layers are drawn this frame (shown, or used by another one)
+    void forEachRenderDependency(const Layer &layer, const std::function<void(size_t, int)> &use) const;
     // every layer, in dependency order; `only`: just these (by id), the others keep the frame they have
     void renderPass(const IsfRenderContext &rc, const std::set<quint64> *only = nullptr);
+    size_t renderLayerIndex(quint64 id) const;
+    bool layerPreviewed(const Layer &layer) const;
     void renderPausedSources(const IsfRenderContext &rc); // paused: the pictures loaded since, and what shows them
     void renderLayer(Layer &l, const IsfRenderContext &rc);
     void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
@@ -945,7 +991,8 @@ private:
                          quint64 viewport = 0, double angle = 0); // angle (degrees): the view turned about its center; viewport: the one drawn for (its share of each layer's opacity)
     std::map<std::pair<int, int>, MsaaBuffer> m_msaa; // by size (render thread)
     int m_maxSamples = 0;
-    void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc);
+    void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting);
+    bool viewportIsPlain(const Layer &v, const std::vector<Layer *> &shown) const;
     void composite();
     void readSourcePreview();
     void stepFade(double dt); // snapshot fades (render thread, lock held)
@@ -981,7 +1028,8 @@ private:
     void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (GL context current)
     void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
     void blit(GLuint tex, const RenderTarget &target);
-    void bindMesh(Layer &l);
+    bool bindMesh(Layer &l);
+    void drawBoundMesh(bool subdivided);
     // A layer's matte (Layer.h): the other layer as it is in the composition this frame (Composition space), or its
     // picture through the matte (Picture space)
     void prepareMatte(Layer &l);
@@ -1051,6 +1099,7 @@ private:
     };
     mutable std::mutex m_outputStatsMutex;
     std::vector<OutputStats> m_outputStats;
+    std::function<void(quint64, QSize)> m_windowDrawProbe;
     double m_presentHz = 0; // render thread: the refresh rate of the window that waits for its screen (0: none)
     qint64 m_paceNext = -1; // render thread: when the next frame is due (steady clock ns; -1: from now)
     void releaseOutputSurface(OutputSurface &o);
@@ -1070,10 +1119,13 @@ private:
     RenderTarget m_dstCopy; // what is drawn so far, for Difference
     static inline std::atomic<bool> s_failDifferenceCopyForTests{false};
     GLint m_blitTexLoc = -1, m_compTexLoc = -1, m_compOpacityLoc = -1, m_compViewLoc = -1, m_presentTexLoc = -1;
+    GLint m_blitOpaqueLoc = -1;
+    GLint m_prepRoiModeLoc = -1, m_prepRoiTriangleLoc = -1, m_prepRoiQuadLoc = -1;
     GLint m_prepTexLoc = -1, m_prepRoiLoc = -1, m_prepAddLoc = -1, m_prepRemoveLoc = -1, m_prepUnpremulLoc = -1, m_prepBalanceLoc = -1;
     GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
     GLuint m_blackTex = 0;
     VideoConverter m_videoConv; // video frames to RGBA (render thread)
+    MaterialTextureCache m_materialTextures;
     TestCard m_testCard;        // the viewports' test cards (render thread)
     struct PreviewSlot {
         quint64 id = 0;
@@ -1093,7 +1145,32 @@ private:
                       const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     RenderTarget m_output[2];
+    GLuint m_compositionReuseTexture = 0; // raw, full-size viewport rendered during this frame
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
+    // What the sound hears of one viewport's picture (0: the composition): read through two pixel buffers, never waited for
+    struct AudioVisualTap {
+        GLuint pbo[2] = {0, 0};
+        GLsync fence[2] = {nullptr, nullptr};
+        int next = 0;               // the buffer the next read goes to
+        std::array<float, 3> rgb{}; // the mean color of the newest read the GPU finished
+        bool used = false;          // listened to this frame
+        void release(QOpenGLExtraFunctions *f)
+        {
+            for (GLsync &s : fence)
+                if (s) f->glDeleteSync(s);
+            for (GLuint &b : pbo)
+                if (b) f->glDeleteBuffers(1, &b);
+            *this = {};
+        }
+    };
+    std::map<quint64, AudioVisualTap> m_audioVisualTaps; // render thread only
+    struct IsfAudioTexture {
+        Texture2D texture;
+        quint64 frame = 0;
+    };
+    // Program/input, waveform/spectrum, and actual column count.
+    std::map<std::array<int, 3>, IsfAudioTexture> m_isfAudioTextures;
+    std::vector<float> m_isfAudioValues, m_isfAudioRgba;
     std::atomic<int> m_published{0};
     int m_back = 1;
 
@@ -1101,8 +1178,12 @@ private:
     Scene3DQuality m_quality3d;
     std::vector<std::unique_ptr<Layer>> m_layers;
     quint64 m_nextId = 1;
+    std::map<quint64, std::shared_ptr<Material3D>> m_materials;
     std::vector<float> m_meshScratch;
     std::vector<uint8_t> m_renderMark; // render pass: layer already rendered this frame (reused, no allocation)
+    std::vector<std::pair<quint64, size_t>> m_renderLayerIndices;
+    bool m_renderLayerIndexActive = false; // only while frame() holds the lock after cue/interaction updates
+    std::vector<std::vector<size_t>> m_renderChildren;
 
     std::atomic<double> m_compositionSpeed{1.0};
     std::atomic<bool> m_paused{false}, m_emergencyHeld{false};
@@ -1123,9 +1204,11 @@ private:
 
     // Source preview
     quint64 m_previewId = 0;
-    int m_previewSide = 360, m_previewTick = 0;
+    int m_previewSide = 360;
+    int64_t m_previewNextNs = 0;
     RenderTarget m_previewTarget;
-    GLuint m_previewPbo = 0; // read back without waiting: mapped at the next preview tick
+    GLuint m_previewPbo = 0;
+    GLsync m_previewFence = nullptr; // map only after the GPU has finished writing
     int m_previewPboW = 0, m_previewPboH = 0;
     quint64 m_previewPboId = 0; // the layer the buffer holds (0: nothing pending)
     mutable std::mutex m_previewMutex;
@@ -1236,6 +1319,7 @@ private:
     quint64 m_nextControlId = 1;
     std::atomic<quint64> m_controlsRevision{0}; // read by the remote's thread
     ShowControl *controlLocked(quint64 id);
+    void remapControlKeys(const QHash<QString, QString> &keys); // lock held
     Sequencer *m_sequencer = nullptr; // a child QObject
     std::atomic<bool> m_fadesManual{false};
     void attachAudio(Layer &l, std::shared_ptr<AudioStream> s);
@@ -1263,8 +1347,11 @@ private:
     void stepInteractionGraph(double dt, const std::vector<InteractionEvent> &events);
     std::vector<Interaction> m_interactions; // under m_mutex
     quint64 m_nextInteractionId = 1;
+    std::vector<InteractionGroup> m_interactionGroups;
+    quint64 m_nextInteractionGroupId = 1;
     struct InteractionRun {
-        InteractionProcessor proc;
+        InteractionProcessor proc, shared;
+        std::optional<double> sharedOut;
         InteractionTargetState target;
         std::optional<double> lastOut;
         double lastInternal = std::numeric_limits<double>::quiet_NaN();
@@ -1355,7 +1442,10 @@ private:
         int curve = 3;
     };
     std::vector<ActionFade> m_actionFades;
-    void runConsequence(const InteractionConsequence &c); // at once, or a fade (lock held)
+    bool writeInteractionOutput(const QString &path, double value, bool action);
+    void sendInteractionOsc(const InteractionConsequence &c, double value);
+    void runConsequence(const InteractionConsequence &c, double sourceValue); // lock held
+    void feedControlAction(const QString &path, double value); // lock held
     void stepActionFades(double dt);
     void updateMidiInputs();          // main thread
     void requestMidiInputUpdate();    // any thread; coalesced named Qt invocation
@@ -1374,7 +1464,12 @@ private:
 
     QString m_projectPath;
     IsfLibrary m_library;
-    QStringList m_binItems;
+    mutable std::vector<MediaItem> m_media; // the Media Bin's items (mediaId() makes one for a file that has none)
+    mutable quint64 m_nextMediaId = 1;
+    Snapshot linkMedia(Snapshot m) const;    // a snapshot as it is kept, and as it is given
+    Snapshot resolveMedia(Snapshot m) const;
+    Preset linkMedia(Preset p) const;
+    Preset resolveMedia(Preset p) const;
     QSet<QString> m_binStreamsUdp; // streams of the Media Bin loaded with RTSP over UDP
 
     // Publishing: the viewports' publishers (Publishing.h)
@@ -1388,18 +1483,24 @@ private:
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread
     void stepVision();
+    GLuint segmentationTexture(quint64 source, LayerTap tap, int &width, int &height) const;
     double visionValue(const Interaction &input);
     void releaseVision();
     std::unique_ptr<VisionRuntime> m_vision;
     bool m_visionReset = false;
+    std::optional<Interaction> m_visionSetupInput;
     PixelSampler m_sampler{[this] { drawQuad(); }};
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;
+    using DmxOverrides = std::map<DmxKey, std::map<int, quint8>>;
+    DmxOverrides m_interactionDmx, m_actionDmx; // engine lock
+    DmxFrame m_fixtureDmx;
+    bool m_hadInteractionDmx = false;
     DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
-    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1;
+    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1, m_maskMixLoc = -1;
     GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
     GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
     GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)

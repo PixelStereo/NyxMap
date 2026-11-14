@@ -132,7 +132,7 @@ bool Engine::initialize(QString *err)
     f->glBindBuffer(GL_ARRAY_BUFFER, m_meshVbo);
     { // the whole frame (viewport outputs); each layer has a buffer of its own
         std::vector<float> full;
-        Mapping().buildVertices(kMeshSubdiv, full);
+        Mapping().buildVertices(1, full);
         f->glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(full.size() * sizeof(float)), full.data(), GL_STATIC_DRAW);
     }
     f->glEnableVertexAttribArray(0);
@@ -156,8 +156,9 @@ bool Engine::initialize(QString *err)
     const char *quadVs = "#version 330 core\nlayout(location=0) in vec2 a_pos; out vec2 v_uv;\n"
                          "void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }\n";
     m_blitProgram = compileProgram(quadVs,
-                                   "#version 330 core\nuniform sampler2D u_tex; in vec2 v_uv; out vec4 o;\n"
-                                   "void main(){ o = texture(u_tex, v_uv); }\n",
+                                   "#version 330 core\nuniform sampler2D u_tex; uniform bool u_opaque; in vec2 v_uv; out vec4 o;\n"
+                                   "void main(){ o = u_opaque ? vec4(texelFetch(u_tex, ivec2(gl_FragCoord.xy), 0).rgb, 1.0)"
+                                   " : texture(u_tex, v_uv); }\n",
                                    &log);
     // IEC sRGB transfer functions (Khronos Data Format, section 13.3).
     // Shared by native-source normalization (straight alpha) and opaque output.
@@ -230,6 +231,7 @@ bool Engine::initialize(QString *err)
         return false;
     }
     m_blitTexLoc = f->glGetUniformLocation(m_blitProgram, "u_tex");
+    m_blitOpaqueLoc = f->glGetUniformLocation(m_blitProgram, "u_opaque");
     m_presentTexLoc = f->glGetUniformLocation(m_presentProgram, "u_tex");
     m_publishing.initGl(&log);
     if (!m_sampler.initGl(&log)) {
@@ -241,7 +243,15 @@ bool Engine::initialize(QString *err)
                                    "#version 330 core\nuniform sampler2D u_tex; uniform vec4 u_roi; uniform vec3 u_add;\n"
                                    "uniform vec3 u_remove; uniform vec3 u_balance; uniform int u_unpremul;\n"
                                    "uniform sampler2D u_mask; uniform int u_maskMode; in vec2 v_uv; out vec4 o;\n"
-                                   "void main(){ vec4 c = texture(u_tex, mix(u_roi.xy, u_roi.zw, v_uv));\n"
+                                   "uniform int u_roiMode; uniform vec2 u_triangle[3]; uniform mat3 u_quad;\n"
+                                   "float side(vec2 a, vec2 b, vec2 p) { vec2 e=b-a, d=p-a; return e.x*d.y-e.y*d.x; }\n"
+                                   "void main(){ vec2 uv = mix(u_roi.xy, u_roi.zw, v_uv);\n"
+                                   "  if (u_roiMode == 3) { o=vec4(0); return; }\n"
+                                   "  if (u_roiMode == 1) { vec2 p=vec2(uv.x,1.0-uv.y);\n"
+                                   "    float a=side(u_triangle[0],u_triangle[1],p), b=side(u_triangle[1],u_triangle[2],p), c=side(u_triangle[2],u_triangle[0],p);\n"
+                                   "    if (min(a,min(b,c))<0.0 && max(a,max(b,c))>0.0) { o=vec4(0); return; } }\n"
+                                   "  if (u_roiMode == 2) { vec3 p=u_quad*vec3(v_uv.x,1.0-v_uv.y,1.0); uv=vec2(p.x/p.z,1.0-p.y/p.z); }\n"
+                                   "  vec4 c = texture(u_tex, uv);\n"
                                    "  if (u_unpremul != 0 && c.a > 0.0) c.rgb /= c.a;\n"
                                    "  vec3 col = clamp(c.rgb * u_balance * (1.0 - u_remove) + u_add, 0.0, 1.0);\n"
                                    // Color through a mask: 1 as it is, 2 inverted (luminance times alpha)
@@ -259,13 +269,13 @@ bool Engine::initialize(QString *err)
     // only the channels the effect changes (the others: the input's)
     m_maskProgram = compileProgram(quadVs,
                                    "#version 330 core\nuniform sampler2D u_in; uniform sampler2D u_fx; uniform sampler2D u_mask;\n"
-                                   "uniform int u_invert; uniform int u_hasMask; uniform vec4 u_channels; in vec2 v_uv; out vec4 o;\n"
+                                   "uniform int u_invert; uniform int u_hasMask; uniform vec4 u_channels; uniform float u_mix; in vec2 v_uv; out vec4 o;\n"
                                    "void main(){ float k = 1.0;\n"
                                    "  if (u_hasMask != 0) { vec4 m = texture(u_mask, v_uv);\n"
                                    "    k = clamp(dot(m.rgb, vec3(0.2126, 0.7152, 0.0722)) * m.a, 0.0, 1.0);\n"
                                    "    if (u_invert != 0) k = 1.0 - k; }\n"
                                    "  vec4 a = texture(u_in, v_uv);\n"
-                                   "  o = mix(a, mix(a, texture(u_fx, v_uv), k), u_channels); }\n",
+                                   "  o = mix(a, mix(a, texture(u_fx, v_uv), k * u_mix), u_channels); }\n",
                                    &log);
     if (!m_maskProgram) {
         if (err) *err = QStringLiteral("Internal shaders: ") + log;
@@ -322,8 +332,12 @@ bool Engine::initialize(QString *err)
     m_maskInvertLoc = f->glGetUniformLocation(m_maskProgram, "u_invert");
     m_maskHasLoc = f->glGetUniformLocation(m_maskProgram, "u_hasMask");
     m_maskChannelsLoc = f->glGetUniformLocation(m_maskProgram, "u_channels");
+    m_maskMixLoc = f->glGetUniformLocation(m_maskProgram, "u_mix");
     m_prepTexLoc = f->glGetUniformLocation(m_prepProgram, "u_tex");
     m_prepRoiLoc = f->glGetUniformLocation(m_prepProgram, "u_roi");
+    m_prepRoiModeLoc = f->glGetUniformLocation(m_prepProgram, "u_roiMode");
+    m_prepRoiTriangleLoc = f->glGetUniformLocation(m_prepProgram, "u_triangle[0]");
+    m_prepRoiQuadLoc = f->glGetUniformLocation(m_prepProgram, "u_quad");
     m_prepAddLoc = f->glGetUniformLocation(m_prepProgram, "u_add");
     m_prepRemoveLoc = f->glGetUniformLocation(m_prepProgram, "u_remove");
     m_prepUnpremulLoc = f->glGetUniformLocation(m_prepProgram, "u_unpremul");
@@ -507,13 +521,14 @@ void Engine::renderLoop()
         // vertical sync); else the main screen's refresh rate. A frame its output does not show (no surface from
         // macOS this time) is not followed by one at another screen's pace.
         const double rate = effectiveRender().frameRate;
+        const bool uncapped = rate == RenderSettings::UncappedFrameRate;
         const double hz = rate > 0 ? rate : m_presentHz > 1 ? m_presentHz : screenRefreshRate();
-        const qint64 periodNs = qint64(1e9 / std::clamp(hz, 1.0, 1000.0));
+        const qint64 periodNs = uncapped ? 0 : qint64(1e9 / std::clamp(hz, 1.0, 1000.0));
 
         const qint64 t0 = FrameTiming::nowNs();
         frame(nextDt());
         const qint64 t1 = FrameTiming::nowNs();
-        const bool presented = presentViewports();
+        const bool presented = presentViewports(!uncapped);
         const qint64 t2 = FrameTiming::nowNs();
         m_frameTiming.noteFrame(t0, t1, t2, periodNs, presented);
         sampleResources();
@@ -522,7 +537,11 @@ void Engine::renderLoop()
         // The vertical sync held this frame (it waited for its screen): it is the pace, nothing to add. Otherwise the
         // next frame is due one period after this one was (absolute deadlines: a late wake-up is caught up on the next
         // frame instead of adding up; more than a period late, the count starts again from now)
-        const bool heldBySync = rate <= 0 && presented && t2 - t1 >= 4000000;
+        if (uncapped) {
+            m_paceNext = -1;
+            continue;
+        }
+        const bool heldBySync = rate == 0 && presented && t2 - t1 >= 4000000;
         const qint64 sleepNs = heldBySync ? FramePacer::resync(m_paceNext, t2, periodNs)
                                           : FramePacer::next(m_paceNext, t0, FrameTiming::nowNs(), periodNs);
         if (sleepNs > 0) QThread::usleep(static_cast<unsigned long>(sleepNs / 1000));
@@ -570,12 +589,18 @@ void Engine::releaseAll()
     auto f = gl();
     for (RenderTarget &o : m_output) o.destroy();
     m_audioVisual.destroy();
+    for (auto &[id, tap] : m_audioVisualTaps) tap.release(f);
+    m_audioVisualTaps.clear();
+    for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
+    m_isfAudioTextures.clear();
     m_previewTarget.destroy();
     for (auto &slot : m_previewSlots) {
         for (auto &target : slot.target) target.destroy();
         for (auto &editor : slot.editor) if (editor) editor->releaseGl();
         for (auto &reader : slot.reader) if (reader) { gl()->glDeleteSync(reader); reader = nullptr; }
     }
+    if (m_previewFence) f->glDeleteSync(m_previewFence);
+    m_previewFence = nullptr;
     if (m_previewPbo) f->glDeleteBuffers(1, &m_previewPbo);
     m_previewPbo = 0;
     m_previewPboW = m_previewPboH = 0;
@@ -587,6 +612,7 @@ void Engine::releaseAll()
     }
     m_videoConv.release();
     m_testCard.release();
+    m_materialTextures.release();
     for (GLuint p : {m_blitProgram, m_compProgram, m_diffProgram, m_presentProgram, m_prepProgram, m_maskProgram,
                      m_fadeProgram, m_shapeMaskProgram, m_matteProgram, m_outputColorProgram})
         if (p) f->glDeleteProgram(p);
@@ -707,7 +733,7 @@ static void setSwapInterval(QOpenGLContext *ctx, int n)
 
 // Each window on screen is drawn with its own context and swapped; the engine's context then becomes current
 // again. Each window's context waits on the GPU for the frame's fence (waitForFrame) before drawing it.
-bool Engine::presentViewports()
+bool Engine::presentViewports(bool syncToDisplay)
 {
     std::vector<std::pair<const Layer *, OutputSurface *>> shown;
     {
@@ -724,10 +750,10 @@ bool Engine::presentViewports()
     for (size_t k = 0; k < shown.size(); ++k) {
         const Layer *vp = shown[k].first;
         OutputSurface &out = *shown[k].second;
-        const bool last = k + 1 == shown.size();
+        const bool waitForDisplay = syncToDisplay && k + 1 == shown.size();
         if (out.metal) { // drawn by Metal from here, with the engine's context current
             const RenderTarget &pic = vp->vpOut[vp->vpPublished.load()];
-            switch (out.metal->present(pic.fbo, pic.w, pic.h, out.pixels, last)) {
+            switch (out.metal->present(pic.fbo, pic.w, pic.h, out.pixels, waitForDisplay)) {
             case MetalOutput::Result::Shown:
                 any = true;
                 ++out.presented;
@@ -766,7 +792,8 @@ bool Engine::presentViewports()
             continue;
         }
         present(*vp, out);
-        setSwapInterval(out.context, last ? 1 : 0); // only the last one waits for the screen
+        if (m_windowDrawProbe) m_windowDrawProbe(vp->id, out.pixels);
+        setSwapInterval(out.context, waitForDisplay ? 1 : 0); // only the last one waits for the screen
         out.context->swapBuffers(out.window);
         any = true;
         ++out.presented;
@@ -940,8 +967,10 @@ double Engine::blackoutFade() const
 void Engine::requestSourcePreview(quint64 layerId, int maxSide)
 {
     Lock lk(&m_mutex);
+    maxSide = std::clamp(maxSide, 16, 2048);
+    if (m_previewId != layerId || m_previewSide != maxSide) m_previewNextNs = 0;
     m_previewId = layerId;
-    m_previewSide = std::clamp(maxSide, 16, 2048);
+    m_previewSide = maxSide;
 }
 
 QImage Engine::sourcePreview(quint64 *layerId) const
@@ -982,7 +1011,7 @@ Engine::RenderSettings Engine::effectiveRender() const
 {
     Lock lk(&m_mutex);
     RenderSettings e;
-    e.frameRate = m_render.frameRate >= 0 ? m_render.frameRate : std::max(0.0, m_renderDefaults.frameRate);
+    e.frameRate = (m_render.frameRate >= 0 || m_render.frameRate == RenderSettings::UncappedFrameRate) ? m_render.frameRate : std::max(0.0, m_renderDefaults.frameRate);
     e.samples = m_render.samples >= 0 ? m_render.samples : std::max(0, m_renderDefaults.samples);
     e.mipmaps = m_render.mipmaps >= 0 ? m_render.mipmaps : std::max(0, m_renderDefaults.mipmaps);
     // RGBA16 UNORM ("10") unless 8 bits are chosen: smooth generated gradients by default, half the GPU memory and

@@ -218,6 +218,7 @@ private:
     std::shared_ptr<const VideoLayout> surfaceLayout(const AVFrame *hw); // null: not sampled in place
     std::shared_ptr<const VideoLayout> hapLayout(int count, int f0, int f1);
     bool setupHardware(const struct AVCodec *dec);
+    bool fallbackStartupSoftware(); // hardware accepted the stream but failed before delivering any frame
     friend struct HwFormat;
 
     AVFormatContext *m_fmt = nullptr;

@@ -2,10 +2,15 @@
 #include <QWidget>
 #include <QHash>
 #include <QPointer>
+#include <functional>
+#include <vector>
+#include "ShowControl.h"
 
 class Engine;
 class QUndoStack;
 class QVBoxLayout;
+class QGridLayout;
+class QToolButton;
 class QLabel;
 class QTimer;
 
@@ -30,6 +35,12 @@ private:
         QPointer<QWidget> field; // SliderField, FlagBox, QComboBox, QPushButton or a swatch
     };
     void addControl(int kind);
+    void fillContainer(QVBoxLayout *column, QGridLayout *grid, quint64 group, int columns, const std::vector<ShowControl> &all);
+    QWidget *makeGroup(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position, const std::vector<ShowControl> &all);
+    QWidget *makeRow(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position);
+    QWidget *nameField(const ShowControl &c);
+    QToolButton *gearButton(const ShowControl &c, const std::vector<const ShowControl *> &siblings, size_t position, const std::vector<ShowControl> &all);
+    void applyControl(quint64 id, const ShowControl &change, const QString &text);
     void editControl(quint64 id);
     void editList(const QString &text, const std::function<void(QJsonArray &)> &change);
     Engine *m_engine;

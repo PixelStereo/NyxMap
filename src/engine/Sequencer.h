@@ -65,6 +65,7 @@ public:
         AnimLoop loop = AnimLoop::Loop; // LoopMode
         int repeat = 0;                 // LoopMode
         double speed = 1;               // Speed
+        double fadeOverride = -1; // seconds; negative uses the preset or snapshot default
         double preWait = 0, postWait = 0; // seconds (beats when its sequence counts in beats: Sequence::beats)
         // A step started by a GO waits for the next multiple of this many beats of the show's clock (Engine::beatClock;
         // 1: the beat, 4: the bar), then its pre-wait. 0: no grid. A stopped clock never gets there: no grid then
@@ -146,7 +147,7 @@ public:
 
     Sequencer(Engine &engine, Annotated<QRecursiveMutex> &mutex);
     ~Sequencer() override;
-    bool requestSnapshot(quint64 id); // serialized on the cue clock; GUI stays available during source loading
+    bool requestSnapshot(quint64 id, double fadeOverride = -1); // serialized on the cue clock; GUI stays available during source loading
     void shutdownClock(); // the clock thread stopped (the engine, before it goes)
 
     int count() const;
@@ -201,8 +202,8 @@ public:
     bool active(int sequenceIndex) const; // any active pre-wait, cue action or follow (UI activity indicator)
     void advance(double dt);       // moves the waits on (a timer does, except with Engine::setFadesManual)
     // The snapshot a step recalls goes through this (the interface: its undo stack); Engine::recallSnapshot by default
-    void setRecaller(std::function<void(int snapshotIndex)> f);
-    void setPresetRecaller(std::function<void(int presetIndex)> f);
+    void setRecaller(std::function<void(int snapshotIndex, double fadeOverride)> f);
+    void setPresetRecaller(std::function<void(int presetIndex, double fadeOverride)> f);
     // A recall the cue clock made (its thread, on time): told afterwards on the Sequencer's thread, with the state it
     // replaced. None: the recall is made all the same, without undo
     void setRecallRecorder(std::function<void(int snapshotIndex, const RecallBefore &before)> f);
@@ -239,7 +240,7 @@ private:
     void startTimer();
     void runClock(); // clock thread
     void tick();     // clock thread
-    void fireSnapshot(quint64 snapshotId); // by its id: on the cue clock, an index may change meanwhile
+    void fireSnapshot(quint64 snapshotId, double fadeOverride); // by its id: on the cue clock, an index may change meanwhile
     void playAtOnce(const std::vector<Step> &steps); // tracking: steps played to their end now, in order
     void noteFired(double late); // lock held
 
@@ -264,13 +265,13 @@ private:
     bool m_startupGo = true;
     std::map<quint64, qint64> m_stepStartedNs;
     struct RecordedRecall { quint64 snapshot = 0, generation = 0; RecallBefore before; };
-    struct PendingSnapshot { quint64 id; std::shared_ptr<std::atomic<bool>> valid; };
+    struct PendingSnapshot { quint64 id; double fadeOverride; std::shared_ptr<std::atomic<bool>> valid; };
     std::vector<PendingSnapshot> m_pendingSnapshots;
     std::vector<RecordedRecall> m_recordedRecalls;
     quint64 m_generation = 0;
     std::vector<Run> m_runs; // all active sequences; each run owns a stable sequenceId
-    std::function<void(int)> m_recaller;                         // under m_mutex
-    std::function<void(int)> m_presetRecaller;
+    std::function<void(int, double)> m_recaller;                         // under m_mutex
+    std::function<void(int, double)> m_presetRecaller;
     std::function<void(int, const RecallBefore &)> m_recorder;   // under m_mutex
     std::unique_ptr<QThread> m_clockThread;
     QObject *m_clockContext = nullptr; // lives in m_clockThread

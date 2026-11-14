@@ -21,11 +21,14 @@ class LayerTable : public QWidget
     Q_OBJECT
 public:
     struct Row {
+        quint64 id = 0;
         QString name, tag, source, effects, blend, playback;
         QColor color;               // of its kind
         bool enabled = true, error = false;
         bool noPicture = false; // audio layer: no opacity or blend
         float opacity = 1.f;
+        bool hasAudio = false;
+        float audioLeft = 0.f, audioRight = 0.f;
         bool viewport = false;      // a viewport: in the block at the top of the list
         bool group = false, collapsed = false; // collapsed: the group itself is folded
         bool hidden = false;        // inside a folded group
@@ -38,7 +41,7 @@ public:
 
     explicit LayerTable(QWidget *parent = nullptr);
 
-    void setRows(const std::vector<Row> &rows); // rebuilds if the count changes, otherwise updates in place
+    bool setRows(const std::vector<Row> &rows); // true if the order, visibility or membership changed
     int currentRow() const;
     void setCurrentRow(int row);
     QList<int> selectedRows() const; // in order
@@ -47,6 +50,7 @@ public:
 
 signals:
     void currentRowChanged(int row);
+    void rowClicked(int row);
     void selectionChanged(); // the rows selected (selectedRows) changed
     void addClicked();
     void groupClicked();
@@ -68,6 +72,7 @@ signals:
 
 private:
     void updateRow(int r, const Row &row);
+    void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
     std::vector<Row> m_rows;
     bool m_updating = false;

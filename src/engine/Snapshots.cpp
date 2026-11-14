@@ -422,26 +422,28 @@ void Engine::stepScheduledRecall(double dt)
 // A preset's recall
 // Each layer's values on their way, as a snapshot's are (only these: the other values, the source, the visibility
 // are left alone); the composition's level and volume with its own fade, its other values at once
-double Engine::presetDuration(quint64 id) const
+double Engine::presetDuration(quint64 id, double fadeOverride) const
 {
     Lock lock(&m_mutex);
     const int index = indexOfPreset(id);
     if (index < 0) return 0;
     const auto p = preset(index);
-    double duration = p.geometry.isEmpty() ? 0.0 : std::max(0.0, p.fade);
+    const double fade = fadeOverride < 0 ? p.fade : fadeOverride;
+    double duration = p.geometry.isEmpty() ? 0.0 : std::max(0.0, fade);
     for (auto it = p.categories.begin(); it != p.categories.end(); ++it) {
         const int parts = it.key().section(':', 1).toInt();
         if ((parts & PartSpatial) && !(parts & PartSource) && it.value().toObject().contains("mesh"))
-            duration = std::max(duration, std::max(0.0, p.fade));
+            duration = std::max(duration, std::max(0.0, fade));
     }
     for (const auto &value : p.values)
-        duration = std::max(duration, std::max(0.0, value.delay) + std::max(0.0, value.time < 0 ? p.fade : value.time));
+        duration = std::max(duration, std::max(0.0, value.delay) + std::max(0.0, value.time < 0 ? fade : value.time));
     return duration;
 }
 
-void Engine::recallPreset(int i)
+void Engine::recallPreset(int i, double fadeOverride)
 {
-    const Preset p = preset(i);
+    Preset p = preset(i);
+    if (fadeOverride >= 0) p.fade = fadeOverride;
     if (!p.id) return;
     if (!p.views.isEmpty()) emit viewsRecalled(p.views);
     resumeAfterStop();
@@ -621,7 +623,7 @@ int Engine::snapshotCount() const
 Engine::Snapshot Engine::snapshot(int i) const
 {
     Lock lk(&m_mutex);
-    return i >= 0 && i < int(m_snapshots.size()) ? m_snapshots[size_t(i)] : Snapshot();
+    return i >= 0 && i < int(m_snapshots.size()) ? resolveMedia(m_snapshots[size_t(i)]) : Snapshot();
 }
 
 int Engine::indexOfSnapshot(quint64 id) const
@@ -638,7 +640,7 @@ void Engine::setSnapshot(int i, const Snapshot &m)
         Lock lk(&m_mutex);
         if (i < 0 || i >= int(m_snapshots.size())) return;
         const quint64 id = m_snapshots[size_t(i)].id; // it keeps its identity
-        m_snapshots[size_t(i)] = m;
+        m_snapshots[size_t(i)] = linkMedia(m); // its files: named by their Media Bin items
         m_snapshots[size_t(i)].id = id;
     }
     emit snapshotsChanged();
@@ -649,7 +651,7 @@ int Engine::addSnapshot(const Snapshot &m, int at)
     {
         Lock lk(&m_mutex);
         if (at < 0 || at > int(m_snapshots.size())) at = int(m_snapshots.size());
-        Snapshot copy = m;
+        Snapshot copy = linkMedia(m);
         bool taken = !copy.id;
         for (const Snapshot &o : m_snapshots) taken = taken || o.id == copy.id;
         if (taken) copy.id = m_nextSnapshotId++;
@@ -704,6 +706,13 @@ QJsonArray Engine::captureLayers(bool withAnimated) const
             o["params"] = params;
         }
         o["included"] = true;
+        // A video starts again from its in point on recall: checked by default. The live value is always off (an
+        // action, not a state), so the default is what a new snapshot holds; an update keeps what the snapshot holds.
+        if (o.value("source").toObject().value("type").toString() == QLatin1String("video")) {
+            QJsonObject params = o.value("params").toObject();
+            params[QStringLiteral("restart")] = true;
+            o["params"] = params;
+        }
         a.append(o);
     }
     return a;
@@ -914,9 +923,14 @@ void Engine::stepCompositionFade(double dt)
     }
 }
 
-void Engine::recallSnapshot(int i) { recallSnapshotCopy(snapshot(i), i); }
+void Engine::recallSnapshot(int i, double fadeOverride)
+{
+    auto copy = snapshot(i);
+    if (fadeOverride >= 0) copy.fade = fadeOverride;
+    recallSnapshotCopy(copy, i);
+}
 
-bool Engine::recallSnapshotById(quint64 id)
+bool Engine::recallSnapshotById(quint64 id, double fadeOverride)
 {
     Snapshot m;
     int i;
@@ -924,8 +938,9 @@ bool Engine::recallSnapshotById(quint64 id)
         Lock lk(&m_mutex);
         i = indexOfSnapshot(id);
         if (i < 0) return false;
-        m = m_snapshots[size_t(i)];
+        m = resolveMedia(m_snapshots[size_t(i)]);
     }
+    if (fadeOverride >= 0) m.fade = fadeOverride;
     recallSnapshotCopy(m, i);
     return true;
 }
@@ -1038,6 +1053,13 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
                 else
                     initial.remove(it.key());
             }
+            // A cue can replace the source without rewiring the layer's projection.
+            if (!live.isEmpty()) {
+                for (const QString &key : {QStringLiteral("is_mapping_zone"), QStringLiteral("mapping_zone")}) {
+                    if (live.contains(key)) state[key] = live.value(key);
+                    else state.remove(key);
+                }
+            }
             state.insert("params", initial);
             if (delayOf(delays, "opacity") > 0 && params.contains("opacity"))
                 state.insert("enable", live.value("enable").toBool(false));
@@ -1083,6 +1105,11 @@ void Engine::applyLayers(const QJsonArray &layers, double fade, bool hideOthers)
         }
         const QJsonObject curSrc = cur.value("source").toObject(),
                           src = o.contains("source") ? o.value("source").toObject() : curSrc;
+        // Material identity is an assignment, not a media reload. Restore it
+        // before resolving this layer's parameter handles and fade tracks.
+        if (curSrc.value("type") == QLatin1String("model") && src.value("type") == QLatin1String("model") &&
+            curSrc.value("material") != src.value("material"))
+            setModelMaterial(idx, src.value("material").toString().toULongLong());
         const bool group = o.value("group").toBool(cur.value("group").toBool());
         auto job = std::make_shared<FadeJob>();
         job->id = id;
@@ -1680,24 +1707,25 @@ Engine::Snapshot Engine::snapshotFromJson(const QJsonObject &o, const QString &d
 }
 
 // A snapshot's action: its longest time
-double Engine::snapshotDuration(quint64 id) const
+double Engine::snapshotDuration(quint64 id, double fadeOverride) const
 {
     Lock lk(&m_mutex);
     const Snapshot *m = nullptr;
     for (const Snapshot &x : m_snapshots)
         if (x.id == id) m = &x;
     if (!m) return 0;
+    const double fade = fadeOverride < 0 ? m->fade : fadeOverride;
     double d = 0;
     auto scan = [&](const QJsonObject &o) {
         const QJsonObject timing = o.value("timing").toObject();
         const QJsonObject delay = o.value("delay").toObject();
-        d = std::max(d, m->fade);
+        d = std::max(d, fade);
         for (auto it = timing.begin(); it != timing.end(); ++it)
             if (it.value().isDouble())
-                d = std::max(d, timeOf(timing, it.key(), m->fade) + delayOf(delay, it.key()));
+                d = std::max(d, timeOf(timing, it.key(), fade) + delayOf(delay, it.key()));
         for (auto it = delay.begin(); it != delay.end(); ++it)
             if (it.value().isDouble())
-                d = std::max(d, delayOf(delay, it.key()) + timeOf(timing, it.key(), m->fade));
+                d = std::max(d, delayOf(delay, it.key()) + timeOf(timing, it.key(), fade));
     };
     for (const QJsonValue &v : m->layers) {
         const QJsonObject o = v.toObject();
@@ -1973,7 +2001,7 @@ bool Engine::snapshotMatches(quint64 id, QString *reason) const
     const int index = indexOfSnapshot(id);
     auto mismatch = [&](const QString &detail) { if (reason) *reason = detail; return false; };
     if (index < 0) return mismatch(QStringLiteral("Snapshot removed"));
-    const Snapshot &snapshot = m_snapshots[size_t(index)];
+    const Snapshot snapshot = resolveMedia(m_snapshots[size_t(index)]);
     std::set<std::pair<quint64, QString>> driven;
     auto collect = [&](const Animation &animation) {
         if (animation.state == AnimState::Stopped) return;
@@ -2102,7 +2130,8 @@ void Engine::setSnapshots(const std::vector<Snapshot> &all, const std::vector<Sn
 {
     {
         Lock lock(&m_mutex);
-        m_snapshots = all;
+        m_snapshots.clear();
+        for (const auto &snapshot : all) m_snapshots.push_back(linkMedia(snapshot));
         for (const auto &snapshot : all)
             m_nextSnapshotId = std::max(m_nextSnapshotId, snapshot.id + 1);
         m_snapshotTree = tree;

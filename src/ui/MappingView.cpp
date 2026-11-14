@@ -243,7 +243,7 @@ void MappingView::refreshCoordinateBar()
             }
         } else {
             Mapping *m = mapping();
-            show = m && !isViewport(m_layer) && !m_engine->isLocked(m_layer) &&
+            show = m && !isViewport(m_layer) && !mappingLocked() &&
                    m_primary.valid() && isSelected(m_primary);
             if (show) {
                 const QSize comp = m_engine->compositionSize();
@@ -308,7 +308,7 @@ void MappingView::typeCoordinate()
     {
         Engine::Lock lk(&m_engine->mutex());
         Mapping *m = mapping();
-        if (!m || !m_primary.valid() || m_engine->isLocked(m_layer)) return;
+        if (!m || !m_primary.valid() || mappingLocked()) return;
         const QSize comp = m_engine->compositionSize();
         const QPointF target = canvasOf(m_layer, QPointF(m_coordX->value() / comp.width(), m_coordY->value() / comp.height()));
         before = *m;
@@ -436,7 +436,13 @@ static bool hasPicture(const Layer *l) { return l && l->hasPicture(); }
 Mapping *MappingView::mapping() const
 {
     Layer *l = m_engine->layer(m_layer);
-    return hasPicture(l) ? &l->mapping : nullptr;
+    return hasPicture(l) ? const_cast<Mapping *>(&m_engine->effectiveMapping(*l)) : nullptr;
+}
+
+bool MappingView::mappingLocked() const
+{
+    const auto *layer = m_engine->layer(m_layer);
+    return m_engine->isLocked(m_layer) || (layer && m_engine->mappingZoneFor(*layer));
 }
 
 // The mappings of the groups holding a layer, innermost first
@@ -444,7 +450,7 @@ std::vector<const Mapping *> MappingView::groupMappings(int layer) const
 {
     std::vector<const Mapping *> out;
     for (int g = m_engine->groupIndexOf(layer); g >= 0; g = m_engine->groupIndexOf(g)) {
-        const Mapping &m = m_engine->layer(g)->mapping;
+        const Mapping &m = m_engine->effectiveMapping(*m_engine->layer(g));
         if (!m.isIdentity()) out.push_back(&m);
     }
     return out;
@@ -701,7 +707,7 @@ void MappingView::paintScene()
             if (i == m_layer) continue;
             Layer *l = m_engine->layer(i);
             if (l->isViewport || !l->enabled || !hasPicture(l)) continue;
-            auto pts = outline(l->mapping, 16);
+            auto pts = outline(m_engine->effectiveMapping(*l), 16);
             for (QPointF &q : pts) q = outOf(i, q);
             for (size_t k = 0; k < pts.size(); ++k)
                 pushLine(others, toWidget(pts[k]), toWidget(pts[(k + 1) % pts.size()]));
@@ -758,8 +764,9 @@ void MappingView::paintScene()
         pushLine(line, W(m->corner(1)), W(m->corner(3)));
     }
     // Locked layer: outline in red, no handles
-    if (m_engine->isLocked(m_layer)) {
-        m_draw.drawLines(line, QColor(230, 80, 70, 220));
+    if (mappingLocked()) {
+        const auto *layer = m_engine->layer(m_layer);
+        m_draw.drawLines(line, layer && m_engine->mappingZoneFor(*layer) ? QColor(165, 146, 240, 230) : QColor(230, 80, 70, 220));
         drawPivot(false);
         return;
     }
@@ -911,7 +918,7 @@ bool MappingView::insideLayer(int index, QPointF p) const
 {
     Layer *l = m_engine->layer(index);
     if (!hasPicture(l)) return false;
-    auto pts = outline(l->mapping, 16);
+    auto pts = outline(m_engine->effectiveMapping(*l), 16);
     for (QPointF &q : pts) q = outOf(index, q);
     bool in = false;
     for (size_t i = 0, j = pts.size() - 1; i < pts.size(); j = i++) {
@@ -956,7 +963,7 @@ MappingView::SnapTargets MappingView::snapTargets() const
             continue;
         }
         if (!l->enabled || isViewport(m_layer)) continue; // a viewport is caught by the composition and the others
-        const Mapping &m = l->mapping;
+        const Mapping &m = m_engine->effectiveMapping(*l);
         const QPointF c[4] = {outOf(i, m.map(0, 0)), outOf(i, m.map(1, 0)), outOf(i, m.map(1, 1)), outOf(i, m.map(0, 1))};
         t.points.insert(t.points.end(), c, c + 4);
         QRectF b(c[0], c[0]);
@@ -1080,7 +1087,7 @@ void MappingView::mousePressEvent(QMouseEvent *e)
         return;
     }
     if (m_maskEditMode) return; // never begin a layer move in explicit Mask selection mode
-    const bool locked = m_engine->isLocked(m_layer);
+    const bool locked = mappingLocked();
     // The grips of the layer (not for a viewport, a locked or a warped layer)
     const Mapping *gm = mapping();
     if (!locked && gm && !gm->meshMode) {
@@ -1145,7 +1152,7 @@ void MappingView::mousePressEvent(QMouseEvent *e)
         }
         for (int i : order) {
             if (m_engine->layer(i)->enabled && insideLayer(i, p)) {
-                const bool pickedLocked = m_engine->isLocked(i);
+                const bool pickedLocked = m_engine->isLocked(i) || m_engine->mappingZoneFor(*m_engine->layer(i));
                 lk.unlock();
                 emit layerPicked(i);
                 lk.relock();
@@ -1241,6 +1248,12 @@ void MappingView::mouseMoveEvent(QMouseEvent *e)
         return;
     }
     Engine::Lock lk(&m_engine->mutex());
+    if ((m_dragHandle || m_dragLayer || m_dragScale || m_dragRotate) && mappingLocked()) {
+        m_dragHandle = m_dragLayer = m_dragScale = m_dragRotate = false;
+        clearGuides();
+        update();
+        return;
+    }
     const QPointF n = toNorm(e->position());
     // Moves happen in the layer's own canvas (inside its group's mapping)
     QPointF delta = canvasOf(m_layer, n) - canvasOf(m_layer, m_lastNorm);
@@ -1498,7 +1511,7 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         return;
     default: QOpenGLWidget::keyPressEvent(e); return;
     }
-    if (!m || m_engine->isLocked(m_layer)) return;
+    if (!m || mappingLocked()) return;
     const Mapping before = *m;
     // One composition pixel, ×10 with Shift
     const QSize comp = m_engine->compositionSize();

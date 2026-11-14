@@ -1,4 +1,5 @@
 #include "LayerInspector.h"
+#include "MaterialPanel.h"
 #include "AdsrCurve.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
@@ -26,6 +27,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QDateTime>
 #include <QHash>
 #include <QJsonDocument>
@@ -85,6 +87,8 @@ struct LayerValues {
     std::vector<Route> routes;
     QString routedBy; // the top group of an item inside a group
     QRectF roi{0, 0, 1, 1};
+    int roiMode = 0;
+    std::array<QPointF, 4> roiPoints{};
     ColorAdjust color;
     bool effectsEnabled = true;
     bool solo = false;
@@ -152,6 +156,8 @@ struct LayerValues {
         s.lockedByGroup = !l->locked && e->isLocked(index);
         s.members = e->groupMembers(index).size();
         s.roi = l->roi;
+        s.roiMode = l->roiMode;
+        s.roiPoints = l->roiPoints;
         s.color = l->color;
         s.effectsEnabled = l->effectsEnabled;
         const QSize comp = e->compositionSize();
@@ -846,6 +852,24 @@ void LayerInspector::rebuild()
     connect(tabs->tabBar(), &QWidget::customContextMenuRequested, this, [this, tabs, id = s.id](const QPoint &point) {
         const int tab = tabs->tabBar()->tabAt(point);
         if (tab < 0) return;
+        const QString title = tabs->tabText(tab);
+        QStringList paths;
+        for (const ParamInfo &param : m_engine->parameters(id)) {
+            const auto &path = param.path;
+            if ((title == QLatin1String("3D") && (path.startsWith("merge/") || path.startsWith("light/"))) ||
+                (title == QLatin1String("Scene") && (path.startsWith("camera/") || path.startsWith("scene/"))) ||
+                (title == QLatin1String("Source") && (path == QLatin1String("model/detail") || path == QLatin1String("model/shading"))) ||
+                (title == QLatin1String("Material") && (path.startsWith("model/material/") || path == QLatin1String("model/unlit"))) ||
+                (title == QLatin1String("Spatial") && (path.startsWith("model/position/") || path.startsWith("model/rotation/") ||
+                                                        path.startsWith("model/scale/") || path == QLatin1String("model/fit"))) ||
+                (title == QLatin1String("FX") && (path.startsWith("model/displace/") || path.startsWith("model/transform_fx/") ||
+                                                   path == QLatin1String("model/bend"))))
+                paths << path;
+        }
+        if (!paths.isEmpty()) {
+            show3dCategoryMenu(id, paths, tabs->tabBar()->mapToGlobal(point));
+            return;
+        }
         if (PresetEditor *editor = PresetEditor::instance()) {
             QMenu menu(this);
             const QString category = tabs->tabText(tab).section(' ', 0, 0);
@@ -870,26 +894,40 @@ void LayerInspector::rebuild()
         const int t = tabs->addTab(page(both), QStringLiteral("Scene"));
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
-    if (object3d) {
-        QWidget *values = build3d({merge3d ? QStringLiteral("merge/") : s.type == SourceType::Model ? QStringLiteral("model/") : QStringLiteral("light/")});
-        if (s.type == SourceType::Model) {
-            auto *both = new QWidget;
-            auto *bv = new QVBoxLayout(both);
-            bv->setContentsMargins(0, 0, 0, 0);
-            bv->addWidget(buildModelLayers());
-            bv->addWidget(values, 1);
-            values = both;
-        }
-        const int t = tabs->addTab(page(values), QStringLiteral("3D"));
-        tabs->setTabToolTip(t, merge3d ? QStringLiteral("Where all it holds is in the scene")
-                              : s.type == SourceType::Model ? QStringLiteral("Where the model is in its scene")
-                                                          : QStringLiteral("The light: its kind, color, level and where it is"));
-    }
-    const bool hasSource = !s.isGroup && !s.isViewport && !object3d;
+    if (object3d && s.type != SourceType::Model)
+        tabs->addTab(page(build3d({merge3d ? QStringLiteral("merge/") : QStringLiteral("light/")})), QStringLiteral("3D"));
+    const bool hasSource = !s.isGroup && !s.isViewport && (!object3d || s.type == SourceType::Model);
     if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
+    if (s.type == SourceType::Model) {
+        auto *surface = new QWidget;
+        auto *layout = new QVBoxLayout(surface);
+        layout->addWidget(buildModelLayers());
+        auto *surfaceParams = build3d({QStringLiteral("model/material/"), QStringLiteral("model/unlit")});
+        layout->addWidget(new MaterialPanel(m_engine, m_undo, [this, id = s.id] { return m_engine->indexOfId(id); },
+                                          [this] { emit projectEdited(); }, surface, surfaceParams));
+        tabs->addTab(page(surface), QStringLiteral("Material"));
+        tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/"), QStringLiteral("model/fit")})), QStringLiteral("Spatial"));
+        auto *effects = new QWidget;
+        auto *fx = new QVBoxLayout(effects);
+        auto *displace = new QGroupBox(QStringLiteral("Displace Source"));
+        auto *form = new QFormLayout(displace);
+        quint64 source = 0;
+        int stage = -1;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const auto *l = m_engine->layer(m_layer)) { source = l->modelDisplace; stage = l->modelDisplaceStage; }
+        }
+        addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None"), source, stage, QStringLiteral("modelDisplace"),
+                       QStringLiteral("A layer whose luminance pushes the mesh along its normals."),
+                       QStringLiteral("Displace Model"),
+                       [this](quint64 id, int st, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, st); });
+        fx->addWidget(displace);
+        fx->addWidget(build3d({QStringLiteral("model/displace/"), QStringLiteral("model/transform_fx/"), QStringLiteral("model/bend")}));
+        tabs->addTab(page(effects), QStringLiteral("FX"));
+    }
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
     tabs->addTab(page(buildColor(s)), QStringLiteral("Color"));
-    tabs->addTab(page(buildMapping(s)), QStringLiteral("Spatial"));
+    if (s.type != SourceType::Model) tabs->addTab(page(buildMapping(s)), QStringLiteral("Spatial"));
     {
         m_maskPanel = new MaskPanel(m_engine, m_undo, s.id, s.isViewport, m_locked);
         int count = 0;
@@ -908,7 +946,7 @@ void LayerInspector::rebuild()
         const int t = tabs->addTab(page(m_maskPanel), count ? QStringLiteral("Masks (%1)").arg(count) : QStringLiteral("Masks"));
         tabs->setTabToolTip(t, QStringLiteral("Shapes that keep or cut its picture (drawn and edited in the preview)"));
     }
-    tabs->addTab(page(buildEffects(s)), QStringLiteral("FX"));
+    if (s.type != SourceType::Model) tabs->addTab(page(buildEffects(s)), QStringLiteral("FX"));
     if (s.hasAudio) { // the sound's own chain, the same mechanism
         const int t = tabs->addTab(page(buildAudioEffects()), QStringLiteral("Audio FX"));
         tabs->setTabToolTip(t, QStringLiteral("Real-time Faust effects on the sound of this layer, before its volume"));
@@ -938,7 +976,8 @@ void LayerInspector::rebuild()
         for (int t = 0; t < tabs->count(); ++t) {
             const QString name = tabs->tabText(t).section(' ', 0, 0);
             if (name == QLatin1String("Source") || name == QLatin1String("Audio") || name == QLatin1String("Anim") ||
-                name == QLatin1String("3D"))
+                name == QLatin1String("3D") || (s.type == SourceType::Model &&
+                (name == QLatin1String("Material") || name == QLatin1String("Spatial") || name == QLatin1String("FX"))))
                 continue; // transport, volume, speed, the sound's FX; a 3D object's values
             tabs->setTabEnabled(t, false);
             tabs->setTabVisible(t, false); // not shown at all (kept built: the inspector's fields stay valid)
@@ -1131,7 +1170,8 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         name = QStringLiteral("(gone)");
         for (const auto &c : s.candidates)
             if (c.first == s.sourceLayer) name = c.second;
-        d << (s.sourceTap == LayerTap::Source ? QStringLiteral("its source, before ROI, color and FX")
+        d << (isMediaPipeTap(s.sourceTap) ? layerTapName(s.sourceTap)
+              : s.sourceTap == LayerTap::Source ? QStringLiteral("its source, before ROI, color and FX")
               : s.sourceTap == LayerTap::PreFx ? QStringLiteral("before its FX") : QStringLiteral("after its FX"));
         break;
     }
@@ -1297,6 +1337,73 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
     auto *v = new QVBoxLayout(g);
     v->setContentsMargins(0, 0, 0, 0);
 
+    if (s.type == SourceType::Model) {
+        if (Model3D::isPrimitivePath(s.sourcePath)) {
+            auto *shape = new QComboBox;
+            shape->setObjectName(QStringLiteral("primitive3dShape"));
+            for (const QString &name : Model3D::primitives()) shape->addItem(name, Model3D::primitivePath(name));
+            shape->setCurrentIndex(shape->findData(s.sourcePath));
+            shape->setEnabled(!m_locked);
+            auto *form = new QFormLayout;
+            form->addRow(QStringLiteral("Primitive 3D"), shape);
+            v->addLayout(form);
+            connect(shape, &QComboBox::activated, this, [this, shape, id = s.id](int index) {
+                const QString path = shape->itemData(index).toString();
+                QTimer::singleShot(0, this, [this, path, id] {
+                    if (m_engine->layerId(m_layer) != id) return;
+                    editSource(QStringLiteral("Change 3D Primitive"), [this, path] { m_engine->setLayerPrimitive(m_layer, path); });
+                    emit layerChanged();
+                    rebuild();
+                });
+            });
+        } else {
+            auto *file = new QLabel(s.sourcePath);
+            file->setTextFormat(Qt::PlainText);
+            file->setWordWrap(true);
+            v->addWidget(file);
+        }
+        m_modelTriangles = new QLabel;
+        m_modelTriangles->setObjectName(QStringLiteral("modelTriangles"));
+        v->addWidget(m_modelTriangles);
+        std::vector<std::pair<QString, QString>> objects;
+        QStringList hidden;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const auto *l = m_engine->layer(m_layer); l && l->model) {
+                objects = l->model->objects();
+                hidden = l->model->hiddenObjects();
+            }
+        }
+        if (!objects.empty()) {
+            auto *list = new QListWidget;
+            list->setObjectName(QStringLiteral("fbxObjects"));
+            list->setMaximumHeight(180);
+            for (const auto &[key, label] : objects) {
+                auto *item = new QListWidgetItem(label.isEmpty() ? QStringLiteral("Object %1").arg(key) : label, list);
+                item->setData(Qt::UserRole, key);
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                item->setCheckState(hidden.contains(key) ? Qt::Unchecked : Qt::Checked);
+            }
+            v->addWidget(new QLabel(QStringLiteral("FBX Objects")));
+            v->addWidget(list);
+            connect(list, &QListWidget::itemChanged, this, [this, list, id = s.id] {
+                QStringList off;
+                for (int i = 0; i < list->count(); ++i)
+                    if (list->item(i)->checkState() == Qt::Unchecked) off << list->item(i)->data(Qt::UserRole).toString();
+                QTimer::singleShot(0, list, [this, id, off] {
+                    if (m_layerId != id) return;
+                    editSource(QStringLiteral("Show FBX Objects"), [this, off] { m_engine->setModelHiddenObjects(m_layer, off); });
+                    emit layerChanged();
+                    rebuild();
+                });
+            });
+        }
+        v->addWidget(build3d({QStringLiteral("model/shading"), QStringLiteral("model/detail")},
+                             Model3D::isPrimitivePath(s.sourcePath) ? QStringList{} : QStringList{QStringLiteral("model/detail")}));
+        v->addStretch();
+        return g;
+    }
+
     // Another layer's picture as this one's source, already made this frame (nothing decoded, generated or computed
     // again): which layer, and where in it — its source as it is, before its FX, after them
     {
@@ -1332,12 +1439,15 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             auto *tap = new QComboBox;
             tap->setObjectName(QStringLiteral("sourceTap"));
             for (LayerTap t : {LayerTap::Source, LayerTap::PreFx, LayerTap::PostFx}) tap->addItem(layerTapName(t), int(t));
+            for (int i = int(LayerTap::MediaPipeMask); i <= int(LayerTap::MediaPipePartsForeground); ++i)
+                tap->addItem(layerTapName(LayerTap(i)), i);
             tap->setCurrentIndex(std::max(0, tap->findData(int(s.sourceTap))));
             tap->setEnabled(!m_locked);
             tap->setToolTip(QStringLiteral("Where the picture is taken in that layer:\n"
                                            "Source — its source as decoded or generated, before its ROI, color and FX\n"
                                            "Pre-FX — after its ROI and color, before its FX\n"
-                                           "Post-FX — after its FX (its own mapping and opacity are never part of it)"));
+                                           "Post-FX — after its FX (its own mapping and opacity are never part of it)\n"
+                                           "MediaPipe Foreground Mask — use the inferred foreground as alpha."));
             auto setTap = [this](LayerTap t) {
                 editSource(QStringLiteral("Change Source Tap"), [this, t] { m_engine->setLayerTap(m_layer, t); });
                 emit layerChanged();
@@ -3150,18 +3260,68 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
     auto *v = new QVBoxLayout(box);
     auto *head = new QHBoxLayout;
     auto *title = new ResetLabel(QStringLiteral("<b>ROI</b>"), [this] {
-        setRoi(Layer::fullRoi());
+        setValues({{"roi/mode", "rectangle"}, {"roi/left", 0}, {"roi/top", 0}, {"roi/right", 1}, {"roi/bottom", 1}},
+                  QStringLiteral("Reset ROI"));
         rebuild();
     });
     title->setToolTip(QStringLiteral("Part of the source picture used by the layer — click to use the whole picture"));
     head->addWidget(title);
+    auto *mode = new QComboBox;
+    mode->setObjectName(QStringLiteral("roiMode"));
+    for (const auto &name : {QStringLiteral("Rectangle"), QStringLiteral("Triangle"), QStringLiteral("Quad")})
+        mode->addItem(name, name.toLower());
+    mode->setCurrentIndex(s.roiMode);
+    mode->setToolTip(QStringLiteral("Rectangle crops by four sides. Triangle cuts out three source points. Quad straightens four source corners."));
+    head->addWidget(mode);
+    m_roiMode = mode;
+    auto *keep = new QCheckBox(QStringLiteral("Keep proportions"));
+    keep->setObjectName(QStringLiteral("roiKeepProportions"));
+    keep->setToolTip(QStringLiteral("Rectangle: resizing a side scales the other axis too, so the cropped picture keeps its shape"));
+    keep->setChecked(QSettings().value(QStringLiteral("roi/keepProportions"), false).toBool());
+    keep->setVisible(s.roiMode == 0);
+    m_roiKeep = keep;
+    head->addWidget(keep);
     head->addStretch();
     v->addLayout(head);
     m_roi = new RoiEditor;
     m_roi->setAspect(s.aspect);
     m_roi->setRoi(s.roi);
+    m_roi->setPolygon(s.roiMode, s.roiPoints);
+    m_roi->setKeepProportions(keep->isChecked());
+    connect(keep, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue(QStringLiteral("roi/keepProportions"), on);
+        if (m_roi) m_roi->setKeepProportions(on);
+    });
     v->addWidget(m_roi);
     m_animate->attach({title, m_roi.data()}, {"roi/left", "roi/top", "roi/right", "roi/bottom"});
+    auto *ranges = new QWidget;
+    m_roiRanges = ranges;
+    ranges->setVisible(s.roiMode == 0);
+    connect(mode, qOverload<int>(&QComboBox::activated), this, [this, mode](int index) {
+        QJsonObject values{{"roi/mode", mode->itemData(index).toString()}};
+        if (index > 0) {
+            Engine::Lock lock(&m_engine->mutex());
+            const auto *layer = m_engine->layer(m_layer);
+            const std::array<QPointF, 4> full{{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
+            if (layer && (!validRoiPolygon(layer->roiPoints.data(), index == 1 ? 3 : 4) ||
+                          (layer->roiMode == 0 && layer->roiPoints == full && layer->roi != Layer::fullRoi()))) {
+                const auto &r = layer->roi;
+                const QPointF corners[] = {r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()};
+                for (int i = 0; i < 4; ++i) {
+                    const QString base = QStringLiteral("roi/point/%1/").arg(i + 1);
+                    values[base + "x"] = corners[i].x();
+                    values[base + "y"] = corners[i].y();
+                }
+            }
+        }
+        setValues(values, QStringLiteral("Change ROI Shape"));
+        if (m_roiKeep) m_roiKeep->setVisible(index == 0);
+        refreshDynamic();
+    });
+    connect(m_roi, &RoiEditor::roiPointEdited, this, [this](int point, QPointF p) {
+        const QString base = QStringLiteral("roi/point/%1/").arg(point + 1);
+        setValues({{base + "x", p.x()}, {base + "y", p.y()}}, QStringLiteral("Move ROI Point"));
+    });
     auto *grid = new QGridLayout;
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(4);
@@ -3187,7 +3347,8 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
         grid->addWidget(bar, k, 1);
         m_animate->attach({name, bar}, k == 0 ? QStringList{"roi/left", "roi/right"} : QStringList{"roi/top", "roi/bottom"});
     }
-    v->addLayout(grid);
+    ranges->setLayout(grid);
+    v->addWidget(ranges);
     auto apply = [this](const QRectF &r) {
         setRoi(r);
         emit layerChanged();
@@ -3199,10 +3360,27 @@ QWidget *LayerInspector::buildRoi(const LayerValues &s)
         bars[1]->setValues(r.top() * 100, r.bottom() * 100);
         apply(r);
     });
-    auto fromBars = [apply, bars, editor] {
+    QPointer<QCheckBox> keepBox = keep;
+    auto fromBars = [apply, bars, editor, keepBox] {
         const double l = bars[0]->low() / 100, r = std::max(bars[0]->high() / 100, bars[0]->low() / 100 + 0.001);
         const double t = bars[1]->low() / 100, b = std::max(bars[1]->high() / 100, bars[1]->low() / 100 + 0.001);
-        const QRectF rect(QPointF(l, t), QPointF(std::min(r, 1.0), std::min(b, 1.0)));
+        QRectF rect(QPointF(l, t), QPointF(std::min(r, 1.0), std::min(b, 1.0)));
+        if (keepBox && keepBox->isChecked() && editor) {
+            // The axis that moved leads; the other follows around its center, so the shape of the crop stays
+            const QRectF before = editor->roi();
+            if (before.height() > 0 && before.width() > 0) {
+                const bool horizontal = std::abs(rect.width() - before.width()) >= std::abs(rect.height() - before.height());
+                const QPointF center = before.center();
+                rect = RoiEditor::keepRatio(rect, before.width() / before.height(), horizontal ? 0 : 1);
+                if (horizontal) rect.moveCenter(QPointF(rect.center().x(), center.y()));
+                else rect.moveCenter(QPointF(center.x(), rect.center().y()));
+                rect.translate(rect.left() < 0 ? -rect.left() : rect.right() > 1 ? 1 - rect.right() : 0,
+                               rect.top() < 0 ? -rect.top() : rect.bottom() > 1 ? 1 - rect.bottom() : 0);
+                QSignalBlocker b0(bars[0]), b1(bars[1]);
+                bars[0]->setValues(rect.left() * 100, rect.right() * 100);
+                bars[1]->setValues(rect.top() * 100, rect.bottom() * 100);
+            }
+        }
         if (editor) editor->setRoi(rect);
         apply(rect);
     };
@@ -3469,6 +3647,22 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
 {
     auto *g = new QWidget; // titled by its sub-tab
     auto *v = new QVBoxLayout(g);
+
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        if (const auto *layer = m_engine->layer(m_engine->indexOfId(s.id))) {
+            if (const auto *zone = m_engine->mappingZoneFor(*layer)) {
+                auto *label = new QLabel(QStringLiteral("◈ Zone · %1").arg(zone->name));
+                label->setTextFormat(Qt::PlainText);
+                v->addWidget(label);
+                auto *help = new QLabel(QStringLiteral("Edit the shared mapping from Layer › Zones › Edit Zone."));
+                help->setWordWrap(true);
+                v->addWidget(help);
+                v->addStretch();
+                return g;
+            }
+        }
+    }
 
     // Position (center, composition pixels) and scale (% of the composition) of the whole mapped layer
     {
@@ -3989,6 +4183,27 @@ QWidget *LayerInspector::effectRowControls(int k, FxChainPanel *panel)
         }
     }
 
+    // Mix: how much of the effect goes on (1: all of it, 0: the picture it was given), dragged sideways
+    if (valid) {
+        const QString path = prefix + QStringLiteral("mix");
+        auto *mix = new NumberBox;
+        mix->setObjectName(QStringLiteral("fxMix"));
+        mix->setRange(0, 1);
+        mix->setDecimals(2);
+        mix->setSingleStep(0.01);
+        mix->setPrefix(QStringLiteral("Mix "));
+        mix->setValue(m_engine->parameterValue(m_layerId, path).toDouble(1.0));
+        mix->setToolTip(QStringLiteral("How much of the FX goes on: 1 = all of it, 0 = the picture it was given (drag sideways)"));
+        auto tint = [mix] { mix->setStyleSheet(mix->value() < 1 - 1e-6 ? QStringLiteral("color:#ffd27a;") : QString()); };
+        tint();
+        connect(mix, &QDoubleSpinBox::valueChanged, this, [this, path, tint](double x) {
+            setValue(path, x, QStringLiteral("Change FX Mix"));
+            tint();
+        });
+        m_animate->attach(mix, {path});
+        h->addWidget(mix);
+    }
+
     // Mask: a chip naming the layer (◑: inverted); a click opens where it comes from
     auto *mask = new QToolButton;
     mask->setObjectName(QStringLiteral("fxMask"));
@@ -4228,20 +4443,55 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
     at->setToolTip(QStringLiteral("Where the layer's picture is taken: its final picture, its source before its FX, or after "
                                   "one of its FX"));
     form->addRow(QStringLiteral("Taken at"), at);
-    connect(pick, &QComboBox::activated, this, [this, pick, set, undoText, hdrFiles](int i) {
+    const auto apply = [this, set, undoText, objectName](quint64 id, int stage, QString *err) {
+        if (m_engine->isLocked(m_layer)) return false;
+        if (objectName != QLatin1String("modelPicture")) {
+            bool ok = false;
+            editSource(undoText, [&] { ok = set(id, stage, err); });
+            return ok;
+        }
+        quint64 previous = 0;
+        int previousStage = -1;
+        const quint64 object = m_layerId;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const auto *l = m_engine->layer(m_layer)) {
+                previous = l->modelPicture;
+                previousStage = l->modelPictureStage;
+            }
+        }
+        if (!set(id, stage, err)) return false;
+        // The picture belongs to the shared material, not to the layer snapshot.
+        class PictureEdit : public QUndoCommand {
+        public:
+            PictureEdit(Engine *e, quint64 object, quint64 before, int beforeStage,
+                        quint64 after, int afterStage, const QString &text)
+                : QUndoCommand(text), e(e), object(object), before(before), after(after),
+                  beforeStage(beforeStage), afterStage(afterStage) {}
+            void undo() override { e->setModelLayer(e->indexOfId(object), before, false, nullptr, beforeStage); }
+            void redo() override {
+                if (first) { first = false; return; }
+                e->setModelLayer(e->indexOfId(object), after, false, nullptr, afterStage);
+            }
+        private:
+            Engine *e; quint64 object, before, after; int beforeStage, afterStage; bool first = true;
+        };
+        if (m_undo) m_undo->push(new PictureEdit(m_engine, object, previous, previousStage, id, stage, undoText));
+        return true;
+    };
+    connect(pick, &QComboBox::activated, this, [this, pick, apply, hdrFiles](int i) {
         const quint64 id = pick->itemData(i).toULongLong();
         QString err;
-        bool ok = true;
-        editSource(undoText, [&] { ok = set(id, hdrFiles.contains(id) ? Engine::kStageHdrFile : -1, &err); });
-        if (!ok && !err.isEmpty()) QMessageBox::warning(this, QStringLiteral("3D"), err);
+        if (!apply(id, hdrFiles.contains(id) ? Engine::kStageHdrFile : -1, &err) && !err.isEmpty())
+            QMessageBox::warning(this, QStringLiteral("3D"), err);
         emit layerChanged();
-        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection); // its stages
+        QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
     });
-    connect(at, &QComboBox::activated, this, [this, at, pick, set, undoText](int i) {
-        const quint64 id = pick->currentData().toULongLong();
-        const int st = at->itemData(i).toInt();
+    connect(at, &QComboBox::activated, this, [this, at, pick, apply](int i) {
         QString err;
-        editSource(undoText, [&] { set(id, st, &err); });
+        if (!apply(pick->currentData().toULongLong(), at->itemData(i).toInt(), &err) && !err.isEmpty())
+            QMessageBox::warning(this, QStringLiteral("3D"), err);
+        emit layerChanged();
     });
 }
 
@@ -4283,28 +4533,108 @@ QWidget *LayerInspector::buildModelLayers()
     auto *box = new QGroupBox(QStringLiteral("Surface"));
     auto *form = new QFormLayout(box);
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    quint64 picture = 0, displace = 0;
-    int pictureStage = -1, displaceStage = -1;
+    quint64 picture = 0;
+    int pictureStage = -1;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
         if (!l) return box;
         picture = l->modelPicture;
-        displace = l->modelDisplace;
         pictureStage = l->modelPictureStage;
-        displaceStage = l->modelDisplaceStage;
     }
+    auto *materials = new QComboBox;
+    materials->setObjectName(QStringLiteral("modelMaterial"));
+    const int scene = m_engine->sceneOfObject(m_layer);
+    if (scene >= 0) {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *object = m_engine->layer(m_layer);
+        if (object->model && !object->model->isPrimitive())
+            materials->addItem(QStringLiteral("Materials from model"), QStringLiteral("0"));
+        for (const auto &[id, material] : m_engine->materials())
+            materials->addItem(material->name, QString::number(id));
+        materials->setCurrentIndex(materials->findData(QString::number(object->modelMaterial)));
+    }
+    connect(m_engine, &Engine::layersChanged, materials, [this, materials, objectId = m_layerId] {
+        Engine::Lock lock(&m_engine->mutex());
+        if (m_layerId == objectId && m_layoutKey != layoutKey()) {
+            QMetaObject::invokeMethod(this, [this, objectId] {
+                if (m_layerId == objectId && m_layoutKey != layoutKey()) rebuild();
+            }, Qt::QueuedConnection);
+        }
+        for (const auto &[id, material] : m_engine->materials()) {
+            const int row = materials->findData(QString::number(id));
+            if (row >= 0 && materials->itemText(row) != material->name) materials->setItemText(row, material->name);
+        }
+    });
+    materials->addItem(QStringLiteral("+ New Material…"), QStringLiteral("new"));
+    materials->addItem(QStringLiteral("Duplicate Material…"), QStringLiteral("duplicate"));
+    materials->setEnabled(scene >= 0);
+    form->addRow(QStringLiteral("Material"), materials);
+    connect(materials, qOverload<int>(&QComboBox::activated), this, [this, materials, objectId = m_layerId](int row) {
+        const auto value = materials->itemData(row).toString();
+        const int object = m_engine->indexOfId(objectId), scene = m_engine->sceneOfObject(object);
+        if (scene < 0) return;
+        quint64 previous = 0;
+        { Engine::Lock lock(&m_engine->mutex()); previous = m_engine->layer(object)->modelMaterial; }
+        quint64 id = value.toULongLong();
+        const bool duplicate = value == QLatin1String("duplicate");
+        bool created = value == QLatin1String("new") || duplicate;
+        if (created) {
+            bool accepted = false;
+            const auto name = QInputDialog::getText(this, QStringLiteral("New Material"), QStringLiteral("Name"),
+                QLineEdit::Normal, QStringLiteral("Material"), &accepted).trimmed();
+            if (!accepted || name.isEmpty()) {
+                QSignalBlocker block(materials);
+                materials->setCurrentIndex(materials->findData(QString::number(previous)));
+                return;
+            }
+            Material3D copy;
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                const auto found = m_engine->materials().find(previous);
+                if (found == m_engine->materials().end()) return;
+                copy = *found->second;
+            }
+            id = m_engine->addMaterial(name);
+            if (duplicate) {
+                Engine::Lock lock(&m_engine->mutex());
+                copy.id = id;
+                copy.name = name;
+                *m_engine->materials().at(id) = copy;
+            }
+        }
+        if (id == previous) return;
+        class AssignMaterial : public QUndoCommand {
+        public:
+            AssignMaterial(Engine *e, quint64 object, quint64 before, quint64 after, bool created)
+                : QUndoCommand(QStringLiteral("Assign 3D Material")), e(e), object(object), before(before), after(after), created(created) {
+                if (created) { Engine::Lock lock(&e->mutex()); stored = *e->materials().at(after); }
+            }
+            void undo() override {
+                e->setModelMaterial(e->indexOfId(object), before);
+                if (created) {
+                    e->removeUnusedMaterial(after);
+                }
+            }
+            void redo() override {
+                if (created) {
+                    e->restoreMaterial(stored);
+                }
+                e->setModelMaterial(e->indexOfId(object), after);
+            }
+        private:
+            Engine *e; quint64 object, before, after; bool created; Material3D stored;
+        };
+        auto *command = new AssignMaterial(m_engine, objectId, previous, id, created);
+        if (m_undo) m_undo->push(command); else { command->redo(); delete command; }
+        emit layerChanged();
+    });
     addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None — its materials"), picture, pictureStage,
                    QStringLiteral("modelPicture"),
                    QStringLiteral("A layer's picture laid on the model, over its UVs: a video on a screen, a dome. The layer "
                                   "can stay hidden. Unlit (below): shown as it is."),
                    QStringLiteral("Show Layer on Model"),
                    [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, false, err, stage); });
-    addLayerChoice(form, QStringLiteral("Displace"), QStringLiteral("None"), displace, displaceStage, QStringLiteral("modelDisplace"),
-                   QStringLiteral("A layer whose luminance pushes the model's points along their normals (Displace › "
-                                  "Amount): white the most, its neutral level not at all. Mesh Detail cuts a primitive finer."),
-                   QStringLiteral("Displace Model"),
-                   [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, stage); });
     return box;
 }
 
@@ -4331,6 +4661,27 @@ void LayerInspector::addSceneEnvironment(QFormLayout *form)
 
 // The parameters of a scene, a model or a light (by their address prefixes), section by section: numbers as bars, colors
 // as pickers, switches, choices; each one undoable, animatable (right-click) and refreshed while it moves
+void LayerInspector::show3dCategoryMenu(quint64 layer, const QStringList &paths, const QPoint &global)
+{
+    QMenu menu(this);
+    QJsonObject defaults;
+    QStringList presetPaths;
+    for (const ParamInfo &param : m_engine->parameters(layer)) {
+        if (!paths.contains(param.path)) continue;
+        if (param.presettable) presetPaths << param.path;
+        if ((param.access & ParamInfo::Write) && param.defaultValue.isValid() && param.type != ParamInfo::Type::Trigger)
+            defaults[param.path] = QJsonValue::fromVariant(param.defaultValue);
+    }
+    if (auto *editor = PresetEditor::instance()) editor->fillMenu(&menu, layer, presetPaths);
+    if (!defaults.isEmpty()) {
+        menu.addAction(QStringLiteral("Reset to Defaults"), this, [this, layer, defaults] {
+            cmd::setValues(m_undo, m_engine, layer, defaults, QStringLiteral("Reset 3D Category"));
+            refreshDynamic();
+        });
+    }
+    if (!menu.isEmpty()) menu.exec(global);
+}
+
 QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList &except, const std::function<void(QFormLayout *)> &first)
 {
     auto *w = new QWidget;
@@ -4347,8 +4698,21 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
         const QString category = p.label.section(QStringLiteral(" › "), 0, 0), name = p.label.section(QStringLiteral(" › "), 1);
         if (!form || category != section) {
             section = category;
-            auto *box = new QGroupBox(category);
+            auto *box = new QGroupBox;
+            QStringList paths;
+            for (const auto &param : params)
+                if (param.label.section(QStringLiteral(" › "), 0, 0) == category) paths << param.path;
+            auto *heading = new QToolButton(box);
+            heading->setText(category);
+            heading->setAutoRaise(true);
+            heading->setArrowType(Qt::DownArrow);
+            heading->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            heading->setToolTip(QStringLiteral("Preset and reset options for this category"));
+            connect(heading, &QToolButton::clicked, this, [this, heading, paths, layer = m_layerId] {
+                show3dCategoryMenu(layer, paths, heading->mapToGlobal(heading->rect().bottomLeft()));
+            });
             form = new QFormLayout(box);
+            form->addRow(heading);
             form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
             v->addWidget(box);
             if (first) first(form);
@@ -4426,6 +4790,14 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
 
 void LayerInspector::refreshDynamic()
 {
+    if (m_modelTriangles) {
+        int triangles = 0;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const auto *l = m_engine->layer(m_layer); l && l->model) triangles = l->model->triangleCount();
+        }
+        m_modelTriangles->setText(QStringLiteral("%L1 triangles").arg(triangles));
+    }
     refreshPicker(); // a layer renamed or moved by something else
     for (const auto &[field, path] : m_3dFields) { // animated, recalled, driven
         if (!field || field->hasFocus() || field->isAncestorOf(QApplication::focusWidget())) continue;
@@ -4579,6 +4951,8 @@ void LayerInspector::refreshDynamic()
     // Values changed elsewhere (OSC, undo, a snapshot) follow in the fields
     if (follow) {
         QRectF roi;
+        int roiMode = 0;
+        std::array<QPointF, 4> roiPoints{};
         QColor add, remove;
         double temp = 0, tint = 0;
         unsigned masksRev = 0;
@@ -4587,6 +4961,8 @@ void LayerInspector::refreshDynamic()
             Layer *l = m_engine->layer(m_layer);
             if (!l) return;
             roi = l->roi;
+            roiMode = l->roiMode;
+            roiPoints = l->roiPoints;
             masksRev = l->masksRevision;
             add = QColor::fromRgbF(l->color.add[0], l->color.add[1], l->color.add[2]);
             remove = QColor::fromRgbF(l->color.remove[0], l->color.remove[1], l->color.remove[2]);
@@ -4595,7 +4971,13 @@ void LayerInspector::refreshDynamic()
         }
         for (auto [field, value] : {std::pair{m_temp.data(), temp}, std::pair{m_tint.data(), tint}})
             if (field && !field->isDragging() && std::abs(field->value() - value) > 1e-3) field->setValue(value);
-        if (m_roi) m_roi->setRoi(roi);
+        if (m_roi) {
+            m_roi->setRoi(roi);
+            m_roi->setPolygon(roiMode, roiPoints);
+        }
+        if (m_roiMode) m_roiMode->setCurrentIndex(roiMode);
+        if (m_roiRanges) m_roiRanges->setVisible(roiMode == 0);
+        if (m_roiKeep) m_roiKeep->setVisible(roiMode == 0);
         if (m_colorAdd) m_colorAdd->setColor(add);
         if (m_colorRemove) m_colorRemove->setColor(remove);
         if (masksRev != m_masksRev) { // a snapshot (or OSC) changed them: the list and the fields follow
@@ -4685,9 +5067,11 @@ QString LayerInspector::layoutKey() const
     if (!layer) return {};
     QStringList key{QString::number(layer->id), QString::number(int(layer->type)), layer->sourcePath,
         QString::number(layer->isGroup), QString::number(layer->isViewport), QString::number(m_engine->isLocked(m_layer)),
+        QString::number(bool(m_engine->mappingZoneFor(*layer))), QString::number(layer->mappingZone),
         QString::number(bool(layer->timecode)), QString::number(layer->sourceLayer), QString::number(int(layer->sourceTap)), QString::number(layer->psdLayer),
         layer->videoSource.pattern, QString::number(layer->videoSource.fps), QString::number(layer->videoSource.live),
         QString::number(layer->videoSource.rtspTcp)};
+    if (layer->type == SourceType::Model) key << QString::number(layer->modelMaterial);
     if (layer->timecode) key << QString::fromUtf8(QJsonDocument(layer->timecode->toJson()).toJson(QJsonDocument::Compact));
     if (layer->toxPlayer) key << QString::number(layer->toxPlayer->revision());
     if (layer->audioEffects)
@@ -4822,7 +5206,7 @@ QWidget *LayerInspector::buildAudioEffects()
         emit layerChanged();
     });
 
-    auto addMeter = [this](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
+    auto addMeter = [](QVBoxLayout *into, const QString &name, QPointer<LevelMeter> *keep) {
         auto *row = new QHBoxLayout;
         auto *label = new QLabel(name);
         label->setStyleSheet("color:#8a8a8e;");

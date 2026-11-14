@@ -11,7 +11,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
-#include <QMap>
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -160,10 +159,31 @@ namespace {
 struct ExprParser {
     static constexpr int kMaxDepth = 64;
     QString s;
+    const std::vector<IsfInput> &inputs;
+    int width, height;
     int p = 0;
     int depth = 0;
-    const QMap<QString, double> *vars = nullptr;
     bool ok = true;
+
+    double variable(QStringView name)
+    {
+        // Resolve only names the expression uses. Numeric inputs with the same name
+        // still override the built-ins, as they did in the expression's variable map.
+        for (auto it = inputs.rbegin(); it != inputs.rend(); ++it) {
+            if (it->name != name) continue;
+            switch (it->type) {
+            case IsfInput::Float: return it->fValue;
+            case IsfInput::Long: return it->lValue;
+            case IsfInput::Bool:
+            case IsfInput::Event: return it->bValue ? 1.0 : 0.0;
+            default: break;
+            }
+        }
+        if (name == QLatin1String("WIDTH")) return width;
+        if (name == QLatin1String("HEIGHT")) return height;
+        ok = false;
+        return 0;
+    }
 
     void ws() { while (p < s.size() && s[p].isSpace()) ++p; }
     bool eat(QChar c)
@@ -220,13 +240,9 @@ struct ExprParser {
         bool dollar = eat('$');
         int st = p;
         while (p < s.size() && isIdentChar(s[p])) ++p;
-        QString id = s.mid(st, p - st);
+        const QStringView id = QStringView(s).mid(st, p - st);
         if (id.isEmpty()) { ok = false; return 0; }
-        if (dollar) {
-            if (vars->contains(id)) return vars->value(id);
-            ok = false;
-            return 0;
-        }
+        if (dollar) return variable(id);
         // function
         if (!eat('(')) { ok = false; return 0; }
         QVector<double> args;
@@ -235,15 +251,15 @@ struct ExprParser {
             if (!eat(')')) ok = false;
         }
         auto a = [&](int i) { return i < args.size() ? args[i] : 0.0; };
-        const QString f = id.toLower();
-        if (f == "floor") return std::floor(a(0));
-        if (f == "ceil") return std::ceil(a(0));
-        if (f == "round") return std::round(a(0));
-        if (f == "abs") return std::fabs(a(0));
-        if (f == "sqrt") return std::sqrt(a(0));
-        if (f == "pow") return std::pow(a(0), a(1));
-        if (f == "min") return std::min(a(0), a(1));
-        if (f == "max") return std::max(a(0), a(1));
+        auto is = [&](QLatin1String name) { return id.compare(name, Qt::CaseInsensitive) == 0; };
+        if (is(QLatin1String("floor"))) return std::floor(a(0));
+        if (is(QLatin1String("ceil"))) return std::ceil(a(0));
+        if (is(QLatin1String("round"))) return std::round(a(0));
+        if (is(QLatin1String("abs"))) return std::fabs(a(0));
+        if (is(QLatin1String("sqrt"))) return std::sqrt(a(0));
+        if (is(QLatin1String("pow"))) return std::pow(a(0), a(1));
+        if (is(QLatin1String("min"))) return std::min(a(0), a(1));
+        if (is(QLatin1String("max"))) return std::max(a(0), a(1));
         ok = false;
         return 0;
     }
@@ -253,21 +269,7 @@ struct ExprParser {
 double IsfInstance::evalSize(const QString &e, int w, int h, int fallback) const
 {
     if (e.isEmpty() || e.trimmed().isEmpty()) return fallback;
-    QMap<QString, double> vars;
-    vars["WIDTH"] = w;
-    vars["HEIGHT"] = h;
-    for (const IsfInput &in : m_inputs) {
-        switch (in.type) {
-        case IsfInput::Float: vars[in.name] = in.fValue; break;
-        case IsfInput::Long: vars[in.name] = in.lValue; break;
-        case IsfInput::Bool:
-        case IsfInput::Event: vars[in.name] = in.bValue ? 1 : 0; break;
-        default: break;
-        }
-    }
-    ExprParser ep;
-    ep.s = e;
-    ep.vars = &vars;
+    ExprParser ep{e, m_inputs, w, h};
     double v = ep.expr();
     if (!ep.ok || !std::isfinite(v)) return fallback;
     return v;
@@ -378,6 +380,10 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
     out.back().bind(nullptr, [self](const QVariant &) { self->requestRestart(); });
     out.emplace_back(QStringLiteral("enable"), cat + QStringLiteral("Enable"), T::Bool);
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });
+    // How much of the effect goes on: a fade between the picture it was given and its result (under its mask and channels)
+    out.emplace_back(QStringLiteral("mix"), cat + QStringLiteral("Mix"), T::Float);
+    out.back().range(0, 1).byDefault(1.0).bind([self] { return self->mix; },
+                                                [self](const QVariant &v) { self->mix = std::clamp(v.toDouble(), 0.0, 1.0); });
     out.emplace_back(QStringLiteral("mask/invert"), cat + QStringLiteral("Invert Mask"), T::Bool);
     out.back().byDefault(false).bind([self] { return self->maskInvert; }, [self](const QVariant &v) { self->maskInvert = v.toBool(); });
     out.emplace_back(QStringLiteral("mask_only"), cat + QStringLiteral("Mask Only"), T::Bool);
@@ -766,6 +772,7 @@ bool IsfInstance::load(const QString &path)
     m_imported.clear();
     m_error.clear();
     m_isFilter = false;
+    m_canSkipDraw = false;
     m_time = 0;
     m_frameIndex = 0;
     m_path = QFileInfo(path).absoluteFilePath();
@@ -788,7 +795,14 @@ bool IsfInstance::load(const QString &path)
             break;
         }
     }
-    if (!compile(cleanBody(body), vsBody)) return false;
+    const QString fragment = cleanBody(body);
+    if (!compile(fragment, vsBody)) return false;
+    // A fullscreen pass with no intermediate buffers or discard cannot read
+    // or retain pixels from the previous frame. Custom vertex shaders can.
+    static const QRegularExpression discard(QStringLiteral("\\bdiscard\\b"));
+    m_canSkipDraw = vsBody.isEmpty() && m_targets.empty() &&
+                    (m_passes.empty() || (m_passes.size() == 1 && m_passes.front().pointsExpr.isEmpty())) &&
+                    !fragment.contains(discard);
 
     for (IsfImported &im : m_imported) {
         QString e;
@@ -844,6 +858,7 @@ bool IsfInstance::reloadSafely()
     swap(m_credit, prepared.m_credit);
     swap(m_error, prepared.m_error);
     swap(m_isFilter, prepared.m_isFilter);
+    swap(m_canSkipDraw, prepared.m_canSkipDraw);
     swap(m_inputs, prepared.m_inputs);
     swap(m_passes, prepared.m_passes);
     swap(m_targets, prepared.m_targets);
@@ -879,8 +894,15 @@ bool IsfInstance::setImageInput(int index, const QString &path, QString *err)
     return true;
 }
 
+void IsfInstance::advanceWithoutDrawing(const IsfRenderContext &rc)
+{
+    m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
+    for (IsfInput &in : m_inputs) in.eventFired = false;
+    ++m_frameIndex;
+}
+
 void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW,
-                         int outH)
+                         int outH, bool repeatFrame)
 {
     auto f = gl();
     out.ensure(outW, outH);
@@ -900,13 +922,13 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
             for (RenderTarget &rt : t.rt)
                 if (rt.fbo) rt.clear();
     }
-    const double dt = rc.dt * speed;
-    m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
+    const double dt = repeatFrame ? 0.0 : rc.dt * speed;
+    if (!repeatFrame) m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
     f->glUseProgram(m_program);
     f->glDisable(GL_BLEND);
     if (m_locTime >= 0) f->glUniform1f(m_locTime, float(m_time));
     if (m_locTimeDelta >= 0) f->glUniform1f(m_locTimeDelta, float(dt));
-    if (m_locFrameIndex >= 0) f->glUniform1i(m_locFrameIndex, m_frameIndex);
+    if (m_locFrameIndex >= 0) f->glUniform1i(m_locFrameIndex, repeatFrame ? std::max(0, m_frameIndex - 1) : m_frameIndex);
     if (m_locDate >= 0) {
         QDateTime now = QDateTime::currentDateTime();
         f->glUniform4f(m_locDate, now.date().year(), now.date().month(), now.date().day(),
@@ -928,7 +950,7 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
         switch (in.type) {
         case IsfInput::Float: if (in.loc >= 0) f->glUniform1f(in.loc, float(in.fValue)); break;
         case IsfInput::Bool: if (in.loc >= 0) f->glUniform1i(in.loc, in.bValue ? 1 : 0); break;
-        case IsfInput::Event: if (in.loc >= 0) f->glUniform1i(in.loc, in.eventFired ? 1 : 0); break;
+        case IsfInput::Event: if (in.loc >= 0) f->glUniform1i(in.loc, !repeatFrame && in.eventFired ? 1 : 0); break;
         case IsfInput::Long: if (in.loc >= 0) f->glUniform1i(in.loc, in.lValue); break;
         case IsfInput::Point2D: if (in.loc >= 0) f->glUniform2f(in.loc, float(in.pValue.x()), float(in.pValue.y())); break;
         case IsfInput::Color: if (in.loc >= 0) f->glUniform4fv(in.loc, 1, in.cValue); break;
@@ -946,7 +968,10 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
                 else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
                 break;
             case IsfInput::Audio:
-            case IsfInput::AudioFFT: bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h); break;
+            case IsfInput::AudioFFT:
+                if (in.extTex) bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.extTex, in.extW, in.extH);
+                else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
+                break;
             default: break;
             }
         }
@@ -1026,8 +1051,10 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
         }
     }
 
-    for (IsfInput &in : m_inputs) in.eventFired = false;
-    ++m_frameIndex;
+    if (!repeatFrame) {
+        for (IsfInput &in : m_inputs) in.eventFired = false;
+        ++m_frameIndex;
+    }
     f->glActiveTexture(GL_TEXTURE0);
 }
 

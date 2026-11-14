@@ -38,6 +38,7 @@ public:
     void zoomBy(double factor);           // around the center of the view
     void zoomToFit();
     double zoom() const { return m_zoom; }
+    QPointF compositionToWidget(QPointF normalized) const { return toWidget(normalized); }
     // How it is seen: zoom and pan, the fixtures shown, mask points or layer geometry selected (a project, a preset)
     QJsonObject viewState() const;
     void setViewState(const QJsonObject &o);
@@ -89,6 +90,7 @@ private:
     };
 
     Mapping *mapping() const;
+    bool mappingLocked() const;
     // Members of a group are mapped inside the group's canvas, itself mapped by the group, and so on up (lock held)
     std::vector<const Mapping *> groupMappings(int layer) const;
     bool isViewport(int layer) const;

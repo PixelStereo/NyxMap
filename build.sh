@@ -13,7 +13,7 @@
 #   ./build.sh --tests         also build the tests (off by default: much slower; CI runs them)
 #
 # What it installs: macOS, with Homebrew: qt ffmpeg cmake pkg-config dotnet git. Ubuntu/Debian, with apt: the packages
-# listed in docs/build.md. Windows, with winget: see build.ps1. OMT (built from source) needs dotnet, clang and git:
+# listed in docs/developers/build.md. Windows, with winget: see build.ps1. OMT (built from source) needs dotnet, clang and git:
 # without them NyxMap is built without it.
 set -euo pipefail
 
@@ -90,7 +90,7 @@ elif [[ $OS == Linux ]]; then
       # .NET for OMT: in Ubuntu's own packages (22.04 and later); elsewhere OMT is left out
       $SUDO apt-get install -y dotnet-sdk-8.0 || echo "No dotnet-sdk-8.0 package here: NyxMap is built without OMT."
     else
-      echo "No apt here: install the equivalents of the packages listed in docs/build.md, then run ./build.sh --no-install."
+      echo "No apt here: install the equivalents of the packages listed in docs/developers/build.md, then run ./build.sh --no-install."
       echo "Trying with what is installed."
     fi
   fi
@@ -143,15 +143,16 @@ else
 fi
 
 # --- Open
+APP_NAME=$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')
 if [[ $OS == Darwin ]]; then
-  APP=build/NyxMap.app
+  APP="build/$APP_NAME.app"
   [[ -d $APP ]] || fail "$APP was not built"
   echo; echo "NyxMap is built: $(pwd)/$APP"
   if [[ $RUN == 1 ]]; then open "$APP"; fi
 else
-  APP=build/NyxMap
+  APP="build/$APP_NAME"
   [[ -x $APP ]] || fail "$APP was not built"
   echo; echo "NyxMap is built: $(pwd)/$APP"
-  if [[ $RUN == 1 ]]; then (cd build && nohup ./NyxMap >/dev/null 2>&1 &); fi
+  if [[ $RUN == 1 ]]; then (cd build && nohup "./$APP_NAME" >/dev/null 2>&1 &); fi
 fi
 exit 0

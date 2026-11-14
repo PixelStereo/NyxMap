@@ -833,7 +833,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     for (int i = 0; i < 10; ++i) e.renderFrame();
     const QPointF cp = e.layer(gen)->mapping.controlPoint(1, 1);
     CHECK(e.saveProject(tmp + "/a.nyxmap", {}, &err));
+    bool sawPartialLayers = false, sawCompleteLayers = false;
+    const auto observer = QObject::connect(&e, &Engine::layersChanged, &e, [&] {
+        const int count = e.layerCount();
+        sawPartialLayers |= count > V && count < V + 2;
+        sawCompleteLayers |= count == V + 2;
+    });
     CHECK(e.loadProject(tmp + "/a.nyxmap", nullptr, &err));
+    QObject::disconnect(observer);
+    CHECK(!sawPartialLayers && sawCompleteLayers);
     CHECK(err.isEmpty());
     CHECK(e.saveProject(tmp + "/b.nyxmap", {}, &err));
     QJsonObject a = readJson(tmp + "/a.nyxmap"), b = readJson(tmp + "/b.nyxmap");
@@ -1482,6 +1490,35 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK((m.pivot - QPointF(0.5, 0.5)).manhattanLength() < 1e-9);
     }
 
+    // Reusing a full-size viewport's raw RGB preserves the opaque composition and its fader.
+    {
+        e.newProject();
+        const QSize size(64, 32);
+        e.setCompositionSize(size);
+        e.fadeCompositionOpacity(0.7, 0);
+        e.setBlackout(false, 0);
+        const int viewport = e.viewports().first();
+        const quint64 viewportId = e.layerId(viewport);
+        e.setViewportSize(viewport, size);
+        e.layer(viewport)->mapping.setRect({QPointF(32, 16), 64, 32, 0}, size);
+        QImage source(64, 32, QImage::Format_ARGB32);
+        source.fill(qRgba(210, 150, 85, 128));
+        CHECK(source.save(tmp + "/partial_alpha.png"));
+        const int layer = e.addLayer("Partial alpha");
+        CHECK(e.setLayerImage(layer, tmp + "/partial_alpha.png", &err));
+        e.layer(layer)->opacity = 0.6f;
+        e.renderFrame();
+        const QImage reused = e.grabOutput();
+        // Change only the viewport routing to force independent compositing.
+        e.layer(layer)->viewportOpacity[viewportId] = 0.2f;
+        e.renderFrame();
+        const QImage separate = e.grabOutput();
+        CHECK(!reused.isNull() && reused == separate);
+        CHECK(separate.pixelColor(32, 16).red() > 30 && separate.pixelColor(32, 16).alpha() == 255);
+        CHECK(e.grabViewport(viewportId).pixelColor(32, 16).red() < separate.pixelColor(32, 16).red());
+        e.fadeCompositionOpacity(1, 0);
+    }
+
     // A viewport can be turned: its region is a rectangle of the composition rotated about its center
     {
         e.newProject();
@@ -1952,6 +1989,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(server.handleMessage({"/composition/opacity", "f", {0.4}}) && std::abs(e.compositionOpacityTarget() - 0.4) < 1e-3);
         e.fadeCompositionOpacity(1.0, 0);
         CHECK(server.handleMessage({"/composition/fps", "f", {30.0}}) && e.effectiveRender().frameRate == 30.0);
+        CHECK(server.handleMessage({"/composition/fps", "f", {-2.0}}) &&
+              e.effectiveRender().frameRate == Engine::RenderSettings::UncappedFrameRate);
+        CHECK(e.frameTimingJson().value("pace_hz").toDouble(-1) == 0);
         e.setRenderSettings(Engine::RenderSettings());
         // Hierarchy, lowercase, and an "enable" child for every switch, over the whole tree
         {
@@ -2671,7 +2711,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         {
             e.setFadesManual(true);
             std::vector<int> fired;
-            e.sequencer().setRecaller([&](int mi) { fired.push_back(mi); });
+            e.sequencer().setRecaller([&](int mi, double) { fired.push_back(mi); });
             Sequencer::Sequence a, b, inserted;
             a.name = "Background A";
             Sequencer::Step a0, a1;
@@ -2884,9 +2924,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
 
             // Pre-wait, post-wait, auto-follow / wait
             std::vector<int> fired;
-            e.sequencer().setRecaller([&](int mi) {
+            e.sequencer().setRecaller([&](int mi, double fadeOverride) {
                 fired.push_back(mi);
-                e.recallSnapshot(mi);
+                e.recallSnapshot(mi, fadeOverride);
             });
             Sequencer::Sequence seq;
             seq.name = "Waits";
@@ -3825,7 +3865,13 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 QJsonObject o = v.toObject();
                 const bool me = o.value("id").toString().toULongLong() == vid;
                 o["included"] = me;
-                if (me && edit) edit(o);
+                if (me) {
+                    // A video snapshot holds Restart on Recall by default: these ones are about play and pause alone
+                    QJsonObject p = o.value("params").toObject();
+                    p["restart"] = false;
+                    o["params"] = p;
+                    if (edit) edit(o);
+                }
                 m.layers.append(o);
             }
             return e.addSnapshot(m);
@@ -4355,6 +4401,36 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     } // masks
 
     if (area("rendering")) {
+    // The ROI samples source coordinates before the destination mapping.
+    {
+        e.newProject();
+        e.setCompositionSize({64, 64});
+        QImage source(64, 64, QImage::Format_RGB32);
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 0; x < source.width(); ++x)
+                source.setPixelColor(x, y, y < 32 ? Qt::red : Qt::blue);
+        const QString path = tmp + "/roi-shapes.png";
+        CHECK(source.save(path));
+        const int row = e.addLayer("ROI shapes");
+        const quint64 id = e.layerId(row);
+        CHECK(e.setLayerImage(row, path, &err));
+        CHECK(e.setParameter(id, "roi/mode", "triangle"));
+        e.renderFrame();
+        QImage output = e.grabOutput();
+        CHECK(output.pixelColor(48, 12).red() > 240 && output.pixelColor(12, 48).blue() < 10);
+        CHECK(e.setParameter(id, "roi/mode", "quad"));
+        CHECK(e.setParameter(id, "roi/point/3/y", .45));
+        CHECK(e.setParameter(id, "roi/point/4/y", .25));
+        CHECK(e.setParameter(id, "roi/point/4/x", .20));
+        e.renderFrame();
+        output = e.grabOutput();
+        CHECK(output.pixelColor(12, 48).red() > 240 && output.pixelColor(48, 48).red() > 240);
+        CHECK(e.saveProject(tmp + "/roi-shapes.nyxmap", {}, &err));
+        CHECK(e.loadProject(tmp + "/roi-shapes.nyxmap", nullptr, &err));
+        CHECK(e.parameterValue(id, "roi/mode").toString() == "quad" &&
+              std::abs(e.parameterValue(id, "roi/point/4/x").toDouble() - .20) < 1e-6);
+        e.newProject();
+    }
     // A delayed GPU share reads the old front at the end of this tick.
     // The renderer must not write into that buffer on the next tick.
     {
@@ -4616,29 +4692,24 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             while ((!w1.isExposed() || !w2.isExposed()) && t.elapsed() < 3000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             e.setViewportWindow(vp1, &w1);
             e.setViewportWindow(vp2, &w2);
-            e.setViewportExposed(vp1, true, w1.size() * w1.devicePixelRatio());
-            e.setViewportExposed(vp2, true, w2.size() * w2.devicePixelRatio());
-            // The windows show their frames when the system presents them, a little after: rendered and grabbed again
-            // until both show their picture (3 s at most), then checked
-            QImage g1, g2;
-            auto shown = [&] {
-                if (g1.isNull() || g2.isNull()) return false;
-                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
-                return c1.red() > 200 && c1.blue() < 50 && c2.blue() > 200 && c2.red() < 50;
-            };
-            t.restart();
-            do {
-                e.renderFrame();
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-                g1 = w1.screen()->grabWindow(w1.winId()).toImage();
-                g2 = w2.screen()->grabWindow(w2.winId()).toImage();
-            } while (!shown() && t.elapsed() < 3000);
-            CHECK(!g1.isNull() && !g2.isNull());
-            if (!g1.isNull() && !g2.isNull()) {
-                const QColor c1 = g1.pixelColor(g1.width() / 2, g1.height() / 2), c2 = g2.pixelColor(g2.width() / 2, g2.height() / 2);
-                CHECK(c1.red() > 200 && c1.blue() < 50);
-                CHECK(c2.blue() > 200 && c2.red() < 50);
-            }
+            CHECK(w1.isExposed() && w2.isExposed());
+            e.setViewportExposed(vp1, w1.isExposed(), w1.size() * w1.devicePixelRatio());
+            e.setViewportExposed(vp2, w2.isExposed(), w2.size() * w2.devicePixelRatio());
+            // Read the real window back buffers before swap. Desktop capture can be unavailable
+            // on macOS even when the application can draw and swap both windows.
+            QColor c1, c2;
+            e.setWindowDrawProbeForTests([&](quint64 id, QSize size) {
+                if (id != vp1 && id != vp2) return;
+                std::array<GLubyte, 4> rgba{};
+                gl()->glReadPixels(size.width() / 2, size.height() / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+                (id == vp1 ? c1 : c2) = QColor(rgba[0], rgba[1], rgba[2]);
+            });
+            const auto before1 = e.windowFrames(vp1), before2 = e.windowFrames(vp2);
+            e.renderFrame();
+            e.setWindowDrawProbeForTests({});
+            CHECK(e.windowFrames(vp1) > before1 && e.windowFrames(vp2) > before2);
+            CHECK(c1.isValid() && c1.red() > 200 && c1.blue() < 50);
+            CHECK(c2.isValid() && c2.blue() > 200 && c2.red() < 50);
             e.setViewportWindow(vp1, nullptr);
             e.setViewportWindow(vp2, nullptr);
         }
@@ -4848,13 +4919,14 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.removeLayer(e.indexOfId(e.layerId(v2)));
         }
         // The frame rate is the project's (composition/fps); samples, mipmaps and depth are the machine's
-        rs = Engine::RenderSettings{30, 8, 1};
+        rs = Engine::RenderSettings{Engine::RenderSettings::UncappedFrameRate, 8, 1};
         e.setRenderSettings(rs);
         CHECK(e.saveProject(tmp + "/render.nyxmap", {}, &err));
         e.newProject();
         CHECK(e.renderSettings().frameRate < 0 && e.renderSettings().samples < 0); // a new project: the defaults
         CHECK(e.loadProject(tmp + "/render.nyxmap", nullptr, &err));
-        CHECK(e.renderSettings().frameRate == 30 && e.renderSettings().samples < 0 && e.renderSettings().mipmaps < 0);
+        CHECK(e.effectiveRender().frameRate == Engine::RenderSettings::UncappedFrameRate &&
+              e.renderSettings().samples < 0 && e.renderSettings().mipmaps < 0);
         e.setRenderSettings({});
     }
     } // rendering
@@ -5410,6 +5482,121 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             // An effect is not a generator: refused, the layer keeps its shader
             CHECK(!e.relinkLayerMedia(s1i, tmp + "/genB.fs", root + "/../isf/effects/Mask.fs", &err));
             CHECK(e.layer(s1i)->sourcePath == QDir::cleanPath(tmp + "/genB.fs"));
+        }
+        // A snapshot, a preset and the project name the Media Bin's item, never the file: the item given another file
+        // (Replace…), they have it without being touched
+        {
+            e.newProject();
+            const QString fileA = tmp + "/linkA.mp4", fileB = tmp + "/linkB.mp4";
+            QFile::remove(fileA);
+            QFile::remove(fileB);
+            CHECK(QFile::copy(root + "/media/h264.mp4", fileA) && QFile::copy(root + "/media/h264.mp4", fileB));
+            const quint64 clip = e.layerId(e.addLayer("Linked"));
+            CHECK(e.setLayerVideo(e.indexOfId(clip), fileA, &err));
+            auto sourceOf = [&](const QJsonArray &layers) {
+                for (const QJsonValue &v : layers)
+                    if (v.toObject().value("id").toString().toULongLong() == clip) return v.toObject().value("source").toObject();
+                return QJsonObject();
+            };
+            Engine::Snapshot held;
+            held.name = "Held";
+            held.fade = 0;
+            held.layers = e.captureLayers();
+            const int si = e.addSnapshot(held);
+            Engine::Preset part;
+            part.name = "Source";
+            part.fade = 0;
+            part.categories[QStringLiteral("%1:%2").arg(clip).arg(int(Engine::PartSource))] =
+                QJsonObject{{"source", e.layerJson(e.indexOfId(clip)).value("source")}};
+            const int pi = e.addPreset(part);
+            auto presetSource = [&] { return e.preset(pi).categories.begin().value().toObject().value("source").toObject(); };
+            // Given with their paths (what the interface and a recall read)
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileA);
+            CHECK(presetSource().value("path").toString() == fileA);
+            const quint64 item = e.mediaId(fileA);
+            CHECK(item && e.mediaPath(item) == fileA && e.mediaId(fileA) == item);
+
+            // Replaced in the Media Bin: the layer shows the other file, the snapshot and the preset name it too
+            CHECK(e.relinkLayerMedia(e.indexOfId(clip), fileA, fileB, &err));
+            e.relinkBinItem(fileA, fileB);
+            CHECK(e.mediaPath(item) == fileB);
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileB);
+            CHECK(presetSource().value("path").toString() == fileB);
+            e.recallSnapshot(si);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileB && l->error.isEmpty());
+            }
+            CHECK(e.snapshotMatches(e.snapshot(si).id));
+
+            // A file only a snapshot names: listed in the Media Bin, and replaced there
+            CHECK(e.setLayerImage(e.indexOfId(clip), root + "/media/bars.png", &err));
+            bool listed = false;
+            for (const auto &r : e.mediaUsage())
+                listed |= r.path == fileB && r.video && r.users.size() == 2 && r.users[0].contains("Held");
+            CHECK(listed);
+            CHECK(e.layersUsingMedia(fileB).isEmpty());
+            e.relinkBinItem(fileB, fileA);
+            CHECK(sourceOf(e.snapshot(si).layers).value("path").toString() == fileA);
+            e.recallSnapshot(si);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA && l->error.isEmpty());
+            }
+            e.recallPreset(pi);
+            CHECK(waitFrames(3));
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA);
+            }
+
+            // In the project file: the file's place is written once, in the Media Bin; the layer, the snapshot and the
+            // preset name its item. An item nothing names any more is not written.
+            e.mediaId(tmp + "/nobody.mov");
+            CHECK(e.saveProject(tmp + "/linked.nyxmap", {}, &err));
+            QFile saved(tmp + "/linked.nyxmap");
+            CHECK(saved.open(QIODevice::ReadOnly));
+            const QByteArray text = saved.readAll();
+            saved.close();
+            const QJsonObject root_ = QJsonDocument::fromJson(text).object();
+            CHECK(text.count("linkA.mp4") == 2 && !text.contains("nobody.mov")); // its path and its relative path
+            QJsonObject savedItem;
+            for (const QJsonValue &v : root_.value("media").toArray())
+                if (v.toObject().value("path").toString() == fileA) savedItem = v.toObject();
+            CHECK(savedItem.value("id").toString().toULongLong() == item && savedItem.value("relative_path").toString() == "linkA.mp4");
+            const QJsonObject savedSnapshot = sourceOf(root_.value("snapshots").toArray()[0].toObject().value("layers").toArray());
+            CHECK(savedSnapshot.value("media").toString().toULongLong() == item && !savedSnapshot.contains("path"));
+            const QJsonObject savedLayer = sourceOf(root_.value("layers").toArray());
+            CHECK(savedLayer.value("media").toString().toULongLong() == item && !savedLayer.contains("path"));
+
+            // Read again: the same links; the file moved meanwhile is replaced once, for all of them
+            e.newProject();
+            QString warn;
+            CHECK(e.loadProject(tmp + "/linked.nyxmap", nullptr, &warn) && warn.isEmpty());
+            CHECK(e.mediaPath(item) == fileA && e.snapshotCount() == 1 && e.presetCount() == 1);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileA);
+            CHECK(e.preset(0).categories.begin().value().toObject().value("source").toObject().value("path").toString() == fileA);
+            {
+                Engine::Lock lk(&e.mutex());
+                const Layer *l = e.layer(e.indexOfId(clip));
+                CHECK(l && l->type == SourceType::Video && l->sourcePath == fileA && l->error.isEmpty());
+            }
+            for (int i : e.layersUsingMedia(fileA)) CHECK(e.relinkLayerMedia(i, fileA, fileB, &err));
+            e.relinkBinItem(fileA, fileB);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileB);
+            CHECK(e.snapshotMatches(e.snapshot(0).id));
+            // The items as they were (the undo of a replacement)
+            auto items = e.mediaItems();
+            for (auto &m : items) if (m.id == item) m.path = fileA;
+            e.setMediaItems(items);
+            CHECK(sourceOf(e.snapshot(0).layers).value("path").toString() == fileA);
+            e.newProject();
+            CHECK(e.mediaItems().empty());
         }
         VideoDecoder::Info info;
         CHECK(VideoDecoder::probe(root + "/media/prores.mov", &info) && info.width == 1920 && info.codec == "prores");

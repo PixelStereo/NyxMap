@@ -183,8 +183,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     filters->addWidget(m_search, 1);
     m_type = new QComboBox;
     m_type->setObjectName(QStringLiteral("typeFilter"));
-    m_type->addItems({QStringLiteral("Video + Audio"), QStringLiteral("Video"), QStringLiteral("Audio")});
-    m_type->setToolTip(QStringLiteral("Shows the video, the audio, or both"));
+    m_type->addItems({QStringLiteral("All media"), QStringLiteral("Video"), QStringLiteral("Audio"), QStringLiteral("3D")});
+    m_type->setToolTip(QStringLiteral("Show all media, video, audio or 3D"));
     filters->addWidget(m_type);
     m_kind = new QComboBox;
     m_kind->setObjectName(QStringLiteral("kindFilter"));
@@ -280,7 +280,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_audioRoot = new BinItem(m_tree, {QStringLiteral("Audio")});
     m_videos = new BinItem(m_videoRoot, {QStringLiteral("Videos")});
     m_images = new BinItem(m_videoRoot, {QStringLiteral("Images")});
-    m_models = new BinItem(m_videoRoot, {QStringLiteral("3D Models")});
+    m_3dRoot = new BinItem(m_tree, {QStringLiteral("3D")});
+    m_models = new BinItem(m_3dRoot, {QStringLiteral("3D Models")});
     m_models->setToolTip(0, QStringLiteral("FBX, glTF, GLB, OBJ: dropped onto a layer, it goes into a 3D scene (one is made "
                                            "around it); dropped onto a 3D scene, it becomes one of its objects"));
     // The generators, built in, always there: Text, Timecode, Countdown, Stopwatch, Clock, Line
@@ -305,15 +306,11 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     // Web Page: only when the application has a browser (Qt WebEngine)
     m_web = webPagesAvailable() ? generator(m_generators, QStringLiteral("Web Page"), kWebGeneratorPath) : nullptr;
     // 3D primitives, built in: onto a layer, into a new 3D scene; onto a scene, one of its objects
-    m_primitives = new BinItem(m_videoRoot, {QStringLiteral("3D Primitives")});
-    for (const QString &name : Model3D::primitives()) {
-        auto *it = generator(m_primitives, name, Model3D::primitivePath(name));
-        it->setText(1, QStringLiteral("3D primitive"));
-        it->setText(3, QStringLiteral("Not applicable"));
-        it->setToolTip(0, QStringLiteral("Built-in 3D shape, unwrapped (UV). Onto a layer: into a new 3D scene, with a light; "
-                                         "onto a 3D scene: one of its objects"));
-    }
-    m_primitives->setText(0, QStringLiteral("3D Primitives (%1)").arg(m_primitives->childCount()));
+    m_primitives = new BinItem(m_3dRoot, {QStringLiteral("3D Primitives")});
+    auto *primitive = generator(m_primitives, QStringLiteral("Primitive 3D"), Model3D::primitivePath(QStringLiteral("Cube")));
+    primitive->setText(1, QStringLiteral("3D primitive"));
+    primitive->setText(3, QStringLiteral("Not applicable"));
+    primitive->setToolTip(0, QStringLiteral("Add a 3D primitive. Choose its shape in the object's Source tab."));
     m_inputs = new BinItem(m_videoRoot, {QStringLiteral("Inputs")});
     m_isf = new BinItem(m_videoRoot, {QStringLiteral("ISF")});
     m_isfGenerators = new BinItem(m_isf, {QStringLiteral("Generators")});
@@ -335,7 +332,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_audioInputs = new BinItem(m_audioRoot, {QStringLiteral("Inputs")});
 
     int groupOrder = 0;
-    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_videos, m_images, m_models, m_primitives, m_generators, m_inputs, m_isf,
+    const QList<QTreeWidgetItem *> groups{m_videoRoot, m_audioRoot, m_3dRoot, m_videos, m_images, m_models, m_primitives, m_generators, m_inputs, m_isf,
                                           m_isfGenerators, m_audios, m_audioGenerators, m_audioInputs};
     for (QTreeWidgetItem *group : groups) {
         group->setData(0, GroupOrderRole, groupOrder++);
@@ -1134,6 +1131,38 @@ void MediaBin::revealSelected()
 #endif
 }
 
+void MediaBin::fillLoadMenu(QMenu *menu, const QString &p, bool missing)
+{
+    const bool model = Model3D::isModelFile(p);
+    if (!model) {
+        menu->addAction(QStringLiteral("Load into Selected Layer"), this, [this, p] { emit useAsSourceRequested(p); })->setEnabled(!missing);
+    }
+    menu->addAction(model ? QStringLiteral("Load into New 3D Scene") : QStringLiteral("Load into New Layer"),
+                   this, [this, p] { emit loadIntoNewLayerRequested(p); })->setEnabled(!missing);
+    QMenu *into = menu->addMenu(model ? QStringLiteral("Load into 3D Scene / Merge 3D") : QStringLiteral("Load into Layer"));
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            Layer *l = m_engine->layer(i);
+            if (!l || l->isViewport || (model && !l->scene3d && !l->merge3d)) continue;
+            if (!model && (l->is3dObject() || l->scene3d)) continue;
+            int depth = 0;
+            for (quint64 up = l->parent; up; ++depth) {
+                const Layer *g = m_engine->layer(m_engine->indexOfId(up));
+                up = g ? g->parent : 0;
+            }
+            const QString label = QStringLiteral("      ").repeated(depth) + l->name;
+            const quint64 id = l->id;
+            QAction *la = into->addAction(label, this, [this, id, p] {
+                const int row = m_engine->indexOfId(id);
+                if (row >= 0) emit loadIntoLayerRequested(row, p);
+            });
+            la->setEnabled((model || !l->isGroup) && !m_engine->isLocked(i));
+        }
+    }
+    into->setEnabled(!missing && !into->isEmpty());
+}
+
 void MediaBin::contextMenu(const QPoint &pos)
 {
     QTreeWidgetItem *it = m_tree->itemAt(pos);
@@ -1142,29 +1171,9 @@ void MediaBin::contextMenu(const QPoint &pos)
     if (!p.isEmpty()) {
         const bool missing = it->data(0, MissingRole).toBool();
         const bool isf = it->data(0, IsfRole).toBool();
-        QAction *a = menu.addAction(QStringLiteral("Load into Selected Layer"), this, [this, p] { emit useAsSourceRequested(p); });
-        a->setEnabled(!missing);
-        menu.addAction(QStringLiteral("Load into New Layer"), this, [this, p] { emit loadIntoNewLayerRequested(p); })->setEnabled(!missing);
-        QMenu *into = menu.addMenu(QStringLiteral("Load into Layer"));
-        {
-            // Every layer of the composition, groups shown (disabled: they have no source) with their layers indented
-            Engine::Lock lk(&m_engine->mutex());
-            for (int i = 0; i < m_engine->layerCount(); ++i) {
-                Layer *l = m_engine->layer(i);
-                if (!l || l->isViewport) continue;
-                int depth = 0;
-                for (quint64 up = l->parent; up; ++depth) {
-                    const Layer *g = m_engine->layer(m_engine->indexOfId(up));
-                    up = g ? g->parent : 0;
-                }
-                const QString label = QStringLiteral("      ").repeated(depth) + l->name;
-                QAction *la = into->addAction(label, this, [this, i, p] { emit loadIntoLayerRequested(i, p); });
-                la->setEnabled(!l->isGroup && !m_engine->isLocked(i));
-            }
-        }
-        into->setEnabled(!missing && !into->isEmpty());
+        fillLoadMenu(&menu, p, missing);
         menu.addSeparator();
-        if (isf) menu.addAction(QStringLiteral("Reload ISF"), this, [this, p] { emit reloadIsfRequested(p); })->setEnabled(!missing);
+        if (isf && !Model3D::isModelFile(p)) menu.addAction(QStringLiteral("Reload ISF"), this, [this, p] { emit reloadIsfRequested(p); })->setEnabled(!missing);
         menu.addAction(QStringLiteral("Replace…"), this, [this, it] {
                 m_tree->setCurrentItem(it);
                 relinkSelected();
@@ -1251,7 +1260,7 @@ void MediaBin::applyFilter()
         return kind == 0 || (kind == 1 && files.contains(group)) || (kind == 2 && generators.contains(group)) ||
                (kind == 3 && inputs.contains(group)) || (kind == 4 && group == m_isf);
     };
-    for (QTreeWidgetItem *root : {m_videoRoot, m_audioRoot}) {
+    for (QTreeWidgetItem *root : {m_videoRoot, m_audioRoot, m_3dRoot}) {
         bool any = false;
         for (int c = 0; c < root->childCount(); ++c) {
             QTreeWidgetItem *group = root->child(c);
@@ -1260,7 +1269,7 @@ void MediaBin::applyFilter()
             group->setHidden(!kindMatches(group) || (!shown && filtering));
             any |= !group->isHidden();
         }
-        const bool mediaMatches = media == 0 || (media == 1) == (root == m_videoRoot);
+        const bool mediaMatches = media == 0 || (media == 1 && root == m_videoRoot) || (media == 2 && root == m_audioRoot) || (media == 3 && root == m_3dRoot);
         root->setHidden(!mediaMatches || (!any && (filtering || kind != 0)));
     }
 }

@@ -1,6 +1,5 @@
 #include <QElapsedTimer>
 #include "InteractionPanel.h"
-#include "InteractionPatch.h"
 #include "AdsrCurve.h"
 // 3D scenes in the interface: Layer › New 3D Scene makes one with a light; a model dropped onto a layer goes into a new
 // scene; the list refuses a move that takes a 3D object out of its scene or a 2D layer into one; the inspector shows the
@@ -9,6 +8,7 @@
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "MediaBin.h"
+#include "MaterialPanel.h"
 #include "PreviewWorkspace.h"
 #include "Scene3DView.h"
 #include <QCheckBox>
@@ -54,6 +54,8 @@ int runScene3dUiTests(Engine &engine)
                 "f 1 3 2\nf 1 4 3\nf 5 6 7\nf 5 7 8\nf 1 5 8\nf 1 8 4\nf 2 3 7\nf 2 7 6\nf 1 2 6\nf 1 6 5\nf 4 8 7\nf 4 7 3\n");
     }
     engine.newProject();
+    engine.setCompositionSize({480, 270});
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {480, 270});
     MainWindow window(&engine);
     window.setAutosaveEnabled(false);
     window.setQuiet(true);
@@ -189,28 +191,9 @@ int runScene3dUiTests(Engine &engine)
             const quint64 gate = panel->addEnvelope(tone, "synth/gate", InteractionPanel::heard(35, 120));
             pump();
             check(find(gate).filters.empty(), "a gate takes the hit as it is: its instrument has its envelope");
-            auto *nodes = panel->findChild<QToolButton *>("interactionNodes");
-            auto *patch = static_cast<InteractionPatch *>(panel->findChild<QWidget *>("interactionPatch"));
-            check(nodes && patch, "the interactions can be nodes");
-            if (nodes && patch) {
-                nodes->setChecked(true);
-                pump();
-                check(patch->isVisible() && patch->links().size() == 2, "each one a link");
-                check(patch->sourceCount() == 1 && patch->targetCount() == 2, "one source with two cables, two targets");
-                check(std::any_of(patch->links().begin(), patch->links().end(), [](const auto &l) { return l.envelope; }), "its envelope is drawn on its node");
-                const size_t before = engine.interactions().size();
-                patch->onConnect(id, gate);
-                pump();
-                check(engine.interactions().size() == before + 1, "a cable dropped on a target is a new interaction");
-                patch->onToggle(id);
-                pump();
-                check(!find(id).enabled, "a double-click switches it off");
-                if (curve) window.grab().save(qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR", dir.path()) + "/patch.png");
-                patch->onRemove(id);
-                pump();
-                check(find(id).id == 0, "Del removes it");
-                nodes->setChecked(false);
-            }
+            check(!panel->findChild<QToolButton *>("interactionNodes"), "node view is absent");
+            check(panel->findChild<QWidget *>("interactionTargetTabs") &&
+                      panel->findChild<QWidget *>("sharedFiltersFrame"), "target tabs follow the shared filter stack");
         }
         engine.setInteractions({});
         engine.removeLayer(engine.indexOfId(other));
@@ -337,7 +320,7 @@ int runScene3dUiTests(Engine &engine)
     }
     select(engine.indexOfId(layer));
     const QStringList objectTabs = tabNames();
-    check(objectTabs.contains("3D") && !objectTabs.contains("Spatial") && !objectTabs.contains("FX"),
+    check(objectTabs.contains("Source") && objectTabs.contains("Material") && objectTabs.contains("Spatial") && objectTabs.contains("FX") && !objectTabs.contains("3D"),
           "a model's inspector shows its 3D values, not a picture's tabs");
     check(inspector && inspector->findChild<SliderField *>("param3d:model/scale/all") &&
               inspector->findChild<SliderField *>("param3d:model/scale/x") && inspector->findChild<SliderField *>("param3d:model/scale/z"),
@@ -390,14 +373,59 @@ int runScene3dUiTests(Engine &engine)
         }
         check(models && models->text(0) == "3D Models (1)", "the Media Bin has a 3D Models category holding the cube");
         check(item && item->text(1).contains("12 triangles"), "the Media Bin reads the model");
+        if (item) {
+            QMenu loadMenu;
+            bin->fillLoadMenu(&loadMenu, cube);
+            bool newScene = false, targets = false;
+            for (auto *action : loadMenu.actions()) {
+                newScene |= action->text() == "Load into New 3D Scene";
+                check(action->text() != "Load into Selected Layer" && action->text() != "Load into New Layer", "3D context has no video loading actions");
+                if (!action->menu() || action->text() != "Load into 3D Scene / Merge 3D") continue;
+                targets = true;
+                for (auto *target : action->menu()->actions()) {
+                    bool holder = false;
+                    for (int i = 0; i < engine.layerCount(); ++i) {
+                        const Layer *l = engine.layer(i);
+                        if (l && l->name == target->text().trimmed() && (l->scene3d || l->merge3d)) holder = true;
+                    }
+                    check(holder, "3D Load into only offers scene and Merge holders");
+                }
+            }
+            check(newScene && targets, "model context offers a new scene and existing 3D holders");
+        }
+
         int primitives = 0;
         for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>())
             for (QTreeWidgetItem *found : tree->findItems("3D Primitives", Qt::MatchStartsWith | Qt::MatchRecursive))
                 primitives = found->childCount();
-        check(primitives == int(Model3D::primitives().size()), "the Media Bin offers the 3D primitives");
+        check(primitives == 1, "the Media Bin offers a single configurable 3D primitive");
+        check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
     } else {
         check(false, "the Media Bin");
     }
+    {
+        QUndoStack primitiveUndo;
+        LayerInspector inspector(&engine, &primitiveUndo);
+        inspector.setLayer(engine.indexOfId(plain));
+        inspector.rebuild();
+        auto *shape = inspector.findChild<QComboBox *>("primitive3dShape");
+        check(shape && shape->count() == Model3D::primitives().size(), "Source offers every primitive shape");
+        engine.setParameter(plain, "model/position/x", 2.0);
+        const quint64 parent = parentOf(plain);
+        if (shape) {
+            const int cubeIndex = shape->findData(Model3D::primitivePath("Cube"));
+            shape->setCurrentIndex(cubeIndex);
+            emit shape->activated(cubeIndex);
+            pump();
+            check(engine.layer(engine.indexOfId(plain))->sourcePath == Model3D::primitivePath("Cube"), "Source changes primitive shape");
+            check(parentOf(plain) == parent && engine.parameterValue(plain, "model/position/x").toDouble() == 2.0, "shape change preserves parent and placement");
+            primitiveUndo.undo();
+            pump();
+            check(engine.layer(engine.indexOfId(plain))->sourcePath == Model3D::primitivePath("Sphere"), "primitive shape change undoes");
+            engine.setParameter(plain, "model/position/x", 0.0);
+        }
+    }
+
     // A 3D view: the scene chosen in a preview cell is seen from the view's own camera; the cube is picked and moved
     auto *previews = window.findChild<PreviewWorkspace *>();
     check(previews != nullptr, "the preview workspace");
@@ -698,6 +726,105 @@ int runScene3dUiTests(Engine &engine)
         }
         window.grab().save(captures + "/scene3d-window.png");
     }
+    engine.newProject();
+    engine.setCompositionSize({480, 270});
+    engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {480, 270});
+    const auto materialScene = engine.layerId(engine.addScene("Shared material UI"));
+    const auto materialA = engine.layerId(engine.addLayer("Material A"));
+    const auto materialB = engine.layerId(engine.addLayer("Material B"));
+    QString materialError;
+    check(engine.setLayerModel(engine.indexOfId(materialA), Model3D::primitivePath("Cube"), &materialError), "create first material object");
+    check(engine.setLayerModel(engine.indexOfId(materialB), Model3D::primitivePath("Sphere"), &materialError), "create second material object");
+    engine.setStructure(tree::intoGroup(engine.structure(), {materialA, materialB}, materialScene));
+    check(engine.setModelMaterial(engine.indexOfId(materialB), engine.addMaterial("Independent surface")), "explicit material overrides scene default");
+    quint64 materialId = 0, originalMaterial = 0;
+    {
+        Engine::Lock lock(&engine.mutex());
+        materialId = engine.layer(engine.indexOfId(materialA))->modelMaterial;
+        originalMaterial = engine.layer(engine.indexOfId(materialB))->modelMaterial;
+    }
+    select(engine.indexOfId(materialB)); pump();
+    LayerInspector *materialInspector = nullptr;
+    for (auto *candidate : window.findChildren<LayerInspector *>())
+        if (candidate->layerId() == materialB) materialInspector = candidate;
+    if (materialInspector) { materialInspector->rebuild(); pump(); }
+    auto *materialMenu = materialInspector ? materialInspector->findChild<QComboBox *>("modelMaterial") : nullptr;
+    if (!materialMenu || materialMenu->findData(QString::number(materialId)) < 0)
+        std::printf("material UI diagnostics: target=%llu inspector=%llu menu=%d choices=%d material=%llu resources=%zu scene=%d\n",
+            (unsigned long long)materialB, (unsigned long long)(materialInspector ? materialInspector->layerId() : 0),
+            int(materialMenu != nullptr), materialMenu ? materialMenu->count() : 0, (unsigned long long)materialId,
+            engine.materials().size(), engine.sceneOfObject(engine.indexOfId(materialB)));
+    check(materialMenu && materialMenu->findData(QString::number(materialId)) >= 0, "material selector lists project resources");
+    if (materialMenu) {
+        const int choice = materialMenu->findData(QString::number(materialId));
+        materialMenu->setCurrentIndex(choice);
+        emit materialMenu->activated(choice); pump();
+        check(engine.setParameter(materialA, "model/material/color/r", .15), "edit shared material from first object");
+        check(std::abs(engine.parameterValue(materialB, "model/material/color/r").toDouble() - .15) < 1e-6, "assigned material is shared through the inspector");
+        undo->undo(); pump();
+        { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == originalMaterial, "material assignment undo"); }
+        undo->redo(); pump();
+        { Engine::Lock lock(&engine.mutex()); check(engine.layer(engine.indexOfId(materialB))->modelMaterial == materialId, "material assignment redo"); }
+    }
+    if (materialInspector) {
+        {
+            Engine::Lock lock(&engine.mutex());
+            QImage normal(2, 2, QImage::Format_RGBA8888);
+            normal.fill(QColor(128, 128, 255));
+            check(engine.materials().at(materialId)->setEmbeddedMap(NormalMap, normal, QStringLiteral("normal-source.png")),
+                  "set a named embedded map");
+        }
+        materialInspector->rebuild();
+        pump();
+        const auto *map = materialInspector->findChild<QPushButton *>("materialMap_normal");
+        check(map && map->text() == "normal-source.png", "the object shows the source image name");
+        auto *strength = materialInspector->findChild<SliderField *>("Normal Strength");
+        check(strength != nullptr, "the object exposes normal strength");
+        if (strength) {
+            emit strength->valueEdited(2.0);
+            check(engine.materials().at(materialId)->normalStrength == 2.f, "object edits the shared project material");
+            undo->undo();
+            check(engine.materials().at(materialId)->normalStrength == 1.f, "object material edit undoes");
+        }
+    }
     window.hide();
+    {
+        QUndoStack materialUndo;
+        MaterialPanel materials(&engine, &materialUndo, [&] { return engine.indexOfId(materialB); }, [] {});
+        materials.resize(380, 900);
+        materials.show();
+        pump();
+        auto *add = materials.findChild<QPushButton *>("addMaterial");
+        auto *items = materials.findChild<QListWidget *>("materialList");
+        const int count = int(engine.materials().size());
+        check(add && items, "material browser exposes creation and list");
+        if (add && items) {
+            add->click(); pump();
+            check(int(engine.materials().size()) == count + 1, "material browser creates project material");
+            const quint64 id = items->currentItem()->data(Qt::UserRole).toULongLong();
+            auto *metal = materials.findChild<SliderField *>("materialMetal");
+            auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
+            auto *color = materials.findChild<ColorPicker *>("materialBaseColor");
+            const QImage before = preview ? preview->grabFramebuffer() : QImage();
+            if (metal) emit metal->valueEdited(.9);
+            if (color) emit color->colorEdited(QColor(Qt::red));
+            pump();
+            const QImage after = preview ? preview->grabFramebuffer() : QImage();
+            check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
+            check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
+            if (const QString file = qEnvironmentVariable("NYXMAP_MATERIAL_CAPTURE"); !file.isEmpty()) materials.grab().save(file);
+            materialUndo.undo(); pump();
+            check(engine.materials().at(id)->color[1] > .7f, "material color edit undoes");
+            auto *assign = materials.findChild<QPushButton *>("assignMaterial");
+            if (assign) assign->click();
+            pump();
+            check(engine.layer(engine.indexOfId(materialB))->modelMaterial == id, "browser assigns material to selected object");
+            auto *remove = materials.findChild<QPushButton *>("removeMaterial");
+            check(remove && !remove->isEnabled(), "used material cannot be removed");
+            materialUndo.undo(); pump();
+            check(engine.layer(engine.indexOfId(materialB))->modelMaterial != id, "material assignment undoes");
+        }
+        materials.hide();
+    }
     return failures;
 }

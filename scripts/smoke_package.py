@@ -54,6 +54,18 @@ def main():
     if libs.returncode != 0:
         print(f'FAIL: the NDI or OMT library of the package does not load (exit code {libs.returncode})')
         return 1
+    vision_env = {**os.environ, "NYXMAP_MEDIAPIPE_DELEGATE": "cpu"}
+    vision_env.pop("NYXMAP_MEDIAPIPE_PYTHON", None)
+    try:
+        result = subprocess.run([exe, '--check-mediapipe'], env=vision_env, timeout=120,
+                                capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        print('FAIL: bundled MediaPipe did not finish within two minutes')
+        return 1
+    print(result.stdout + result.stderr, end='', flush=True)
+    if result.returncode:
+        print(f'FAIL: bundled MediaPipe inference failed (exit code {result.returncode})')
+        return 1
     cmd = [exe, '--render', out, '--frames', '10', '--strict', proj]
     print(' '.join(cmd), flush=True)
     try:

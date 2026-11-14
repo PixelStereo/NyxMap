@@ -45,6 +45,7 @@ quint64 keyOf(const Layer &l)
         mix(quint64(i->isValid()));
         for (const IsfInput &in : i->inputs()) mix(qHash(in.name) ^ (quint64(in.type) << 40));
     };
+    mix(quint64(quintptr(l.material.get())));
     mix(quint64(quintptr(l.toxPlayer.get())));
     if (l.toxPlayer) mix(l.toxPlayer->revision());
     inputs(l.generator.get());
@@ -207,6 +208,20 @@ const std::vector<Parameter *> &Layer::parameters()
                     self->roi = QRectF(QPointF(v[0], v[1]), QPointF(v[2], v[3])) & Layer::fullRoi();
                 })
                 .step(0.001);
+
+        const QStringList roiModes{QStringLiteral("rectangle"), QStringLiteral("triangle"), QStringLiteral("quad")};
+        add("roi/mode", "ROI › Shape", T::Choice).choices(roiModes).byDefault(roiModes.front()).ramp(Parameter::Ramp::Cut)
+            .bind([self, roiModes] { return QVariant(roiModes.value(self->roiMode)); },
+                  [self, roiModes](const QVariant &v) { self->roiMode = std::max(0, int(roiModes.indexOf(v.toString()))); });
+        for (int point = 0; point < 4; ++point)
+            for (int axis = 0; axis < 2; ++axis)
+                num(QStringLiteral("roi/point/%1/%2").arg(point + 1).arg(axis ? "y" : "x"),
+                    QStringLiteral("ROI › Point %1 %2").arg(point + 1).arg(axis ? "Y" : "X"),
+                    0, 1, axis ? (point >= 2 ? 1 : 0) : (point == 1 || point == 2 ? 1 : 0),
+                    [self, point, axis] { return axis ? self->roiPoints[point].y() : self->roiPoints[point].x(); },
+                    [self, point, axis](double v) {
+                        (axis ? self->roiPoints[point].ry() : self->roiPoints[point].rx()) = std::clamp(v, 0.0, 1.0);
+                    }).step(0.001).pointComponent(axis);
 
         // Color: the section's switch, the balance, the colors removed and added (each with its switch)
         flag("color/enable", "Color › Enable", true, &color.enabled);
@@ -760,12 +775,20 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
-        if (model && model->isPrimitive()) { // a primitive's material (a file keeps its own)
+        if (material || (model && model->isPrimitive())) {
+            auto *shared = material.get();
             for (int c = 0; c < 3; ++c)
                 f3(QStringLiteral("model/material/color/") + QChar("rgb"[c]), QStringLiteral("Material › Color ") + QChar("RGB"[c]), 0, 1,
-                   0.8, &mp->color[size_t(c)]).colorComponent(c);
-            f3("model/material/metal", "Material › Metal", 0, 1, 0, &mp->metal).step(0.01);
-            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, &mp->rough).step(0.01);
+                   0.8, shared ? &shared->color[size_t(c)] : &mp->color[size_t(c)]).colorComponent(c);
+            f3("model/material/metal", "Material › Metal", 0, 1, 0, shared ? &shared->metal : &mp->metal).step(0.01);
+            f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, shared ? &shared->rough : &mp->rough).step(0.01);
+        }
+        flag("model/displace/enabled", "Displace › Enabled", false, &modelDisplaceEnabled).ramp(Parameter::Ramp::Cut);
+        flag("model/transform_fx/enabled", "Transform 3D › Enabled", false, &modelTransformFxEnabled).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a) {
+            f3("model/transform_fx/position/" + xyz[a], "Transform 3D › Position " + XYZ[a], -10, 10, 0, &modelTransformFx.position[size_t(a)]).step(0.01);
+            f3("model/transform_fx/rotation/" + xyz[a], "Transform 3D › Rotation " + XYZ[a], -180, 180, 0, &modelTransformFx.rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+            f3("model/transform_fx/scale/" + xyz[a], "Transform 3D › Scale " + XYZ[a], 0.01, 10, 1, &modelTransformFx.axisScale[size_t(a)]).step(0.01);
         }
         f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
@@ -901,7 +924,7 @@ const std::vector<Parameter *> &Layer::parameters()
     // The shaders: the generator's at the layer's top (its speed: the pace of its TIME), each effect under fx/<fx>/
     auto shader = [&](const IsfInstance &inst, const QString &prefix, const QString &title, bool effect) {
         for (Parameter p : inst.parameters(title)) {
-            if (!effect && (p.path() == "enable" || p.path() == "mask/invert" || p.path() == "mask_only" || p.path().startsWith("channel/")))
+            if (!effect && (p.path() == "enable" || p.path() == "mask/invert" || p.path() == "mask_only" || p.path() == "mix" || p.path().startsWith("channel/")))
                 continue; // an effect's
             if (!effect && p.path() == "speed" && hasTransport()) continue;              // the media's speed instead
             paramStore.push_back(std::make_unique<Parameter>(p.prefixed(prefix)));

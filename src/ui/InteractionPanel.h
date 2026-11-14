@@ -8,6 +8,7 @@
 #include "Interactions.h"
 
 #include <QHash>
+#include <QSet>
 #include <QPointer>
 #include <QWidget>
 #include <functional>
@@ -43,7 +44,6 @@ public:
     // An envelope on a value, in one go: what `source` hears (a hit, a key, a gate) shapes it from where it is now
     quint64 addEnvelope(quint64 layer, const QString &path, Interaction source);
     static Interaction heard(double low, double high); // the hits of a region of the program's sound
-    void connectSource(quint64 from, quint64 layer, const QString &path); // the same source, to drive another value
     // The end of any value's right-click menu: its OSC address (copied when chosen), and Learn Interaction ▸ a kind of
     // source. `paths`: the values the widget shows (x and y: one sub-menu each)
     static void fillValueMenu(QMenu *menu, Engine *e, quint64 layer, const QStringList &paths);
@@ -60,12 +60,8 @@ private:
     void attachPreset(std::initializer_list<QWidget *> ws, const QStringList &paths);
     std::optional<InteractionSource> shownKind() const; // the sub-tab's (none: All)
     void rebuildList();
-    void refreshPatch();
-    void patchMenu(quint64 id, const QPoint &at);
-    void patchConnectElsewhere(quint64 from, const QPoint &at);
     void rebuildSettings();
-    // A menu of the show's values by owner: the composition's, then each layer's (not the groups'), each sub-menu filled
-    void fillByOwner(QMenu *menu, const std::function<void(QMenu *, quint64)> &fill);
+    void fillOutputTargets(QMenu *menu, const QString &currentPath, const std::function<void(const QString &)> &select);
     // An Action's settings: its conditions, what it does if true, if false (rebuildSettings)
     using EditFn = std::function<void(const QString &, const std::function<void(Interaction &)> &, const QString &)>;
     void buildActionSettings(class QFormLayout *form, const Interaction &it, const EditFn &edit);
@@ -81,6 +77,12 @@ private:
     // form one step: a drag)
     void commit(const Interaction &it, const QString &text, const QString &mergeKey = QString());
     void commitList(const std::vector<Interaction> &list, const QString &text);
+    // The list and its groups together, as one undo step
+    void commitGroups(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups, const QString &text);
+    void applyTree();                      // the tree after a drop: the groups' contents read back
+    void groupSelected();                  // a group of the selection
+    void fillGroupMenu(QMenu *menu, quint64 group);
+    QTreeWidgetItem *groupItem(quint64 group) const;
     void add(InteractionSource kind);
     void removeSelected();
     QString targetLabel(quint64 layer, const QString &param) const;
@@ -113,13 +115,14 @@ private:
     class QScrollArea *m_scroll = nullptr;
     QTimer *m_timer;
     QTimer *m_valuesTimer = nullptr;
-    class InteractionPatch *m_patch = nullptr; // the nodes, in place of the list
-    class QStackedWidget *m_views = nullptr;
+    quint64 m_targetTab = 0;
+    int m_sharedSelectedFilter = 0;
     quint64 m_shown = 0;        // the interaction whose settings are shown
     int m_xyAxis = 0; // source/chain currently edited in an XY interaction
     bool m_committing = false;  // its own edit going to the engine: the settings are not made again
     bool m_filling = false;
     // Reused between meter polls; a busy engine leaves the display intact.
     std::vector<InteractionTelemetry> m_levelSample;
+    QSet<quint64> m_collapsed; // the groups folded (kept across the list being made again)
     QHash<int, QString> m_pressed; // keys held: the name they were pressed with (their modifiers may change since)
 };

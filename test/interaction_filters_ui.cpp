@@ -3,12 +3,19 @@
 #include "Engine.h"
 #include "AnimEditor.h"
 #include "InteractionPanel.h"
-#include "InteractionPatch.h"
+#include "TimelinePanel.h"
+#include "TimelineActivity.h"
+#include <QPushButton>
+#include <QStackedWidget>
+#include <QTabWidget>
+#include <QTabBar>
 #include "PresetEditor.h"
 #include "Widgets.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
+#include <QTimer>
 #include <QMenu>
 #include <QPointer>
 #include <QMouseEvent>
@@ -66,6 +73,27 @@ int main(int argc, char **argv)
     }
     check(filters()[0].op == MathOp::OneMinus, "Math › 1 − x");
     check(!panel.findChild<QWidget *>("filter0a"), "1 − x has no value to set");
+    auto *rename = panel.findChild<QLabel *>("filterName0");
+    check(rename != nullptr, "a filter has a name label");
+    if (rename) {
+        QTimer::singleShot(0, &panel, [] {
+            if (auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                dialog->setTextValue("Invert signal");
+                dialog->accept();
+            }
+        });
+        const QPoint at = rename->rect().center();
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, at, rename->mapToGlobal(at),
+                                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(rename, &doubleClick);
+        settle();
+        const auto *label = panel.findChild<QLabel *>("filterName0");
+        check(filters()[0].enabled && filters()[0].name == "Invert signal" && label && label->text().contains("Invert signal (Math)"),
+              "renaming shows both purpose and type");
+        undo.undo();
+        settle();
+        check(filters()[0].name.isEmpty() && filters()[0].op == MathOp::OneMinus, "renaming undoes without changing settings");
+    }
     auto select = [&](int k) { // a click on a filter (its frame, not a field)
         if (auto *block = panel.findChild<QWidget *>(QStringLiteral("filterBlock%1").arg(k))) {
             const QPointF at(block->width() - 4, 4);
@@ -95,30 +123,48 @@ int main(int argc, char **argv)
     check(filters().size() == 2, "the removal undoes");
     check(panel.findChild<QWidget *>("filtersFrame") != nullptr, "the filters in their frame");
 
-    // A stationary patch must not repaint at every telemetry poll.
-    struct CountedPatch : InteractionPatch {
-        int paints = 0;
-        void paintEvent(QPaintEvent *event) override {
-            ++paints;
-            InteractionPatch::paintEvent(event);
-        }
-    } patch;
-    patch.setAttribute(Qt::WA_DontShowOnScreen);
-    patch.resize(500, 160);
-    patch.show();
-    patch.setLevels({{1, 0.25}});
-    settle();
-    patch.repaint();
-    const int initialPaints = patch.paints;
-    for (int i = 0; i < 20; ++i) {
-        patch.setLevels({{1, 0.25}});
+    FixturePatch patch = engine.fixturePatch();
+    DmxOutput dmx;
+    dmx.name = "Stage lights";
+    patch.outputs.push_back(dmx);
+    engine.setFixturePatch(patch);
+    engine.addMidiOutput("Stage MIDI");
+    auto *targetPicker = panel.findChild<QToolButton *>("interactionTargetParameter");
+    check(targetPicker && targetPicker->menu(), "the target picker offers a menu");
+    if (targetPicker && targetPicker->menu()) {
+        auto *menu = targetPicker->menu();
+        emit menu->aboutToShow();
+        const auto entries = menu->actions();
+        check(entries.size() >= 3 && entries[0]->text() == "OSC" && entries[1]->text() == "DMX" &&
+              entries[2]->text() == "MIDI", "network and MIDI outputs are at the root of the target menu");
+        const auto hasOutput = [&entries](int index, const QString &name) {
+            if (index >= entries.size() || !entries[index]->menu()) return false;
+            for (auto *action : entries[index]->menu()->actions())
+                if (action->text() == name && action->isEnabled()) return true;
+            return false;
+        };
+        check(hasOutput(1, "Stage lights") && hasOutput(2, "Stage MIDI"),
+              "DMX and MIDI menus show the outputs configured in Composition");
+    }
+
+    auto *tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
+    check(tabs && tabs->count() == 1 && tabs->tabText(0) == "Target 1", "Target 1 exists by default");
+    check(panel.findChild<QWidget *>("sharedFiltersFrame"), "shared filters have their own frame");
+    if (tabs) {
+        QTimer::singleShot(0, &panel, [&] {
+            if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+                for (auto *action : menu->actions())
+                    if (action->text() == "Add Target") { action->trigger(); break; }
+                menu->close();
+            }
+        });
+        tabs->tabBar()->customContextMenuRequested(tabs->tabBar()->tabRect(0).center());
+        settle();
+        tabs = panel.findChild<QTabWidget *>("interactionTargetTabs");
+        check(tabs && tabs->count() == 2 && tabs->currentIndex() == 1, "right-click adds and opens Target 2");
+        undo.undo();
         settle();
     }
-    check(patch.paints == initialPaints, "unchanged telemetry does not repaint patch");
-    patch.setLevels({{1, 0.75}});
-    settle();
-    check(patch.paints > initialPaints, "changed telemetry repaints patch");
-    patch.hide();
     // Switching protocols preserves the complete mapping and remains undoable.
     auto changeSource = [&](InteractionSource kind) {
         auto *button = panel.findChild<QToolButton *>("interactionSource");
@@ -232,5 +278,27 @@ int main(int argc, char **argv)
 
     if (argc > 1) panel.grab().save(QString::fromLocal8Bit(argv[1]));
     std::printf("interaction_filters_ui: %d failures\n", failures);
+
+    {
+        Animation a; a.name = "Fold test";
+        const int index = engine.addAnimation(a);
+        TimelineWindow timelines(&engine, &undo);
+        timelines.selectTimeline(engine.animation(index).id);
+        auto *fold = timelines.editor()->findChild<QPushButton *>("timelineFold");
+        auto *pages = timelines.findChild<QStackedWidget *>("timelineWorkspace");
+        check(fold && pages, "timeline fold control exists");
+        if (fold && pages) {
+            fold->click();
+            check(pages->currentWidget() != timelines.editor(), "individual timeline folds");
+            auto *expand = pages->currentWidget()->findChild<QPushButton *>("timelineExpand");
+            check(expand != nullptr, "folded timeline can expand");
+            if (expand) expand->click();
+            check(pages->currentWidget() == timelines.editor(), "timeline expands without replacement");
+            auto *all = timelines.listPanel()->findChild<QPushButton *>("timelinesOverview");
+            all->click();
+            auto *activity = qobject_cast<TimelineActivity *>(pages->currentWidget());
+            check(activity && !activity->rows().empty(), "fold all retains timeline overview");
+        }
+    }
     return failures ? 1 : 0;
 }

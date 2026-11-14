@@ -3,9 +3,15 @@
 # Requirements: Xvfb, openbox, xdotool, ImageMagick; media (make_media.sh) and test projects (make_tests.py).
 # The pixel measures are printed (their coordinates depend on the layout); what fails it (exit 1, the CI job):
 # the application gone before the scenario's end (a crash), no autosave, no recovery after the forced kill.
+set -o pipefail
 FAILED=0
 fail() { echo "FAIL: $*"; FAILED=1; }
 cd "$(dirname "$0")"
+# CMake's manifest is authoritative: the executable now includes version/revision.
+source ./ui_test_helpers.sh
+APP_BIN=$(ui_executable ../build) || exit 1
+[ -x "$APP_BIN" ] || { echo "Application executable missing: $APP_BIN" >&2; exit 1; }
+
 OUT=${1:-out/ui}; mkdir -p "$OUT"
 export DISPLAY=:97
 Xvfb :97 -screen 0 1920x1080x24 >/dev/null 2>&1 & XV=$!
@@ -18,32 +24,25 @@ cp media/h264.mp4 "$OUT/act2_found.mov"
 shot() { xwd -root -silent | convert xwd:- "$OUT/$1.png"; }
 # Coordinates relative to the main window
 X0=0; Y0=0
-origin() { # the largest window whose title ends with "NyxMap" (main window)
-    local best=0 w
-    for w in $(xdotool search --name "NyxMap$"); do
-        local info ax ay ww hh
-        info=$(xwininfo -id "$w")
-        ax=$(echo "$info" | awk '/Absolute upper-left X/ {print $4}')
-        ay=$(echo "$info" | awk '/Absolute upper-left Y/ {print $4}')
-        ww=$(echo "$info" | awk '/Width:/ {print $2}')
-        hh=$(echo "$info" | awk '/Height:/ {print $2}')
-        if [ $((ww * hh)) -gt $best ]; then best=$((ww * hh)); X0=$ax; Y0=$ay; fi
-    done
+origin() { ui_origin "NyxMap"; }
+wait_for_main_window() {
+    if ! ui_wait_for_window "$APP" 30 "NyxMap"; then
+        fail "main application window not found (log: $OUT/log1.txt)"
+        xwininfo -root -tree > "$OUT/windows.txt" 2>&1
+        cat "$OUT/log1.txt"
+        kill "$APP" "$XV" 2>/dev/null
+        return 1
+    fi
     echo "main window at $X0,$Y0"
 }
 at() { xdotool mousemove $((X0 + $1)) $((Y0 + $2)); }
 roi() { echo "$3x$4+$((X0 + $1))+$((Y0 + $2))"; }
-lum() { convert "$OUT/$1.png" -roi "$2" +repage -colorspace Gray -format '%[fx:mean*255]' info:; }
-same() { # number of differing pixels between two screenshots, within an area
-    convert "$OUT/$1.png" -roi "$3" +repage /tmp/_a.png; convert "$OUT/$2.png" -roi "$3" +repage /tmp/_b.png
-    compare -metric AE /tmp/_a.png /tmp/_b.png null: 2>&1
-}
 PREVIEW=""
 
-../build/NyxMap --endurance-csv "$OUT/endurance.csv" projects/demo.nyxmap >"$OUT/log1.txt" 2>&1 & APP=$!
-sleep 5
+"$APP_BIN" --endurance-csv "$OUT/endurance.csv" projects/demo.nyxmap >"$OUT/log1.txt" 2>&1 & APP=$!
+wait_for_main_window || exit 1
 xdotool key Return; sleep 1                      # "file not found" warning
-origin; PREVIEW=$(roi 400 180 700 380)
+origin || { fail "main window disappeared after project open"; exit 1; }; PREVIEW=$(roi 400 180 700 380)
 shot 01_opened; sleep 0.7; shot 01b
 echo "animated preview (pixels changed in 0.7 s): $(same 01_opened 01b "$PREVIEW")"
 
@@ -94,7 +93,7 @@ for column in audio_callback_count_lifetime audio_callback_p99_ms_lifetime audio
     grep '^utc,' "$OUT/endurance.csv" | tr ',' '\n' | grep -qx "$column" || fail "endurance CSV missing $column"
 done
 test "$(wc -l < "$OUT/endurance.csv")" -ge 6 || fail "endurance CSV has no periodic samples"
-../build/NyxMap >"$OUT/log2.txt" 2>&1 & APP=$!
+"$APP_BIN" >"$OUT/log2.txt" 2>&1 & APP=$!
 sleep 4; shot 12_recovery
 xdotool key Return; sleep 4; shot 13_restored
 kill -0 $APP 2>/dev/null || fail "the application exited after the recovery (log: $OUT/log2.txt)"

@@ -7,10 +7,10 @@ class ScopeTest(unittest.TestCase):
     def test_ui_keeps_platform_build_and_memory_checks(self):
         scope = classify(["src/ui/TimelineActivity.cpp"])
         self.assertTrue(scope["build"] and scope["ui"] and scope["memory"])
-        self.assertFalse(scope["tsan"] or scope["fuzz"] or scope["valgrind"])
+        self.assertFalse(scope["tsan"] or scope["fuzz"] or scope["valgrind"] or scope["package"])
     def test_packaging_rebuilds_the_packages(self):
         for path in ("packaging/linux/AppRun", "packaging/ndi-sdk.json", "licenses/LGPL-3.0.txt", "THIRD-PARTY-NOTICES.md"):
-            self.assertTrue(classify([path])["build"], path)
+            self.assertTrue(classify([path])["package"], path)
     def test_threading_keeps_tsan(self):
         self.assertTrue(classify(["src/engine/Sequencer.cpp"])["tsan"])
     def test_codec_keeps_fuzzing(self):
@@ -22,7 +22,13 @@ class ScopeTest(unittest.TestCase):
     def test_nightly_keeps_safety_without_repackaging_three_platforms(self):
         scope = classify([], "schedule")
         self.assertFalse(scope["build"])
-        self.assertTrue(all(v for k,v in scope.items() if k != "build"))
+        self.assertTrue(all(v for k,v in scope.items() if k not in ("build", "package")))
+    def test_regular_pr_keeps_builds_and_main_keeps_distribution(self):
+        files = ["src/engine/Render.cpp", "test/remote_server.cpp"]
+        self.assertTrue(classify(files)["build"])
+        self.assertFalse(classify(files)["package"])
+        self.assertTrue(classify(files, event="push")["package"])
+
     def test_release_runs_everything(self):
         self.assertTrue(all(classify([], ref_type="tag").values()))
     def test_source_version_rebuilds_all_platforms(self):

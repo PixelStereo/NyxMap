@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "AdaptiveSplitter.h"
+#include "NyxMapVersion.h"
 #include "PresetEditor.h"
 #include "Commands.h"
 #include "Model3D.h"
@@ -14,16 +16,17 @@
 #include <QCheckBox>
 #include <memory>
 #include "Engine.h"
+#include "ProcessMemory.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
 #include "ControlsPanel.h"
 #include "RemoteServer.h"
-#include "ShowControlPanel.h"
 #include "InteractionPanel.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
 #include "CompositionPanel.h" // CompositionPanel
 #include "MediaBin.h"
+#include "MaterialPanel.h"
 #include "LogPanel.h"
 #include "SnapshotPanel.h"
 #include "SequencePanel.h"
@@ -40,6 +43,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -51,10 +55,17 @@
 #include <QFileInfo>
 #include <QFileOpenEvent>
 #include <QGuiApplication>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QAbstractSpinBox>
+#include <QAbstractItemView>
+#include <QHeaderView>
+#include <QHelpEvent>
+#include <QMouseEvent>
+#include <QStatusTipEvent>
+#include <QTextDocument>
 #include <QLabel>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -62,6 +73,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPainter>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
@@ -84,6 +96,42 @@
 #include <cmath>
 
 static const QStringList kIsfExt = {"fs", "frag"};
+
+namespace {
+class CueWorkspaceTabs final : public QTabBar
+{
+public:
+    CueWorkspaceTabs()
+    {
+        // Keep the normal tab fills and hide their border and underline.
+        setStyleSheet(theme::tabStyle() +
+                      QStringLiteral("QTabBar::tab { padding-left: 16px; }") +
+                      QStringLiteral("QTabBar::tab, QTabBar::tab:selected, QTabBar::tab:hover:!selected {"
+                                     " border-color: transparent; border-bottom-color: transparent; }"));
+        addCueTab(QStringLiteral("Snapshots"), theme::CueKind::Snapshot);
+        addCueTab(QStringLiteral("Presets"), theme::CueKind::Preset);
+        addCueTab(QStringLiteral("Timelines"), theme::CueKind::Timeline);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QTabBar::paintEvent(event);
+        QPainter painter(this);
+        for (int i = 0; i < count(); ++i) {
+            const QRect tab = tabRect(i);
+            painter.fillRect(QRect(tab.left() + 6, tab.top() + 6, 3, tab.height() - 12),
+                             theme::cueColor(theme::CueKind(tabData(i).toInt())));
+        }
+    }
+
+private:
+    void addCueTab(const QString &label, theme::CueKind kind)
+    {
+        setTabData(addTab(label), int(kind));
+    }
+};
+}
 
 // STOP ALL: Ctrl+Esc, Cmd+Esc on macOS (Qt's Control is Cmd there), as the platform writes it ("Ctrl+Esc", "⌘Esc")
 static QString emergencyStopKeyText()
@@ -202,8 +250,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_viewportList, &QListWidget::itemSelectionChanged, this, &MainWindow::updateCoTargets);
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int tab) {
-        if (tab == 1) m_view->setLayer(m_engine->indexOfId(m_selectedViewport));
-        else if (tab == 0 && m_layerTable) m_view->setLayer(m_layerTable->currentRow());
+        if (tab == 1) {
+            m_view->setLayer(m_engine->indexOfId(m_selectedViewport));
+            if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_selectedViewport);
+        } else if (tab == 0 && m_layerTable) {
+            const int row = m_layerTable->currentRow();
+            m_view->setLayer(row);
+            if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_engine->layerId(row));
+        }
     });
     connect(m_viewportInspector, &LayerInspector::layerChanged, this, [this] { refreshLayerList(); markDirty(); });
     connect(m_viewportInspector, &LayerInspector::mappingChanged, m_view, qOverload<>(&QWidget::update));
@@ -219,6 +273,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(dmxOutputs, &DmxOutputsPanel::projectEdited, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
     m_tabs->addTab(scrolled(m_settings), QStringLiteral("Settings"));
+    m_tabs->addTab(scrolled(new MaterialPanel(m_engine, m_undo, [this] { return currentLayer(); }, [this] { markDirty(); })), QStringLiteral("Materials"));
     connect(m_settings, &SettingsPanel::playModeChanged, this,
             [this] { m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode()); });
     VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding());
@@ -238,8 +293,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // The sequence's state sent by OSC to a remote interface (Companion, TouchOSC…)
     m_feedback = new SequenceFeedback(m_engine, this);
     auto applyFeedback = [this] {
-        m_feedback->setTargets(SettingsPanel::feedbackTargets());
-        m_feedback->setEnabled(SettingsPanel::feedbackEnabled());
+        const auto targets = SettingsPanel::feedbackEnabledTargets();
+        m_feedback->setTargets(targets);
+        m_feedback->setEnabled(!targets.isEmpty());
     };
     applyFeedback();
     connect(m_settings, &SettingsPanel::feedbackChanged, this, applyFeedback);
@@ -283,18 +339,20 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         const int index = m_engine->indexOfId(id);
         if (index >= 0) selectLayer(index);
     });
+    m_seqWindow = new SequenceWindow(m_engine, this, m_undo);
+    m_seqWindow->setWindowFlags(Qt::Widget);
+    auto *sequencePage = workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll"));
+    const int sequenceTab = m_leftTabs->addTab(sequencePage, QStringLiteral("Sequences"));
     m_logs = new LogPanel;
     m_leftTabs->addTab(m_logs, QStringLiteral("Logs"));
-    m_showControl = new ShowControlPanel(m_engine);
-    m_leftTabs->addTab(m_showControl, QStringLiteral("Show Control"));
-    connect(m_showControl, &ShowControlPanel::layersRequested, this, [this] { m_leftTabs->setCurrentIndex(1); });
     // The Logs panel reads the events' ring (EventLog) a few times a second: no signal per message
     m_leftTabs->setTabToolTip(0, QStringLiteral("Media Bin (Shift+1)"));
     m_leftTabs->setTabToolTip(1, QStringLiteral("Layers (Shift+2)"));
-    m_leftTabs->setTabToolTip(2, QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
-    m_leftTabs->setTabToolTip(3, QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_interactions), QStringLiteral("Interactions: keys, MIDI, OSC and values of the show driving others (Shift+3)"));
+    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_logs), QStringLiteral("Event log: OSC, MIDI and keyboard (Shift+4)"));
     m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_controls), QStringLiteral("Controls: your own sliders, switches, selectors, buttons and colors, for interactions, timelines, OSC and the remote (Shift+5)"));
-    m_leftTabs->setTabToolTip(m_leftTabs->indexOf(m_showControl), QStringLiteral("Show Control: GO, the cues and their times, snapshots, presets and timelines. Also a web page: see Settings › OSC › Remote (Shift+6)"));
+    m_leftTabs->setTabToolTip(sequenceTab,
+                             QStringLiteral("Sequences (Shift+6)"));
     connect(m_interactions, &InteractionPanel::edited, this, &MainWindow::markDirty);
     connect(m_interactions, &InteractionPanel::showRequested, this, [this] { m_leftTabs->setCurrentWidget(m_interactions); });
     m_leftTabs->tabBar()->setChangeCurrentOnDrag(true);
@@ -302,7 +360,12 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs->setCurrentIndex(1);
 
     auto *top = new QSplitter(Qt::Horizontal);
-    top->addWidget(workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll")));
+    auto *left = workspacePane(m_leftTabs, QStringLiteral("mainLibraryScroll"));
+    connect(m_leftTabs, &QTabWidget::currentChanged, left, [this, left, sequencePage](int index) {
+        const bool sequences = m_leftTabs->widget(index) == sequencePage;
+        m_leftTabs->setSizePolicy(sequences ? QSizePolicy::Ignored : QSizePolicy::Preferred, QSizePolicy::Preferred);
+        left->setHorizontalScrollBarPolicy(sequences ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    });
     auto *center = new QWidget;
     auto *cv = new QVBoxLayout(center);
     cv->setContentsMargins(0, 0, 0, 0);
@@ -314,38 +377,32 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_engine->setViewProvider([this] { return viewsState(); });
     connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
-    connect(m_engine, &Engine::frameRendered, previews, &PreviewWorkspace::refreshFrames);
     previews->setUndoStack(m_undo);
     connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));
-    top->setStretchFactor(0, 0);
-    top->setStretchFactor(1, 1);
-    top->setStretchFactor(2, 0);
-    top->setSizes({560, 610, 430});
+    top->setStretchFactor(0, 1);
+    top->setStretchFactor(1, 0);
+    top->setSizes({610, 430});
 
-    // --- Bottom: sequences beside a shared snapshot/preset/timeline workspace
+    // --- Show library below the preview and inspector.
     m_snapshots = new SnapshotPanel(m_engine, m_undo);
-    m_seqWindow = new SequenceWindow(m_engine, this, m_undo);
-    m_seqWindow->setWindowFlags(Qt::Widget);
     m_timelineWindow = new TimelineWindow(m_engine, m_undo, this);
     m_timelineWindow->setWindowFlags(Qt::Widget);
     auto *workspace = new QWidget;
     auto *workspaceLayout = new QVBoxLayout(workspace);
     workspaceLayout->setContentsMargins(0, 0, 0, 0);
-    m_workspaceTabs = new QTabBar;
+    m_workspaceTabs = new CueWorkspaceTabs;
     m_workspaceTabs->setObjectName(QStringLiteral("showWorkspaceTabs"));
-    m_workspaceTabs->addTab(QStringLiteral("Snapshots"));
-    m_workspaceTabs->addTab(QStringLiteral("Presets"));
-    m_workspaceTabs->addTab(QStringLiteral("Timelines"));
     auto *library = new QWidget;
     library->setObjectName(QStringLiteral("showLibraryColumn"));
-    library->setMinimumWidth(340);
+    library->setMinimumWidth(302);
+
     auto *libraryLayout = new QVBoxLayout(library);
     libraryLayout->setContentsMargins(0, 0, 0, 0);
     m_workspaceTabs->setExpanding(true);
     m_workspaceTabs->setUsesScrollButtons(false);
-    m_workspaceTabs->setElideMode(Qt::ElideNone);
+    m_workspaceTabs->setElideMode(Qt::ElideRight);
     libraryLayout->addWidget(m_workspaceTabs);
     auto *libraryPages = new QStackedWidget;
     libraryPages->setObjectName(QStringLiteral("showLibraryPages"));
@@ -357,14 +414,19 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     workspacePages->addWidget(m_snapshots);
     workspacePages->addWidget(m_timelineWindow->workspace());
     m_timelineWindow->hide(); // retains the library/editor controller connections
-    auto *librarySplit = new QSplitter(Qt::Horizontal);
+    auto *librarySplit = new AdaptiveSplitter(730);
     librarySplit->setObjectName(QStringLiteral("showLibrarySplit"));
     librarySplit->setChildrenCollapsible(false);
-    librarySplit->addWidget(workspacePane(library, QStringLiteral("showLibraryScroll")));
-    librarySplit->addWidget(workspacePane(workspacePages, QStringLiteral("showEditorScroll")));
+    auto *libraryScroll = workspacePane(library, QStringLiteral("showLibraryScroll"));
+    auto *editorScroll = workspacePane(workspacePages, QStringLiteral("showEditorScroll"));
+    for (auto *pane : {sequencePage, libraryScroll, editorScroll})
+        pane->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    libraryScroll->setMinimumWidth(316);
+    librarySplit->addWidget(libraryScroll);
+    librarySplit->addWidget(editorScroll);
     librarySplit->setStretchFactor(0, 0);
     librarySplit->setStretchFactor(1, 1);
-    librarySplit->setSizes({355, 825});
+    librarySplit->setSizes({316, 825});
     workspaceLayout->addWidget(librarySplit);
     connect(m_workspaceTabs, &QTabBar::currentChanged, this, [this, workspacePages, libraryPages](int tab) {
         workspacePages->setCurrentIndex(tab == 2 ? 1 : 0);
@@ -374,42 +436,66 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_snapshots, &SnapshotPanel::modeChanged, this, [this](int mode) {
         m_workspaceTabs->setCurrentIndex(mode);
     });
-    auto *bottom = new QSplitter(Qt::Horizontal);
-    bottom->addWidget(workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll")));
-    bottom->addWidget(workspace);
-    bottom->setStretchFactor(0, 1);
-    bottom->setStretchFactor(1, 2);
-    bottom->setSizes({620, 1000});
     auto *split = new QSplitter(Qt::Vertical);
     split->addWidget(top);
-    split->addWidget(bottom);
+    split->addWidget(workspace);
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
     split->setSizes({620, 340});
-    split->setObjectName("mainSplit3"); // (layout changed: earlier saved states are not restored)
-    top->setObjectName("topSplit2");
+    split->setObjectName("mainSplit4");
+    top->setObjectName("topSplit3");
+    auto *columns = new AdaptiveSplitter(620);
+    columns->setObjectName("mainColumns");
+    columns->setChildrenCollapsible(false);
+    columns->addWidget(left);
+    columns->addWidget(split);
+    columns->setStretchFactor(0, 0);
+    columns->setStretchFactor(1, 1);
+    columns->setSizes({560, 1040});
     connect(m_snapshots, &SnapshotPanel::edited, this, &MainWindow::markDirty);
     connect(m_snapshots, &SnapshotPanel::recalled, this, &MainWindow::scheduleRecallRefresh);
     qApp->installEventFilter(this); // Shift+1 / Shift+2: left tabs
-    setCentralWidget(split);
+    setCentralWidget(columns);
 
-    m_status = new QLabel;
-    m_status->setObjectName(QStringLiteral("mainStatus"));
-    // Output names and live status can be arbitrarily long; they must not grow the window.
-    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    statusBar()->addPermanentWidget(m_status);
+    m_contextHelp = new QLabel(statusBar());
+    m_contextHelp->setObjectName(QStringLiteral("contextHelpStatus"));
+    m_contextHelp->setTextFormat(Qt::PlainText);
+    m_contextHelp->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    statusBar()->addWidget(m_contextHelp, 1);
+
+    auto *usageLabel = new QLabel(statusBar());
+    usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
+    usageLabel->setToolTip(tr("System CPU and RAM usage, GPU activity and dedicated video memory when the driver reports them. "
+                              "A dash means the measurement is unavailable. With several GPUs, system readings show the highest usage."));
+    statusBar()->addPermanentWidget(usageLabel);
+    auto *usageTimer = new QTimer(usageLabel);
+    auto refreshUsage = [this, usageLabel, sampler = processMemory::SystemUsageSampler{}]() mutable {
+        auto usage = sampler.sample();
+        if (usage.vram < 0) {
+            const auto resources = m_engine->resourcesJson();
+            const double total = resources.value(QStringLiteral("graphics_memory_total_mb")).toDouble();
+            const double free = resources.value(QStringLiteral("graphics_memory_free_mb")).toDouble(-1);
+            if (total > 0 && free >= 0) usage.vram = 100.0 * (1.0 - std::min(free, total) / total);
+        }
+        const auto percent = [](double value) {
+            return value < 0 ? QStringLiteral("—") : QString::number(qRound(std::min(100.0, value))) + QLatin1Char('%');
+        };
+        usageLabel->setText(QStringLiteral("CPU %1  ·  GPU %2  ·  RAM %3  ·  VRAM %4")
+                                .arg(percent(usage.cpu), percent(usage.gpu), percent(usage.ram), percent(usage.vram)));
+    };
+    refreshUsage();
+    connect(usageTimer, &QTimer::timeout, usageLabel, refreshUsage);
+    usageTimer->start(1000);
 
     buildMenus();
     m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode());
 
     // --- Layers
-    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
-        m_view->setLayer(r);
-        m_previews->setCurrentLayer(m_engine->layerId(r));
-        m_inspector->setLayer(r);
-        updateCoTargets();
-        if (r >= 0 && r != m_lastSelected) m_tabs->setCurrentIndex(0);
-        m_lastSelected = r;
+    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int row) {
+        syncLayerSelection(row, true);
+    });
+    connect(m_layerTable, &LayerTable::rowClicked, this, [this](int row) {
+        if (m_tabs->currentIndex() != 0) syncLayerSelection(row, true);
     });
     connect(m_layerTable, &LayerTable::selectionChanged, this, &MainWindow::updateCoTargets);
     connect(m_layerTable, &LayerTable::visibilityToggled, this, [this](int row, bool on) {
@@ -462,8 +548,8 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         // The selection does not stay on a hidden row
         bool inside = false;
         for (int g = m_engine->groupIndexOf(currentLayer()); g >= 0 && !inside; g = m_engine->groupIndexOf(g)) inside = g == row;
-        if (inside) selectLayer(row);
-        else refreshLayerList();
+        refreshLayerList();
+        if (inside && m_layerTable->currentRow() < 0) selectLayer(row);
     });
     connect(m_layerTable, &LayerTable::renamed, this, [this](int row, const QString &name) {
         if (refuseLocked(row)) return;
@@ -580,10 +666,25 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::layersChanged, this, &MainWindow::refreshLayerList);
     connect(m_engine, &Engine::layersChanged, this, &MainWindow::syncOutputs); // windows follow the viewports
     connect(m_engine, &Engine::compositionSizeChanged, this, [this] { m_view->update(); });
-    // The preview follows rendering (at most one update per rendered frame)
-    connect(m_engine, &Engine::frameRendered, this, [this] {
+    // Coalesce fast engine frames into editor updates. Keep the engine's notification
+    // pending until the update so uncapped rendering cannot fill the Qt event queue.
+    m_previewTimer.setSingleShot(true);
+    m_previewTimer.setTimerType(Qt::PreciseTimer);
+    const auto refreshPreview = [this] {
+        m_previewClock.start();
+        if (!isMinimized()) {
+            if (m_view->isVisible()) m_view->update();
+            if (m_previews->isVisible()) m_previews->refreshFrames();
+        }
         m_engine->acknowledgeFrame();
-        m_view->update();
+    };
+    connect(&m_previewTimer, &QTimer::timeout, this, refreshPreview);
+    connect(m_engine, &Engine::frameRendered, this, [this, refreshPreview] {
+        if (m_previewTimer.isActive()) return;
+        const qint64 periodNs = !isVisible() || isMinimized() ? 100'000'000 : 16'666'667;
+        const qint64 delayNs = m_previewClock.isValid() ? periodNs - m_previewClock.nsecsElapsed() : 0;
+        if (delayNs > 0) m_previewTimer.start(int((delayNs + 999'999) / 1'000'000));
+        else refreshPreview();
     });
     // Rendering may have started before this connection: unblock the notification.
     m_engine->acknowledgeFrame();
@@ -616,20 +717,17 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_timelineWindow->addActions({m_undoAction, m_redoAction}); // undo / redo from the Timelines window too
     connect(m_timelineWindow, &TimelineWindow::edited, this, &MainWindow::markDirty);
     connect(m_timelineWindow, &TimelineWindow::showRequested, this, &MainWindow::openTimelines);
-    connect(m_layerTable, &LayerTable::currentRowChanged, this, [this](int r) {
-        m_timelineWindow->setCurrentLayer(r >= 0 ? m_engine->layerId(r) : 0);
-    });
     // A step's snapshot, when its pre-wait is over (GO, Space, OSC, or a step that follows): undoable; the panel
     // then shows the step unchanged
-    m_engine->sequencer().setRecaller([this](int snapshot) {
-        m_snapshots->recall(snapshot);
+    m_engine->sequencer().setRecaller([this](int snapshot, double fadeOverride) {
+        m_snapshots->recall(snapshot, fadeOverride);
         m_cueUndoIndex = m_undo->index();
         m_seqWindow->setModified(false);
         m_feedback->setModified(false);
     });
-    m_engine->sequencer().setPresetRecaller([this](int preset) {
+    m_engine->sequencer().setPresetRecaller([this](int preset, double fadeOverride) {
         if (preset >= 0 && preset < m_engine->presetCount())
-            m_undo->push(new cmd::RecallPreset(m_engine, m_engine->preset(preset).id));
+            m_undo->push(new cmd::RecallPreset(m_engine, m_engine->preset(preset).id, fadeOverride));
     });
     // A step the cue clock fired (its pre-wait, a follow): already recalled on time, recorded here for undo
     m_engine->sequencer().setRecallRecorder([this](int snapshot, const Sequencer::RecallBefore &before) {
@@ -675,19 +773,26 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         m_binTimer.start();
         m_view->update();
     });
-    m_statusTimer.setInterval(100);
+    m_statusTimer.setInterval(200);
     connect(&m_statusTimer, &QTimer::timeout, this, &MainWindow::statusTick);
     m_statusTimer.start();
+    m_layerStatusTimer.setInterval(100);
+    connect(&m_layerStatusTimer, &QTimer::timeout, this, [this] {
+        if (m_layerTable->isVisible() && !isMinimized())
+            refreshLayerListFromEngine(false); // retry next tick if the renderer owns the lock
+    });
+    m_layerStatusTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
         // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.
         m_renderTimer.setTimerType(Qt::PreciseTimer);
         m_renderTimer.setInterval(16);
-        // The rate chosen, or the screen's
+        // A zero-interval timer renders whenever the event loop is ready.
         auto *pace = new QTimer(this);
         connect(pace, &QTimer::timeout, this, [this] {
             const double r = m_engine->effectiveRender().frameRate;
-            const int ms = int(1000.0 / std::clamp(r > 0 ? r : m_engine->screenRefreshRate(), 1.0, 1000.0));
+            const int ms = r == Engine::RenderSettings::UncappedFrameRate ? 0
+                : int(1000.0 / std::clamp(r > 0 ? r : m_engine->screenRefreshRate(), 1.0, 1000.0));
             if (m_renderTimer.interval() != ms) m_renderTimer.setInterval(ms);
         });
         pace->start(500);
@@ -704,8 +809,9 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     startOsc();
     startRemote();
     restoreGeometry(s.value("ui/geometry").toByteArray());
-    split->restoreState(s.value("ui/mainSplit3").toByteArray());
-    top->restoreState(s.value("ui/topSplit2").toByteArray());
+    columns->restoreState(s.value("ui/mainColumns").toByteArray());
+    split->restoreState(s.value("ui/mainSplit4").toByteArray());
+    top->restoreState(s.value("ui/topSplit3").toByteArray());
     fitToAvailableScreen();
 }
 
@@ -733,6 +839,7 @@ void MainWindow::showEvent(QShowEvent *e)
 
 MainWindow::~MainWindow()
 {
+    qApp->removeEventFilter(this);
     // The undo stack is a child, deleted after this window's members: it clears itself (indexChanged) when
     // deleted, which must not reach this window's slots (they use members already destroyed, m_binTimer…)
     m_undo->disconnect(this);
@@ -750,6 +857,8 @@ MainWindow::~MainWindow()
         m_oscThread->wait();
     }
     m_statusTimer.stop();
+    m_layerStatusTimer.stop();
+    m_previewTimer.stop();
     m_renderTimer.stop();
     m_autosaveTimer.stop();
     for (auto &[id, o] : m_outputs) delete o.window;
@@ -759,8 +868,80 @@ MainWindow::~MainWindow()
 // Show-control shortcuts
 // ---------------------------------------------------------------------------
 
+static QString helpAt(QWidget *widget, const QPoint &global)
+{
+    for (auto *part = widget; part; part = part->isWindow() ? nullptr : part->parentWidget()) {
+        QString tip;
+        if (auto *header = qobject_cast<QHeaderView *>(part)) {
+            const int section = header->logicalIndexAt(header->mapFromGlobal(global));
+            if (section >= 0 && header->model())
+                tip = header->model()->headerData(section, header->orientation(), Qt::ToolTipRole).toString();
+        } else if (auto *view = qobject_cast<QAbstractItemView *>(part)) {
+            const QPoint pos = view->viewport()->mapFromGlobal(global);
+            if (view->viewport()->rect().contains(pos))
+                tip = view->indexAt(pos).data(Qt::ToolTipRole).toString();
+        } else if (auto *tabs = qobject_cast<QTabBar *>(part)) {
+            const int index = tabs->tabAt(tabs->mapFromGlobal(global));
+            if (index >= 0) tip = tabs->tabToolTip(index);
+        } else if (auto *menu = qobject_cast<QMenu *>(part)) {
+            if (auto *action = menu->actionAt(menu->mapFromGlobal(global)))
+                tip = action->statusTip().isEmpty() ? action->toolTip() : action->statusTip();
+        } else if (auto *bar = qobject_cast<QMenuBar *>(part)) {
+            if (auto *action = bar->actionAt(bar->mapFromGlobal(global)))
+                tip = action->statusTip().isEmpty() ? action->toolTip() : action->statusTip();
+        }
+        if (tip.isEmpty()) tip = part->toolTip();
+        if (!tip.isEmpty()) return tip;
+    }
+    return {};
+}
+
+void MainWindow::showContextHelp(QWidget *widget, QString text)
+{
+    if (Qt::mightBeRichText(text)) {
+        QTextDocument document;
+        document.setHtml(text);
+        text = document.toPlainText();
+    }
+    text = text.simplified();
+    m_helpWidget = text.isEmpty() ? nullptr : widget;
+    if (m_contextHelp->text() != text) m_contextHelp->setText(text);
+}
+
 bool MainWindow::eventFilter(QObject *o, QEvent *e)
 {
+    if (m_contextHelp) {
+        if (auto *widget = qobject_cast<QWidget *>(o)) {
+            switch (e->type()) {
+            case QEvent::ToolTip:
+                showContextHelp(widget, helpAt(widget, static_cast<QHelpEvent *>(e)->globalPos()));
+                return true;
+            case QEvent::StatusTip:
+                showContextHelp(widget, static_cast<QStatusTipEvent *>(e)->tip());
+                return true;
+            case QEvent::Enter:
+                showContextHelp(widget, helpAt(widget, static_cast<QEnterEvent *>(e)->globalPosition().toPoint()));
+                break;
+            case QEvent::MouseMove: {
+                const auto *mouse = static_cast<QMouseEvent *>(e);
+                if (mouse->buttons() == Qt::NoButton) {
+                    const QPoint global = mouse->globalPosition().toPoint();
+                    auto *hovered = widget->childAt(widget->mapFromGlobal(global));
+                    if (!hovered) hovered = widget;
+                    showContextHelp(hovered, helpAt(hovered, global));
+                }
+                break;
+            }
+            case QEvent::Leave:
+            case QEvent::Hide:
+                if (widget == m_helpWidget) showContextHelp(nullptr, {});
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
     // A project opened from the Finder (a double-click on a .nyxmap, a file dropped on the app's icon): macOS sends it
     // to the application, also when it launches the app for it
     if (o == qApp && e->type() == QEvent::FileOpen) {
@@ -807,10 +988,13 @@ bool MainWindow::eventFilter(QObject *o, QEvent *e)
             int tab = -1;
             if (k->key() == Qt::Key_1 || k->key() == Qt::Key_Exclam) tab = 0;
             if (k->key() == Qt::Key_2 || k->key() == Qt::Key_At || k->key() == Qt::Key_QuoteDbl) tab = 1;
-            if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = 2;
-            if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = 3;
+            if (k->key() == Qt::Key_3 || k->key() == Qt::Key_NumberSign || k->key() == Qt::Key_sterling) tab = m_leftTabs->indexOf(m_interactions);
+            if (k->key() == Qt::Key_4 || k->key() == Qt::Key_Dollar) tab = m_leftTabs->indexOf(m_logs);
             if (k->key() == Qt::Key_5 || k->key() == Qt::Key_Percent) tab = m_leftTabs->indexOf(m_controls);
-            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) tab = m_leftTabs->indexOf(m_showControl);
+            if (k->key() == Qt::Key_6 || k->key() == Qt::Key_AsciiCircum) {
+                if (!k->isAutoRepeat()) openSequences();
+                return true;
+            }
             if (tab >= 0 && !k->isAutoRepeat()) {
                 m_leftTabs->setCurrentIndex(tab);
                 return true;
@@ -848,9 +1032,9 @@ void MainWindow::setBlackout(bool on)
 void MainWindow::buildMenus()
 {
     QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
-    auto *about = help->addAction(QStringLiteral("About NYXMAP"), this, [this] {
+    auto *about = help->addAction(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME), this, [this] {
         QMessageBox box(this);
-        box.setWindowTitle(QStringLiteral("About NYXMAP"));
+        box.setWindowTitle(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME));
         // The licence files travel with the program: Contents/Resources on macOS, next to it elsewhere
 #ifdef Q_OS_MACOS
         const QString docs = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../Resources"));
@@ -956,6 +1140,11 @@ void MainWindow::buildMenus()
     if (prefs->shortcut().isEmpty()) prefs->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma)); // Linux / Windows
 
     QMenu *layer = menuBar()->addMenu(QStringLiteral("&Layer"));
+    auto *zones = layer->addMenu(QStringLiteral("Zones"));
+    connect(zones, &QMenu::aboutToShow, this, [this, zones] {
+        zones->clear();
+        fillZonesMenu(zones, currentLayer());
+    });
     // A layer is created empty; media is then dropped onto it (Media Bin, Finder)
     layer->addAction(QStringLiteral("New Layer"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), this,
                      &MainWindow::addEmptyLayer);
@@ -963,6 +1152,17 @@ void MainWindow::buildMenus()
         layer->addAction(QStringLiteral("Load Web Page…"), this, [this] { loadIntoLayer(currentLayer(), kWebGeneratorPath); });
     QAction *dup = layer->addAction(QStringLiteral("Duplicate"), this, &MainWindow::duplicateCurrentLayer);
     dup->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    for (auto entry : {std::pair<const char *, QKeySequence::StandardKey>{"Copy Layers", QKeySequence::Copy},
+                       {"Cut Layers", QKeySequence::Cut}, {"Paste Layers", QKeySequence::Paste}}) {
+        auto *action = new QAction(QString::fromLatin1(entry.first), m_layerTable->table());
+        action->setShortcut(QKeySequence(entry.second));
+        action->setShortcutContext(Qt::WidgetShortcut);
+        m_layerTable->table()->addAction(action);
+        layer->addAction(action);
+        connect(action, &QAction::triggered, this, [this, key = entry.second] {
+            if (key == QKeySequence::Paste) pasteLayers(); else copyLayers(key == QKeySequence::Cut);
+        });
+    }
     // Copy a layer, then paste all of it or some of its parts onto others (as DaVinci Resolve's Paste Attributes)
     layer->addAction(QStringLiteral("Copy Attributes"), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C), this, [this] {
         if (currentLayer() >= 0) copyLayerParams(currentLayer());
@@ -1001,6 +1201,8 @@ void MainWindow::buildMenus()
     seq->addSeparator();
     seq->addAction(QStringLiteral("Sequences…"), this, &MainWindow::openSequences);
     seq->addAction(QStringLiteral("Timelines…"), this, &MainWindow::openTimelines);
+    auto *show = seq->addAction(QStringLiteral("Open Show Control in Browser…"), this, &MainWindow::openShowControl);
+    show->setObjectName(QStringLiteral("openShowControlWeb"));
 
     QMenu *comp = menuBar()->addMenu(QStringLiteral("C&omposition"));
     comp->addAction(QStringLiteral("Composition Size (Composition tab)"), this, [this] { m_tabs->setCurrentWidget(m_tabs->widget(2)); });
@@ -1096,6 +1298,10 @@ void MainWindow::syncOutputs()
         if (o.title != title) o.window->setTitle(o.title = title);
         QScreen *sc = OutputWindow::screenNamed(w.screen);
         const QString scName = sc ? sc->name() : QString();
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (Layer *layer = m_engine->layer(m_engine->indexOfId(w.id))) layer->vpResolvedScreen = scName;
+        }
         if (o.mode == w.mode && (w.mode == 0 || o.screen == scName)) continue;
         o.mode = w.mode;
         o.screen = scName;
@@ -1236,17 +1442,26 @@ void MainWindow::toggleSolo(int row)
 
 void MainWindow::refreshLayerList()
 {
+    refreshLayerListFromEngine(true);
+}
+
+void MainWindow::refreshLayerListFromEngine(bool wait)
+{
     std::vector<LayerTable::Row> rows;
+    const bool audioRunning = m_engine->audioOutput().isRunning();
     {
-        Engine::Lock lk(&m_engine->mutex());
+        std::unique_lock<Engine::Mutex> lock(m_engine->mutex(), std::defer_lock);
+        if (wait) lock.lock();
+        else if (!lock.try_lock()) return;
         const std::vector<bool> leftOut = m_engine->soloLeftOut();
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             Layer *l = m_engine->layer(i);
             LayerTable::Row r;
+            r.id = l->id;
             r.name = l->name;
             r.solo = l->solo && !l->isViewport;
             r.soloHidden = leftOut[size_t(i)];
-            r.tag = l->isViewport ? QStringLiteral("▭")
+            r.tag = l->isMappingZone ? QStringLiteral("◈") : l->isViewport ? QStringLiteral("▭")
                     : l->scene3d  ? QStringLiteral("⬡")
                     : l->merge3d  ? QStringLiteral("◇")
                     : l->isGroup  ? QStringLiteral("▤")
@@ -1254,7 +1469,7 @@ void MainWindow::refreshLayerList()
                                   : layerTag(l->type != SourceType::None ? l->type : l->missingType);
             r.viewport = l->isViewport;
             r.hidden = l->isViewport;
-            r.color = l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
+            r.color = l->isMappingZone ? QColor(165, 146, 240) : l->isViewport ? QColor(140, 200, 255) : l->scene3d ? QColor(255, 150, 70) : l->merge3d ? QColor(255, 196, 90) : l->isGroup ? QColor(255, 214, 165) : layerColor(l->type != SourceType::None ? l->type : l->missingType);
             r.group = l->isGroup;
             r.collapsed = l->isGroup && l->collapsed;
             r.locked = l->locked;
@@ -1321,11 +1536,22 @@ void MainWindow::refreshLayerList()
             default: r.source = l->missingType != SourceType::None ? QFileInfo(l->sourcePath).fileName() + QStringLiteral(" — missing")
                                                                     : QStringLiteral("(empty)");
             }
+            if (l->isMappingZone) {
+                r.source = QStringLiteral("Mapping Zone");
+                r.noPicture = true; // no opacity or blend controls for the geometry row
+            } else if (const auto *zone = m_engine->mappingZoneFor(*l)) {
+                r.source += QStringLiteral("  ·  ◈ %1").arg(zone->name);
+            }
             QStringList fx;
             for (const auto &e : l->effects) fx << (e->enabled ? e->name() : QStringLiteral("(") + e->name() + QStringLiteral(")"));
             r.effects = fx.join(QStringLiteral(" › "));
             r.effectCount = int(l->effects.size());
             if (l->audio) {
+                r.hasAudio = true;
+                if (audioRunning) {
+                    r.audioLeft = l->audio->outputMeter().peak(0);
+                    r.audioRight = l->audio->outputMeter().peak(1);
+                }
                 const QString vol = l->muted ? QStringLiteral("muted") : QStringLiteral("%1%").arg(std::lround(l->volume * 100));
                 r.source += (l->type == SourceType::Video ? QStringLiteral("   ♪ ") : QStringLiteral("   ")) + vol;
             }
@@ -1344,23 +1570,17 @@ void MainWindow::refreshLayerList()
         }
     }
     const int n = int(rows.size());
-    int keep = qBound(-1, m_layerTable->currentRow(), n - 1);
-    if (keep >= 0 && rows[size_t(keep)].viewport) keep = -1;
-    const bool filled = m_listedRows == 0 && n > 0; // the list was empty (a project opened, the first layer made)
+    const bool filled = m_listedRows == 0 && n > 0;
     m_listedRows = n;
-    m_layerTable->setRows(rows);
-    // A list just filled: its first layer below the viewports (or the first viewport). Otherwise what the user chose,
-    // nothing included: a layer deselected stays deselected
-    int firstLayer = 0;
-    while (firstLayer < n && rows[size_t(firstLayer)].viewport) ++firstLayer;
-    const int sel = keep >= 0 ? keep : filled && firstLayer < n ? firstLayer : -1;
-    if (sel != m_layerTable->currentRow()) m_layerTable->setCurrentRow(sel);
-    // By index and by id: an opened project may put another layer at the same index (its edits would be lost)
-    if (sel != m_inspector->layerIndex() || (sel >= 0 && m_engine->layerId(sel) != m_inspector->layerId())) {
-        m_inspector->setLayer(sel);
-        m_view->setLayer(sel);
-        m_lastSelected = sel;
+    const bool changed = m_layerTable->setRows(rows);
+    if (filled && m_layerTable->currentRow() < 0) {
+        const auto first = std::find_if(rows.begin(), rows.end(), [](const auto &row) { return !row.hidden && !row.viewport; });
+        if (first != rows.end()) m_layerTable->setCurrentRow(int(first - rows.begin()));
     }
+    const int selected = m_layerTable->currentRow();
+    if (changed || selected != m_inspector->layerIndex() ||
+        (selected >= 0 && m_engine->layerId(selected) != m_inspector->layerId()))
+        syncLayerSelection(selected, false);
     refreshViewports();
 }
 
@@ -1429,12 +1649,27 @@ void MainWindow::selectLayer(int index)
           return;
       }
     }
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        for (int group = m_engine->groupIndexOf(index); group >= 0; group = m_engine->groupIndexOf(group))
+            m_engine->layer(group)->collapsed = false;
+    }
     refreshLayerList();
     m_layerTable->setCurrentRow(index);
-    m_view->setLayer(index);
-    m_inspector->setLayer(index);
-    if (index >= 0) m_tabs->setCurrentIndex(0);
-    m_lastSelected = index;
+    syncLayerSelection(m_layerTable->currentRow(), true);
+}
+
+void MainWindow::syncLayerSelection(int row, bool focusInspector)
+{
+    const quint64 id = m_engine->layerId(row);
+    if (row != m_inspector->layerIndex() || id != m_inspector->layerId()) m_inspector->setLayer(row);
+    m_previews->setCurrentLayer(id);
+    if (focusInspector && row >= 0) m_tabs->setCurrentIndex(0);
+    if (m_tabs->currentIndex() != 1) {
+        if (m_timelineWindow) m_timelineWindow->setCurrentLayer(id);
+        m_view->setLayer(row);
+    }
+    updateCoTargets();
 }
 
 int MainWindow::currentLayer() const { return m_tabs->currentIndex() == 1 ? m_engine->indexOfId(m_selectedViewport) : m_layerTable->currentRow(); }
@@ -1460,8 +1695,109 @@ QList<int> MainWindow::selectedRows() const
 // Layer actions (all undoable)
 // ---------------------------------------------------------------------------
 
+void MainWindow::assignZone(const QList<quint64> &layers, quint64 zone)
+{
+    struct Link {
+        quint64 layer, oldZone;
+        Mapping before, after;
+    };
+    class ChangeZone : public QUndoCommand {
+    public:
+        ChangeZone(Engine *engine, quint64 zone, std::vector<Link> links)
+            : QUndoCommand(zone ? QStringLiteral("Assign to Zone") : QStringLiteral("Unlink from Zone")),
+              engine(engine), zone(zone), links(std::move(links)) {}
+        void undo() override {
+            for (const auto &link : links) engine->setMappingZone(link.layer, link.oldZone, link.before);
+        }
+        void redo() override {
+            for (const auto &link : links) engine->setMappingZone(link.layer, zone, link.after);
+        }
+    private:
+        Engine *engine;
+        quint64 zone;
+        std::vector<Link> links;
+    };
+    std::vector<Link> links;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        const auto *destination = zone ? m_engine->layer(m_engine->indexOfId(zone)) : nullptr;
+        if (zone && (!destination || !destination->isMappingZone)) return;
+        for (quint64 id : layers) {
+            const int row = m_engine->indexOfId(id);
+            const auto *layer = m_engine->layer(row);
+            if (!layer || layer->isMappingZone || layer->isViewport || !layer->hasPicture() ||
+                m_engine->isLocked(row) || layer->mappingZone == zone ||
+                (destination && destination->parent != layer->parent)) continue;
+            const auto *previous = m_engine->mappingZoneFor(*layer);
+            links.push_back({id, previous ? previous->id : 0, layer->mapping,
+                             zone ? layer->mapping : m_engine->effectiveMapping(*layer)});
+        }
+    }
+    if (!links.empty()) m_undo->push(new ChangeZone(m_engine, zone, std::move(links)));
+}
+
+void MainWindow::fillZonesMenu(QMenu *menu, int row)
+{
+    Engine::Lock lock(&m_engine->mutex());
+    const auto *layer = m_engine->layer(row);
+    if (!layer || layer->isViewport || !layer->hasPicture()) {
+        menu->addAction(QStringLiteral("Select a mapped layer"))->setEnabled(false);
+        return;
+    }
+    const quint64 id = layer->id;
+    if (layer->isMappingZone) {
+        if (auto *editor = PresetEditor::instance())
+            editor->fillCategoryMenu(menu, id, QStringLiteral("Spatial"));
+        return;
+    }
+    QList<quint64> targets;
+    const auto selection = selectedRows();
+    for (int index : selection.contains(row) ? selection : QList<int>{row})
+        targets << m_engine->layerId(index);
+    const auto *linked = m_engine->mappingZoneFor(*layer);
+    if (linked) {
+        menu->addAction(QStringLiteral("Edit Zone · %1").arg(linked->name), this, [this, zone = linked->id] {
+            selectLayer(m_engine->indexOfId(zone));
+        });
+    }
+    const bool hasLink = std::any_of(targets.begin(), targets.end(), [this](quint64 target) {
+        const auto *layer = m_engine->layer(m_engine->indexOfId(target));
+        return layer && layer->mappingZone;
+    });
+    menu->addAction(QStringLiteral("Unlink and Keep Mapping"), this, [this, targets] { assignZone(targets, 0); })->setEnabled(hasLink);
+    auto *assign = menu->addMenu(QStringLiteral("Assign to Zone"));
+    for (int i = 0; i < m_engine->layerCount(); ++i) {
+        const auto *zone = m_engine->layer(i);
+        if (!zone->isMappingZone || zone->parent != layer->parent) continue;
+        auto *action = assign->addAction(zone->name, this, [this, targets, zoneId = zone->id] { assignZone(targets, zoneId); });
+        action->setCheckable(true);
+        action->setChecked(zone == linked);
+    }
+    assign->setEnabled(!assign->isEmpty());
+    menu->addAction(QStringLiteral("Create Zone from Layer…"), this, [this, id, targets, suggested = layer->name] {
+        bool accepted = false;
+        const QString name = QInputDialog::getText(this, QStringLiteral("Create Zone"), QStringLiteral("Name"),
+            QLineEdit::Normal, suggested, &accepted).trimmed();
+        if (!accepted || name.isEmpty()) return;
+        const int from = m_engine->indexOfId(id);
+        if (from < 0 || m_engine->isLocked(from)) return;
+        const int created = m_engine->addMappingZone(from, name);
+        if (created < 0) return;
+        const quint64 zone = m_engine->layerId(created);
+        m_undo->beginMacro(QStringLiteral("Create Mapping Zone"));
+        m_undo->push(new cmd::AddLayer(m_engine, created, QStringLiteral("Create Mapping Zone")));
+        assignZone(targets, zone);
+        m_undo->endMacro();
+        selectLayer(m_engine->indexOfId(zone));
+    })->setEnabled(!m_engine->isLocked(row));
+}
+
 bool MainWindow::loadIntoLayer(int i, const QString &path)
 {
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        if (const auto *layer = m_engine->layer(i); layer && layer->isMappingZone) return false;
+    }
     if (i < 0 || i >= m_engine->layerCount()) {
         statusBar()->showMessage(QStringLiteral("Create a layer with + first, then drop the media onto it."), 6000);
         return false;
@@ -1799,20 +2135,21 @@ void MainWindow::relinkMedia(const QString &from, const QString &to)
 {
     const QList<int> layers = m_engine->layersUsingMedia(from);
     QStringList errors;
-    if (!layers.isEmpty()) {
-        // A single undo step for all affected layers
-        m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
-        for (int i : layers) {
-            const QJsonObject before = m_engine->layerJson(i);
-            const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
-            QString err;
-            if (m_engine->relinkLayerMedia(i, from, to, &err))
-                m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace"), beforeAnimations));
-            else if (!err.isEmpty()) errors << err;
-        }
-        m_undo->endMacro();
+    // A single undo step: the layers that show the file, and the Media Bin's item (what the snapshots and the
+    // presets name: they have the new file without being touched)
+    m_undo->beginMacro(QStringLiteral("Replace \"%1\"").arg(QFileInfo(from).fileName()));
+    for (int i : layers) {
+        const QJsonObject before = m_engine->layerJson(i);
+        const auto beforeAnimations = m_engine->captureAnimationTargets(m_engine->layerId(i));
+        QString err;
+        if (m_engine->relinkLayerMedia(i, from, to, &err))
+            m_undo->push(new cmd::ReplaceLayer(m_engine, i, before, QStringLiteral("Replace"), beforeAnimations));
+        else if (!err.isEmpty()) errors << err;
     }
+    const auto itemsBefore = m_engine->mediaItems();
     m_engine->relinkBinItem(from, to);
+    m_undo->push(new cmd::SetMediaItems(m_engine, itemsBefore, m_engine->mediaItems(), QStringLiteral("Replace")));
+    m_undo->endMacro();
     markDirty();
     refreshAll();
     if (!errors.isEmpty()) QMessageBox::warning(this, QStringLiteral("Relink"), errors.join('\n'));
@@ -1900,6 +2237,7 @@ void MainWindow::removeCurrentLayer()
     if (rows.isEmpty()) return;
     // A group goes with its layers; locked layers stay
     QSet<int> victims;
+    const LayerTree structure = m_engine->structure();
     int skipped = 0;
     for (int r : rows) {
         if (m_engine->isLocked(r)) {
@@ -1907,7 +2245,7 @@ void MainWindow::removeCurrentLayer()
             continue;
         }
         QList<int> members;
-        for (quint64 id : tree::descendants(m_engine->structure(), m_engine->layerId(r)))
+        for (quint64 id : tree::descendants(structure, m_engine->layerId(r)))
             members << m_engine->indexOfId(id);
         bool lockedMember = false;
         for (int m : members) lockedMember |= m_engine->isLocked(m);
@@ -1920,7 +2258,7 @@ void MainWindow::removeCurrentLayer()
     }
     if (skipped) statusBar()->showMessage(QStringLiteral("%1 locked layer(s) not deleted.").arg(skipped), 4000);
     if (victims.isEmpty()) return;
-    if (const QString used = layersInUse(victims); !used.isEmpty() && !m_quiet) {
+    if (const QString used = m_quiet ? QString() : layersInUse(victims); !used.isEmpty()) {
         QMessageBox box(QMessageBox::Warning, QStringLiteral("Delete"), QStringLiteral("What you are deleting is used elsewhere."), QMessageBox::NoButton, this);
         box.setInformativeText(used);
         QPushButton *remove = box.addButton(QStringLiteral("Delete"), QMessageBox::DestructiveRole);
@@ -1932,12 +2270,9 @@ void MainWindow::removeCurrentLayer()
         if (box.clickedButton() == withUsers && withUsers) victims.unite(users);
         else if (box.clickedButton() != remove) return;
     }
-    QList<int> order = victims.values();
-    std::sort(order.begin(), order.end(), std::greater<int>()); // members (below their group) first
-    const int first = order.last();
-    m_undo->beginMacro(order.size() > 1 ? QStringLiteral("Delete %1 Layers").arg(order.size()) : QStringLiteral("Delete Layer"));
-    for (int r : order) m_undo->push(new cmd::RemoveLayer(m_engine, r));
-    m_undo->endMacro();
+    const auto order = victims.values();
+    const int first = *std::min_element(order.begin(), order.end());
+    m_undo->push(new cmd::RemoveLayers(m_engine, order));
     if (viewportSelection) { refreshViewports(); m_tabs->setCurrentIndex(1); }
     else selectLayer(qMin(first, m_engine->layerCount() - 1));
 }
@@ -2042,6 +2377,45 @@ void MainWindow::pasteAttributesDialog()
     if (parts) pasteLayerParams(parts, parts == Engine::PartAll ? QStringLiteral("Attributes") : names.join(QStringLiteral(", ")));
 }
 
+void MainWindow::copyLayers(bool cut)
+{
+    const auto selected = m_layerTable->selectedRows();
+    if (selected.isEmpty()) return;
+    QSet<int> rows;
+    for (int row : selected) {
+        if (cut && m_engine->isLocked(row)) return;
+        rows.insert(row);
+        for (auto id : tree::descendants(m_engine->structure(), m_engine->layerId(row)))
+            rows.insert(m_engine->indexOfId(id));
+    }
+    QList<int> ordered = rows.values(); std::sort(ordered.begin(), ordered.end());
+    QJsonArray states;
+    for (int row : ordered) if (row >= 0) states.append(m_engine->layerJson(row));
+    auto *mime = new QMimeData;
+    mime->setData("application/x-nyxmap-layers", QJsonDocument(states).toJson(QJsonDocument::Compact));
+    QApplication::clipboard()->setMimeData(mime);
+    if (cut) removeCurrentLayer();
+}
+
+void MainWindow::pasteLayers()
+{
+    const auto *mime = QApplication::clipboard()->mimeData();
+    if (!mime || !mime->hasFormat("application/x-nyxmap-layers")) return;
+    const auto document = QJsonDocument::fromJson(mime->data("application/x-nyxmap-layers"));
+    if (!document.isArray()) return;
+    std::vector<QJsonObject> states;
+    for (const auto &value : document.array()) {
+        if (!value.isObject()) return;
+        states.push_back(value.toObject());
+    }
+    const int at = m_engine->insertLayerCopies(std::max(0, currentLayer()), states);
+    if (at < 0) return;
+    m_undo->beginMacro(QStringLiteral("Paste Layers"));
+    for (int k = 0; k < int(states.size()); ++k) m_undo->push(new cmd::AddLayer(m_engine, at + k, QStringLiteral("Paste Layer")));
+    m_undo->endMacro();
+    selectLayer(at);
+}
+
 void MainWindow::copyLayerParams(int row)
 {
     const QJsonObject o = m_engine->layerJson(row);
@@ -2142,12 +2516,17 @@ void MainWindow::layerContextMenu(int row, const QPoint &globalPos)
             into->setEnabled(!targets.empty());
             into->setToolTip(QStringLiteral("This layer's picture becomes the source of the one chosen"));
         }
+        fillZonesMenu(menu.addMenu(QStringLiteral("Zones")), row);
         menu.addAction(QStringLiteral("Copy Attributes"), this, [this, row] { copyLayerParams(row); });
         if (PresetEditor *pe = PresetEditor::instance()) { // any of its values into a preset
             menu.addSeparator();
             pe->fillLayerMenu(&menu, m_engine->layerId(row));
         }
     }
+    menu.addAction(QStringLiteral("Copy Layers"), this, [this] { copyLayers(false); })->setEnabled(onLayer);
+    menu.addAction(QStringLiteral("Cut Layers"), this, [this] { copyLayers(true); })->setEnabled(onLayer && !locked);
+    const auto *layerMime = QApplication::clipboard()->mimeData();
+    menu.addAction(QStringLiteral("Paste Layers"), this, &MainWindow::pasteLayers)->setEnabled(layerMime && layerMime->hasFormat("application/x-nyxmap-layers"));
     addPasteMenu(&menu, onLayer && !locked, group);
     menu.addSeparator();
     menu.addAction(QStringLiteral("New Layer"), this, &MainWindow::addEmptyLayer);
@@ -2187,7 +2566,6 @@ void MainWindow::moveCurrentLayer(int delta)
     const LayerTree after = tree::moved(t, {cur.id}, before, cur.parent);
     if (after == t || refuse3d(after)) return;
     m_undo->push(new cmd::SetStructure(m_engine, t, after, QStringLiteral("Reorder Layers")));
-    selectLayer(m_engine->indexOfId(cur.id));
 }
 
 void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
@@ -2215,7 +2593,8 @@ void MainWindow::moveRows(const QList<int> &rows, int beforeRow, int parentRow)
     if (after == t || refuse3d(after)) return;
     const bool into = parent && std::any_of(ids.begin(), ids.end(), [&](quint64 id) { return t[size_t(tree::indexOf(t, id))].parent != parent; });
     m_undo->push(new cmd::SetStructure(m_engine, t, after, into ? QStringLiteral("Move into Group") : QStringLiteral("Move Layers")));
-    selectLayer(m_engine->indexOfId(ids.front()));
+    const int moved = m_engine->indexOfId(ids.front());
+    if (!m_layerTable->selectedRows().contains(moved)) selectLayer(moved);
 }
 
 void MainWindow::createGroup()
@@ -2256,6 +2635,13 @@ void MainWindow::createGroup()
 void MainWindow::fill3dMenu(QMenu *menu)
 {
     menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
+    menu->addAction(QStringLiteral("Materials…"), this, [this] {
+        for (int i = 0; i < m_tabs->count(); ++i)
+            if (m_tabs->widget(i)->findChild<QWidget *>(QStringLiteral("materialPanel"))) {
+                m_tabs->setCurrentIndex(i);
+                break;
+            }
+    });
     const int cur = currentLayer();
     bool inScene = false;
     if (cur >= 0) {
@@ -2266,6 +2652,17 @@ void MainWindow::fill3dMenu(QMenu *menu)
     }
     QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
     light->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d)->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Primitive 3D"), this, [this, inScene] {
+        const QString path = Model3D::primitivePath(QStringLiteral("Cube"));
+        int target = currentLayer();
+        if (inScene) {
+            const LayerTree t = m_engine->structure();
+            if (t[size_t(target)].role != TreeNode::Scene3d && t[size_t(target)].role != TreeNode::Merge3d)
+                target = tree::indexOf(t, t[size_t(target)].parent);
+            loadIntoLayer(target, path);
+        } else loadIntoNewLayer(path);
+    });
     menu->addAction(QStringLiteral("Import 3D Model…"), this, [this, inScene] {
         QStringList ext;
         for (const QString &e : Model3D::extensions()) ext << QStringLiteral("*.") + e;
@@ -2538,9 +2935,32 @@ void MainWindow::sequenceBack() { m_engine->sequencer().back(); }
 // The step's GO: its pre-wait, then its snapshot (recalled through the undo stack, see the recaller), then what follows
 void MainWindow::sequenceGoTo(int step) { m_engine->sequencer().goTo(step); }
 
+void MainWindow::openShowControl()
+{
+    quint16 port = 0;
+    if (m_remote && m_remoteThread->isRunning())
+        QMetaObject::invokeMethod(m_remote, [this, &port] {
+            if (m_remote->isRunning()) port = m_remote->port();
+        }, Qt::BlockingQueuedConnection);
+    if (!port) {
+        statusBar()->showMessage(QStringLiteral("Enable the remote server in Settings › OSC › Remote to open Show Control."), 8000);
+        return;
+    }
+    const QHostAddress binding(SettingsPanel::oscListen());
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(binding == QHostAddress::AnyIPv6 ? QStringLiteral("::1")
+                : binding.isNull() || binding == QHostAddress::Any || binding == QHostAddress::AnyIPv4
+                      ? QStringLiteral("127.0.0.1") : binding.toString());
+    url.setPort(port);
+    url.setPath(QStringLiteral("/show"));
+    QDesktopServices::openUrl(url);
+}
+
 void MainWindow::openSequences()
 {
-    m_seqWindow->show();
+    if (auto *page = m_leftTabs->findChild<QScrollArea *>(QStringLiteral("sequenceEditorScroll")))
+        m_leftTabs->setCurrentWidget(page);
     m_seqWindow->setFocus();
 }
 
@@ -2571,32 +2991,10 @@ void MainWindow::togglePlayCurrent()
 
 void MainWindow::statusTick()
 {
-    m_engine->acknowledgeFrame(); // safety net: the preview cannot stay frozen
-    m_inspector->refreshDynamic();
-    m_viewportInspector->refreshDynamic();
-    m_composition->refreshStatus();
-    refreshLayerList(); // playback positions (in-place update)
-    const int pct = int(std::lround(m_engine->outputLevel() * 100));
-    const QSize c = m_engine->compositionSize();
-    // Each viewport: shown how (F fullscreen, W window), and what it publishes
-    QStringList outs;
-    int shown = 0;
-    for (const auto &[id, o] : m_outputs) {
-        QStringList pubs;
-        for (int k = 0; k < kPublishKindCount; ++k)
-            if (m_engine->publishState(id, PublishKind(k)).level == PublishState::Ok) pubs << publishKindName(PublishKind(k));
-        if (o.mode) ++shown;
-        if (!pubs.isEmpty()) outs << QStringLiteral("%1 → %2").arg(o.title.section(QStringLiteral(" — "), 1), pubs.join('+'));
-    }
-    m_status->setText(QStringLiteral("%1 × %2   ·   %3 fps   ·   composition %4%   ·   %5 of %6 viewport(s) shown%7")
-                          .arg(c.width())
-                          .arg(c.height())
-                          .arg(m_engine->fps(), 0, 'f', 1)
-                          .arg(pct)
-                          .arg(shown)
-                          .arg(m_outputs.size())
-                          .arg(outs.isEmpty() ? QString() : QStringLiteral("   ·   ") + outs.join(QStringLiteral(", ")))
-                      + (m_engine->blackout() ? QStringLiteral("   ·   BLACKOUT") : QString()));
+    if (isMinimized()) return;
+    if (m_inspector->isVisible()) m_inspector->refreshDynamic();
+    if (m_viewportInspector->isVisible()) m_viewportInspector->refreshDynamic();
+    if (m_composition->isVisible()) m_composition->refreshStatus();
 }
 
 // ---------------------------------------------------------------------------
@@ -2639,7 +3037,7 @@ void MainWindow::markDirty()
 void MainWindow::updateTitle()
 {
     const QString p = m_engine->projectPath();
-    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — NyxMap"));
+    setWindowTitle((p.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(p).fileName()) + QStringLiteral("[*] — ") + QStringLiteral(NYXMAP_APP_NAME));
     setWindowModified(isDirty());
 }
 
@@ -2926,8 +3324,9 @@ void MainWindow::closeEvent(QCloseEvent *e)
     m_quitting = true;
     QSettings s;
     s.setValue("ui/geometry", saveGeometry());
-    if (auto *split = findChild<QSplitter *>("mainSplit3")) s.setValue("ui/mainSplit3", split->saveState());
-    if (auto *top = findChild<QSplitter *>("topSplit2")) s.setValue("ui/topSplit2", top->saveState());
+    if (auto *columns = findChild<QSplitter *>("mainColumns")) s.setValue("ui/mainColumns", columns->saveState());
+    if (auto *split = findChild<QSplitter *>("mainSplit4")) s.setValue("ui/mainSplit4", split->saveState());
+    if (auto *top = findChild<QSplitter *>("topSplit3")) s.setValue("ui/topSplit3", top->saveState());
     for (auto &[id, o] : m_outputs) o.window->hideOutput();
     // Normal exit: no recovery to offer on next launch.
     if (m_autosaveEnabled && !m_keepAutosave) QFile::remove(autosavePath());

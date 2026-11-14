@@ -81,19 +81,19 @@ int main(int argc, char **argv)
         require(engine.setControlValue(a, 20) && engine.animParamValue(0, "control/master_level", &read) && near(read, 20), "set through the API, read as a parameter");
         require(!engine.setControlValue(e, 1), "a color has no single value");
 
-        // Edit: the address stays when the name changes; the value is kept within a new range
+        // Renaming a control regenerates its OSC key and keeps its value within the edited range.
         auto changed = *engine.control(a);
         changed.name = "Master";
         changed.max = 100;
         changed.value = 20;
-        require(engine.updateControl(a, changed) && engine.control(a)->key == "master_level", "renamed, still at its address");
-        require(has("control/master_level"), "and the parameter is still there");
+        require(engine.updateControl(a, changed) && engine.control(a)->key == "master", "renamed with a new address");
+        require(has("control/master") && !has("control/master_level"), "only the new parameter address is available");
         require(engine.moveControl(e, 0) && engine.controls().front().id == e, "moved");
         engine.moveControl(e, 4);
-        require(engine.setParameter(0, "control/master_level", 80), "a control is a parameter that animations and interactions can drive");
+        require(engine.setParameter(0, "control/master", 80), "a control is a parameter that animations and interactions can drive");
         bool animatable = false;
         for (const ParamInfo &p : engine.parameters(0))
-            if (p.path == "control/master_level") animatable = p.animatable;
+            if (p.path == "control/master") animatable = p.animatable;
         require(animatable, "a slider is animatable");
 
         // OSC: /control/<key>
@@ -101,16 +101,18 @@ int main(int argc, char **argv)
             OscServer osc(&engine);
             int status = 0;
             const auto tree = QJsonDocument::fromJson(osc.httpGet("/control", &status)).object();
-            require(status == 200 && tree.value("CONTENTS").toObject().contains("master_level") &&
+            require(status == 200 && tree.value("CONTENTS").toObject().contains("master") &&
                         tree.value("CONTENTS").toObject().contains("wash"), "the controls are in the OSC namespace");
-            const auto node = QJsonDocument::fromJson(osc.httpGet("/control/master_level", &status)).object();
+            const auto node = QJsonDocument::fromJson(osc.httpGet("/control/master", &status)).object();
             require(node.value("TYPE").toString() == "f" && near(node.value("RANGE").toArray().at(0).toObject().value("MAX").toDouble(), 100),
                     "a slider is a float with its range");
             osc::Message m;
-            m.address = "/control/master_level";
+            m.address = "/control/master";
             m.types = "f";
             m.args = {QVariant(42.0)};
             require(osc.handleMessage(m) && near(engine.control(a)->value, 42), "set it by OSC");
+            m.address = "/control/master_level";
+            require(!osc.handleMessage(m), "the old OSC address no longer routes");
             m.address = "/control/scene";
             m.types = "i";
             m.args = {QVariant(2)};
@@ -177,16 +179,16 @@ int main(int argc, char **argv)
         engine.setControlValue(d, 1);
         require(engine.saveProject(project, {}, &error), qPrintable(error));
         engine.newProject();
-        require(engine.controls().empty() && !has("control/master_level"), "a new project has no controls");
+        require(engine.controls().empty() && !has("control/master"), "a new project has no controls");
         require(engine.loadProject(project, nullptr, &error), qPrintable(error));
         const auto loaded = engine.controls();
-        require(loaded.size() == 5 && loaded[0].key == "master_level" && loaded[0].kind == ShowControl::Kind::Slider &&
+        require(loaded.size() == 5 && loaded[0].key == "master" && loaded[0].kind == ShowControl::Kind::Slider &&
                     near(loaded[0].value, 33) && near(loaded[0].max, 100) && loaded[0].unit == " %",
                 "the slider is back with its range and value");
         require(loaded[1].value == 1.0 && loaded[2].value == 2.0 && loaded[2].choices.size() == 3, "the switch and the selector");
         require(loaded[3].value == 0.0, "a button comes back up");
         require(near(loaded[4].rgb[0], 0.1) && near(loaded[4].rgb[2], 0.3), "the color");
-        require(has("control/master_level") && has("control/scene"), "and their parameters");
+        require(has("control/master") && has("control/scene"), "and their parameters");
         // Hand-edited states: nothing breaks
         QJsonArray junk;
         junk.append(QJsonObject{{"id", "1"}, {"name", "A"}, {"key", "bad/key"}, {"kind", "slider"}, {"min", 5}, {"max", 1}, {"value", 99}});

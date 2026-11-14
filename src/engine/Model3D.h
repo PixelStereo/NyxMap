@@ -11,17 +11,25 @@
 // lights, their shadows, and its environment or a studio's light.
 
 #include "Gl.h"
+#include <QJsonObject>
+#include <QDir>
+#include <QFileInfo>
 
 #include <QByteArray>
 #include <QImage>
 #include <QMatrix4x4>
 #include <QString>
+#include <QStringList>
 #include <QVector3D>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <memory>
+#include <map>
 #include <vector>
+
+enum MaterialMap { BaseColorMap, RoughnessMap, MetallicMap, NormalMap, OcclusionMap, EmissionMap, HeightMap, MaterialMapCount };
+inline constexpr const char *materialMapNames[] = {"base_color", "roughness", "metallic", "normal", "occlusion", "emission", "height"};
 
 // Where a model is in its scene
 struct ModelPlacement {
@@ -33,6 +41,12 @@ struct ModelPlacement {
     // A Merge 3D's own transform, around its position: all it holds moves with it
     QMatrix4x4 transform() const;
     float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
+    bool sharedMaterial = false;
+    std::array<GLuint, MaterialMapCount> materialTextures{};
+    std::array<float, 3> emission{};
+    std::array<float, 2> uvTiling{{1, 1}};
+    float normalStrength = 1, occlusionStrength = 1, ior = 1.5f, specular = 1;
+    bool materialHeight = false;
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
     int detail = 1;      // a primitive's mesh: how finely it is cut (1, the least, to 8)
     int shading = 0;     // 0 as it is made (a sphere smooth, a cube with its edges), 1 smooth, 2 flat: its facets show
@@ -44,6 +58,93 @@ struct ModelPlacement {
     // A built-in primitive's material (a file keeps its own)
     std::array<float, 3> color{{0.8f, 0.8f, 0.8f}};
     float metal = 0, rough = 0.6f;
+};
+
+struct Material3D {
+    quint64 id = 0;
+    QString name;
+    std::array<float, 3> color{{.8f, .8f, .8f}};
+    float metal = 0, rough = .6f;
+    std::array<QString, MaterialMapCount> paths;
+    std::array<QImage, MaterialMapCount> images;
+    std::array<QString, MaterialMapCount> embeddedMapNames;
+    std::array<QString, MaterialMapCount> embeddedMaps; // base64 PNG for imported maps without standalone paths
+    std::array<float, 3> emissionColor{{1, 1, 1}};
+    std::array<float, 2> uvTiling{{1, 1}};
+    float emission = 0, normalStrength = 1, occlusionStrength = 1, height = 0, ior = 1.5f, specular = 1;
+    quint64 picture = 0;
+    int pictureStage = -1;
+    bool setMap(MaterialMap slot, const QString &path, QString *error = nullptr);
+    bool setEmbeddedMap(MaterialMap slot, const QImage &image, const QString &name);
+    QJsonObject toJson(const QString &projectDir = {}) const {
+        QJsonObject maps;
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            if (paths[i].isEmpty()) {
+                if (!embeddedMaps[i].isEmpty()) maps[materialMapNames[i]] = QJsonObject{{"png", embeddedMaps[i]}, {"name", embeddedMapNames[i]}};
+                continue;
+            }
+            QJsonObject file{{"path", paths[i]}};
+            if (!projectDir.isEmpty()) file["relative_path"] = QDir(projectDir).relativeFilePath(paths[i]);
+            maps[materialMapNames[i]] = file;
+        }
+        return {{"id", QString::number(id)}, {"name", name},
+                {"r", color[0]}, {"g", color[1]}, {"b", color[2]}, {"metal", metal}, {"rough", rough}, {"picture", QString::number(picture)}, {"picture_stage", pictureStage},
+                {"maps", maps}, {"normal_strength", normalStrength}, {"occlusion_strength", occlusionStrength},
+                {"emission", emission}, {"emission_r", emissionColor[0]}, {"emission_g", emissionColor[1]}, {"emission_b", emissionColor[2]},
+                {"height", height}, {"ior", ior}, {"specular", specular}, {"tile_u", uvTiling[0]}, {"tile_v", uvTiling[1]}};
+    }
+    static Material3D fromJson(const QJsonObject &json, const QString &projectDir = {}) {
+        Material3D material;
+        material.id = json.value("id").toString().toULongLong();
+        material.name = json.value("name").toString();
+        for (int c = 0; c < 3; ++c)
+            material.color[c] = float(std::clamp(json.value(QString(QChar("rgb"[c]))).toDouble(.8), 0., 1.));
+        material.metal = float(std::clamp(json.value("metal").toDouble(), 0., 1.));
+        material.rough = float(std::clamp(json.value("rough").toDouble(.6), 0., 1.));
+        material.picture = json.value("picture").toString().toULongLong();
+        material.pictureStage = json.value("picture_stage").toInt(-1);
+        const QJsonObject maps = json.value("maps").toObject();
+        for (int i = 0; i < MaterialMapCount; ++i) {
+            const auto file = maps.value(materialMapNames[i]).toObject();
+            QString path = file.value("path").toString();
+            const QString relative = file.value("relative_path").toString();
+            if (!projectDir.isEmpty() && !relative.isEmpty() && !QFileInfo(path).isFile()) {
+                const QString alternate = QDir(projectDir).absoluteFilePath(relative);
+                if (QFileInfo(alternate).isFile()) path = alternate;
+            }
+            if (!path.isEmpty() && !material.setMap(MaterialMap(i), path)) material.paths[i] = path;
+            if (path.isEmpty()) {
+                material.embeddedMaps[i] = file.value("png").toString();
+                material.embeddedMapNames[i] = file.value("name").toString();
+                if (!material.embeddedMaps[i].isEmpty())
+                    material.images[i] = QImage::fromData(QByteArray::fromBase64(material.embeddedMaps[i].toLatin1()), "PNG");
+            }
+        }
+        material.normalStrength = float(std::clamp(json.value("normal_strength").toDouble(1), 0., 10.));
+        material.occlusionStrength = float(std::clamp(json.value("occlusion_strength").toDouble(1), 0., 1.));
+        material.emission = float(std::clamp(json.value("emission").toDouble(), 0., 100.));
+        material.emissionColor = {{float(std::clamp(json.value("emission_r").toDouble(1), 0., 1.)), float(std::clamp(json.value("emission_g").toDouble(1), 0., 1.)), float(std::clamp(json.value("emission_b").toDouble(1), 0., 1.))}};
+        material.height = float(std::clamp(json.value("height").toDouble(), -2., 2.));
+        material.ior = float(std::clamp(json.value("ior").toDouble(1.5), 1., 4.));
+        material.specular = float(std::clamp(json.value("specular").toDouble(1), 0., 1.));
+        material.uvTiling = {{float(std::clamp(json.value("tile_u").toDouble(1), .01, 100.)), float(std::clamp(json.value("tile_v").toDouble(1), .01, 100.))}};
+        return material;
+    }
+};
+
+// Import editable metallic-roughness surfaces without importing the model's geometry.
+std::vector<Material3D> importGltfMaterials(const QString &path, QString *error = nullptr);
+
+// One cache per GL owner. A shared material uploads each image once even when used by multiple objects.
+class MaterialTextureCache {
+public:
+    void apply(const Material3D &material, ModelPlacement &placement);
+    void advance();
+    void release();
+private:
+    struct Entry { Texture2D texture; quint64 used = 0; };
+    std::map<qint64, Entry> m_textures;
+    quint64 m_frame = 0;
 };
 
 // A light of a scene
@@ -107,6 +208,7 @@ struct Scene3DQuality {
 
 // Where the program that shades a mesh takes what its material says, found once
 struct MeshUniforms {
+    GLint dielectric = -1;
     GLint base = -1, metal = -1, rough = -1, emissive = -1, alphaMode = -1, alphaCutoff = -1, normalScale = -1, aoStrength = -1;
     GLint roughCh = -1, metalCh = -1, hasTex = -1, layerTex = -1, has[5] = {-1, -1, -1, -1, -1};
     void resolve(GLuint program);
@@ -128,7 +230,9 @@ public:
     static QString primitivePath(const QString &name);
     static bool isPrimitivePath(const QString &path);
 
-    bool load(const QString &path, QString *err); // reads the file (no GL): its meshes, materials and textures
+    bool load(const QString &path, QString *err, const QStringList &hidden = {});
+    const auto &objects() const { return m_objects; }
+    const QStringList &hiddenObjects() const { return m_hidden; } // reads the file (no GL): its meshes, materials and textures
     QString path() const { return m_path; }
     int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;
@@ -144,6 +248,7 @@ public:
     bool hasBlended() const;
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
+    int displacementUvTopology() const { return m_primitive ? m_displacementUvTopology : 0; }
     int detail() const { return m_detail; }
     void setDetail(int detail); // a primitive made again, finer or coarser (render thread)
     void setSmooth(bool on);    // its normals averaged where its faces meet, its edges rounded (render thread)
@@ -173,6 +278,7 @@ private:
         std::vector<Vertex> vertices;
         std::vector<quint32> indices;
         int material = 0;
+        QString object;
         GLuint vao = 0, vbo = 0, ibo = 0;
         GLuint edgeVao = 0, edgeIbo = 0;
         GLsizei edgeCount = 0;
@@ -188,6 +294,8 @@ private:
     bool uploadGl();
 
     QString m_path;
+    QStringList m_hidden;
+    std::vector<std::pair<QString, QString>> m_objects;
     std::vector<Mesh> m_meshes;
     int m_meshesRead = 0;
     std::vector<Material> m_materials;
@@ -196,6 +304,7 @@ private:
     QVector3D m_center;
     float m_radius = 1, m_width = 1;
     bool m_primitive = false;
+    int m_displacementUvTopology = 0;
     int m_detail = 1;
     void releaseMeshes();
     bool m_uploaded = false;
@@ -261,10 +370,11 @@ private:
     static constexpr int kGlowLevels = 6;
     GLuint m_glowDownProgram = 0, m_glowUpProgram = 0, m_fogProgram = 0, m_fogBlurProgram = 0, m_postProgram = 0, m_rawSampler = 0;
     GLuint m_msBright = 0, m_bright = 0, m_glowTex[kGlowLevels] = {}, m_fogTex[2] = {}, m_final = 0, m_lookFbo = 0;
-    GLuint m_picture = 0; // what it gives: its final picture, or m_color with nothing over it
+    RenderTarget m_aaOutput; // composition-sized resolve of the high-quality 3D render
+    GLuint m_picture = 0; // the texture returned to composition
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
-        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1;
+        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
         void resolve(GLuint program);
     };
     GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
@@ -272,7 +382,64 @@ private:
     MeshUniforms m_unlitUniforms;
     MeshUniforms m_meshUniforms;
     PlaceUniforms m_placeMain, m_placeDepth, m_placePoint;
-    GLint m_unlitAt = -1, m_flatAt = -1;
+    struct SceneUniforms {
+        GLint u_ambient = -1;
+        GLint u_aoAmount = -1;
+        GLint u_aoTex = -1;
+        GLint u_color = -1;
+        GLint u_cos = -1;
+        GLint u_cosIn = -1;
+        GLint u_count = -1;
+        GLint u_depthRange = -1;
+        GLint u_disp = -1;
+        GLint u_env = -1;
+        GLint u_envIntensity = -1;
+        GLint u_envLinear = -1;
+        GLint u_envMaxLod = -1;
+        GLint u_envRot = -1;
+        GLint u_exposure = -1;
+        GLint u_eye = -1;
+        GLint u_glowLimit = -1;
+        GLint u_hasEnv = -1;
+        GLint u_hasLast = -1;
+        GLint u_last = -1;
+        GLint u_lastExposure = -1;
+        GLint u_ldir = -1;
+        GLint u_lhalf = -1;
+        GLint u_lpos = -1;
+        GLint u_lright = -1;
+        GLint u_lup = -1;
+        GLint u_penumbra = -1;
+        GLint u_pointFar = -1;
+        GLint u_pointMap0 = -1;
+        GLint u_pointMap1 = -1;
+        GLint u_pointRaw0 = -1;
+        GLint u_pointRaw1 = -1;
+        GLint u_pointShadow = -1;
+        GLint u_pointSoft = -1;
+        GLint u_proj = -1;
+        GLint u_reflections = -1;
+        GLint u_screen = -1;
+        GLint u_seen = -1;
+        GLint u_shadow = -1;
+        GLint u_shadowBias = -1;
+        GLint u_shadowRadius = -1;
+        GLint u_shadowRaw = -1;
+        GLint u_shadows = -1;
+        GLint u_steps = -1;
+        GLint u_studio = -1;
+        GLint u_taps = -1;
+        GLint u_tex = -1;
+        GLint u_type = -1;
+        GLint u_view = -1;
+        GLint u_viewProj = -1;
+    } m_sceneUniforms;
+    GLint m_unlitAt = -1, m_shadingAt = -1;
+    struct DepthUniforms {
+        GLint view = -1, projection = -1, displacement = -1, light = -1, farPlane = -1;
+    } m_depthUniforms, m_pointUniforms;
+    std::array<GLint, kMaxShadows> m_shadowPlaneAt{}, m_shadowMatrixAt{}, m_fogShadowMatrixAt{};
+    GLint m_targetLimit = 0, m_sampleLimit = 1;
     GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
     bool m_compiled = false;
     GLuint m_fbo = 0, m_color = 0;                          // its picture

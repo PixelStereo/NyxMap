@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include <functional>
 #include "LayerInspector.h"
 #include "ParamAnimPanel.h"
 #include "TimelinePanel.h"
@@ -96,13 +97,23 @@ int runColorParameterUiTests(Engine &engine, const QString &root)
     check(numericMode && numericMode->isVisible() && numericMode->isChecked() && numericMode->text().contains("CURRENT VALUE") &&
           numericMode->styleSheet().contains("#f6c453"), "numeric current-value mode has a persistent highlighted badge");
     auto inlineTarget = [&](const Engine::AnimParam &target) -> QAction * {
+        // The one value picker: Layers ▸ the layer ▸ its categories ▸ the value, each menu filled as it opens
         const int cut = target.label.lastIndexOf(QStringLiteral(" › "));
-        for (auto *button : timeline.findChildren<QPushButton *>()) {
-            if (!button->menu() || button->objectName() != QLatin1String("timelineParameter")) continue;
-            for (auto *category : button->menu()->actions()) if (category->menu() && category->text() == target.label.left(cut))
-                for (auto *action : category->menu()->actions()) if (action->text() == target.name()) return action;
-        }
-        return nullptr;
+        const QStringList category = target.label.left(cut).split(QStringLiteral(" › "));
+        QAction *found = nullptr;
+        std::function<void(QMenu *, QStringList)> look = [&](QMenu *menu, QStringList path) {
+            emit menu->aboutToShow();
+            for (auto *action : menu->actions()) {
+                if (found) return;
+                if (action->menu()) look(action->menu(), path + QStringList{action->text()});
+                else if (action->text() == target.name() && path.size() >= category.size() &&
+                         path.mid(path.size() - category.size()) == category && path.value(0) == "Layers")
+                    found = action;
+            }
+        };
+        for (auto *button : timeline.findChildren<QPushButton *>())
+            if (button->menu() && button->objectName() == QLatin1String("timelineParameter") && !found) look(button->menu(), {});
+        return found;
     };
     for (const auto &target : colors) {
         auto *action = inlineTarget(target);

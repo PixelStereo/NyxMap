@@ -89,9 +89,14 @@ struct InteractionConsequence {
     double value = 1;
     double time = 0;
     int curve = 3; // ease in-out
+    QString oscDestination;
+    QString oscAddress;
+    QJsonArray oscArguments;
+    bool sendsOsc() const { return !oscDestination.isEmpty(); }
     bool operator==(const InteractionConsequence &o) const
     {
-        return layer == o.layer && param == o.param && value == o.value && time == o.time && curve == o.curve;
+        return layer == o.layer && param == o.param && value == o.value && time == o.time && curve == o.curve &&
+               oscDestination == o.oscDestination && oscAddress == o.oscAddress && oscArguments == o.oscArguments;
     }
 };
 
@@ -110,12 +115,14 @@ InteractionFilter interactionFilterFromKey(const QString &k, bool *ok = nullptr)
 // One filter of an interaction's chain
 struct InteractionStage {
     InteractionFilter kind = InteractionFilter::Average;
+    QString name; // optional display label
     bool enabled = true;
     double a = 0, b = 0, c = 0, d = 0; // its settings (interactionFilterSetting)
     double &setting(int which) { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
     double setting(int which) const { return which == 0 ? a : which == 1 ? b : which == 2 ? c : d; }
     MathOp op = MathOp::Multiply; // Math
     AnimTrack curve;              // Curve: keys over 0..1 (time) to 0..1 (value)
+    QString displayName() const { return name.isEmpty() ? interactionFilterName(kind) : name; }
     static InteractionStage made(InteractionFilter kind); // with its defaults (a Curve: straight)
     static InteractionStage remap(double inMin, double inMax, double outMin, double outMax);
     QJsonObject toJson() const;
@@ -140,9 +147,21 @@ struct InteractionEvent {
     QString describe() const; // "MIDI · ch 1 · CC 7", "Key Space", "OSC /fader/1"
 };
 
+// A folder of the interactions list, as the layers' groups: it holds interactions and other groups (`parent`, 0: the list's
+// top level). Purely for putting the list in order: it changes nothing of how its interactions run.
+struct InteractionGroup {
+    quint64 id = 0;
+    QString name;
+    quint64 parent = 0;
+    bool operator==(const InteractionGroup &o) const { return id == o.id && name == o.name && parent == o.parent; }
+    QJsonObject toJson() const;
+    static InteractionGroup fromJson(const QJsonObject &o);
+};
+
 struct Interaction {
     quint64 id = 0;
     QString name; // its own (empty: described by its source and its target)
+    quint64 group = 0; // the InteractionGroup it is in (0: the list's top level)
     bool enabled = true;
     InteractionSource source = InteractionSource::Keyboard;
 
@@ -167,6 +186,7 @@ struct Interaction {
     bool audioInput = false;
     PixelAnalysis::Settings pixels;
     PixelAnalysis::Feature pixelFeature = PixelAnalysis::Feature::Mean;
+    int visionLandmark = 0;
     HandTracking::Feature handFeature = HandTracking::Feature::Pinch;
     int handIndex = 0;
     double handConfidence = .7;
@@ -200,6 +220,7 @@ struct Interaction {
 
     // The chain: its filters in their order, then the master level
     double master = 1;    // 0..1
+    std::vector<InteractionStage> sharedFilters; // before the target branches
     std::vector<InteractionStage> filters; // in their order
     bool movesOverTime() const; // a filter on that moves by itself between values (Average, Damper, Delay…)
     Takeover takeover = Takeover::Jump;
@@ -257,7 +278,7 @@ private:
         double y = 0, v = 0, slow = 0, prev = 0;     // its value, its speed (Damper), its slow average (Pulse), the last input
         int phase = 0;                                // Envelope: 0 idle, 1 attack, 2 decay, 3 sustain, 4 release
         double peak = 1;                              // Envelope: the level the trigger came in at (its velocity)
-        std::deque<std::pair<double, double>> window; // Average, Delay: (time, value)
+        std::deque<std::pair<double, double>> window{}; // Average, Delay: (time, value)
     };
     OnsetDetector m_hit;             // a Hit source: what it learned of the sound
     std::optional<double> m_level;   // the source's last value

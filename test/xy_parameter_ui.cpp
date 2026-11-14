@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include <functional>
 #include "LayerInspector.h"
 #include "ParamAnimPanel.h"
 #include "TimelinePanel.h"
@@ -233,9 +234,17 @@ int runXyParameterUiTests(Engine &engine, const QString &root)
         check(timelinePath.grab().save(QDir(captures).filePath("xy-path-timeline.png")), "save global XY path preview in CI");
     auto *targetMenu = timelinePath.findChild<QPushButton *>("timelineParameter");
     QAction *scalarTarget = nullptr;
-    if (targetMenu && targetMenu->menu())
-        for (auto *action : targetMenu->menu()->actions())
-            if (action->text() == QLatin1String("Opacity") && !action->menu()) scalarTarget = action;
+    if (targetMenu && targetMenu->menu()) {
+        // The one value picker: Layers ▸ a layer ▸ its values, each filled as it opens
+        std::function<void(QMenu *)> look = [&](QMenu *menu) {
+            emit menu->aboutToShow();
+            for (auto *action : menu->actions()) {
+                if (action->text() == QLatin1String("Opacity") && !action->menu() && !scalarTarget) scalarTarget = action;
+                if (action->menu() && !scalarTarget) look(action->menu());
+            }
+        };
+        look(targetMenu->menu());
+    }
     check(scalarTarget != nullptr, "timeline target menu offers a scalar target beside XY");
     if (scalarTarget) scalarTarget->trigger();
     pump();

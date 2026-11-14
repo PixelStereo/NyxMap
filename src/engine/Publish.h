@@ -102,6 +102,18 @@ std::unique_ptr<CpuPublisher> createDeckLinkPublisher(); // DeckLink.cpp (nullpt
 // For tests: receives every frame sent
 std::unique_ptr<CpuPublisher> createTapPublisher(std::function<void(const CpuFrame &)> fn);
 
+// A read-back picture still in the buffer the GPU wrote it to (mapped by the render thread), lent to the send thread:
+// the send thread copies it, so that the render thread never does, then gives the buffer back
+struct LentFrame {
+    const uint8_t *data = nullptr; // bgra, rows top to bottom
+    size_t bytes = 0;
+    int token = 0; // names the buffer (0..31): comes back through takeReturned()
+    int width = 0, height = 0, stride = 0;
+    int64_t timestamp100ns = 0;
+    int fpsN = 60, fpsD = 1;
+    std::optional<Timecode> timecode;
+};
+
 // Send thread: receives read-back frames and dispatches them to CPU publishers.
 // Three rotating buffers: NDI asynchronous send holds a frame until the next send.
 class CpuSendThread
@@ -111,6 +123,11 @@ public:
     ~CpuSendThread();
     CpuFrame *acquire();          // free buffer (or the pending frame, replaced), never blocks
     void submit(CpuFrame *f);
+    // A picture to copy then send. Never blocks: one lent before and not copied yet is replaced (the send thread is
+    // late), its buffer given back at once. `data` stays readable until its token comes back
+    void lend(const LentFrame &f);
+    unsigned takeReturned(); // a bit per token: the buffers the send thread no longer reads, since the last call
+    void recall();           // waits until no lent buffer is read: all of them are given back
     void setPublishers(std::vector<std::shared_ptr<CpuPublisher>> pubs); // destroyed in the send thread
     bool hasPublishers() const { return m_active.load(); }
     uint64_t sentFrames() const { return m_sent.load(); }
@@ -124,6 +141,10 @@ private:
     CpuFrame *m_pending = nullptr, *m_inflight = nullptr;
     std::vector<std::shared_ptr<CpuPublisher>> m_pubs, m_next;
     bool m_changed = false, m_quit = false;
+    std::optional<LentFrame> m_lent; // waiting to be copied
+    bool m_copying = false;          // a lent buffer is being read (the lock is not held meanwhile)
+    unsigned m_returned = 0;
+    std::condition_variable m_idle;  // no lent buffer is being read
     std::atomic<bool> m_active{false};
     std::atomic<uint64_t> m_sent{0};
     std::thread m_thread;

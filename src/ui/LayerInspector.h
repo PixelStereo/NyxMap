@@ -28,6 +28,7 @@ class QLineEdit;
 class RoiEditor;
 class ColorEditor;
 class QComboBox;
+class QCheckBox;
 class QToolButton;
 class QGroupBox;
 class ParamPanel;
@@ -160,6 +161,9 @@ private:
     QPointer<QLabel> m_sourceColorStatus;
     QPointer<RangeField> m_loop;
     QPointer<QButtonGroup> m_playButtons;
+    QPointer<QComboBox> m_roiMode;
+    QPointer<QWidget> m_roiRanges;
+    QPointer<QCheckBox> m_roiKeep;
     QPointer<RoiEditor> m_roi;
     QPointer<ColorEditor> m_colorAdd, m_colorRemove;
     std::vector<std::pair<QPointer<QPushButton>, QString>> m_textColors;
@@ -169,6 +173,7 @@ private:
     std::vector<std::pair<QPointer<SliderField>, QString>> m_synthFields;
     QPointer<class AdsrCurve> m_adsrCurve; // an instrument's envelope
     // 3D: a scene's camera and light, a model's place, a light (their parameters, by prefix)
+    void show3dCategoryMenu(quint64 layer, const QStringList &paths, const QPoint &global);
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
@@ -176,6 +181,7 @@ private:
     void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
                         const QString &objectName, const QString &tip, const QString &undoText,
                         const std::function<bool(quint64, int, QString *)> &set, bool hdr = false);
+    QPointer<QLabel> m_modelTriangles;
     std::vector<std::pair<QPointer<QWidget>, QString>> m_3dFields;
     std::vector<std::pair<QPointer<QWidget>, QStringList>> m_3dColors;
     QPointer<ParamPanel> m_generatorParams, m_effectParams;

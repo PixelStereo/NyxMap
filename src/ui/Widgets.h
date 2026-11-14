@@ -17,6 +17,7 @@ class QPainter;
 #include <QRectF>
 #include <QWidget>
 #include <functional>
+#include <array>
 #include <vector>
 
 // A button of one symbol (+, −, ⧉) in a tight bar: narrow, as high as the words beside it
@@ -54,6 +55,8 @@ QString css(int alpha = 255);    // "#rrggbb", or "rgba(r, g, b, a)" when alpha 
 // Sub-tabs that read as tabs (the inspector's, the interactions', the settings'): the current one lighter, in bold,
 // underlined with the accent; the others darker, apart
 QString tabStyle();
+enum class CueKind { Snapshot, Preset, Timeline, Group, Sequence };
+QColor cueColor(CueKind kind);
 } // namespace theme
 
 // Magnetism: points and frames dragged in the preview are caught by the edges, centers and corners around
@@ -233,6 +236,40 @@ QIcon playModeIcon(int mode); // PlayMode: OneShot, Loop, PingPong, Stop
 
 // Part of the source picture used by a layer: preview of the whole picture with a rectangle whose sides are dragged
 // (they stay straight); dragging inside moves the rectangle. Numeric fields in % below.
+// A 2D slider: a square in which a dot is dragged, X to the right and Y upward, both within one range. Double-click: back to its default.
+class XyPad : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit XyPad(QWidget *parent = nullptr);
+    void setRange(double lo, double hi);
+    void setDefault(double v) { m_default = v; }
+    void setDecimals(int d) { m_decimals = d; update(); }
+    void setValue(double x, double y); // not while being dragged
+    double x() const { return m_x; }
+    double y() const { return m_y; }
+    bool isDragging() const { return m_dragging; }
+    QSize sizeHint() const override { return QSize(180, 150); }
+    QSize minimumSizeHint() const override { return QSize(90, 90); }
+
+signals:
+    void valueEdited(double x, double y); // continuous while dragging
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *e) override;
+    void mouseMoveEvent(QMouseEvent *e) override;
+    void mouseReleaseEvent(QMouseEvent *e) override;
+    void mouseDoubleClickEvent(QMouseEvent *e) override;
+
+private:
+    QRectF area() const;
+    void drag(QPointF pos);
+    double m_lo = 0, m_hi = 1, m_default = 0, m_x = 0, m_y = 0;
+    int m_decimals = 2;
+    bool m_dragging = false;
+};
+
 class RoiEditor : public QWidget
 {
     Q_OBJECT
@@ -241,12 +278,20 @@ public:
     void setImage(const QImage &img);
     void setAspect(double aspect); // used while no preview is available
     void setRoi(const QRectF &r);
+    void setPolygon(int mode, const std::array<QPointF, 4> &points);
     QRectF roi() const { return m_roi; }
+    // Rectangle mode: dragging a side resizes the rectangle around its center keeping its width : height
+    void setKeepProportions(bool on) { m_keepProportions = on; }
+    bool keepProportions() const { return m_keepProportions; }
+    // `r` with the side(s) that `axis` (0: left / right, 1: top / bottom) did not move scaled to keep `ratio` (width / height),
+    // around the center of `r`, within 0..1
+    static QRectF keepRatio(QRectF r, double ratio, int axis);
     QSize sizeHint() const override { return QSize(320, 200); }
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int w) const override;
 
 signals:
+    void roiPointEdited(int point, QPointF position);
     void roiEdited(const QRectF &r); // continuous while dragging
 
 protected:
@@ -256,11 +301,15 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override;
 
 private:
+    QPolygonF polygon() const;
     QRectF picture() const; // image area in the widget
     int hit(QPointF p) const;   // 0 left, 1 top, 2 right, 3 bottom, 4 inside, -1 none
     QImage m_image;
     double m_aspect = 16.0 / 9.0;
     QRectF m_roi{0, 0, 1, 1}, m_dragStart;
+    int m_roiMode = 0;
+    bool m_keepProportions = false;
+    std::array<QPointF, 4> m_roiPoints{};
     int m_drag = -1;
     QPointF m_pressNorm;
 };

@@ -58,7 +58,7 @@ struct IsfInput {
     int extW = 0, extH = 0;
 
     // An "audio" or "audioFFT" input: the sound it shows (saved), and its MAX (the columns wanted; 0: the native
-    // width). The engine fills imageTex before each render.
+    // width). The engine binds the shared analysis texture before each render.
     enum AudioSource { LiveInput, Program };
     AudioSource audioSource = LiveInput;
     int audioMax = 0;
@@ -143,7 +143,11 @@ public:
     void releaseGl();
 
     // Renders into `out` (size outW x outH). inputTex may be 0 (generator).
-    void render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW, int outH);
+    // A stateless generator can redraw its held frame without consuming time or events.
+    void render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW, int outH,
+                bool repeatFrame = false);
+    bool canSkipDraw() const { return m_canSkipDraw; }
+    void advanceWithoutDrawing(const IsfRenderContext &rc);
 
     bool setImageInput(int index, const QString &path, QString *err); // GL context current
     // Texture of the engine bound to the image input `name` at the next renders (0: back to its own image)
@@ -183,6 +187,7 @@ public:
     // The mask layer's picture it takes: -1 its final picture, 0 its source (before its effects), k its picture after its
     // effect k (1 = the first). Its own layer can mask it, from a stage above it (its source, an effect before it)
     int maskStage = -1;
+    double mix = 1; // an effect: how much of its result goes on (1: all of it, 0: the picture it was given)
     bool maskOnly = false; // computed (a mask can take its picture), but the layer's picture goes on without it
     std::array<bool, 4> channels{{true, true, true, true}}; // an effect: the channels it changes (R G B A); the others
                                                             // keep the picture it was given
@@ -214,6 +219,7 @@ private:
 
     QString m_path, m_name, m_description, m_credit, m_error;
     bool m_isFilter = false;
+    bool m_canSkipDraw = false;
     std::vector<IsfInput> m_inputs;
     std::vector<IsfPass> m_passes;
     std::vector<IsfTarget> m_targets;

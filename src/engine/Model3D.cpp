@@ -58,9 +58,11 @@ int Model3D::addImage(const QImage &image)
     return int(m_images.size()) - 1;
 }
 
-bool Model3D::load(const QString &path, QString *err)
+bool Model3D::load(const QString &path, QString *err, const QStringList &hidden)
 {
     m_path = path;
+    m_hidden = hidden;
+    m_objects.clear();
     m_meshes.clear();
     m_materials.clear();
     m_images.clear();
@@ -76,8 +78,10 @@ bool Model3D::load(const QString &path, QString *err)
     }
     if (m_materials.empty()) m_materials.emplace_back();
     m_meshesRead = int(m_meshes.size());
+    computeBounds(); // hiding geometry must not change the fit or pivot
+    if (!m_hidden.isEmpty())
+        m_meshes.erase(std::remove_if(m_meshes.begin(), m_meshes.end(), [this](const Mesh &m) { return m_hidden.contains(m.object); }), m_meshes.end());
     mergeMeshes();
-    computeBounds();
     return true;
 }
 
@@ -198,6 +202,12 @@ struct Builder {
 bool Model3D::loadPrimitive(const QString &name, QString *err)
 {
     Builder b;
+    // Periodic U/V and collapsed ends of V, for stitching live displacement textures.
+    if (name == QLatin1String("Torus")) m_displacementUvTopology = 1 | 2;
+    else if (name == QLatin1String("Sphere") || name == QLatin1String("Capsule")) m_displacementUvTopology = 1 | 4 | 8;
+    else if (name == QLatin1String("Dome")) m_displacementUvTopology = 1 | 8;
+    else if (name == QLatin1String("Cylinder") || name == QLatin1String("Open Cylinder")) m_displacementUvTopology = 1;
+    else m_displacementUvTopology = 0;
     // As little as the shape needs, more when asked: segments around; cuts of a flat face (a cube is 12 triangles, a plane 2)
     static const int kRound[8] = {24, 32, 48, 64, 96, 128, 192, 256}, kFlat[8] = {1, 4, 8, 16, 32, 64, 128, 256};
     const int S = kRound[std::clamp(m_detail, 1, 8) - 1], F = kFlat[std::clamp(m_detail, 1, 8) - 1];
@@ -285,38 +295,132 @@ bool Model3D::loadPrimitive(const QString &name, QString *err)
 
 // --- glTF / GLB (cgltf) --------------------------------------------------------------------------------------------
 
-bool Model3D::loadGltf(const QString &path, QString *err)
+namespace {
+using GltfDocument = std::unique_ptr<cgltf_data, decltype(&cgltf_free)>;
+
+GltfDocument readGltf(const QString &path)
 {
     cgltf_options options{};
     cgltf_data *data = nullptr;
     const QByteArray file = QFile::encodeName(path);
-    if (cgltf_parse_file(&options, file.constData(), &data) != cgltf_result_success ||
-        cgltf_load_buffers(&options, data, file.constData()) != cgltf_result_success) {
-        if (data) cgltf_free(data);
+    const auto result = cgltf_parse_file(&options, file.constData(), &data);
+    GltfDocument document(data, &cgltf_free);
+    if (result != cgltf_result_success || cgltf_load_buffers(&options, data, file.constData()) != cgltf_result_success)
+        document.reset();
+    return document;
+}
+
+QImage readGltfImage(const cgltf_image &image, const QDir &dir)
+{
+    if (image.buffer_view) {
+        const auto *view = image.buffer_view;
+        const auto *buffer = view->buffer;
+        if (!buffer || !buffer->data || view->offset > buffer->size || view->size > buffer->size - view->offset ||
+            view->size > std::numeric_limits<int>::max()) return {};
+        const auto *bytes = static_cast<const uchar *>(buffer->data) + view->offset;
+        return QImage::fromData(bytes, int(view->size));
+    }
+    if (!image.uri) return {};
+    QByteArray uri(image.uri);
+    if (uri.startsWith("data:")) {
+        const int comma = uri.indexOf(',');
+        if (comma < 0 || !uri.left(comma).endsWith(";base64")) return {};
+        return QImage::fromData(QByteArray::fromBase64(uri.mid(comma + 1)));
+    }
+    cgltf_decode_uri(uri.data());
+    return QImage(dir.absoluteFilePath(QString::fromUtf8(uri.constData())));
+}
+
+QImage gltfChannel(const QImage &rgba, int channel)
+{
+    QImage result(rgba.size(), QImage::Format_Grayscale8);
+    if (result.isNull()) return {};
+    for (int y = 0; y < rgba.height(); ++y) {
+        const auto *src = rgba.constScanLine(y);
+        auto *dst = result.scanLine(y);
+        for (int x = 0; x < rgba.width(); ++x) dst[x] = src[4 * x + channel];
+    }
+    return result;
+}
+} // namespace
+
+std::vector<Material3D> importGltfMaterials(const QString &path, QString *error)
+{
+    if (error) error->clear();
+    const auto document = readGltf(path);
+    if (!document || document->materials_count == 0) {
+        if (error) *error = document ? QStringLiteral("The glTF file has no materials.")
+                                     : QStringLiteral("Not a glTF file that can be read.");
+        return {};
+    }
+    const QFileInfo source(path);
+    const QDir dir = source.absoluteDir();
+    QHash<const cgltf_image *, QImage> images;
+    std::vector<Material3D> materials;
+    for (size_t i = 0; i < document->materials_count; ++i) {
+        const auto &input = document->materials[i];
+        Material3D material;
+        material.name = QString::fromUtf8(input.name);
+        if (material.name.isEmpty()) material.name = QStringLiteral("%1 · Material %2").arg(source.completeBaseName()).arg(i + 1);
+        const auto &pbr = input.pbr_metallic_roughness;
+        const auto displayColor = [](float linear) { return std::pow(std::clamp(linear, 0.f, 1.f), 1.f / 2.2f); };
+        for (int c = 0; c < 3; ++c) {
+            material.color[c] = displayColor(pbr.base_color_factor[c]);
+            material.emissionColor[c] = displayColor(input.emissive_factor[c]);
+        }
+        material.metal = pbr.metallic_factor;
+        material.rough = pbr.roughness_factor;
+        material.emission = input.has_emissive_strength ? input.emissive_strength.emissive_strength : 1.f;
+        material.normalStrength = input.normal_texture.texture ? input.normal_texture.scale : 1.f;
+        material.occlusionStrength = input.occlusion_texture.texture ? input.occlusion_texture.scale : 1.f;
+        if (input.has_ior) material.ior = input.ior.ior;
+        if (input.has_specular) material.specular = input.specular.specular_factor;
+        auto map = [&](MaterialMap slot, const cgltf_texture_view &view, int channel = -1) {
+            if (!view.texture) return true;
+            const auto *image = view.texture->image;
+            if (!image) return false;
+            auto it = images.find(image);
+            if (it == images.end())
+                it = images.insert(image, readGltfImage(*image, dir).convertToFormat(QImage::Format_RGBA8888));
+            if (it->isNull()) return false;
+            QString name = QString::fromUtf8(image->name);
+            QByteArray uri(image->uri);
+            if (!uri.isEmpty() && !uri.startsWith("data:")) {
+                cgltf_decode_uri(uri.data());
+                name = QFileInfo(QString::fromUtf8(uri.constData())).fileName();
+            }
+            if (name.isEmpty()) name = QStringLiteral("%1 · Image %2").arg(source.fileName()).arg(image - document->images + 1);
+            return material.setEmbeddedMap(slot, channel < 0 ? *it : gltfChannel(*it, channel), name);
+        };
+        if (!map(BaseColorMap, pbr.base_color_texture) ||
+            !map(RoughnessMap, pbr.metallic_roughness_texture, 1) ||
+            !map(MetallicMap, pbr.metallic_roughness_texture, 2) ||
+            !map(NormalMap, input.normal_texture) ||
+            !map(OcclusionMap, input.occlusion_texture, 0) ||
+            !map(EmissionMap, input.emissive_texture)) {
+            if (error) *error = QStringLiteral("Cannot read or embed a texture for %1.").arg(material.name);
+            return {};
+        }
+        materials.push_back(std::move(material));
+    }
+    return materials;
+}
+
+bool Model3D::loadGltf(const QString &path, QString *err)
+{
+    const auto document = readGltf(path);
+    if (!document) {
         if (err) *err = QStringLiteral("Not a glTF file that can be read.");
         return false;
     }
+    const auto *data = document.get();
     const QDir dir = QFileInfo(path).absoluteDir();
-    // Its images, decoded once: embedded (a buffer, a data URI) or beside the file
     QHash<const cgltf_image *, int> images;
     auto imageOf = [&](const cgltf_texture_view &view) -> int {
         if (!view.texture || !view.texture->image) return -1;
         const cgltf_image *img = view.texture->image;
         if (images.contains(img)) return images.value(img);
-        QImage decoded;
-        if (img->buffer_view && img->buffer_view->buffer->data) {
-            const auto *bytes = static_cast<const uchar *>(img->buffer_view->buffer->data) + img->buffer_view->offset;
-            decoded = QImage::fromData(bytes, int(img->buffer_view->size));
-        } else if (img->uri) {
-            const QString uri = QString::fromUtf8(img->uri);
-            if (uri.startsWith(QLatin1String("data:"))) {
-                decoded = QImage::fromData(QByteArray::fromBase64(uri.section(',', 1).toLatin1()));
-            } else {
-                QByteArray name = QByteArray(img->uri);
-                cgltf_decode_uri(name.data());
-                decoded = QImage(dir.absoluteFilePath(QString::fromUtf8(name.constData())));
-            }
-        }
+        const QImage decoded = readGltfImage(*img, dir);
         const int index = addImage(decoded);
         images.insert(img, index);
         return index;
@@ -402,7 +506,6 @@ bool Model3D::loadGltf(const QString &path, QString *err)
             m_meshes.push_back(std::move(mesh));
         }
     }
-    cgltf_free(data);
     return true;
 }
 
@@ -482,6 +585,9 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
         if (!mesh) continue;
         const ufbx_matrix toWorld = node->geometry_to_world;
         const ufbx_matrix normalToWorld = ufbx_matrix_for_normals(&toWorld);
+        const QString key = QString::number(n);
+        if (QFileInfo(path).suffix().compare(QStringLiteral("fbx"), Qt::CaseInsensitive) == 0)
+            m_objects.emplace_back(key, QString::fromUtf8(node->name.data, qsizetype(node->name.length)));
         // One mesh of ours per material of it
         std::vector<Mesh> parts(std::max<size_t>(1, mesh->materials.count));
         for (size_t k = 0; k < parts.size(); ++k)
@@ -495,19 +601,71 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
             for (size_t i = 0; i < count * 3; ++i) {
                 const uint32_t ix = tri[i];
                 const ufbx_vec3 p = ufbx_transform_position(&toWorld, ufbx_get_vertex_vec3(&mesh->vertex_position, ix));
-                ufbx_vec3 nn = mesh->vertex_normal.exists ? ufbx_get_vertex_vec3(&mesh->vertex_normal, ix) : ufbx_vec3{0, 0, 1};
+                ufbx_vec3 nn{};
+                if (mesh->vertex_normal.exists) nn = ufbx_get_vertex_vec3(&mesh->vertex_normal, ix);
+                else nn.z = 1;
                 nn = ufbx_vec3_normalize(ufbx_transform_direction(&normalToWorld, nn));
-                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, ix) : ufbx_vec2{0, 0};
+                const ufbx_vec2 uv = mesh->vertex_uv.exists ? ufbx_get_vertex_vec2(&mesh->vertex_uv, ix) : ufbx_vec2{};
                 out.indices.push_back(quint32(out.vertices.size()));
                 out.vertices.push_back(Vertex{{float(p.x), float(p.y), float(p.z)}, {float(nn.x), float(nn.y), float(nn.z)},
                                               {float(uv.x), 1.0f - float(uv.y)}}); // its V from the bottom: ours from the top
             }
         }
         for (Mesh &part : parts)
-            if (!part.indices.empty()) m_meshes.push_back(std::move(part));
+            if (!part.indices.empty()) { part.object = key; m_meshes.push_back(std::move(part)); }
     }
     ufbx_free_scene(scene);
     return true;
+}
+
+void MaterialTextureCache::apply(const Material3D &material, ModelPlacement &placement)
+{
+    placement.sharedMaterial = true;
+    placement.color = material.color;
+    placement.metal = material.metal;
+    placement.rough = material.rough;
+    placement.uvTiling = material.uvTiling;
+    placement.normalStrength = material.normalStrength;
+    placement.occlusionStrength = material.occlusionStrength;
+    placement.ior = material.ior;
+    placement.specular = material.specular;
+    for (int channel = 0; channel < 3; ++channel)
+        placement.emission[channel] = std::pow(material.emissionColor[channel], 2.2f) * material.emission;
+    auto f = gl();
+    for (int slot = 0; slot < MaterialMapCount; ++slot) {
+        const auto &image = material.images[slot];
+        if (image.isNull() || (slot == HeightMap && material.height == 0)) continue;
+        auto [entry, inserted] = m_textures.try_emplace(image.cacheKey());
+        if (inserted) {
+            f->glActiveTexture(GL_TEXTURE0);
+            entry->second.texture.uploadImage(image);
+            f->glBindTexture(GL_TEXTURE_2D, entry->second.texture.tex);
+            f->glGenerateMipmap(GL_TEXTURE_2D);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            f->glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        entry->second.used = m_frame;
+        placement.materialTextures[slot] = entry->second.texture.tex;
+    }
+}
+
+void MaterialTextureCache::advance()
+{
+    ++m_frame;
+    if (m_frame % 60 != 0) return;
+    for (auto it = m_textures.begin(); it != m_textures.end();) {
+        if (m_frame - it->second.used <= 120) { ++it; continue; }
+        it->second.texture.destroy();
+        it = m_textures.erase(it);
+    }
+}
+
+void MaterialTextureCache::release()
+{
+    for (auto &[key, entry] : m_textures) entry.texture.destroy();
+    m_textures.clear();
 }
 
 // --- Drawing ---------------------------------------------------------------------------------------------------------
@@ -516,22 +674,70 @@ static const char *kVertex = R"(#version 330 core
 layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(location=2) in vec2 a_uv;
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
 uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
-uniform int u_hasDisp; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
+uniform vec2 u_uvTiling;
+uniform int u_hasDisp, u_shading, u_dispTopology; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
+out vec3 v_basePos; out float v_heightScale; out vec2 v_heightSlope;
+float rawHeight(vec2 uv) {
+    vec4 h = textureLod(u_disp, uv, 0.0);
+    return dot(h.rgb, vec3(0.2126, 0.7152, 0.0722)) * h.a;
+}
+float stitchedU(vec2 uv) {
+    if ((u_dispTopology & 1) == 0) return rawHeight(uv);
+    uv.x = fract(uv.x);
+    float distanceToEdge = min(uv.x, 1.0 - uv.x);
+    float blend = 1.0 - smoothstep(0.0, 0.10, distanceToEdge);
+    if (blend <= 0.0) return rawHeight(uv);
+    float seam = 0.5 * (rawHeight(vec2(0, uv.y)) + rawHeight(vec2(1, uv.y)));
+    return mix(rawHeight(uv), seam, blend);
+}
+float heightAt(vec2 uv) {
+    if (u_hasDisp != 1 || u_dispTopology == 0) return rawHeight(uv);
+    if ((u_dispTopology & 2) != 0) {
+        uv.y = fract(uv.y);
+        float edge = min(uv.y, 1.0 - uv.y);
+        float blend = 1.0 - smoothstep(0.0, 0.10, edge);
+        if (blend <= 0.0) return stitchedU(uv);
+        float seam = 0.5 * (stitchedU(vec2(uv.x, 0)) + stitchedU(vec2(uv.x, 1)));
+        return mix(stitchedU(uv), seam, blend);
+    }
+    uv.y = clamp(uv.y, 0.0, 1.0);
+    float pole = uv.y < 0.5 ? 0.0 : 1.0;
+    int poleFlag = pole == 0.0 ? 4 : 8;
+    float blend = 1.0 - smoothstep(0.0, 0.14, abs(uv.y - pole));
+    if ((u_dispTopology & poleFlag) == 0 || blend <= 0.0) return stitchedU(uv);
+    // A whole UV row converges on one vertex position at the pole.
+    float mean = 0.0;
+    for (int i = 0; i < 8; ++i) mean += rawHeight(vec2((float(i) + 0.5) / 8.0, pole));
+    return mix(stitchedU(uv), mean / 8.0, blend);
+}
+vec3 bendPosition(vec3 p, float r) {
+    float t = (p.x - u_bendCx) / r;
+    return vec3(u_bendCx + (r - p.z) * sin(t), p.y, r - (r - p.z) * cos(t));
+}
 void main() {
-    vec3 p = a_pos, n = a_n;
+    vec3 p = a_pos, n = a_n, base = a_pos;
+    v_heightSlope = vec2(0.0);
     if (u_hasDisp != 0) {
-        vec4 d = textureLod(u_disp, vec2(a_uv.x, 1.0 - a_uv.y), 0.0); // a layer's picture: its first row at the bottom
-        float l = dot(d.rgb, vec3(0.2126, 0.7152, 0.0722)) * d.a; // its luminance
-        p += normalize(n) * (l - u_dispMid) * u_dispAmount;
+        vec2 uv = u_hasDisp == 2 ? a_uv * u_uvTiling : vec2(a_uv.x, 1.0 - a_uv.y);
+        p += normalize(n) * (heightAt(uv) - u_dispMid) * u_dispAmount;
+        if (u_shading == 1) {
+            vec2 stepUV = 1.0 / vec2(textureSize(u_disp, 0));
+            vec2 dx = vec2(stepUV.x, 0), dy = vec2(0, stepUV.y);
+            v_heightSlope = vec2(heightAt(uv + dx) - heightAt(uv - dx),
+                                 heightAt(uv + dy) - heightAt(uv - dy)) / (2.0 * stepUV);
+        }
     }
     if (abs(u_bend) > 1e-4) {
         float R = u_bendW / u_bend, t = (p.x - u_bendCx) / R, s = sin(t), c = cos(t);
-        p = vec3(u_bendCx + (R - p.z) * s, p.y, R - (R - p.z) * c);
+        p = bendPosition(p, R);
+        base = bendPosition(base, R);
         n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
     }
     vec4 w = u_model * vec4(p, 1.0);
-    v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv;
+    v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv * u_uvTiling;
+    v_basePos = (u_model * vec4(base, 1.0)).xyz;
+    v_heightScale = 1.0 / max(length(u_normal * normalize(n)), 1e-8);
     gl_Position = u_proj * u_view * w;
 }
 )";
@@ -543,13 +749,16 @@ void main() {
 // tone mapping, sRGB out
 static const char *kFragment = R"(#version 330 core
 in vec3 v_pos; in vec3 v_n; in vec2 v_uv;
+in vec3 v_basePos; in float v_heightScale; in vec2 v_heightSlope;
 layout(location = 0) out vec4 o;
 layout(location = 1) out vec4 o_bright; // what shines more than a screen can show: its glow (linear light)
 uniform float u_glowLimit;
 uniform vec3 u_lright[8], u_lup[8]; uniform vec2 u_lhalf[8]; // an area light: its sides, half its size
 uniform int u_penumbra; uniform vec3 u_shadowPlanes[4]; uniform sampler2DArray u_shadowRaw; uniform samplerCube u_pointRaw0, u_pointRaw1;
-uniform vec4 u_base; uniform float u_metal, u_rough; uniform vec3 u_emissive;
-uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_flat; uniform int u_hasDisp; uniform int u_layerTex;
+uniform vec2 u_uvTiling;
+uniform vec4 u_base; uniform float u_metal, u_rough, u_dielectric; uniform vec3 u_emissive;
+uniform int u_hasTex; uniform sampler2D u_tex; uniform int u_unlit; uniform int u_shading; uniform int u_hasDisp; uniform int u_layerTex;
+uniform float u_dispAmount;
 uniform sampler2D u_roughTex, u_metalTex, u_normalTex, u_aoTexMap, u_emTex;
 uniform int u_hasRough, u_hasMetal, u_hasNormal, u_hasAo, u_hasEm;
 uniform vec4 u_roughCh, u_metalCh; uniform float u_normalScale, u_aoStrength;
@@ -699,10 +908,20 @@ vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' app
     float a004 = min(k.x * k.x, exp2(-9.28 * NdV)) * k.x + k.y;
     return vec2(-1.04, 1.04) * a004 + k.zw;
 }
+vec3 smoothDisplacedNormal(vec3 n) {
+    // Project the interpolated texture slope onto the base surface.
+    // Differentiating displaced positions would give one normal per face.
+    vec2 uv = u_hasDisp == 2 ? v_uv : vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y);
+    vec3 rx = cross(dFdy(v_basePos), n), ry = cross(n, dFdx(v_basePos));
+    float area = dot(dFdx(v_basePos), rx);
+    if (abs(area) < 1e-12) return n;
+    vec3 gradient = (rx * dot(v_heightSlope, dFdx(uv)) + ry * dot(v_heightSlope, dFdy(uv))) / area;
+    return normalize(n - gradient * (u_dispAmount * v_heightScale));
+}
 void main() {
     vec4 base = u_base;
     if (u_hasTex != 0) {
-        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y) : v_uv); // a layer's picture: bottom up
         if (u_unlit != 0) { // as it is: a screen
             o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a);
             o_bright = bright(pow(t.rgb * u_base.rgb, vec3(2.2)), t.a * u_base.a);
@@ -716,7 +935,11 @@ void main() {
     }
     if (u_alphaMode == 1 && base.a < u_alphaCutoff) discard;
     if (u_alphaMode == 0) base.a = 1.0;
-    vec3 N = u_hasDisp != 0 || u_flat != 0 ? normalize(cross(dFdx(v_pos), dFdy(v_pos))) : normalize(v_n); // displaced, flat: its own surface
+    vec3 N = normalize(v_n);
+    if (u_hasDisp != 0 && u_shading == 1)
+        N = smoothDisplacedNormal(N);
+    else if (u_hasDisp != 0 || u_shading == 2)
+        N = normalize(cross(dFdx(v_pos), dFdy(v_pos)));
     vec3 V = normalize(u_eye - v_pos);
     if (dot(N, V) < 0.0) N = -N; // both faces lit
     if (u_hasNormal != 0) { // its normal map, in the frame its UVs make on screen
@@ -735,7 +958,7 @@ void main() {
     float contact = u_aoAmount > 0.0 ? texture(u_aoTex, gl_FragCoord.xy / u_screen).r : 1.0;
     ao *= contact;
     float r = clamp(rough, 0.04, 1.0), a = r * r;
-    vec3 F0 = mix(vec3(0.04), base.rgb, metal);
+    vec3 F0 = mix(vec3(u_dielectric), base.rgb, metal);
     float NdV = max(dot(N, V), 1e-4);
     vec3 c = u_ambient * base.rgb * (1.0 - 0.7 * metal) * ao;
     if (u_hasEnv != 0) { // the environment: diffuse from its most blurred level, reflections as rough as the surface
@@ -922,6 +1145,7 @@ in vec2 v_ndc; out vec4 o;
 uniform sampler2D u_seen; uniform mat4 u_inv; uniform vec3 u_eye, u_fogColor;
 uniform float u_density, u_fogBase, u_falloff, u_reach, u_exposure; uniform int u_steps;
 uniform int u_count; uniform int u_type[8]; uniform vec3 u_color[8], u_lpos[8], u_ldir[8]; uniform float u_cos[8], u_cosIn[8];
+uniform vec2 u_coneDot[8];
 uniform int u_shadow[8], u_pointShadow[8]; uniform mat4 u_shadowMat[4]; uniform sampler2DArrayShadow u_shadows;
 uniform float u_pointFar[2]; uniform samplerCubeShadow u_pointMap0, u_pointMap1;
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
@@ -960,11 +1184,18 @@ void main() {
                 float dist2 = max(dot(d, d), 0.05);
                 L = d * inversesqrt(dist2);
                 att = 1.0 / dist2;
-                if (u_type[i] == 2) att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(dot(-L, normalize(u_ldir[i])), -1.0, 1.0)));
+                if (u_type[i] == 2) {
+                    // The angular gradient only needs acos along the edge of the beam.
+                    float axis = dot(-L, normalize(u_ldir[i]));
+                    if (axis <= u_coneDot[i].x) continue;
+                    if (axis < u_coneDot[i].y)
+                        att *= 1.0 - smoothstep(u_cosIn[i], u_cos[i], acos(clamp(axis, -1.0, 1.0)));
+                }
                 if (u_type[i] == 3) att *= max(dot(-L, normalize(u_ldir[i])), 0.0);
                 if (att <= 1e-4) continue;
             }
-            float cosine = dot(dir, -L), phase = 0.0796 * (1.0 - 0.16) / pow(1.16 - 0.8 * cosine, 1.5); // forward, as dust
+            float phaseBase = 1.16 - 0.8 * dot(dir, -L);
+            float phase = 0.0796 * (1.0 - 0.16) / (phaseBase * sqrt(phaseBase)); // forward, as dust
             light += u_color[i] * att * phase * through(i, p);
         }
         added += seen * gets * light;
@@ -1165,6 +1396,7 @@ void MeshUniforms::resolve(GLuint program)
     metal = loc("u_metal");
     rough = loc("u_rough");
     emissive = loc("u_emissive");
+    dielectric = loc("u_dielectric");
     alphaMode = loc("u_alphaMode");
     alphaCutoff = loc("u_alphaCutoff");
     normalScale = loc("u_normalScale");
@@ -1290,11 +1522,16 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
     for (const Mesh &m : m_meshes) {
         if (!m.vao) continue;
         Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
-        if (m_primitive && look) { // a primitive: the material its parameters give it
+        if (look && look->sharedMaterial) mat = Material(); // the selected project material replaces file-local maps
+        if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
             // A colour chosen as it looks; the materials are in linear light
             mat.baseColor = {{std::pow(look->color[0], 2.2f), std::pow(look->color[1], 2.2f), std::pow(look->color[2], 2.2f), 1}};
             mat.metallic = look->metal;
             mat.roughness = look->rough;
+            mat.emissive = look->emission;
+            mat.normalScale = look->normalStrength;
+            mat.aoStrength = look->occlusionStrength;
+            mat.roughChannel = mat.metalChannel = 0;
         }
         if (picture) { // a layer's picture instead of its colours (a white material under it)
             mat.baseColor = {{1, 1, 1, 1}};
@@ -1306,6 +1543,9 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
         f->glUniform4f(u.base, mat.baseColor[0], mat.baseColor[1], mat.baseColor[2], mat.baseColor[3]);
         f->glUniform1f(u.metal, mat.metallic);
         f->glUniform1f(u.rough, mat.roughness);
+        const float ior = look ? look->ior : 1.5f;
+        const float reflectance = (ior - 1) / (ior + 1);
+        f->glUniform1f(u.dielectric, reflectance * reflectance * (look ? look->specular : 1.f));
         f->glUniform3f(u.emissive, mat.emissive[0], mat.emissive[1], mat.emissive[2]);
         f->glUniform1i(u.alphaMode, picture ? 2 : mat.alphaMode); // a picture keeps its alpha
         f->glUniform1f(u.alphaCutoff, mat.alphaCutoff);
@@ -1317,7 +1557,7 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
         f->glUniform4f(u.metalCh, mc.x(), mc.y(), mc.z(), mc.w());
         const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
         for (int k = 0; k < 5; ++k) {
-            const GLuint t = image(indices[k]);
+            const GLuint t = look && look->sharedMaterial ? look->materialTextures[RoughnessMap + k] : image(indices[k]);
             f->glUniform1i(u.has[k], t ? 1 : 0);
             if (t == bound[k]) continue;
             bound[k] = t;
@@ -1325,10 +1565,11 @@ void Model3D::drawMeshes(const MeshUniforms &u, GLuint picture, int pass, const 
             f->glBindTexture(GL_TEXTURE_2D, t);
         }
         f->glActiveTexture(GL_TEXTURE0);
-        const bool textured = picture || image(mat.texture);
+        const GLuint baseTexture = look && look->sharedMaterial ? look->materialTextures[BaseColorMap] : image(mat.texture);
+        const bool textured = picture || baseTexture;
         f->glUniform1i(u.hasTex, textured ? 1 : 0);
         f->glUniform1i(u.layerTex, picture ? 1 : 0);
-        f->glBindTexture(GL_TEXTURE_2D, picture ? picture : image(mat.texture));
+        f->glBindTexture(GL_TEXTURE_2D, picture ? picture : baseTexture);
         f->glBindVertexArray(m.vao);
         f->glDrawElements(GL_TRIANGLES, GLsizei(m.indices.size()), GL_UNSIGNED_INT, nullptr);
     }
@@ -1494,6 +1735,8 @@ void Scene3D::PlaceUniforms::resolve(GLuint program)
     hasDisp = loc("u_hasDisp");
     dispAmount = loc("u_dispAmount");
     dispMid = loc("u_dispMid");
+    dispTopology = loc("u_dispTopology");
+    uvTiling = loc("u_uvTiling");
 }
 
 bool Scene3D::lite(const QString &renderer)
@@ -1527,9 +1770,59 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glGenVertexArrays(1, &m_skyVao);
         if (m_program) {
             m_meshUniforms.resolve(m_program);
+            m_sceneUniforms.u_ambient = f->glGetUniformLocation(m_program, "u_ambient");
+            m_sceneUniforms.u_aoAmount = f->glGetUniformLocation(m_program, "u_aoAmount");
+            m_sceneUniforms.u_aoTex = f->glGetUniformLocation(m_program, "u_aoTex");
+            m_sceneUniforms.u_color = f->glGetUniformLocation(m_program, "u_color");
+            m_sceneUniforms.u_cos = f->glGetUniformLocation(m_program, "u_cos");
+            m_sceneUniforms.u_cosIn = f->glGetUniformLocation(m_program, "u_cosIn");
+            m_sceneUniforms.u_count = f->glGetUniformLocation(m_program, "u_count");
+            m_sceneUniforms.u_depthRange = f->glGetUniformLocation(m_program, "u_depthRange");
+            m_sceneUniforms.u_disp = f->glGetUniformLocation(m_program, "u_disp");
+            m_sceneUniforms.u_env = f->glGetUniformLocation(m_program, "u_env");
+            m_sceneUniforms.u_envIntensity = f->glGetUniformLocation(m_program, "u_envIntensity");
+            m_sceneUniforms.u_envLinear = f->glGetUniformLocation(m_program, "u_envLinear");
+            m_sceneUniforms.u_envMaxLod = f->glGetUniformLocation(m_program, "u_envMaxLod");
+            m_sceneUniforms.u_envRot = f->glGetUniformLocation(m_program, "u_envRot");
+            m_sceneUniforms.u_exposure = f->glGetUniformLocation(m_program, "u_exposure");
+            m_sceneUniforms.u_eye = f->glGetUniformLocation(m_program, "u_eye");
+            m_sceneUniforms.u_glowLimit = f->glGetUniformLocation(m_program, "u_glowLimit");
+            m_sceneUniforms.u_hasEnv = f->glGetUniformLocation(m_program, "u_hasEnv");
+            m_sceneUniforms.u_hasLast = f->glGetUniformLocation(m_program, "u_hasLast");
+            m_sceneUniforms.u_last = f->glGetUniformLocation(m_program, "u_last");
+            m_sceneUniforms.u_lastExposure = f->glGetUniformLocation(m_program, "u_lastExposure");
+            m_sceneUniforms.u_ldir = f->glGetUniformLocation(m_program, "u_ldir");
+            m_sceneUniforms.u_lhalf = f->glGetUniformLocation(m_program, "u_lhalf");
+            m_sceneUniforms.u_lpos = f->glGetUniformLocation(m_program, "u_lpos");
+            m_sceneUniforms.u_lright = f->glGetUniformLocation(m_program, "u_lright");
+            m_sceneUniforms.u_lup = f->glGetUniformLocation(m_program, "u_lup");
+            m_sceneUniforms.u_penumbra = f->glGetUniformLocation(m_program, "u_penumbra");
+            m_sceneUniforms.u_pointFar = f->glGetUniformLocation(m_program, "u_pointFar");
+            m_sceneUniforms.u_pointMap0 = f->glGetUniformLocation(m_program, "u_pointMap0");
+            m_sceneUniforms.u_pointMap1 = f->glGetUniformLocation(m_program, "u_pointMap1");
+            m_sceneUniforms.u_pointRaw0 = f->glGetUniformLocation(m_program, "u_pointRaw0");
+            m_sceneUniforms.u_pointRaw1 = f->glGetUniformLocation(m_program, "u_pointRaw1");
+            m_sceneUniforms.u_pointShadow = f->glGetUniformLocation(m_program, "u_pointShadow");
+            m_sceneUniforms.u_pointSoft = f->glGetUniformLocation(m_program, "u_pointSoft");
+            m_sceneUniforms.u_proj = f->glGetUniformLocation(m_program, "u_proj");
+            m_sceneUniforms.u_reflections = f->glGetUniformLocation(m_program, "u_reflections");
+            m_sceneUniforms.u_screen = f->glGetUniformLocation(m_program, "u_screen");
+            m_sceneUniforms.u_seen = f->glGetUniformLocation(m_program, "u_seen");
+            m_sceneUniforms.u_shadow = f->glGetUniformLocation(m_program, "u_shadow");
+            m_sceneUniforms.u_shadowBias = f->glGetUniformLocation(m_program, "u_shadowBias");
+            m_sceneUniforms.u_shadowRadius = f->glGetUniformLocation(m_program, "u_shadowRadius");
+            m_sceneUniforms.u_shadowRaw = f->glGetUniformLocation(m_program, "u_shadowRaw");
+            m_sceneUniforms.u_shadows = f->glGetUniformLocation(m_program, "u_shadows");
+            m_sceneUniforms.u_steps = f->glGetUniformLocation(m_program, "u_steps");
+            m_sceneUniforms.u_studio = f->glGetUniformLocation(m_program, "u_studio");
+            m_sceneUniforms.u_taps = f->glGetUniformLocation(m_program, "u_taps");
+            m_sceneUniforms.u_tex = f->glGetUniformLocation(m_program, "u_tex");
+            m_sceneUniforms.u_type = f->glGetUniformLocation(m_program, "u_type");
+            m_sceneUniforms.u_view = f->glGetUniformLocation(m_program, "u_view");
+            m_sceneUniforms.u_viewProj = f->glGetUniformLocation(m_program, "u_viewProj");
             m_placeMain.resolve(m_program);
             m_unlitAt = f->glGetUniformLocation(m_program, "u_unlit");
-            m_flatAt = f->glGetUniformLocation(m_program, "u_flat");
+            m_shadingAt = f->glGetUniformLocation(m_program, "u_shading");
         }
         if (!m_lite) {
             m_glowDownProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowDown), &log);
@@ -1549,8 +1842,35 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_COMPARE_MODE, GL_NONE);
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (m_shadowProgram) m_placeDepth.resolve(m_shadowProgram);
-        if (m_pointProgram) m_placePoint.resolve(m_pointProgram);
+        auto resolveDepth = [&](GLuint program, DepthUniforms &u) {
+            u.view = f->glGetUniformLocation(program, "u_view");
+            u.projection = f->glGetUniformLocation(program, "u_proj");
+            u.displacement = f->glGetUniformLocation(program, "u_disp");
+        };
+        if (m_shadowProgram) {
+            m_placeDepth.resolve(m_shadowProgram);
+            resolveDepth(m_shadowProgram, m_depthUniforms);
+        }
+        if (m_pointProgram) {
+            m_placePoint.resolve(m_pointProgram);
+            resolveDepth(m_pointProgram, m_pointUniforms);
+            m_pointUniforms.light = f->glGetUniformLocation(m_pointProgram, "u_light");
+            m_pointUniforms.farPlane = f->glGetUniformLocation(m_pointProgram, "u_far");
+        }
+        for (int slot = 0; slot < kMaxShadows; ++slot) {
+            const QByteArray index = QByteArray::number(slot) + ']';
+            if (m_program) {
+                m_shadowPlaneAt[slot] = f->glGetUniformLocation(m_program, ("u_shadowPlanes[" + index).constData());
+                m_shadowMatrixAt[slot] = f->glGetUniformLocation(m_program, ("u_shadowMat[" + index).constData());
+            }
+            if (m_fogProgram)
+                m_fogShadowMatrixAt[slot] = f->glGetUniformLocation(m_fogProgram, ("u_shadowMat[" + index).constData());
+        }
+        GLint maxTexture = 0, maxRenderbuffer = 0;
+        f->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+        f->glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+        m_targetLimit = std::min(maxTexture, maxRenderbuffer);
+        f->glGetIntegerv(GL_MAX_SAMPLES, &m_sampleLimit);
     }
     // An HDR file's picture does not change: copied and blurred once
     bool hasEnv = environment && environmentLinear && environment == m_envSource && m_env;
@@ -1560,6 +1880,36 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
     const float envMaxLod = std::log2(float(kEnvW));
     if (!m_program) return 0;
+
+    const int outputW = w, outputH = h;
+    // High quality resolves the whole 3D picture after the look passes. MSAA alone
+    // cannot smooth fog and other effects evaluated on a single-sample depth buffer.
+    bool supersample = false;
+    if (!m_lite && quality.antialiasing == 3 && qint64(w) * h <= 4'194'304 &&
+        w <= m_targetLimit / 2 && h <= m_targetLimit / 2) {
+        if (m_aaOutput.ensure(w, h)) m_frameKey.clear();
+        supersample = m_aaOutput.ready(w, h);
+    }
+    if (supersample) {
+        w *= 2;
+        h *= 2;
+    } else if (m_aaOutput.fbo) {
+        m_aaOutput.destroy();
+    }
+
+    // The extra resolution is internal. Layers, effects and viewports still see
+    // the composition-sized picture with its premultiplied alpha.
+    const auto finishPicture = [&](GLuint tex, GLuint sourceFbo) {
+        m_picture = tex;
+        if (supersample) {
+            f->glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFbo);
+            f->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_aaOutput.fbo);
+            f->glBlitFramebuffer(0, 0, w, h, 0, 0, outputW, outputH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            m_aaOutput.bind();
+            m_picture = m_aaOutput.tex;
+        }
+        return m_picture;
+    };
     std::vector<Placed> placed;
     placed.reserve(items.size());
     for (const Item &item : items) {
@@ -1575,10 +1925,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     {
         QByteArray key;
         const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
-        bool could = !environment || hasEnv && environment == m_envSource; // an HDR file's picture does not change
+        bool could = !environment || (hasEnv && environment == m_envSource); // an HDR file's picture does not change
         add(&environment, sizeof environment);
         add(&w, sizeof w);
         add(&h, sizeof h);
+        add(&supersample, sizeof supersample);
         const auto addScene = [&] {
             for (float v : {s.distance, s.yaw, s.pitch, s.fov, s.ambientIntensity, s.exposure, s.envIntensity, s.envRotation, s.envBlur, s.studio, s.ao,
                             s.aoRadius, s.reflections, s.glow, s.glowThreshold, s.glowSize, s.vignette, s.contrast, s.saturation, s.temperature,
@@ -1593,14 +1944,18 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         add(&quality, sizeof quality);
         for (const Placed &placedItem : placed) {
             const Item &item = *placedItem.item;
-            could = could && !item.picture && !item.displace;
+            could = could && !item.picture && (!item.displace || item.placement.materialHeight);
             const Model3D *which = item.model.get();
             add(&which, sizeof which);
             add(placedItem.model.constData(), sizeof(float) * 16);
             const ModelPlacement &p = item.placement;
             add(p.color.data(), sizeof(float) * 3);
-            for (float v : {p.metal, p.rough, p.bend}) add(&v, sizeof v);
-            for (int v : {p.detail, p.shading, int(p.unlit)}) add(&v, sizeof v);
+            add(p.materialTextures.data(), sizeof(GLuint) * MaterialMapCount);
+            add(p.uvTiling.data(), sizeof(float) * 2);
+            add(p.emission.data(), sizeof(float) * 3);
+            add(&item.displaceAmount, sizeof(float));
+            for (float v : {p.metal, p.rough, p.bend, p.normalStrength, p.occlusionStrength, p.ior, p.specular}) add(&v, sizeof v);
+            for (int v : {p.detail, p.shading, int(p.unlit), int(p.sharedMaterial)}) add(&v, sizeof v);
         }
         for (const Lamp &lamp : lamps) {
             const LightSettings &l = lamp.light;
@@ -1628,17 +1983,17 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
         f->glUniform1f(u.bendCx, item.model->centerX());
         f->glUniform1f(u.bendW, item.model->width());
-        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
+        f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);
     };
-    const int aaLevel = m_lite ? 0 : std::clamp(quality.antialiasing, 0, 3);
-    GLint maxSamples = 1;
-    f->glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
-    const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, maxSamples));
+    const int aaLevel = m_lite ? 0 : supersample ? 1 : std::clamp(quality.antialiasing, 0, 3);
+    const int wantedSamples = std::clamp(1 << aaLevel, 1, std::max(1, m_sampleLimit));
     if (!m_fbo || w != m_w || h != m_h || wantedSamples != m_samples) { // its targets, the composition's size: antialiased with depth, and its picture
         if (m_fbo) {
             f->glDeleteFramebuffers(1, &m_fbo);
@@ -1810,7 +2165,13 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                 addTo(p.model.constData(), sizeof(float) * 16);
                 addTo(&item.placement.bend, sizeof(float));
                 addTo(&item.placement.detail, sizeof(int));
-                still = still && !item.displace;
+                if (item.placement.materialHeight) {
+                    addTo(&item.displace, sizeof item.displace);
+                    addTo(&item.displaceAmount, sizeof item.displaceAmount);
+                    addTo(item.placement.uvTiling.data(), sizeof(float) * 2);
+                } else {
+                    still = still && !item.displace;
+                }
             }
         const bool castersMoved = !still || key != m_shadowKey;
         m_shadowKey = key;
@@ -1855,8 +2216,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glDisable(GL_BLEND);
             f->glDisable(GL_CULL_FACE);
             f->glUseProgram(m_pointProgram);
-            auto where = [&](const char *name) { return f->glGetUniformLocation(m_pointProgram, name); };
-            f->glUniform1i(where("u_disp"), 1);
+            f->glUniform1i(m_pointUniforms.displacement, 1);
             static const QVector3D kLook[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
             static const QVector3D kUp[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
             for (int slot = 0; slot < pointShadows; ++slot) {
@@ -1875,16 +2235,16 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                     f->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
                     f->glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
                 }
-                f->glUniform3f(where("u_light"), pointAt[slot].x(), pointAt[slot].y(), pointAt[slot].z());
-                f->glUniform1f(where("u_far"), pointFar[slot]);
+                f->glUniform3f(m_pointUniforms.light, pointAt[slot].x(), pointAt[slot].y(), pointAt[slot].z());
+                f->glUniform1f(m_pointUniforms.farPlane, pointFar[slot]);
                 for (int face = 0; face < 6; ++face) {
                     f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GLenum(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face), m_pointMaps[slot], 0);
                     f->glClear(GL_DEPTH_BUFFER_BIT);
                     QMatrix4x4 faceView, faceProj;
                     faceView.lookAt(pointAt[slot], pointAt[slot] + kLook[face], kUp[face]);
                     faceProj.perspective(90, 1, 0.02f, pointFar[slot]);
-                    f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, faceView.constData());
-                    f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, faceProj.constData());
+                    f->glUniformMatrix4fv(m_pointUniforms.view, 1, GL_FALSE, faceView.constData());
+                    f->glUniformMatrix4fv(m_pointUniforms.projection, 1, GL_FALSE, faceProj.constData());
                     drawCasters(m_placePoint, faceProj * faceView);
                 }
             }
@@ -1917,15 +2277,14 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             f->glEnable(GL_POLYGON_OFFSET_FILL);
             f->glPolygonOffset(1.5f, 2.0f);
             f->glUseProgram(m_shadowProgram);
-            auto where = [&](const char *name) { return f->glGetUniformLocation(m_shadowProgram, name); };
             const QMatrix4x4 identity;
-            f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, identity.constData());
-            f->glUniform1i(where("u_disp"), 1);
+            f->glUniformMatrix4fv(m_depthUniforms.view, 1, GL_FALSE, identity.constData());
+            f->glUniform1i(m_depthUniforms.displacement, 1);
             for (int slot = 0; slot < shadows; ++slot) {
                 if (!shadowAgain[slot]) continue;
                 f->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_shadowMaps, 0, slot);
                 f->glClear(GL_DEPTH_BUFFER_BIT);
-                f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, shadowMatrices[slot].constData());
+                f->glUniformMatrix4fv(m_depthUniforms.projection, 1, GL_FALSE, shadowMatrices[slot].constData());
                 drawCasters(m_placeDepth, shadowMatrices[slot]);
             }
             f->glDisable(GL_POLYGON_OFFSET_FILL);
@@ -1960,10 +2319,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glDisable(GL_BLEND);
         f->glDisable(GL_CULL_FACE);
         f->glUseProgram(m_shadowProgram);
-        auto where = [&](const char *name) { return f->glGetUniformLocation(m_shadowProgram, name); };
-        f->glUniformMatrix4fv(where("u_view"), 1, GL_FALSE, view.constData());
-        f->glUniformMatrix4fv(where("u_proj"), 1, GL_FALSE, proj.constData());
-        f->glUniform1i(where("u_disp"), 1);
+        f->glUniformMatrix4fv(m_depthUniforms.view, 1, GL_FALSE, view.constData());
+        f->glUniformMatrix4fv(m_depthUniforms.projection, 1, GL_FALSE, proj.constData());
+        f->glUniform1i(m_depthUniforms.displacement, 1);
         for (const Placed *near : nearestFirst) {
             computed += near->item->model->triangleCount();
             place(m_placeDepth, *near);
@@ -2004,6 +2362,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glBindVertexArray(0);
     }
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_msFbo);
+    if (m_samples > 1) f->glEnable(GL_MULTISAMPLE);
     f->glViewport(0, 0, w, h);
     const float a = s.background[3];
     f->glClearColor(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
@@ -2049,12 +2408,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     }
 
     f->glUseProgram(m_program);
-    auto loc = [&](const char *name) { return f->glGetUniformLocation(m_program, name); };
-    f->glUniformMatrix4fv(loc("u_view"), 1, GL_FALSE, view.constData());
-    f->glUniformMatrix4fv(loc("u_proj"), 1, GL_FALSE, proj.constData());
-    f->glUniform3f(loc("u_eye"), eye.x(), eye.y(), eye.z());
-    f->glUniform3f(loc("u_ambient"), s.ambient[0] * s.ambientIntensity, s.ambient[1] * s.ambientIntensity, s.ambient[2] * s.ambientIntensity);
-    f->glUniform1f(loc("u_exposure"), s.exposure);
+    f->glUniformMatrix4fv(m_sceneUniforms.u_view, 1, GL_FALSE, view.constData());
+    f->glUniformMatrix4fv(m_sceneUniforms.u_proj, 1, GL_FALSE, proj.constData());
+    f->glUniform3f(m_sceneUniforms.u_eye, eye.x(), eye.y(), eye.z());
+    f->glUniform3f(m_sceneUniforms.u_ambient, s.ambient[0] * s.ambientIntensity, s.ambient[1] * s.ambientIntensity, s.ambient[2] * s.ambientIntensity);
+    f->glUniform1f(m_sceneUniforms.u_exposure, s.exposure);
     GLint types[kMaxLights] = {};
     GLfloat colors[3 * kMaxLights] = {}, positions[3 * kMaxLights] = {}, directions[3 * kMaxLights] = {}, cones[kMaxLights] = {}, conesIn[kMaxLights] = {};
     GLfloat rights[3 * kMaxLights] = {}, ups[3 * kMaxLights] = {}, halves[2 * kMaxLights] = {}, rayColors[3 * kMaxLights] = {};
@@ -2082,18 +2440,18 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         cones[k] = qDegreesToRadians(spread); // angles, in radians
         conesIn[k] = std::min(cones[k] - 1e-3f, qDegreesToRadians(spread * (1 - std::clamp(l.falloff, 0.0f, 1.0f))));
     }
-    f->glUniform1i(loc("u_count"), count);
-    f->glUniform1iv(loc("u_type"), kMaxLights, types);
-    f->glUniform3fv(loc("u_lright"), kMaxLights, rights);
-    f->glUniform3fv(loc("u_lup"), kMaxLights, ups);
-    f->glUniform2fv(loc("u_lhalf"), kMaxLights, halves);
-    f->glUniform1f(loc("u_glowLimit"), s.glowThreshold);
-    f->glUniform1i(loc("u_penumbra"), shadowLevel >= 2 ? 1 : 0);
-    f->glUniform1i(loc("u_shadowRaw"), 15);
-    f->glUniform1i(loc("u_pointRaw0"), 16);
-    f->glUniform1i(loc("u_pointRaw1"), 17);
+    f->glUniform1i(m_sceneUniforms.u_count, count);
+    f->glUniform1iv(m_sceneUniforms.u_type, kMaxLights, types);
+    f->glUniform3fv(m_sceneUniforms.u_lright, kMaxLights, rights);
+    f->glUniform3fv(m_sceneUniforms.u_lup, kMaxLights, ups);
+    f->glUniform2fv(m_sceneUniforms.u_lhalf, kMaxLights, halves);
+    f->glUniform1f(m_sceneUniforms.u_glowLimit, s.glowThreshold);
+    f->glUniform1i(m_sceneUniforms.u_penumbra, shadowLevel >= 2 ? 1 : 0);
+    f->glUniform1i(m_sceneUniforms.u_shadowRaw, 15);
+    f->glUniform1i(m_sceneUniforms.u_pointRaw0, 16);
+    f->glUniform1i(m_sceneUniforms.u_pointRaw1, 17);
     for (int slot = 0; slot < shadows; ++slot)
-        f->glUniform3f(f->glGetUniformLocation(m_program, qPrintable(QStringLiteral("u_shadowPlanes[%1]").arg(slot))), shadowPlanes[slot].x(), shadowPlanes[slot].y(), shadowPlanes[slot].z());
+        f->glUniform3f(m_shadowPlaneAt[slot], shadowPlanes[slot].x(), shadowPlanes[slot].y(), shadowPlanes[slot].z());
     f->glActiveTexture(GL_TEXTURE15);
     f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
     f->glBindSampler(15, m_rawSampler);
@@ -2102,57 +2460,57 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
         f->glBindSampler(GLuint(16 + slot), m_rawSampler);
     }
-    f->glUniform3fv(loc("u_color"), kMaxLights, colors);
-    f->glUniform3fv(loc("u_lpos"), kMaxLights, positions);
-    f->glUniform3fv(loc("u_ldir"), kMaxLights, directions);
-    f->glUniform1fv(loc("u_cos"), kMaxLights, cones);
-    f->glUniform1fv(loc("u_cosIn"), kMaxLights, conesIn);
-    f->glUniform1f(loc("u_studio"), std::max(0.0f, s.studio));
-    f->glUniform1iv(loc("u_shadow"), kMaxLights, shadowOf);
+    f->glUniform3fv(m_sceneUniforms.u_color, kMaxLights, colors);
+    f->glUniform3fv(m_sceneUniforms.u_lpos, kMaxLights, positions);
+    f->glUniform3fv(m_sceneUniforms.u_ldir, kMaxLights, directions);
+    f->glUniform1fv(m_sceneUniforms.u_cos, kMaxLights, cones);
+    f->glUniform1fv(m_sceneUniforms.u_cosIn, kMaxLights, conesIn);
+    f->glUniform1f(m_sceneUniforms.u_studio, std::max(0.0f, s.studio));
+    f->glUniform1iv(m_sceneUniforms.u_shadow, kMaxLights, shadowOf);
     for (int slot = 0; slot < shadows; ++slot)
-        f->glUniformMatrix4fv(f->glGetUniformLocation(m_program, qPrintable(QStringLiteral("u_shadowMat[%1]").arg(slot))), 1, GL_FALSE, shadowMatrices[slot].constData());
-    f->glUniform1fv(loc("u_shadowRadius"), kMaxShadows, shadowRadii);
-    f->glUniform1fv(loc("u_shadowBias"), kMaxShadows, shadowBiases);
-    f->glUniform1i(loc("u_shadows"), 9);
+        f->glUniformMatrix4fv(m_shadowMatrixAt[slot], 1, GL_FALSE, shadowMatrices[slot].constData());
+    f->glUniform1fv(m_sceneUniforms.u_shadowRadius, kMaxShadows, shadowRadii);
+    f->glUniform1fv(m_sceneUniforms.u_shadowBias, kMaxShadows, shadowBiases);
+    f->glUniform1i(m_sceneUniforms.u_shadows, 9);
     f->glActiveTexture(GL_TEXTURE9);
     f->glBindTexture(GL_TEXTURE_2D_ARRAY, m_shadowMaps);
-    f->glUniform1iv(loc("u_pointShadow"), kMaxLights, pointOf);
-    f->glUniform1fv(loc("u_pointFar"), kMaxPointShadows, pointFar);
-    f->glUniform1fv(loc("u_pointSoft"), kMaxPointShadows, pointSoft);
-    f->glUniform1i(loc("u_pointMap0"), 10);
-    f->glUniform1i(loc("u_pointMap1"), 11);
+    f->glUniform1iv(m_sceneUniforms.u_pointShadow, kMaxLights, pointOf);
+    f->glUniform1fv(m_sceneUniforms.u_pointFar, kMaxPointShadows, pointFar);
+    f->glUniform1fv(m_sceneUniforms.u_pointSoft, kMaxPointShadows, pointSoft);
+    f->glUniform1i(m_sceneUniforms.u_pointMap0, 10);
+    f->glUniform1i(m_sceneUniforms.u_pointMap1, 11);
     for (int slot = 0; slot < kMaxPointShadows; ++slot) {
         f->glActiveTexture(GLenum(GL_TEXTURE10 + slot));
         f->glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointMaps[slot]);
     }
     // Where surfaces meet, and what they reflect: the last frame's picture, where this one's depth says
     const QMatrix4x4 viewProj = proj * view;
-    f->glUniformMatrix4fv(loc("u_viewProj"), 1, GL_FALSE, viewProj.constData());
-    f->glUniform2f(loc("u_screen"), float(w), float(h));
-    f->glUniform2f(loc("u_depthRange"), cam.nearPlane, cam.farPlane);
-    f->glUniform1f(loc("u_aoAmount"), wantsAo ? s.ao : 0.0f);
-    f->glUniform1f(loc("u_reflections"), reflections);
-    f->glUniform1i(loc("u_taps"), shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12);
-    f->glUniform1i(loc("u_steps"), reflectLevel == 1 ? 20 : reflectLevel == 3 ? 80 : 40);
-    f->glUniform1f(loc("u_lastExposure"), s.exposure);
-    f->glUniform1i(loc("u_hasLast"), m_hasPicture && reflections > 0 ? 1 : 0);
-    f->glUniform1i(loc("u_aoTex"), 12);
-    f->glUniform1i(loc("u_seen"), 13);
-    f->glUniform1i(loc("u_last"), 14);
+    f->glUniformMatrix4fv(m_sceneUniforms.u_viewProj, 1, GL_FALSE, viewProj.constData());
+    f->glUniform2f(m_sceneUniforms.u_screen, float(w), float(h));
+    f->glUniform2f(m_sceneUniforms.u_depthRange, cam.nearPlane, cam.farPlane);
+    f->glUniform1f(m_sceneUniforms.u_aoAmount, wantsAo ? s.ao : 0.0f);
+    f->glUniform1f(m_sceneUniforms.u_reflections, reflections);
+    f->glUniform1i(m_sceneUniforms.u_taps, shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12);
+    f->glUniform1i(m_sceneUniforms.u_steps, reflectLevel == 1 ? 20 : reflectLevel == 3 ? 80 : 40);
+    f->glUniform1f(m_sceneUniforms.u_lastExposure, s.exposure);
+    f->glUniform1i(m_sceneUniforms.u_hasLast, m_hasPicture && reflections > 0 ? 1 : 0);
+    f->glUniform1i(m_sceneUniforms.u_aoTex, 12);
+    f->glUniform1i(m_sceneUniforms.u_seen, 13);
+    f->glUniform1i(m_sceneUniforms.u_last, 14);
     f->glActiveTexture(GL_TEXTURE12);
     f->glBindTexture(GL_TEXTURE_2D, m_aoTex[1]);
     f->glActiveTexture(GL_TEXTURE13);
     f->glBindTexture(GL_TEXTURE_2D, m_preDepth);
     f->glActiveTexture(GL_TEXTURE14);
     f->glBindTexture(GL_TEXTURE_2D, m_color);
-    f->glUniform1i(loc("u_tex"), 0);
-    f->glUniform1i(loc("u_disp"), 1);
-    f->glUniform1i(loc("u_env"), 2);
-    f->glUniform1i(loc("u_hasEnv"), hasEnv ? 1 : 0);
-    f->glUniform1f(loc("u_envIntensity"), s.envIntensity);
-    f->glUniform1f(loc("u_envRot"), envRot);
-    f->glUniform1f(loc("u_envMaxLod"), envMaxLod);
-    f->glUniform1i(loc("u_envLinear"), environmentLinear ? 1 : 0);
+    f->glUniform1i(m_sceneUniforms.u_tex, 0);
+    f->glUniform1i(m_sceneUniforms.u_disp, 1);
+    f->glUniform1i(m_sceneUniforms.u_env, 2);
+    f->glUniform1i(m_sceneUniforms.u_hasEnv, hasEnv ? 1 : 0);
+    f->glUniform1f(m_sceneUniforms.u_envIntensity, s.envIntensity);
+    f->glUniform1f(m_sceneUniforms.u_envRot, envRot);
+    f->glUniform1f(m_sceneUniforms.u_envMaxLod, envMaxLod);
+    f->glUniform1i(m_sceneUniforms.u_envLinear, environmentLinear ? 1 : 0);
     f->glActiveTexture(GL_TEXTURE2);
     f->glBindTexture(GL_TEXTURE_2D, hasEnv ? m_env : 0);
     f->glActiveTexture(GL_TEXTURE0);
@@ -2166,7 +2524,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         if (pass == 0) computed += item.model->triangleCount();
         place(m_placeMain, p);
         f->glUniform1i(m_unlitAt, item.placement.unlit ? 1 : 0);
-        f->glUniform1i(m_flatAt, item.placement.shading == 2 ? 1 : 0);
+        f->glUniform1i(m_shadingAt, item.placement.shading);
         if (pass == 1) {
             f->glEnable(GL_BLEND);
             f->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied
@@ -2210,10 +2568,9 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     m_computed = computed;
     ++m_framesDrawn;
-    m_picture = m_color;
     // All over its picture, as a camera does. m_color stays as it is: what a reflection reads
     const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
-    if (!m_postProgram || !(wantsGlow || wantsFog || graded)) return m_color;
+    if (!m_postProgram || !(wantsGlow || wantsFog || graded)) return finishPicture(m_color, m_fbo);
     makeLookTargets(w, h);
     const auto target = [&](GLuint tex, int tw, int th) {
         f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
@@ -2281,11 +2638,17 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         f->glUniform3fv(where("u_ldir"), kMaxLights, directions);
         f->glUniform1fv(where("u_cos"), kMaxLights, cones);
         f->glUniform1fv(where("u_cosIn"), kMaxLights, conesIn);
+        GLfloat coneDots[2 * kMaxLights] = {};
+        for (int k = 0; k < count; ++k) {
+            coneDots[2 * k] = std::cos(cones[k]);
+            coneDots[2 * k + 1] = std::cos(conesIn[k]);
+        }
+        f->glUniform2fv(where("u_coneDot"), kMaxLights, coneDots);
         f->glUniform1iv(where("u_shadow"), kMaxLights, shadowOf);
         f->glUniform1iv(where("u_pointShadow"), kMaxLights, pointOf);
         f->glUniform1fv(where("u_pointFar"), kMaxPointShadows, pointFar);
         for (int slot = 0; slot < shadows; ++slot)
-            f->glUniformMatrix4fv(f->glGetUniformLocation(m_fogProgram, qPrintable(QStringLiteral("u_shadowMat[%1]").arg(slot))), 1, GL_FALSE, shadowMatrices[slot].constData());
+            f->glUniformMatrix4fv(m_fogShadowMatrixAt[slot], 1, GL_FALSE, shadowMatrices[slot].constData());
         f->glUniform1i(where("u_seen"), 0);
         f->glUniform1i(where("u_shadows"), 9);
         f->glUniform1i(where("u_pointMap0"), 10);
@@ -2343,8 +2706,7 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
     f->glBindVertexArray(0);
     f->glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
     f->glViewport(0, 0, w, h);
-    m_picture = m_final;
-    return m_final;
+    return finishPicture(m_final, m_lookFbo);
 }
 
 // What its look needs, its size, kept while it is not resized
@@ -2387,11 +2749,12 @@ void Scene3D::releaseLook()
 // and pictures as they are
 static const char *kUnlitFragment = R"(#version 330 core
 in vec2 v_uv; out vec4 o;
+uniform vec2 u_uvTiling;
 uniform vec4 u_base; uniform vec3 u_emissive; uniform int u_hasTex, u_layerTex, u_alphaMode; uniform float u_alphaCutoff; uniform sampler2D u_tex;
 void main() {
     vec4 c = u_base;
     if (u_hasTex != 0) {
-        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv); // a layer's picture: bottom up
+        vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y) : v_uv); // a layer's picture: bottom up
         c *= vec4(pow(t.rgb, vec3(2.2)), t.a);
     }
     if (u_alphaMode == 1 && c.a < u_alphaCutoff) discard;
@@ -2446,6 +2809,11 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         add(&which, sizeof which);
         add(p.model.constData(), sizeof(float) * 16);
         add(item.placement.color.data(), sizeof(float) * 3);
+        const bool sharedMaterial = item.placement.sharedMaterial;
+        add(&sharedMaterial, sizeof sharedMaterial);
+        add(item.placement.materialTextures.data(), sizeof(GLuint) * MaterialMapCount);
+        add(item.placement.uvTiling.data(), sizeof(float) * 2);
+        add(item.placement.emission.data(), sizeof(float) * 3);
         add(&item.placement.bend, sizeof(float));
         add(&item.placement.detail, sizeof(int));
     }
@@ -2509,9 +2877,11 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
         f->glUniform1f(u.bendCx, item.model->centerX());
         f->glUniform1f(u.bendW, item.model->width());
-        f->glUniform1i(u.hasDisp, item.displace ? 1 : 0);
+        f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
+        f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
+        f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);
@@ -2588,6 +2958,7 @@ void Scene3D::releaseGl()
     if (m_rawSampler) f->glDeleteSamplers(1, &m_rawSampler);
     m_rawSampler = 0;
     m_picture = 0;
+    m_aaOutput.destroy();
     if (m_fbo) f->glDeleteFramebuffers(1, &m_fbo);
     if (m_color) f->glDeleteTextures(1, &m_color);
     if (m_depth) f->glDeleteRenderbuffers(1, &m_depth);

@@ -1,4 +1,5 @@
 #include "LayerTable.h"
+#include <QSet>
 #include "Widgets.h"
 
 #include <QApplication>
@@ -25,8 +26,9 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <tuple>
 
-enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColAudio, ColCount };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
@@ -58,6 +60,9 @@ class LayerGrid : public QTableWidget
 {
 public:
     using QTableWidget::QTableWidget;
+    int anchor() const { return m_anchor; }
+    void setAnchor(int row) { m_anchor = row; }
+    void cancelPendingPress() { m_pendingColumn = -1; m_pressRow = -1; m_rangePress = false; }
     const std::vector<LayerTable::Row> *rows = nullptr;
     std::function<void(int, const QStringList &)> onDrop;
     std::function<void(const QList<int> &, int, int)> onMove;
@@ -163,14 +168,53 @@ protected:
     {
         const QPoint p = e->position().toPoint();
         const int row = rowAt(p.y()), col = columnAt(p.x());
-        m_pressRow = -1;
+        cancelPendingPress();
         if (row < 0) { // empty area: nothing selected (a new group is then created empty)
             clearSelection();
             setCurrentCell(-1, -1);
             return;
         }
+        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ShiftModifier)) {
+            const int anchor = m_anchor >= 0 && m_anchor < rowCount() ? m_anchor : std::max(0, currentRow());
+            const int previous = currentRow(), previousColumn = currentColumn();
+            {
+                QSignalBlocker block(this);
+                QItemSelection range;
+                for (int r = std::min(anchor, row); r <= std::max(anchor, row); ++r)
+                    if (!isRowHidden(r)) range.select(model()->index(r, 0), model()->index(r, columnCount() - 1));
+                selectionModel()->setCurrentIndex(model()->index(row, std::max(0, col)), QItemSelectionModel::NoUpdate);
+                selectionModel()->select(range, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            }
+            m_rangePress = true;
+            emit currentCellChanged(row, col, previous, previousColumn);
+            emit itemSelectionChanged();
+            emit clicked(model()->index(row, std::max(0, col)));
+            return;
+        }
         if (e->button() == Qt::LeftButton && col == ColName && rows && row < int(rows->size()) && onArrow(row, p.x())) {
             if (onCollapse) onCollapse(row);
+            return;
+        }
+        if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier)) {
+            const int previous = currentRow(), previousColumn = currentColumn();
+            auto *selection = selectionModel();
+            const bool remove = selection->isRowSelected(row, QModelIndex());
+            int current = row;
+            {
+                const QSignalBlocker block(this);
+                selection->select(model()->index(row, 0), QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
+                if (remove) {
+                    const auto remaining = selection->selectedRows();
+                    current = previous >= 0 && selection->isRowSelected(previous, QModelIndex()) ? previous
+                              : remaining.isEmpty() ? -1 : remaining.front().row();
+                }
+                selection->setCurrentIndex(current < 0 ? QModelIndex() : model()->index(current, ColName),
+                                           QItemSelectionModel::NoUpdate);
+            }
+            m_anchor = current;
+            m_rangePress = true;
+            emit currentCellChanged(current, ColName, previous, previousColumn);
+            emit itemSelectionChanged();
             return;
         }
         if (e->button() == Qt::LeftButton && col != ColVisible && col != ColLock && col != ColSolo) {
@@ -179,10 +223,12 @@ protected:
             // A plain click selects on release: a press that becomes a drag (onto the inspector's source, say)
             // leaves the selection, and the layer shown, as they are
             if (e->modifiers() == Qt::NoModifier) {
-                m_pendingPress.reset(static_cast<QMouseEvent *>(e->clone()));
+                m_pendingColumn = col;
+                setFocus(Qt::MouseFocusReason);
                 return;
             }
         }
+        if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::ShiftModifier)) m_anchor = row;
         QTableWidget::mousePressEvent(e);
     }
 
@@ -205,24 +251,33 @@ protected:
             auto *drag = new QDrag(this);
             drag->setMimeData(mime);
             m_pressRow = -1;
-            m_pendingPress.reset();
+            m_pendingColumn = -1;
             drag->exec(Qt::MoveAction);
             return;
         }
-        QTableWidget::mouseMoveEvent(e);
+        if (m_pendingColumn < 0 && !m_rangePress) QTableWidget::mouseMoveEvent(e);
     }
 
     void mouseReleaseEvent(QMouseEvent *e) override
     {
-        m_pressRow = -1;
-        if (m_pendingPress) { // a plain click, not a drag: that row alone, selected now
-            const QPoint p = m_pendingPress->position().toPoint();
-            m_pendingPress.reset();
-            const int row = rowAt(p.y()), col = columnAt(p.x());
-            if (row >= 0) {
-                setCurrentCell(row, std::max(0, col), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-                emit clicked(model()->index(row, std::max(0, col)));
+        const int row = m_pressRow, col = m_pendingColumn;
+        m_pressRow = m_pendingColumn = -1;
+        if (m_rangePress) { m_rangePress = false; return; }
+        if (row >= 0 && col >= 0 && e->button() == Qt::LeftButton) {
+            // Commit one row explicitly. Qt's extended selection can defer
+            // deselection on an already selected row until release.
+            if (rowAt(e->position().toPoint().y()) != row) return;
+            const auto index = model()->index(row, col);
+            const int previous = currentRow(), previousColumn = currentColumn();
+            m_anchor = row;
+            {
+                const QSignalBlocker block(this);
+                selectionModel()->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             }
+            if (row != previous || col != previousColumn)
+                emit currentCellChanged(row, col, previous, previousColumn);
+            emit itemSelectionChanged();
+            emit clicked(index);
             return;
         }
         QTableWidget::mouseReleaseEvent(e);
@@ -230,6 +285,7 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent *e) override
     {
+        cancelPendingPress();
         const QPoint p = e->position().toPoint();
         const int row = rowAt(p.y()), col = columnAt(p.x());
         if (row >= 0 && col == ColName && rows && row < int(rows->size())) {
@@ -360,7 +416,9 @@ private:
     Target m_target;
     int m_pressRow = -1;
     QPoint m_pressPos;
-    std::unique_ptr<QMouseEvent> m_pendingPress; // a plain click, selecting on release unless it became a drag
+    int m_anchor = -1;
+    bool m_rangePress = false;
+    int m_pendingColumn = -1; // a plain click, selecting on release unless it became a drag
 };
 } // namespace
 
@@ -412,7 +470,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
     m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback")});
+                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback"), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -420,6 +478,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
+    m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -451,6 +510,10 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setColumnWidth(ColBlend, 66);
     h->setSectionResizeMode(ColPlayback, QHeaderView::Interactive);
     m_table->setColumnWidth(ColPlayback, 150);
+    h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColAudio, 92);
+    h->moveSection(h->visualIndex(ColAudio), h->visualIndex(ColName) + 1);
+    m_table->setColumnHidden(ColAudio, true);
     h->setStretchLastSection(true);
     v->addWidget(m_table, 1);
 
@@ -478,6 +541,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         emit visibilityToggled(it->row(), it->checkState() == Qt::Checked);
     });
     connect(m_table, &QTableWidget::cellClicked, this, [this](int row, int col) {
+        if (row == m_table->currentRow() && m_table->selectionModel()->isRowSelected(row, QModelIndex()))
+            emit rowClicked(row);
         if (col == ColLock) emit lockToggled(row);
         if (col == ColSolo && row >= 0 && row < int(m_rows.size()) && !m_rows[size_t(row)].viewport) emit soloToggled(row);
     });
@@ -517,6 +582,7 @@ QList<int> LayerTable::selectedRows() const
 
 void LayerTable::setCurrentRow(int row)
 {
+    static_cast<LayerGrid *>(m_table)->setAnchor(row);
     m_updating = true;
     if (row < 0) {
         m_table->setCurrentCell(-1, -1);
@@ -539,11 +605,12 @@ void LayerTable::startRename(int row)
     m_table->setCellWidget(row, ColName, edit);
     edit->setFocus();
     QPointer<RenameEdit> guard(edit);
-    connect(edit, &QLineEdit::editingFinished, this, [this, guard, row] {
+    connect(edit, &QLineEdit::editingFinished, this, [this, guard, row, id = r.id] {
         if (!guard || guard->property("done").toBool()) return;
         guard->setProperty("done", true);
         const QString name = guard->text().trimmed();
-        const bool ok = !guard->cancelled && !name.isEmpty() && row < int(m_rows.size()) && name != m_rows[size_t(row)].name;
+        const bool ok = !m_updating && !guard->cancelled && !name.isEmpty() && row < int(m_rows.size()) &&
+                        m_rows[size_t(row)].id == id && name != m_rows[size_t(row)].name;
         QTimer::singleShot(0, this, [this, guard, row] {
             if (guard && m_table->cellWidget(row, ColName) == guard) m_table->removeCellWidget(row, ColName);
             m_table->setFocus();
@@ -636,6 +703,21 @@ void LayerTable::updateRow(int r, const Row &row)
     fx->setForeground(row.effectsOn ? QColor(255, 200, 140) : QColor(110, 110, 115));
     text(ColBlend, row.noPicture || row.viewport ? QStringLiteral("—") : row.blend);
     text(ColPlayback, row.playback)->setFont(QFont(QStringLiteral("monospace")));
+    auto *audioCell = m_table->cellWidget(r, ColAudio);
+    if (row.hasAudio) {
+        if (!audioCell) {
+            audioCell = new QWidget;
+            audioCell->setAttribute(Qt::WA_TransparentForMouseEvents);
+            auto *layout = new QHBoxLayout(audioCell);
+            layout->setContentsMargins(5, 0, 5, 0);
+            auto *meter = new LevelMeter(QStringLiteral("Layer output"));
+            meter->setFixedHeight(meter->sizeHint().height());
+            layout->addWidget(meter);
+            m_table->setCellWidget(r, ColAudio, audioCell);
+        }
+    } else if (audioCell) {
+        m_table->removeCellWidget(r, ColAudio);
+    }
     const QBrush bg = row.viewport ? QBrush(QColor(38, 48, 60)) : row.group ? QBrush(QColor(50, 50, 58)) : QBrush();
     for (int c = 0; c < ColCount; ++c)
         if (QTableWidgetItem *it = m_table->item(r, c)) it->setBackground(bg);
@@ -677,24 +759,79 @@ void LayerTable::updateRow(int r, const Row &row)
     slider->setVisible(!row.noPicture);
     none->setVisible(row.noPicture);
     slider->setEnabled(!row.locked && !row.lockedByGroup);
+}
+
+void LayerTable::updateRowLevels(int r, const Row &row)
+{
+    if (row.hasAudio)
+        if (auto *cell = m_table->cellWidget(r, ColAudio))
+            cell->findChild<LevelMeter *>()->setLevels(row.audioLeft, row.audioRight);
     if (row.noPicture) return;
+    auto *slider = m_table->cellWidget(r, ColOpacity)->findChild<SliderField *>();
     const double pct = std::round(row.opacity * 100);
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-void LayerTable::setRows(const std::vector<Row> &rows)
+bool LayerTable::setRows(const std::vector<Row> &rows)
 {
+    const bool changed = !std::equal(m_rows.begin(), m_rows.end(), rows.begin(), rows.end(),
+        [](const Row &a, const Row &b) { return a.id == b.id && a.hidden == b.hidden; });
+    auto *grid = static_cast<LayerGrid *>(m_table);
+    auto oldId = [this](int row) -> quint64 {
+        return row >= 0 && row < int(m_rows.size()) ? m_rows[size_t(row)].id : 0;
+    };
+    const quint64 currentId = oldId(m_table->currentRow()), anchorId = oldId(grid->anchor());
+    QSet<quint64> selected;
+    if (changed)
+        for (int row : selectedRows()) selected.insert(oldId(row));
+
     m_updating = true;
-    const int keep = m_table->currentRow();
-    m_rows = rows;
-    if (m_table->rowCount() != int(rows.size())) {
+    m_table->setColumnHidden(ColAudio, std::none_of(rows.begin(), rows.end(), [](const Row &row) { return row.hasAudio; }));
+    if (changed) {
+        grid->cancelPendingPress();
         m_table->clearContents();
         m_table->setRowCount(int(rows.size()));
-        if (keep >= 0 && keep < int(rows.size()))
-            m_table->selectionModel()->setCurrentIndex(m_table->model()->index(keep, ColName),
-                                                       QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     }
-    for (int r = 0; r < int(rows.size()); ++r) updateRow(r, rows[size_t(r)]);
+    const auto metadata = [](const Row &row) {
+        return std::tie(row.name, row.tag, row.source, row.effects, row.blend, row.color, row.enabled, row.error,
+                        row.noPicture, row.hasAudio, row.viewport, row.group, row.collapsed, row.depth, row.locked,
+                        row.lockedByGroup, row.effectsOn, row.solo, row.soloHidden, row.effectCount);
+    };
+    for (int r = 0; r < int(rows.size()); ++r) {
+        const auto &row = rows[size_t(r)];
+        if (changed || metadata(row) != metadata(m_rows[size_t(r)])) {
+            updateRow(r, row);
+        } else {
+            auto *visible = m_table->item(r, ColVisible);
+            const auto state = row.enabled ? Qt::Checked : Qt::Unchecked;
+            if (visible->checkState() != state) visible->setCheckState(state); // a refused toggle
+            if (row.playback != m_rows[size_t(r)].playback) {
+                auto *playback = m_table->item(r, ColPlayback);
+                playback->setText(row.playback);
+                playback->setToolTip(row.playback);
+            }
+        }
+        updateRowLevels(r, row);
+    }
+    m_rows = rows;
+    if (changed) {
+        int current = -1, anchor = -1, firstSelected = -1;
+        QItemSelection restored;
+        for (int r = 0; r < int(rows.size()); ++r) {
+            const auto &row = rows[size_t(r)];
+            if (!row.id || row.hidden || row.viewport) continue;
+            if (row.id == anchorId) anchor = r;
+            if (!selected.contains(row.id)) continue;
+            if (firstSelected < 0) firstSelected = r;
+            if (row.id == currentId) current = r;
+            restored.select(m_table->model()->index(r, 0), m_table->model()->index(r, m_table->columnCount() - 1));
+        }
+        if (current < 0) current = firstSelected;
+        m_table->selectionModel()->select(restored, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_table->selectionModel()->setCurrentIndex(current < 0 ? QModelIndex() : m_table->model()->index(current, ColName),
+                                                   QItemSelectionModel::NoUpdate);
+        grid->setAnchor(anchor >= 0 ? anchor : current);
+    }
     m_updating = false;
+    return changed;
 }
-

@@ -28,6 +28,7 @@ public:
     void importFiles(const QStringList &paths);
     bool reveal(const QString &path); // shows and selects it, its filters put aside if they hide it; false: not in the bin
     QString selectedPath() const;
+    void fillLoadMenu(class QMenu *menu, const QString &path, bool missing = false);
 
 signals:
     void relinkRequested(const QString &from, const QString &to);
@@ -58,7 +59,7 @@ private:
 
     Engine *m_engine;
     QTreeWidget *m_tree;
-    QTreeWidgetItem *m_videoRoot, *m_audioRoot;
+    QTreeWidgetItem *m_videoRoot, *m_audioRoot, *m_3dRoot;
     QTreeWidgetItem *m_videos, *m_images, *m_models, *m_primitives, *m_audios, *m_generators, *m_text, *m_timecode, *m_line, *m_web, *m_inputs, *m_isf, *m_isfGenerators;
     QTreeWidgetItem *m_audioGenerators, *m_audioInputs;
     QTreeWidgetItem *m_cursive = nullptr;

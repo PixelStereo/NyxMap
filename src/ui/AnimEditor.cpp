@@ -25,7 +25,7 @@
 #include <QSlider>
 #include <QStyle>
 #include <QTimer>
-#include <QToolTip>
+#include <QStatusTipEvent>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -78,24 +78,24 @@ QString animCurveName(int c)
 }
 
 void addParamMenu(QMenu *menu, const std::vector<Engine::AnimParam> &params,
-                  const std::function<void(QMenu *, const Engine::AnimParam &, const QString &)> &item)
+                  const std::function<void(QMenu *, const Engine::AnimParam &, const QString &)> &item,
+                  bool nested)
 {
-    std::vector<std::pair<QString, QMenu *>> subs; // in the order they come
-    for (const Engine::AnimParam &p : params) {
-        const int cut = p.label.lastIndexOf(QStringLiteral(" › "));
+    const QString separator = QStringLiteral(" › ");
+    QHash<QMenu *, QHash<QString, QMenu *>> submenus;
+    for (const auto &p : params) {
         QMenu *into = menu;
-        QString text = p.label;
-        if (cut >= 0) { // the category: up to the last " › " (none: at the top of the menu)
-            const QString cat = p.label.left(cut);
-            auto it = std::find_if(subs.begin(), subs.end(), [&](const auto &x) { return x.first == cat; });
-            if (it == subs.end()) {
-                subs.push_back({cat, menu->addMenu(cat)});
-                it = subs.end() - 1;
+        const auto cut = p.label.lastIndexOf(separator);
+        if (cut >= 0) {
+            const QString category = p.label.left(cut);
+            const auto parts = nested ? category.split(separator) : QStringList{category};
+            for (const auto &part : parts) {
+                auto &submenu = submenus[into][part];
+                if (!submenu) submenu = into->addMenu(part);
+                into = submenu;
             }
-            into = it->second;
-            text = p.label.mid(cut + 3);
         }
-        item(into, p, text);
+        item(into, p, p.label.mid(cut < 0 ? 0 : cut + separator.size()));
     }
 }
 
@@ -692,7 +692,8 @@ void CurveLane::mouseMoveEvent(QMouseEvent *e)
         k.t = valueOnly ? m_pressKey.t : std::clamp(tOf(xOf(m_pressKey.t) + d.x()), lo, hi);
         k.v = timeOnly ? m_pressKey.v : vOf(yOf(m_pressKey.v) + d.y());
         const QString v = m_dragKey == 0 && k.isCurrentValue ? QStringLiteral("current value") : num(k.v);
-        QToolTip::showText(e->globalPosition().toPoint(), QStringLiteral("%1 s → %2").arg(k.t, 0, 'f', 2).arg(v), this);
+        QStatusTipEvent help(QStringLiteral("%1 s → %2").arg(k.t, 0, 'f', 2).arg(v));
+        QCoreApplication::sendEvent(this, &help);
         update();
         emitEdited(m_gesture);
         return;
@@ -749,6 +750,10 @@ void CurveLane::mouseMoveEvent(QMouseEvent *e)
 
 void CurveLane::mouseReleaseEvent(QMouseEvent *)
 {
+    if (m_dragKey >= 0) {
+        QStatusTipEvent help{QString()};
+        QCoreApplication::sendEvent(this, &help);
+    }
     if (m_panning) {
         m_panning = false;
         unsetCursor();
@@ -2076,13 +2081,14 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         auto *transport = new QHBoxLayout;
         for (QWidget *w : std::initializer_list<QWidget *>{m_play, m_pause, m_stop, m_rewind}) transport->addWidget(w);
         transport->addStretch();
-        transport->addWidget(durationLabel(false));
-        transport->addWidget(m_duration);
-        transport->addWidget(speedLabel(false));
-        transport->addWidget(m_speed);
-        transport->addWidget(m_loop);
-        transport->addWidget(m_repeat);
         v->addLayout(transport);
+        auto *timing = new QHBoxLayout;
+        timing->addWidget(durationLabel(false));
+        timing->addWidget(m_duration);
+        timing->addWidget(speedLabel(false));
+        timing->addWidget(m_speed);
+        timing->addStretch();
+        v->addLayout(timing);
         // The zoom: time (all the lanes) and values (each lane its own; the slider sets them all)
         auto *zoomRow = new QHBoxLayout;
         m_zoomX = new QSlider(Qt::Horizontal);
@@ -2095,7 +2101,11 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
         m_zoomY->setToolTip(QStringLiteral("Vertical zoom: the values shown in every lane (Alt+wheel over a lane: that lane only)"));
         zoomRow->addWidget(gray(QStringLiteral("Zoom  Time")));
         zoomRow->addWidget(m_zoomX);
-        zoomRow->addSpacing(8);
+        zoomRow->addWidget(m_loop);
+        zoomRow->addWidget(m_repeat);
+        zoomRow->addStretch();
+        v->addLayout(zoomRow);
+        zoomRow = new QHBoxLayout;
         zoomRow->addWidget(gray(QStringLiteral("Values")));
         zoomRow->addWidget(m_zoomY);
         zoomRow->addWidget(m_fit);
@@ -2172,6 +2182,7 @@ AnimEditor::AnimEditor(Engine *engine, QUndoStack *undo, Layout layout, bool scr
     rulerRow->setSpacing(0);
     rulerRow->addSpacing(headerWidth());
     m_ruler = new TimeRuler;
+    m_ruler->setToolTip(QStringLiteral("Pan time with Shift + scroll or a middle-button drag."));
     rulerRow->addWidget(m_ruler, 1);
     rulerRow->addSpacing(bar);
     v->addLayout(rulerRow);
@@ -2415,7 +2426,7 @@ void AnimEditor::applyView()
         m_scrollX->setSingleStep(std::max(1, int(std::lround(span * 100))));
         m_scrollX->setValue(int(std::lround(m_t0 * 1000)));
         m_scrollX->setEnabled(span < d - 1e-9);
-        m_scrollX->setVisible(m_layout == Layout::Side || span < d - 1e-9); // narrow: only when zoomed in
+        m_scrollX->setVisible(m_layout != Layout::Side && span < d - 1e-9); // the timeline pans with the ruler or lanes
         m_filling = false;
         if (m_zoomX) {
             const QSignalBlocker b(m_zoomX);

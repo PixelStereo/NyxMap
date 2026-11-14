@@ -5,6 +5,9 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QMenu>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QToolButton>
 #include <QUndoStack>
@@ -29,7 +32,7 @@ int runControlsUiTests(Engine &engine)
     pump();
     check(engine.controls().empty() && panel.findChildren<QWidget *>("controlRow").isEmpty(), "no control yet");
     auto *add = panel.findChild<QToolButton *>("controlsAdd");
-    check(add && add->menu() && add->menu()->actions().size() == 5, "a menu of the five kinds");
+    check(add && add->menu() && add->menu()->actions().size() == 7, "a menu of the seven kinds (a 2D slider and a group too)");
     if (!add) return failures;
     for (int k = 0; k < 5; ++k) {
         add->menu()->actions().at(k)->trigger();
@@ -47,6 +50,34 @@ int runControlsUiTests(Engine &engine)
     undo.redo();
     pump();
     check(engine.controls().size() == 5, "and redo brings it back");
+
+    const auto rows = panel.findChildren<QWidget *>("controlRow");
+    if (!rows.isEmpty()) {
+        auto *label = rows.front()->findChild<QLabel *>("controlName");
+        auto *editor = rows.front()->findChild<QLineEdit *>("controlNameEditor");
+        check(label && editor, "there is an inline name editor");
+        if (label && editor) {
+            QMouseEvent click(QEvent::MouseButtonDblClick, QPointF(5, 5), label->mapToGlobal(QPoint(5, 5)),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(label, &click);
+            check(editor->isVisible(), "double-click edits the name in place");
+            Interaction binding = Interaction::made(InteractionSource::Internal);
+            binding.sourceParam = QStringLiteral("control/") + list[0].key;
+            const auto interaction = engine.addInteraction(binding);
+            editor->setText("Performance Level");
+            emit editor->editingFinished();
+            pump();
+            check(engine.control(list[0].id)->name == "Performance Level" &&
+                      engine.control(list[0].id)->key == "performance_level",
+                  "rename regenerates the OSC key");
+            check(engine.interactions().back().sourceParam == "control/performance_level", "the interaction follows the renamed control");
+            undo.undo();
+            pump();
+            check(engine.control(list[0].id)->name == list[0].name && engine.control(list[0].id)->key == list[0].key &&
+                      engine.interactions().back().sourceParam == binding.sourceParam, "undo restores the name, key and interaction binding");
+            engine.removeInteraction(interaction);
+        }
+    }
 
     // Played from the panel
     auto *slider = panel.findChild<SliderField *>(QStringLiteral("control_%1").arg(list[0].key));

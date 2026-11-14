@@ -290,7 +290,8 @@ QWidget *CompositionPanel::buildComposition()
     m_rate = new QComboBox;
     m_rate->addItem(QStringLiteral("Machine default"), -1.0);
     for (double r : renderChoice::frameRates()) m_rate->addItem(renderChoice::frameRateName(r), r);
-    m_rate->setToolTip(QStringLiteral("Frame rate of the render (Machine default: the choice made in Settings)"));
+    m_rate->addItem(QStringLiteral("Uncapped (as fast as possible)"), Engine::RenderSettings::UncappedFrameRate);
+    m_rate->setToolTip(QStringLiteral("Composition render rate. Uncapped removes the frame-rate limit and display sync waits."));
     form->addRow(new ResetLabel(QStringLiteral("Frame rate"), [this] {
         m_rate->setCurrentIndex(0);
         emit m_rate->activated(0);
@@ -497,8 +498,10 @@ void CompositionPanel::refreshStatus()
     refreshTimecodeStatus();
 
     const int pct = int(std::lround(m_engine->outputLevel() * 100));
-    m_compositionLabel->setText(QStringLiteral("out %1%").arg(pct)); // the fader, and the blackout over it
-    m_compositionLabel->setStyleSheet(pct == 0 ? "color:#ff5a4f; font-weight:bold;" : "");
+    const QString level = QStringLiteral("out %1%").arg(pct); // the fader, and the blackout over it
+    if (m_compositionLabel->text() != level) m_compositionLabel->setText(level);
+    const QString style = pct == 0 ? QStringLiteral("color:#ff5a4f; font-weight:bold;") : QString();
+    if (m_compositionLabel->styleSheet() != style) m_compositionLabel->setStyleSheet(style);
 
     if (!m_rate->view()->isVisible()) {
         m_syncing = true;

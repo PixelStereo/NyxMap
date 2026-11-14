@@ -21,6 +21,8 @@ void remove(Engine::Preset &, const std::vector<PresetSelection> &);
 void merge(Engine::Preset &, const Engine::Preset &);
 Engine::Snapshot fromPreset(const Engine::Preset &);
 Engine::Preset toPreset(const Engine::Snapshot &);
+// Remove entries whose final value is already set by the preceding cues.
+bool simplify(Engine::Preset &, const Engine::Preset &previous);
 QByteArray encode(const Engine::Snapshot &);
 bool decode(const QByteArray &, Engine::Snapshot *);
 } // namespace StoredContent

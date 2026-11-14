@@ -345,6 +345,7 @@ Engine::Preset StoredContent::toPreset(const Engine::Snapshot &snapshot)
 {
     Engine::Preset out;
     out.fade = snapshot.fade;
+    out.views = snapshot.views;
     auto values = [&](quint64 layer, const QString &prefix, const QJsonObject &params, const QJsonObject &row) {
         for (auto it = params.begin(); it != params.end(); ++it) {
             Engine::PresetValue value;
@@ -361,7 +362,7 @@ Engine::Preset StoredContent::toPreset(const Engine::Snapshot &snapshot)
     };
     for (const auto &v : snapshot.layers) {
         auto row = v.toObject();
-        if (!row.value("included").toBool(true))
+        if (!row.value("included").toBool(true) || row.value("viewport").toBool())
             continue;
         const auto id = row.value("id").toString().toULongLong();
         values(id, {}, row.value("params").toObject(), row);
@@ -376,13 +377,13 @@ Engine::Preset StoredContent::toPreset(const Engine::Snapshot &snapshot)
         for (auto entry : {std::pair<const char *, int>{"source", Engine::PartSource},
                            {"fx", Engine::PartEffects},
                            {"masks", Engine::PartMasks},
+                           {"matte", Engine::PartMasks},
+                           {"mask", Engine::PartColor},
                            {"viewports", Engine::PartViewports}})
             if (row.contains(entry.first)) {
                 auto key = QStringLiteral("%1:%2").arg(id).arg(entry.second);
                 auto category = out.categories.value(key).toObject();
                 category[entry.first] = row.value(entry.first);
-                if (entry.second == Engine::PartMasks && row.contains("matte"))
-                    category["matte"] = row.value("matte");
                 out.categories[key] = category;
             }
         if (row.contains("mesh"))
@@ -402,12 +403,61 @@ Engine::Preset StoredContent::toPreset(const Engine::Snapshot &snapshot)
             if (!row.value("included").toBool(true))
                 continue;
             const auto id = row.value("id").toString();
-            values(0, (owner == Owner::Interaction ? "interaction/" : "fixture/") + id + '/',
-                   row.value("params").toObject(), row);
+            auto params = row.value("params").toObject();
+            if (owner == Owner::Interaction && row.contains("enabled") && !params.contains("enable"))
+                params["enable"] = row.value("enabled");
+            values(0, (owner == Owner::Interaction ? "interaction/" : "fixture/") + id + '/', params, row);
             if (owner == Owner::Interaction && row.contains("definition"))
                 out.interactions.push_back(Interaction::fromJson(row.value("definition").toObject()));
         }
     return out;
+}
+bool StoredContent::simplify(Engine::Preset &preset, const Engine::Preset &previous)
+{
+    std::vector<PresetSelection> redundant;
+    QSet<quint64> rebuilt;
+    for (auto it = preset.categories.begin(); it != preset.categories.end(); ++it) {
+        const auto old = previous.categories.constFind(it.key());
+        if (old != previous.categories.constEnd() && old.value() == it.value()) {
+            redundant.push_back({0, "@category/" + it.key()});
+        } else if (it.key().section(':', 1).toInt() & (Engine::PartSource | Engine::PartEffects)) {
+            rebuilt.insert(it.key().section(':', 0, 0).toULongLong());
+        }
+    }
+    for (const auto &value : preset.values) {
+        // Transport commands can have an effect each time they are recalled.
+        if (rebuilt.contains(value.layer) || (value.path == "restart" && value.value.toBool()) || value.path == "position" ||
+            value.path.startsWith("clock/") || value.path.endsWith("/trigger"))
+            continue;
+        const int i = previous.indexOf(value.layer, value.path);
+        if (i >= 0 && previous.values[size_t(i)].value == value.value)
+            redundant.push_back({value.layer, value.path});
+    }
+    for (auto it = preset.geometry.begin(); it != preset.geometry.end(); ++it)
+        if (previous.geometry.contains(it.key()) && previous.geometry.value(it.key()) == it.value())
+            redundant.push_back({0, "@geometry/" + it.key()});
+    if (!preset.views.isEmpty() && preset.views == previous.views)
+        redundant.push_back({0, QStringLiteral("@views")});
+    for (const auto &animation : preset.animations) {
+        if (animation.tracks.empty()) continue;
+        const auto &track = animation.tracks.front();
+        if (rebuilt.contains(track.layer)) continue;
+        for (const auto &old : previous.animations)
+            if (!old.tracks.empty() && old.tracks.front().layer == track.layer &&
+                old.tracks.front().param == track.param && layerAnimToJson(old) == layerAnimToJson(animation)) {
+                redundant.push_back({track.layer, "@animation/" + track.param});
+                break;
+            }
+    }
+    for (const auto &interaction : preset.interactions)
+        for (const auto &old : previous.interactions)
+            if (old.id == interaction.id && old.toJson() == interaction.toJson()) {
+                redundant.push_back({0, QStringLiteral("@interaction/%1").arg(interaction.id)});
+                break;
+            }
+    if (redundant.empty()) return false;
+    remove(preset, redundant);
+    return true;
 }
 QByteArray StoredContent::encode(const Engine::Snapshot &fragment)
 {

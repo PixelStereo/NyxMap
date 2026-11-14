@@ -81,7 +81,7 @@ QString interactionSourceName(InteractionSource s)
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels");
     case InteractionSource::Hands:
-        return QStringLiteral("Hands");
+        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -223,7 +223,7 @@ QString InteractionEvent::describe() const
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels");
     case InteractionSource::Hands:
-        return QStringLiteral("Hands");
+        return QStringLiteral("MediaPipe");
     }
     return QString();
 }
@@ -264,7 +264,7 @@ QString Interaction::label() const
     case InteractionSource::Pixels:
         return QStringLiteral("Pixels · ") + PixelAnalysis::featureNames().value(int(pixelFeature));
     case InteractionSource::Hands:
-        return QStringLiteral("Hand %1 · ").arg(handIndex + 1) + HandTracking::featureNames().value(int(handFeature));
+        return QStringLiteral("MediaPipe · ") + HandTracking::featureNames().value(int(handFeature));
     case InteractionSource::Audio: {
         const QString what = audioFeature==AudioFeature::Band ? QStringLiteral("%1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : audioFeature==AudioFeature::Level ? QStringLiteral("level") : audioFeature==AudioFeature::Hit ? QStringLiteral("hits %1–%2 Hz").arg(audioLow,0,'f',0).arg(audioHigh,0,'f',0) : QStringLiteral("attacks");
         return (audioInput ? QStringLiteral("Audio in ") : QStringLiteral("Audio ")) + what;
@@ -325,7 +325,7 @@ InteractionStage InteractionStage::remap(double inMin, double inMax, double outM
 
 bool InteractionStage::operator==(const InteractionStage &o) const
 {
-    if (kind != o.kind || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
+    if (kind != o.kind || name != o.name || enabled != o.enabled || a != o.a || b != o.b || c != o.c || d != o.d || op != o.op ||
         curve.keys.size() != o.curve.keys.size())
         return false;
     for (size_t k = 0; k < curve.keys.size(); ++k) {
@@ -373,6 +373,7 @@ static AnimTrack curveFromJson(const QJsonArray &a)
 QJsonObject InteractionStage::toJson() const
 {
     QJsonObject o{{"type", interactionFilterKey(kind)}};
+    if (!name.isEmpty()) o["name"] = name;
     if (!enabled) o["enabled"] = false;
     for (int w = 0; w < kFilterSettingCount; ++w)
         if (!interactionFilterSetting(kind, w).name.isEmpty()) o[QString(QChar('a' + w))] = setting(w);
@@ -384,6 +385,7 @@ QJsonObject InteractionStage::toJson() const
 InteractionStage InteractionStage::fromJson(const QJsonObject &o)
 {
     InteractionStage s = made(interactionFilterFromKey(o.value("type").toString()));
+    s.name = o.value("name").toString().trimmed();
     s.enabled = o.value("enabled").toBool(true);
     for (int w = 0; w < kFilterSettingCount; ++w) {
         const double v = o.value(QString(QChar('a' + w))).toDouble(s.setting(w));
@@ -431,16 +433,25 @@ Interaction Interaction::made(InteractionSource s)
 {
     Interaction it;
     it.source = s;
-    if (s == InteractionSource::Audio || s == InteractionSource::Pixels ||
-        s == InteractionSource::Hands) { // smoothed: a band's level flickers
-        InteractionStage smooth = InteractionStage::made(InteractionFilter::AttackRelease);
-        smooth.a = .012;
-        smooth.b = .2;
-        it.filters = {smooth};
-    }
     // A fader or a knob: it waits to meet the value (pick-up); a key, a link: it sets it
     it.takeover = s == InteractionSource::Midi || s == InteractionSource::Osc ? Takeover::PickUp : Takeover::Jump;
     return it;
+}
+
+QJsonObject InteractionGroup::toJson() const
+{
+    QJsonObject o{{"id", QString::number(id)}, {"name", name}};
+    if (parent) o["parent"] = QString::number(parent);
+    return o;
+}
+
+InteractionGroup InteractionGroup::fromJson(const QJsonObject &o)
+{
+    InteractionGroup g;
+    g.id = o.value("id").toString().toULongLong();
+    g.name = o.value("name").toString();
+    g.parent = o.value("parent").toString().toULongLong();
+    return g;
 }
 
 QJsonObject Interaction::toJson() const
@@ -448,6 +459,7 @@ QJsonObject Interaction::toJson() const
     QJsonObject o;
     o["id"] = QString::number(id); // ids are strings in files
     if (!name.isEmpty()) o["name"] = name;
+    if (group) o["group"] = QString::number(group);
     o["enabled"] = enabled;
     o["source"] = kSources[int(source)];
     switch (source) {
@@ -471,6 +483,7 @@ QJsonObject Interaction::toJson() const
         o["pixels"] = pixels.toJson();
         o["pixel_feature"] = int(pixelFeature);
         o["hand_feature"] = int(handFeature);
+        o["vision_landmark"] = visionLandmark;
         o["hand_index"] = handIndex;
         o["hand_confidence"] = handConfidence;
         break;
@@ -495,6 +508,7 @@ QJsonObject Interaction::toJson() const
     }
     o["master"] = master;
     o["filters"] = filtersToJson(filters);
+    if (!sharedFilters.empty()) o["shared_filters"] = filtersToJson(sharedFilters);
     o["takeover"] = takeover == Takeover::PickUp ? "pickup" : "jump";
     if (isAction()) {
         o["mode"] = QStringLiteral("action");
@@ -505,9 +519,14 @@ QJsonObject Interaction::toJson() const
         o["conditions_all"] = conditionsAll;
         auto list = [](const std::vector<InteractionConsequence> &v) {
             QJsonArray a;
-            for (const InteractionConsequence &c : v)
-                a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value},
-                                     {"time", c.time}, {"curve", c.curve}});
+            for (const InteractionConsequence &c : v) {
+                if (c.sendsOsc())
+                    a.append(QJsonObject{{"osc_destination", c.oscDestination}, {"osc_address", c.oscAddress},
+                                         {"osc_arguments", c.oscArguments}});
+                else
+                    a.append(QJsonObject{{"layer", QString::number(c.layer)}, {"param", c.param}, {"value", c.value},
+                                         {"time", c.time}, {"curve", c.curve}});
+            }
             return a;
         };
         o["if_true"] = list(onTrue);
@@ -522,6 +541,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     Interaction it;
     it.id = o.value("id").toString().toULongLong();
     it.name = o.value("name").toString();
+    it.group = o.value("group").toString().toULongLong();
     it.enabled = o.value("enabled").toBool(true);
     it.source = InteractionSource(keyIndex(kSources, o.value("source").toString(), 0));
     it.key = o.value("key").toString();
@@ -543,8 +563,9 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     it.audioInput=o.value("audio_input").toBool(false);
     it.pixels = PixelAnalysis::Settings::fromJson(o.value("pixels").toObject());
     it.pixelFeature = PixelAnalysis::Feature(std::clamp(o.value("pixel_feature").toInt(), 0, 10));
-    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, 11));
-    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 1);
+    it.visionLandmark = std::clamp(o.value("vision_landmark").toInt(), 0, 477);
+    it.handFeature = HandTracking::Feature(std::clamp(o.value("hand_feature").toInt(8), 0, int(HandTracking::Feature::HandRightness)));
+    it.handIndex = std::clamp(o.value("hand_index").toInt(), 0, 3);
     it.handConfidence = std::clamp(o.value("hand_confidence").toDouble(.7), .5, .99);
     it.layer = o.value("layer").toString().toULongLong();
     it.param = o.value("param").toString();
@@ -556,6 +577,7 @@ Interaction Interaction::fromJson(const QJsonObject &o)
     }
     it.master = std::clamp(o.value("master").toDouble(1), 0.0, 1.0);
     it.filters = filtersFromJson(o);
+    it.sharedFilters = filtersFromJson(QJsonObject{{"filters", o.value("shared_filters")}});
     it.takeover = o.value("takeover").toString() == QLatin1String("pickup") ? Takeover::PickUp : Takeover::Jump;
     // An XY mapping drives its point: never an Action
     it.mode = o.value("mode").toString() == QLatin1String("action") && it.xyInputs.empty() ? InteractionMode::Action
@@ -582,7 +604,10 @@ Interaction Interaction::fromJson(const QJsonObject &o)
             const double time = c.value("time").toDouble(0);
             q.time = std::isfinite(time) ? std::clamp(time, 0.0, 600.0) : 0;
             q.curve = std::clamp(c.value("curve").toInt(3), 0, 5);
-            if (!q.param.isEmpty()) out.push_back(q);
+            q.oscDestination = c.value("osc_destination").toString();
+            q.oscAddress = c.value("osc_address").toString();
+            q.oscArguments = c.value("osc_arguments").toArray();
+            if (q.sendsOsc() || !q.param.isEmpty()) out.push_back(q);
         }
         return out;
     };

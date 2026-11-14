@@ -22,6 +22,8 @@
 #include <QTableWidget>
 #include <QAction>
 #include <QHeaderView>
+#include <QHelpEvent>
+#include <QStatusTipEvent>
 #include <QMouseEvent>
 #include <QMenu>
 #include <QMap>
@@ -35,11 +37,14 @@
 #include <QTabWidget>
 #include <QPushButton>
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include <QCheckBox>
 #include <QMenuBar>
 #include <QSettings>
 #include <QScreen>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QSurfaceFormat>
@@ -136,10 +141,10 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                     check(tree->sortColumn() == column, "every column header selects its sort key");
                     bin.refresh();
                     check(tree->sortColumn() == column, "refresh preserves the selected sort key");
-                    check(tree->topLevelItemCount() == 2 && tree->topLevelItem(0) == groups[0] && tree->topLevelItem(1) == groups[1],
-                          "sorting keeps the Video and Audio roots in place");
+                    check(tree->topLevelItemCount() == 3 && tree->topLevelItem(0) == groups[0] && tree->topLevelItem(1) == groups[1] && tree->topLevelItem(2) == groups[2],
+                          "sorting keeps the Video, Audio and 3D roots in place");
                     for (int i = 0; i < group->parent()->childCount(); ++i)
-                        check(group->parent()->child(i) == groups[2 + i], "sorting keeps media type groups in place");
+                        check(group->parent()->child(i) == groups[3 + i], "sorting keeps media type groups in place");
                 }
                 tree->sortItems(2, Qt::AscendingOrder);
                 check(orderIs(c, b, a), "Layers sorts zero, two and ten numerically");
@@ -338,6 +343,92 @@ int main(int argc, char **argv)
     auto check = [&](bool ok, const char *reason) {
         if (!ok) { ++failures; std::printf("FAIL %s: %s\n", selection ? "selection_ui" : "workspace_ui", reason); }
     };
+    {
+        LayerTable list;
+        std::vector<LayerTable::Row> rows(16);
+        for (int i = 0; i < 16; ++i) rows[i].name = QStringLiteral("Layer %1").arg(i);
+        list.setRows(rows); list.resize(1000, 650); list.show(); app.processEvents();
+        auto *table = static_cast<QTableWidget *>(list.table());
+        auto click = [&](int row, Qt::KeyboardModifiers modifiers) {
+            table->scrollToItem(table->item(row, 4));
+            app.processEvents();
+            const QPoint point = table->visualItemRect(table->item(row, 4)).center();
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)), Qt::LeftButton, Qt::LeftButton, modifiers);
+            QApplication::sendEvent(table->viewport(), &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)), Qt::LeftButton, Qt::NoButton, modifiers);
+            QApplication::sendEvent(table->viewport(), &release);
+        };
+        click(13, Qt::NoModifier); click(3, Qt::ShiftModifier);
+        QList<int> wanted; for (int i = 3; i <= 13; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "Shift click selects the exact upward layer range");
+        click(1, Qt::NoModifier); click(11, Qt::ShiftModifier);
+        wanted.clear(); for (int i = 1; i <= 11; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "a new plain click resets the Shift range anchor");
+        click(5, Qt::ShiftModifier);
+        wanted.clear(); for (int i = 1; i <= 5; ++i) wanted << i;
+        check(list.selectedRows() == wanted, "repeated Shift click retains the original anchor");
+        click(4, Qt::NoModifier);
+        click(7, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>({4, 7}) && list.currentRow() == 7,
+              "modifier-click adds a row and makes it current");
+        click(4, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>{7} && list.currentRow() == 7,
+              "modifier-clicking a secondary row keeps the primary row current");
+        click(4, Qt::NoModifier);
+        click(7, Qt::ControlModifier);
+        click(7, Qt::ControlModifier);
+        check(list.selectedRows() == QList<int>{4} && list.currentRow() == 4,
+              "modifier-clicking the primary row leaves the remaining row current");
+        click(4, Qt::ControlModifier);
+        check(list.selectedRows().isEmpty() && list.currentRow() == -1,
+              "modifier-clicking the last selected row clears the inspector target");
+    }
+    {
+        auto *saved = new QMimeData;
+        const auto *before = QApplication::clipboard()->mimeData();
+        if (before) for (const auto &format : before->formats()) saved->setData(format, before->data(format));
+        engine.newProject();
+        engine.addLayer("Clipboard fixture");
+        MainWindow window(&engine); window.setAutosaveEnabled(false); window.setQuiet(true);
+        window.show(); app.processEvents();
+        auto *layers = window.findChild<LayerTable *>();
+        layers->setCurrentRow(0);
+        auto action = [&](const QString &name) {
+            for (auto *a : window.findChildren<QAction *>()) if (a->text() == name) { a->trigger(); return true; }
+            return false;
+        };
+        const int count = engine.layerCount();
+        const auto original = engine.layerId(0);
+        check(action("Copy Layers") && action("Paste Layers"), "layer copy and paste actions are available");
+        check(engine.layerCount() == count + 1 && engine.layerId(0) != original, "paste creates a new layer identity");
+        auto *undo = window.findChild<QUndoStack *>();
+        undo->undo(); check(engine.layerCount() == count, "layer paste is undoable");
+        undo->redo(); check(engine.layerCount() == count + 1, "layer paste can be redone");
+        layers->setCurrentRow(0);
+        check(action("Cut Layers") && engine.layerCount() == count, "cut removes the selected layer");
+        undo->undo(); check(engine.layerCount() == count + 1, "layer cut is undoable");
+        const quint64 first = engine.layerId(engine.addLayer("Batch delete A", 0));
+        const quint64 second = engine.layerId(engine.addLayer("Batch delete B", 1));
+        const int a = engine.indexOfId(first), b = engine.indexOfId(second);
+        auto *table = static_cast<QTableWidget *>(layers->table());
+        table->setCurrentCell(a, 4, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        table->selectionModel()->select(table->model()->index(b, 0),
+                                        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+        int notifications = 0;
+        const auto connection = QObject::connect(&engine, &Engine::layersChanged, [&] { ++notifications; });
+        auto deleted = [&] { return engine.indexOfId(first) < 0 && engine.indexOfId(second) < 0; };
+        check(action("Delete (Del in list)") && deleted() && notifications == 1,
+              "multiple layers are removed with one list notification");
+        undo->undo();
+        check(engine.indexOfId(first) == a && engine.indexOfId(second) == b,
+              "one undo restores all removed layer identities and their order");
+        notifications = 0;
+        undo->redo();
+        check(deleted() && notifications == 1, "redo removes the batch with one notification");
+        QObject::disconnect(connection);
+        QApplication::clipboard()->setMimeData(saved);
+    }
+    engine.newProject();
     if (systemIsf) {
         systemIsfVisibilityTests(engine, check);
         engine.shutdown();
@@ -364,6 +455,32 @@ int main(int argc, char **argv)
                     button->setChecked(false);
                 }
             }
+        }
+        auto *contextHelp = window.findChild<QLabel *>("contextHelpStatus");
+        auto *usageStatus = window.findChild<QLabel *>("systemUsageStatus");
+        check(contextHelp && usageStatus, "context help and resource indicators have separate status fields");
+        if (contextHelp && usageStatus) {
+            const QPoint pos = usageStatus->rect().center();
+            QHelpEvent help(QEvent::ToolTip, pos, usageStatus->mapToGlobal(pos));
+            QApplication::sendEvent(usageStatus, &help);
+            check(contextHelp->text().contains("System CPU and RAM usage"), "widget help goes to the status bar");
+            QEvent leave(QEvent::Leave);
+            QApplication::sendEvent(usageStatus, &leave);
+            check(contextHelp->text().isEmpty(), "context help clears on leave");
+
+            QTableWidget actions(1, 1, &window);
+            actions.setItem(0, 0, new QTableWidgetItem("Action"));
+            actions.item(0, 0)->setToolTip("<b>Timeline</b> · play");
+            actions.resize(240, 120);
+            actions.show();
+            app.processEvents();
+            const QPoint cell = actions.visualItemRect(actions.item(0, 0)).center();
+            QHelpEvent actionHelp(QEvent::ToolTip, cell, actions.viewport()->mapToGlobal(cell));
+            QApplication::sendEvent(actions.viewport(), &actionHelp);
+            check(contextHelp->text() == "Timeline · play", "table cell help shows as plain status text");
+            QStatusTipEvent dragHelp("1.20 s → 0.5");
+            QApplication::sendEvent(&actions, &dragHelp);
+            check(contextHelp->text() == "1.20 s → 0.5", "live drag help uses the same field");
         }
         auto *defaultColorView = window.findChild<QComboBox *>("defaultColorPickerView");
         check(defaultColorView && defaultColorView->currentData().toInt() == int(ColorPicker::HSL), "Settings defaults to HSL");
@@ -405,22 +522,42 @@ int main(int argc, char **argv)
                           "switching workspace and inspector pages preserves a compact window size");
                 }
             }
-            if (auto *status = window.findChild<QLabel *>("mainStatus")) {
+            if (auto *status = window.findChild<QLabel *>("contextHelpStatus")) {
                 const QString before = status->text();
                 status->setText(QString(1000, QLatin1Char('W')));
                 app.processEvents();
                 check(window.width() <= 480 && window.height() <= 360,
-                      "long output status cannot increase the window minimum size");
+                      "long context help cannot increase the window minimum size");
                 status->setText(before);
             }
             auto *editor = window.findChild<QScrollArea *>("showEditorScroll");
-            check(editor && editor->horizontalScrollBar()->maximum() > 0,
-                  "wide show controls remain reachable through horizontal scrolling");
-            if (editor) {
-                editor->horizontalScrollBar()->setValue(editor->horizontalScrollBar()->maximum());
-                check(editor->horizontalScrollBar()->value() == editor->horizontalScrollBar()->maximum(),
-                      "the right edge of a wide editor is reachable in a tiled window");
+            auto *showList = window.findChild<QScrollArea *>("showLibraryScroll");
+            auto *sequencePane = window.findChild<QScrollArea *>("sequenceEditorScroll");
+            check(editor && showList && sequencePane &&
+                      !editor->horizontalScrollBar()->isVisible() && !showList->horizontalScrollBar()->isVisible() &&
+                      !sequencePane->horizontalScrollBar()->isVisible(),
+                  "show and sequence panes do not expose horizontal scrollbars");
+            if (editor && tabs) {
+                for (int mode : {0, 1, 2}) {
+                    tabs->setCurrentIndex(mode);
+                    app.processEvents();
+                    check(editor->widget()->width() <= editor->viewport()->width(),
+                          "the editor fits its viewport in every workspace mode");
+                }
             }
+            if (auto *leftArea = window.findChild<QScrollArea *>("mainLibraryScroll"); leftArea && sequencePane) {
+                if (auto *leftTabs = qobject_cast<QTabWidget *>(leftArea->widget())) {
+                    leftTabs->setCurrentWidget(sequencePane);
+                    app.processEvents();
+                    auto *steps = sequencePane->findChild<QTableWidget *>("sequenceSteps");
+                    check(sequencePane->widget()->width() <= sequencePane->viewport()->width(),
+                          "the sequence editor fits its viewport");
+                    check(steps && steps->horizontalHeader()->length() <= steps->viewport()->width(),
+                          "the step columns fit the table viewport");
+                }
+            }
+            if (auto *showSplit = window.findChild<QSplitter *>("showLibrarySplit"))
+                check(showSplit->orientation() == Qt::Vertical, "the narrow show workspace stacks its list and editor");
             // A saved window from a larger/disconnected screen must also recover.
             QWidget saved;
             saved.setGeometry(10000, 10000, 9000, 9000);
@@ -441,6 +578,12 @@ int main(int argc, char **argv)
             check(tabs->count() == 3 && tabs->tabText(0) == "Snapshots" && tabs->tabText(1) == "Presets" && tabs->tabText(2) == "Timelines", "three named workspace tabs");
             auto *library = window.findChild<QWidget *>("showLibraryColumn");
             check(library && tabs->parentWidget() == library, "tabs belong only to the library column");
+            auto *leftArea = window.findChild<QScrollArea *>("mainLibraryScroll");
+            auto *leftTabs = leftArea ? qobject_cast<QTabWidget *>(leftArea->widget()) : nullptr;
+            auto *sequencePage = window.findChild<QScrollArea *>("sequenceEditorScroll");
+            check(leftTabs && sequencePage && leftTabs->indexOf(sequencePage) >= 0, "the sequence editor lives in the left column");
+            if (leftTabs && sequencePage) leftTabs->setCurrentWidget(sequencePage);
+            app.processEvents();
             const QPoint inspectorOrigin = pages->mapTo(&window, QPoint());
             for (int tab : {0, 1, 2, 0, 2, 1}) {
                 tabs->setCurrentIndex(tab); app.processEvents();
@@ -565,8 +708,8 @@ int main(int argc, char **argv)
                     check(gen && shown(gen), "Used shows it");
                     // Two roots, Video and Audio; the kind filter picks Files, Generators, Inputs or ISF in them
                     QTreeWidgetItem *videoRoot = tree->topLevelItem(0), *audioRoot = tree->topLevelItem(1), *videos = nullptr, *isfTop = nullptr;
-                    check(tree->topLevelItemCount() == 2 && videoRoot->text(0) == "Video" && audioRoot->text(0) == "Audio",
-                          "the media bin has a Video root and an Audio root");
+                    check(tree->topLevelItemCount() == 3 && tree->topLevelItem(2)->text(0) == "3D" && videoRoot->text(0) == "Video" && audioRoot->text(0) == "Audio",
+                          "the media bin has separate Video, Audio and 3D roots");
                     for (int c = 0; c < videoRoot->childCount(); ++c) {
                         if (videoRoot->child(c)->text(0).startsWith("Videos")) videos = videoRoot->child(c);
                         if (videoRoot->child(c)->text(0) == "ISF") isfTop = videoRoot->child(c);
@@ -829,6 +972,25 @@ int main(int argc, char **argv)
             app.processEvents();
             check(table->currentRow() == -1 && table->selectionModel()->selectedRows().isEmpty(),
                   "a deselected list stays empty after a refresh");
+            table->setCurrentCell(engine.indexOfId(ids[0]), 4);
+            table->selectionModel()->select(table->model()->index(engine.indexOfId(ids[2]), 0),
+                                            QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            const auto inserted = engine.layerId(engine.addLayer("Inserted ahead of selection", engine.indexOfId(ids[2])));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[0] && inspector->layerId() == ids[0] &&
+                      inspector->coTargets() == QList<quint64>{ids[2]},
+                  "inserting a layer preserves both selected IDs and the inspector target");
+            engine.moveLayer(engine.indexOfId(ids[2]), engine.indexOfId(ids[0]));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[0] && inspector->coTargets() == QList<quint64>{ids[2]},
+                  "reordering layers preserves the primary and secondary selection");
+            engine.removeLayer(engine.indexOfId(inserted));
+            const QJsonObject removed = engine.layerJson(engine.indexOfId(ids[0]));
+            engine.removeLayer(engine.indexOfId(ids[0]));
+            app.processEvents();
+            check(engine.layerId(table->currentRow()) == ids[2] && inspector->layerId() == ids[2],
+                  "deleting the current layer promotes a surviving selected layer");
+            engine.insertLayerJson(engine.layerCount(), removed);
             // Viewports: several selected in their list, pasted onto together and edited together
             auto *tabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *viewportList = window.findChild<QListWidget *>("viewportList");
@@ -861,6 +1023,9 @@ int main(int argc, char **argv)
                               std::abs(opacityOf(v1) - .3) < 1e-6,
                           "viewport inspector edit reaches every selected viewport only");
                 }
+                emit table->cellClicked(table->currentRow(), 4);
+                check(tabs->currentIndex() == 0 && inspector->layerId() == ids[2],
+                      "clicking the already-selected layer returns from the Viewports inspector");
             }
         }
         window.hide();
