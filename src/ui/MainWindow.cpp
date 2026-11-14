@@ -1057,7 +1057,7 @@ void MainWindow::buildMenus()
                                    "Playback requires a separately installed and licensed TouchDesigner or TouchPlayer.</p>"
                                    "<p>NDI® is a registered trademark of Vizrt NDI AB. "
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
-                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU GPL v3 or later")),
+                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU AGPL v3 or later")),
                              link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
         box.setIconPixmap(QPixmap(QStringLiteral(":/branding/nyxmap.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();
