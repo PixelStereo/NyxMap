@@ -309,21 +309,36 @@ layers.append({"id": STAGE, "name": "Stage", "enable": True, "locked": False, "v
 _stage_at = len(layers)
 
 
-def model(name, shape, parent=STAGE, position=(0, 0, 0), rotation=(0, 0, 0), scale=1.0, axes=(1, 1, 1), color=(0.8, 0.8, 0.8), metal=0.0, rough=0.5, detail=1, displace=None, amount=0.2, picture=None, unlit=False, smooth=False):
+FX3D = {}  # layer id -> the ids of its 3D FX by kind
+
+
+def model(name, shape, parent=STAGE, position=(0, 0, 0), rotation=(0, 0, 0), scale=1.0, axes=(1, 1, 1), color=(0.8, 0.8, 0.8), metal=0.0, rough=0.5, detail=1, displace=None, amount=0.2, picture=None, unlit=False, smooth=False, bend=False):
     src = {"type": "model", "path": f"/NyxMap/3D/{shape}"}
-    if displace:
-        src.update(displace=displace, displace_stage=-1)
     if picture:
         src.update(picture=picture, picture_stage=-1)
-    p = {"model/fit": True, "model/detail": detail, "model/unlit": unlit, "model/scale/all": scale, "model/material/metal": metal, "model/material/rough": rough, "model/displace/amount": amount, "model/displace/mid": 0.5}
+    p = {"model/fit": True, "model/detail": detail, "model/unlit": unlit, "model/scale/all": scale, "model/material/metal": metal, "model/material/rough": rough}
     if smooth:
         p["model/shading"] = "smooth"
+    # Its 3D FX, in the order they apply: each is an entry of its own, its settings "fx3d/<id>/…"
+    fx3d, fx = [], {}
+    if displace:
+        fx["displace"] = len(fx3d) + 1
+        fx3d.append({"id": str(fx["displace"]), "kind": "displace", "layer": displace, "stage": -1})
+        p.update({f"fx3d/{fx['displace']}/enabled": True, f"fx3d/{fx['displace']}/amount": amount, f"fx3d/{fx['displace']}/mid": 0.5})
+    if bend:
+        fx["bend"] = len(fx3d) + 1
+        fx3d.append({"id": str(fx["bend"]), "kind": "bend"})
+        p.update({f"fx3d/{fx['bend']}/enabled": True, f"fx3d/{fx['bend']}/amount": 0})
     for i, a in enumerate("xyz"):
         p[f"model/position/{a}"], p[f"model/rotation/{a}"], p[f"model/scale/{a}"] = position[i], rotation[i], axes[i]
     for i, a in enumerate("rgb"):
         p[f"model/material/color/{a}"] = color[i]
     lid = new_id()
-    layers.append({"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "parent": parent, "source": src, "fx": [], "params": p})
+    layer = {"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "parent": parent, "source": src, "fx": [], "params": p}
+    if fx3d:
+        layer.update(fx3d=fx3d, fx3d_next=str(len(fx3d) + 1))
+    layers.append(layer)
+    FX3D[lid] = fx
     return lid
 
 
@@ -356,8 +371,8 @@ NOISE = new_id()
 MONO = model("Monolith", "Cube", position=(0, 1.5, 0), axes=(0.34, 2.4, 0.12), scale=1.5, color=(0.02, 0.02, 0.025), metal=1, rough=0.12, detail=6, displace=NOISE, amount=0.02)
 OCEAN = model("Sea Plane", "Plane", position=(0, -1, 0), rotation=(-90, 0, 0), scale=30, color=(1, 1, 1), metal=0.2, rough=0.25, detail=8, displace=NOISE, amount=0.05, picture=SEA)
 HALO = merge("Halo", (0, 1.5, 0))
-FOAM = model("Noise Ring", "Torus", HALO, scale=1.8, color=(0.9, 0.95, 1), metal=0.9, rough=0.2, detail=7, displace=NOISE, amount=0.14, rotation=(90, 0, 0), smooth=True)
-RING2 = model("Noise Ring 2", "Torus", HALO, scale=2.6, color=(0.1, 0.5, 0.55), metal=0.8, rough=0.25, detail=7, displace=NOISE, amount=0.2, rotation=(70, 20, 0), smooth=True)
+FOAM = model("Noise Ring", "Torus", HALO, scale=1.8, color=(0.9, 0.95, 1), metal=0.9, rough=0.2, detail=7, displace=NOISE, amount=0.14, rotation=(90, 0, 0), smooth=True, bend=True)
+RING2 = model("Noise Ring 2", "Torus", HALO, scale=2.6, color=(0.1, 0.5, 0.55), metal=0.8, rough=0.25, detail=7, displace=NOISE, amount=0.2, rotation=(70, 20, 0), smooth=True, bend=True)
 ROCKS = merge("Stones", (0, 0.4, 0))
 STONES = [model(f"Stone {k + 1}", "Sphere", ROCKS, position=(3.2 * math.cos(k * 1.256), 0.2 * math.sin(k * 2.1), 3.2 * math.sin(k * 1.256)), scale=0.45, color=(0.55, 0.6, 0.62), metal=0.7, rough=0.35, detail=7, displace=NOISE, amount=0.5) for k in range(5)]
 RAYS = merge("White Lines", (0, 1.5, 0))
@@ -585,9 +600,9 @@ LOW_HITS, MID_HITS, HIGH_HITS = (35, 120), (1400, 4500), (8000, 16000)
 ENVELOPES = [
     (LOW_HITS, WORLD, "scale/x", 100, 109, 0.003, 0.16), (LOW_HITS, WORLD, "scale/y", 100, 109, 0.003, 0.16), (LOW_HITS, FIL, "param/amp", 0.04, 0.3, 0.003, 0.22), (LOW_HITS, FIL, "param/glow", 0.2, 2.6, 0.003, 0.2),
     (LOW_HITS, SEA, "param/hit", 0, 1, 0.003, 0.3), (LOW_HITS, LATTICE, "param/hit", 0, 1, 0.003, 0.25), (LOW_HITS, BARS, "param/hit", 0, 1, 0.003, 0.2), (LOW_HITS, DATA, "param/hit", 0, 1, 0.003, 0.18), (LOW_HITS, WAVES, "param/hit", 0, 1, 0.003, 0.2),
-    (LOW_HITS, MONO, "model/scale/all", 1.5, 1.85, 0.003, 0.2), (LOW_HITS, FOAM, "model/displace/amount", 0.14, 0.7, 0.004, 0.3), (LOW_HITS, RING2, "model/scale/all", 2.6, 3.3, 0.004, 0.32), (LOW_HITS, OCEAN, "model/displace/amount", 0.05, 0.16, 0.004, 0.4),
+    (LOW_HITS, MONO, "model/scale/all", 1.5, 1.85, 0.003, 0.2), (LOW_HITS, FOAM, f"fx3d/{FX3D[FOAM]['displace']}/amount", 0.14, 0.7, 0.004, 0.3), (LOW_HITS, RING2, "model/scale/all", 2.6, 3.3, 0.004, 0.32), (LOW_HITS, OCEAN, f"fx3d/{FX3D[OCEAN]['displace']}/amount", 0.05, 0.16, 0.004, 0.4),
     (LOW_HITS, SPOT, "light/intensity", 160, 700, 0.002, 0.2), (LOW_HITS, STAGE, "scene/glow", 0.9, 3, 0.002, 0.2), (LOW_HITS, NOISE, "param/contrast", 1.4, 2.6, 0.004, 0.2),
-    (MID_HITS, SPOT2, "light/intensity", 90, 700, 0.002, 0.18), (MID_HITS, RING2, "model/bend", 0, 160, 0.004, 0.25), (MID_HITS, FOAM, "model/bend", 0, -110, 0.004, 0.2), (MID_HITS, RAYS, "merge/scale/all", 1, 1.6, 0.003, 0.18),
+    (MID_HITS, SPOT2, "light/intensity", 90, 700, 0.002, 0.18), (MID_HITS, RING2, f"fx3d/{FX3D[RING2]['bend']}/amount", 0, 160, 0.004, 0.25), (MID_HITS, FOAM, f"fx3d/{FX3D[FOAM]['bend']}/amount", 0, -110, 0.004, 0.2), (MID_HITS, RAYS, "merge/scale/all", 1, 1.6, 0.003, 0.18),
     (MID_HITS, DATA, "param/glitch", 0, 1, 0.002, 0.14), (MID_HITS, WORLD, "rotation", 0, 1.6, 0.002, 0.14), (MID_HITS, FLASH, "opacity", 0, 0.14, 0.001, 0.09),
     (HIGH_HITS, DOTS, "merge/scale/all", 1, 1.18, 0.002, 0.06), (HIGH_HITS, SEA, "param/spark", 0.6, 3, 0.002, 0.08), (HIGH_HITS, BARS, "param/jitter", 0, 0.5, 0.002, 0.07), (HIGH_HITS, FIL, "param/spread", 0.012, 0.03, 0.002, 0.06),
 ]

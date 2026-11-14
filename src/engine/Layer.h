@@ -417,8 +417,42 @@ struct Layer {
 
     quint64 sceneDefaultMaterial = 0;
     quint64 modelMaterial = 0;
-    ModelPlacement modelTransformFx;
-    bool modelTransformFxEnabled = false, modelDisplaceEnabled = false;
+    // Its 3D FX (a model, an Instance, a Merge 3D, a light or a camera: see Fx3d), as the inspector lists them: none by
+    // default, each with its own settings and its own switch, applied in list order; several of a kind can follow each
+    // other. A parameter reaches one by its id ("fx3d/<id>/amount")
+    std::vector<Fx3dEntry> fx3d;
+    quint64 fx3dNext = 1; // the id of the next one (an id is not used again in a layer)
+    Fx3dEntry *fx3dById(quint64 id)
+    {
+        for (Fx3dEntry &e : fx3d)
+            if (e.id == id) return &e;
+        return nullptr;
+    }
+    const Fx3dEntry *fx3dById(quint64 id) const { return const_cast<Layer *>(this)->fx3dById(id); }
+    Fx3dEntry &addFx3d(Fx3d kind)
+    {
+        Fx3dEntry e;
+        e.id = fx3dNext++;
+        e.kind = kind;
+        e.s = Fx3dSettings::defaults(kind);
+        fx3d.push_back(e);
+        return fx3d.back();
+    }
+    // The first of that kind that is on (the one that counts where a kind acts once), or none
+    const Fx3dEntry *fx3dFirst(Fx3d kind) const
+    {
+        for (const Fx3dEntry &e : fx3d)
+            if (e.kind == kind && e.enabled) return &e;
+        return nullptr;
+    }
+    bool fx3dOn(Fx3d kind) const { return fx3dFirst(kind) != nullptr; }
+    // What this object can have: a model all of them (an Instance shows its original's shape, so only the placement ones);
+    // a Merge 3D, a light and a camera Follow Path
+    bool canHaveFx3d(Fx3d kind) const
+    {
+        if (type == SourceType::Model) return !isShapeFx3d(kind) || !instanceOf;
+        return kind == Fx3d::FollowPath && (type == SourceType::Light || type == SourceType::Camera || merge3d);
+    }
     std::shared_ptr<Material3D> material;
     // An Instance (a model layer with no model of its own): the model it shows, and that model's material, picture,
     // displacement, shading and detail; its own transform and 3D FX. Edit the original and every instance changes. With
@@ -426,20 +460,11 @@ struct Layer {
     // original's GPU meshes): Engine::modelOf
     quint64 instanceOf = 0;
     bool instanceOwnMaterial = false;
-    // Its Duplicate 3D FX (a model or an Instance): a copy on every point of a Path of its scene, when the FX is on
-    bool duplicateEnabled = false;
-    quint64 duplicatePath = 0;
-    int duplicateAlign = 1;            // 0 as it is, 1 turned the way each point faces (Path3D::directionsLocal)
-    float duplicateScale = 1;          // every copy's size
-    float duplicateRandomScale = 0;    // 0 to 1: how much each copy's size varies
-    float duplicateRandomRotation = 0; // degrees: how far each copy turns at random around its up
-    int duplicateSeed = 1;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
-    quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
     quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)
-    // Where those layers' pictures are taken (as an FX mask's): -1 their final picture, 0 their source (before their
-    // FX), k after their FX k
-    int modelPictureStage = -1, modelDisplaceStage = -1;
+    // Where that layer's picture is taken (as an FX mask's): -1 its final picture, 0 its source (before its FX), k after
+    // its FX k
+    int modelPictureStage = -1;
     // A 3D scene: the layer whose picture (equirectangular: an HDRI, a video…) surrounds it and lights it, at a stage
     quint64 sceneEnvironment = 0;
     int sceneEnvironmentStage = -1;
@@ -451,14 +476,6 @@ struct Layer {
     // A camera (type Camera): where it points, its field of view; the 3D object of its scene it looks at (0: its point)
     CameraSettings camera;
     quint64 lookAtObject = 0;
-    // Its Follow Path 3D FX (a model, a Merge 3D or an Empty, a camera, a light): the Path of its scene it travels along
-    // (0: none), when the FX is on; where on it (0 to 1), turns per second, turned to face the way it goes. A camera or a
-    // light is then on the path's point; a model's or a Merge 3D's own transform applies from there
-    bool followEnabled = false;
-    quint64 followPath = 0;
-    float followPosition = 0, followSpeed = 0;
-    bool followOrient = false;
-    double followTravel = 0; // how far its speed has taken it (not kept in a project)
     bool is3dObject() const
     {
         return type == SourceType::Model || type == SourceType::Light || type == SourceType::Path || type == SourceType::Camera ||

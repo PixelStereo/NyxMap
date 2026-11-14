@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "fx3d_test.h"
 #include "Model3D.h"
 #include "Path3D.h"
 #include <QJsonObject>
@@ -77,30 +78,31 @@ int runPath3dTests(Engine &engine)
     // Follow Path is a 3D FX: nothing moves until it is on
     check(engine.setFollowPath(at(light), path), "a light can follow a Path of its scene");
     check(!engine.setFollowPath(at(light), empty), "not what is not a Path");
-    engine.setParameter(light, "follow/position", 0.25);
+    engine.setParameter(light, fxPath(engine, light, Fx3d::FollowPath, "enabled"), false); // a FX is added on: this one waits
+    engine.setParameter(light, fxPath(engine, light, Fx3d::FollowPath, "position"), 0.25);
     const auto placeOf = [&](quint64 id) {
         Engine::Lock lk(&engine.mutex());
         return engine.placeOf3dObject(*engine.layer(at(id)));
     };
     check(!near(placeOf(light), {0, 3, 2}), "the FX off: the light stays where it is");
-    engine.setParameter(light, "follow/enabled", true);
+    engine.setParameter(light, fxPath(engine, light, Fx3d::FollowPath, "enabled"), true);
     check(near(placeOf(light), {0, 3, 2}), "the FX on: the light is on the path, the path moved");
 
     // A model follows, its own position an offset; turned along its path
     engine.setFollowPath(at(model), path);
-    engine.setParameter(model, "follow/enabled", true);
-    engine.setParameter(model, "follow/position", 0.0);
+    engine.setParameter(model, fxPath(engine, model, Fx3d::FollowPath, "enabled"), true);
+    engine.setParameter(model, fxPath(engine, model, Fx3d::FollowPath, "position"), 0.0);
     check(near(placeOf(model), {2, 3, 0}), "a model on its path");
     // A quarter turn round: it goes toward -X, so its own +X offset points to +Z
-    engine.setParameter(model, "follow/orient", true);
-    engine.setParameter(model, "follow/position", 0.25);
+    engine.setParameter(model, fxPath(engine, model, Fx3d::FollowPath, "orient"), true);
+    engine.setParameter(model, fxPath(engine, model, Fx3d::FollowPath, "position"), 0.25);
     engine.setParameter(model, "model/position/x", 1.0);
     check(near(placeOf(model), {0, 3, 3}), "turned along it, its offset turns too");
 
     // A Merge 3D (an Empty) follows: what it holds comes along
     engine.setFollowPath(at(empty), path);
-    engine.setParameter(empty, "follow/enabled", true);
-    engine.setParameter(empty, "follow/position", 0.5);
+    engine.setParameter(empty, fxPath(engine, empty, Fx3d::FollowPath, "enabled"), true);
+    engine.setParameter(empty, fxPath(engine, empty, Fx3d::FollowPath, "position"), 0.5);
     engine.setParameter(held, "camera3d/position/x", 0.0);
     engine.setParameter(held, "camera3d/position/y", 1.0);
     engine.setParameter(held, "camera3d/position/z", 0.0);
@@ -112,8 +114,8 @@ int runPath3dTests(Engine &engine)
     check(engine.setCameraLookAt(at(camera), empty), "a camera looks at an Empty");
     check(engine.setCameraLookAt(at(other), model), "another looks at a model");
     engine.setFollowPath(at(camera), path);
-    engine.setParameter(camera, "follow/enabled", true);
-    engine.setParameter(camera, "follow/position", 0.75);
+    engine.setParameter(camera, fxPath(engine, camera, Fx3d::FollowPath, "enabled"), true);
+    engine.setParameter(camera, fxPath(engine, camera, Fx3d::FollowPath, "position"), 0.75);
     {
         Engine::Lock lk(&engine.mutex());
         const SceneSettings view = engine.placedCamera(*engine.layer(at(scene)));
@@ -121,7 +123,7 @@ int runPath3dTests(Engine &engine)
         check(near(c.eye, {0, 3, -2}) && near(QVector3D(view.target[0], view.target[1], view.target[2]), {-2, 3, 0}),
               "the active camera is on its path, looking at the Empty");
     }
-    engine.setParameter(camera, "follow/speed", 0.5);
+    engine.setParameter(camera, fxPath(engine, camera, Fx3d::FollowPath, "speed"), 0.5);
     {
         Engine::Lock lk(&engine.mutex());
         engine.stepAnimations(0.5);
@@ -152,10 +154,11 @@ int runPath3dTests(Engine &engine)
         const Layer *l = engine.layer(engine.indexOfId(light));
         check(p && p->type == SourceType::Path && p->path3d.kind == Path3D::Spiral && p->path3d.points == 64 &&
                   std::abs(p->modelPlacement.position[1] - 3) < 1e-4f, "the Path comes back");
-        check(c && c->type == SourceType::Camera && c->followPath == path && c->followEnabled && c->lookAtObject == empty &&
+        const Fx3dEntry *cf = c ? c->fx3dFirst(Fx3d::FollowPath) : nullptr, *lf = l ? l->fx3dFirst(Fx3d::FollowPath) : nullptr;
+        check(c && c->type == SourceType::Camera && cf && cf->s.layer == path && c->lookAtObject == empty &&
                   o && o->lookAtObject == model && sc && sc->activeCamera == other,
               "the cameras, what they look at and the one the scene is seen through come back");
-        check(l && l->followPath == path && l->followEnabled, "a Follow Path FX comes back");
+        check(lf && lf->s.layer == path, "a Follow Path FX comes back");
     }
     engine.newProject();
     return failures;

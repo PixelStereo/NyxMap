@@ -5,8 +5,10 @@
 // scene; the list refuses a move that takes a 3D object out of its scene or a 2D layer into one; the inspector shows the
 // scene's camera (Scene tab) and an object's values (3D tab), each edit one undo step.
 #include "Engine.h"
+#include "fx3d_test.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
+#include "FxChainPanel.h"
 #include "MediaBin.h"
 #include "MaterialPanel.h"
 #include "PreviewWorkspace.h"
@@ -343,10 +345,80 @@ int runScene3dUiTests(Engine &engine)
     } else {
         check(false, "a model's 3D tab has its Shading");
     }
-    check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer") && inspector->findChild<QComboBox *>("modelDisplaceLayer"),
-          "a model's 3D tab chooses the layer shown on it and the one that displaces it");
+    check(inspector && inspector->findChild<QComboBox *>("modelPictureLayer"), "a model's tab chooses the layer shown on it");
+    // Its 3D FX: none by default, as a video layer's; Displace joins the list, and chooses the layer that displaces it
+    check(inspector && inspector->findChild<FxChainPanel *>("fxChainPanel") && inspector->findChild<FxChainPanel *>("fxChainPanel")->count() == 0 &&
+              !inspector->findChild<QComboBox *>("modelDisplaceLayer"),
+          "a model has no 3D FX by default");
+    engine.setParameter(layer, fxPath(engine, layer, Fx3d::Displace, "enabled"), true); // turning an FX on lists it
+    select(engine.indexOfId(plain));
+    select(engine.indexOfId(layer));
+    check(inspector && inspector->findChild<FxChainPanel *>("fxChainPanel") && inspector->findChild<FxChainPanel *>("fxChainPanel")->count() == 1,
+          "turning Displace on lists it");
+    check(inspector && inspector->findChild<QComboBox *>("modelDisplaceLayer"), "the listed Displace chooses the layer that displaces the model");
     check(inspector && inspector->findChild<QComboBox *>("modelPictureStage") && inspector->findChild<QComboBox *>("modelDisplaceStage"),
           "and the stage each one is taken at");
+    {   // The list: a second FX of the same kind, then the order, a row's switch and the removal; each an undo step
+        const auto kinds = [&] {
+            std::vector<Fx3d> out;
+            Engine::Lock lk(&engine.mutex());
+            for (const Fx3dEntry &e : engine.layer(engine.indexOfId(layer))->fx3d) out.push_back(e.kind);
+            return out;
+        };
+        const auto idOf = [&](int row) {
+            Engine::Lock lk(&engine.mutex());
+            return engine.layer(engine.indexOfId(layer))->fx3d[size_t(row)].id;
+        };
+        const auto on = [&](quint64 id) { return engine.parameterValue(layer, QStringLiteral("fx3d/%1/enabled").arg(id)).toBool(); };
+        const auto chain = [&] { return inspector ? inspector->findChild<FxChainPanel *>("fxChainPanel") : nullptr; };
+        const auto reopen = [&] {
+            select(engine.indexOfId(plain));
+            select(engine.indexOfId(layer));
+        };
+        const quint64 bendA = engine.addFx3d(engine.indexOfId(layer), Fx3d::Bend);
+        const quint64 bendB = engine.addFx3d(engine.indexOfId(layer), Fx3d::Bend); // the same kind again
+        reopen();
+        check(kinds() == std::vector<Fx3d>({Fx3d::Displace, Fx3d::Bend, Fx3d::Bend}) && chain() && chain()->count() == 3,
+              "the same FX can be listed twice");
+        if (chain()) emit chain()->moveRequested(1, 2);
+        pump();
+        check(idOf(1) == bendB && idOf(2) == bendA, "▲ ▼ change the order they apply in");
+        if (undo) undo->undo();
+        pump(); // the list is built again
+        check(idOf(1) == bendA && idOf(2) == bendB, "undo puts the order back");
+        if (chain()) emit chain()->toggled(2, false);
+        pump();
+        check(!on(bendB) && on(bendA) && kinds().size() == 3, "a row's box switches that one, which stays listed");
+        if (undo) undo->undo();
+        pump();
+        check(on(bendB), "undo switches it back on");
+        engine.setParameter(layer, QStringLiteral("fx3d/%1/amount").arg(bendB), 77.0);
+        if (chain()) emit chain()->removeRequested(2);
+        pump();
+        check(kinds() == std::vector<Fx3d>({Fx3d::Displace, Fx3d::Bend}), "− takes the selected one out of the list");
+        if (undo) undo->undo();
+        pump();
+        check(kinds().size() == 3 && std::abs(engine.parameterValue(layer, QStringLiteral("fx3d/%1/amount").arg(bendB)).toDouble() - 77) < 1e-6,
+              "undo lists it again, with its settings");
+        // The menu keeps every kind, whatever the list holds
+        if (chain()) {
+            QWidget *anchor = chain()->addButton();
+            QTimer::singleShot(100, [&] {
+                for (QWidget *w : QApplication::topLevelWidgets())
+                    if (auto *menu = qobject_cast<QMenu *>(w); menu && menu->isVisible()) {
+                        int kindsInMenu = 0;
+                        for (QAction *action : menu->actions())
+                            if (!action->isSeparator() && !action->text().isEmpty()) ++kindsInMenu;
+                        check(kindsInMenu == 9, "the menu offers every kind of 3D FX, the ones already listed too");
+                        menu->close();
+                    }
+            });
+            emit chain()->addRequested(anchor);
+        }
+        engine.removeFx3d(engine.indexOfId(layer), bendB);
+        engine.removeFx3d(engine.indexOfId(layer), bendA);
+        reopen();
+    }
     if (auto *pick = inspector ? inspector->findChild<QComboBox *>("modelPictureLayer") : nullptr) {
         bool offersScene = false;
         for (int k = 0; k < pick->count(); ++k) offersScene |= pick->itemData(k).toULongLong() == scene;
@@ -392,6 +464,51 @@ int runScene3dUiTests(Engine &engine)
                 }
             }
             check(newScene && targets, "model context offers a new scene and existing 3D holders");
+        }
+
+        // A Camera, an Empty and a Path are 3D objects too: a new scene or an existing 3D scene, never a video or a 2D layer
+        for (const QString &object : {kCamera3dPath, kEmpty3dPath, kPath3dPath}) {
+            QMenu objectMenu;
+            bin->fillLoadMenu(&objectMenu, object);
+            bool newScene = false, targets = false;
+            for (auto *action : objectMenu.actions()) {
+                newScene |= action->text() == "Load into New 3D Scene";
+                check(action->text() != "Load into Selected Layer" && action->text() != "Load into New Layer" && action->text() != "Load into Layer",
+                      "a Camera, an Empty and a Path have no 2D loading actions");
+                if (!action->menu() || action->text() != "Load into 3D Scene / Merge 3D") continue;
+                targets = true;
+                for (auto *target : action->menu()->actions()) {
+                    bool holder = false;
+                    for (int i = 0; i < engine.layerCount(); ++i) {
+                        const Layer *l = engine.layer(i);
+                        if (l && l->name == target->text().trimmed() && (l->scene3d || l->merge3d)) holder = true;
+                    }
+                    check(holder, "a Camera, an Empty or a Path is only offered to scenes and Merge 3D");
+                }
+            }
+            check(newScene && targets, "a Camera, an Empty and a Path offer a new scene and the existing 3D scenes");
+        }
+        {   // onto a layer that is not a 3D scene (a video, a generator): refused, nothing created
+            const int before = engine.layerCount();
+            const int plain = engine.addLayer(QStringLiteral("Plain layer"), 0);
+            emit bin->loadIntoLayerRequested(plain, kCamera3dPath); // the right-click submenu's signal
+            pump();
+            check(engine.layerCount() == before + 1, "refusing a Camera onto a 2D layer creates nothing");
+            check(engine.layer(plain) && engine.layer(plain)->name == "Plain layer" && engine.layer(plain)->type == SourceType::None,
+                  "a Camera is not loaded into a 2D layer");
+            engine.removeLayer(plain);
+        }
+        {   // Load into New 3D Scene: a scene with a light and the object, not an empty 2D layer
+            const int before = engine.layerCount();
+            emit bin->loadIntoNewLayerRequested(kEmpty3dPath); // the right-click menu's signal
+            pump();
+            bool scene = false, empty = false;
+            for (int i = 0; i < engine.layerCount(); ++i) {
+                const Layer *l = engine.layer(i);
+                scene |= l && l->scene3d;
+                empty |= l && l->merge3d && l->name.startsWith("Empty");
+            }
+            check(scene && empty && engine.layerCount() > before, "Load into New 3D Scene makes a scene around an Empty");
         }
 
         QStringList primitives;

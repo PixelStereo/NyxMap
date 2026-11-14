@@ -181,8 +181,19 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     o["id"] = QString::number(l.id);
     if (l.isMappingZone) o["is_mapping_zone"] = true;
     if (l.mappingZone) o["mapping_zone"] = QString::number(l.mappingZone);
-    if (l.followPath) o["follow_path"] = QString::number(l.followPath); // a 3D object along a Path of its scene
-    if (l.duplicatePath) o["duplicate_path"] = QString::number(l.duplicatePath); // a model copied on a Path's points
+    if (!l.fx3d.empty()) { // its 3D FX, in the order they apply: what each is and the layer it reads (its values are parameters)
+        QJsonArray fx;
+        for (const Fx3dEntry &e : l.fx3d) {
+            QJsonObject entry{{"id", QString::number(e.id)}, {"kind", fx3dKey(e.kind)}};
+            if (e.s.layer) {
+                entry["layer"] = QString::number(e.s.layer);
+                entry["stage"] = e.s.stage;
+            }
+            fx.append(entry);
+        }
+        o["fx3d"] = fx;
+        o["fx3d_next"] = QString::number(l.fx3dNext);
+    }
     if (l.parent) o["parent"] = QString::number(l.parent);
     if (l.isGroup) {
         o["group"] = true;
@@ -252,9 +263,7 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
         if (l.model && !l.model->hiddenObjects().isEmpty()) src["hidden_objects"] = QJsonArray::fromStringList(l.model->hiddenObjects());
         if (l.modelMaterial) src["material"] = QString::number(l.modelMaterial);
         if (l.modelPicture) src["picture"] = QString::number(l.modelPicture); // the layer shown on it
-        if (l.modelDisplace) src["displace"] = QString::number(l.modelDisplace); // the layer whose luminance pushes it
-        if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where their pictures are taken
-        if (l.modelDisplace) src["displace_stage"] = l.modelDisplaceStage;
+        if (l.modelPicture) src["picture_stage"] = l.modelPictureStage;   // where its picture is taken
         break;
     case SourceType::Light:
         src["type"] = "light";
@@ -356,8 +365,7 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
         if (l->scene3d) { // ids of this project, checked when drawn
             l->activeCamera = o.value("active_camera").toString().toULongLong();
         }
-        l->followPath = o.value("follow_path").toString().toULongLong(); // the Path it travels along
-        l->duplicatePath = o.value("duplicate_path").toString().toULongLong(); // the Path its copies are on
+
         l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
@@ -462,9 +470,7 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
                 l->modelMaterial = src.value("material").toString().toULongLong();
                 l->material.reset();
                 l->modelPicture = src.value("picture").toString().toULongLong();
-                l->modelDisplace = src.value("displace").toString().toULongLong();
                 l->modelPictureStage = src.value("picture_stage").toInt(-1);
-                l->modelDisplaceStage = src.value("displace_stage").toInt(-1);
             }
         }
         QStringList hidden;
@@ -590,10 +596,24 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
     Lock lk(&m_mutex);
     Layer *l = layer(index);
     if (o.contains("mesh")) l->mapping.setMeshJson(o.value("mesh").toObject());
+    l->fx3d.clear(); // its 3D FX, in the order they apply (once its source is there: loading a model resets them)
+    for (const QJsonValue &v : o.value("fx3d").toArray()) {
+        const QJsonObject entry = v.toObject();
+        const std::optional<Fx3d> kind = fx3dFromKey(entry.value("kind").toString());
+        const quint64 id = entry.value("id").toString().toULongLong();
+        if (!kind || !id || l->fx3dById(id)) continue;
+        Fx3dEntry e;
+        e.id = id;
+        e.kind = *kind;
+        e.s = Fx3dSettings::defaults(*kind);
+        e.s.layer = entry.value("layer").toString().toULongLong();
+        e.s.stage = entry.value("stage").toInt(-1);
+        l->fx3d.push_back(e);
+    }
+    l->fx3dNext = std::max<quint64>(o.value("fx3d_next").toString().toULongLong(), 1);
+    for (const Fx3dEntry &e : l->fx3d) l->fx3dNext = std::max(l->fx3dNext, e.id + 1);
     const auto layerParams = o.value("params").toObject();
     parametersFromJson(l->parameters(), layerParams, &l->extraParams);
-    if (l->type == SourceType::Model && !layerParams.contains("model/displace/enabled"))
-        l->modelDisplaceEnabled = l->modelDisplace != 0;
     if (l->hasTransport()) {
         // Played or paused: its parameter (a snapshot that restarts it plays it)
         const QJsonObject params = o.value("params").toObject();

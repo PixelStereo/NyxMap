@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "fx3d_test.h"
 #include "Model3D.h"
 #include "Path3D.h"
 #include <algorithm>
@@ -96,12 +97,13 @@ int runInstance3dTests(Engine &engine)
     }();
     check(engine.sceneTriangles(at(stage)) == 2 * cubeTriangles, "without the FX: one of each");
     check(engine.setDuplicatePath(at(box), grid), "Duplicate on a grid");
+    engine.setParameter(box, fxPath(engine, box, Fx3d::Duplicate, "enabled"), false); // a FX is added on: this one waits
     check(engine.sceneTriangles(at(stage)) == 2 * cubeTriangles, "the FX off: nothing copied yet");
-    engine.setParameter(box, "duplicate/enabled", true);
+    engine.setParameter(box, fxPath(engine, box, Fx3d::Duplicate, "enabled"), true);
     check(engine.sceneTriangles(at(stage)) == 7 * cubeTriangles, "the FX on: a copy on each of the 6 points, and the instance");
     {
         Engine::Lock lk(&engine.mutex());
-        const auto frames = engine.duplicateFrames(*engine.layer(at(box)), QMatrix4x4());
+        const auto frames = engine.placementFrames(*engine.layer(at(box)), QMatrix4x4(), true);
         bool onPoints = frames.size() == 6;
         Path3D g;
         g.kind = Path3D::Grid, g.columns = 3, g.rows = 2;
@@ -110,21 +112,20 @@ int runInstance3dTests(Engine &engine)
             onPoints = (frames[k].map(QVector3D()) - (points[k] + QVector3D(0, 1, 0))).length() < 1e-3f;
         check(onPoints, "each copy is on its point, where the Path is");
     }
-    engine.setParameter(box, "duplicate/random_scale", 0.5);
-    engine.setParameter(box, "duplicate/random_rotation", 90.0);
+    engine.setParameter(box, fxPath(engine, box, Fx3d::Duplicate, "random_scale"), 0.5);
+    engine.setParameter(box, fxPath(engine, box, Fx3d::Duplicate, "random_rotation"), 90.0);
     const auto sizes = [&] {
         Engine::Lock lk(&engine.mutex());
         std::vector<float> out;
-        for (const QMatrix4x4 &f : engine.duplicateFrames(*engine.layer(at(box)), QMatrix4x4())) out.push_back(f.column(1).toVector3D().length());
+        for (const QMatrix4x4 &f : engine.placementFrames(*engine.layer(at(box)), QMatrix4x4(), true)) out.push_back(f.column(1).toVector3D().length());
         return out;
     };
     const auto first = sizes();
     check(first == sizes() && std::any_of(first.begin(), first.end(), [&](float v) { return std::abs(v - first[0]) > 1e-3f; }),
           "variations differ from copy to copy, the same at every frame");
-    engine.setParameter(box, "duplicate/seed", 7);
+    engine.setParameter(box, fxPath(engine, box, Fx3d::Duplicate, "seed"), 7);
     check(sizes() != first, "another seed, other variations");
     check(engine.setDuplicatePath(at(twin), grid), "an Instance has its own Duplicate");
-    engine.setParameter(twin, "duplicate/enabled", true);
     check(engine.sceneTriangles(at(stage)) == 12 * cubeTriangles, "the instance copied too, with the same meshes");
     // Far enough for every copy to be in view: what the camera does not see is not drawn
     engine.setParameter(stage, "camera/distance", 30.0);
@@ -138,8 +139,8 @@ int runInstance3dTests(Engine &engine)
     {
         Engine::Lock lk(&engine.mutex());
         const Layer *b = engine.layer(engine.indexOfId(box));
-        check(b && b->duplicateEnabled && b->duplicatePath == grid && b->duplicateSeed == 7 &&
-                  std::abs(b->duplicateRandomScale - 0.5f) < 1e-4f, "the Duplicate FX comes back");
+        const Fx3dEntry *d = b ? b->fx3dFirst(Fx3d::Duplicate) : nullptr;
+        check(d && d->s.layer == grid && d->s.seed == 7 && std::abs(d->s.randomScale - 0.5f) < 1e-4f, "the Duplicate FX comes back");
     }
     engine.newProject();
     return failures;

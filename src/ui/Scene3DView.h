@@ -23,7 +23,7 @@ public:
     void setUndoStack(QUndoStack *undo) { m_undo = undo; }
     void setScene(quint64 scene);       // 0: none (the slot shows pictures again)
     void setSelected(quint64 layer);    // the layer selected in the list (its handles, if it is one of the scene's)
-    quint64 scene() const { return m_scene; }
+    quint64 scene() const { return m_root; } // what it looks at: a 3D scene, or a Merge 3D of one
     enum class Mode { Move, Rotate, Scale };
     void setMode(Mode m);
     Mode mode() const { return m_mode; }
@@ -101,7 +101,7 @@ private:
     int m_slot;
     QUndoStack *m_undo = nullptr;
     GlDraw m_draw;
-    quint64 m_scene = 0, m_selected = 0;
+    quint64 m_scene = 0, m_root = 0, m_selected = 0; // the 3D scene whose camera it uses; what it looks at (that scene or a Merge 3D of it)
     SceneSettings m_cam;
     Mode m_mode = Mode::Move;
     QToolButton *m_modeButtons[3] = {};

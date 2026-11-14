@@ -144,12 +144,16 @@ public:
     bool setDuplicatePath(int index, quint64 path);
     // A model's frames with its Duplicate FX on: one per copy (its own transform applies within each); without it, just
     // `frame` (lock held)
-    std::vector<QMatrix4x4> duplicateFrames(const Layer &model, const QMatrix4x4 &frame);
+    std::vector<QMatrix4x4> duplicateFrames(const Fx3dEntry &fx, const QMatrix4x4 &frame); // a Duplicate FX: a copy on each point of its Path
     // The Path of its scene a model, a Merge 3D, a camera or a light travels along in its Follow Path FX (0: none)
     bool setFollowPath(int index, quint64 path);
     // Where a 3D object's own transform starts: on its Path when it follows one (turned along it with Follow Orient),
     // otherwise under its Merge 3Ds (`parent`) (lock held)
-    QMatrix4x4 followFrame(const Layer &object, const QMatrix4x4 &parent);
+    QMatrix4x4 followFrame(const Layer &object, const QMatrix4x4 &parent);                       // all its Follow Path FX, in order
+    QMatrix4x4 followFrame(const Layer &object, const Fx3dEntry &fx, const QMatrix4x4 &parent); // one of them
+    // A model's frames under its placement FX (Follow Path, Duplicate, Transform 3D), in the order they are listed; one
+    // frame without `copies` (where it is, not its copies)
+    std::vector<QMatrix4x4> placementFrames(const Layer &object, const QMatrix4x4 &parent, bool copies);
     QVector3D cameraPosition(const Layer &camera); // a camera object's place in its scene (lock held)
     // A camera object's view, as a scene's camera settings (the rest from `base`, its scene's) (lock held)
     SceneSettings cameraView(const Layer &camera, const SceneSettings &base);
@@ -159,8 +163,13 @@ public:
     // A scene's camera as it is drawn: along its path and looking at its object when it has them (lock held)
     SceneSettings placedCamera(const Layer &scene);
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
-    bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
-    bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
+    bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // the first Displace: a layer's luminance pushing its points
+    bool setModelLayer(int index, quint64 layer, QString *err, int stage = -1); // the picture laid on a model
+    bool feedsModel(const Layer &model, quint64 picture, QString *err);          // (lock held)
+    quint64 addFx3d(int index, Fx3d kind);                    // a 3D FX at the end of its list, on: its id (0: it cannot have it)
+    bool removeFx3d(int index, quint64 fx);                    // takes it out of the list (its settings go with it)
+    quint64 fx3dOfKind(int index, Fx3d kind);                 // the first of that kind (0: none)
+    bool setFx3dLayer(int index, quint64 fx, quint64 layer, QString *err = nullptr, int stage = -1); // Displace's picture, a Path
     // The 3D object of its scene a light looks at (0: its Look At's point); refused: itself, or what is not in its scene
     bool setLightLookAt(int index, quint64 object);
     // A light as its scene sees it (lock held): where its path and its Merge 3Ds put it, where it points; `target`: the

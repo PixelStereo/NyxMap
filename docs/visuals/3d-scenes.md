@@ -12,8 +12,7 @@ A primitive starts with as few triangles as its shape needs (a cube is 12, a pla
 A model can:
 
 - show another layer's picture over its UVs (its 3D tab › **Surface › Picture**; lit, or unlit: as it is);
-- bend across its width (`model/bend`: a curved screen);
-- have its points pushed along their normals by a layer's luminance (**Surface › Displace**; `model/displace/amount`, `model/displace/mid`).
+- take 3D FX (its **FX** tab, below): bend across its width (a curved screen), have its points pushed along their normals by a layer's luminance (Displace), twist, taper, wave…
 
 `model/shading` shows a model as made, smooth (its normals averaged where faces meet) or flat (its facets show).
 
@@ -61,13 +60,38 @@ It is drawn in the 3D view (its points and lines), not in the scene's picture; *
 
 A circle, a rectangle, a line or a spiral is also a **path**, which 3D objects travel along with the **Follow Path** 3D FX. A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.
 
+## 3D FX
+
+A 3D object's **FX** tab is a list, empty by default, like the FX of a video layer. **Add 3D FX…** adds one at the end of the list; the menu offers every kind each time, so the same one can follow itself (two Bends, three Noises…). **−** takes the selected one out, **▲ ▼** change the order, a row's box switches it on or off, and below are the settings of the selected one. Each FX has its own id, and its parameters are at `fx3d/<id>/…` (`fx3d/3/amount`): they stay with it when the list changes, and a preset, an interaction or a timeline reaches one by its id.
+
+The **shape FX** move the points of a model's mesh, in list order (a taper then a bend is not a bend then a taper). Their settings are in the units of the model's size, so any model reads the same:
+
+| FX | Settings | What it does |
+| --- | --- | --- |
+| Displace | `amount`, `mid`, a picture | Pushes the points along their normals by a layer's luminance. One picture pushes the points at a time: if several Displace are listed, only the first one acts (the others show a ⚠). |
+| Bend | `amount` (°) | Curves it across its width: a plane becomes a curved screen. |
+| Twist | `angle` (°, end to end), `axis` | Turns it around an axis, more and more along it. |
+| Taper | `amount`, `axis` | Makes it wider at one end and narrower at the other. |
+| Wave | `amount`, `length`, `phase` (turns), `axis` | A wave travels along an axis and moves the points across it. Animate the phase. |
+| Noise | `amount`, `scale`, `rate`, `interp`, `phase`, `seed` | Pushes the points by a smooth noise that changes over time (below). |
+
+**Noise** has values that change: `rate` is how many times per second it takes a new set of values (0: it holds still), and `interp` says how one becomes the next: **none (sharp)**, an abrupt change at each step; **linear**, a steady move from one to the next; **smooth**, a move that eases in and out. `phase` shifts the steps (animate it to scrub the noise by hand), `seed` chooses another noise. Changing `rate` does not make it jump.
+
+A shape FX needs points to move: a primitive is cut finer on its own (`model/detail` sets the least); an imported model keeps its own mesh.
+
+The **placement FX** then place it, in list order: **Transform 3D** (`position`, `rotation` and `scale` on top of its Spatial values), **Duplicate** and **Follow Path**, below. A model has all of them; an Instance has the placement ones (it shows its original's shape); a Merge 3D, a light and a camera have Follow Path.
+
+## Looking at a scene or a Merge 3D
+
+In the viewer's source menu (**Layers**), a 3D scene and a Merge 3D are layers like the others: each opens a 3D view. A Merge 3D shows itself and what it holds, where it is in its scene, with its scene's camera and background. The 3D objects (models, lights, cameras, Paths) are not offered by themselves.
+
 ## Follow Path (3D FX)
 
-A model, a Merge 3D or an Empty, a camera or a light has a **Follow Path** 3D FX (its **FX** tab): choose a Path of the scene, turn it on (`follow/enabled`), place the object on it (`follow/position`, 0 to 1) and set it moving (`follow/speed`, turns per second). **Turned Along It** (`follow/orient`) turns the object to face the way it goes. A camera or a light sits on the path's point; a model's or a Merge 3D's own transform applies from there, so a Merge 3D on a path carries everything it holds.
+A model, a Merge 3D or an Empty, a camera or a light has a **Follow Path** 3D FX (its **FX** list): add it, choose a Path of the scene, place the object on it (`position`, 0 to 1) and set it moving (`speed`, turns per second). **Turned Along It** (`orient`) turns the object to face the way it goes. A camera or a light sits on the path's point; a model's or a Merge 3D's own transform applies from there, so a Merge 3D on a path carries everything it holds.
 
 ## Duplicate (3D FX)
 
-A model or an Instance has a **Duplicate** 3D FX (its **FX** tab): a copy on every point of a Path of its scene, of any kind (a grid, a sphere, random points, a circle, a spiral…). The Path's point count is the number of copies; move or animate the Path and the copies follow. **Copies** turns each one along the path (or outward on a sphere) or leaves it as it is; **Copy Size**, **Size Variation** and **Turn Variation** (with a **Seed**) vary them. The copies share the model's meshes: drawn again, not built again. With Duplicate on, the copies stand on the Path's points (the model's own Follow Path does not apply); its own transform applies to each copy.
+A model or an Instance has a **Duplicate** 3D FX (its **FX** list): a copy on every point of a Path of its scene, of any kind (a grid, a sphere, random points, a circle, a spiral…). The Path's point count is the number of copies; move or animate the Path and the copies follow. **Copies** turns each one along the path (or outward on a sphere) or leaves it as it is; **Copy Size**, **Size Variation** and **Turn Variation** (with a **Seed**) vary them. The copies share the model's meshes: drawn again, not built again. With Duplicate on, the copies stand on the Path's points (a Follow Path listed before it does not apply); a Transform 3D listed after it applies to each copy.
 
 ## Cameras
 
