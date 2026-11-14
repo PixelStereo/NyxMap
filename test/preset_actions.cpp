@@ -1,7 +1,9 @@
 // Actions in a preset: a media's Rewind and Seek To, a countdown's Start, a timeline's Play — held as something to do,
 // done when the preset is recalled, after its values. A whole category holds its values, not its actions.
 #include "Engine.h"
+#include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QThread>
 #include <QSurfaceFormat>
 #include <cmath>
 #include <iostream>
@@ -75,7 +77,14 @@ int main(int argc, char **argv)
         Engine::AnimationPlayback play;
         require(e.sampleAnimation(tl, 0, {}, &play) && play.state == AnimState::Playing, "a preset plays a timeline");
         double at = -1;
-        require(e.animParamValue(movie, "playhead", &at) && std::abs(at - 1.0) < 0.3, "a preset seeks a media (after its rewind)");
+        QElapsedTimer seeking; // the decoder seeks on its own thread: slower machines take a few frames more
+        seeking.start();
+        while (!(e.animParamValue(movie, "playhead", &at) && std::abs(at - 1.0) < 0.3) && seeking.elapsed() < 5000) {
+            e.renderFrame();
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+        require(std::abs(at - 1.0) < 0.3, "a preset seeks a media (after its rewind)");
         // An ISF shader's Restart: its TIME from 0 again, held by a preset
         {
             const int si = e.addLayer("Shader");
