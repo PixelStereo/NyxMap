@@ -126,6 +126,8 @@ int runInstance3dTests(Engine &engine)
     check(engine.setDuplicatePath(at(twin), grid), "an Instance has its own Duplicate");
     engine.setParameter(twin, "duplicate/enabled", true);
     check(engine.sceneTriangles(at(stage)) == 12 * cubeTriangles, "the instance copied too, with the same meshes");
+    // Far enough for every copy to be in view: what the camera does not see is not drawn
+    engine.setParameter(stage, "camera/distance", 30.0);
     engine.renderFrame();
     engine.renderFrame();
     check(engine.sceneTrianglesComputed(at(stage)) >= 12 * cubeTriangles, "every copy is drawn");
