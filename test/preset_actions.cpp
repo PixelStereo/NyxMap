@@ -97,10 +97,17 @@ int main(int argc, char **argv)
             const ParamInfo ri = info(shader, restart);
             require(ri.action && ri.presettable, "Restart is an action a preset can hold");
             e.setFadesManual(false);
-            for (int k = 0; k < 30; ++k) e.renderFrame();
             auto time = [&] { Engine::Lock lk(&e.mutex()); return e.layer(e.indexOfId(shader))->generator->time(); };
+            // Run until its time is well past one frame: a restart from there is clear whatever the frame's length
+            // (a slow machine's software renderer takes longer than 0.2 s to draw one frame)
+            QElapsedTimer running;
+            running.start();
+            while (time() < 1.0 && running.elapsed() < 10000) {
+                e.renderFrame();
+                QThread::msleep(20);
+            }
             const double before = time();
-            require(before > 0, "the shader's time runs");
+            require(before > 0.5, "the shader's time runs");
             Engine::Preset r;
             r.name = "Restart";
             r.fade = 0;
@@ -108,7 +115,7 @@ int main(int argc, char **argv)
             require(r.values.back().value == QJsonValue(true), "held as do it");
             e.recallPreset(e.addPreset(r));
             e.renderFrame();
-            require(time() < before && time() < 0.2, "a preset restarts an ISF shader from its first frame");
+            require(time() < before && time() < 0.5, "a preset restarts an ISF shader from its first frame");
         }
         e.shutdown();
         std::cout << "Preset actions: held, captured, recalled passed\n";
