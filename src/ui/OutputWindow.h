@@ -15,11 +15,11 @@ public:
     quint64 viewport() const { return m_viewport; }
     ~OutputWindow() override;
 
-    // Fullscreen (its own Space on macOS) on the chosen screen, or a window.
-    // On macOS, leaving fullscreen is animated: the window is only hidden or moved once the Space has closed.
+    // Fullscreen on the chosen screen, or a window. Instant on every platform: on macOS the window covers
+    // its screen above the menu bar and the Dock instead of opening a Space of its own.
     void showOn(QScreen *screen, bool fullscreen);
     void hideOutput();
-    // Lets go of the viewport at once and deletes the window once it is off screen (after the Space closed)
+    // Lets go of the viewport at once and deletes the window
     void dispose();
 
     // The screen of that name; without one (or once unplugged), the first screen that is not the main
@@ -38,11 +38,11 @@ protected:
 
 private:
     void sync();
-    void showOnNow(QScreen *screen, bool fullscreen); // once no Space is left to close
     void hideNow();
     Engine *m_engine;
     quint64 m_viewport = 0;
     bool m_lastExposed = false;
+    bool m_coversScreen = false; // macOS: borderless above the menu bar and the Dock
     QSize m_lastSize;
     double m_lastHz = 0; // its screen's refresh rate, as last told to the engine
 };

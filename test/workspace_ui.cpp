@@ -18,6 +18,9 @@
 #include <QComboBox>
 #include "Commands.h"
 #include "LayerTable.h"
+#include "OutputWindow.h"
+#include <QElapsedTimer>
+#include <QScreen>
 #include "Widgets.h"
 #include <QTableWidget>
 #include <QAction>
@@ -382,6 +385,28 @@ int main(int argc, char **argv)
         click(4, Qt::ControlModifier);
         check(list.selectedRows().isEmpty() && list.currentRow() == -1,
               "modifier-clicking the last selected row clears the inspector target");
+    }
+    {
+        // Fullscreen output is instant: no Space of its own on macOS, nothing to wait for on the way back
+        engine.newProject();
+        const quint64 viewport = engine.layerId(engine.addViewport(QStringLiteral("Fullscreen test")));
+        auto *output = new OutputWindow(&engine, viewport);
+        QScreen *screen = QGuiApplication::primaryScreen();
+        QElapsedTimer clock;
+        clock.start();
+        output->showOn(screen, true);
+        app.processEvents();
+        check(output->isVisible() && output->geometry() == screen->geometry(), "fullscreen covers the whole screen");
+        check((output->flags() & Qt::FramelessWindowHint) != 0, "fullscreen output is borderless");
+        output->showOn(screen, false);
+        app.processEvents();
+        check(output->isVisible() && !(output->flags() & Qt::FramelessWindowHint) &&
+                  output->geometry() != screen->geometry(), "leaving fullscreen shows a framed window at once");
+        check(clock.elapsed() < 500, "entering and leaving fullscreen take no animation time");
+        output->hideOutput();
+        check(!output->isVisible(), "hiding the output is immediate");
+        output->dispose();
+        app.processEvents();
     }
     {
         auto *saved = new QMimeData;

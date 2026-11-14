@@ -11,49 +11,17 @@ static NSWindow *nsWindowOf(QWindow *w)
     return view ? [view window] : nil;
 }
 
-void macPrepareFullScreen(QWindow *w)
+void macSetCoversScreen(QWindow *w, bool covers)
 {
     NSWindow *win = nsWindowOf(w);
     if (!win) return;
+    // Above the menu bar (and so the Dock) on any screen, whether or not NyxMap is the active application.
+    [win setLevel:covers ? NSMainMenuWindowLevel + 1 : NSNormalWindowLevel];
     NSWindowCollectionBehavior b = [win collectionBehavior];
-    b |= NSWindowCollectionBehaviorFullScreenPrimary; // its own Space, as any other application
-    b &= ~NSWindowCollectionBehaviorFullScreenNone;
+    b &= ~NSWindowCollectionBehaviorFullScreenPrimary; // never a Space of its own
+    if (covers) b |= NSWindowCollectionBehaviorFullScreenNone;
+    else b &= ~NSWindowCollectionBehaviorFullScreenNone;
     [win setCollectionBehavior:b];
-}
-
-bool macIsFullScreen(QWindow *w)
-{
-    NSWindow *win = nsWindowOf(w);
-    return win && ([win styleMask] & NSWindowStyleMaskFullScreen) != 0;
-}
-
-void macEnterFullScreen(QWindow *w)
-{
-    NSWindow *win = nsWindowOf(w);
-    if (!win || ([win styleMask] & NSWindowStyleMaskFullScreen)) return;
-    macPrepareFullScreen(w);
-    [win toggleFullScreen:nil];
-}
-
-void macExitFullScreen(QWindow *w, std::function<void()> done)
-{
-    NSWindow *win = nsWindowOf(w);
-    if (!win || !([win styleMask] & NSWindowStyleMaskFullScreen)) {
-        if (done) done();
-        return;
-    }
-    // The Space is only gone once macOS says the window left fullscreen: everything waits for that.
-    __block id token = nil;
-    __block std::function<void()> fn = std::move(done);
-    token = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidExitFullScreenNotification
-                                                              object:win
-                                                               queue:[NSOperationQueue mainQueue]
-                                                          usingBlock:^(NSNotification *) {
-        [[NSNotificationCenter defaultCenter] removeObserver:token];
-        if (fn) fn();
-        fn = nullptr;
-    }];
-    [win toggleFullScreen:nil];
 }
 
 void macKeepLiveOutputActive()
