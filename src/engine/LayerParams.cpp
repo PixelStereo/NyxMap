@@ -710,8 +710,6 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("camera/fov", "Camera › Field of View (°)", 5, 150, d.fov, &sc->fov).step(0.1);
         for (int a = 0; a < 3; ++a)
             f3("camera/target/" + xyz[a], "Camera › Target " + XYZ[a], -10, 10, 0, &sc->target[size_t(a)]).step(0.01);
-        f3("camera/path/position", "Camera › Path Position", 0, 1, d.cameraPathPosition, &sc->cameraPathPosition).step(0.001);
-        f3("camera/path/speed", "Camera › Path Speed (turns/s)", -2, 2, d.cameraPathSpeed, &sc->cameraPathSpeed).step(0.001);
         for (int c = 0; c < 3; ++c)
             f3(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
                &sc->ambient[size_t(c)]).colorComponent(c);
@@ -796,6 +794,26 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)
             f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
+    }
+    if (type == SourceType::Model || type == SourceType::Camera || type == SourceType::Light || merge3d) { // Follow Path FX
+        flag("follow/enabled", "Follow Path › Enabled", false, &followEnabled).ramp(Parameter::Ramp::Cut);
+        f3("follow/position", "Follow Path › Position", 0, 1, 0, &followPosition).step(0.001);
+        f3("follow/speed", "Follow Path › Speed (turns/s)", -2, 2, 0, &followSpeed).step(0.001);
+        flag("follow/orient", "Follow Path › Turned Along It", false, &followOrient).ramp(Parameter::Ramp::Cut);
+    }
+    if (type == SourceType::Camera) {
+        CameraSettings *cm = &camera;
+        const CameraSettings d;
+        ModelPlacement *mp = &modelPlacement;
+        for (int a = 0; a < 3; ++a)
+            f3("camera3d/position/" + xyz[a], "Camera › Position " + XYZ[a], -20, 20, a == 0 ? 3 : a == 1 ? 2 : 4,
+               &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
+        f3("camera3d/fov", "Camera › Field of View (°)", 5, 150, d.fov, &cm->fov).step(0.1);
+        flag("camera3d/lookat", "Look At › On", d.lookAt, &cm->lookAt).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("camera3d/lookpoint/" + xyz[a], "Look At › Point " + XYZ[a], -20, 20, 0, &cm->lookPoint[size_t(a)]).step(0.01);
+        f3("camera3d/yaw", "Camera › Yaw (°, without Look At)", -180, 180, d.yaw, &cm->yaw).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("camera3d/pitch", "Camera › Pitch (°, without Look At)", -89, 89, d.pitch, &cm->pitch).step(0.1);
     }
     if (type == SourceType::Path) {
         Path3D *sh = &path3d;

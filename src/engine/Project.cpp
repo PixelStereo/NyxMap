@@ -181,14 +181,14 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     o["id"] = QString::number(l.id);
     if (l.isMappingZone) o["is_mapping_zone"] = true;
     if (l.mappingZone) o["mapping_zone"] = QString::number(l.mappingZone);
+    if (l.followPath) o["follow_path"] = QString::number(l.followPath); // a 3D object along a Path of its scene
     if (l.parent) o["parent"] = QString::number(l.parent);
     if (l.isGroup) {
         o["group"] = true;
         o["collapsed"] = l.collapsed;
         if (l.scene3d) { o["scene3d"] = true; o["default_material"] = QString::number(l.sceneDefaultMaterial); }
         if (l.merge3d) o["merge3d"] = true; // its transform: its params
-        if (l.scene3d && l.cameraPath) o["camera_path"] = QString::number(l.cameraPath); // its camera along a Path
-        if (l.scene3d && l.cameraLookAt) o["camera_look_at"] = QString::number(l.cameraLookAt);
+        if (l.scene3d && l.activeCamera) o["active_camera"] = QString::number(l.activeCamera); // seen through it
         if (l.scene3d && l.sceneEnvironment) // the layer that surrounds and lights it
             o["environment"] = QJsonObject{{"layer", QString::number(l.sceneEnvironment)}, {"stage", l.sceneEnvironmentStage}};
     }
@@ -253,10 +253,13 @@ QJsonObject Engine::layerToJson(Layer &l, const QString &projectDir) const
     case SourceType::Light:
         src["type"] = "light";
         if (l.lightLookAt) src["look_at"] = QString::number(l.lightLookAt);
-        if (l.lightPath) src["path"] = QString::number(l.lightPath); // the Path it travels along
         break;
     case SourceType::Path: // its settings and place: its params
         src["type"] = "path";
+        break;
+    case SourceType::Camera: // its settings and place: its params
+        src["type"] = "camera";
+        if (l.lookAtObject) src["look_at"] = QString::number(l.lookAtObject);
         break;
     case SourceType::Web:
         src = l.web.toJson();
@@ -345,9 +348,9 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
         l->scene3d = l->isGroup && o.value("scene3d").toBool(false);
         l->merge3d = l->isGroup && o.value("merge3d").toBool(false);
         if (l->scene3d) { // ids of this project, checked when drawn
-            l->cameraPath = o.value("camera_path").toString().toULongLong();
-            l->cameraLookAt = o.value("camera_look_at").toString().toULongLong();
+            l->activeCamera = o.value("active_camera").toString().toULongLong();
         }
+        l->followPath = o.value("follow_path").toString().toULongLong(); // the Path it travels along
         l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
         if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
@@ -432,10 +435,13 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
         Lock lk(&m_mutex); // what it looks at: a layer of this project (ids kept), checked when drawn
         if (Layer *l = layer(index)) {
             l->lightLookAt = src.value("look_at").toString().toULongLong();
-            l->lightPath = src.value("path").toString().toULongLong();
         }
     } else if (type == "path") {
         setLayerPath(index);
+    } else if (type == "camera") {
+        setLayerCamera(index);
+        Lock lk(&m_mutex); // what it looks at: a layer of this project (ids kept), checked when drawn
+        if (Layer *l = layer(index)) l->lookAtObject = src.value("look_at").toString().toULongLong();
     } else if (type == "model") {
         {
             Lock lk(&m_mutex); // its picture: a layer of this project (ids kept), checked when drawn
@@ -833,7 +839,8 @@ static QString projectPreflightError(const QJsonObject &root)
                  type != QLatin1String("audio") && type != QLatin1String("image") &&
                  type != QLatin1String("layer") && type != QLatin1String("isf") &&
                  type != QLatin1String("input") && type != QLatin1String("text") && type != QLatin1String("web") && type != QLatin1String("tox") &&
-                 type != QLatin1String("model") && type != QLatin1String("light") && type != QLatin1String("path")))
+                 type != QLatin1String("model") && type != QLatin1String("light") && type != QLatin1String("path") &&
+                 type != QLatin1String("camera")))
                 return invalid(where + QStringLiteral("/source/type"), QStringLiteral("known source type"));
             for (const QString &field : {QStringLiteral("path"), QStringLiteral("relative_path"),
                                          QStringLiteral("uri"), QStringLiteral("layer"), QStringLiteral("url")}) {

@@ -1169,6 +1169,7 @@ void MainWindow::buildMenus()
     layer->addAction(QStringLiteral("New Empty (a Merge 3D: a point to place, hold or aim at)"), this,
                      [this] { createMerge3d(QStringLiteral("Empty")); });
     layer->addAction(QStringLiteral("New Path (points and paths: circle, grid, spiral…)"), this, &MainWindow::addPathToScene);
+    layer->addAction(QStringLiteral("Add Camera to 3D Scene"), this, &MainWindow::addCameraToScene);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1388,6 +1389,7 @@ static QColor layerColor(SourceType t)
     case SourceType::Model: return QColor(90, 215, 200);
     case SourceType::Light: return QColor(255, 225, 90);
     case SourceType::Path: return QColor(120, 200, 255);
+    case SourceType::Camera: return QColor(150, 205, 255);
     default: return QColor(230, 230, 233);
     }
 }
@@ -1407,6 +1409,7 @@ static QString layerTag(SourceType t)
     case SourceType::Model: return QStringLiteral("⬢");
     case SourceType::Light: return QStringLiteral("✦");
     case SourceType::Path: return QStringLiteral("⁘");
+    case SourceType::Camera: return QStringLiteral("⎔");
     default: return QStringLiteral("○");
     }
 }
@@ -1511,6 +1514,12 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
             case SourceType::Light:
                 r.source = QStringLiteral("light · ") + QStringList{"directional", "point", "spot"}.value(l->light.type);
                 break;
+            case SourceType::Camera: {
+                const Layer *scene = m_engine->layer(m_engine->sceneOfObject(i));
+                r.source = scene && scene->activeCamera == l->id ? QStringLiteral("camera · its scene is seen through it")
+                                                                 : QStringLiteral("camera");
+                break;
+            }
             case SourceType::Path:
                 r.source = QStringLiteral("Path · %1 · %2 points").arg(Path3D::kindNames().value(l->path3d.kind))
                                .arg(l->path3d.pointCount());
@@ -1797,9 +1806,10 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         return false;
     }
     if (refuseLocked(i)) return false;
-    if (isPath3dPath(path) || isEmpty3dPath(path)) { // into the 3D scene (or Merge 3D) it is dropped on, or its object's
+    if (isPath3dPath(path) || isEmpty3dPath(path) || isCamera3dPath(path)) { // into the 3D scene it is dropped on
         selectLayer(i);
         if (isPath3dPath(path)) addPathToScene();
+        else if (isCamera3dPath(path)) addCameraToScene();
         else createMerge3d(QStringLiteral("Empty"));
         return true;
     }
@@ -2112,7 +2122,7 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
         if (isTextGeneratorPath(p) || isCursiveGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
-            Model3D::isPrimitivePath(p) || isPath3dPath(p) || isEmpty3dPath(p) ||
+            Model3D::isPrimitivePath(p) || isPath3dPath(p) || isEmpty3dPath(p) || isCamera3dPath(p) ||
             !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
@@ -2655,6 +2665,7 @@ void MainWindow::fill3dMenu(QMenu *menu)
     menu->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, [this] { createMerge3d(); })->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Empty"), this, [this] { createMerge3d(QStringLiteral("Empty")); })->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Path"), this, &MainWindow::addPathToScene)->setEnabled(inScene);
+    menu->addAction(QStringLiteral("Add Camera to 3D Scene"), this, &MainWindow::addCameraToScene)->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Primitive 3D"), this, [this, inScene] {
         const QString path = Model3D::primitivePath(QStringLiteral("Cube"));
         int target = currentLayer();
@@ -2818,6 +2829,54 @@ void MainWindow::addPathToScene()
     m_undo->endMacro();
     selectLayer(m_engine->indexOfId(id));
     statusBar()->showMessage(QStringLiteral("Path: choose its kind and points in its 3D tab; lights and the camera can travel along it."), 5000);
+}
+
+// A camera in the 3D scene (or Merge 3D) selected, or in the scene of the 3D object selected. The scene's first camera
+// becomes the one it is seen through
+void MainWindow::addCameraToScene()
+{
+    int s = currentLayer();
+    if (s < 0) return;
+    const LayerTree t = m_engine->structure();
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    if (!holds3d(s)) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+    if (s < 0 || !holds3d(s)) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene (or one of its objects) to add a camera to it."), 4000);
+        return;
+    }
+    if (refuseLocked(s)) return;
+    const quint64 holder = m_engine->layerId(s);
+    int count = 0;
+    for (int k = 0; k < m_engine->layerCount(); ++k) {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(k); l && l->type == SourceType::Camera) ++count;
+    }
+    m_undo->beginMacro(QStringLiteral("Add Camera"));
+    const int li = m_engine->addLayer(QStringLiteral("Camera %1").arg(count + 1), s + 1);
+    m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("Add Camera")));
+    const QJsonObject before = m_engine->layerJson(li);
+    m_engine->setLayerCamera(li);
+    m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("Add Camera"), {}));
+    const quint64 id = m_engine->layerId(li);
+    const LayerTree now = m_engine->structure();
+    const LayerTree after = tree::intoGroup(now, {id}, holder);
+    if (after != now) m_undo->push(new cmd::SetStructure(m_engine, now, after, QStringLiteral("Into 3D Scene")));
+    const int scene = m_engine->sceneOfObject(m_engine->indexOfId(id));
+    bool first = false;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *sl = m_engine->layer(scene);
+        first = sl && !sl->activeCamera;
+    }
+    if (first) {
+        const QJsonObject sceneBefore = m_engine->layerJson(scene);
+        m_engine->setActiveCamera(scene, id);
+        m_undo->push(new cmd::ReplaceLayer(m_engine, scene, sceneBefore, QStringLiteral("Active Camera"), {}));
+    }
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(id));
+    statusBar()->showMessage(first ? QStringLiteral("Camera added: its scene is now seen through it (Scene tab › Seen Through).")
+                                   : QStringLiteral("Camera added: choose it in the scene's Scene tab › Seen Through."), 5000);
 }
 
 void MainWindow::addLightToScene()

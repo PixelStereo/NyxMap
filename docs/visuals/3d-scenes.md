@@ -55,16 +55,19 @@ A **Path** (**Layer › New Path**, or **Media Bin › 3D Primitives › Path** 
 
 It is drawn in the 3D view (its points and lines), not in the scene's picture; **Shown in the 3D View** hides it there too.
 
-A circle, a rectangle, a line or a spiral is also a **path**:
+A circle, a rectangle, a line or a spiral is also a **path**, which 3D objects travel along with the **Follow Path** 3D FX. A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.
 
-- a light travels along it: its 3D tab › **Path › Path**, then `light/path/position` (0 to 1) and `light/path/speed` (turns per second);
-- so does the scene's camera: the Scene tab › **Camera Path**, `camera/path/position` and `camera/path/speed`, looking at **Camera Looks At** (an object of the scene, an Empty for one) or at its target point.
+## Follow Path (3D FX)
 
-A closed path (circle, rectangle) goes around; an open one (line, spiral) goes to its end and back.
+A model, a Merge 3D or an Empty, a camera or a light has a **Follow Path** 3D FX (its **FX** tab): choose a Path of the scene, turn it on (`follow/enabled`), place the object on it (`follow/position`, 0 to 1) and set it moving (`follow/speed`, turns per second). **Turned Along It** (`follow/orient`) turns the object to face the way it goes. A camera or a light sits on the path's point; a model's or a Merge 3D's own transform applies from there, so a Merge 3D on a path carries everything it holds.
+
+## Cameras
+
+A **Camera** (**Layer › Add Camera to 3D Scene**, or **Media Bin › 3D Primitives › Camera** dropped onto a scene) is a 3D object: a scene can have several. The scene is seen through the one chosen in its Scene tab › **Seen Through** (the first camera added is chosen), or through its own orbit camera. A camera looks at a point or at any 3D object of its scene (**Look At** › Object: an Empty, a primitive, an FBX or OBJ model, a light…), or points by its yaw and pitch (`camera3d/…`), and can follow a Path with its Follow Path FX. The 3D view draws every camera, the one the scene is seen through brighter.
 
 ## Empty
 
-An **Empty** (**Layer › New Empty**, or **Media Bin › 3D Primitives › Empty**) is a Merge 3D: a point of the scene with its axes, to place objects under, or for a light or the camera to look at.
+An **Empty** (**Layer › New Empty**, or **Media Bin › 3D Primitives › Empty**) is a Merge 3D: a point of the scene with its axes, to place objects under, for a light or a camera to look at, or to carry objects along a Path.
 
 ## Merge 3D
 

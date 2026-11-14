@@ -675,35 +675,37 @@ template <typename Find> const Layer *sceneOfLayer(const Layer *o, Find layerOfI
 }
 }
 
-bool Engine::setLightPath(int i, quint64 shape)
+bool Engine::setLayerCamera(int i)
 {
+    std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
-        if (!l || l->type != SourceType::Light) return false;
-        if (shape) {
-            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != sceneOfLayer(l, find)) return false;
-        }
-        l->lightPath = shape;
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Camera;
+        l->camera = CameraSettings();
+        l->lookAtObject = 0;
+        l->modelPlacement = ModelPlacement();
+        l->modelPlacement.position = {{3, 2, 4}};
     }
+    releaseGarbage(g);
     emit layersChanged();
     return true;
 }
 
-bool Engine::setCameraPath(int i, quint64 shape)
+bool Engine::setActiveCamera(int i, quint64 camera)
 {
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
         if (!l || !l->scene3d) return false;
-        if (shape) {
+        if (camera) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != l) return false;
+            const Layer *c = find(camera);
+            if (!c || c->type != SourceType::Camera || sceneOfLayer(c, find) != l) return false;
         }
-        l->cameraPath = shape;
+        l->activeCamera = camera;
     }
     emit layersChanged();
     return true;
@@ -714,13 +716,33 @@ bool Engine::setCameraLookAt(int i, quint64 object)
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
-        if (!l || !l->scene3d) return false;
+        if (!l || l->type != SourceType::Camera) return false;
         if (object) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
             const Layer *o = find(object);
-            if (!o || !o->is3dObject() || sceneOfLayer(o, find) != l) return false;
+            if (!o || o == l || !o->is3dObject() || sceneOfLayer(o, find) != sceneOfLayer(l, find)) return false;
         }
-        l->cameraLookAt = object;
+        l->lookAtObject = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setFollowPath(int i, quint64 path)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !(l->type == SourceType::Model || l->type == SourceType::Camera || l->type == SourceType::Light || l->merge3d))
+            return false;
+        if (path) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *p = find(path);
+            if (!p || p->type != SourceType::Path || p == l || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
+            for (quint64 up = p->parent; up; up = find(up) ? find(up)->parent : 0)
+                if (up == l->id) return false; // a Merge 3D cannot follow a path it holds: it would chase itself
+        }
+        l->followPath = path;
     }
     emit layersChanged();
     return true;

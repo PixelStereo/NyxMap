@@ -1227,54 +1227,108 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
-QMatrix4x4 Engine::pathMatrix(const Layer &shape)
+QMatrix4x4 Engine::mergesOf(const Layer &object)
 {
-    QMatrix4x4 parent;
-    for (quint64 up = shape.parent; up;) {
+    std::vector<const Layer *> chain; // its Merge 3Ds, the outermost first
+    for (quint64 up = object.parent; up;) {
         const Layer *g = layer(indexOfId(up));
         if (!g || !g->merge3d) break;
-        parent = g->modelPlacement.transform() * parent;
+        chain.insert(chain.begin(), g);
         up = g->parent;
     }
-    return parent * shape.modelPlacement.transform();
+    QMatrix4x4 parent;
+    for (const Layer *g : chain) parent = followFrame(*g, parent) * g->modelPlacement.transform();
+    return parent;
+}
+
+QMatrix4x4 Engine::pathMatrix(const Layer &path) { return mergesOf(path) * path.modelPlacement.transform(); }
+
+QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
+{
+    const Layer *path = object.followEnabled && object.followPath ? layer(indexOfId(object.followPath)) : nullptr;
+    if (!path || path->type != SourceType::Path || !path->path3d.isPath() || path == &object) return parent;
+    // Paths in Merge 3Ds that follow paths: a chain, not a loop (A in a Merge 3D following B, B in one following A)
+    static thread_local int depth = 0;
+    if (depth > 8) return parent;
+    ++depth;
+    const QMatrix4x4 m = pathMatrix(*path);
+    --depth;
+    const double t = double(object.followPosition) + object.followTravel;
+    QMatrix4x4 frame;
+    frame.translate(m.map(path->path3d.along(t)));
+    if (object.followOrient) { // its +Z the way it goes, its +Y as up as can be
+        const double eps = 0.002;
+        QVector3D forward = m.map(path->path3d.along(t + eps)) - m.map(path->path3d.along(t - eps));
+        if (forward.lengthSquared() > 1e-12f) {
+            forward.normalize();
+            QVector3D up(0, 1, 0);
+            if (std::abs(QVector3D::dotProduct(up, forward)) > 0.999f) up = QVector3D(1, 0, 0);
+            const QVector3D right = QVector3D::crossProduct(up, forward).normalized();
+            up = QVector3D::crossProduct(forward, right);
+            QMatrix4x4 turn;
+            turn.setColumn(0, QVector4D(right, 0));
+            turn.setColumn(1, QVector4D(up, 0));
+            turn.setColumn(2, QVector4D(forward, 0));
+            frame *= turn;
+        }
+    }
+    return frame;
+}
+
+QVector3D Engine::cameraPosition(const Layer &camera)
+{
+    const ModelPlacement &p = camera.modelPlacement;
+    const QMatrix4x4 parent = mergesOf(camera), frame = followFrame(camera, parent);
+    if (frame != parent) return frame.map(QVector3D()); // its Follow Path FX: on the path's point
+    return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
 }
 
 SceneSettings Engine::placedCamera(const Layer &scene)
 {
-    SceneSettings s = scene.scene;
-    const Layer *path = scene.cameraPath ? layer(indexOfId(scene.cameraPath)) : nullptr;
-    if (!path || path->type != SourceType::Path || !path->path3d.isPath()) return s;
-    const QVector3D eye = pathMatrix(*path).map(path->path3d.along(double(s.cameraPathPosition) + s.cameraPathTravel));
-    const Layer *looked = scene.cameraLookAt ? layer(indexOfId(scene.cameraLookAt)) : nullptr;
-    const QVector3D target = looked ? placeOf3dObject(*looked) : QVector3D(s.target[0], s.target[1], s.target[2]);
-    QVector3D from = eye - target; // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
+    const Layer *cam = scene.activeCamera ? layer(indexOfId(scene.activeCamera)) : nullptr;
+    if (!cam || cam->type != SourceType::Camera) return scene.scene; // its own orbit camera
+    return cameraView(*cam, scene.scene);
+}
+
+SceneSettings Engine::cameraView(const Layer &camera, const SceneSettings &base)
+{
+    SceneSettings s = base;
+    const Layer *cam = &camera;
+    const CameraSettings &c = cam->camera;
+    const QVector3D eye = cameraPosition(*cam);
+    QVector3D target;
+    if (c.lookAt) {
+        const Layer *looked = cam->lookAtObject ? layer(indexOfId(cam->lookAtObject)) : nullptr;
+        target = looked ? placeOf3dObject(*looked) : QVector3D(c.lookPoint[0], c.lookPoint[1], c.lookPoint[2]);
+    } else {
+        target = eye - Camera3D::aim(c.yaw, c.pitch); // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
+    }
+    QVector3D from = eye - target;
     if (from.lengthSquared() < 1e-8f) from = QVector3D(0, 0, 0.01f);
     for (int a = 0; a < 3; ++a) s.target[size_t(a)] = target[a];
     s.distance = from.length();
+    s.fov = c.fov;
     Camera3D::anglesOf(from.normalized(), &s.yaw, &s.pitch);
     return s;
 }
 
 QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
 {
-    // Along a Path of its scene: where the shape is, whatever holds the light
-    if (const Layer *path = light.lightPath ? layer(indexOfId(light.lightPath)) : nullptr;
-        path && path->type == SourceType::Path && path->path3d.isPath())
-        return pathMatrix(*path).map(path->path3d.along(double(light.light.pathPosition) + light.light.pathTravel));
+    // Its Follow Path FX: on the path's point
+    if (light.followEnabled && light.followPath) {
+        const QMatrix4x4 frame = followFrame(light, parent);
+        if (frame != parent) return frame.map(QVector3D());
+    }
     return parent.map(light.light.located());
 }
 
 QVector3D Engine::placeOf3dObject(const Layer &object)
 {
-    QMatrix4x4 parent;
-    for (quint64 up = object.parent; up;) {
-        const Layer *g = layer(indexOfId(up));
-        if (!g || !g->merge3d) break;
-        parent = g->modelPlacement.transform() * parent;
-        up = g->parent;
-    }
+    QMatrix4x4 parent = mergesOf(object);
     if (object.type == SourceType::Light) return lightPosition(object, parent);
     if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
+    if (object.type == SourceType::Camera) return cameraPosition(object);
+    parent = followFrame(object, parent);
     if (object.model) {
         if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
         return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
@@ -1308,7 +1362,7 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             std::vector<Layer *> inside;
             for (auto &o : m_layers)
                 if (o->parent == m->id) inside.push_back(o.get());
-            collectScene(inside, items, lamps, parent * m->modelPlacement.transform());
+            collectScene(inside, items, lamps, followFrame(*m, parent) * m->modelPlacement.transform());
             continue;
         }
         if (!m->enabled || m->soloHidden) continue;
@@ -1329,7 +1383,8 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             m->model->setDetail(placement.meshDetail(displacement != 0));
             items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
                              displacement, amount, mid,
-                             m->modelTransformFxEnabled ? parent * m->modelTransformFx.transform() : parent});
+                             m->modelTransformFxEnabled ? followFrame(*m, parent) * m->modelTransformFx.transform()
+                                                        : followFrame(*m, parent)});
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
         }

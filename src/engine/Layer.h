@@ -39,7 +39,7 @@
 // What feeds a layer's picture. `Layer`: the picture of another layer of the composition, tapped either
 // before or after its effect chain (see LayerTap) — the same picture can be mapped and treated twice.
 // `Text`: rendered text layer with system fonts, word wrapping, and animation. `Web`: a web page (WebPage.h).
-enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light, Path };
+enum class SourceType { None, Video, Image, Isf, Audio, Layer, Text, Input, Web, Tox, Model, Light, Path, Camera };
 
 // The Text generator is built in: the Media Bin lists it under Generators with this (virtual) path, so that it is
 // dragged onto a layer like any media.
@@ -73,6 +73,8 @@ inline const QString kPath3dPath = QStringLiteral("/NyxMap/3D Objects/Path");
 inline const QString kEmpty3dPath = QStringLiteral("/NyxMap/3D Objects/Empty");
 inline bool isPath3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kPath3dPath); }
 inline bool isEmpty3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kEmpty3dPath); }
+inline const QString kCamera3dPath = QStringLiteral("/NyxMap/3D Objects/Camera");
+inline bool isCamera3dPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kCamera3dPath); }
 // The Web Page generator (WebPage.h), the same way (offered only when the application has a browser)
 inline const QString kWebGeneratorPath = QStringLiteral("/NyxMap/Generators/Web Page");
 inline bool isWebGeneratorPath(const QString &p) { return QString(p).replace('\\', '/').endsWith(kWebGeneratorPath); }
@@ -428,16 +430,25 @@ struct Layer {
     quint64 sceneEnvironment = 0;
     int sceneEnvironmentStage = -1;
     LightSettings light;
-    // A light: the Path of its scene it travels along (0: its own path, LightSettings::pathShape)
-    quint64 lightPath = 0;
     // A Path (type Path): points laid out by a rule, placed by modelPlacement (Path3D.h)
     Path3D path3d;
-    // A 3D scene's camera: the Path it travels along (0: it orbits its target), and what it looks at then
-    // (0: its target point)
-    quint64 cameraPath = 0, cameraLookAt = 0;
+    // A 3D scene: the Camera object it is seen through (0: its own orbit camera, SceneSettings)
+    quint64 activeCamera = 0;
+    // A camera (type Camera): where it points, its field of view; the 3D object of its scene it looks at (0: its point)
+    CameraSettings camera;
+    quint64 lookAtObject = 0;
+    // Its Follow Path 3D FX (a model, a Merge 3D or an Empty, a camera, a light): the Path of its scene it travels along
+    // (0: none), when the FX is on; where on it (0 to 1), turns per second, turned to face the way it goes. A camera or a
+    // light is then on the path's point; a model's or a Merge 3D's own transform applies from there
+    bool followEnabled = false;
+    quint64 followPath = 0;
+    float followPosition = 0, followSpeed = 0;
+    bool followOrient = false;
+    double followTravel = 0; // how far its speed has taken it (not kept in a project)
     bool is3dObject() const
     {
-        return type == SourceType::Model || type == SourceType::Light || type == SourceType::Path || merge3d;
+        return type == SourceType::Model || type == SourceType::Light || type == SourceType::Path || type == SourceType::Camera ||
+               merge3d;
     }
 
     // TouchDesigner component: native SDK access stays on the render thread.
