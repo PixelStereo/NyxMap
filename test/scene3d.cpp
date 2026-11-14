@@ -1798,19 +1798,32 @@ int runScene3dTests(Engine &engine)
         const QImage still = picture();
         engine.stepAnimations(0.0);
         check(differs(still, picture()) == 0, "a Noise at rate 0 holds its values");
+        // Check the clock separately from the rendered interpolation. Rendering can take a
+        // different amount of wall time on software GL and must not decide which side of a
+        // Noise step the image comparison happens to land on.
+        const auto travel = [&] {
+            for (const Fx3dEntry &fx : fxOf(plane))
+                if (fx.id == noise) return double(fx.travel);
+            return -1.0;
+        };
         set(noise, "rate", 1.0);
+        const double beforeStep = travel();
+        engine.stepAnimations(0.5);
+        check(std::abs((travel() - beforeStep) - 0.5) < 1e-6, "Noise rate advances its step clock");
+        set(noise, "rate", 0.0);
         set(noise, "interp", QStringLiteral("none (sharp)"));
-        engine.stepAnimations(0.5);
+        set(noise, "phase", 0.5);
         const QImage half = picture();
-        engine.stepAnimations(0.25);
+        set(noise, "phase", 0.75);
         check(differs(half, picture()) == 0, "sharp: the values hold until the next step");
-        engine.stepAnimations(0.5);
+        set(noise, "phase", 1.0);
         check(differs(half, picture()) > 20, "sharp: then change at once");
         set(noise, "interp", QStringLiteral("smooth"));
+        set(noise, "phase", 1.2);
         const QImage a1 = picture();
-        engine.stepAnimations(0.2);
+        set(noise, "phase", 1.4);
         const QImage a2 = picture();
-        engine.stepAnimations(0.2);
+        set(noise, "phase", 1.6);
         check(differs(a1, a2) > 20 && differs(a2, picture()) > 20, "smooth: the values move between steps");
         // Saved with the project: the list in its order, each one's settings
         set(noise, "scale", 5.0);
