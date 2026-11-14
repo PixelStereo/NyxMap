@@ -50,6 +50,18 @@ namespace {
 // UsedRole: not removable (used, or always there); UsersRole: how many layers use it
 enum Role { PathRole = Qt::UserRole + 1, MissingRole, UsedRole, IsfRole, CategoryRole, UsersRole, GroupOrderRole };
 
+// One colour rule for every row of the Media Bin, whatever its group: red when its file or source is missing,
+// white when a layer uses it, grey when it sits in the bin unused.
+QColor binRowColour(bool missing, bool used)
+{
+    if (missing) return QColor(255, 110, 95);
+    return used ? QColor(225, 225, 228) : QColor(170, 170, 175);
+}
+void setRowColour(QTreeWidgetItem *it, bool missing, bool used)
+{
+    for (int c = 0; c < 4; ++c) it->setForeground(c, binRowColour(missing, used));
+}
+
 class BinItem : public QTreeWidgetItem
 {
 public:
@@ -295,6 +307,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         it->setText(0, name);
         it->setTextAlignment(2, Qt::AlignCenter);
+        setRowColour(it, false, false); // until a layer uses it (show, below)
         return it;
     };
     m_text = generator(m_generators, QStringLiteral("Text"), kTextGeneratorPath);
@@ -459,8 +472,7 @@ void MediaBin::refresh()
                                                  : QStringLiteral("Used by:\n") + r.users.join('\n');
         it->setToolTip(0, r.path + QStringLiteral("\n\n") + usedBy);
         it->setToolTip(2, usedBy);
-        const QColor fg = r.missing ? QColor(255, 110, 95) : (r.users.isEmpty() ? QColor(140, 140, 145) : QColor(225, 225, 228));
-        for (int c = 0; c < 4; ++c) it->setForeground(c, fg);
+        setRowColour(it, r.missing, !r.users.isEmpty());
     }
     for (auto e = existing.begin(); e != existing.end(); ++e)
         if (!seen.contains(e.key())) delete e.value();
@@ -587,8 +599,7 @@ void MediaBin::refreshIsf()
                               QStringLiteral("\n\n") + usedBy);
         it->setToolTip(1, g->description);
         it->setToolTip(2, usedBy);
-        const QColor fg = missing ? QColor(255, 110, 95) : (g->users.isEmpty() ? QColor(170, 170, 175) : QColor(225, 225, 228));
-        for (int c = 0; c < 4; ++c) it->setForeground(c, fg);
+        setRowColour(it, missing, !g->users.isEmpty());
     }
     qDeleteAll(existing);
     for (auto c = categories.begin(); c != categories.end(); ++c)
@@ -636,9 +647,9 @@ bool fillInputs(QTreeWidget *tree, QTreeWidgetItem *group, QStringList *signatur
         it->setText(0, r.name);
         it->setText(3, QStringLiteral("Unknown (live input)"));
         it->setText(1, r.present ? r.kind : r.kind + QStringLiteral(" — not found"));
-        if (!r.present) it->setForeground(1, QColor(255, 110, 95));
         const QStringList u = users.value(r.uri);
         it->setData(0, UsersRole, int(u.size()));
+        setRowColour(it, !r.present, !u.isEmpty());
         it->setText(2, u.isEmpty() ? QStringLiteral("—") : QString::number(u.size()));
         it->setTextAlignment(2, Qt::AlignCenter);
         it->setToolTip(0, QStringLiteral("%1 input — %2\n%3").arg(r.kind, dragTip, r.uri) +
@@ -764,8 +775,7 @@ void MediaBin::refreshAudioGenerators()
         const QString usedBy = u.isEmpty() ? QStringLiteral("Not used by any layer") : QStringLiteral("Used by:\n") + u.join('\n');
         it->setToolTip(0, (builtIn ? QStringLiteral("Real-time Faust instrument") : p) + QStringLiteral("\n\n") + usedBy);
         it->setToolTip(2, usedBy);
-        const QColor fg = missing ? QColor(255, 110, 95) : QColor(225, 225, 228);
-        for (int col = 0; col < 4; ++col) it->setForeground(col, fg);
+        setRowColour(it, missing, !u.isEmpty());
     }
     m_audioGenerators->setText(0, QStringLiteral("Generators (%1)").arg(m_audioGenerators->childCount()));
 }
@@ -792,6 +802,7 @@ void MediaBin::refreshText()
         it->setToolTip(0, what + QStringLiteral("\n\n") + usedBy);
         it->setToolTip(2, usedBy);
         it->setText(3, QStringLiteral("Unspecified (generated)"));
+        setRowColour(it, false, !users.isEmpty());
     };
     show(m_cursive, cursives, QStringLiteral("Cursive generator: a text in a cursive font, written as by a pen over its Writing Time."));
     show(m_text, texts, QStringLiteral("Text generator: type a text; a snapshot that holds another text types it (typewriter)"));
