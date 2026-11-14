@@ -6,7 +6,7 @@ hide:
 
 # NyxMap
 
-**Real-time projection mapping and show composition instrument.** From a single screen to a multi-output installation, design the image, write the sound and run the show without switching tools. Free and open source (GPLv3), for macOS, Windows and Linux.
+**Real-time projection mapping and show composition instrument.** From a single screen to a multi-output installation, design the image, write the sound and run the show without switching tools. Free and open source (AGPLv3), for macOS, Windows and Linux.
 
 [Download :material-download:](https://github.com/PixelStereo/NyxMap/releases/latest){ .md-button .md-button--primary }
 [Install and launch](getting-started/install.md){ .md-button }

@@ -1,6 +1,6 @@
 # Third-party notices
 
-NyxMap's own code is under the GNU GPL v3 or later, with an additional permission for the NDI runtime and the TouchEngine
+NyxMap's own code is under the GNU AGPL v3 or later, with an additional permission for the NDI runtime and the TouchEngine
 SDK (see LICENSE and LICENSE-EXCEPTION.md). It uses the following third-party components, each under its
 own licence; their full texts are in the `licenses` folder (and, for those fetched at packaging time, next to the
 library).
@@ -24,9 +24,9 @@ library).
 
 NDI® is a registered trademark of Vizrt NDI AB. Information about NDI and its tools: https://ndi.video
 
-**NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's GPL licence: it is provided by Vizrt NDI AB
+**NDI runtime in the packages.** The NDI runtime is not covered by NyxMap's AGPL licence: it is provided by Vizrt NDI AB
 under the NDI SDK License Agreement. These terms apply to the NDI components only, never to NyxMap's own code, which
-stays under the GPL with or without them. You may not modify the NDI components, reverse engineer, disassemble or
+stays under the AGPL with or without them. You may not modify the NDI components, reverse engineer, disassemble or
 recompile them or the protocols they use (nor attempt to), circumvent their technical limitations, remove or alter their
 proprietary notices, separately distribute them, or use them outside NyxMap. They may not be exported in violation of
 United States export laws. Vizrt NDI AB (NDI, Inc.) owns their copyright. Vizrt NDI AB and its licensors provide them
@@ -65,7 +65,7 @@ parts, and records that licence in `DEPENDENCIES.txt`. Those builds include Open
 inside the FFmpeg DLLs, for TLS and SRT streams; their sources are linked from the BtbN/FFmpeg-Builds repository. Microsoft's `vc_redist.x64.exe` is included unmodified, under
 its own licence terms; the build checks its Microsoft signature and records its version and SHA-256.
 
-TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by NyxMap's GPL licence.
+TouchEngine and TouchDesigner are products of Derivative Inc. The SDK is not covered by NyxMap's AGPL licence.
 See `licenses/touchengine.txt` for the full Shared Use License. NyxMap is an independent integration; Derivative does
 not endorse it. Playback requires a separately installed TouchDesigner or TouchPlayer with a paid Educational,
 Commercial or Pro licence. NyxMap neither installs nor activates that licence. Builders must explicitly opt in with
