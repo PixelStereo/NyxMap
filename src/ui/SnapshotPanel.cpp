@@ -3,6 +3,7 @@
 #include "AdaptiveSplitter.h"
 #include "Commands.h"
 #include "LibraryTree.h"
+#include <QKeySequence>
 #include "PresetEditor.h"
 #include "Engine.h"
 #include "Widgets.h"
@@ -305,10 +306,13 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     pbar->addStretch();
     m_presetEdit = new QPushButton(QStringLiteral("Edit"));
     m_presetEdit->setCheckable(true);
-    m_presetEdit->setToolTip(QStringLiteral("Edit mode: the values of the selected preset are underlined in the inspector "
-                                            "(green; orange once changed). Click a value's name — or Alt-click its field — "
-                                            "to put it in the preset or take it out."));
-    m_presetEdit->setStyleSheet(QStringLiteral("QPushButton:checked { background:%1; color:white; }").arg(theme::css()));
+    m_presetEdit->setObjectName(QStringLiteral("presetEdit"));
+    m_presetEdit->setToolTip(QStringLiteral("Edit mode (%1): the values of the selected preset are underlined in the inspector "
+                                            "(green; orange once changed), those that could go in it in red, and the window is framed "
+                                            "in red. Click a value's name — or Alt-click its field — to put it in the preset or take it out.")
+                                 .arg(QKeySequence(Qt::CTRL | Qt::Key_E).toString(QKeySequence::NativeText)));
+    // On, it is as loud as the frame around the window: the same red
+    m_presetEdit->setStyleSheet(QStringLiteral("QPushButton:checked { background:#eb4034; color:white; font-weight:bold; }"));
     m_presetNew = new QPushButton(QStringLiteral("+"));
     symbolButton(m_presetNew);
     m_presetNew->setToolTip(QStringLiteral("A new empty preset: fill it in Edit mode, or right-click a value › Add to Preset"));

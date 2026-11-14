@@ -1057,7 +1057,7 @@ void MainWindow::buildMenus()
                                    "Playback requires a separately installed and licensed TouchDesigner or TouchPlayer.</p>"
                                    "<p>NDI® is a registered trademark of Vizrt NDI AB. "
                                    "<a href=\"https://ndi.video\">ndi.video</a></p>")
-                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU GPL v3 or later")),
+                        .arg(QCoreApplication::applicationVersion(), link(QStringLiteral("LICENSE"), QStringLiteral("GNU AGPL v3 or later")),
                              link(QStringLiteral("THIRD-PARTY-NOTICES.md"), QStringLiteral("third-party notices"))));
         box.setIconPixmap(QPixmap(QStringLiteral(":/branding/nyxmap.png")).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         box.exec();
@@ -1118,6 +1118,21 @@ void MainWindow::buildMenus()
         refreshAll();
     });
     edit->addSeparator();
+    // The presets' Edit mode, from anywhere: ⌘E on macOS, Ctrl+E elsewhere (the Edit button of the Presets panel follows)
+    if (PresetEditor *presets = PresetEditor::instance()) {
+        QAction *presetEdit = edit->addAction(QStringLiteral("Preset Edit Mode"));
+        presetEdit->setObjectName(QStringLiteral("presetEditAction"));
+        presetEdit->setCheckable(true);
+        presetEdit->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+        presetEdit->setShortcutContext(Qt::ApplicationShortcut);
+        presetEdit->setChecked(presets->editing());
+        connect(presetEdit, &QAction::toggled, presets, &PresetEditor::setEditing);
+        connect(presets, &PresetEditor::editingChanged, presetEdit, [presetEdit](bool on) {
+            const QSignalBlocker b(presetEdit);
+            presetEdit->setChecked(on);
+        });
+        edit->addSeparator();
+    }
     // On macOS, Qt moves it to the application menu (NyxMap ▸ Settings…, ⌘,)
     QAction *prefs = edit->addAction(QStringLiteral("Preferences…"), QKeySequence::Preferences, this,
                                      [this] { m_tabs->setCurrentWidget(m_tabs->widget(3)); }); // the Settings tab
