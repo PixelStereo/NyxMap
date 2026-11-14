@@ -131,11 +131,29 @@ public:
     int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setLayerPath(int index);                       // the layer becomes a Path of a 3D scene (Path3D.h)
-    // The Path a light travels along (0: its own path); refused: what is not a Path of its scene
-    bool setLightPath(int index, quint64 shape);
-    // A scene's camera along a Path (0: it orbits its target), looking at an object of the scene (0: its target)
-    bool setCameraPath(int scene, quint64 shape);
-    bool setCameraLookAt(int scene, quint64 object);
+    bool setLayerCamera(int index);                      // the layer becomes a camera of a 3D scene
+    // The layer becomes an Instance of a model (of an instance: of its original); refused: what is not a model
+    bool setLayerInstance(int index, quint64 original);
+    const Layer *originalOf(const Layer &model) const;        // an Instance's original, a model's itself (lock held)
+    std::shared_ptr<Model3D> modelOf(const Layer &model) const; // its model, or its original's (lock held)
+    // The Camera object a scene is seen through (0: its own orbit camera); refused: what is not a camera of that scene
+    bool setActiveCamera(int scene, quint64 camera);
+    // The 3D object of its scene a camera looks at (0: its Look At point); refused: itself, or what is not in its scene
+    bool setCameraLookAt(int camera, quint64 object);
+    // The Path of its scene whose points a model or an Instance is copied on, in its Duplicate FX (0: none)
+    bool setDuplicatePath(int index, quint64 path);
+    // A model's frames with its Duplicate FX on: one per copy (its own transform applies within each); without it, just
+    // `frame` (lock held)
+    std::vector<QMatrix4x4> duplicateFrames(const Layer &model, const QMatrix4x4 &frame);
+    // The Path of its scene a model, a Merge 3D, a camera or a light travels along in its Follow Path FX (0: none)
+    bool setFollowPath(int index, quint64 path);
+    // Where a 3D object's own transform starts: on its Path when it follows one (turned along it with Follow Orient),
+    // otherwise under its Merge 3Ds (`parent`) (lock held)
+    QMatrix4x4 followFrame(const Layer &object, const QMatrix4x4 &parent);
+    QVector3D cameraPosition(const Layer &camera); // a camera object's place in its scene (lock held)
+    // A camera object's view, as a scene's camera settings (the rest from `base`, its scene's) (lock held)
+    SceneSettings cameraView(const Layer &camera, const SceneSettings &base);
+    QMatrix4x4 mergesOf(const Layer &object);      // its Merge 3Ds' transforms, paths followed (lock held)
     // A Path's place in its scene: its own placement under its Merge 3Ds (lock held)
     QMatrix4x4 pathMatrix(const Layer &shape);
     // A scene's camera as it is drawn: along its path and looking at its object when it has them (lock held)

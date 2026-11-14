@@ -59,6 +59,12 @@ private:
         quint64 id = 0;
         bool light = false;
         bool merge = false;
+        bool camera = false;                             // a camera object:
+        bool active = false;                             // the one its scene is seen through
+        QString name;
+        float fov = 45;
+        QVector3D target;                                // what it looks at, world
+        bool aims() const { return light || camera; }    // turned by its yaw and pitch, not scaled
         bool isPath3d = false;                              // a Path:
         std::vector<QVector3D> path3dPoints;              // its points, world
         std::vector<std::vector<QVector3D>> path3dLines;  // its lines, world

@@ -508,7 +508,8 @@ int Engine::sceneTriangles(int scene) const
         for (const auto &l : m_layers) {
             if (l->parent != holder || !l->enabled) continue;
             if (l->merge3d) walk(l->id);
-            else if (l->model) total += l->model->triangleCount();
+            else if (const auto m = l->type == SourceType::Model ? modelOf(*l) : nullptr) // every copy of its Duplicate FX
+                total += m->triangleCount() * int(const_cast<Engine *>(this)->duplicateFrames(*l, QMatrix4x4()).size());
         }
     };
     walk(top->id);
@@ -675,35 +676,79 @@ template <typename Find> const Layer *sceneOfLayer(const Layer *o, Find layerOfI
 }
 }
 
-bool Engine::setLightPath(int i, quint64 shape)
+bool Engine::setLayerCamera(int i)
 {
+    std::shared_ptr<Garbage> g;
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
-        if (!l || l->type != SourceType::Light) return false;
-        if (shape) {
-            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != sceneOfLayer(l, find)) return false;
-        }
-        l->lightPath = shape;
+        if (!l || l->isGroup || l->isViewport) return false;
+        g = detachSource(*l);
+        l->type = SourceType::Camera;
+        l->camera = CameraSettings();
+        l->lookAtObject = 0;
+        l->modelPlacement = ModelPlacement();
+        l->modelPlacement.position = {{3, 2, 4}};
     }
+    releaseGarbage(g);
     emit layersChanged();
     return true;
 }
 
-bool Engine::setCameraPath(int i, quint64 shape)
+bool Engine::setLayerInstance(int i, quint64 original)
+{
+    std::shared_ptr<Garbage> g;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        const Layer *o = layer(indexOfId(original));
+        if (o) o = originalOf(*o);
+        if (!l || !o || o == l || l->isGroup || l->isViewport || o->type != SourceType::Model || !o->model) return false;
+        const quint64 root = o->id;
+        g = detachSource(*l);
+        l->type = SourceType::Model;
+        l->sourcePath.clear();
+        l->instanceOf = root;
+        l->instanceOwnMaterial = false;
+        l->modelPlacement = ModelPlacement();
+        l->modelPlacement.fit = o->modelPlacement.fit;
+    }
+    releaseGarbage(g);
+    emit layersChanged();
+    return true;
+}
+
+const Layer *Engine::originalOf(const Layer &model) const
+{
+    const auto find = [this](quint64 id) -> const Layer * {
+        for (const auto &l : m_layers)
+            if (l->id == id) return l.get();
+        return nullptr;
+    };
+    const Layer *o = &model;
+    for (int hops = 0; o && o->instanceOf && hops < 16; ++hops) o = find(o->instanceOf);
+    return o && !o->instanceOf && o->type == SourceType::Model ? o : nullptr;
+}
+
+std::shared_ptr<Model3D> Engine::modelOf(const Layer &model) const
+{
+    if (!model.instanceOf) return model.model;
+    const Layer *o = originalOf(model);
+    return o ? o->model : nullptr;
+}
+
+bool Engine::setActiveCamera(int i, quint64 camera)
 {
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
         if (!l || !l->scene3d) return false;
-        if (shape) {
+        if (camera) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *s = find(shape);
-            if (!s || s->type != SourceType::Path || sceneOfLayer(s, find) != l) return false;
+            const Layer *c = find(camera);
+            if (!c || c->type != SourceType::Camera || sceneOfLayer(c, find) != l) return false;
         }
-        l->cameraPath = shape;
+        l->activeCamera = camera;
     }
     emit layersChanged();
     return true;
@@ -714,13 +759,50 @@ bool Engine::setCameraLookAt(int i, quint64 object)
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
-        if (!l || !l->scene3d) return false;
+        if (!l || l->type != SourceType::Camera) return false;
         if (object) {
             const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
             const Layer *o = find(object);
-            if (!o || !o->is3dObject() || sceneOfLayer(o, find) != l) return false;
+            if (!o || o == l || !o->is3dObject() || sceneOfLayer(o, find) != sceneOfLayer(l, find)) return false;
         }
-        l->cameraLookAt = object;
+        l->lookAtObject = object;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setDuplicatePath(int i, quint64 path)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || l->type != SourceType::Model) return false;
+        if (path) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *p = find(path);
+            if (!p || p->type != SourceType::Path || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
+        }
+        l->duplicatePath = path;
+    }
+    emit layersChanged();
+    return true;
+}
+
+bool Engine::setFollowPath(int i, quint64 path)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !(l->type == SourceType::Model || l->type == SourceType::Camera || l->type == SourceType::Light || l->merge3d))
+            return false;
+        if (path) {
+            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+            const Layer *p = find(path);
+            if (!p || p->type != SourceType::Path || p == l || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
+            for (quint64 up = p->parent; up; up = find(up) ? find(up)->parent : 0)
+                if (up == l->id) return false; // a Merge 3D cannot follow a path it holds: it would chase itself
+        }
+        l->followPath = path;
     }
     emit layersChanged();
     return true;
@@ -1382,6 +1464,8 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->toxPlayer = std::move(l.toxPlayer);
     l.tox = ToxSettings();
     g->model = std::move(l.model);
+    l.instanceOf = 0;
+    l.instanceOwnMaterial = false;
     l.modelPlacement = ModelPlacement();
     l.modelTransformFx = ModelPlacement();
     l.modelTransformFxEnabled = false;

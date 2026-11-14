@@ -56,6 +56,7 @@ int runImagePrecisionTests(Engine &engine);
 int runShowHoldTests(Engine &engine);
 int runScene3dTests(Engine &engine); // scene3d.cpp
 int runPath3dTests(Engine &engine); // path3d.cpp
+int runInstance3dTests(Engine &engine); // instance3d.cpp
 int runOutputColorTests(Engine &engine);
 int runRecallIntegrityTests(Engine &engine);
 int runGoldenRenderTests(Engine &e, const QString &root, const QString &tmp); // golden_render.cpp
@@ -198,6 +199,7 @@ int main(int argc, char **argv)
     if (area("show_hold")) failures += runShowHoldTests(e);
     if (area("scene3d")) failures += runScene3dTests(e);
     if (area("path3d")) failures += runPath3dTests(e);
+    if (area("instance3d")) failures += runInstance3dTests(e);
     if (area("image_precision")) failures += runImagePrecisionTests(e);
     if (area("gpu_targets")) {
         failures += runGpuTargetTests(e);

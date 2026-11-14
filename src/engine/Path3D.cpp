@@ -136,3 +136,21 @@ QVector3D Path3D::along(double t) const
     }
     return atLength(pathOf(*this, 256), t);
 }
+
+std::vector<QVector3D> Path3D::directionsLocal() const
+{
+    const auto p = pointsLocal();
+    std::vector<QVector3D> out(p.size(), QVector3D(0, 1, 0));
+    if (kind == Sphere) {
+        for (size_t k = 0; k < p.size(); ++k)
+            if (p[k].lengthSquared() > 1e-12f) out[k] = p[k].normalized();
+    } else if (isPath() && p.size() > 1) {
+        for (size_t k = 0; k < p.size(); ++k) {
+            const size_t a = k > 0 ? k - 1 : (isClosed() ? p.size() - 1 : 0);
+            const size_t b = k + 1 < p.size() ? k + 1 : (isClosed() ? 0 : k);
+            const QVector3D d = p[b] - p[a];
+            if (d.lengthSquared() > 1e-12f) out[k] = d.normalized();
+        }
+    }
+    return out;
+}

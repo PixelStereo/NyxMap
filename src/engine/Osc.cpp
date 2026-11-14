@@ -98,6 +98,7 @@ static QString sourceTypeKey(const Layer &l)
     case SourceType::Model: return QStringLiteral("model");
     case SourceType::Light: return QStringLiteral("light");
     case SourceType::Path: return QStringLiteral("path");
+    case SourceType::Camera: return QStringLiteral("camera");
     case SourceType::Web: return QStringLiteral("web");
     default: return QStringLiteral("none");
     }

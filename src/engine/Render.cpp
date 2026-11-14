@@ -1,3 +1,4 @@
+#include <random>
 // Engine: one frame — the sources are updated, every layer is rendered in dependency order, the
 // composition is assembled, then read back for the interface preview and for publishing.
 #include <QJsonArray>
@@ -444,7 +445,11 @@ void Engine::markNeeded()
             Layer &member = *m_layers[child];
             if (!member.enabled) continue;
             if (member.merge3d) needModels(child);
-            else if (!member.soloHidden && member.type == SourceType::Model) need(child);
+            else if (!member.soloHidden && member.type == SourceType::Model) {
+                need(child);
+                if (const Layer *o = member.instanceOf ? originalOf(member) : nullptr) // what it shows: its original's
+                    if (const int row = indexOfId(o->id); row >= 0) need(size_t(row));
+            }
         }
     };
     need = [&](size_t row) {
@@ -1227,57 +1232,154 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
-QMatrix4x4 Engine::pathMatrix(const Layer &shape)
+QMatrix4x4 Engine::mergesOf(const Layer &object)
 {
-    QMatrix4x4 parent;
-    for (quint64 up = shape.parent; up;) {
+    std::vector<const Layer *> chain; // its Merge 3Ds, the outermost first
+    for (quint64 up = object.parent; up;) {
         const Layer *g = layer(indexOfId(up));
         if (!g || !g->merge3d) break;
-        parent = g->modelPlacement.transform() * parent;
+        chain.insert(chain.begin(), g);
         up = g->parent;
     }
-    return parent * shape.modelPlacement.transform();
+    QMatrix4x4 parent;
+    for (const Layer *g : chain) parent = followFrame(*g, parent) * g->modelPlacement.transform();
+    return parent;
+}
+
+QMatrix4x4 Engine::pathMatrix(const Layer &path) { return mergesOf(path) * path.modelPlacement.transform(); }
+
+QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
+{
+    const Layer *path = object.followEnabled && object.followPath ? layer(indexOfId(object.followPath)) : nullptr;
+    if (!path || path->type != SourceType::Path || !path->path3d.isPath() || path == &object) return parent;
+    // Paths in Merge 3Ds that follow paths: a chain, not a loop (A in a Merge 3D following B, B in one following A)
+    static thread_local int depth = 0;
+    if (depth > 8) return parent;
+    ++depth;
+    const QMatrix4x4 m = pathMatrix(*path);
+    --depth;
+    const double t = double(object.followPosition) + object.followTravel;
+    QMatrix4x4 frame;
+    frame.translate(m.map(path->path3d.along(t)));
+    if (object.followOrient) { // its +Z the way it goes, its +Y as up as can be
+        const double eps = 0.002;
+        QVector3D forward = m.map(path->path3d.along(t + eps)) - m.map(path->path3d.along(t - eps));
+        if (forward.lengthSquared() > 1e-12f) {
+            forward.normalize();
+            QVector3D up(0, 1, 0);
+            if (std::abs(QVector3D::dotProduct(up, forward)) > 0.999f) up = QVector3D(1, 0, 0);
+            const QVector3D right = QVector3D::crossProduct(up, forward).normalized();
+            up = QVector3D::crossProduct(forward, right);
+            QMatrix4x4 turn;
+            turn.setColumn(0, QVector4D(right, 0));
+            turn.setColumn(1, QVector4D(up, 0));
+            turn.setColumn(2, QVector4D(forward, 0));
+            frame *= turn;
+        }
+    }
+    return frame;
+}
+
+std::vector<QMatrix4x4> Engine::duplicateFrames(const Layer &model, const QMatrix4x4 &frame)
+{
+    const Layer *path = model.duplicateEnabled && model.duplicatePath ? layer(indexOfId(model.duplicatePath)) : nullptr;
+    if (!path || path->type != SourceType::Path) return {frame};
+    // On the Path's points, where the Path is (whatever holds the model); its Follow Path does not apply then
+    const QMatrix4x4 m = pathMatrix(*path);
+    const auto points = path->path3d.pointsLocal();
+    const auto ways = path->path3d.directionsLocal();
+    std::mt19937 rng{static_cast<uint32_t>(model.duplicateSeed)};
+    std::uniform_real_distribution<float> unit(0.f, 1.f);
+    std::vector<QMatrix4x4> out;
+    out.reserve(points.size());
+    for (size_t k = 0; k < points.size(); ++k) {
+        QMatrix4x4 copy;
+        copy.translate(m.map(points[k]));
+        if (model.duplicateAlign == 1) { // its +Z the way the point goes, +Y up (on a sphere: its +Y outward)
+            QVector3D way = m.mapVector(ways[k]);
+            if (way.lengthSquared() > 1e-12f) {
+                way.normalize();
+                const bool outward = path->path3d.kind == Path3D::Sphere || !path->path3d.isPath();
+                QVector3D up = outward ? way : QVector3D(0, 1, 0);
+                QVector3D ahead = outward ? QVector3D(0, 0, 1) : way;
+                if (std::abs(QVector3D::dotProduct(up, ahead)) > 0.999f) ahead = QVector3D(1, 0, 0);
+                const QVector3D right = QVector3D::crossProduct(up, ahead).normalized();
+                ahead = QVector3D::crossProduct(right, up);
+                QMatrix4x4 turn;
+                turn.setColumn(0, QVector4D(right, 0));
+                turn.setColumn(1, QVector4D(up, 0));
+                turn.setColumn(2, QVector4D(ahead, 0));
+                copy *= turn;
+            }
+        }
+        const float spin = (unit(rng) * 2 - 1) * model.duplicateRandomRotation;
+        const float size = model.duplicateScale * (1 + (unit(rng) * 2 - 1) * model.duplicateRandomScale);
+        copy.rotate(spin, 0, 1, 0);
+        copy.scale(std::max(0.001f, size));
+        out.push_back(copy);
+    }
+    return out;
+}
+
+QVector3D Engine::cameraPosition(const Layer &camera)
+{
+    const ModelPlacement &p = camera.modelPlacement;
+    const QMatrix4x4 parent = mergesOf(camera), frame = followFrame(camera, parent);
+    if (frame != parent) return frame.map(QVector3D()); // its Follow Path FX: on the path's point
+    return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
 }
 
 SceneSettings Engine::placedCamera(const Layer &scene)
 {
-    SceneSettings s = scene.scene;
-    const Layer *path = scene.cameraPath ? layer(indexOfId(scene.cameraPath)) : nullptr;
-    if (!path || path->type != SourceType::Path || !path->path3d.isPath()) return s;
-    const QVector3D eye = pathMatrix(*path).map(path->path3d.along(double(s.cameraPathPosition) + s.cameraPathTravel));
-    const Layer *looked = scene.cameraLookAt ? layer(indexOfId(scene.cameraLookAt)) : nullptr;
-    const QVector3D target = looked ? placeOf3dObject(*looked) : QVector3D(s.target[0], s.target[1], s.target[2]);
-    QVector3D from = eye - target; // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
+    const Layer *cam = scene.activeCamera ? layer(indexOfId(scene.activeCamera)) : nullptr;
+    if (!cam || cam->type != SourceType::Camera) return scene.scene; // its own orbit camera
+    return cameraView(*cam, scene.scene);
+}
+
+SceneSettings Engine::cameraView(const Layer &camera, const SceneSettings &base)
+{
+    SceneSettings s = base;
+    const Layer *cam = &camera;
+    const CameraSettings &c = cam->camera;
+    const QVector3D eye = cameraPosition(*cam);
+    QVector3D target;
+    if (c.lookAt) {
+        const Layer *looked = cam->lookAtObject ? layer(indexOfId(cam->lookAtObject)) : nullptr;
+        target = looked ? placeOf3dObject(*looked) : QVector3D(c.lookPoint[0], c.lookPoint[1], c.lookPoint[2]);
+    } else {
+        target = eye - Camera3D::aim(c.yaw, c.pitch); // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
+    }
+    QVector3D from = eye - target;
     if (from.lengthSquared() < 1e-8f) from = QVector3D(0, 0, 0.01f);
     for (int a = 0; a < 3; ++a) s.target[size_t(a)] = target[a];
     s.distance = from.length();
+    s.fov = c.fov;
     Camera3D::anglesOf(from.normalized(), &s.yaw, &s.pitch);
     return s;
 }
 
 QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
 {
-    // Along a Path of its scene: where the shape is, whatever holds the light
-    if (const Layer *path = light.lightPath ? layer(indexOfId(light.lightPath)) : nullptr;
-        path && path->type == SourceType::Path && path->path3d.isPath())
-        return pathMatrix(*path).map(path->path3d.along(double(light.light.pathPosition) + light.light.pathTravel));
+    // Its Follow Path FX: on the path's point
+    if (light.followEnabled && light.followPath) {
+        const QMatrix4x4 frame = followFrame(light, parent);
+        if (frame != parent) return frame.map(QVector3D());
+    }
     return parent.map(light.light.located());
 }
 
 QVector3D Engine::placeOf3dObject(const Layer &object)
 {
-    QMatrix4x4 parent;
-    for (quint64 up = object.parent; up;) {
-        const Layer *g = layer(indexOfId(up));
-        if (!g || !g->merge3d) break;
-        parent = g->modelPlacement.transform() * parent;
-        up = g->parent;
-    }
+    QMatrix4x4 parent = mergesOf(object);
     if (object.type == SourceType::Light) return lightPosition(object, parent);
     if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
-    if (object.model) {
+    if (object.type == SourceType::Camera) return cameraPosition(object);
+    parent = followFrame(object, parent);
+    if (const auto model = object.type == SourceType::Model ? modelOf(object) : nullptr) {
         if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
-        return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
+        ModelPlacement p = object.modelPlacement;
+        if (const Layer *o = object.instanceOf ? originalOf(object) : nullptr) p.fit = o->modelPlacement.fit;
+        return (parent * model->matrix(p)).map(model->center());
     }
     const ModelPlacement &p = object.modelPlacement;
     return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
@@ -1308,28 +1410,49 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             std::vector<Layer *> inside;
             for (auto &o : m_layers)
                 if (o->parent == m->id) inside.push_back(o.get());
-            collectScene(inside, items, lamps, parent * m->modelPlacement.transform());
+            collectScene(inside, items, lamps, followFrame(*m, parent) * m->modelPlacement.transform());
             continue;
         }
         if (!m->enabled || m->soloHidden) continue;
-        if (m->type == SourceType::Model && m->model) {
-            m->model->setSmooth(m->modelPlacement.shading == 1);
-            const Layer *pic = m->modelPicture ? layer(indexOfId(m->modelPicture)) : nullptr;
-            const Layer *disp = m->modelDisplaceEnabled && m->modelDisplace ? layer(indexOfId(m->modelDisplace)) : nullptr;
-            auto placement = m->modelPlacement;
-            if (m->material) m_materialTextures.apply(*m->material, placement);
-            GLuint displacement = disp ? stagePicture(*disp, m->modelDisplaceStage) : 0;
+        if (m->type == SourceType::Model && (m->model || m->instanceOf)) {
+            // What it looks like: its own, or (an Instance) its original's: the same meshes, material, picture,
+            // displacement, shading and detail; its own transform, 3D FX and, with its own material, colours
+            const Layer *look = m->instanceOf ? originalOf(*m) : m;
+            const std::shared_ptr<Model3D> model = look ? look->model : nullptr;
+            if (!model) continue;
+            if (look == m) model->setSmooth(m->modelPlacement.shading == 1); // an original sets its shared mesh
+            const Layer *pic = look->modelPicture ? layer(indexOfId(look->modelPicture)) : nullptr;
+            const Layer *disp = look->modelDisplaceEnabled && look->modelDisplace ? layer(indexOfId(look->modelDisplace)) : nullptr;
+            auto placement = look->modelPlacement;
+            if (look != m) {
+                const ModelPlacement &own = m->modelPlacement;
+                placement.position = own.position;
+                placement.rotation = own.rotation;
+                placement.scale = own.scale;
+                placement.axisScale = own.axisScale;
+                if (m->instanceOwnMaterial) {
+                    placement.color = own.color;
+                    placement.metal = own.metal;
+                    placement.rough = own.rough;
+                    placement.unlit = own.unlit;
+                }
+            }
+            if (look->material && !(look != m && m->instanceOwnMaterial)) m_materialTextures.apply(*look->material, placement);
+            GLuint displacement = disp ? stagePicture(*disp, look->modelDisplaceStage) : 0;
             float amount = placement.displaceAmount, mid = placement.displaceMid;
             if (!displacement && placement.materialTextures[HeightMap]) {
                 displacement = placement.materialTextures[HeightMap];
                 placement.materialHeight = true;
-                amount = m->material->height;
+                amount = look->material->height;
                 mid = 0;
             }
-            m->model->setDetail(placement.meshDetail(displacement != 0));
-            items.push_back({m->model, placement, pic ? stagePicture(*pic, m->modelPictureStage) : 0,
-                             displacement, amount, mid,
-                             m->modelTransformFxEnabled ? parent * m->modelTransformFx.transform() : parent});
+            if (look == m) model->setDetail(placement.meshDetail(displacement != 0));
+            const GLuint picture = pic ? stagePicture(*pic, look->modelPictureStage) : 0;
+            // Its Duplicate FX: a copy on each point of its Path (the same meshes, drawn again, not built again)
+            for (QMatrix4x4 frame : duplicateFrames(*m, followFrame(*m, parent))) {
+                if (m->modelTransformFxEnabled) frame *= m->modelTransformFx.transform();
+                items.push_back({model, placement, picture, displacement, amount, mid, frame});
+            }
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
         }

@@ -329,6 +329,11 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     shape3d->setText(3, QStringLiteral("Not applicable"));
     shape3d->setToolTip(0, QStringLiteral("Points laid out by a rule (circle, rectangle, line, grid, spiral, sphere, random): a path "
                                           "for lights and the camera. Drop it onto a 3D scene."));
+    auto *camera3d = generator(m_primitives, QStringLiteral("Camera"), kCamera3dPath);
+    camera3d->setText(1, QStringLiteral("3D camera"));
+    camera3d->setText(3, QStringLiteral("Not applicable"));
+    camera3d->setToolTip(0, QStringLiteral("A camera of a 3D scene: several per scene, the scene seen through the one it chooses. "
+                                           "It looks at an object (an Empty, a model…) and can follow a Path. Drop it onto a 3D scene."));
     auto *empty3d = generator(m_primitives, QStringLiteral("Empty"), kEmpty3dPath);
     empty3d->setText(1, QStringLiteral("3D point"));
     empty3d->setText(3, QStringLiteral("Not applicable"));
