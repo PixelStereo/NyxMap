@@ -1165,7 +1165,10 @@ void MainWindow::buildMenus()
     // 3D: a scene renders its models (FBX, glTF, OBJ: dropped onto a layer) under its lights, seen by its camera
     layer->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
     layer->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
-    layer->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d);
+    layer->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, [this] { createMerge3d(); });
+    layer->addAction(QStringLiteral("New Empty (a Merge 3D: a point to place, hold or aim at)"), this,
+                     [this] { createMerge3d(QStringLiteral("Empty")); });
+    layer->addAction(QStringLiteral("New Shape 3D (points and paths: circle, grid, spiral…)"), this, &MainWindow::addShapeToScene);
     layer->addAction(QStringLiteral("Lock / Unlock"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::toggleLockCurrent);
     layer->addAction(QStringLiteral("Rename (F2 in list, or double-click)"), this,
                      [this] { m_layerTable->startRename(currentLayer()); });
@@ -1384,6 +1387,7 @@ static QColor layerColor(SourceType t)
     case SourceType::Web: return QColor(150, 200, 170);
     case SourceType::Model: return QColor(90, 215, 200);
     case SourceType::Light: return QColor(255, 225, 90);
+    case SourceType::Shape: return QColor(120, 200, 255);
     default: return QColor(230, 230, 233);
     }
 }
@@ -1402,6 +1406,7 @@ static QString layerTag(SourceType t)
     case SourceType::Web: return QStringLiteral("◍");
     case SourceType::Model: return QStringLiteral("⬢");
     case SourceType::Light: return QStringLiteral("✦");
+    case SourceType::Shape: return QStringLiteral("⁘");
     default: return QStringLiteral("○");
     }
 }
@@ -1505,6 +1510,10 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
                 break;
             case SourceType::Light:
                 r.source = QStringLiteral("light · ") + QStringList{"directional", "point", "spot"}.value(l->light.type);
+                break;
+            case SourceType::Shape:
+                r.source = QStringLiteral("Shape 3D · %1 · %2 points").arg(Shape3D::kindNames().value(l->shape.kind))
+                               .arg(l->shape.pointCount());
                 break;
             case SourceType::Web:
                 r.source = QStringLiteral("web ") + (l->web.url.isEmpty() ? QStringLiteral("(blank)") : l->web.url.left(60));
@@ -1788,6 +1797,12 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
         return false;
     }
     if (refuseLocked(i)) return false;
+    if (isShape3dPath(path) || isEmpty3dPath(path)) { // into the 3D scene (or Merge 3D) it is dropped on, or its object's
+        selectLayer(i);
+        if (isShape3dPath(path)) addShapeToScene();
+        else createMerge3d(QStringLiteral("Empty"));
+        return true;
+    }
     if (isTimecodeGeneratorPath(path)) { // the built-in Timecode generator, dragged from the Media Bin
         {
             Engine::Lock lk(&m_engine->mutex());
@@ -2097,7 +2112,7 @@ void MainWindow::loadDropped(int layer, const QStringList &paths)
         const QString ext = QFileInfo(p).suffix().toLower();
         const bool effect = kIsfExt.contains(ext) && IsfInstance::readHeader(p).isFilter;
         if (isTextGeneratorPath(p) || isCursiveGeneratorPath(p) || isTimecodeGeneratorPath(p) || clockGeneratorOfPath(p) || isWebGeneratorPath(p) || isLineGeneratorPath(p) ||
-            Model3D::isPrimitivePath(p) ||
+            Model3D::isPrimitivePath(p) || isShape3dPath(p) || isEmpty3dPath(p) ||
             !liveInputUriOfPath(p).isEmpty() ||
             !Engine::streamUrlOfPath(p).isEmpty()) { // built in, or live (a stream comes from the Media Bin): never imported again
             if (!sourceLoaded) sourceLoaded = loadIntoLayer(layer, p);
@@ -2637,7 +2652,9 @@ void MainWindow::fill3dMenu(QMenu *menu)
     }
     QAction *light = menu->addAction(QStringLiteral("Add Light to 3D Scene"), this, &MainWindow::addLightToScene);
     light->setEnabled(inScene);
-    menu->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, &MainWindow::createMerge3d)->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Merge 3D (selected 3D objects go into it)"), this, [this] { createMerge3d(); })->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Empty"), this, [this] { createMerge3d(QStringLiteral("Empty")); })->setEnabled(inScene);
+    menu->addAction(QStringLiteral("New Shape 3D"), this, &MainWindow::addShapeToScene)->setEnabled(inScene);
     menu->addAction(QStringLiteral("New Primitive 3D"), this, [this, inScene] {
         const QString path = Model3D::primitivePath(QStringLiteral("Cube"));
         int target = currentLayer();
@@ -2709,9 +2726,11 @@ void MainWindow::createScene()
     statusBar()->showMessage(QStringLiteral("3D scene created: drop an FBX, glTF or OBJ onto it to add a model."), 5000);
 }
 
-// A new Merge 3D: in the 3D scene or the Merge 3D selected, or beside the 3D objects selected, which go into it
-void MainWindow::createMerge3d()
+// A new Merge 3D: in the 3D scene or the Merge 3D selected, or beside the 3D objects selected, which go into it.
+// An Empty is a Merge 3D named so: a point of the scene to place things under, to aim a light or the camera at
+void MainWindow::createMerge3d(const QString &kind)
 {
+    const bool empty = kind == QLatin1String("Empty");
     const LayerTree t = m_engine->structure();
     const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
     std::vector<quint64> ids;
@@ -2744,8 +2763,17 @@ void MainWindow::createMerge3d()
         return;
     }
     if (at < 0) at = holderRow + 1;
-    m_undo->beginMacro(QStringLiteral("New Merge 3D"));
-    const int mi = m_engine->addMerge3d(QString(), at);
+    m_undo->beginMacro(empty ? QStringLiteral("New Empty") : QStringLiteral("New Merge 3D"));
+    QString name;
+    if (empty) {
+        int count = 0;
+        for (int k = 0; k < m_engine->layerCount(); ++k) {
+            Engine::Lock lk(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(k); l && l->merge3d && l->name.startsWith(QLatin1String("Empty"))) ++count;
+        }
+        name = QStringLiteral("Empty %1").arg(count + 1);
+    }
+    const int mi = m_engine->addMerge3d(name, at);
     const quint64 mid = m_engine->layerId(mi);
     m_undo->push(new cmd::AddLayer(m_engine, mi, QStringLiteral("New Merge 3D")));
     const LayerTree before = m_engine->structure();
@@ -2756,6 +2784,40 @@ void MainWindow::createMerge3d()
     selectLayer(m_engine->indexOfId(mid));
     statusBar()->showMessage(ids.empty() ? QStringLiteral("Empty Merge 3D: drag 3D objects onto it, or other Merge 3Ds.")
                                          : QStringLiteral("Merge 3D of %1 object(s): move it, and they follow.").arg(ids.size()), 4000);
+}
+
+// A Shape 3D in the 3D scene (or Merge 3D) selected, or in the scene of the 3D object selected
+void MainWindow::addShapeToScene()
+{
+    int s = currentLayer();
+    if (s < 0) return;
+    const LayerTree t = m_engine->structure();
+    const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+    if (!holds3d(s)) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+    if (s < 0 || !holds3d(s)) {
+        statusBar()->showMessage(QStringLiteral("Select a 3D scene (or one of its objects) to add a Shape 3D to it."), 4000);
+        return;
+    }
+    if (refuseLocked(s)) return;
+    const quint64 sid = m_engine->layerId(s);
+    int count = 0;
+    for (int k = 0; k < m_engine->layerCount(); ++k) {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(k); l && l->type == SourceType::Shape) ++count;
+    }
+    m_undo->beginMacro(QStringLiteral("New Shape 3D"));
+    const int li = m_engine->addLayer(QStringLiteral("Shape %1").arg(count + 1), s + 1);
+    m_undo->push(new cmd::AddLayer(m_engine, li, QStringLiteral("New Shape 3D")));
+    const QJsonObject before = m_engine->layerJson(li);
+    m_engine->setLayerShape(li);
+    m_undo->push(new cmd::ReplaceLayer(m_engine, li, before, QStringLiteral("New Shape 3D"), {}));
+    const quint64 id = m_engine->layerId(li);
+    const LayerTree now = m_engine->structure();
+    const LayerTree after = tree::intoGroup(now, {id}, sid);
+    if (after != now) m_undo->push(new cmd::SetStructure(m_engine, now, after, QStringLiteral("Into 3D Scene")));
+    m_undo->endMacro();
+    selectLayer(m_engine->indexOfId(id));
+    statusBar()->showMessage(QStringLiteral("Shape 3D: choose its kind and points in its 3D tab; lights and the camera can travel along it."), 5000);
 }
 
 void MainWindow::addLightToScene()

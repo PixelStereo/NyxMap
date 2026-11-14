@@ -177,6 +177,7 @@ private:
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
+    void addPathPicker(class QFormLayout *form, bool camera); // a light's or the camera's Shape 3D path
     void addSceneEnvironment(class QFormLayout *form); // a scene: the layer (an HDRI) around it, lighting it
     void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,
                         const QString &objectName, const QString &tip, const QString &undoText,

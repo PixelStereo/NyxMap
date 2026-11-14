@@ -835,7 +835,7 @@ void LayerInspector::rebuild()
         tv->setContentsMargins(0, 0, 0, 0);
         tv->setSpacing(8);
         tv->addWidget(buildSource(s));
-        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && !s.merge3d) { // a sound, a 3D
+        if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Shape && !s.merge3d) { // a sound, a 3D
                                                                                                            // object: no picture
             tv->addWidget(separator());
             tv->addWidget(buildCompositing(s));
@@ -884,7 +884,7 @@ void LayerInspector::rebuild()
         Engine::Lock lk(&m_engine->mutex());
         if (const Layer *l = m_engine->layer(m_layer)) scene3d = l->scene3d, merge3d = l->merge3d;
     }
-    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || merge3d;
+    const bool object3d = s.type == SourceType::Model || s.type == SourceType::Light || s.type == SourceType::Shape || merge3d;
     if (scene3d) {
         auto *both = new QWidget;
         auto *bv = new QVBoxLayout(both);
@@ -895,7 +895,9 @@ void LayerInspector::rebuild()
         tabs->setTabToolTip(t, QStringLiteral("The camera that sees the scene, its ambient light, background and exposure"));
     }
     if (object3d && s.type != SourceType::Model)
-        tabs->addTab(page(build3d({merge3d ? QStringLiteral("merge/") : QStringLiteral("light/")})), QStringLiteral("3D"));
+        tabs->addTab(page(build3d({merge3d ? QStringLiteral("merge/") : s.type == SourceType::Shape ? QStringLiteral("shape/")
+                                                                                                    : QStringLiteral("light/")})),
+                     QStringLiteral("3D"));
     const bool hasSource = !s.isGroup && !s.isViewport && (!object3d || s.type == SourceType::Model);
     if (hasSource) tabs->addTab(page(buildSourceTab(s)), QStringLiteral("Source"));
     if (s.type == SourceType::Model) {
@@ -1157,6 +1159,17 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
         d << QStringLiteral("drawn by its 3D scene");
         break;
     }
+    case SourceType::Shape: {
+        kind = QStringLiteral("Shape 3D");
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer)) {
+            name = Shape3D::kindNames().value(l->shape.kind);
+            d << QStringLiteral("%1 point(s)").arg(l->shape.pointCount());
+            if (l->shape.isPath()) d << QStringLiteral("a path: lights and the camera can travel along it");
+        }
+        d << QStringLiteral("shown in the 3D view, not in the picture");
+        break;
+    }
     case SourceType::Light: {
         kind = QStringLiteral("Light");
         Engine::Lock lk(&m_engine->mutex());
@@ -1247,7 +1260,7 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
     // Transition when a snapshot gives this layer another source (a sound: its levels cross, nothing to choose; a 3D
     // object has no picture of its own)
-    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light) {
+    if (s.type != SourceType::Audio && s.type != SourceType::Model && s.type != SourceType::Light && s.type != SourceType::Shape) {
         auto *row = new QHBoxLayout;
         auto *label = new ResetLabel(QStringLiteral("Transition"), [this] {
             setProp(cmd::SetLayerProp::Transition, QString());
@@ -4516,6 +4529,59 @@ void LayerInspector::addLightLookAt(QFormLayout *form)
     });
 }
 
+// A light's or a scene camera's path: a Shape 3D of its scene to travel along (a circle, a rectangle, a line, a spiral).
+// The camera also gets what it looks at while it travels: an object of its scene, or its target point
+void LayerInspector::addPathPicker(QFormLayout *form, bool camera)
+{
+    auto *path = new QComboBox;
+    path->setObjectName(camera ? QStringLiteral("cameraPath") : QStringLiteral("lightPath"));
+    path->addItem(camera ? QStringLiteral("None (it orbits its target)") : QStringLiteral("Its own (the Shape below)"), QVariant(qulonglong(0)));
+    QComboBox *look = nullptr;
+    if (camera) {
+        look = new QComboBox;
+        look->setObjectName(QStringLiteral("cameraLookAt"));
+        look->addItem(QStringLiteral("Its target point"), QVariant(qulonglong(0)));
+    }
+    quint64 currentPath = 0, currentLook = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return;
+        currentPath = camera ? l->cameraPath : l->lightPath;
+        currentLook = l->cameraLookAt;
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        const Layer *scene = sceneOf(l);
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (!o || o == l || !o->is3dObject() || sceneOf(o) != scene) continue;
+            if (o->type == SourceType::Shape && o->shape.isPath()) path->addItem(o->name, QVariant(qulonglong(o->id)));
+            if (look) look->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    path->setCurrentIndex(std::max(0, path->findData(QVariant(qulonglong(currentPath)))));
+    path->setToolTip(QStringLiteral("A Shape 3D of the scene (circle, rectangle, line, spiral) to travel along: its Path Position "
+                                    "and Path Speed place it on it"));
+    form->addRow(camera ? QStringLiteral("Camera Path") : QStringLiteral("Path › Shape 3D"), path);
+    connect(path, &QComboBox::activated, this, [this, path, camera](int i) {
+        const quint64 id = path->itemData(i).toULongLong();
+        editSource(camera ? QStringLiteral("Camera Path") : QStringLiteral("Light Path"),
+                   [&] { camera ? m_engine->setCameraPath(m_layer, id) : m_engine->setLightPath(m_layer, id); });
+        emit layerChanged();
+    });
+    if (!look) return;
+    look->setCurrentIndex(std::max(0, look->findData(QVariant(qulonglong(currentLook)))));
+    look->setToolTip(QStringLiteral("While on its path, the camera looks at this object (an Empty, a model…) or at its target point"));
+    form->addRow(QStringLiteral("Camera Looks At"), look);
+    connect(look, &QComboBox::activated, this, [this, look](int i) {
+        const quint64 id = look->itemData(i).toULongLong();
+        editSource(QStringLiteral("Camera Looks At"), [&] { m_engine->setCameraLookAt(m_layer, id); });
+        emit layerChanged();
+    });
+}
+
 // A model's layers: the picture laid on it (over its UVs) and the one whose luminance pushes its points along their
 // normals, each taken at a stage of its own
 QWidget *LayerInspector::buildModelLayers()
@@ -4773,6 +4839,8 @@ QWidget *LayerInspector::build3d(const QStringList &prefixes, const QStringList 
         m_animate->attach({label, field}, {path});
         m_3dFields.push_back({field, path});
         if (path == QLatin1String("light/lookat")) addLightLookAt(form);
+        if (path == QLatin1String("light/path/shape")) addPathPicker(form, false);
+        if (path == QLatin1String("camera/target/z")) addPathPicker(form, true);
     }
     v->addStretch();
     return w;

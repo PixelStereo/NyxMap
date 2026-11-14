@@ -191,7 +191,7 @@ SceneSettings Scene3DView::sceneCamera() const
 {
     Engine::Lock lk(&m_engine->mutex());
     const Layer *s = m_engine->layer(m_engine->indexOfId(m_scene));
-    return s ? s->scene : SceneSettings();
+    return s ? m_engine->placedCamera(*s) : SceneSettings(); // where its path puts it, when it has one
 }
 
 void Scene3DView::viewFromSceneCamera() { setCamera(sceneCamera()); }
@@ -309,8 +309,35 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
                 o.scale = p.scale;
                 o.radius = 0.1f;
+                for (int a = 0; a < 3; ++a) {
+                    QVector3D unit;
+                    unit[a] = 1;
+                    o.axes[a] = (parent * p.transform()).mapVector(unit);
+                }
                 out.push_back(o);
                 if (l->enabled) collect(l->id, parent * p.transform(), l->id);
+                continue;
+            }
+            if (l->type == SourceType::Shape) {
+                o.shape = true;
+                o.position = parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
+                o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
+                o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
+                o.scale = p.scale;
+                o.radius = 0.12f;
+                if (l->shape.show && l->enabled) {
+                    const QMatrix4x4 m = m_engine->shapeMatrix(*l);
+                    for (const QVector3D &q : l->shape.pointsLocal()) {
+                        o.shapePoints.push_back(m.map(q));
+                        o.reach = std::max(o.reach, (o.shapePoints.back() - o.position).length());
+                    }
+                    for (const auto &line : l->shape.linesLocal()) {
+                        std::vector<QVector3D> world;
+                        for (const QVector3D &q : line) world.push_back(m.map(q));
+                        o.shapeLines.push_back(std::move(world));
+                    }
+                }
+                out.push_back(o);
                 continue;
             }
             if (l->type == SourceType::Light) {
@@ -324,7 +351,8 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.looks = placed.lookAt;
                 o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
                 o.direction = Camera3D::aim(placed.yaw, placed.pitch);
-                for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
+                if (!l->lightPath) // along a Shape 3D: the shape draws its path itself
+                    for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {
@@ -406,7 +434,7 @@ QString Scene3DView::pathOf(const Object &o, const QString &what, int axis) cons
         if (what == QLatin1String("rotation")) return axis == 1 ? QStringLiteral("light/yaw") : QStringLiteral("light/pitch");
         return QStringLiteral("light/position/") + kAxisName[axis];
     }
-    const QString base = o.merge ? QStringLiteral("merge") : QStringLiteral("model");
+    const QString base = o.merge ? QStringLiteral("merge") : o.shape ? QStringLiteral("shape") : QStringLiteral("model");
     if (what == QLatin1String("scale") && axis == 3) return base + QStringLiteral("/scale/all");
     return QStringLiteral("%1/%2/%3").arg(base, what, kAxisName[axis]);
 }
@@ -546,7 +574,43 @@ void Scene3DView::paintOverlay(QPainter &p)
             p.setPen(QPen(sel ? kSelected : kMerge, sel ? 2 : 1.4));
             p.setBrush(QColor(kMerge.red(), kMerge.green(), kMerge.blue(), 70));
             p.drawPolygon(diamond);
+            // Its axes (an Empty's look): X red, Y green, Z blue
+            const QColor axisInk[3] = {QColor(235, 90, 90), QColor(110, 210, 110), QColor(100, 150, 255)};
+            for (int a = 0; a < 3; ++a) {
+                bool tip;
+                const QPointF end = project(o.position + o.axes[a].normalized() * handleLength() * 0.6f, &tip);
+                if (!tip) continue;
+                p.setPen(QPen(axisInk[a], 1.2));
+                p.drawLine(c, end);
+            }
         }
+    }
+    // The Shape 3Ds: their lines and points, and their middle
+    for (const Object &o : objs) {
+        if (!o.shape) continue;
+        const bool sel = o.id == m_selected;
+        const QColor ink = sel ? kSelected : QColor(120, 200, 255);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(ink, sel ? 1.6 : 1));
+        for (const auto &line : o.shapeLines)
+            for (size_t k = 1; k < line.size(); ++k) {
+                bool fa, fb;
+                const QPointF a = project(line[k - 1], &fa), b = project(line[k], &fb);
+                if (fa && fb) p.drawLine(a, b);
+            }
+        p.setPen(Qt::NoPen);
+        p.setBrush(ink);
+        for (const QVector3D &q : o.shapePoints) {
+            bool front;
+            const QPointF c = project(q, &front);
+            if (front) p.drawEllipse(c, 2.2, 2.2);
+        }
+        bool front;
+        const QPointF c = project(o.position, &front);
+        if (!front) continue;
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(ink, sel ? 2 : 1.4));
+        p.drawRect(QRectF(c - QPointF(5, 5), QSizeF(10, 10)));
     }
     // The paths the lights go around, and what they look at
     for (const Object &o : objs) {
@@ -677,7 +741,7 @@ void Scene3DView::paintOverlay(QPainter &p)
         bool front;
         const QPointF c = project(o.position, &front);
         if (!front) break;
-        if (!o.light && !o.merge) { // its bounds, as a circle
+        if (!o.light && !o.merge && !o.shape) { // its bounds, as a circle
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             p.setPen(QPen(kSelected, 1, Qt::DotLine));
             p.setBrush(Qt::NoBrush);
@@ -751,11 +815,11 @@ void Scene3DView::mousePressEvent(QMouseEvent *e)
         const QPointF c = project(o.position, &front);
         if (!front) continue;
         double r = 10;
-        if (!o.light && !o.merge) {
+        if (!o.light && !o.merge && !o.shape) {
             const QPointF edge = project(o.position + cameraNow().view.inverted().mapVector({1, 0, 0}).normalized() * o.radius);
             r = std::max(8.0, std::hypot(edge.x() - c.x(), edge.y() - c.y()));
         }
-        const float dist = (o.position - eye).length() - (o.light || o.merge ? 1000 : 0); // a light, a Merge 3D over a model
+        const float dist = (o.position - eye).length() - (o.light || o.merge || o.shape ? 1000 : 0); // over a model
         if (std::hypot(e->position().x() - c.x(), e->position().y() - c.y()) <= r && dist < nearest) {
             nearest = dist;
             picked = o.id;

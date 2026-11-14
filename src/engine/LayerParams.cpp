@@ -710,6 +710,8 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("camera/fov", "Camera › Field of View (°)", 5, 150, d.fov, &sc->fov).step(0.1);
         for (int a = 0; a < 3; ++a)
             f3("camera/target/" + xyz[a], "Camera › Target " + XYZ[a], -10, 10, 0, &sc->target[size_t(a)]).step(0.01);
+        f3("camera/path/position", "Camera › Path Position", 0, 1, d.cameraPathPosition, &sc->cameraPathPosition).step(0.001);
+        f3("camera/path/speed", "Camera › Path Speed (turns/s)", -2, 2, d.cameraPathSpeed, &sc->cameraPathSpeed).step(0.001);
         for (int c = 0; c < 3; ++c)
             f3(QStringLiteral("scene/ambient/") + QChar("rgb"[c]), QStringLiteral("Scene › Ambient ") + QChar("RGB"[c]), 0, 1, 1,
                &sc->ambient[size_t(c)]).colorComponent(c);
@@ -794,6 +796,38 @@ const std::vector<Parameter *> &Layer::parameters()
         f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)
             f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
+    }
+    if (type == SourceType::Shape) {
+        Shape3D *sh = &shape;
+        const Shape3D d;
+        ModelPlacement *mp = &modelPlacement;
+        static const QStringList kinds = Shape3D::kindNames();
+        add("shape/kind", "Shape 3D › Kind", T::Choice)
+            .choices(kinds)
+            .byDefault(kinds.value(d.kind))
+            .ramp(Parameter::Ramp::Cut)
+            .bind([sh] { return QVariant(kinds.value(sh->kind)); },
+                  [sh](const QVariant &v) { sh->kind = std::max(0, int(kinds.indexOf(v.toString()))); });
+        const auto count = [&](const QString &path, const QString &label, int lo, int hi, int def, int *field) {
+            add(path, label, T::Int).range(lo, hi).byDefault(def).ramp(Parameter::Ramp::Cut)
+                .bind([field] { return QVariant(*field); }, [field, lo, hi](const QVariant &v) { *field = std::clamp(v.toInt(), lo, hi); });
+        };
+        count("shape/points", "Shape 3D › Points", 1, 4096, d.points, &sh->points);
+        count("shape/columns", "Shape 3D › Grid Columns", 1, 256, d.columns, &sh->columns);
+        count("shape/rows", "Shape 3D › Grid Rows", 1, 256, d.rows, &sh->rows);
+        count("shape/seed", "Shape 3D › Random Seed", 0, 99999, d.seed, &sh->seed);
+        f3("shape/width", "Shape 3D › Width", 0, 40, d.width, &sh->width).step(0.01).limits(0, 1000);
+        f3("shape/depth", "Shape 3D › Depth", 0, 40, d.depth, &sh->depth).step(0.01).limits(0, 1000);
+        f3("shape/height", "Shape 3D › Height", -40, 40, d.height, &sh->height).step(0.01).limits(-1000, 1000);
+        f3("shape/turns", "Shape 3D › Spiral Turns", 0, 32, d.turns, &sh->turns).step(0.01);
+        flag("shape/show", "Shape 3D › Shown in the 3D View", d.show, &sh->show).ramp(Parameter::Ramp::Cut);
+        for (int a = 0; a < 3; ++a)
+            f3("shape/position/" + xyz[a], "Shape 3D › Position " + XYZ[a], -10, 10, 0, &mp->position[size_t(a)]).step(0.01).limits(-10000, 10000);
+        for (int a = 0; a < 3; ++a)
+            f3("shape/rotation/" + xyz[a], "Shape 3D › Rotation " + XYZ[a] + " (°)", -180, 180, 0, &mp->rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
+        f3("shape/scale/all", "Shape 3D › Scale", 0.01, 10, 1, &mp->scale).step(0.01).limits(0.001, 1000);
+        for (int a = 0; a < 3; ++a)
+            f3("shape/scale/" + xyz[a], "Shape 3D › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(0.001, 1000);
     }
     if (type == SourceType::Light) {
         LightSettings *lt = &light;

@@ -324,6 +324,16 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     primitive->setText(1, QStringLiteral("3D primitive"));
     primitive->setText(3, QStringLiteral("Not applicable"));
     primitive->setToolTip(0, QStringLiteral("Add a 3D primitive. Choose its shape in the object's Source tab."));
+    auto *shape3d = generator(m_primitives, QStringLiteral("Shape 3D"), kShape3dPath);
+    shape3d->setText(1, QStringLiteral("3D points"));
+    shape3d->setText(3, QStringLiteral("Not applicable"));
+    shape3d->setToolTip(0, QStringLiteral("Points laid out by a rule (circle, rectangle, line, grid, spiral, sphere, random): a path "
+                                          "for lights and the camera. Drop it onto a 3D scene."));
+    auto *empty3d = generator(m_primitives, QStringLiteral("Empty"), kEmpty3dPath);
+    empty3d->setText(1, QStringLiteral("3D point"));
+    empty3d->setText(3, QStringLiteral("Not applicable"));
+    empty3d->setToolTip(0, QStringLiteral("A point of a 3D scene (a Merge 3D): place objects under it, aim a light or the camera "
+                                          "at it. Drop it onto a 3D scene."));
     m_inputs = new BinItem(m_videoRoot, {QStringLiteral("Inputs")});
     m_isf = new BinItem(m_videoRoot, {QStringLiteral("ISF")});
     m_isfGenerators = new BinItem(m_isf, {QStringLiteral("Generators")});
