@@ -1,6 +1,6 @@
 # Ghost Arcade effects
 
-ISF 2.0 versions of the single-pass effects of [Ghost Arcade](https://github.com/riskcapital/ghost-arcade) by
+ISF 2.0 versions of the GLSL effects of [Ghost Arcade](https://github.com/riskcapital/ghost-arcade) by
 riskcapital, generated from its source at commit `a2c62b104fab` by `scripts/port_ghost_arcade.py` and checked to compile.
 
 **Licence.** Ghost Arcade is under the GNU AGPL v3. These shaders are adapted from its code and stay under the
@@ -11,14 +11,17 @@ ISF inputs with its ranges and labels; uniforms Ghost Arcade sets from code beco
 default, except the ones its engine drives from audio, which are fixed at their default. Names that desktop GLSL
 reserves are renamed. The effect logic is unchanged.
 
-**Not ported (28)** — they need what a single ISF pass does not provide:
+**Feedback effects.** The effects that read their own previous output (Feedback Zoom, Reaction Diffusion, Pixel
+Sand…) draw into a persistent ISF buffer, `feedbackBuffer`, which holds the previous frame when read, then show it
+in a second pass. `uHasFeedback` is false on the first frame, as in Ghost Arcade.
+
+**Not ported (17)** — they need what ISF does not provide (WebGPU compute, 3D meshes, a camera mask):
 
 - `gpuFluidSim`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `eulerianMagnify`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `blobTrack`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `blobContour`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `blobHeatmap`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `bloom`: passes the texture to a function
 - `stringOrb`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `sphereWireframe`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `voxelCubeCluster`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
@@ -30,14 +33,4 @@ reserves are renamed. The effect logic is unchanged.
 - `helixParticleStream`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `donutConstellation`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
 - `geometricTilePro`: no standalone GLSL shader (WebGPU, multi-pass or generated in code)
-- `feedbackZoom`: needs other textures: uFeedback
-- `opticalFlowDatamosh`: needs other textures: uFeedback
-- `reactionDiffusion`: needs other textures: uFeedback
-- `pixelSand`: needs other textures: uFeedback
-- `laserSlice`: needs other textures: uFeedback
 - `auraField`: needs other textures: uNativeMask
-- `glitchQuilt`: needs other textures: uFeedback
-- `cellularAutomataBurn`: needs other textures: uFeedback
-- `analogFeedbackRack`: needs other textures: uFeedback
-- `mirrorShards`: needs other textures: uFeedback
-- `ghostExposure`: needs other textures: uFeedback
