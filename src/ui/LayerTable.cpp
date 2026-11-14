@@ -605,17 +605,30 @@ void LayerTable::startRename(int row)
     m_table->setCellWidget(row, ColName, edit);
     edit->setFocus();
     QPointer<RenameEdit> guard(edit);
-    connect(edit, &QLineEdit::editingFinished, this, [this, guard, row, id = r.id] {
+    // Enter or a click elsewhere validates, Esc cancels. The layer is found again by its id once the editor
+    // is gone: the rows may have changed in between.
+    const auto finish = [this, guard, id = r.id](bool restoreFocus) {
         if (!guard || guard->property("done").toBool()) return;
         guard->setProperty("done", true);
         const QString name = guard->text().trimmed();
-        const bool ok = !m_updating && !guard->cancelled && !name.isEmpty() && row < int(m_rows.size()) &&
-                        m_rows[size_t(row)].id == id && name != m_rows[size_t(row)].name;
-        QTimer::singleShot(0, this, [this, guard, row] {
-            if (guard && m_table->cellWidget(row, ColName) == guard) m_table->removeCellWidget(row, ColName);
-            m_table->setFocus();
+        const bool cancelled = guard->cancelled;
+        QTimer::singleShot(0, this, [this, guard, id, name, cancelled, restoreFocus] {
+            for (int i = 0; guard && i < m_table->rowCount(); ++i)
+                if (m_table->cellWidget(i, ColName) == guard) m_table->removeCellWidget(i, ColName);
+            if (restoreFocus) m_table->setFocus();
+            if (cancelled || name.isEmpty()) return;
+            for (int i = 0; i < int(m_rows.size()); ++i)
+                if (m_rows[size_t(i)].id == id) {
+                    if (name != m_rows[size_t(i)].name) emit renamed(i, name);
+                    return;
+                }
         });
-        if (ok) emit renamed(row, name);
+    };
+    connect(edit, &QLineEdit::editingFinished, this, [finish] { finish(true); });
+    // Another layer selected (in the list, the mapping view or the timeline) while renaming: the editor
+    // closes and keeps the name typed, without taking the focus from where the selection was made.
+    connect(m_table, &QTableWidget::currentCellChanged, edit, [finish, row](int current) {
+        if (current != row) finish(false);
     });
 }
 
