@@ -35,14 +35,38 @@ wait_for_main_window() {
     fi
     echo "main window at $X0,$Y0"
 }
+# The main window is shown before the startup project has finished loading. Its
+# missing-media warning is modal and appears afterwards; don't send Return to
+# whichever window happens to have focus during that transition.
+dismiss_open_warning() {
+    local deadline=$((SECONDS + 30)) dialog
+    until dialog=$(xdotool search --onlyvisible --name "^Open Project$" 2>/dev/null | head -n 1) && [ -n "$dialog" ]; do
+        kill -0 "$APP" 2>/dev/null || { fail "application exited before the project warning"; return 1; }
+        [ "$SECONDS" -lt "$deadline" ] || {
+            fail "project missing-media warning did not appear (log: $OUT/log1.txt)"
+            xwininfo -root -tree > "$OUT/windows.txt" 2>&1
+            cat "$OUT/log1.txt"
+            return 1
+        }
+        sleep 0.2
+    done
+    xdotool windowactivate --sync "$dialog"
+    xdotool key Return
+}
 at() { xdotool mousemove $((X0 + $1)) $((Y0 + $2)); }
 roi() { echo "$3x$4+$((X0 + $1))+$((Y0 + $2))"; }
 PREVIEW=""
 
 "$APP_BIN" --endurance-csv "$OUT/endurance.csv" projects/demo.nyxmap >"$OUT/log1.txt" 2>&1 & APP=$!
 wait_for_main_window || exit 1
-xdotool key Return; sleep 1                      # "file not found" warning
-origin || { fail "main window disappeared after project open"; exit 1; }; PREVIEW=$(roi 400 180 700 380)
+dismiss_open_warning || exit 1
+if ! ui_wait_for_window "$APP" 5 "NyxMap"; then
+    fail "main window did not return after dismissing the project warning"
+    xwininfo -root -tree > "$OUT/windows.txt" 2>&1
+    cat "$OUT/log1.txt"
+    exit 1
+fi
+PREVIEW=$(roi 400 180 700 380)
 shot 01_opened; sleep 0.7; shot 01b
 echo "animated preview (pixels changed in 0.7 s): $(same 01_opened 01b "$PREVIEW")"
 
