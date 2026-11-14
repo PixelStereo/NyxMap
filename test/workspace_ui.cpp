@@ -384,6 +384,37 @@ int main(int argc, char **argv)
               "modifier-clicking the last selected row clears the inspector target");
     }
     {
+        // Selecting another layer while renaming closes the editor and keeps the typed name
+        LayerTable list;
+        std::vector<LayerTable::Row> rows(6);
+        for (int i = 0; i < 6; ++i) { rows[i].name = QStringLiteral("Layer %1").arg(i); rows[i].id = quint64(i + 1); }
+        list.setRows(rows); list.resize(1000, 400); list.show(); app.processEvents();
+        auto *table = static_cast<QTableWidget *>(list.table());
+        QList<QPair<int, QString>> renames;
+        QObject::connect(&list, &LayerTable::renamed, [&](int row, const QString &name) { renames.append({row, name}); });
+        const auto editor = [&](int row) { return qobject_cast<QLineEdit *>(table->cellWidget(row, 4 /* name column */)); };
+        list.setCurrentRow(2);
+        list.startRename(2);
+        app.processEvents();
+        if (auto *edit = editor(2)) edit->setText(QStringLiteral("Renamed"));
+        check(editor(2) != nullptr, "F2 opens the rename editor");
+        list.setCurrentRow(4); // another layer selected elsewhere (mapping view, timeline)
+        app.processEvents(); app.processEvents();
+        check(editor(2) == nullptr, "selecting another layer closes the rename editor");
+        check(renames == QList<QPair<int, QString>>{{2, QStringLiteral("Renamed")}},
+              "selecting another layer keeps the name typed");
+        list.startRename(4);
+        app.processEvents();
+        if (auto *edit = editor(4)) {
+            edit->setText(QStringLiteral("Discarded"));
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(edit, &escape);
+        }
+        list.setCurrentRow(1);
+        app.processEvents(); app.processEvents();
+        check(editor(4) == nullptr && renames.size() == 1, "Esc then another selection leaves the name unchanged");
+    }
+    {
         auto *saved = new QMimeData;
         const auto *before = QApplication::clipboard()->mimeData();
         if (before) for (const auto &format : before->formats()) saved->setData(format, before->data(format));
