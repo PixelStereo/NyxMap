@@ -397,7 +397,11 @@ int main(int argc, char **argv)
         output->showOn(screen, true);
         app.processEvents();
         check(output->isVisible() && output->geometry() == screen->geometry(), "fullscreen covers the whole screen");
-        check((output->flags() & Qt::FramelessWindowHint) != 0, "fullscreen output is borderless");
+#ifdef Q_OS_MACOS
+        check((output->flags() & Qt::FramelessWindowHint) != 0, "fullscreen output is borderless (no Space of its own)");
+#else
+        check(output->windowStates() & Qt::WindowFullScreen, "fullscreen output is the system's fullscreen");
+#endif
         output->showOn(screen, false);
         app.processEvents();
         check(output->isVisible() && !(output->flags() & Qt::FramelessWindowHint) &&
