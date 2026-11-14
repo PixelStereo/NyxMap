@@ -1,5 +1,6 @@
 #pragma once
 #include <QHash>
+#include <array>
 #include <QWidget>
 
 class Engine;
@@ -67,7 +68,11 @@ private:
     QPushButton *m_relink, *m_remove, *m_reveal;
     QLabel *m_summary;
     QLineEdit *m_search = nullptr;
-    QComboBox *m_type = nullptr;  // The media: All, Video, Audio
+    // The media, as coloured buttons at the top (one at a time): All, Video, Audio, 3D
+    std::array<class QToolButton *, 4> m_typePills{};
+    int typeIndex() const; // 0 all, 1 video, 2 audio, 3 3D
+    void setTypeIndex(int index);
+    void updateTypeCounts(); // how many items each button shows
     QComboBox *m_kind = nullptr;  // What of it: All, Files, Generators, Inputs, ISF
     QComboBox *m_usage = nullptr; // All, Used (by a layer), Unused
     QToolButton *m_rebuild = nullptr;

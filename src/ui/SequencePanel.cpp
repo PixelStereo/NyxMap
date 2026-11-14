@@ -1073,7 +1073,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     // GO: from the keyboard's Space too. Neither takes the focus: Space and Return stay with the rest of the panel
     m_back = new QPushButton(QStringLiteral("‹"));
     m_back->setObjectName(QStringLiteral("sequenceBack"));
-    m_back->setToolTip(QStringLiteral("GO BACK: the step before (Shift+Space)"));
+    m_back->setToolTip(QStringLiteral("GO BACK: the step before (Alt+Space)"));
     symbolButton(m_back);
     m_go = new QPushButton(QStringLiteral("GO ▶"));
     m_go->setObjectName(QStringLiteral("sequenceGo"));

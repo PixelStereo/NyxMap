@@ -28,6 +28,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QImageReader>
 #include <QLabel>
 #include <QMap>
@@ -186,6 +187,38 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     import->setMenu(importMenu);
     head->addWidget(import);
     v->addLayout(head);
+    // The media to show, as coloured buttons (the colour of each kind is the same in the layer list): one at a time
+    {
+        struct Pill { const char *name; const char *colour; const char *tip; };
+        static const Pill pills[4] = {{"All", "#9fb0d0", "Show all media"},
+                                      {"Video", "#5ad1e0", "Show videos, images, video generators and live inputs"},
+                                      {"Audio", "#3fbf6f", "Show sounds, instruments and audio inputs"},
+                                      {"3D", "#b08cff", "Show 3D models and primitives"}};
+        auto *row = new QHBoxLayout;
+        row->setSpacing(6);
+        auto *group = new QButtonGroup(this);
+        group->setExclusive(true);
+        for (int i = 0; i < 4; ++i) {
+            auto *pill = new QToolButton;
+            pill->setObjectName(QStringLiteral("typePill%1").arg(QLatin1String(pills[i].name)));
+            pill->setCheckable(true);
+            pill->setChecked(i == 0);
+            pill->setText(QLatin1String(pills[i].name));
+            pill->setToolTip(QLatin1String(pills[i].tip));
+            pill->setCursor(Qt::PointingHandCursor);
+            pill->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            const QString c = QLatin1String(pills[i].colour);
+            pill->setStyleSheet(QStringLiteral("QToolButton { background:#35353b; color:%1; border:1px solid #4a4a52; border-bottom:3px solid %1; "
+                                               "border-radius:8px; padding:5px 10px; font-weight:600; }"
+                                               "QToolButton:hover { background:#404048; }"
+                                               "QToolButton:checked { background:%1; color:#16161b; }").arg(c));
+            group->addButton(pill, i);
+            row->addWidget(pill);
+            m_typePills[size_t(i)] = pill;
+        }
+        connect(group, &QButtonGroup::idClicked, this, [this](int) { applyFilter(); });
+        v->addLayout(row);
+    }
     m_search = new QLineEdit;
     m_search->setPlaceholderText(QStringLiteral("Search…"));
     m_search->setClearButtonEnabled(true);
@@ -193,11 +226,6 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     auto *filters = new QHBoxLayout;
     filters->setSpacing(4);
     filters->addWidget(m_search, 1);
-    m_type = new QComboBox;
-    m_type->setObjectName(QStringLiteral("typeFilter"));
-    m_type->addItems({QStringLiteral("All media"), QStringLiteral("Video"), QStringLiteral("Audio"), QStringLiteral("3D")});
-    m_type->setToolTip(QStringLiteral("Show all media, video, audio or 3D"));
-    filters->addWidget(m_type);
     m_kind = new QComboBox;
     m_kind->setObjectName(QStringLiteral("kindFilter"));
     m_kind->addItems({QStringLiteral("All Kinds"), QStringLiteral("Files"), QStringLiteral("Generators"), QStringLiteral("Inputs"),
@@ -211,7 +239,6 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     filters->addWidget(m_usage);
     v->addLayout(filters);
     connect(m_search, &QLineEdit::textChanged, this, &MediaBin::applyFilter);
-    connect(m_type, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
     connect(m_kind, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
     connect(m_usage, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
 
@@ -1246,8 +1273,9 @@ bool MediaBin::reveal(const QString &path)
     if (!item) return false;
     if (item->isHidden()) {
         if (m_search) m_search->clear();
-        for (QComboBox *filter : {m_usage, m_type, m_kind})
+        for (QComboBox *filter : {m_usage, m_kind})
             if (filter) filter->setCurrentIndex(0);
+        setTypeIndex(0);
         applyFilter();
     }
     for (QTreeWidgetItem *up = item->parent(); up; up = up->parent()) up->setExpanded(true);
@@ -1256,11 +1284,39 @@ bool MediaBin::reveal(const QString &path)
     return true;
 }
 
+int MediaBin::typeIndex() const
+{
+    for (size_t i = 0; i < m_typePills.size(); ++i)
+        if (m_typePills[i] && m_typePills[i]->isChecked()) return int(i);
+    return 0;
+}
+
+void MediaBin::setTypeIndex(int index)
+{
+    if (index >= 0 && index < int(m_typePills.size()) && m_typePills[size_t(index)]) m_typePills[size_t(index)]->setChecked(true);
+}
+
+// How many items each button shows: the media under each kind, All being the sum
+void MediaBin::updateTypeCounts()
+{
+    const std::function<int(const QTreeWidgetItem *)> items = [&](const QTreeWidgetItem *it) {
+        int n = it->childCount() == 0 && it->data(0, PathRole).isValid() ? 1 : 0;
+        for (int c = 0; c < it->childCount(); ++c) n += items(it->child(c));
+        return n;
+    };
+    const int video = items(m_videoRoot), audio = items(m_audioRoot), models = items(m_3dRoot);
+    const char *names[4] = {"All", "Video", "Audio", "3D"};
+    const int counts[4] = {video + audio + models, video, audio, models};
+    for (int i = 0; i < 4; ++i)
+        if (m_typePills[size_t(i)]) m_typePills[size_t(i)]->setText(QStringLiteral("%1 %2").arg(QLatin1String(names[i])).arg(counts[i]));
+}
+
 void MediaBin::applyFilter()
 {
+    updateTypeCounts();
     const QString f = m_search ? m_search->text().trimmed() : QString();
     const int usage = m_usage ? m_usage->currentIndex() : 0; // 0 all, 1 used, 2 unused
-    const int media = m_type ? m_type->currentIndex() : 0;   // 0 both, 1 video, 2 audio
+    const int media = typeIndex(); // 0 all, 1 video, 2 audio, 3 3D
     const int kind = m_kind ? m_kind->currentIndex() : 0;    // 0 all, 1 files, 2 generators, 3 inputs, 4 ISF
     const bool filtering = !f.isEmpty() || usage != 0;
     // Leaves (media, shaders) match by name and use; a category stays visible if one of its items does

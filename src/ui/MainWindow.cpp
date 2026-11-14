@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "ConsolePanel.h"
+#include "StatusLine.h"
 #include "AdaptiveSplitter.h"
 #include "NyxMapVersion.h"
 #include "PresetEditor.h"
@@ -47,6 +49,7 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDockWidget>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -161,6 +164,8 @@ static QScrollArea *workspacePane(QWidget *w, const QString &name)
 
 MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m_engine(engine)
 {
+    m_status = new StatusLine(this);
+    setStatusBar(m_status);
     setAcceptDrops(true);
     resize(1600, 980);
     m_undo = new QUndoStack(this);
@@ -457,11 +462,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     qApp->installEventFilter(this); // Shift+1 / Shift+2: left tabs
     setCentralWidget(columns);
 
-    m_contextHelp = new QLabel(statusBar());
-    m_contextHelp->setObjectName(QStringLiteral("contextHelpStatus"));
-    m_contextHelp->setTextFormat(Qt::PlainText);
-    m_contextHelp->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    statusBar()->addWidget(m_contextHelp, 1);
+    m_contextHelp = m_status->line(); // the one line: a message, else what the pointer is over
+    // The Console, below the panels: hidden until the alert button (or Help › Console) opens it
+    m_consoleDock = new QDockWidget(QStringLiteral("Console"), this);
+    m_consoleDock->setObjectName(QStringLiteral("consoleDock"));
+    m_consoleDock->setWidget(new ConsolePanel(nullptr, m_consoleDock));
+    m_consoleDock->setFeatures(QDockWidget::DockWidgetClosable);
+    addDockWidget(Qt::BottomDockWidgetArea, m_consoleDock);
+    m_consoleDock->hide();
+    connect(m_status, &StatusLine::alertsClicked, this, &MainWindow::toggleConsole);
 
     auto *usageLabel = new QLabel(statusBar());
     usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
@@ -706,8 +715,13 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // Space: GO, the next step of the sequence (also from the sequences' window and the outputs)
     auto *space = new QShortcut(QKeySequence(Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
     connect(space, &QShortcut::activated, this, &MainWindow::sequenceGo);
-    auto *spaceBack = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
+    // Alt+Space: GO BACK. Shift+Space: the next step, Alt+Shift+Space: the previous one, each without its timing
+    auto *spaceBack = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
     connect(spaceBack, &QShortcut::activated, this, &MainWindow::sequenceBack);
+    auto *spaceNext = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
+    connect(spaceNext, &QShortcut::activated, this, &MainWindow::sequenceGoWithoutTiming);
+    auto *spaceBackNow = new QShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Space), this, nullptr, nullptr, Qt::ApplicationShortcut);
+    connect(spaceBackNow, &QShortcut::activated, this, &MainWindow::sequenceBackWithoutTiming);
     connect(m_seqWindow, &SequenceWindow::goRequested, this, &MainWindow::sequenceGo);
     connect(m_seqWindow, &SequenceWindow::backRequested, this, &MainWindow::sequenceBack);
     connect(m_seqWindow, &SequenceWindow::goToRequested, this, &MainWindow::sequenceGoTo);
@@ -905,7 +919,7 @@ void MainWindow::showContextHelp(QWidget *widget, QString text)
     }
     text = text.simplified();
     m_helpWidget = text.isEmpty() ? nullptr : widget;
-    if (m_contextHelp->text() != text) m_contextHelp->setText(text);
+    m_status->setHelp(text); // shown while no message is up
 }
 
 bool MainWindow::eventFilter(QObject *o, QEvent *e)
@@ -1008,11 +1022,14 @@ bool MainWindow::handleControlKey(int key, Qt::KeyboardModifiers mods)
 {
     const bool ctrl = mods & Qt::ControlModifier;
     const bool shift = mods & Qt::ShiftModifier;
+    const bool alt = mods & Qt::AltModifier;
     if (ctrl && key == Qt::Key_Escape) emergencyStop();
     else if (ctrl && key == Qt::Key_B) setBlackout(!m_composition->isBlackout());
     else if (ctrl && shift && key == Qt::Key_F) toggleAllOutputs(1);
     else if (ctrl && key == Qt::Key_F) toggleAllOutputs(2);
-    else if (!ctrl && shift && key == Qt::Key_Space) sequenceBack();
+    else if (!ctrl && alt && shift && key == Qt::Key_Space) sequenceBackWithoutTiming();
+    else if (!ctrl && alt && key == Qt::Key_Space) sequenceBack();
+    else if (!ctrl && shift && key == Qt::Key_Space) sequenceGoWithoutTiming();
     else if (!ctrl && key == Qt::Key_Space) sequenceGo();
     else return false;
     return true;
@@ -1032,6 +1049,8 @@ void MainWindow::setBlackout(bool on)
 void MainWindow::buildMenus()
 {
     QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
+    help->addAction(QStringLiteral("Console (messages, errors and warnings)"), this, &MainWindow::toggleConsole);
+    help->addSeparator();
     auto *about = help->addAction(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME), this, [this] {
         QMessageBox box(this);
         box.setWindowTitle(QStringLiteral("About ") + QStringLiteral(NYXMAP_APP_NAME));
@@ -1200,7 +1219,9 @@ void MainWindow::buildMenus()
 
     QMenu *seq = menuBar()->addMenu(QStringLiteral("&Sequence"));
     seq->addAction(QStringLiteral("GO — next step (Space)"), this, &MainWindow::sequenceGo);
-    seq->addAction(QStringLiteral("GO BACK — previous step (Shift+Space)"), this, &MainWindow::sequenceBack);
+    seq->addAction(QStringLiteral("GO BACK — previous step (Alt+Space)"), this, &MainWindow::sequenceBack);
+    seq->addAction(QStringLiteral("Next step without its timing, straight to its state (Shift+Space)"), this, &MainWindow::sequenceGoWithoutTiming);
+    seq->addAction(QStringLiteral("Previous step without its timing, straight to its state (Alt+Shift+Space)"), this, &MainWindow::sequenceBackWithoutTiming);
     seq->addAction(QStringLiteral("Stop the waits (pre-waits and follows still to come)"), &m_engine->sequencer(), &Sequencer::stop);
     // The key is handled by the event filter (also from the output windows): only shown here, after the tab
     seq->addAction(QStringLiteral("STOP ALL\t%1").arg(emergencyStopKeyText()), this, &MainWindow::emergencyStop);
@@ -3112,9 +3133,13 @@ void MainWindow::emergencyStop()
                                  .arg(emergencyStopKeyText()), 5000);
 }
 
+void MainWindow::toggleConsole() { m_consoleDock->setVisible(!m_consoleDock->isVisible()); }
+
 void MainWindow::sequenceGo() { m_engine->sequencer().go(); }
 
 void MainWindow::sequenceBack() { m_engine->sequencer().back(); }
+void MainWindow::sequenceGoWithoutTiming() { m_engine->sequencer().goWithoutTiming(); }
+void MainWindow::sequenceBackWithoutTiming() { m_engine->sequencer().backWithoutTiming(); }
 
 // The step's GO: its pre-wait, then its snapshot (recalled through the undo stack, see the recaller), then what follows
 void MainWindow::sequenceGoTo(int step) { m_engine->sequencer().goTo(step); }
