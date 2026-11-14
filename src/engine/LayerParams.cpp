@@ -775,8 +775,10 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
-        if (material || (model && model->isPrimitive())) {
-            auto *shared = material.get();
+        if (instanceOf) // an Instance: its original's material, or its own colours
+            flag("model/instance/own_material", "Instance › Own Material", false, &instanceOwnMaterial).ramp(Parameter::Ramp::Cut);
+        if (instanceOf || material || (model && model->isPrimitive())) {
+            auto *shared = instanceOf ? nullptr : material.get();
             for (int c = 0; c < 3; ++c)
                 f3(QStringLiteral("model/material/color/") + QChar("rgb"[c]), QStringLiteral("Material › Color ") + QChar("RGB"[c]), 0, 1,
                    0.8, shared ? &shared->color[size_t(c)] : &mp->color[size_t(c)]).colorComponent(c);

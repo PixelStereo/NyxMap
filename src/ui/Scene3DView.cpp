@@ -381,12 +381,14 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
                 o.scale = p.scale;
-                if (l->model) { // its bounds, placed: what a click picks
-                    const QMatrix4x4 m = o.parent * l->model->matrix(p);
-                    const QVector3D c = m.map(l->model->center());
+                if (const auto model = m_engine->modelOf(*l)) { // its bounds (an Instance: its original's), placed
+                    ModelPlacement placed = p;
+                    if (const Layer *o = l->instanceOf ? m_engine->originalOf(*l) : nullptr) placed.fit = o->modelPlacement.fit;
+                    const QMatrix4x4 m = o.parent * model->matrix(placed);
+                    const QVector3D c = m.map(model->center());
                     o.position = c;
-                    o.radius = std::max(0.05f, (m.map(l->model->center() + QVector3D(l->model->radius(), 0, 0)) - c).length());
-                    o.reach = l->model->radius() * std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
+                    o.radius = std::max(0.05f, (m.map(model->center() + QVector3D(model->radius(), 0, 0)) - c).length());
+                    o.reach = model->radius() * std::max({m.column(0).toVector3D().length(), m.column(1).toVector3D().length(), m.column(2).toVector3D().length()});
                 }
             }
             out.push_back(o);

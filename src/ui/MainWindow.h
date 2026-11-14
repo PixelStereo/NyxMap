@@ -105,7 +105,8 @@ private:
     void fill3dMenu(QMenu *menu); // the 3D button's and the list's context menu entries
     void createMerge3d(const QString &kind = {});
     void addPathToScene();
-    void addCameraToScene();       // a new Merge 3D, holding the 3D objects selected
+    void addCameraToScene();
+    void createInstance();       // a new Merge 3D, holding the 3D objects selected
     void addLightToScene();     // a light in the selected 3D scene (or the scene of the selected object)
     int addLightLayer(int scene); // its index (undoable steps, in the caller's macro)
     void wrapInScene(int layer);  // a model outside any scene goes into a new one, with a light

@@ -132,6 +132,10 @@ public:
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
     bool setLayerPath(int index);                       // the layer becomes a Path of a 3D scene (Path3D.h)
     bool setLayerCamera(int index);                      // the layer becomes a camera of a 3D scene
+    // The layer becomes an Instance of a model (of an instance: of its original); refused: what is not a model
+    bool setLayerInstance(int index, quint64 original);
+    const Layer *originalOf(const Layer &model) const;        // an Instance's original, a model's itself (lock held)
+    std::shared_ptr<Model3D> modelOf(const Layer &model) const; // its model, or its original's (lock held)
     // The Camera object a scene is seen through (0: its own orbit camera); refused: what is not a camera of that scene
     bool setActiveCamera(int scene, quint64 camera);
     // The 3D object of its scene a camera looks at (0: its Look At point); refused: itself, or what is not in its scene

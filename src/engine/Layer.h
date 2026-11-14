@@ -420,6 +420,12 @@ struct Layer {
     ModelPlacement modelTransformFx;
     bool modelTransformFxEnabled = false, modelDisplaceEnabled = false;
     std::shared_ptr<Material3D> material;
+    // An Instance (a model layer with no model of its own): the model it shows, and that model's material, picture,
+    // displacement, shading and detail; its own transform and 3D FX. Edit the original and every instance changes. With
+    // its own material, its colour, metal and roughness are its own. Never holds the model (releasing it would take the
+    // original's GPU meshes): Engine::modelOf
+    quint64 instanceOf = 0;
+    bool instanceOwnMaterial = false;
     quint64 modelPicture = 0; // a model: the layer whose picture (after its FX) covers it, over its UVs (0: its materials)
     quint64 modelDisplace = 0; // a model: the layer whose luminance pushes its points (0: none)
     quint64 lightLookAt = 0;   // a light: the 3D object of its scene it points at, when it looks at something (0: a point)
