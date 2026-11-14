@@ -1213,7 +1213,7 @@ void Engine::renderScene(Layer &g, const std::vector<Layer *> &members, const Is
     const int w = m_compSize.width(), h = m_compSize.height();
     const Layer *env = g.sceneEnvironment ? layer(indexOfId(g.sceneEnvironment)) : nullptr;
     const bool linear = env && g.sceneEnvironmentStage == kStageHdrFile && env->hdrTex.tex; // an HDR file as read
-    const GLuint tex = g.sceneRenderer->draw(g.scene, items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear, m_quality3d);
+    const GLuint tex = g.sceneRenderer->draw(placedCamera(g), items, lamps, w, h, env ? stagePicture(*env, g.sceneEnvironmentStage) : 0, linear, m_quality3d);
     if (!tex) return;
     processLayer(g, tex, w, h, true, rc);
 }
@@ -1227,6 +1227,43 @@ GLuint Engine::stagePicture(const Layer &l, int stage) const
     return l.finalTex;
 }
 
+QMatrix4x4 Engine::pathMatrix(const Layer &shape)
+{
+    QMatrix4x4 parent;
+    for (quint64 up = shape.parent; up;) {
+        const Layer *g = layer(indexOfId(up));
+        if (!g || !g->merge3d) break;
+        parent = g->modelPlacement.transform() * parent;
+        up = g->parent;
+    }
+    return parent * shape.modelPlacement.transform();
+}
+
+SceneSettings Engine::placedCamera(const Layer &scene)
+{
+    SceneSettings s = scene.scene;
+    const Layer *path = scene.cameraPath ? layer(indexOfId(scene.cameraPath)) : nullptr;
+    if (!path || path->type != SourceType::Path || !path->path3d.isPath()) return s;
+    const QVector3D eye = pathMatrix(*path).map(path->path3d.along(double(s.cameraPathPosition) + s.cameraPathTravel));
+    const Layer *looked = scene.cameraLookAt ? layer(indexOfId(scene.cameraLookAt)) : nullptr;
+    const QVector3D target = looked ? placeOf3dObject(*looked) : QVector3D(s.target[0], s.target[1], s.target[2]);
+    QVector3D from = eye - target; // Camera3D::of puts the eye at target + aim(yaw, pitch) * distance
+    if (from.lengthSquared() < 1e-8f) from = QVector3D(0, 0, 0.01f);
+    for (int a = 0; a < 3; ++a) s.target[size_t(a)] = target[a];
+    s.distance = from.length();
+    Camera3D::anglesOf(from.normalized(), &s.yaw, &s.pitch);
+    return s;
+}
+
+QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
+{
+    // Along a Path of its scene: where the shape is, whatever holds the light
+    if (const Layer *path = light.lightPath ? layer(indexOfId(light.lightPath)) : nullptr;
+        path && path->type == SourceType::Path && path->path3d.isPath())
+        return pathMatrix(*path).map(path->path3d.along(double(light.light.pathPosition) + light.light.pathTravel));
+    return parent.map(light.light.located());
+}
+
 QVector3D Engine::placeOf3dObject(const Layer &object)
 {
     QMatrix4x4 parent;
@@ -1236,7 +1273,8 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
         parent = g->modelPlacement.transform() * parent;
         up = g->parent;
     }
-    if (object.type == SourceType::Light) return parent.map(object.light.located());
+    if (object.type == SourceType::Light) return lightPosition(object, parent);
+    if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
     if (object.model) {
         if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
         return (parent * object.model->matrix(object.modelPlacement)).map(object.model->center());
@@ -1248,7 +1286,7 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
 LightSettings Engine::placedLight(const Layer &m, const QMatrix4x4 &parent, QVector3D *target)
 {
     LightSettings light = m.light;
-    const QVector3D at = parent.map(light.located());
+    const QVector3D at = lightPosition(m, parent);
     for (int a = 0; a < 3; ++a) light.position[size_t(a)] = at[a];
     QVector3D points = parent.mapVector(Camera3D::aim(light.yaw, light.pitch));
     if (light.lookAt) {

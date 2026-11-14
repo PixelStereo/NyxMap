@@ -2,9 +2,10 @@
 #include "../engine/Engine.h"
 // Presets in the interface: which one is selected, the Edit mode, and the parameters' widgets that can go in one.
 //
-// The inspector's widgets of a value register here (AnimateMenu::attach does it). In Edit mode, each one in the
-// selected preset is underlined: green, or orange once its value is no longer the preset's; a click on its name (or an
-// Alt-click on its field) puts it in the preset or takes it out. Out of Edit mode the lines go. A right-click on it
+// The inspector's widgets of a value register here (AnimateMenu::attach does it). In Edit mode (⌘E / Ctrl+E), each one in
+// the selected preset is underlined: green, or orange once its value is no longer the preset's; each one that could go in
+// it and is not, red; the window gets a red frame and a badge. A click on its name (or an Alt-click on its field) puts it
+// in the preset or takes it out. Out of Edit mode the lines go. A right-click on it
 // offers Add to New Preset / Add to Selected Preset. Every change is one undo step.
 
 #include <QObject>
@@ -56,6 +57,9 @@ public:
     void removeFromSelected(quint64 layer, const QStringList &paths);
     void removeFromPreset(quint64 preset, quint64 layer, const QStringList &paths);
     bool inSelected(quint64 layer, const QStringList &paths) const; // one of them at least
+    // How a tracked widget is marked now: 0 none, 1 in the selected preset, 2 in it with another value, 3 could go in it
+    // (Edit mode, red), -1 not tracked (tests)
+    int mark(const QWidget *w);
 
 signals:
     void editingChanged(bool on);
@@ -70,7 +74,7 @@ private:
         quint64 layer = 0;
         QStringList paths;
         bool name = false; // a label or a switch: its name, the one marked
-        int state = 0;     // 0 not in the selected preset, 1 in it, 2 in it with another value now
+        int state = 0;     // 0 not marked, 1 in the selected preset, 2 in it with another value now, 3 could go in it (Edit mode)
         bool driven = false; // an enabled animation track or interaction targets one of these values
     };
     void captureCategory(Engine::Preset &preset, quint64 layer, const QString &path) const;
@@ -84,6 +88,7 @@ private:
     bool m_editing = false;
     quint64 m_selectedSnapshot = 0;
     quint64 m_selected = 0;
+    QString m_editingName; // the selected preset's, on the Edit mode badge
     std::vector<Tracked> m_tracked;
     QTimer m_timer;
     QObject *m_swallow = nullptr; // a press taken: its release and double-click go too

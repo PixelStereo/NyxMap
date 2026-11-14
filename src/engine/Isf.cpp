@@ -375,6 +375,9 @@ std::vector<Parameter> IsfInstance::parameters(const QString &title) const
     out.emplace_back(QStringLiteral("speed"), cat + QStringLiteral("Speed"), T::Float);
     out.back().range(0, 10).step(0.01).byDefault(1.0).bind([self] { return self->speed; },
                                                            [self](const QVariant &v) { self->speed = v.toDouble(); });
+    // Restart: from its first frame, as when it was loaded (an action: a preset or a cue can hold it)
+    out.emplace_back(QStringLiteral("restart"), cat + QStringLiteral("Restart"), T::Trigger);
+    out.back().bind(nullptr, [self](const QVariant &) { self->requestRestart(); });
     out.emplace_back(QStringLiteral("enable"), cat + QStringLiteral("Enable"), T::Bool);
     out.back().byDefault(true).bind([self] { return self->enabled; }, [self](const QVariant &v) { self->enabled = v.toBool(); });
     // How much of the effect goes on: a fade between the picture it was given and its result (under its mask and channels)
@@ -911,6 +914,14 @@ void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, i
         return;
     }
 
+    if (m_restartPending) { // from its first frame: its time, its frame count and what its persistent buffers kept
+        m_restartPending = false;
+        m_time = 0;
+        m_frameIndex = 0;
+        for (IsfTarget &t : m_targets)
+            for (RenderTarget &rt : t.rt)
+                if (rt.fbo) rt.clear();
+    }
     const double dt = repeatFrame ? 0.0 : rc.dt * speed;
     if (!repeatFrame) m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
     f->glUseProgram(m_program);

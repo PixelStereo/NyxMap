@@ -45,6 +45,7 @@ endif()
 add_library(nyxmap_engine STATIC
   src/engine/Gl.cpp
   src/engine/Model3D.cpp
+  src/engine/Path3D.cpp
   src/engine/MaterialX.cpp
   third_party/ufbx/ufbx.c
   src/engine/Isf.cpp
@@ -635,7 +636,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NYXMAP_TESTS "Build the engine tests" ON)
 if(NYXMAP_TESTS)
-  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/scene3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/scene3d.cpp test/path3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(nyxmap_tests PRIVATE src/ui)
   target_link_libraries(nyxmap_tests PRIVATE nyxmap_engine)
   target_compile_options(nyxmap_tests PRIVATE ${NYXMAP_WARNINGS})
@@ -698,17 +699,22 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_hand_inference_test PRIVATE nyxmap_engine)
   add_test(NAME vision_hand_inference COMMAND nyxmap_hand_inference_test)
   set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+  add_executable(nyxmap_preset_actions_test test/preset_actions.cpp)
+  target_link_libraries(nyxmap_preset_actions_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_preset_actions_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME preset_actions COMMAND nyxmap_preset_actions_test)
+  set_tests_properties(preset_actions PROPERTIES TIMEOUT 60)
   add_executable(nyxmap_isf_library_test test/isf_library.cpp)
   target_link_libraries(nyxmap_isf_library_test PRIVATE nyxmap_engine)
   add_test(NAME isf_library COMMAND nyxmap_isf_library_test)
   add_executable(nyxmap_color_timeline_ui_test test/color_timeline_ui.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
-                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/PresetEditor.cpp)
   target_include_directories(nyxmap_color_timeline_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_color_timeline_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME color_timeline_ui COMMAND nyxmap_color_timeline_ui_test)
   set_tests_properties(color_timeline_ui PROPERTIES TIMEOUT 30)
   add_executable(nyxmap_timeline_events_ui_test test/timeline_events_ui.cpp src/ui/AnimEditor.cpp src/ui/ShowMenus.cpp src/ui/TimelinePanel.cpp src/ui/TimelineActivity.cpp
-                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp)
+                 src/ui/Commands.cpp src/ui/Widgets.cpp src/ui/ColorPicker.cpp src/ui/PresetEditor.cpp)
   target_include_directories(nyxmap_timeline_events_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_timeline_events_ui_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME timeline_events_ui COMMAND nyxmap_timeline_events_ui_test)
@@ -867,7 +873,7 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_cue_dispatch_test PRIVATE nyxmap_engine Qt6::Widgets)
   add_test(NAME cue_dispatch COMMAND nyxmap_cue_dispatch_test)
   set_tests_properties(cue_dispatch PROPERTIES TIMEOUT 60)
-  foreach(area scene3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area scene3d path3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks text_writing file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
   endforeach()

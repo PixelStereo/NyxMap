@@ -130,6 +130,16 @@ public:
     int sceneTrianglesComputed(int scene) const;
     int addMerge3d(const QString &name = {}, int at = 0); // an empty Merge 3D: a transform for the 3D objects it holds
     bool setLayerLight(int index);                       // the layer becomes a light of a 3D scene
+    bool setLayerPath(int index);                       // the layer becomes a Path of a 3D scene (Path3D.h)
+    // The Path a light travels along (0: its own path); refused: what is not a Path of its scene
+    bool setLightPath(int index, quint64 shape);
+    // A scene's camera along a Path (0: it orbits its target), looking at an object of the scene (0: its target)
+    bool setCameraPath(int scene, quint64 shape);
+    bool setCameraLookAt(int scene, quint64 object);
+    // A Path's place in its scene: its own placement under its Merge 3Ds (lock held)
+    QMatrix4x4 pathMatrix(const Layer &shape);
+    // A scene's camera as it is drawn: along its path and looking at its object when it has them (lock held)
+    SceneSettings placedCamera(const Layer &scene);
     bool setModelPicture(int index, quint64 picture, QString *err = nullptr); // a layer's picture on a 3D model
     bool setModelDisplace(int index, quint64 layer, QString *err = nullptr);  // a layer's luminance pushing its points
     bool setModelLayer(int index, quint64 layer, bool displace, QString *err, int stage = -1);
@@ -139,6 +149,7 @@ public:
     // point it looks at, when it looks at one
     LightSettings placedLight(const Layer &light, const QMatrix4x4 &parent, QVector3D *target = nullptr);
     QVector3D placeOf3dObject(const Layer &object); // in its scene, through its Merge 3Ds (lock held)
+    QVector3D lightPosition(const Layer &light, const QMatrix4x4 &parent); // its path's point, or its own (lock held)
     bool setSceneEnvironment(int index, quint64 layer, QString *err = nullptr, int stage = -1); // a 3D scene's HDRI
     // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k, kStageHdrFile an HDR
     // image's file as read (linear, unclipped; its final picture when it has none) (render thread, lock held)

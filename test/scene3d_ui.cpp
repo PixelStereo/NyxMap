@@ -394,11 +394,15 @@ int runScene3dUiTests(Engine &engine)
             check(newScene && targets, "model context offers a new scene and existing 3D holders");
         }
 
-        int primitives = 0;
+        QStringList primitives;
         for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>())
             for (QTreeWidgetItem *found : tree->findItems("3D Primitives", Qt::MatchStartsWith | Qt::MatchRecursive))
-                primitives = found->childCount();
-        check(primitives == 1, "the Media Bin offers a single configurable 3D primitive");
+                for (int k = 0; k < found->childCount(); ++k) primitives << found->child(k)->text(0);
+        primitives.sort();
+        if (primitives != QStringList({"Empty", "Path", "Primitive 3D"}))
+            std::printf("3D Primitives: %s\n", qPrintable(primitives.join(", ")));
+        check(primitives == QStringList({"Empty", "Path", "Primitive 3D"}),
+              "the Media Bin offers one configurable 3D primitive, a Path and an Empty");
         check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
     } else {
         check(false, "the Media Bin");

@@ -51,7 +51,10 @@ struct ParamInfo {
     int colorComponent = -1; // explicit RGB(A) member at <color path>/r,g,b,a; -1: not a color
     int pointComponent = -1; // explicit XY member at <point path>/x,y; -1: not a point
     bool stored = false;     // saved in a file and a snapshot (Parameter::isStored)
-    bool presettable = false; // a preset can hold it: stored, or a state of the show (Enable, Solo, Blackout)
+    bool presettable = false; // a preset can hold it: stored, a state of the show (Enable, Solo, Blackout), or an action
+    // An action rather than a value: a Trigger (Rewind, Start, a timeline's Play, GO), or a value it can only be sent
+    // (Seek To). A preset holds it as something to do when it is recalled, after its values
+    bool action = false;
 
     bool isNumber() const { return type == Type::Float || type == Type::Int; }
     QString name() const; // its own name, without the category ("Rotation (°)")
