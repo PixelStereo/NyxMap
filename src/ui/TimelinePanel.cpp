@@ -1,6 +1,7 @@
 #include "TimelinePanel.h"
 #include "Commands.h"
 #include "Engine.h"
+#include "PresetEditor.h"
 #include "Widgets.h"
 
 #include <QApplication>
@@ -558,6 +559,24 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
         QMenu menu;
         menu.addAction(QStringLiteral("New Timeline"), m_add, &QPushButton::click);
         menu.addAction(QStringLiteral("New Group"), this, [this] { m_groups->newGroup(); });
+        // Its transport as actions of a preset: recalling the preset plays it, stops it…
+        if (const quint64 timeline = row ? row->data(0, TimelineList::TimelineRole).toULongLong() : 0) {
+            if (PresetEditor *presets = PresetEditor::instance()) {
+                QMenu *sub = menu.addMenu(QStringLiteral("Add to Preset"));
+                const bool selected = presets->selected() != 0;
+                for (const auto &[key, label] : std::vector<std::pair<QString, QString>>{
+                         {"play", "Play"}, {"pause", "Pause"}, {"stop", "Stop"}, {"rewind", "Rewind"}}) {
+                    const QString path = QStringLiteral("timeline/%1/%2").arg(timeline).arg(key);
+                    QAction *a = sub->addAction(label + (selected ? QStringLiteral(" (selected preset)") : QStringLiteral(" (new preset)")), this,
+                                                [presets, path, selected] {
+                                                    if (selected) presets->addToSelected(0, {path});
+                                                    else presets->addToNew(0, {path});
+                                                });
+                    a->setCheckable(selected);
+                    a->setChecked(selected && presets->inSelected(0, {path}));
+                }
+            }
+        }
         m_groups->fillMenu(menu, row);
         menu.exec(m_list->viewport()->mapToGlobal(pos));
     });

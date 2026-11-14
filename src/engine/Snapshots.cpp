@@ -561,6 +561,14 @@ void Engine::recallPreset(int i)
         if (params.contains("solo")) l->solo = params.value("solo").toBool();
         applyParams(*l, params, timing, easing, fade, *job, false, false, false, delays);
         if (!job->done()) m_fades.push_back(std::move(job));
+        // Its actions (Rewind, Seek To, Start…), after its values: a media rewound once its source and range are set
+        for (Parameter *p : l->parameters()) {
+            const auto it = params.constFind(p->path());
+            if (it == params.constEnd() || p->isStored() || !p->info().action) continue;
+            const double delay = delayOf(delays, p->path());
+            if (delay > 0) scheduleRecall(layerId, p->path(), it.value(), 0, QString(), delay);
+            else p->setJson(it.value());
+        }
     }
     // Restore the captured modulation definitions after writing static values.
     // Replace the held drivers and any RGB drivers competing for their channels.

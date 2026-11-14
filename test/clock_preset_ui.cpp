@@ -82,7 +82,10 @@ int runClockPresetUiTests(Engine &engine)
         if (!field) return;
         const auto before = engine.parameterValue(id, path);
         const auto count = engine.preset(pi).values.size();
+        QWidget *marked = label ? label : field; // the name is the one underlined when there is one
+        check(presets.mark(marked) == 3, qPrintable(path + ": in Edit mode, a value that could go in the preset is underlined in red"));
         click(field, Qt::AltModifier);
+        check(presets.mark(marked) == 1, qPrintable(path + ": once in the preset it is green"));
         check(presets.inSelected(id, {path}) && engine.preset(pi).values.size() == count + 1,
               qPrintable(path + ": Alt-click stores exactly the individual setting"));
         check(engine.parameterValue(id, path) == before, qPrintable(path + ": preset selection leaves the live value unchanged"));
@@ -115,6 +118,11 @@ int runClockPresetUiTests(Engine &engine)
         if (kind == ClockKind::Countdown) engine.setParameter(id, "clock/at_zero", "text");
         showSource();
         for (const auto &path : QStringList{"clock/format", "clock/custom_format"}) exercise(path);
+        if (const QByteArray shots = qgetenv("NYXMAP_TEST_SHOTS"); !shots.isEmpty() && kind == ClockKind::Stopwatch) {
+            presets.mark(&inspector); // the marks as they are now
+            pump();
+            inspector.grab().save(QString::fromLocal8Bit(shots) + "/preset-edit.png");
+        }
         if (kind == ClockKind::Stopwatch) exercise("clock/offset");
         if (kind != ClockKind::Clock) {
             exercise("clock/fps"); exercise("clock/play"); exercise("clock/elapsed");

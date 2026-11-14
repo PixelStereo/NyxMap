@@ -159,6 +159,9 @@ public:
     QJsonObject save(const QString &projectDir, bool withParams = true) const;
     void restore(const QJsonObject &o, const QString &projectDir); // GL context current (its images are loaded)
     void resetParams();
+    // Restart: TIME and FRAMEINDEX back to 0, its persistent buffers emptied, at its next render (a preset can hold it)
+    void requestRestart() { m_restartPending = true; }
+    double time() const { return m_time; }
 
     QString path() const { return m_path; }
     QString name() const { return m_name; }
@@ -228,4 +231,5 @@ private:
           m_locFrameIndex = -1;
     double m_time = 0;
     int m_frameIndex = 0;
+    bool m_restartPending = false; // Restart asked: done by the next render (its buffers are the render thread's)
 };

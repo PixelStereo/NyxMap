@@ -2717,6 +2717,7 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
             b->setProperty("allowLocked", true);
             playRow->addWidget(b);
             const double step = k.step;
+            if (step == 0) m_animate->attach(b, {QStringLiteral("rewind")}); // an action a preset can hold (Alt-click)
             connect(b, &QToolButton::clicked, this, [this, step, frame] {
                 double to = 0;
                 {
@@ -3021,6 +3022,15 @@ QWidget *LayerInspector::buildSourceTab(const LayerValues &s)
         reset->setToolTip(QStringLiteral("Every parameter of the shader back to its default value (one undo step)"));
         auto *resetRow = new QHBoxLayout;
         resetRow->addWidget(reset);
+        // Restart: from its first frame (TIME and FRAMEINDEX at 0, its buffers emptied); an action a preset can hold
+        auto *restart = new QPushButton(QStringLiteral("Restart"));
+        restart->setObjectName(QStringLiteral("isfRestart"));
+        restart->setToolTip(QStringLiteral("Play the shader from its first frame: TIME and FRAMEINDEX back to 0, its persistent buffers "
+                                           "emptied. In a preset (Alt-click in Edit mode), it restarts the shader when the preset is recalled."));
+        restart->setProperty("allowLocked", true);
+        m_animate->attach(restart, {QStringLiteral("restart")});
+        connect(restart, &QPushButton::clicked, this, [this] { m_engine->setParameter(m_layerId, QStringLiteral("restart"), true); });
+        resetRow->addWidget(restart);
         resetRow->addStretch();
         v->addLayout(resetRow);
         auto *res = new QHBoxLayout;

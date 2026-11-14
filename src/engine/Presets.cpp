@@ -253,6 +253,17 @@ Engine::PresetValue Engine::presetValue(quint64 layer, const QString &path) cons
     v.layer = layer;
     v.path = path;
     v.value = parameterValue(layer, path);
+    // An action: a trigger is held as "do it"; a value it can only be sent (Seek To) as where the media is now
+    ParamInfo info;
+    if (v.value.isUndefined() && parameterInfo(layer, path, &info) && info.action) {
+        if (info.type == ParamInfo::Type::Trigger) {
+            v.value = true;
+        } else {
+            double now = info.lo;
+            if (path == QLatin1String("seek")) animParamValue(layer, QStringLiteral("playhead"), &now);
+            v.value = std::isfinite(now) ? now : info.lo;
+        }
+    }
     if (layer && path == "enable") {
         Lock lock(&m_mutex);
         const int index = indexOfId(layer);
