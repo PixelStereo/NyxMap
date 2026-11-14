@@ -74,7 +74,7 @@ The same keys work in the Snapshots, Presets and Timelines lists and in a sequen
 | ⌘D / Ctrl+D | Duplicate the row. |
 | ⌘G / Ctrl+G | A new group; in the steps, one step of the steps selected. |
 
-A held key does nothing more than one press. Space stays GO and Shift+Space GO BACK everywhere; in the steps, double-clicking a step's number plays it.
+A held key does nothing more than one press. Space stays GO and Alt+Space GO BACK everywhere; Shift+Space plays the next step and Alt+Shift+Space the previous one without their timing: at once, nothing following them, and straight to their state (the fade of their snapshot or preset, and every delay, are over); in the steps, double-clicking a step's number plays it.
 
 The field above each library list narrows it to the names holding what is typed (whatever its case and accents) or to a number; Esc empties it.
 

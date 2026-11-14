@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "AppConsole.h"
 #include "HandTracking.h"
 #include "EnduranceLogger.h"
 #include "MainWindow.h"
@@ -29,6 +30,15 @@
 
 static std::atomic<bool> s_quitDone{false}; // set once quitting is over (the watchdog below)
 
+// What Qt and the libraries warn about is kept for the Console, then goes where it went (the terminal)
+static QtMessageHandler s_previousMessageHandler = nullptr;
+static void consoleMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
+{
+    if (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg)
+        AppConsole::instance().add(type == QtWarningMsg ? AppConsole::Warning : AppConsole::Error, QStringLiteral("Qt"), message);
+    if (s_previousMessageHandler) s_previousMessageHandler(type, context, message);
+}
+
 int main(int argc, char *argv[])
 {
     // OpenGL 3.3 core everywhere (macOS then provides 4.1 core). Contexts shared between engine and windows.
@@ -43,6 +53,7 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QApplication app(argc, argv);
+    s_previousMessageHandler = qInstallMessageHandler(consoleMessageHandler);
     ignoreWheelOnFields(&app); // the trackpad scrolls the panels, it never changes a value
     QApplication::setApplicationName("NyxMap");
     QApplication::setOrganizationName("NyxMap");

@@ -521,6 +521,27 @@ int runScene3dUiTests(Engine &engine)
         check(primitives == QStringList({"Camera", "Empty", "Path", "Primitive 3D"}),
               "the Media Bin offers one configurable 3D primitive, a Camera, an Empty and a Path");
         check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
+        // The media buttons at the top: coloured, one at a time, each with its count; 3D shows only the 3D media
+        auto *pill3d = bin->findChild<QToolButton *>("typePill3D");
+        auto *pillVideo = bin->findChild<QToolButton *>("typePillVideo");
+        auto *pillAll = bin->findChild<QToolButton *>("typePillAll");
+        check(pill3d && pillVideo && bin->findChild<QToolButton *>("typePillAudio") && pillAll, "the Media Bin has All, Video, Audio and 3D buttons");
+        if (pill3d && pillVideo && pillAll) {
+            pill3d->click();
+            pump();
+            bool videoShown = false, modelsShown = false;
+            for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>()) {
+                for (QTreeWidgetItem *found : tree->findItems("Video", Qt::MatchStartsWith | Qt::MatchRecursive))
+                    if (!found->parent()) videoShown |= !found->isHidden();
+                for (QTreeWidgetItem *found : tree->findItems("3D", Qt::MatchStartsWith | Qt::MatchRecursive))
+                    if (!found->parent()) modelsShown |= !found->isHidden();
+            }
+            check(modelsShown && !videoShown && pill3d->isChecked() && !pillAll->isChecked(), "the 3D button shows the 3D media only");
+            check(pill3d->text().startsWith("3D "), "and counts them");
+            if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) bin->grab().save(captures + "/media-bin.png");
+            pillAll->click();
+            pump();
+        }
     } else {
         check(false, "the Media Bin");
     }

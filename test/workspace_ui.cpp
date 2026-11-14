@@ -2,6 +2,7 @@
 #include "MediaBin.h"
 #include <QFile>
 #include "MainWindow.h"
+#include "StatusLine.h"
 #include "SequencePanel.h"
 #include "SnapshotPanel.h"
 #include "TimelinePanel.h"
@@ -64,6 +65,7 @@ int runClockPresetUiTests(Engine &engine);
 int runLayerSourceUiTests(Engine &engine); // layer_source_ui.cpp
 int runScene3dUiTests(Engine &engine);     // scene3d_ui.cpp
 int runAudioFxUiTests(Engine &engine);     // audio_fx_ui.cpp
+int runConsoleUiTests(Engine &engine);     // console_ui.cpp
 int runControlsUiTests(Engine &engine);    // controls_ui.cpp
 int runShowControlUiTests(Engine &engine); // show_control_ui.cpp
 
@@ -285,7 +287,7 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false;
+    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false, consoleUi = false;
     bool showControlUi = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
@@ -297,6 +299,7 @@ int main(int argc, char **argv)
         else if (arg == QLatin1String("--layer-source")) layerSource = true;
         else if (arg == QLatin1String("--scene3d")) scene3dUi = true;
         else if (arg == QLatin1String("--audio-fx")) audioFx = true;
+        else if (arg == QLatin1String("--console")) consoleUi = true;
         else if (arg == QLatin1String("--controls")) controlsUi = true;
         else if (arg == QLatin1String("--show-control")) showControlUi = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
@@ -314,6 +317,11 @@ int main(int argc, char **argv)
     }
     if (controlsUi) {
         const int failures = runControlsUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (consoleUi) {
+        const int failures = runConsoleUiTests(engine);
         engine.shutdown();
         return failures ? 1 : 0;
     }
@@ -516,6 +524,7 @@ int main(int argc, char **argv)
                 }
             }
         }
+        if (auto *line = window.findChild<StatusLine *>()) line->clearMessage(); // a message in the line hides what is hovered
         auto *contextHelp = window.findChild<QLabel *>("contextHelpStatus");
         auto *usageStatus = window.findChild<QLabel *>("systemUsageStatus");
         check(contextHelp && usageStatus, "context help and resource indicators have separate status fields");
@@ -716,10 +725,10 @@ int main(int argc, char **argv)
                 auto *tree = bin->findChild<QTreeWidget *>();
                 check(tree && tree->columnCount() == 4 && tree->headerItem()->text(3) == "Color space",
                       "media bin has an explicit source color-space column");
-                auto *type = bin->findChild<QComboBox *>("typeFilter");
+                auto *type = bin->findChild<QToolButton *>("typePillAll"); // the media buttons: All, Video, Audio, 3D
                 auto *usage = bin->findChild<QComboBox *>("usageFilter");
                 auto *rebuild = bin->findChild<QToolButton *>("rebuild");
-                check(tree && type && usage && rebuild, "media bin has type, usage filters and a rebuild button");
+                check(tree && type && usage && rebuild, "media bin has media buttons, a usage filter and a rebuild button");
                 auto itemOf = [&](const QString &path) -> QTreeWidgetItem * {
                     for (QTreeWidgetItemIterator it(tree); *it; ++it)
                         if ((*it)->data(0, Qt::UserRole + 1).toString() == QDir::cleanPath(path)) return *it;
@@ -783,12 +792,12 @@ int main(int argc, char **argv)
                         kind->setCurrentIndex(kind->findText("Files"));
                         check(!videos->isHidden() && isfTop->isHidden(), "kind filter Files hides the ISF");
                         kind->setCurrentIndex(0);
-                        type->setCurrentIndex(type->findText("Audio"));
+                        bin->findChild<QToolButton *>("typePillAudio")->click();
                         check(videoRoot->isHidden() && !audioRoot->isHidden(), "media filter Audio hides the Video root");
-                        type->setCurrentIndex(type->findText("Video"));
+                        bin->findChild<QToolButton *>("typePillVideo")->click();
                         check(!videoRoot->isHidden() && audioRoot->isHidden(), "media filter Video hides the Audio root");
                     }
-                    type->setCurrentIndex(0);
+                    type->click();
                     usage->setCurrentIndex(0);
                     rebuild->click();
                     app.processEvents();

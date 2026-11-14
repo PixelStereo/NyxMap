@@ -540,6 +540,29 @@ bool Sequencer::go()
     return goSequence(index);
 }
 
+// A step with no timing: at once (no pre-wait, nothing following), and straight to its state: the fade of its snapshot or
+// preset, its values' own times and delays, are over as it is recalled
+bool Sequencer::goWithoutTiming()
+{
+    const int step = next();
+    return step >= 0 && goCut(step);
+}
+
+bool Sequencer::backWithoutTiming()
+{
+    const int step = previous();
+    return step >= 0 && goCut(step);
+}
+
+bool Sequencer::goCut(int step)
+{
+    if (!goTo(step, false)) return false;
+    // Where the step was played (here, or on the sequencer's own thread, in the order it was asked)
+    if (QThread::currentThread() == thread()) m_engine.finishRecalls();
+    else QMetaObject::invokeMethod(this, [this] { m_engine.finishRecalls(); }, Qt::QueuedConnection);
+    return true;
+}
+
 bool Sequencer::back()
 {
     int index;

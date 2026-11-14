@@ -13,6 +13,9 @@ class LayerInspector;
 class LayerTable;
 class MediaBin;
 class LogPanel;
+class StatusLine;
+class ConsolePanel;
+class QDockWidget;
 class CompositionPanel;
 class SettingsPanel;
 class FixturePanel;
@@ -127,10 +130,14 @@ private:
     void pasteAttributesDialog(); // Paste Attributes…: the parts chosen (as last time) onto the selected layers
     void pasteLayerParams(int parts, const QString &what);     // Engine::LayerParts, onto the selected layers
     void togglePlayCurrent();
-    // Sequences: GO plays the next step of the current sequence, GO BACK the previous one (Space, Shift+Space)
+    // Sequences: GO plays the next step of the current sequence, GO BACK the previous one (Space, Alt+Space); Shift+Space and Alt+Shift+Space: the next and the previous step without their timing
     void emergencyStop(); // Ctrl+Esc (Cmd+Esc on macOS) from the interface or any output window
+    StatusLine *statusBar() const { return m_status; } // hides QMainWindow's: every message goes through the one line
+    void toggleConsole();
     void sequenceGo();
     void sequenceBack();
+    void sequenceGoWithoutTiming();    // Shift+Space: the next step at once, straight to its state
+    void sequenceBackWithoutTiming();  // Alt+Shift+Space: the previous step at once, straight to its state
     void sequenceGoTo(int step);
     void openSequences();
     void openShowControl();
@@ -161,6 +168,8 @@ private:
     LayerTable *m_layerTable = nullptr;
     MediaBin *m_bin = nullptr;
     LogPanel *m_logs = nullptr;
+    StatusLine *m_status = nullptr;     // the status bar: one line, and the alert button
+    QDockWidget *m_consoleDock = nullptr; // the Console, below
     CompositionPanel *m_composition = nullptr;
     SettingsPanel *m_settings = nullptr;
     FixturePanel *m_fixtures = nullptr;
