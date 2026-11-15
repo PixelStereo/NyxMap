@@ -834,10 +834,12 @@ if(NYXMAP_TESTS)
   endif()
   add_test(NAME web_page COMMAND nyxmap_web_page_test)
   set_tests_properties(web_page PROPERTIES TIMEOUT 120)
-  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine show_controls beat_clock
+  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine beat_clock
     audio_levels audio_effects show_editing vision_analysis vision_engine preset_actions pixel_mapping line_generator
-    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine fixture_ui
+    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
+  # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
+  set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
   set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui
