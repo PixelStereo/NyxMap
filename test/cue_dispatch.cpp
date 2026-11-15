@@ -24,7 +24,11 @@ int main(int argc,char **argv) {
     std::atomic<bool> inSlowRecall{false};int recorded=0,heartbeats=0;bool correctThread=false;
     QObject::connect(&engine,&Engine::snapshotRecalled,&engine,[&](int){inSlowRecall=true;QThread::msleep(120);inSlowRecall=false;},Qt::DirectConnection);
     engine.sequencer().setRecallRecorder([&](int cue,const Sequencer::RecallBefore &before){++recorded;correctThread=QThread::currentThread()==app.thread()&&cue==index&&!before.layers.isEmpty();});
-    QTimer heartbeat;heartbeat.setInterval(1);QObject::connect(&heartbeat,&QTimer::timeout,[&]{if(inSlowRecall)++heartbeats;});heartbeat.start();
+    QTimer heartbeat;
+    heartbeat.setTimerType(Qt::PreciseTimer);
+    heartbeat.setInterval(5); // leave ample time for the GUI event loop during the 120 ms cue-thread stall
+    QObject::connect(&heartbeat, &QTimer::timeout, [&] { if (inSlowRecall) ++heartbeats; });
+    heartbeat.start();
     const bool accepted=engine.sequencer().requestSnapshot(id);
     QElapsedTimer wait;wait.start();while(!recorded&&wait.elapsed()<5000){app.processEvents();QThread::msleep(1);}
     int failures=0;
