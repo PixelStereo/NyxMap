@@ -1,5 +1,6 @@
 // The Controls tab: new controls from the menu, played, moved by something else, shaped, deleted — each edit one undo step.
 #include "ControlsPanel.h"
+#include "PresetEditor.h"
 #include "Engine.h"
 #include "Widgets.h"
 #include <QApplication>
@@ -26,6 +27,7 @@ int runControlsUiTests(Engine &engine)
         }
     };
     QUndoStack undo;
+    PresetEditor presets(&engine, &undo); // the panel's widgets register with it
     ControlsPanel panel(&engine, &undo);
     panel.resize(420, 520);
     panel.show();
@@ -43,6 +45,13 @@ int runControlsUiTests(Engine &engine)
               list[2].kind == ShowControl::Kind::Choice && list[3].kind == ShowControl::Kind::Button && list[4].kind == ShowControl::Kind::Color,
           "one of each kind, in order");
     check(panel.findChildren<QWidget *>("controlRow").size() == 5, "five rows");
+    for (const ShowControl &c : list) { // every kind of control can go in a preset: its field and its name are tracked
+        auto *field = panel.findChild<QWidget *>(QStringLiteral("control_%1").arg(c.key));
+        check(field && presets.mark(field) >= 0, "a control's field can go in a preset");
+    }
+    for (QWidget *row : panel.findChildren<QWidget *>("controlRow"))
+        check(row->findChild<QLabel *>("controlName") && presets.mark(row->findChild<QLabel *>("controlName")) >= 0,
+              "a control's name can go in a preset");
     check(undo.count() == 5, "each is one undo step");
     undo.undo();
     pump();
