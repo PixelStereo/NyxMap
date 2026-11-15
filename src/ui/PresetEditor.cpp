@@ -310,6 +310,12 @@ bool PresetEditor::eventFilter(QObject *o, QEvent *e)
         if (type == QEvent::MouseButtonRelease) m_swallow = nullptr;
         return true;
     }
+    // This filter is installed on whole widget subtrees, so it also receives
+    // paint, focus, timer, and other non-mouse events. Never cast those to
+    // QMouseEvent: reading button() from them is an out-of-bounds access.
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseButtonRelease &&
+        type != QEvent::MouseButtonDblClick)
+        return false;
     auto *me = static_cast<QMouseEvent *>(e);
     if (me->button() != Qt::LeftButton) return false;
     const Tracked *t = trackedFor(o);
