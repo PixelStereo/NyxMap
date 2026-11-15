@@ -2518,6 +2518,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         }
         // Sequences: steps recalling snapshots, GO / GO BACK, loop, saved with the project
         {
+            while (e.sequencer().count() > 0) // a new project holds "Sequence 1": start from none
+                e.sequencer().remove(0);
             Sequencer::Sequence seq;
             seq.name = "Show";
             seq.steps = {{e.snapshot(1).id, "Act 1", {}}, {e.snapshot(0).id, "Act 2", {}}, {987654, "gone", {}}};
