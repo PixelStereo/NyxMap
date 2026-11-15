@@ -1,5 +1,6 @@
 // Engine: the layers — creation, order and groups, sources (video, image, sound, ISF generator, another
 // layer), transport, effect chain, and the copy of parameters from one layer to another.
+#include "Naming.h"
 #include "EngineInternal.h"
 #include "Midi.h"
 #include "ImageFile.h"
@@ -1389,7 +1390,14 @@ int Engine::insertLayerCopies(int at, const std::vector<QJsonObject> &states)
     for (size_t k = 0; k < states.size(); ++k) {
         QJsonObject state = states[k];
         state["id"] = remap(state.value("id"));
-        if (k == 0) state["name"] = state.value("name").toString() + QStringLiteral(" copy");
+        if (k == 0) { // the next number no other layer has, never "copy"
+            QStringList taken;
+            {
+                Lock lock(&m_mutex);
+                for (const auto &other : m_layers) taken << other->name;
+            }
+            state["name"] = numberedName(state.value("name").toString(), taken);
+        }
         if (state.contains("parent")) state["parent"] = remap(state.value("parent"));
         if (state.contains("mask")) state["mask"] = remap(state.value("mask"));
         if (state.contains("matte")) {

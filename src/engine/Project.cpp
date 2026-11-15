@@ -106,6 +106,7 @@ void Engine::clearProject()
         m_deferredRecallIndex.clear();
         m_recallClock = 0;
         m_recalledSnapshot = 0;
+        m_recalledPreset = 0;
         m_recallTotal = 0;
         for (auto &[id, t] : m_transitions) retireTransition(std::move(t));
         m_transitions.clear();

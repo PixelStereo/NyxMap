@@ -724,8 +724,9 @@ public:
     // The snapshot recalled last, and where its fade is (its longest time: values with times of their own included)
     struct RecallProgress {
         quint64 snapshot = 0;          // 0: none recalled since the project was opened
+        quint64 preset = 0;            // or the preset recalled last (a recall is of one or of the other)
         double elapsed = 0, total = 0;
-        bool running() const { return snapshot && total > 0 && elapsed < total; }
+        bool running() const { return (snapshot || preset) && total > 0 && elapsed < total; }
         double fraction() const { return total > 0 ? std::min(1.0, elapsed / total) : 1.0; }
     };
     struct FadeJob; // a layer on its way to a snapshot's state (Snapshots.cpp)
@@ -1312,6 +1313,8 @@ private:
     void releaseRetired(bool wait);                                       // render thread, lock held: their OpenGL
     double m_fadeElapsed = 0; // seconds since the last recall
     quint64 m_recalledSnapshot = 0;
+    quint64 m_recalledPreset = 0;   // the last recall was this preset's (a snapshot's recall clears it)
+    void noteRecallTotal();         // m_recallTotal from the fades this recall began (lock held)
     double m_recallTotal = 0;
     quint64 m_nextSnapshotId = 1;
     RenderSettings m_render, m_renderDefaults{0, 0, 0};

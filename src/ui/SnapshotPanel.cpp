@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "SnapshotPanel.h"
 #include "FittedTableHeader.h"
 #include "AdaptiveSplitter.h"
@@ -224,12 +225,25 @@ private:
 class PresetRowDelegate : public QStyledItemDelegate
 {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    PresetRowDelegate(Engine *e, QObject *parent) : QStyledItemDelegate(parent), m_engine(e) {}
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index) const override
     {
         QStyledItemDelegate::paint(p, opt, index);
-        paintPlay(p, opt, index, PresetRole, false);
+        const Engine::RecallProgress r = m_engine->recallProgress();
+        const quint64 id = index.siblingAtColumn(0).data(PresetRole).toULongLong();
+        const bool mine = id && r.preset == id;
+        paintPlay(p, opt, index, PresetRole, mine && r.running());
+        if (!mine || !r.running()) return;
+        // The whole row's width is the preset's time: the green line runs under it
+        const QAbstractItemView *view = qobject_cast<const QAbstractItemView *>(opt.widget);
+        const int total = view ? view->viewport()->width() : opt.rect.width();
+        const QRectF bar(opt.rect.left(), opt.rect.bottom() - 2, opt.rect.width(), 3);
+        const QRectF done = bar.intersected(QRectF(0, bar.top(), r.fraction() * total, bar.height()));
+        if (!done.isEmpty()) p->fillRect(done, kLiveSnapshot);
     }
+
+private:
+    Engine *m_engine;
 };
 } // namespace
 
@@ -2026,7 +2040,17 @@ void SnapshotPanel::connectPresets()
         selectPreset(id);
         emit edited();
     });
-    m_presets->setItemDelegate(new PresetRowDelegate(m_presets));
+    m_presets->setItemDelegate(new PresetRowDelegate(m_engine, m_presets));
+    { // the fade running moves the line under its preset
+        auto *t = new QTimer(this);
+        t->setInterval(33);
+        connect(t, &QTimer::timeout, this, [this] {
+            const Engine::RecallProgress r = m_engine->recallProgress();
+            if (r.preset && (r.running() || m_presetWasRunning)) m_presets->viewport()->update();
+            m_presetWasRunning = r.preset && r.running();
+        });
+        t->start();
+    }
     connect(m_presets, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem *it, int column) {
         if (column != 0 || !it->data(0, PresetRole).toULongLong()) return;
         const QRect r = m_presets->visualItemRect(it);
@@ -2779,7 +2803,9 @@ void SnapshotPanel::duplicateSelected(bool preset)
         const auto before = m_engine->presets();
         auto copy = m_engine->preset(index);
         copy.id = 0;
-        copy.name += QStringLiteral(" (copy)");
+        QStringList taken;
+        for (const auto &other : before) taken << other.name;
+        copy.name = numberedName(copy.name, taken);
         const int added = m_engine->addPreset(copy, index + 1);
         const auto id = m_engine->preset(added).id;
         if (m_undo)
@@ -2792,7 +2818,9 @@ void SnapshotPanel::duplicateSelected(bool preset)
             return;
         auto copy = m_engine->snapshot(index);
         copy.id = 0;
-        copy.name += QStringLiteral(" (copy)");
+        QStringList taken;
+        for (int k = 0; k < m_engine->snapshotCount(); ++k) taken << m_engine->snapshot(k).name;
+        copy.name = numberedName(copy.name, taken);
         int added = -1;
         cmd::editSnapshotLibrary(m_undo, m_engine, QStringLiteral("Duplicate Snapshot"),
                                  [&] { added = m_engine->addSnapshot(copy, index + 1); });

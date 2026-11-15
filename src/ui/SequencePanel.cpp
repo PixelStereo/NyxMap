@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "SequencePanel.h"
 #include "FittedTableHeader.h"
 #include "Engine.h"
@@ -235,15 +236,17 @@ RecallProgressBar::RecallProgressBar(Engine *engine, QWidget *parent) : QWidget(
 void RecallProgressBar::poll()
 {
     const Engine::RecallProgress r = m_engine->recallProgress();
-    const double f = r.snapshot ? r.fraction() : 0.0;
+    const double f = r.snapshot || r.preset ? r.fraction() : 0.0;
     const bool running = r.running();
     if (std::abs(f - m_fraction) < 1e-4 && running == m_running) return;
     m_fraction = f;
     m_running = running;
-    const int mi = m_engine->indexOfSnapshot(r.snapshot);
-    setToolTip(mi < 0 ? QString()
-                      : QStringLiteral("%1. %2 — %3 / %4 s").arg(mi + 1).arg(m_engine->snapshot(mi).name)
-                            .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1));
+    const int mi = m_engine->indexOfSnapshot(r.snapshot), pi = m_engine->indexOfPreset(r.preset);
+    setToolTip(mi >= 0 ? QStringLiteral("%1. %2 — %3 / %4 s").arg(mi + 1).arg(m_engine->snapshot(mi).name)
+                             .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1)
+               : pi >= 0 ? QStringLiteral("Preset %1. %2 — %3 / %4 s").arg(pi + 1).arg(m_engine->preset(pi).name)
+                             .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1)
+                         : QString());
     update();
 }
 
@@ -935,7 +938,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     connect(m_dup, &QPushButton::clicked, this, [this, current] {
         if (current() < 0) return;
         Sequencer::Sequence s = m_engine->sequencer().sequence(current());
-        s.name += QStringLiteral(" copy");
+        QStringList taken;
+        for (int k = 0; k < m_engine->sequencer().count(); ++k) taken << m_engine->sequencer().sequence(k).name;
+        s.name = numberedName(s.name, taken);
         m_engine->sequencer().setCurrent(m_engine->sequencer().add(s, current() + 1));
         emit edited();
     });

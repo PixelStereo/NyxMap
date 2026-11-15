@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "TimelinePanel.h"
 #include "ShowMenus.h"
 #include "FittedTableHeader.h"
@@ -684,7 +685,9 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
         if (i < 0) return;
         Animation a = m_engine->animation(i);
         a.id = 0;
-        a.name += QStringLiteral(" copy");
+        QStringList taken;
+        for (int k = 0; k < m_engine->animationCount(); ++k) taken << m_engine->animation(k).name;
+        a.name = numberedName(a.name, taken);
         add(a, i + 1, QStringLiteral("Duplicate Timeline"));
     });
     connect(m_del, &QPushButton::clicked, this, [this] {

@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "FixturePanel.h"
 #include "Commands.h"
 #include "Engine.h"
@@ -470,6 +471,9 @@ void FixturePanel::duplicateFixtures()
             if (!ids.count(f.id)) continue;
             Fixture copy = f;
             copy.id = ++next;
+            QStringList taken;
+            for (const Fixture &other : p.fixtures) taken << other.name;
+            copy.name = numberedName(copy.name.isEmpty() ? QStringLiteral("Fixture") : copy.name, taken);
             copy.solo = false;
             copy.center += QPointF(0, f.size.height() * 1.5); // just under it
             if (const std::optional<FixtureType> t = p.resolvedType(f))
