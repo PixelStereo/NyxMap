@@ -998,7 +998,7 @@ int main(int argc, char **argv)
                       "undo restores every selected layer");
             }
             // The list's own opacity bar on a selected row
-            if (auto *cell = table->cellWidget(c, 5); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
+            if (auto *cell = table->cellWidget(c, 6); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
                 emit bar->valueEdited(25);
                 check(std::abs(opacityOf(ids[0]) - .25) < 1e-6 && std::abs(opacityOf(ids[2]) - .25) < 1e-6,
                       "list opacity bar of a selected row sets the whole selection");

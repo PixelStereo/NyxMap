@@ -526,6 +526,18 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         if (rows.contains(m_inspector->layerIndex())) m_inspectorTimer.start(); // inspector resynced after the gesture
         if (rows.size() > 1) refreshLayerList(); // the other rows' bars follow
     });
+    connect(m_layerTable, &LayerTable::blendEdited, this, [this](int row, int mode) {
+        if (refuseLocked(row)) return refreshLayerList();
+        QList<int> rows = m_layerTable->selectedRows();
+        if (!rows.contains(row)) rows = {row};
+        std::vector<std::pair<quint64, QJsonObject>> changes;
+        for (int r : rows)
+            if (r == row || !m_engine->isLocked(r))
+                changes.push_back({m_engine->layerId(r), {{QStringLiteral("blend_mode"), blendModeKey(BlendMode(mode))}}});
+        cmd::setValues(m_undo, m_engine, changes, QStringLiteral("Change Blend Mode"));
+        if (rows.contains(m_inspector->layerIndex())) m_inspectorTimer.start();
+        refreshLayerList();
+    });
     connect(m_layerTable, &LayerTable::removeClicked, this, &MainWindow::removeCurrentLayer);
     connect(m_layerTable, &LayerTable::groupClicked, this, &MainWindow::createGroup);
     connect(m_layerTable, &LayerTable::scene3dClicked, this, [this](QWidget *anchor) {
