@@ -938,6 +938,8 @@ public:
 
     // --- Project
     void newProject();   // empty, with one viewport
+    // "Sequence 1", selected, when the project has no sequence: GO has somewhere to go from the start
+    void ensureSequence();
     bool saveProject(const QString &path, const QJsonObject &uiState, QString *err);
     QJsonObject projectToJson(const QString &projectDir, const QJsonObject &uiState) const; // what saveProject writes
 
@@ -1455,7 +1457,7 @@ private:
                            const QJsonObject &timing, const QJsonObject &easing, double fade, const QJsonObject &delays);
     void makeInteractionParams();    // lock held
     const std::vector<std::unique_ptr<Parameter>> &interactionParams(); // made again when needed (lock held)
-    // The show's actions and states as the composition's parameters (ShowParams.cpp): "show/go", "show/blackout",
+    // The show's actions and states as the composition's parameters (ShowParams.cpp): "show/stop_all", "show/blackout",
     // "snapshot/<id>/recall", "timeline/<id>/play"…; made again when what they act on changes (lock held)
     const std::vector<std::unique_ptr<Parameter>> &showParams();
     static bool isShowParam(const QString &path);

@@ -389,6 +389,7 @@ bool Engine::initialize(QString *err)
     m_library.scan();
     m_clock.start();
     ensureViewport(); // the composition is always shown through at least one viewport
+    ensureSequence(); // and GO has a sequence from the start, as a new project
     m_lastNs = m_clock.nsecsElapsed();
     m_initialized = true;
     return true;

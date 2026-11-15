@@ -1725,13 +1725,8 @@ void SequenceWindow::refresh()
 
 void SequenceWindow::addStep(int at, quint64 snapshot, quint64 timeline, quint64 preset, quint64 sequence, quint64 folder)
 {
-    int cur = m_engine->sequencer().current();
-    if (cur < 0) { // a first sequence for it
-        Sequencer::Sequence s;
-        s.name = QStringLiteral("Sequence 1");
-        cur = m_engine->sequencer().add(s);
-        m_engine->sequencer().setCurrent(cur);
-    }
+    m_engine->ensureSequence(); // a first sequence for a step, if there is none
+    const int cur = m_engine->sequencer().current();
     Sequencer::Sequence s = m_engine->sequencer().sequence(cur);
     if (at < 0 || at > int(s.steps.size())) at = int(s.steps.size());
     Sequencer::Step st;

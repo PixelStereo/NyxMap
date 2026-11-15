@@ -9,7 +9,7 @@
 //     Fixtures    ▸ the groups (their own values, then their fixtures) and the fixtures ▸ each one ▸ its values
 //     Interactions▸ the interactions as their list has them (groups) ▸ each interaction ▸ the values in play
 //     Timelines   ▸ each timeline ▸ its transport, speed, loop mode, its oscillators' period, amplitude…
-//     Sequences   ▸ each sequence ▸ GO, GO Back, Stop
+//     Sequences   ▸ each sequence ▸ GO, GO Back, Stop, Launch Step, Load as Next
 //
 // What a menu does with an owner is its own business (it says which values it takes, and what choosing one does): it is
 // given the owner's menu to fill. Nothing else builds these menus.
