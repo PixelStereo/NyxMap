@@ -953,6 +953,10 @@ int main(int argc, char **argv)
             if (candidate->objectName() != "viewportInspector") inspector = candidate;
         auto opacityOf = [&](quint64 id) { return engine.parameterValue(id, "opacity").toDouble(); };
         check(table && undo && inspector, "layer list, undo stack and inspector present");
+        if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty() && table) {
+            app.processEvents();
+            window.findChild<LayerTable *>()->grab().save(captures + "/layer-list.png");
+        }
         if (table && undo && inspector) {
             const int a = engine.indexOfId(ids[0]), b = engine.indexOfId(ids[1]), c = engine.indexOfId(ids[2]);
             table->clearSelection();
@@ -994,7 +998,7 @@ int main(int argc, char **argv)
                       "undo restores every selected layer");
             }
             // The list's own opacity bar on a selected row
-            if (auto *cell = table->cellWidget(c, 6); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
+            if (auto *cell = table->cellWidget(c, 5); auto *bar = cell ? cell->findChild<SliderField *>() : nullptr) {
                 emit bar->valueEdited(25);
                 check(std::abs(opacityOf(ids[0]) - .25) < 1e-6 && std::abs(opacityOf(ids[2]) - .25) < 1e-6,
                       "list opacity bar of a selected row sets the whole selection");

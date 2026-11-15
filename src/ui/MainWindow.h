@@ -200,7 +200,8 @@ private:
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
-    QTimer m_previewTimer;
+    QTimer m_previewTimer, m_layerThumbTimer; // the layer list's pictures: one layer every moment, not live
+    int m_layerThumbNext = 0;
     QElapsedTimer m_previewClock;
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
