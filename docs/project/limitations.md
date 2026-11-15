@@ -10,7 +10,8 @@ Known problems of the current version. Planned work is in the [Roadmap](roadmap.
   profiles or signal encoding; physical 10-bit output remains unverified.
 - **Timing:** long stalls skip feedback/simulation steps. Physical A/V recovery and
   clock stability remain unmeasured. Input acquisition continues while paused.
-- **Resources:** soft budgets miss some FFmpeg/driver/GPU allocations. Render-lock
+- **Resources:** the video budget leaves out FFmpeg's and the drivers' own allocations;
+  graphics memory is reported, not limited. Render-lock
   contention, retained decoder threads and control-event drops under load need
   measurement. Readback waits accumulate per output; slow IO can delay shutdown.
 - **Playback and recalls:** FFT startup adds 85 ms at 48 kHz. ProRes 4444/XQ software

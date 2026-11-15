@@ -82,6 +82,7 @@ struct RenderTarget {
     void bind() const;
     void clear(float r = 0, float g = 0, float b = 0, float a = 0) const;
     void destroy();
+    size_t bytes() const; // graphics memory it holds (estimated)
 };
 
 // Multisampled framebuffer (antialiasing): drawn into, then resolved into a RenderTarget of the same size.
@@ -92,6 +93,7 @@ struct MsaaBuffer {
     void ensure(int w, int h, int samples);
     void resolveInto(const RenderTarget &target) const;
     void destroy();
+    size_t bytes() const; // graphics memory it holds (estimated)
 };
 
 // Simple texture fed from the CPU (video, images).
@@ -103,6 +105,7 @@ struct Texture2D {
     void uploadImage(const QImage &image); // first row is bottom; preserves normalized 16-bit integer samples
     void uploadFloat(const float *rgba, int w, int h); // 32-bit float RGBA (audio for ISF)
     void destroy();
+    size_t bytes() const; // graphics memory it holds (estimated)
 private:
     void uploadPixels(const void *rgba, int w, int h, GLenum format, GLenum type);
 };

@@ -100,6 +100,25 @@ void removeUploadStream() { --s_uploadStreams; }
 int uploadStreams() { return s_uploadStreams.load(std::memory_order_relaxed); }
 size_t uploadShare() { return uploadLimit() / size_t(std::max(1, uploadStreams())); }
 
+// Graphics memory ------------------------------------------------------------
+static std::atomic<size_t> s_gpu[int(Gpu::Count)];
+
+void addGpu(Gpu kind, size_t bytes)
+{
+    if (bytes) s_gpu[int(kind)].fetch_add(bytes, std::memory_order_relaxed);
+}
+void removeGpu(Gpu kind, size_t bytes)
+{
+    if (bytes) s_gpu[int(kind)].fetch_sub(bytes, std::memory_order_relaxed);
+}
+size_t gpuInUse(Gpu kind) { return s_gpu[int(kind)].load(std::memory_order_relaxed); }
+size_t gpuInUse()
+{
+    size_t sum = 0;
+    for (const auto &g : s_gpu) sum += g.load(std::memory_order_relaxed);
+    return sum;
+}
+
 // Threads -------------------------------------------------------------------
 static std::mutex s_threadMutex;
 static int s_threadsInUse = 0, s_decodersOpen = 0;

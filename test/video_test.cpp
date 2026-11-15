@@ -1146,12 +1146,48 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         std::printf("    upload buffers: %.2f MiB at most for 4 layers (limit %.2f MiB)\n", double(peak) / 1048576.0,
                     double(videoBudget::uploadLimit()) / 1048576.0);
         VCHECK(shown && peak > 0 && peak <= videoBudget::uploadLimit() && videoBudget::uploadStreams() == 4);
+        // Their textures in the graphics memory report: four 640×360 YUV 4:2:0 frames' planes, at least
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) >= 4 * size_t(640 * 360 * 3 / 2));
+        VCHECK(e.resourcesJson().value("graphics_memory_video_planes_mb").toDouble() > 0);
         e.newProject();
         e.renderFrame();
         VCHECK(videoBudget::uploadInUse() == 0 && videoBudget::uploadStreams() == 0);
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
         videoBudget::setMemoryLimit(0);
         VideoDecoder::setHardwareDecoding(hw);
     }
+    // Graphics memory report: a render target counts its texture while it holds one
+    {
+        const size_t before = videoBudget::gpuInUse(videoBudget::Gpu::Targets);
+        RenderTarget t;
+        VCHECK(t.ensure(64, 32));
+        VCHECK(t.bytes() == size_t(64 * 32) * (t.bits > 8 ? 8 : 4));
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
+        VCHECK(t.ensure(128, 32)); // another size: the old one no longer counted
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
+        t.destroy();
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before && t.bytes() == 0);
+        Texture2D img;
+        const std::vector<uint8_t> px(size_t(16 * 8 * 4), 255);
+        const size_t images = videoBudget::gpuInUse(videoBudget::Gpu::Images);
+        img.upload(px.data(), 16, 8);
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images + 16 * 8 * 4);
+        img.destroy();
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images);
+    }
+    // Hardware surfaces held (queued, shown, bound) are counted while held, none once the video is closed
+    if (VideoDecoder::hardwareDecoding()) {
+        quint64 staged = 0;
+        playAndGrab(root + "/media/av.mp4", nullptr, &staged);
+        Engine::Lock lk(&e.mutex());
+        const Layer *l = e.layer(0);
+        if (l && l->videoTex && l->videoTex->surfaceUploads() > 0)
+            VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) > 0);
+        else
+            std::printf("    hardware surfaces: none sampled in place here (not checked)\n");
+    }
     e.newProject();
+    e.renderFrame();
+    VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) == 0 && videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
     return g_failures;
 }

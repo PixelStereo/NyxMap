@@ -71,6 +71,7 @@ struct VideoFrame {
     std::vector<uint8_t> bytes;
     AVFrame *av = nullptr;
     size_t budgetBytes = 0; // reservation for decoded CPU frame memory, transferred on move
+    size_t surfaceBytes = 0; // a hardware surface held: counted in the graphics memory report, transferred on move
 
     VideoFrame() = default;
     ~VideoFrame();

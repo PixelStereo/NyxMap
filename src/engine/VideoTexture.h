@@ -80,6 +80,7 @@ private:
     void createPbo(VideoDecoder &dec);
     void destroyPbo(int id);
     void wantUpload(bool on);
+    void releaseHeld();
     void ensurePlanes(const VideoLayout &L);
     void uploadPlane(int p, const VideoLayout::Plane &pl, const void *data, int rowPixels);
     void uploadFrom(const AVFrame *av, const VideoLayout &L); // planes read in place, rows repacked if need be
@@ -90,6 +91,8 @@ private:
     GLuint m_planes[4] = {0, 0, 0, 0};
     GLuint m_rect[4] = {0, 0, 0, 0}; // planes of a hardware surface (rectangle textures)
     AVFrame *m_held = nullptr;       // the frame whose surface is bound: kept until the next one
+    size_t m_heldBytes = 0;          // its surface, in the graphics memory report
+    size_t m_planeBytes[4] = {0, 0, 0, 0}; // storage of each plane texture, in the graphics memory report
     VideoLayout::Plane m_planeShape[4]; // what each texture holds
     bool m_allocated[4] = {false, false, false, false};
     RenderTarget m_out;

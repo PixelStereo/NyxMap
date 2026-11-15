@@ -52,6 +52,16 @@ int decodersOpen();
 int threadLimit();
 void setThreadLimit(int threads); // 0: the default (twice the cores), tests and measurements
 
+// Graphics memory NyxMap allocated (any thread), estimated from the sizes and formats asked for: a report, not a
+// limit. Render targets: every framebuffer texture (layers, effects, outputs, multisampling). Images: textures of
+// still pictures and data. Video planes: the textures a video frame is uploaded to. Surfaces: the hardware
+// decoders' frames NyxMap holds (queued, shown, bound), sampled where they were decoded.
+enum class Gpu { Targets, Images, VideoPlanes, Surfaces, Count };
+void addGpu(Gpu kind, size_t bytes);
+void removeGpu(Gpu kind, size_t bytes);
+size_t gpuInUse(Gpu kind);
+size_t gpuInUse(); // all of them
+
 // The machine's physical memory (0 when the system does not tell)
 size_t physicalMemory();
 

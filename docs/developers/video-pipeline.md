@@ -18,6 +18,29 @@ not required for these optimizations.
   NV12, NV21 and P010 share the UV lookup. Channel selection, alpha, chroma siting,
   range, matrix and bit-depth scaling remain common to all formats.
 
+## Memory budget
+
+`VideoBudget` arbitrates what every stream may hold, in one place.
+
+* **Video memory envelope:** a quarter of the RAM, at most 2.5 GiB
+  (`NYXMAP_VIDEO_MEMORY_MB` overrides it). A fifth goes to the decoded frames
+  kept in the decoders' memory (a soft limit: over it, every stream keeps fewer
+  frames ahead, none is dropped), the rest to the upload buffers.
+* **Upload buffers:** a hard limit. A buffer is reserved before it is made; the
+  layers wanting buffers share the limit evenly, a newcomer getting its share as
+  the others give theirs back. A layer without room uploads from the decoder's
+  memory (the slow path) instead of going over.
+* **Decode threads:** reserved under one lock before FFmpeg opens the decoder
+  (`NYXMAP_DECODE_THREAD_BUDGET`, twice the cores by default). Beyond the limit,
+  a new decoder gets an even share, at least two.
+* **Graphics memory (reported, not limited):** render targets, images, video
+  plane textures and the hardware surfaces NyxMap holds, estimated from their
+  sizes and formats.
+
+`/composition/budget` (OSC) returns all of it as JSON, the status bar shows the
+graphics memory and the video envelope (amber when a budget is exceeded, the
+detail when hovered), and the endurance CSV logs the graphics memory allocated.
+
 ## Validation
 
 `nyxmap_tests --area video` compares GPU output against FFmpeg for planar,

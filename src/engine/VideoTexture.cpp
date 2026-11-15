@@ -336,7 +336,21 @@ void VideoTexture::uploadPlane(int p, const VideoLayout::Plane &pl, const void *
         else f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pl.width, pl.height, format, type, data);
         f->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     }
+    if (!m_allocated[p]) { // its storage made now, of this shape
+        videoBudget::removeGpu(videoBudget::Gpu::VideoPlanes, m_planeBytes[p]);
+        m_planeBytes[p] = compressedTexels(pl.texels)
+                              ? pl.size
+                              : size_t(pl.width) * size_t(pl.height) * size_t(pl.channels) * (pl.texels == VideoLayout::Texels::U16 ? 2 : 1);
+        videoBudget::addGpu(videoBudget::Gpu::VideoPlanes, m_planeBytes[p]);
+    }
     m_allocated[p] = true;
+}
+
+void VideoTexture::releaseHeld()
+{
+    if (m_held) av_frame_free(&m_held);
+    videoBudget::removeGpu(videoBudget::Gpu::Surfaces, m_heldBytes);
+    m_heldBytes = 0;
 }
 
 // A hardware frame: each plane of its surface bound to a rectangle texture
@@ -360,8 +374,12 @@ bool VideoTexture::bindSurface(const VideoFrame &fr, const VideoLayout &L)
     }
     // Kept until the next frame is bound: the GPU reads this surface, which the decoder would otherwise reuse
     AVFrame *ref = av_frame_clone(fr.av);
-    if (m_held) av_frame_free(&m_held);
+    releaseHeld();
     m_held = ref;
+    if (m_held) {
+        m_heldBytes = L.totalBytes;
+        videoBudget::addGpu(videoBudget::Gpu::Surfaces, m_heldBytes);
+    }
     return true;
 }
 
@@ -549,11 +567,15 @@ void VideoTexture::destroy()
             t = 0;
         }
     for (bool &a : m_allocated) a = false;
+    for (size_t &b : m_planeBytes) {
+        videoBudget::removeGpu(videoBudget::Gpu::VideoPlanes, b);
+        b = 0;
+    }
     for (GLuint &t : m_rect)
         if (t) {
             f->glDeleteTextures(1, &t);
             t = 0;
         }
-    if (m_held) av_frame_free(&m_held);
+    releaseHeld();
     m_out.destroy();
 }

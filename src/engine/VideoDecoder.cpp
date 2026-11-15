@@ -83,12 +83,13 @@ void VideoDecoder::setGpuFormats(bool s3tc, bool bptc)
 VideoFrame::~VideoFrame() { releaseAv(); }
 
 VideoFrame::VideoFrame(VideoFrame &&o) noexcept
-    : pts(o.pts), layout(std::move(o.layout)), staging(o.staging), bytes(std::move(o.bytes)), av(o.av), budgetBytes(o.budgetBytes)
+    : pts(o.pts), layout(std::move(o.layout)), staging(o.staging), bytes(std::move(o.bytes)), av(o.av), budgetBytes(o.budgetBytes), surfaceBytes(o.surfaceBytes)
 {
     o.staging = -1;
     o.av = nullptr;
     o.bytes = {};
     o.budgetBytes = 0;
+    o.surfaceBytes = 0;
 }
 
 VideoFrame &VideoFrame::operator=(VideoFrame &&o) noexcept
@@ -101,10 +102,12 @@ VideoFrame &VideoFrame::operator=(VideoFrame &&o) noexcept
         bytes = std::move(o.bytes);
         av = o.av;
         budgetBytes = o.budgetBytes;
+        surfaceBytes = o.surfaceBytes;
         o.staging = -1;
         o.av = nullptr;
         o.bytes = {};
         o.budgetBytes = 0;
+        o.surfaceBytes = 0;
     }
     return *this;
 }
@@ -114,6 +117,8 @@ void VideoFrame::releaseAv()
     if (av) av_frame_free(&av);
     videoBudget::removeDecoded(budgetBytes);
     budgetBytes = 0;
+    videoBudget::removeGpu(videoBudget::Gpu::Surfaces, surfaceBytes);
+    surfaceBytes = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,11 +1357,17 @@ void VideoDecoder::runLoop()
 }
 
 // A decoded frame kept in memory, counted in the process-wide budget. Not counted: one in an upload buffer
-// (the upload buffers have their own), one the GPU samples where it was decoded (a hardware surface)
+// (the upload buffers have their own). One the GPU samples where it was decoded (a hardware surface) is counted
+// in the graphics memory report instead, while the frame holds it.
 void VideoDecoder::accountFrame(VideoFrame &frame)
 {
     if (frame.staging >= 0 || !frame.layout) return;
-    if (frame.av && frame.av->hw_frames_ctx) return;
+    if (frame.av && frame.av->hw_frames_ctx) {
+        videoBudget::removeGpu(videoBudget::Gpu::Surfaces, frame.surfaceBytes);
+        frame.surfaceBytes = frame.layout->totalBytes;
+        videoBudget::addGpu(videoBudget::Gpu::Surfaces, frame.surfaceBytes);
+        return;
+    }
     const size_t wanted = std::max(frame.layout->totalBytes, frame.bytes.capacity());
     if (wanted > frame.budgetBytes) videoBudget::addDecoded(wanted - frame.budgetBytes);
     else videoBudget::removeDecoded(frame.budgetBytes - wanted);
