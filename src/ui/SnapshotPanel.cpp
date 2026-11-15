@@ -257,6 +257,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         [this] { return m_engine->newSnapshotGroupId(); }});
     m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_list->setColumnCount(3);
+    m_list->setIconSize(QSize(56, 32));
     m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_list->setRootIsDecorated(true);
     m_list->setIndentation(12);
@@ -710,6 +711,7 @@ void SnapshotPanel::refresh()
                     const Engine::Snapshot m = m_engine->snapshot(i);
                     it->setText(0, QString::number(i + 1));
                     it->setText(1, m.name);
+                    if (!m.thumbnail.isNull()) it->setIcon(1, QIcon(thumbnail(m.thumbnail))); // the picture taken when it was stored
                     it->setText(2, QStringLiteral("%1 s").arg(m.fade, 0, 'f', 1));
                     it->setData(0, SnapshotRole, m.id);
                     it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);

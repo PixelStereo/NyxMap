@@ -1,6 +1,9 @@
 #pragma once
 #include <QColor>
+#include <QHash>
+#include <QImage>
 #include <QList>
+#include <QPixmap>
 #include <QWidget>
 #include <vector>
 
@@ -47,6 +50,7 @@ public:
     QList<int> selectedRows() const; // in order
     void startRename(int row);
     QWidget *table() const;
+    void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
     void currentRowChanged(int row);
@@ -75,5 +79,6 @@ private:
     void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
     std::vector<Row> m_rows;
+    QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };

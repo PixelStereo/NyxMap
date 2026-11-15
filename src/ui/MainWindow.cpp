@@ -796,6 +796,21 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
             refreshLayerListFromEngine(false); // retry next tick if the renderer owns the lock
     });
     m_layerStatusTimer.start();
+    m_layerThumbTimer.setInterval(1200);
+    connect(&m_layerThumbTimer, &QTimer::timeout, this, [this] {
+        const int n = m_engine->layerCount();
+        if (n <= 0 || !m_layerTable->isVisible() || isMinimized()) return;
+        for (int tries = 0; tries < n; ++tries) { // the next layer that has a picture
+            const int i = m_layerThumbNext++ % n;
+            const Layer *l = m_engine->layer(i);
+            if (!l || l->isViewport || !l->hasPicture()) continue;
+            const quint64 id = l->id;
+            const QImage img = m_engine->grabLayerSource(i);
+            if (!img.isNull()) m_layerTable->setThumbnail(id, img.scaled(112, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            break;
+        }
+    });
+    m_layerThumbTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
         // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.

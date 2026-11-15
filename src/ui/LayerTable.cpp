@@ -18,6 +18,9 @@
 #include <QPointer>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QApplication>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -28,13 +31,71 @@
 #include <functional>
 #include <tuple>
 
-enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColAudio, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColOpacity, ColAudio, ColCount };
+enum NameRole { RoleMeta = Qt::UserRole + 1, RoleDepth, RoleArrow, RoleTag, RoleThumb };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
 static constexpr int kIndent = 26;     // px: members of a group
 
 namespace {
+// The name cell: the layer's small picture (or its kind's tag), its name in bold and, under it, what it is and how it plays
+class NameDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &ix) const override
+    {
+        QStyleOptionViewItem o = opt;
+        initStyleOption(&o, ix);
+        o.text.clear();
+        o.icon = QIcon();
+        QStyle *st = o.widget ? o.widget->style() : QApplication::style();
+        st->drawControl(QStyle::CE_ItemViewItem, &o, p, o.widget);
+        p->save();
+        p->setClipRect(opt.rect);
+        const int depth = ix.data(RoleDepth).toInt();
+        int x = opt.rect.left() + 8 + depth * kIndent;
+        const QString arrow = ix.data(RoleArrow).toString();
+        const QColor name = ix.data(Qt::ForegroundRole).value<QBrush>().color();
+        if (!arrow.isEmpty()) {
+            p->setPen(name);
+            p->drawText(QRect(x, opt.rect.top(), kArrowZone - 6, opt.rect.height()), Qt::AlignCenter, arrow);
+            x += kArrowZone - 4;
+        }
+        const QRect box(x, opt.rect.top() + 5, 56, opt.rect.height() - 10);
+        const QPixmap thumb = ix.data(RoleThumb).value<QPixmap>();
+        p->fillRect(box, QColor(18, 18, 22));
+        if (!thumb.isNull()) {
+            const QSize sz = thumb.size().scaled(box.size(), Qt::KeepAspectRatio);
+            p->drawPixmap(QRect(box.center() - QPoint(sz.width() / 2, sz.height() / 2), sz), thumb);
+        } else {
+            p->setPen(name);
+            p->drawText(box, Qt::AlignCenter, ix.data(RoleTag).toString());
+        }
+        p->setPen(QColor(70, 70, 78));
+        p->drawRect(box.adjusted(0, 0, -1, -1));
+        const int tx = box.right() + 9;
+        const QRect textBox(tx, opt.rect.top(), opt.rect.right() - tx - 4, opt.rect.height());
+        QFont f = opt.font;
+        f.setBold(true);
+        QFontMetrics fm(f);
+        p->setFont(f);
+        p->setPen(name);
+        p->drawText(QRect(textBox.left(), textBox.top() + 5, textBox.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    fm.elidedText(ix.data(Qt::DisplayRole).toString(), Qt::ElideRight, textBox.width()));
+        QFont g = opt.font;
+        g.setPointSizeF(std::max(7.0, g.pointSizeF() - 1.5));
+        QFontMetrics gm(g);
+        p->setFont(g);
+        p->setPen(QColor(140, 140, 150));
+        p->drawText(QRect(textBox.left(), textBox.top() + 6 + fm.height(), textBox.width(), gm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    gm.elidedText(ix.data(RoleMeta).toString(), Qt::ElideRight, textBox.width()));
+        p->restore();
+    }
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return QSize(160, 44); }
+};
+
 // Rename in place: Enter validates, Esc cancels
 class RenameEdit : public QLineEdit
 {
@@ -476,8 +537,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onCollapse = [this](int row) { emit collapseToggled(row); };
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
-    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Blend"), QStringLiteral("Playback"), QStringLiteral("Audio")});
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"),
+                                        QStringLiteral("Opacity"), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -485,13 +546,13 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
-    m_table->horizontalHeaderItem(ColBlend)->setToolTip(QStringLiteral("Blend Mode"));
     m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->verticalHeader()->setVisible(false);
-    m_table->verticalHeader()->setDefaultSectionSize(26);
+    m_table->verticalHeader()->setDefaultSectionSize(44);
+    m_table->setItemDelegateForColumn(ColName, new NameDelegate(m_table));
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);
@@ -510,12 +571,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     h->setSectionResizeMode(ColSolo, QHeaderView::Fixed);
     m_table->setColumnWidth(ColSolo, 24);
     h->setSectionResizeMode(ColName, QHeaderView::Stretch);
-    h->setSectionResizeMode(ColEffects, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColEffects, 32);
     h->setSectionResizeMode(ColOpacity, QHeaderView::Fixed);
     m_table->setColumnWidth(ColOpacity, 108);
-    h->setSectionResizeMode(ColBlend, QHeaderView::ResizeToContents);
-    h->setSectionResizeMode(ColPlayback, QHeaderView::ResizeToContents);
     h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
     m_table->setColumnWidth(ColAudio, 64);
     h->setMinimumSectionSize(16);
@@ -702,27 +759,24 @@ void LayerTable::updateRow(int r, const Row &row)
                      : row.solo   ? QStringLiteral("Soloed — click to show every layer again")
                                   : QStringLiteral("Solo: draw only this layer (and the other soloed ones)"));
 
-    // Indented by depth (about kIndent px per level); a group starts with its fold arrow
-    const QString prefix = QStringLiteral("        ").repeated(row.depth) +
-                           (row.group ? (row.collapsed ? QStringLiteral("▸  ") : QStringLiteral("▾  ")) : QString());
-    QTableWidgetItem *name = text(ColName, prefix + row.tag + QStringLiteral("  ") + row.name,
-                                  row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
-    QFont f = name->font();
-    f.setBold(true);
-    name->setFont(f);
+    // The name cell is painted by its delegate: depth, fold arrow, picture, name, then what it is and how it plays
+    QTableWidgetItem *name = text(ColName, row.name, row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
+    QStringList meta;
+    if (!row.noPicture && !row.viewport) meta << row.blend;
+    if (row.effectCount) meta << QStringLiteral("%1 FX%2").arg(row.effectCount).arg(row.effectsOn ? QString() : QStringLiteral(" (off)"));
+    if (!row.playback.isEmpty() && !row.viewport) meta << row.playback;
+    if (!row.source.isEmpty()) meta << row.source;
+    name->setData(RoleMeta, meta.join(QStringLiteral(" · ")));
+    name->setData(RoleDepth, row.depth);
+    name->setData(RoleArrow, row.group ? (row.collapsed ? QStringLiteral("▸") : QStringLiteral("▾")) : QString());
+    name->setData(RoleTag, row.tag);
+    name->setData(RoleThumb, m_thumbs.value(row.id));
+    name->setToolTip(row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source) +
+                     (row.effectCount ? QStringLiteral("\n") + row.effects.split(QStringLiteral(" › ")).join('\n') : QString()));
     name->setForeground(row.error        ? QColor(255, 110, 95)
                         : row.soloHidden ? QColor(110, 110, 115) // left out by a solo
                         : row.color.isValid() ? row.color
                                               : QColor(230, 230, 233));
-    // Effects: their number, the names on hover
-    QTableWidgetItem *fx = text(ColEffects, row.effectCount ? QString::number(row.effectCount) : QStringLiteral("—"),
-                                row.effectCount ? (row.effectsOn ? QString() : QStringLiteral("FX off\n")) +
-                                                      row.effects.split(QStringLiteral(" › ")).join('\n')
-                                                : QStringLiteral("No FX"));
-    fx->setTextAlignment(Qt::AlignCenter);
-    fx->setForeground(row.effectsOn ? QColor(255, 200, 140) : QColor(110, 110, 115));
-    text(ColBlend, row.noPicture || row.viewport ? QStringLiteral("—") : row.blend);
-    text(ColPlayback, row.playback)->setFont(QFont(QStringLiteral("monospace")));
     auto *audioCell = m_table->cellWidget(r, ColAudio);
     if (row.hasAudio) {
         if (!audioCell) {
@@ -750,7 +804,7 @@ void LayerTable::updateRow(int r, const Row &row)
     if (!cell) {
         cell = new QWidget;
         auto *h = new QHBoxLayout(cell);
-        h->setContentsMargins(4, 0, 4, 0);
+        h->setContentsMargins(4, 12, 4, 12);
         slider = new SliderField;
         slider->setRange(0, 100);
         slider->setDecimals(0);
@@ -779,6 +833,15 @@ void LayerTable::updateRow(int r, const Row &row)
     slider->setVisible(!row.noPicture);
     none->setVisible(row.noPicture);
     slider->setEnabled(!row.locked && !row.lockedByGroup);
+}
+
+void LayerTable::setThumbnail(quint64 id, const QImage &image)
+{
+    const QPixmap pm = image.isNull() ? QPixmap() : QPixmap::fromImage(image);
+    m_thumbs.insert(id, pm);
+    for (int r = 0; r < int(m_rows.size()); ++r)
+        if (m_rows[size_t(r)].id == id)
+            if (QTableWidgetItem *it = m_table->item(r, ColName)) it->setData(RoleThumb, pm);
 }
 
 void LayerTable::updateRowLevels(int r, const Row &row)
@@ -825,11 +888,7 @@ bool LayerTable::setRows(const std::vector<Row> &rows)
             auto *visible = m_table->item(r, ColVisible);
             const auto state = row.enabled ? Qt::Checked : Qt::Unchecked;
             if (visible->checkState() != state) visible->setCheckState(state); // a refused toggle
-            if (row.playback != m_rows[size_t(r)].playback) {
-                auto *playback = m_table->item(r, ColPlayback);
-                playback->setText(row.playback);
-                playback->setToolTip(row.playback);
-            }
+            if (row.playback != m_rows[size_t(r)].playback) updateRow(r, row);
         }
         updateRowLevels(r, row);
     }
