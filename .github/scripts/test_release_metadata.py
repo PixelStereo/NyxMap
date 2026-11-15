@@ -61,7 +61,7 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_preview_and_tag_without_v(self):
         current = release("1.3.0-rc.1", prerelease=True)
         chosen, urls = metadata.select_release([current], REPO)
-        self.assertIn("(preview)", metadata.downloads(chosen, urls, REPO))
+        self.assertIn("· PREVIEW", metadata.downloads(chosen, urls, REPO))
         self.assertIn("1.3.0-rc.1", metadata.downloads(chosen, urls, REPO))
 
     def test_bad_urls_and_no_complete_release_fail(self):

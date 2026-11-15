@@ -5,6 +5,7 @@
 #include "Model3D.h"
 #include <QBuffer>
 #include <QColor>
+#include <QElapsedTimer>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QFile>
@@ -27,8 +28,11 @@
 int runScene3dTests(Engine &engine)
 {
     int failures = 0;
+    QElapsedTimer clock; // seconds on every line: where a slow machine (a CI runner) spends its time
+    clock.start();
     auto check = [&](bool ok, const char *why) {
-        if (!ok) { ++failures; std::printf("FAIL scene3d: %s\n", why); }
+        if (!ok) ++failures;
+        std::printf("%s [%7.2f] scene3d: %s\n", ok ? "ok  " : "FAIL", clock.elapsed() / 1000.0, why);
     };
     QTemporaryDir dir;
     // A unit cube (OBJ, with its normals) and a triangle (glTF, its buffer inline, no normals: flat ones are made)

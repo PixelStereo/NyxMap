@@ -680,7 +680,16 @@ static void networkTests(Engine &e)
         check(!packet.isEmpty(), art ? "an Art-Net packet arrives" : "an sACN packet arrives");
         if (art) check(packet.size() == 530 && packet.startsWith("Art-Net") && quint8(packet[14]) == 3, "Art-Net: universe 3");
         else check(packet.size() == 638 && quint8(packet[113]) == 0 && quint8(packet[114]) == 3, "sACN: universe 3");
-        check(e.dmxOutputState(7).level == DmxOutputState::Ok && e.dmxOutputState(7).packets > 0, "the output says it sends");
+        // The UDP datagram can reach the receiver just before the sender thread
+        // publishes its corresponding status snapshot. Wait for that publication
+        // instead of making this assertion depend on thread scheduling.
+        for (int i = 0; i < 100; ++i) {
+            const auto state = e.dmxOutputState(7);
+            if (state.level == DmxOutputState::Ok && state.packets > 0) break;
+            QThread::msleep(10);
+        }
+        const auto outputState = e.dmxOutputState(7);
+        check(outputState.level == DmxOutputState::Ok && outputState.packets > 0, "the output says it sends");
         if (!art) { // the stream is terminated when the output goes
             e.setFixturePatch(FixturePatch());
             bool terminated = false;

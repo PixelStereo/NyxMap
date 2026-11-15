@@ -79,10 +79,16 @@ int runLiveInputTests(Engine &e); // live_inputs.cpp
 int runClockGeneratorTests(Engine &e); // clock_generators.cpp
 int runToxTests(Engine &e, const QString &tmp);
 int runFileSourceTests(Engine &e, const QString &tmp); // file_sources.cpp
+// Seconds since the program started, on every line: where a slow machine (a CI runner) spends its time
+static double testClock()
+{
+    static QElapsedTimer clock = [] { QElapsedTimer t; t.start(); return t; }();
+    return clock.elapsed() / 1000.0;
+}
 #define CHECK(cond)                                                                 \
     do {                                                                            \
-        if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); ++failures; } \
-        else std::printf("ok    %s\n", #cond);                                      \
+        if (!(cond)) { std::printf("FAIL [%7.2f] %s:%d  %s\n", testClock(), __FILE__, __LINE__, #cond); ++failures; } \
+        else std::printf("ok   [%7.2f] %s\n", testClock(), #cond);                  \
     } while (0)
 
 // A parameter's value in a layer's state (its "params", by address)
@@ -104,6 +110,7 @@ static QJsonObject readJson(const QString &p)
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // every line out before a crash (CI)
+    testClock(); // its clock starts here
     QSurfaceFormat fmt;
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
