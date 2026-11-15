@@ -125,7 +125,7 @@ jobs:
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core ccache
       - name: Rebuild libtiff without JBIG
         if: needs.scope.outputs.package == 'true'
         run: |
@@ -174,12 +174,29 @@ jobs:
         with:
           path: ~/ffmpeg-lgpl-linux
           key: ffmpeg-lgpl-linux-${{ steps.linux-abi.outputs.key }}-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
+      - name: Compiler cache
+        if: needs.scope.outputs.linux_engine == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - name: Use the compiler cache
+        if: needs.scope.outputs.linux_engine == 'true'
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=500M --set-config=compression=true
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
       - name: Build
         if: needs.scope.outputs.linux_engine == 'true'
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
+          ccache --show-stats
       - uses: actions/setup-python@v5
         if: needs.scope.outputs.linux_engine == 'true' || needs.scope.outputs.package == 'true'
         with:
@@ -200,17 +217,18 @@ jobs:
         if: needs.scope.outputs.linux_engine == 'true'
         run: |
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
-          xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing
+          xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -L timing
       - name: Backtraces of the crashed tests
         if: failure()
         run: |
-          # Each failed engine area again under gdb: where it crashed (the symbols of a release build: functions only)
+          # Each failed engine or grouped test again under gdb: where it crashed (the symbols of a release build: functions only)
           sudo apt-get install -y gdb
           for name in $(sed -n 's/^[0-9]*:\(.*\)$/\1/p' build/Testing/Temporary/LastTestsFailed*.log | sort -u); do
-            ctest --test-dir build -N -V -R "^${name}\$" | grep -q 'Test command: .*nyxmap_tests.*--area' || continue
+            command=$(ctest --test-dir build -N -V -R "^${name}\$" | sed -n 's/^.*Test command: //p')
+            echo "$command" | grep -Eq '/nyxmap_(tests|engine_tests|ui_tests)"? ' || continue
             echo "::group::gdb $name"
-            (cd build && timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args ./nyxmap_tests --area "$name") || true
+            (cd build && eval "timeout 600 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 30' --args $command") || true
             echo "::endgroup::"
           done
       - name: Dependency versions
@@ -280,7 +298,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
-            libavutil-dev libasound2-dev xvfb
+            libavutil-dev libasound2-dev xvfb ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-asan-${{ github.sha }}
+          restore-keys: ccache-asan-
+      - name: Use the compiler cache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=500M --set-config=compression=true
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
       - name: Build with AddressSanitizer
         timeout-minutes: 15
         run: |
@@ -320,7 +352,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
-            libavutil-dev libasound2-dev xvfb valgrind
+            libavutil-dev libasound2-dev xvfb valgrind ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-valgrind-${{ github.sha }}
+          restore-keys: ccache-valgrind-
+      - name: Use the compiler cache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=500M --set-config=compression=true
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
       - name: Build with debug symbols
         run: |
           cmake -S . -B build-memory -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -367,7 +413,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
-            libswresample-dev libavutil-dev libasound2-dev xvfb
+            libswresample-dev libavutil-dev libasound2-dev xvfb ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-tsan-${{ github.sha }}
+          restore-keys: ccache-tsan-
+      - name: Use the compiler cache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=500M --set-config=compression=true
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
       - name: Build
         run: |
           /usr/bin/clang --version
@@ -375,7 +435,7 @@ jobs:
           cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=/usr/bin/clang \
             -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_C_FLAGS=-fsanitize=thread \
             -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
-          cmake --build build-tsan --target nyxmap_tests nyxmap_audio_analysis_concurrency_test nyxmap_publishing_concurrency_test nyxmap_cue_dispatch_test -j4
+          cmake --build build-tsan --target nyxmap_tests nyxmap_audio_analysis_concurrency_test nyxmap_engine_tests -j4
       - name: Bridge Qt clock joins for ThreadSanitizer
         run: |
           cc -shared -fPIC -Wall -Wextra -Werror .github/scripts/tsan_qt_join.c -o build-tsan/libnyxmap-tsan-qt-join.so -pthread
@@ -513,7 +573,23 @@ jobs:
           path: test/media
       - name: Dependencies
         # Homebrew's qt includes Qt WebEngine (the Web Page generator) on macOS 14 or later
-        run: brew install qt ffmpeg pkg-config
+        run: brew install qt ffmpeg pkg-config ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
+      - name: Use the compiler cache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=500M --set-config=compression=true
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_OBJC_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_OBJCXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
@@ -524,6 +600,7 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
+          ccache --show-stats
       - name: macOS source build starts before packaging
         run: |
           codesign --verify --deep --strict build/runtimes/touchengine/TouchEngine.framework
@@ -546,8 +623,15 @@ jobs:
           echo "NYXMAP_MEDIAPIPE_DELEGATE=cpu" >> "$GITHUB_ENV"
       - name: Engine tests
         run: |
-          ctest --test-dir build --output-on-failure --timeout 900 -LE timing
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
+      - name: Test output with timestamps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-log
+          path: build/Testing/Temporary/LastTest*.log
+          retention-days: 7
       - name: Dependency versions
         if: needs.scope.outputs.package == 'true'
         run: |
@@ -791,7 +875,7 @@ jobs:
         run: |
           $env:PATH = "C:\ffmpeg\$env:FFMPEG_ZIP\bin;$env:PATH"
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
-          ctest --test-dir build --output-on-failure --timeout 900 -LE timing
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
