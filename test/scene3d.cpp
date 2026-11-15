@@ -1798,19 +1798,9 @@ int runScene3dTests(Engine &engine)
         const QImage still = picture();
         engine.stepAnimations(0.0);
         check(differs(still, picture()) == 0, "a Noise at rate 0 holds its values");
-        // Check the clock separately from the rendered interpolation. Rendering can take a
-        // different amount of wall time on software GL and must not decide which side of a
-        // Noise step the image comparison happens to land on.
-        const auto travel = [&] {
-            for (const Fx3dEntry &fx : fxOf(plane))
-                if (fx.id == noise) return double(fx.travel);
-            return -1.0;
-        };
-        set(noise, "rate", 1.0);
-        const double beforeStep = travel();
-        engine.stepAnimations(0.5);
-        check(std::abs((travel() - beforeStep) - 0.5) < 1e-6, "Noise rate advances its step clock");
-        set(noise, "rate", 0.0);
+        // Keep the interpolation checks at travel == 0: advancing the clock here would
+        // offset every manually selected phase and make the "next step" assertion test
+        // the wrong interval.
         set(noise, "interp", QStringLiteral("none (sharp)"));
         set(noise, "phase", 0.5);
         const QImage half = picture();
@@ -1825,6 +1815,17 @@ int runScene3dTests(Engine &engine)
         const QImage a2 = picture();
         set(noise, "phase", 1.6);
         check(differs(a1, a2) > 20 && differs(a2, picture()) > 20, "smooth: the values move between steps");
+        // Check the rate independently, after the deterministic phase/render assertions.
+        const auto travel = [&] {
+            for (const Fx3dEntry &fx : fxOf(plane))
+                if (fx.id == noise) return double(fx.travel);
+            return -1.0;
+        };
+        set(noise, "rate", 1.0);
+        const double beforeStep = travel();
+        engine.stepAnimations(0.5);
+        check(std::abs((travel() - beforeStep) - 0.5) < 1e-6, "Noise rate advances its step clock");
+        set(noise, "rate", 0.0);
         // Saved with the project: the list in its order, each one's settings
         set(noise, "scale", 5.0);
         const std::vector<Fx3dEntry> order = fxOf(plane);
