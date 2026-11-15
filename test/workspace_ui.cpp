@@ -795,8 +795,10 @@ int main(int argc, char **argv)
                         kind->setCurrentIndex(kind->findText("Files"));
                         check(!videos->isHidden() && isfTop->isHidden(), "kind filter Files hides the ISF");
                         kind->setCurrentIndex(0);
+                        bin->findChild<QToolButton *>("typePillAll")->click(); // All takes every kind away
                         bin->findChild<QToolButton *>("typePillAudio")->click();
                         check(videoRoot->isHidden() && !audioRoot->isHidden(), "media filter Audio hides the Video root");
+                        bin->findChild<QToolButton *>("typePillAudio")->click(); // added up: Audio off again
                         bin->findChild<QToolButton *>("typePillVideo")->click();
                         check(!videoRoot->isHidden() && audioRoot->isHidden(), "media filter Video hides the Audio root");
                     }
@@ -962,15 +964,17 @@ int main(int argc, char **argv)
                  *pillAll = list->findChild<QToolButton *>("layerPillAll");
             check(pill3d && pillVideo && pillAll, "the layer list has All, Video, 3D and Audio buttons");
             if (pill3d && pillVideo && pillAll) {
-                pill3d->click(); app.processEvents();
-                bool anyShown = false;
-                for (int r = 0; r < table->rowCount(); ++r) anyShown |= !table->isRowHidden(r);
-                check(!anyShown, "3D shows no generator");
-                pillVideo->click(); app.processEvents();
-                bool allShown = true;
-                for (int r = 0; r < table->rowCount(); ++r) allShown &= !table->isRowHidden(r) || engine.layer(r)->isViewport;
-                check(allShown, "Video shows the generators");
+                // The kinds add up: All takes them all away, then 3D alone shows no generator (a video kind)
                 pillAll->click(); app.processEvents();
+                pill3d->click(); app.processEvents();
+                bool anyGenerator = false;
+                for (int r = 0; r < table->rowCount(); ++r) anyGenerator |= !table->isRowHidden(r) && engine.layer(r)->type == SourceType::Isf;
+                check(!anyGenerator, "3D alone shows no generator");
+                pillVideo->click(); app.processEvents(); // added to 3D
+                bool generatorShown = false;
+                for (int r = 0; r < table->rowCount(); ++r) generatorShown |= !table->isRowHidden(r) && engine.layer(r)->type == SourceType::Isf;
+                check(generatorShown, "Video added to 3D shows the generators");
+                pillAll->click(); app.processEvents(); // not all three: All selects them all
             }
             auto *fixturePicker = window.findChild<QComboBox *>("fixturePicker");
             check(fixturePicker != nullptr, "the Inspector has a menu of the fixtures");

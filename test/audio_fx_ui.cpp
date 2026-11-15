@@ -297,6 +297,7 @@ int runAudioFxUiTests(Engine &engine)
             kind->setCurrentIndex(kind->findText("Inputs"));
             check(!inputs->isHidden() && generators->isHidden(), "kind Inputs shows only the input categories");
             kind->setCurrentIndex(0);
+            media->click(); // All takes every kind away, then Audio alone
             bin.findChild<QToolButton *>("typePillAudio")->click();
             check(tree->topLevelItem(0)->isHidden() && !audio->isHidden() && tree->topLevelItem(2)->isHidden(), "media Audio shows the Audio root only");
             media->click();

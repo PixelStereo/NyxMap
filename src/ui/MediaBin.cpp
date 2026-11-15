@@ -187,7 +187,8 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     import->setMenu(importMenu);
     head->addWidget(import);
     v->addLayout(head);
-    // The media to show, as coloured buttons (the colour of each kind is the same in the layer list): one at a time
+    // The media to show, as coloured buttons (the colour of each kind is the same in the layer list). Video, 3D and Audio
+    // add up; All selects them all, or takes them all away when they are all shown
     {
         struct Pill { const char *name; const char *colour; const char *tip; };
         static const Pill pills[4] = {{"All", "#9fb0d0", "Show all media"},
@@ -197,12 +198,13 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
         auto *group = new QButtonGroup(this);
-        group->setExclusive(true);
-        for (int i = 0; i < 4; ++i) {
+        group->setExclusive(false);
+        // Shown in this order: All, Video, 3D, Audio (m_typePills keeps All 0, Video 1, Audio 2, 3D 3)
+        for (int i : {0, 1, 3, 2}) {
             auto *pill = new QToolButton;
             pill->setObjectName(QStringLiteral("typePill%1").arg(QLatin1String(pills[i].name)));
             pill->setCheckable(true);
-            pill->setChecked(i == 0);
+            pill->setChecked(true); // everything shown at first
             pill->setText(QLatin1String(pills[i].name));
             pill->setToolTip(QLatin1String(pills[i].tip));
             pill->setCursor(Qt::PointingHandCursor);
@@ -216,7 +218,17 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
             row->addWidget(pill);
             m_typePills[size_t(i)] = pill;
         }
-        connect(group, &QButtonGroup::idClicked, this, [this](int) { applyFilter(); });
+        connect(group, &QButtonGroup::idClicked, this, [this](int id) {
+            const bool all = m_typePills[0]->isChecked();
+            if (id == 0) { // All: every kind follows it
+                for (int k = 1; k < 4; ++k) setPillChecked(k, all);
+            } else {
+                m_typePills[0]->blockSignals(true);
+                m_typePills[0]->setChecked(m_typePills[1]->isChecked() && m_typePills[2]->isChecked() && m_typePills[3]->isChecked());
+                m_typePills[0]->blockSignals(false);
+            }
+            applyFilter();
+        });
         v->addLayout(row);
     }
     m_search = new QLineEdit;
@@ -1290,16 +1302,25 @@ bool MediaBin::reveal(const QString &path)
     return true;
 }
 
-int MediaBin::typeIndex() const
+void MediaBin::setPillChecked(int index, bool on)
 {
-    for (size_t i = 0; i < m_typePills.size(); ++i)
-        if (m_typePills[i] && m_typePills[i]->isChecked()) return int(i);
-    return 0;
+    if (QToolButton *b = m_typePills[size_t(index)]) b->setChecked(on);
 }
 
-void MediaBin::setTypeIndex(int index)
+// Which kinds are shown: 1 video, 2 audio, 3 3D (a bit each); All is all three
+int MediaBin::typeMask() const
 {
-    if (index >= 0 && index < int(m_typePills.size()) && m_typePills[size_t(index)]) m_typePills[size_t(index)]->setChecked(true);
+    int mask = 0;
+    if (m_typePills[1] && m_typePills[1]->isChecked()) mask |= 1;
+    if (m_typePills[2] && m_typePills[2]->isChecked()) mask |= 2;
+    if (m_typePills[3] && m_typePills[3]->isChecked()) mask |= 4;
+    return mask;
+}
+
+// Every kind shown (All), as the bin opens and as a reset gives it
+void MediaBin::setTypeIndex(int)
+{
+    for (int k = 0; k < 4; ++k) setPillChecked(k, true);
 }
 
 // How many items each button shows: the media under each kind, All being the sum
@@ -1322,7 +1343,7 @@ void MediaBin::applyFilter()
     updateTypeCounts();
     const QString f = m_search ? m_search->text().trimmed() : QString();
     const int usage = m_usage ? m_usage->currentIndex() : 0; // 0 all, 1 used, 2 unused
-    const int media = typeIndex(); // 0 all, 1 video, 2 audio, 3 3D
+    const int mask = typeMask(); // the kinds shown: video 1, audio 2, 3D 4
     const int kind = m_kind ? m_kind->currentIndex() : 0;    // 0 all, 1 files, 2 generators, 3 inputs, 4 ISF
     const bool filtering = !f.isEmpty() || usage != 0;
     // Leaves (media, shaders) match by name and use; a category stays visible if one of its items does
@@ -1358,7 +1379,7 @@ void MediaBin::applyFilter()
             group->setHidden(!kindMatches(group) || (!shown && filtering));
             any |= !group->isHidden();
         }
-        const bool mediaMatches = media == 0 || (media == 1 && root == m_videoRoot) || (media == 2 && root == m_audioRoot) || (media == 3 && root == m_3dRoot);
+        const bool mediaMatches = (root == m_videoRoot && (mask & 1)) || (root == m_audioRoot && (mask & 2)) || (root == m_3dRoot && (mask & 4));
         root->setHidden(!mediaMatches || (!any && (filtering || kind != 0)));
     }
 }
