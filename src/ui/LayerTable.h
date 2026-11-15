@@ -40,6 +40,7 @@ public:
         bool solo = false;       // soloed
         bool soloHidden = false; // left out by another layer's solo
         int effectCount = 0;
+        int category = 0;        // 1 video (a picture), 2 3D, 3 audio: what the filter buttons choose
     };
 
     explicit LayerTable(QWidget *parent = nullptr);
@@ -50,6 +51,7 @@ public:
     QList<int> selectedRows() const; // in order
     void startRename(int row);
     QWidget *table() const;
+    void setFilter(int category); // 0 all, 1 video, 2 3D, 3 audio
     void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
@@ -72,14 +74,14 @@ signals:
     void moveRequested(const QList<int> &rows, int beforeRow, int parentRow);
     void removeClicked();
     void duplicateClicked();
-    void moveClicked(int delta);
     void contextMenuRequested(int row, const QPoint &globalPos); // right-click on a row (-1: empty area)
 
 private:
     void updateRow(int r, const Row &row);
     void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
-    std::vector<Row> m_rows;
+    std::vector<Row> m_rows, m_raw;
+    int m_filter = 0;
     QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };

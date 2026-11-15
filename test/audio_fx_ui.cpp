@@ -211,13 +211,13 @@ int runAudioFxUiTests(Engine &engine)
             check(picker->count() == engine.layerCount(), "it lists every layer, group and viewport");
             check(picker->itemText(picker->currentIndex()).contains("Instrument") && picker->itemData(picker->currentIndex()).toULongLong() == id,
                   "its current item is the layer inspected");
-            bool viewportsLast = true, seenViewport = false;
+            bool viewportsFirst = true, seenOther = false;
             for (int k = 0; k < picker->count(); ++k) {
                 const bool isViewport = picker->itemText(k).contains("◫");
-                if (seenViewport && !isViewport) viewportsLast = false;
-                seenViewport |= isViewport;
+                if (seenOther && isViewport) viewportsFirst = false;
+                seenOther |= !isViewport;
             }
-            check(viewportsLast, "the viewports come last");
+            check(viewportsFirst, "the viewports come first");
             bool indented = false;
             for (int k = 0; k < picker->count(); ++k)
                 if (picker->itemText(k).contains("In the group")) indented = picker->itemText(k).startsWith(QChar(0x2003));

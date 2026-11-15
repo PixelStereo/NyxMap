@@ -28,7 +28,6 @@
 #include "PreviewWorkspace.h"
 #include "CompositionPanel.h" // CompositionPanel
 #include "MediaBin.h"
-#include "MaterialPanel.h"
 #include "LogPanel.h"
 #include "SnapshotPanel.h"
 #include "SequencePanel.h"
@@ -91,6 +90,7 @@
 #include <QTabWidget>
 #include <QListWidget>
 #include <QStackedWidget>
+#include <QComboBox>
 #include <QThread>
 #include <QUndoStack>
 #include <QVBoxLayout>
@@ -196,29 +196,18 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     layerColumn->setSpacing(0);
     layerColumn->addWidget(m_inspector->pinnedHeader());
     layerColumn->addWidget(scrolled(m_inspector), 1);
-    m_tabs->addTab(layerPage, QStringLiteral("Layer"));
-    auto *viewportPage = new QWidget;
-    auto *viewportLayout = new QVBoxLayout(viewportPage);
-    viewportLayout->setContentsMargins(0, 0, 0, 0);
-    auto *viewportHeader = new QHBoxLayout; // no title: the tab already says Viewports
-    auto *newViewport = new QPushButton(QStringLiteral("+"));
-    newViewport->setFixedWidth(30);
-    newViewport->setToolTip(QStringLiteral("New viewport"));
-    connect(newViewport, &QPushButton::clicked, this, &MainWindow::addViewport);
-    viewportHeader->addWidget(newViewport);
-    viewportLayout->addLayout(viewportHeader);
-    m_viewportList = new QListWidget;
+    // One inspector: the menu at the top picks a viewport (they come first), a layer or a group; under it, the panel of what is
+    // picked. A fixture picked in the list or in the view has its own panel here, with its own menu.
+    m_inspectorStack = new QStackedWidget;
+    m_inspectorStack->setObjectName(QStringLiteral("inspectorStack"));
+    m_inspectorStack->addWidget(layerPage); // 0: a layer or a group
+    m_tabs->addTab(m_inspectorStack, QStringLiteral("Inspector"));
+    // The viewports selected, as a list kept out of sight: what the layer actions act on, and the names
+    m_viewportList = new QListWidget(this);
     m_viewportList->setObjectName(QStringLiteral("viewportList"));
-    m_viewportList->setFixedHeight(86);
     m_viewportList->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    m_viewportList->setSelectionMode(QAbstractItemView::ExtendedSelection); // several edited or pasted onto at once
-    auto *removeViewport = new QPushButton(QStringLiteral("−"));
-    removeViewport->setObjectName(QStringLiteral("removeViewport"));
-    removeViewport->setFixedWidth(30);
-    removeViewport->setToolTip(QStringLiteral("Delete the selected viewports"));
-    viewportHeader->addWidget(removeViewport);
-    viewportHeader->addStretch(1);
-    connect(removeViewport, &QPushButton::clicked, this, [this] { m_tabs->setCurrentIndex(1); removeCurrentLayer(); });
+    m_viewportList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_viewportList->hide();
     connect(m_viewportList, &QListWidget::itemChanged, this, [this](QListWidgetItem *item) {
         const quint64 id = item->data(Qt::UserRole).toULongLong();
         const QString name = item->text();
@@ -226,7 +215,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         if (before.isValid() && before.toString() != name)
             m_undo->push(new cmd::SetLayerProp(m_engine, id, cmd::SetLayerProp::Name, before, name));
     });
-    viewportLayout->addWidget(m_viewportList);
     // As on the layers: copy one viewport's attributes, paste some or all of them onto the viewports selected
     m_viewportList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_viewportList, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
@@ -240,25 +228,31 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     m_viewportInspector = new LayerInspector(m_engine, m_undo);
     m_viewportInspector->setObjectName(QStringLiteral("viewportInspector"));
+    auto *viewportPage = new QWidget;
+    auto *viewportLayout = new QVBoxLayout(viewportPage);
+    viewportLayout->setContentsMargins(0, 0, 0, 0);
+    viewportLayout->setSpacing(0);
+    viewportLayout->addWidget(m_viewportInspector->pinnedHeader());
     viewportLayout->addWidget(scrolled(m_viewportInspector), 1);
-    m_tabs->addTab(viewportPage, QStringLiteral("Viewports"));
-    m_tabs->addTab(scrolled(m_composition), QStringLiteral("Composition"));
+    m_inspectorStack->addWidget(viewportPage); // 1: a viewport
+    m_compositionTab = scrolled(m_composition);
+    m_tabs->addTab(m_compositionTab, QStringLiteral("Composition"));
     connect(m_viewportList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
         m_selectedViewport = item ? item->data(Qt::UserRole).toULongLong() : 0;
         const int index = m_engine->indexOfId(m_selectedViewport);
         m_viewportInspector->setLayer(index);
         updateCoTargets();
-        if (m_tabs->currentIndex() == 1) {
+        if (viewportMode()) {
             m_view->setLayer(index);
             if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_selectedViewport);
         }
     });
     connect(m_viewportList, &QListWidget::itemSelectionChanged, this, &MainWindow::updateCoTargets);
-    connect(m_tabs, &QTabWidget::currentChanged, this, [this](int tab) {
-        if (tab == 1) {
+    connect(m_inspectorStack, &QStackedWidget::currentChanged, this, [this](int page) {
+        if (page == 1) {
             m_view->setLayer(m_engine->indexOfId(m_selectedViewport));
             if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_selectedViewport);
-        } else if (tab == 0 && m_layerTable) {
+        } else if (page == 0 && m_layerTable) {
             const int row = m_layerTable->currentRow();
             m_view->setLayer(row);
             if (m_timelineWindow) m_timelineWindow->setCurrentLayer(m_engine->layerId(row));
@@ -270,15 +264,41 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     // Pixel mapping: the selected fixture's settings here (its list is on the left), the DMX outputs in Composition
     m_fixtureInspector = new FixtureInspector(m_engine, m_undo);
     m_fixtureInspector->setObjectName(QStringLiteral("fixtureInspector"));
-    m_fixtureTab = scrolled(m_fixtureInspector);
-    m_tabs->addTab(m_fixtureTab, QStringLiteral("Fixture"));
+    m_fixtureTab = new QWidget;
+    auto *fixtureColumn = new QVBoxLayout(m_fixtureTab);
+    fixtureColumn->setContentsMargins(0, 0, 0, 0);
+    fixtureColumn->setSpacing(4);
+    auto *fixtureRow = new QHBoxLayout; // the menu of the fixtures, as the layers have theirs
+    fixtureRow->setContentsMargins(0, 0, 0, 0);
+    fixtureRow->setSpacing(4);
+    auto *fixturePrev = new QToolButton, *fixtureNext = new QToolButton;
+    fixturePrev->setText(QStringLiteral("◀"));
+    fixtureNext->setText(QStringLiteral("▶"));
+    fixturePrev->setToolTip(QStringLiteral("The fixture before"));
+    fixtureNext->setToolTip(QStringLiteral("The fixture after"));
+    m_fixturePicker = new QComboBox;
+    m_fixturePicker->setObjectName(QStringLiteral("fixturePicker"));
+    m_fixturePicker->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_fixturePicker->setMinimumContentsLength(12);
+    m_fixturePicker->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_fixturePicker->setMaxVisibleItems(24);
+    m_fixturePicker->setToolTip(QStringLiteral("The fixture inspected: pick another (the Fixtures list follows)"));
+    fixtureRow->addWidget(fixturePrev);
+    fixtureRow->addWidget(m_fixturePicker, 1);
+    fixtureRow->addWidget(fixtureNext);
+    fixtureColumn->addLayout(fixtureRow);
+    fixtureColumn->addWidget(scrolled(m_fixtureInspector), 1);
+    m_inspectorStack->addWidget(m_fixtureTab); // 2: a fixture
+    connect(fixturePrev, &QToolButton::clicked, this, [this] { stepFixturePicker(-1); });
+    connect(fixtureNext, &QToolButton::clicked, this, [this] { stepFixturePicker(1); });
+    connect(m_engine, &Engine::fixturesChanged, this, [this] { refreshFixturePicker(); });
     connect(m_fixtureInspector, &FixtureInspector::projectEdited, this, &MainWindow::markDirty);
     auto *dmxOutputs = new DmxOutputsPanel(m_engine, m_undo);
     m_composition->addSection(dmxOutputs);
     connect(dmxOutputs, &DmxOutputsPanel::projectEdited, this, &MainWindow::markDirty);
     m_settings = new SettingsPanel(m_engine);
-    m_tabs->addTab(scrolled(m_settings), QStringLiteral("Settings"));
-    m_tabs->addTab(scrolled(new MaterialPanel(m_engine, m_undo, [this] { return currentLayer(); }, [this] { markDirty(); })), QStringLiteral("Materials"));
+    m_settingsTab = scrolled(m_settings);
+    m_tabs->addTab(m_settingsTab, QStringLiteral("Settings"));
     connect(m_settings, &SettingsPanel::playModeChanged, this,
             [this] { m_engine->setDefaultPlayMode(SettingsPanel::defaultPlayMode()); });
     VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding());
@@ -326,8 +346,15 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     auto showFixture = [this](quint64 id) {
         m_view->setFixture(id);
         m_fixtureInspector->setFixture(id);
-        if (id) m_tabs->setCurrentWidget(m_fixtureTab);
+        refreshFixturePicker();
+        if (id) showInspectorPage(2);
     };
+    connect(m_fixturePicker, qOverload<int>(&QComboBox::activated), this, [this, showFixture](int k) {
+        const quint64 id = m_fixturePicker->itemData(k).toULongLong();
+        if (!id) return;
+        m_fixtures->selectFixture(id);
+        showFixture(id);
+    });
     connect(m_fixtures, &FixturePanel::fixtureSelected, this, showFixture);
     connect(m_view, &MappingView::fixturePicked, this, [this, showFixture](quint64 id) {
         m_fixtures->selectFixture(id);
@@ -340,10 +367,11 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_leftTabs->addTab(m_controls, QStringLiteral("Controls"));
     connect(m_controls, &ControlsPanel::edited, this, &MainWindow::markDirty);
     // The menu at the top of the inspector: the layer, group or viewport picked there is selected, as a click in the list does
-    connect(m_inspector, &LayerInspector::layerPickRequested, this, [this](quint64 id) {
-        const int index = m_engine->indexOfId(id);
-        if (index >= 0) selectLayer(index);
-    });
+    for (LayerInspector *inspector : {m_inspector, m_viewportInspector})
+        connect(inspector, &LayerInspector::layerPickRequested, this, [this](quint64 id) {
+            const int index = m_engine->indexOfId(id);
+            if (index >= 0) selectLayer(index);
+        });
     m_seqWindow = new SequenceWindow(m_engine, this, m_undo);
     m_seqWindow->setWindowFlags(Qt::Widget);
     auto *sequencePage = workspacePane(m_seqWindow, QStringLiteral("sequenceEditorScroll"));
@@ -504,7 +532,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         syncLayerSelection(row, true);
     });
     connect(m_layerTable, &LayerTable::rowClicked, this, [this](int row) {
-        if (m_tabs->currentIndex() != 0) syncLayerSelection(row, true);
+        if (m_tabs->currentIndex() != 0 || m_inspectorStack->currentIndex() != 0) syncLayerSelection(row, true);
     });
     connect(m_layerTable, &LayerTable::selectionChanged, this, &MainWindow::updateCoTargets);
     connect(m_layerTable, &LayerTable::visibilityToggled, this, [this](int row, bool on) {
@@ -584,7 +612,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_layerTable, &LayerTable::moveRequested, this, &MainWindow::moveRows);
     connect(m_layerTable, &LayerTable::duplicateClicked, this, &MainWindow::duplicateCurrentLayer);
     connect(m_layerTable, &LayerTable::contextMenuRequested, this, &MainWindow::layerContextMenu);
-    connect(m_layerTable, &LayerTable::moveClicked, this, &MainWindow::moveCurrentLayer);
     auto *del = new QShortcut(QKeySequence::Delete, m_layerTable->table(), nullptr, nullptr, Qt::WidgetShortcut);
     connect(del, &QShortcut::activated, this, &MainWindow::removeCurrentLayer);
     auto *backspace = new QShortcut(QKeySequence(Qt::Key_Backspace), m_layerTable->table(), nullptr, nullptr, Qt::WidgetShortcut);
@@ -631,7 +658,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_view, &MappingView::layerPicked, this, &MainWindow::selectLayer);
     // Masks: the one selected in the inspector is edited in the preview, the one drawn there is selected
     connect(m_inspector, &LayerInspector::maskSelected, this, [this](int index) {
-        if (m_tabs->currentIndex() != 1) m_view->setMaskIndex(index);
+        if (!viewportMode()) m_view->setMaskIndex(index);
     });
     connect(m_inspector, &LayerInspector::maskDrawRequested, this, [this] {
         m_view->startMaskDrawing();
@@ -656,14 +683,14 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_view, &MappingView::linesEdited, this, &MainWindow::markDirty);
     connect(m_view, &MappingView::masksEdited, m_inspector, &LayerInspector::refreshMasks);
     connect(m_view, &MappingView::maskPicked, this, [this](int index) {
-        (m_tabs->currentIndex() == 1 ? m_viewportInspector : m_inspector)->selectMask(index);
+        (viewportMode() ? m_viewportInspector : m_inspector)->selectMask(index);
     });
     connect(m_view, &MappingView::masksEdited, m_viewportInspector, &LayerInspector::refreshMasks);
     connect(m_viewportInspector, &LayerInspector::maskSelected, this, [this](int index) {
-        if (m_tabs->currentIndex() == 1) m_view->setMaskIndex(index);
+        if (viewportMode()) m_view->setMaskIndex(index);
     });
     connect(m_viewportInspector, &LayerInspector::maskDrawRequested, this, [this] {
-        m_tabs->setCurrentIndex(1);
+        showInspectorPage(1);
         m_view->startMaskDrawing();
     });
     connect(m_viewportInspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary, Qt::QueuedConnection);
@@ -675,7 +702,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     });
     connect(m_inspector, &LayerInspector::rescanLibraryRequested, this, &MainWindow::rescanLibrary,
             Qt::QueuedConnection); // the rebuild destroys the button that emitted it
-    connect(m_inspector, &LayerInspector::kindChanged, this, [this](const QString &k) { m_tabs->setTabText(0, k); });
     connect(m_inspector, &LayerInspector::mappingChanged, m_view, qOverload<>(&QWidget::update));
     connect(m_inspector, &LayerInspector::fileDropped, this, [this](const QString &p) { loadIntoLayer(m_inspector->layerIndex(), p); });
     // The accent color is a machine preference: applied at once, everywhere
@@ -1181,7 +1207,7 @@ void MainWindow::buildMenus()
     }
     // On macOS, Qt moves it to the application menu (NyxMap ▸ Settings…, ⌘,)
     QAction *prefs = edit->addAction(QStringLiteral("Preferences…"), QKeySequence::Preferences, this,
-                                     [this] { m_tabs->setCurrentWidget(m_tabs->widget(3)); }); // the Settings tab
+                                     [this] { m_tabs->setCurrentWidget(m_settingsTab); });
     prefs->setMenuRole(QAction::PreferencesRole);
     if (prefs->shortcut().isEmpty()) prefs->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma)); // Linux / Windows
 
@@ -1259,7 +1285,7 @@ void MainWindow::buildMenus()
     show->setObjectName(QStringLiteral("openShowControlWeb"));
 
     QMenu *comp = menuBar()->addMenu(QStringLiteral("C&omposition"));
-    comp->addAction(QStringLiteral("Composition Size (Composition tab)"), this, [this] { m_tabs->setCurrentWidget(m_tabs->widget(2)); });
+    comp->addAction(QStringLiteral("Composition Size (Composition tab)"), this, [this] { m_tabs->setCurrentWidget(m_compositionTab); });
     comp->addAction(QStringLiteral("New Viewport"), this, &MainWindow::addViewport);
     comp->addSeparator();
     QAction *outlines = comp->addAction(QStringLiteral("Show Outlines of Other Layers"));
@@ -1541,6 +1567,11 @@ void MainWindow::refreshLayerListFromEngine(bool wait)
                 r.hidden = r.hidden || g->collapsed;
                 up = g->parent;
             }
+            r.category = l->scene3d || l->merge3d ? 2
+                         : l->isGroup ? 0
+                         : l->type == SourceType::Audio ? 3
+                         : l->type == SourceType::Model || l->type == SourceType::Light || l->type == SourceType::Path || l->type == SourceType::Camera ? 2
+                                                                                                                                                         : 1;
             r.enabled = l->enabled;
             r.opacity = l->opacity;
             r.blend = blendModeName(l->blend);
@@ -1689,7 +1720,7 @@ void MainWindow::refreshViewports()
     const int index = m_engine->indexOfId(m_selectedViewport);
     if (m_viewportInspector->layerIndex() != index || (index >= 0 && m_viewportInspector->layerId() != m_selectedViewport))
         m_viewportInspector->setLayer(index);
-    if (m_tabs->currentIndex() == 1) m_view->setLayer(index);
+    if (viewportMode()) m_view->setLayer(index);
     updateCoTargets();
 }
 
@@ -1718,7 +1749,7 @@ void MainWindow::selectLayer(int index)
       if (layer && layer->isViewport) {
           m_selectedViewport = layer->id;
           refreshViewports();
-          m_tabs->setCurrentIndex(1);
+          showInspectorPage(1);
           m_view->setLayer(index);
           return;
       }
@@ -1738,22 +1769,62 @@ void MainWindow::syncLayerSelection(int row, bool focusInspector)
     const quint64 id = m_engine->layerId(row);
     if (row != m_inspector->layerIndex() || id != m_inspector->layerId()) m_inspector->setLayer(row);
     m_previews->setCurrentLayer(id);
-    if (focusInspector && row >= 0) m_tabs->setCurrentIndex(0);
-    if (m_tabs->currentIndex() != 1) {
+    if (focusInspector && row >= 0) showInspectorPage(0);
+    if (!viewportMode()) {
         if (m_timelineWindow) m_timelineWindow->setCurrentLayer(id);
         m_view->setLayer(row);
     }
     updateCoTargets();
 }
 
-int MainWindow::currentLayer() const { return m_tabs->currentIndex() == 1 ? m_engine->indexOfId(m_selectedViewport) : m_layerTable->currentRow(); }
+bool MainWindow::viewportMode() const { return m_inspectorStack && m_inspectorStack->currentIndex() == 1; }
+
+// The Inspector tab, on the panel of a layer (0), a viewport (1) or a fixture (2)
+void MainWindow::showInspectorPage(int page)
+{
+    m_tabs->setCurrentIndex(0);
+    m_inspectorStack->setCurrentIndex(page);
+}
+
+// The menu of the fixtures, in the order of the list
+void MainWindow::refreshFixturePicker()
+{
+    const FixturePatch patch = m_engine->fixturePatch();
+    const quint64 shown = m_fixtureInspector->fixture();
+    QString key = QString::number(shown) + QLatin1Char('|');
+    for (const Fixture &f : patch.fixtures) key += QStringLiteral("%1:%2;").arg(f.id).arg(f.name);
+    if (key == m_fixturePickerKey) return;
+    m_fixturePickerKey = key;
+    const QSignalBlocker block(m_fixturePicker);
+    m_fixturePicker->clear();
+    int current = -1;
+    for (const Fixture &f : patch.fixtures) {
+        if (f.id == shown) current = m_fixturePicker->count();
+        m_fixturePicker->addItem(QStringLiteral("▦ ") + (f.name.isEmpty() ? QStringLiteral("Untitled") : f.name), QVariant::fromValue<qulonglong>(f.id));
+    }
+    m_fixturePicker->setCurrentIndex(current);
+}
+
+void MainWindow::stepFixturePicker(int delta)
+{
+    const int k = m_fixturePicker->currentIndex() + delta;
+    if (k < 0 || k >= m_fixturePicker->count()) return;
+    const quint64 id = m_fixturePicker->itemData(k).toULongLong();
+    if (!id) return;
+    m_fixtures->selectFixture(id);
+    m_view->setFixture(id);
+    m_fixtureInspector->setFixture(id);
+    refreshFixturePicker();
+}
+
+int MainWindow::currentLayer() const { return viewportMode() ? m_engine->indexOfId(m_selectedViewport) : m_layerTable->currentRow(); }
 
 // What the layer actions act on: the viewports selected in their list (Viewports tab), otherwise the layers selected
 // in the layer list; the current one when nothing is selected
 QList<int> MainWindow::selectedRows() const
 {
     QList<int> rows;
-    if (m_tabs->currentIndex() == 1) {
+    if (viewportMode()) {
         for (QListWidgetItem *item : m_viewportList->selectedItems()) {
             const int index = m_engine->indexOfId(item->data(Qt::UserRole).toULongLong());
             if (index >= 0) rows << index;
@@ -2326,7 +2397,7 @@ QSet<int> MainWindow::sourceUsers(const QSet<int> &rows) const
 
 void MainWindow::removeCurrentLayer()
 {
-    const bool viewportSelection = m_tabs->currentIndex() == 1;
+    const bool viewportSelection = viewportMode();
     const QList<int> rows = selectedRows();
     if (rows.isEmpty()) return;
     // A group goes with its layers; locked layers stay
@@ -2367,7 +2438,7 @@ void MainWindow::removeCurrentLayer()
     const auto order = victims.values();
     const int first = *std::min_element(order.begin(), order.end());
     m_undo->push(new cmd::RemoveLayers(m_engine, order));
-    if (viewportSelection) { refreshViewports(); m_tabs->setCurrentIndex(1); }
+    if (viewportSelection) { refreshViewports(); showInspectorPage(1); }
     else selectLayer(qMin(first, m_engine->layerCount() - 1));
 }
 
@@ -2435,7 +2506,7 @@ void MainWindow::pasteAttributesDialog()
     QSettings s;
     const int last = s.value("ui/pasteParts", int(Engine::PartAll & ~Engine::PartSource)).toInt();
     std::vector<std::pair<int, QCheckBox *>> boxes;
-    const bool viewports = m_tabs->currentIndex() == 1; // no source of their own
+    const bool viewports = viewportMode(); // no source of their own
     for (const auto &[part, label] : attributeParts()) {
         if (viewports && part == Engine::PartSource) continue;
         auto *b = new QCheckBox(label);
@@ -2729,13 +2800,6 @@ void MainWindow::createGroup()
 void MainWindow::fill3dMenu(QMenu *menu)
 {
     menu->addAction(QStringLiteral("New 3D Scene"), this, &MainWindow::createScene);
-    menu->addAction(QStringLiteral("Materials…"), this, [this] {
-        for (int i = 0; i < m_tabs->count(); ++i)
-            if (m_tabs->widget(i)->findChild<QWidget *>(QStringLiteral("materialPanel"))) {
-                m_tabs->setCurrentIndex(i);
-                break;
-            }
-    });
     const int cur = currentLayer();
     bool inScene = false;
     if (cur >= 0) {
