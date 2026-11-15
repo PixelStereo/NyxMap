@@ -518,13 +518,14 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
                                       {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"}};
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
+        // Video, 3D and Audio add up (each is a bit of m_filter, as its category); All selects them all, or takes them all away
         auto *buttons = new QButtonGroup(this);
-        buttons->setExclusive(true);
+        buttons->setExclusive(false);
         for (int i = 0; i < 4; ++i) {
             auto *pill = new QToolButton;
             pill->setObjectName(QStringLiteral("layerPill%1").arg(QLatin1String(pills[i].name)));
             pill->setCheckable(true);
-            pill->setChecked(i == 0);
+            pill->setChecked(true); // everything shown at first
             pill->setText(QLatin1String(pills[i].name));
             pill->setToolTip(QLatin1String(pills[i].tip));
             pill->setCursor(Qt::PointingHandCursor);
@@ -536,8 +537,20 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
                                                "QToolButton:checked { background:%1; color:#16161b; }").arg(c));
             buttons->addButton(pill, i);
             row->addWidget(pill);
+            m_filterPills[size_t(i)] = pill;
         }
-        connect(buttons, &QButtonGroup::idClicked, this, [this](int id) { setFilter(id); });
+        connect(buttons, &QButtonGroup::idClicked, this, [this](int id) {
+            if (id == 0) { // All: every kind follows it
+                const bool on = m_filterPills[0]->isChecked();
+                for (int k = 1; k < 4; ++k) m_filterPills[size_t(k)]->setChecked(on);
+            } else {
+                m_filterPills[0]->setChecked(m_filterPills[1]->isChecked() && m_filterPills[2]->isChecked() && m_filterPills[3]->isChecked());
+            }
+            int mask = 0;
+            for (int k = 1; k < 4; ++k)
+                if (m_filterPills[size_t(k)]->isChecked()) mask |= 1 << k;
+            setFilter(mask);
+        });
         v->addLayout(row);
     }
     auto *bar = new QHBoxLayout;
@@ -911,20 +924,21 @@ void LayerTable::updateRowLevels(int r, const Row &row)
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-void LayerTable::setFilter(int category)
+// The kinds shown: a bit per category (1 video, 2 3D, 3 audio)
+void LayerTable::setFilter(int mask)
 {
-    if (category == m_filter) return;
-    m_filter = category;
+    if (mask == m_filter) return;
+    m_filter = mask;
     setRows(m_raw);
 }
 
-// With a filter, a row shows if it is of the kind (a group: if something it holds is)
-static std::vector<LayerTable::Row> filtered(std::vector<LayerTable::Row> rows, int filter)
+// With a filter, a row shows if its kind is chosen (a group: if something it holds is)
+static std::vector<LayerTable::Row> filtered(std::vector<LayerTable::Row> rows, int mask)
 {
-    if (filter <= 0) return rows;
+    if (mask == 0b1110) return rows; // every kind
     std::vector<bool> shown(rows.size(), false);
     for (size_t i = 0; i < rows.size(); ++i)
-        if (!rows[i].group && !rows[i].viewport && rows[i].category == filter) {
+        if (!rows[i].group && !rows[i].viewport && rows[i].category > 0 && (mask & (1 << rows[i].category))) {
             shown[i] = true;
             // its groups, up the list (a member follows its group, and sits deeper)
             int depth = rows[i].depth;

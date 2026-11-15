@@ -549,6 +549,7 @@ int runScene3dUiTests(Engine &engine)
         auto *pillAll = bin->findChild<QToolButton *>("typePillAll");
         check(pill3d && pillVideo && bin->findChild<QToolButton *>("typePillAudio") && pillAll, "the Media Bin has All, Video, Audio and 3D buttons");
         if (pill3d && pillVideo && pillAll) {
+            pillAll->click(); // All takes every kind away; 3D alone is then chosen
             pill3d->click();
             pump();
             bool videoShown = false, modelsShown = false;

@@ -5,6 +5,7 @@
 #include <QList>
 #include <QPixmap>
 #include <QWidget>
+#include <array>
 #include <vector>
 
 class QTableWidget;
@@ -51,7 +52,7 @@ public:
     QList<int> selectedRows() const; // in order
     void startRename(int row);
     QWidget *table() const;
-    void setFilter(int category); // 0 all, 1 video, 2 3D, 3 audio
+    void setFilter(int mask);     // the kinds shown: a bit each (1 video, 2 3D, 3 audio); all three by default
     void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
@@ -81,7 +82,8 @@ private:
     void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
     std::vector<Row> m_rows, m_raw;
-    int m_filter = 0;
+    int m_filter = 0b1110;
+    std::array<class QToolButton *, 4> m_filterPills{}; // All, Video, 3D, Audio
     QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };
