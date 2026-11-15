@@ -82,8 +82,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         _, urls = metadata.select_release([current], REPO)
         self.assertIn(companion['browser_download_url'], metadata.downloads(current, urls, REPO))
         rendered = metadata.downloads(current, urls, REPO)
-        self.assertIn("https://companion.free/img/companion-badge.png?ref=bitfocus", rendered)
-        self.assertIn("https://companion.free/?ref=bitfocus", rendered)
+        self.assertIn("https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png", rendered)
+        self.assertIn("alt=\"Module for Companion\"", rendered)
+        self.assertNotIn("Controllable by Companion", rendered)
         self.assertIn("Download the NyxMap module", rendered)
         companion['browser_download_url'] = 'https://example.org/module.tgz'
         with self.assertRaises(ValueError):
