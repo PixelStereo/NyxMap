@@ -521,6 +521,14 @@ QPointF MappingView::toWidget(QPointF n) const
     return QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height());
 }
 
+bool MappingView::pointerNorm(QPointF *norm) const
+{
+    const QPointF p = mapFromGlobal(QCursor::pos());
+    if (!rect().contains(p.toPoint())) return false;
+    *norm = toNorm(p);
+    return true;
+}
+
 QPointF MappingView::toNorm(QPointF p) const
 {
     const QRectF r = viewRect();

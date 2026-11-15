@@ -28,6 +28,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QImageReader>
 #include <QLabel>
 #include <QMap>
@@ -186,6 +187,50 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     import->setMenu(importMenu);
     head->addWidget(import);
     v->addLayout(head);
+    // The media to show, as coloured buttons (the colour of each kind is the same in the layer list). Video, 3D and Audio
+    // add up; All selects them all, or takes them all away when they are all shown
+    {
+        struct Pill { const char *name; const char *colour; const char *tip; };
+        static const Pill pills[4] = {{"All", "#9fb0d0", "Show all media"},
+                                      {"Video", "#5ad1e0", "Show videos, images, video generators and live inputs"},
+                                      {"Audio", "#3fbf6f", "Show sounds, instruments and audio inputs"},
+                                      {"3D", "#b08cff", "Show 3D models and primitives"}};
+        auto *row = new QHBoxLayout;
+        row->setSpacing(6);
+        auto *group = new QButtonGroup(this);
+        group->setExclusive(false);
+        // Shown in this order: All, Video, 3D, Audio (m_typePills keeps All 0, Video 1, Audio 2, 3D 3)
+        for (int i : {0, 1, 3, 2}) {
+            auto *pill = new QToolButton;
+            pill->setObjectName(QStringLiteral("typePill%1").arg(QLatin1String(pills[i].name)));
+            pill->setCheckable(true);
+            pill->setChecked(true); // everything shown at first
+            pill->setText(QLatin1String(pills[i].name));
+            pill->setToolTip(QLatin1String(pills[i].tip));
+            pill->setCursor(Qt::PointingHandCursor);
+            pill->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            const QString c = QLatin1String(pills[i].colour);
+            pill->setStyleSheet(QStringLiteral("QToolButton { background:#35353b; color:%1; border:1px solid #4a4a52; border-bottom:3px solid %1; "
+                                               "border-radius:8px; padding:5px 10px; font-weight:600; }"
+                                               "QToolButton:hover { background:#404048; }"
+                                               "QToolButton:checked { background:%1; color:#16161b; }").arg(c));
+            group->addButton(pill, i);
+            row->addWidget(pill);
+            m_typePills[size_t(i)] = pill;
+        }
+        connect(group, &QButtonGroup::idClicked, this, [this](int id) {
+            const bool all = m_typePills[0]->isChecked();
+            if (id == 0) { // All: every kind follows it
+                for (int k = 1; k < 4; ++k) setPillChecked(k, all);
+            } else {
+                m_typePills[0]->blockSignals(true);
+                m_typePills[0]->setChecked(m_typePills[1]->isChecked() && m_typePills[2]->isChecked() && m_typePills[3]->isChecked());
+                m_typePills[0]->blockSignals(false);
+            }
+            applyFilter();
+        });
+        v->addLayout(row);
+    }
     m_search = new QLineEdit;
     m_search->setPlaceholderText(QStringLiteral("Search…"));
     m_search->setClearButtonEnabled(true);
@@ -193,11 +238,6 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     auto *filters = new QHBoxLayout;
     filters->setSpacing(4);
     filters->addWidget(m_search, 1);
-    m_type = new QComboBox;
-    m_type->setObjectName(QStringLiteral("typeFilter"));
-    m_type->addItems({QStringLiteral("All media"), QStringLiteral("Video"), QStringLiteral("Audio"), QStringLiteral("3D")});
-    m_type->setToolTip(QStringLiteral("Show all media, video, audio or 3D"));
-    filters->addWidget(m_type);
     m_kind = new QComboBox;
     m_kind->setObjectName(QStringLiteral("kindFilter"));
     m_kind->addItems({QStringLiteral("All Kinds"), QStringLiteral("Files"), QStringLiteral("Generators"), QStringLiteral("Inputs"),
@@ -211,7 +251,6 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     filters->addWidget(m_usage);
     v->addLayout(filters);
     connect(m_search, &QLineEdit::textChanged, this, &MediaBin::applyFilter);
-    connect(m_type, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
     connect(m_kind, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
     connect(m_usage, &QComboBox::currentIndexChanged, this, &MediaBin::applyFilter);
 
@@ -229,6 +268,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_tree->setUniformRowHeights(true);
     m_tree->setIndentation(12); // ISF > Generators > category > shader: keep room for the names
+    m_tree->setIconSize(QSize(44, 26)); // the pictures of the videos and images
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_tree->header()->setSectionResizeMode(1, QHeaderView::Interactive);
@@ -461,6 +501,7 @@ void MediaBin::refresh()
         it->setData(0, UsersRole, int(r.users.size()));
         const bool stream = Engine::isStreamUrl(r.path);
         it->setText(0, stream ? Engine::streamName(r.path) : QFileInfo(r.path).fileName());
+        it->setIcon(0, r.missing ? QIcon() : m_thumbs.value(r.path)); // its picture, once read
         if (stream) { // never probed: that would connect to it
             const bool rtsp = r.path.startsWith(QLatin1String("rtsp"), Qt::CaseInsensitive);
             it->setText(1, QStringLiteral("Stream · ") + r.path.section(QLatin1Char(':'), 0, 0).toUpper() +
@@ -986,11 +1027,15 @@ void MediaBin::probe(const QString &path)
         // Three fields: short info, tooltip details, explicit source color tags.
         if (!info.contains('\t')) info += '\t';
         info += '\t' + color;
+        // Its picture: an image, a video's first frame (a sound or a sequence has none)
+        QImage thumb;
+        if (image || (!sound && !QFileInfo(path).isDir() && Engine::isVideoFile(path))) thumb = readThumbnail(path, QSize(96, 54), !image);
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
-            [self, path, info] {
+            [self, path, info, thumb] {
                 if (!self) return;
                 self->m_info[path] = info;
+                if (!thumb.isNull()) self->m_thumbs[path] = QIcon(QPixmap::fromImage(thumb));
                 self->m_probing.remove(path);
                 self->refresh();
             },
@@ -1246,8 +1291,9 @@ bool MediaBin::reveal(const QString &path)
     if (!item) return false;
     if (item->isHidden()) {
         if (m_search) m_search->clear();
-        for (QComboBox *filter : {m_usage, m_type, m_kind})
+        for (QComboBox *filter : {m_usage, m_kind})
             if (filter) filter->setCurrentIndex(0);
+        setTypeIndex(0);
         applyFilter();
     }
     for (QTreeWidgetItem *up = item->parent(); up; up = up->parent()) up->setExpanded(true);
@@ -1256,11 +1302,48 @@ bool MediaBin::reveal(const QString &path)
     return true;
 }
 
+void MediaBin::setPillChecked(int index, bool on)
+{
+    if (QToolButton *b = m_typePills[size_t(index)]) b->setChecked(on);
+}
+
+// Which kinds are shown: 1 video, 2 audio, 3 3D (a bit each); All is all three
+int MediaBin::typeMask() const
+{
+    int mask = 0;
+    if (m_typePills[1] && m_typePills[1]->isChecked()) mask |= 1;
+    if (m_typePills[2] && m_typePills[2]->isChecked()) mask |= 2;
+    if (m_typePills[3] && m_typePills[3]->isChecked()) mask |= 4;
+    return mask;
+}
+
+// Every kind shown (All), as the bin opens and as a reset gives it
+void MediaBin::setTypeIndex(int)
+{
+    for (int k = 0; k < 4; ++k) setPillChecked(k, true);
+}
+
+// How many items each button shows: the media under each kind, All being the sum
+void MediaBin::updateTypeCounts()
+{
+    const std::function<int(const QTreeWidgetItem *)> items = [&](const QTreeWidgetItem *it) {
+        int n = it->childCount() == 0 && it->data(0, PathRole).isValid() ? 1 : 0;
+        for (int c = 0; c < it->childCount(); ++c) n += items(it->child(c));
+        return n;
+    };
+    const int video = items(m_videoRoot), audio = items(m_audioRoot), models = items(m_3dRoot);
+    const char *names[4] = {"All", "Video", "Audio", "3D"};
+    const int counts[4] = {video + audio + models, video, audio, models};
+    for (int i = 0; i < 4; ++i)
+        if (m_typePills[size_t(i)]) m_typePills[size_t(i)]->setText(QStringLiteral("%1 %2").arg(QLatin1String(names[i])).arg(counts[i]));
+}
+
 void MediaBin::applyFilter()
 {
+    updateTypeCounts();
     const QString f = m_search ? m_search->text().trimmed() : QString();
     const int usage = m_usage ? m_usage->currentIndex() : 0; // 0 all, 1 used, 2 unused
-    const int media = m_type ? m_type->currentIndex() : 0;   // 0 both, 1 video, 2 audio
+    const int mask = typeMask(); // the kinds shown: video 1, audio 2, 3D 4
     const int kind = m_kind ? m_kind->currentIndex() : 0;    // 0 all, 1 files, 2 generators, 3 inputs, 4 ISF
     const bool filtering = !f.isEmpty() || usage != 0;
     // Leaves (media, shaders) match by name and use; a category stays visible if one of its items does
@@ -1296,7 +1379,7 @@ void MediaBin::applyFilter()
             group->setHidden(!kindMatches(group) || (!shown && filtering));
             any |= !group->isHidden();
         }
-        const bool mediaMatches = media == 0 || (media == 1 && root == m_videoRoot) || (media == 2 && root == m_audioRoot) || (media == 3 && root == m_3dRoot);
+        const bool mediaMatches = (root == m_videoRoot && (mask & 1)) || (root == m_audioRoot && (mask & 2)) || (root == m_3dRoot && (mask & 4));
         root->setHidden(!mediaMatches || (!any && (filtering || kind != 0)));
     }
 }

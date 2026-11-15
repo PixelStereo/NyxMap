@@ -1,8 +1,11 @@
 #include "LayerTable.h"
 #include <QSet>
 #include "Widgets.h"
+#include "../engine/Layer.h"
 
 #include <QApplication>
+#include <QButtonGroup>
+#include <QComboBox>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -11,6 +14,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMimeData>
 #include <memory>
 #include <QPainter>
@@ -18,6 +22,9 @@
 #include <QPointer>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QApplication>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -28,13 +35,71 @@
 #include <functional>
 #include <tuple>
 
-enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColEffects, ColOpacity, ColBlend, ColPlayback, ColAudio, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColBlend, ColOpacity, ColAudio, ColCount };
+enum NameRole { RoleMeta = Qt::UserRole + 1, RoleDepth, RoleArrow, RoleTag, RoleThumb };
 
 static const char *const kRowsMime = kLayerRowsMime;
 static constexpr int kArrowZone = 22;  // px at the left of a group's name: fold / unfold
 static constexpr int kIndent = 26;     // px: members of a group
 
 namespace {
+// The name cell: the layer's small picture (or its kind's tag), its name in bold and, under it, what it is and how it plays
+class NameDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &ix) const override
+    {
+        QStyleOptionViewItem o = opt;
+        initStyleOption(&o, ix);
+        o.text.clear();
+        o.icon = QIcon();
+        QStyle *st = o.widget ? o.widget->style() : QApplication::style();
+        st->drawControl(QStyle::CE_ItemViewItem, &o, p, o.widget);
+        p->save();
+        p->setClipRect(opt.rect);
+        const int depth = ix.data(RoleDepth).toInt();
+        int x = opt.rect.left() + 8 + depth * kIndent;
+        const QString arrow = ix.data(RoleArrow).toString();
+        const QColor name = ix.data(Qt::ForegroundRole).value<QBrush>().color();
+        if (!arrow.isEmpty()) {
+            p->setPen(name);
+            p->drawText(QRect(x, opt.rect.top(), kArrowZone - 6, opt.rect.height()), Qt::AlignCenter, arrow);
+            x += kArrowZone - 4;
+        }
+        const QRect box(x, opt.rect.top() + 5, 56, opt.rect.height() - 10);
+        const QPixmap thumb = ix.data(RoleThumb).value<QPixmap>();
+        p->fillRect(box, QColor(18, 18, 22));
+        if (!thumb.isNull()) {
+            const QSize sz = thumb.size().scaled(box.size(), Qt::KeepAspectRatio);
+            p->drawPixmap(QRect(box.center() - QPoint(sz.width() / 2, sz.height() / 2), sz), thumb);
+        } else {
+            p->setPen(name);
+            p->drawText(box, Qt::AlignCenter, ix.data(RoleTag).toString());
+        }
+        p->setPen(QColor(70, 70, 78));
+        p->drawRect(box.adjusted(0, 0, -1, -1));
+        const int tx = box.right() + 9;
+        const QRect textBox(tx, opt.rect.top(), opt.rect.right() - tx - 4, opt.rect.height());
+        QFont f = opt.font;
+        f.setBold(true);
+        QFontMetrics fm(f);
+        p->setFont(f);
+        p->setPen(name);
+        p->drawText(QRect(textBox.left(), textBox.top() + 5, textBox.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    fm.elidedText(ix.data(Qt::DisplayRole).toString(), Qt::ElideRight, textBox.width()));
+        QFont g = opt.font;
+        g.setPointSizeF(std::max(7.0, g.pointSizeF() - 1.5));
+        QFontMetrics gm(g);
+        p->setFont(g);
+        p->setPen(QColor(140, 140, 150));
+        p->drawText(QRect(textBox.left(), textBox.top() + 6 + fm.height(), textBox.width(), gm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    gm.elidedText(ix.data(RoleMeta).toString(), Qt::ElideRight, textBox.width()));
+        p->restore();
+    }
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return QSize(160, 44); }
+};
+
 // Rename in place: Enter validates, Esc cancels
 class RenameEdit : public QLineEdit
 {
@@ -353,6 +418,11 @@ protected:
         QTableWidget::paintEvent(e);
         QPainter p(viewport());
         const QColor accent = theme::accent();
+        if (rows && rows->empty()) { // nothing yet: say what to do
+            p.setPen(QColor(136, 136, 142));
+            p.drawText(viewport()->rect().adjusted(16, 16, -16, -16), Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                       QStringLiteral("No layers yet.\nClick + Layer, or drop a video, an image, a sound or a shader here."));
+        }
         // Each row a band of its kind's colour; each group a fine line around all it holds
         if (rows) {
             const int bandX = columnViewportPosition(ColName), width = viewport()->width();
@@ -427,7 +497,9 @@ static QToolButton *barButton(const QString &text, const QString &tip)
     auto *b = new QToolButton;
     b->setText(text);
     b->setToolTip(tip);
-    b->setMinimumSize(30, 24);
+    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    b->setMinimumHeight(24);
+    b->setMinimumWidth(text.size() <= 2 ? 30 : 0); // a symbol is a square; a word has its own width
     return b;
 }
 
@@ -437,22 +509,64 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     v->setContentsMargins(8, 4, 8, 4);
     v->setSpacing(4);
 
+    // What to show: all the layers, or only the videos (pictures), the 3D ones or the sounds, as the Media Bin does
+    {
+        struct Pill { const char *name; const char *colour; const char *tip; };
+        static const Pill pills[4] = {{"All", "#9fb0d0", "Show every layer"},
+                                      {"Video", "#5ad1e0", "Show the videos, images, generators, texts and live inputs"},
+                                      {"3D", "#b08cff", "Show the 3D scenes, models, lights, cameras and paths"},
+                                      {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"}};
+        auto *row = new QHBoxLayout;
+        row->setSpacing(6);
+        // Video, 3D and Audio add up (each is a bit of m_filter, as its category); All selects them all, or takes them all away
+        auto *buttons = new QButtonGroup(this);
+        buttons->setExclusive(false);
+        for (int i = 0; i < 4; ++i) {
+            auto *pill = new QToolButton;
+            pill->setObjectName(QStringLiteral("layerPill%1").arg(QLatin1String(pills[i].name)));
+            pill->setCheckable(true);
+            pill->setChecked(true); // everything shown at first
+            pill->setText(QLatin1String(pills[i].name));
+            pill->setToolTip(QLatin1String(pills[i].tip));
+            pill->setCursor(Qt::PointingHandCursor);
+            pill->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            const QString c = QLatin1String(pills[i].colour);
+            pill->setStyleSheet(QStringLiteral("QToolButton { background:#35353b; color:%1; border:1px solid #4a4a52; border-bottom:3px solid %1; "
+                                               "border-radius:8px; padding:4px 10px; font-weight:600; }"
+                                               "QToolButton:hover { background:#404048; }"
+                                               "QToolButton:checked { background:%1; color:#16161b; }").arg(c));
+            buttons->addButton(pill, i);
+            row->addWidget(pill);
+            m_filterPills[size_t(i)] = pill;
+        }
+        connect(buttons, &QButtonGroup::idClicked, this, [this](int id) {
+            if (id == 0) { // All: every kind follows it
+                const bool on = m_filterPills[0]->isChecked();
+                for (int k = 1; k < 4; ++k) m_filterPills[size_t(k)]->setChecked(on);
+            } else {
+                m_filterPills[0]->setChecked(m_filterPills[1]->isChecked() && m_filterPills[2]->isChecked() && m_filterPills[3]->isChecked());
+            }
+            int mask = 0;
+            for (int k = 1; k < 4; ++k)
+                if (m_filterPills[size_t(k)]->isChecked()) mask |= 1 << k;
+            setFilter(mask);
+        });
+        v->addLayout(row);
+    }
     auto *bar = new QHBoxLayout;
     auto *title = new QLabel(QStringLiteral("<b>Layers</b>"));
     auto *add = barButton(QStringLiteral("+"), QStringLiteral("New Layer (empty: drop a media onto it)"));
-    auto *group = barButton(QStringLiteral("⊞"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
-    auto *vp = barButton(QStringLiteral("▭"), QStringLiteral("New Viewport: another window onto the composition, "
+    auto *group = barButton(QStringLiteral("Group"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
+    auto *vp = barButton(QStringLiteral("Viewport"), QStringLiteral("New Viewport: another window onto the composition, "
                                                              "with its own size, screen and publishing"));
     auto *scene = barButton(QStringLiteral("3D"), QStringLiteral("3D: a new 3D scene (with a light), or a light in the selected "
                                                                  "scene. Models: drop an FBX, glTF or OBJ onto a layer or a scene"));
     scene->setObjectName(QStringLiteral("layer3dButton"));
     auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected layers (Del)"));
     auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
-    auto *up = barButton(QStringLiteral("▲"), QStringLiteral("Move Up (Ctrl+])"));
-    auto *down = barButton(QStringLiteral("▼"), QStringLiteral("Move Down (Ctrl+[)"));
     (void)title;
     bar->setSpacing(2);
-    for (auto *b : {add, group, vp, scene, remove, dup, up, down}) bar->addWidget(b);
+    for (auto *b : {add, remove, group, vp, scene, dup}) bar->addWidget(b);
     bar->addStretch();
     v->addLayout(bar);
 
@@ -469,8 +583,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onCollapse = [this](int row) { emit collapseToggled(row); };
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
-    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"), QStringLiteral("Fx"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Blend Mode"), QStringLiteral("Playback"), QStringLiteral("Audio")});
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"),
+                                        QStringLiteral("Blend"), QStringLiteral("Opa."), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -478,12 +592,15 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
+    m_table->horizontalHeaderItem(ColBlend)->setToolTip(QStringLiteral("Blend Mode"));
+    m_table->horizontalHeaderItem(ColOpacity)->setToolTip(QStringLiteral("Opacity: drag the number sideways, double-click to type"));
     m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->verticalHeader()->setVisible(false);
-    m_table->verticalHeader()->setDefaultSectionSize(26);
+    m_table->verticalHeader()->setDefaultSectionSize(44);
+    m_table->setItemDelegateForColumn(ColName, new NameDelegate(m_table));
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);
@@ -491,30 +608,28 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setMouseTracking(true); // the handles' hand
     auto *h = m_table->horizontalHeader();
     h->setHighlightSections(false);
+    // The name takes the room that is left; the others are as wide as what they show, so no header or cell is cut
+    h->setStretchLastSection(false);
     h->setSectionResizeMode(ColHandle, QHeaderView::Fixed);
     m_table->setColumnWidth(ColHandle, 16);
+    m_table->setColumnHidden(ColHandle, true); // a layer is dragged from anywhere in its row
     h->setSectionResizeMode(ColVisible, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColVisible, 30);
+    m_table->setColumnWidth(ColVisible, 28);
     h->setSectionResizeMode(ColLock, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColLock, 28);
+    m_table->setColumnWidth(ColLock, 26);
     h->setSectionResizeMode(ColSolo, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColSolo, 26);
-    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColName, 170);
-    h->setSectionResizeMode(ColEffects, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColEffects, 34);
+    m_table->setColumnWidth(ColSolo, 24);
+    h->setSectionResizeMode(ColName, QHeaderView::Stretch);
     h->setSectionResizeMode(ColOpacity, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColOpacity, 150);
+    m_table->setColumnWidth(ColOpacity, 62);
     h->setSectionResizeMode(ColBlend, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColBlend, 66);
-    h->setSectionResizeMode(ColPlayback, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColPlayback, 150);
+    m_table->setColumnWidth(ColBlend, 92);
     h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColAudio, 92);
+    m_table->setColumnWidth(ColAudio, 64);
+    h->setMinimumSectionSize(16);
     h->moveSection(h->visualIndex(ColAudio), h->visualIndex(ColName) + 1);
     m_table->setColumnHidden(ColAudio, true);
-    h->setStretchLastSection(true);
+    h->setStretchLastSection(false);
     v->addWidget(m_table, 1);
 
     connect(m_table, &QTableWidget::currentCellChanged, this, [this](int row, int, int prev, int) {
@@ -544,6 +659,18 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         if (row == m_table->currentRow() && m_table->selectionModel()->isRowSelected(row, QModelIndex()))
             emit rowClicked(row);
         if (col == ColLock) emit lockToggled(row);
+        if (col == ColBlend && row >= 0 && row < int(m_rows.size())) {
+            const Row &r = m_rows[size_t(row)];
+            if (r.noPicture || r.viewport || r.locked || r.lockedByGroup) return;
+            QMenu menu(m_table);
+            for (BlendMode m : kBlendModes) {
+                QAction *a = menu.addAction(blendModeName(m));
+                a->setCheckable(true);
+                a->setChecked(blendModeName(m) == r.blend);
+                connect(a, &QAction::triggered, this, [this, row, m] { emit blendEdited(row, int(m)); });
+            }
+            menu.exec(m_table->viewport()->mapToGlobal(QPoint(m_table->columnViewportPosition(ColBlend), m_table->rowViewportPosition(row) + m_table->rowHeight(row))));
+        }
         if (col == ColSolo && row >= 0 && row < int(m_rows.size()) && !m_rows[size_t(row)].viewport) emit soloToggled(row);
     });
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -564,8 +691,6 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     connect(scene, &QToolButton::clicked, this, [this, scene] { emit scene3dClicked(scene); });
     connect(remove, &QToolButton::clicked, this, &LayerTable::removeClicked);
     connect(dup, &QToolButton::clicked, this, &LayerTable::duplicateClicked);
-    connect(up, &QToolButton::clicked, this, [this] { emit moveClicked(-1); });
-    connect(down, &QToolButton::clicked, this, [this] { emit moveClicked(+1); });
 }
 
 QWidget *LayerTable::table() const { return m_table; }
@@ -695,27 +820,23 @@ void LayerTable::updateRow(int r, const Row &row)
                      : row.solo   ? QStringLiteral("Soloed — click to show every layer again")
                                   : QStringLiteral("Solo: draw only this layer (and the other soloed ones)"));
 
-    // Indented by depth (about kIndent px per level); a group starts with its fold arrow
-    const QString prefix = QStringLiteral("        ").repeated(row.depth) +
-                           (row.group ? (row.collapsed ? QStringLiteral("▸  ") : QStringLiteral("▾  ")) : QString());
-    QTableWidgetItem *name = text(ColName, prefix + row.tag + QStringLiteral("  ") + row.name,
-                                  row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
-    QFont f = name->font();
-    f.setBold(true);
-    name->setFont(f);
+    // The name cell is painted by its delegate: depth, fold arrow, picture, name, then what it is and how it plays
+    QTableWidgetItem *name = text(ColName, row.name, row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
+    QStringList meta;
+    if (row.effectCount) meta << QStringLiteral("%1 FX%2").arg(row.effectCount).arg(row.effectsOn ? QString() : QStringLiteral(" (off)"));
+    if (!row.playback.isEmpty() && !row.viewport) meta << row.playback;
+    if (!row.source.isEmpty()) meta << row.source;
+    name->setData(RoleMeta, meta.join(QStringLiteral(" · ")));
+    name->setData(RoleDepth, row.depth);
+    name->setData(RoleArrow, row.group ? (row.collapsed ? QStringLiteral("▸") : QStringLiteral("▾")) : QString());
+    name->setData(RoleTag, row.tag);
+    name->setData(RoleThumb, m_thumbs.value(row.id));
+    name->setToolTip(row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source) +
+                     (row.effectCount ? QStringLiteral("\n") + row.effects.split(QStringLiteral(" › ")).join('\n') : QString()));
     name->setForeground(row.error        ? QColor(255, 110, 95)
                         : row.soloHidden ? QColor(110, 110, 115) // left out by a solo
                         : row.color.isValid() ? row.color
                                               : QColor(230, 230, 233));
-    // Effects: their number, the names on hover
-    QTableWidgetItem *fx = text(ColEffects, row.effectCount ? QString::number(row.effectCount) : QStringLiteral("—"),
-                                row.effectCount ? (row.effectsOn ? QString() : QStringLiteral("FX off\n")) +
-                                                      row.effects.split(QStringLiteral(" › ")).join('\n')
-                                                : QStringLiteral("No FX"));
-    fx->setTextAlignment(Qt::AlignCenter);
-    fx->setForeground(row.effectsOn ? QColor(255, 200, 140) : QColor(110, 110, 115));
-    text(ColBlend, row.noPicture || row.viewport ? QStringLiteral("—") : row.blend);
-    text(ColPlayback, row.playback)->setFont(QFont(QStringLiteral("monospace")));
     auto *audioCell = m_table->cellWidget(r, ColAudio);
     if (row.hasAudio) {
         if (!audioCell) {
@@ -736,6 +857,14 @@ void LayerTable::updateRow(int r, const Row &row)
         if (QTableWidgetItem *it = m_table->item(r, c)) it->setBackground(bg);
     m_table->setRowHidden(r, row.hidden);
 
+    // Blend Mode: its name in the row; a click opens the menu (flat, like the rest of the list)
+    {
+        QTableWidgetItem *blend = text(ColBlend, row.noPicture || row.viewport ? QString() : row.blend + QStringLiteral("  ▾"),
+                                       QStringLiteral("Blend Mode: click to change"));
+        blend->setTextAlignment(Qt::AlignCenter);
+        blend->setForeground(row.locked || row.lockedByGroup ? QColor(110, 110, 115) : QColor(190, 190, 198));
+    }
+
     // Opacity: the application's own bar (SliderField, as in the inspector) right in the row; "—" without a picture
     auto *cell = m_table->cellWidget(r, ColOpacity);
     SliderField *slider = cell ? cell->findChild<SliderField *>() : nullptr;
@@ -743,7 +872,7 @@ void LayerTable::updateRow(int r, const Row &row)
     if (!cell) {
         cell = new QWidget;
         auto *h = new QHBoxLayout(cell);
-        h->setContentsMargins(4, 0, 4, 0);
+        h->setContentsMargins(2, 12, 2, 12);
         slider = new SliderField;
         slider->setRange(0, 100);
         slider->setDecimals(0);
@@ -751,6 +880,7 @@ void LayerTable::updateRow(int r, const Row &row)
         slider->setSingleStep(1);
         slider->setSnaps({100});
         slider->setCompact(true);
+        slider->setNumberOnly(true);
         slider->setFocusPolicy(Qt::NoFocus);
         none = new QLabel(QStringLiteral("—"));
         none->setAlignment(Qt::AlignCenter);
@@ -774,6 +904,15 @@ void LayerTable::updateRow(int r, const Row &row)
     slider->setEnabled(!row.locked && !row.lockedByGroup);
 }
 
+void LayerTable::setThumbnail(quint64 id, const QImage &image)
+{
+    const QPixmap pm = image.isNull() ? QPixmap() : QPixmap::fromImage(image);
+    m_thumbs.insert(id, pm);
+    for (int r = 0; r < int(m_rows.size()); ++r)
+        if (m_rows[size_t(r)].id == id)
+            if (QTableWidgetItem *it = m_table->item(r, ColName)) it->setData(RoleThumb, pm);
+}
+
 void LayerTable::updateRowLevels(int r, const Row &row)
 {
     if (row.hasAudio)
@@ -785,8 +924,39 @@ void LayerTable::updateRowLevels(int r, const Row &row)
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-bool LayerTable::setRows(const std::vector<Row> &rows)
+// The kinds shown: a bit per category (1 video, 2 3D, 3 audio)
+void LayerTable::setFilter(int mask)
 {
+    if (mask == m_filter) return;
+    m_filter = mask;
+    setRows(m_raw);
+}
+
+// With a filter, a row shows if its kind is chosen (a group: if something it holds is)
+static std::vector<LayerTable::Row> filtered(std::vector<LayerTable::Row> rows, int mask)
+{
+    if (mask == 0b1110) return rows; // every kind
+    std::vector<bool> shown(rows.size(), false);
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].group && !rows[i].viewport && rows[i].category > 0 && (mask & (1 << rows[i].category))) {
+            shown[i] = true;
+            // its groups, up the list (a member follows its group, and sits deeper)
+            int depth = rows[i].depth;
+            for (size_t k = i; k-- > 0 && depth > 0;)
+                if (rows[k].group && rows[k].depth < depth) {
+                    shown[k] = true;
+                    depth = rows[k].depth;
+                }
+        }
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].viewport && !shown[i]) rows[i].hidden = true;
+    return rows;
+}
+
+bool LayerTable::setRows(const std::vector<Row> &input)
+{
+    m_raw = input;
+    const std::vector<Row> rows = filtered(input, m_filter);
     const bool changed = !std::equal(m_rows.begin(), m_rows.end(), rows.begin(), rows.end(),
         [](const Row &a, const Row &b) { return a.id == b.id && a.hidden == b.hidden; });
     auto *grid = static_cast<LayerGrid *>(m_table);
@@ -818,11 +988,7 @@ bool LayerTable::setRows(const std::vector<Row> &rows)
             auto *visible = m_table->item(r, ColVisible);
             const auto state = row.enabled ? Qt::Checked : Qt::Unchecked;
             if (visible->checkState() != state) visible->setCheckState(state); // a refused toggle
-            if (row.playback != m_rows[size_t(r)].playback) {
-                auto *playback = m_table->item(r, ColPlayback);
-                playback->setText(row.playback);
-                playback->setToolTip(row.playback);
-            }
+            if (row.playback != m_rows[size_t(r)].playback) updateRow(r, row);
         }
         updateRowLevels(r, row);
     }

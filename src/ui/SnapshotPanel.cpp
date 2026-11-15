@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "SnapshotPanel.h"
 #include "FittedTableHeader.h"
 #include "AdaptiveSplitter.h"
@@ -53,7 +54,8 @@ enum {
     GroupRole = Qt::UserRole + 7,
     PresetRole = Qt::UserRole + 8,
     ConcordanceRole = Qt::UserRole + 9,
-    ContentRole = Qt::UserRole + 10
+    ContentRole = Qt::UserRole + 10,
+    ActiveRole = Qt::UserRole + 11
 };
 // Columns of the tree of what a snapshot holds
 enum Column { ColName, ColValue, ColTime, ColDelay };
@@ -175,6 +177,22 @@ void fitText(QPushButton *button, int padding = 18)
 // and ▶ before its number — and its fade fills the row's bottom while it runs.
 namespace {
 const QColor kLiveSnapshot(76, 217, 100);
+constexpr int kPlayZone = 20; // px at the left of the number: the small play
+
+// The small ▶ at the left of a row of a list (a snapshot, a preset): clicking it plays the row, as in the steps of a sequence
+void paintPlay(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index, int role, bool live)
+{
+    if (index.column() != 0 || !index.siblingAtColumn(0).data(role).toULongLong()) return;
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    const QRectF r(opt.rect.left() + 6, opt.rect.center().y() - 5, 9, 10);
+    QPolygonF tri;
+    tri << r.topLeft() << r.bottomLeft() << QPointF(r.right(), r.center().y());
+    p->setPen(Qt::NoPen);
+    p->setBrush(live ? kLiveSnapshot : QColor(150, 150, 158));
+    p->drawPolygon(tri);
+    p->restore();
+}
 
 class SnapshotRowDelegate : public QStyledItemDelegate
 {
@@ -183,6 +201,7 @@ public:
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index) const override
     {
         QStyledItemDelegate::paint(p, opt, index);
+        paintPlay(p, opt, index, SnapshotRole, index.siblingAtColumn(0).data(ActiveRole).toBool());
         const Engine::RecallProgress r = m_engine->recallProgress();
         if (!r.snapshot || index.siblingAtColumn(0).data(SnapshotRole).toULongLong() != r.snapshot) return;
         p->save();
@@ -197,6 +216,30 @@ public:
             if (!done.isEmpty()) p->fillRect(done, kLiveSnapshot);
         }
         p->restore();
+    }
+
+private:
+    Engine *m_engine;
+};
+
+class PresetRowDelegate : public QStyledItemDelegate
+{
+public:
+    PresetRowDelegate(Engine *e, QObject *parent) : QStyledItemDelegate(parent), m_engine(e) {}
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::paint(p, opt, index);
+        const Engine::RecallProgress r = m_engine->recallProgress();
+        const quint64 id = index.siblingAtColumn(0).data(PresetRole).toULongLong();
+        const bool mine = id && r.preset == id;
+        paintPlay(p, opt, index, PresetRole, mine && r.running());
+        if (!mine || !r.running()) return;
+        // The whole row's width is the preset's time: the green line runs under it
+        const QAbstractItemView *view = qobject_cast<const QAbstractItemView *>(opt.widget);
+        const int total = view ? view->viewport()->width() : opt.rect.width();
+        const QRectF bar(opt.rect.left(), opt.rect.bottom() - 2, opt.rect.width(), 3);
+        const QRectF done = bar.intersected(QRectF(0, bar.top(), r.fraction() * total, bar.height()));
+        if (!done.isEmpty()) p->fillRect(done, kLiveSnapshot);
     }
 
 private:
@@ -257,6 +300,7 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         [this] { return m_engine->newSnapshotGroupId(); }});
     m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_list->setColumnCount(3);
+    m_list->setIconSize(QSize(56, 32));
     m_list->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Name"), QStringLiteral("Fade")});
     m_list->setRootIsDecorated(true);
     m_list->setIndentation(12);
@@ -275,8 +319,14 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     new FittedTableHeader(m_list, m_list->header(), 1);
     m_list->setToolTip(QStringLiteral("⌘Return: recall · Double-click or Return: rename · Delete: delete · ⌘D: duplicate · ⌘G: new group\n"
                                       "Drag to reorder, into a group, or onto a step of a sequence\n"
-                                      "Green stripe and ▶: the snapshot recalled last; the green line under it: its fade"));
+                                      "The small ▶ at the left of a row plays it · green: the snapshot recalled last, and the line under it: its fade"));
     m_list->setItemDelegate(new SnapshotRowDelegate(m_engine, m_list));
+    connect(m_list, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem *it, int column) {
+        if (column != 0 || !it->data(0, SnapshotRole).toULongLong()) return;
+        const QRect r = m_list->visualItemRect(it);
+        const int x = m_list->viewport()->mapFromGlobal(QCursor::pos()).x();
+        if (x >= r.left() && x < r.left() + kPlayZone) recall(indexOf(it)); // the small play
+    });
     { // the fade running moves the line under its snapshot
         auto *t = new QTimer(this);
         t->setInterval(33);
@@ -636,7 +686,8 @@ SnapshotPanel::SnapshotPanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         // Playback moves a marker; it does not replace the list or the parameter inspector.
         for (int row : {previous, m_active}) if (auto *item = itemOf(row)) {
             const bool active = row == m_active;
-            item->setText(0, active ? QStringLiteral("▶ %1").arg(row+1) : QString::number(row+1));
+            item->setText(0, QString::number(row+1));
+            item->setData(0, ActiveRole, active);
             auto font = item->font(1); font.setBold(active);
             for (int column=0; column<3; ++column) {
                 item->setFont(column,font);
@@ -710,13 +761,14 @@ void SnapshotPanel::refresh()
                     const Engine::Snapshot m = m_engine->snapshot(i);
                     it->setText(0, QString::number(i + 1));
                     it->setText(1, m.name);
+                    if (!m.thumbnail.isNull()) it->setIcon(1, QIcon(thumbnail(m.thumbnail))); // the picture taken when it was stored
                     it->setText(2, QStringLiteral("%1 s").arg(m.fade, 0, 'f', 1));
                     it->setData(0, SnapshotRole, m.id);
                     it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
                     it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
                     it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
                     if (i == m_active) { // last recalled: ▶, bold, green — not the accent, which is the selection's
-                        it->setText(0, QStringLiteral("▶ %1").arg(i + 1));
+                        it->setData(0, ActiveRole, true);
                         QFont f = it->font(1);
                         f.setBold(true);
                         for (int c = 0; c < 3; ++c) {
@@ -1988,6 +2040,23 @@ void SnapshotPanel::connectPresets()
         selectPreset(id);
         emit edited();
     });
+    m_presets->setItemDelegate(new PresetRowDelegate(m_engine, m_presets));
+    { // the fade running moves the line under its preset
+        auto *t = new QTimer(this);
+        t->setInterval(33);
+        connect(t, &QTimer::timeout, this, [this] {
+            const Engine::RecallProgress r = m_engine->recallProgress();
+            if (r.preset && (r.running() || m_presetWasRunning)) m_presets->viewport()->update();
+            m_presetWasRunning = r.preset && r.running();
+        });
+        t->start();
+    }
+    connect(m_presets, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem *it, int column) {
+        if (column != 0 || !it->data(0, PresetRole).toULongLong()) return;
+        const QRect r = m_presets->visualItemRect(it);
+        const int x = m_presets->viewport()->mapFromGlobal(QCursor::pos()).x();
+        if (x >= r.left() && x < r.left() + kPlayZone) recallPreset(m_engine->indexOfPreset(it->data(0, PresetRole).toULongLong()));
+    });
     connect(m_presetGo, &QPushButton::clicked, this, [this] { recallPreset(selectedPreset()); });
     connect(m_presets, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *it) {
         m_presets->editItem(it, it->data(0, GroupRole).toULongLong() ? 0 : 1);
@@ -2734,7 +2803,9 @@ void SnapshotPanel::duplicateSelected(bool preset)
         const auto before = m_engine->presets();
         auto copy = m_engine->preset(index);
         copy.id = 0;
-        copy.name += QStringLiteral(" (copy)");
+        QStringList taken;
+        for (const auto &other : before) taken << other.name;
+        copy.name = numberedName(copy.name, taken);
         const int added = m_engine->addPreset(copy, index + 1);
         const auto id = m_engine->preset(added).id;
         if (m_undo)
@@ -2747,7 +2818,9 @@ void SnapshotPanel::duplicateSelected(bool preset)
             return;
         auto copy = m_engine->snapshot(index);
         copy.id = 0;
-        copy.name += QStringLiteral(" (copy)");
+        QStringList taken;
+        for (int k = 0; k < m_engine->snapshotCount(); ++k) taken << m_engine->snapshot(k).name;
+        copy.name = numberedName(copy.name, taken);
         int added = -1;
         cmd::editSnapshotLibrary(m_undo, m_engine, QStringLiteral("Duplicate Snapshot"),
                                  [&] { added = m_engine->addSnapshot(copy, index + 1); });

@@ -11486,6 +11486,38 @@
             "enable": true,
             "fx": [
             ],
+            "id": "317",
+            "locked": false,
+            "name": "Beam Path",
+            "params": {
+                "path/depth": 6,
+                "path/kind": "circle",
+                "path/position/x": 0,
+                "path/position/y": 7,
+                "path/position/z": 0,
+                "path/show": false,
+                "path/width": 6
+            },
+            "parent": "145",
+            "source": {
+                "type": "path"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "fx3d": [
+                {
+                    "id": "1",
+                    "kind": "follow_path",
+                    "layer": "317",
+                    "stage": -1
+                }
+            ],
+            "fx3d_next": "2",
             "id": "204",
             "locked": false,
             "mesh": {
@@ -11561,6 +11593,8 @@
             },
             "name": "Beam",
             "params": {
+                "fx3d/1/enabled": true,
+                "fx3d/1/speed": 0.08,
                 "light/angle": 11,
                 "light/color/b": 1,
                 "light/color/g": 1,
@@ -11573,14 +11607,6 @@
                 "light/lookpoint/x": 0,
                 "light/lookpoint/y": 0,
                 "light/lookpoint/z": 0,
-                "light/path/depth": 6,
-                "light/path/position": 0,
-                "light/path/rotation/x": 0,
-                "light/path/rotation/y": 0,
-                "light/path/rotation/z": 0,
-                "light/path/shape": "none",
-                "light/path/speed": 0.07999999821186066,
-                "light/path/width": 6,
                 "light/pitch": -89.5,
                 "light/position/x": 0,
                 "light/position/y": 7,
@@ -11603,6 +11629,38 @@
             "enable": true,
             "fx": [
             ],
+            "id": "318",
+            "locked": false,
+            "name": "Beam 2 Path",
+            "params": {
+                "path/depth": 5,
+                "path/kind": "rectangle",
+                "path/position/x": -5,
+                "path/position/y": 6,
+                "path/position/z": 3,
+                "path/show": false,
+                "path/width": 8
+            },
+            "parent": "145",
+            "source": {
+                "type": "path"
+            },
+            "viewports": {
+            }
+        },
+        {
+            "enable": true,
+            "fx": [
+            ],
+            "fx3d": [
+                {
+                    "id": "1",
+                    "kind": "follow_path",
+                    "layer": "318",
+                    "stage": -1
+                }
+            ],
+            "fx3d_next": "2",
             "id": "205",
             "locked": false,
             "mesh": {
@@ -11678,6 +11736,8 @@
             },
             "name": "Beam 2",
             "params": {
+                "fx3d/1/enabled": true,
+                "fx3d/1/speed": -0.13,
                 "light/angle": 9,
                 "light/color/b": 0.30000001192092896,
                 "light/color/g": 0.550000011920929,
@@ -11690,14 +11750,6 @@
                 "light/lookpoint/x": 0,
                 "light/lookpoint/y": 2,
                 "light/lookpoint/z": 0,
-                "light/path/depth": 5,
-                "light/path/position": 0,
-                "light/path/rotation/x": 0,
-                "light/path/rotation/y": 0,
-                "light/path/rotation/z": 0,
-                "light/path/shape": "none",
-                "light/path/speed": -0.12999999523162842,
-                "light/path/width": 8,
                 "light/pitch": -89.5,
                 "light/position/x": -5,
                 "light/position/y": 6,
@@ -11807,14 +11859,6 @@
                 "light/lookpoint/x": 0,
                 "light/lookpoint/y": 0,
                 "light/lookpoint/z": 0,
-                "light/path/depth": 4,
-                "light/path/position": 0,
-                "light/path/rotation/x": 0,
-                "light/path/rotation/y": 0,
-                "light/path/rotation/z": 0,
-                "light/path/shape": "none",
-                "light/path/speed": 0,
-                "light/path/width": 4,
                 "light/pitch": -89.5,
                 "light/position/x": 0,
                 "light/position/y": 8,

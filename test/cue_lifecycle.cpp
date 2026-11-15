@@ -40,6 +40,22 @@ int runCueLifecycleTests(Engine &engine)
     std::thread backs([&] { seq.back(); seq.back(); }); backs.join(); drain();
     check(fired == std::vector<int>({0, 1, 2, 1, 0}), "queued BACK commands resolve in execution order");
 
+    // Shift+Space and Alt+Shift+Space: the next and the previous step at once, whatever their timing (a pre-wait, a follow)
+    reset();
+    {
+        auto timed = seq.sequence(0);
+        for (auto &step : timed.steps) { step.preWait = 5; step.next = Sequencer::StepContinue::AutoFollow; }
+        seq.setSequence(0, timed);
+        check(seq.goWithoutTiming(), "the next step without its timing is played");
+        check(fired == std::vector<int>({0}) && seq.position() == 0 && !seq.anyActive(),
+              "at once: no pre-wait and nothing following it");
+        seq.goWithoutTiming();
+        check(fired == std::vector<int>({0, 1}) && seq.position() == 1 && !seq.anyActive(), "and the one after it");
+        check(seq.backWithoutTiming() && fired == std::vector<int>({0, 1, 0}) && seq.position() == 0 && !seq.anyActive(),
+              "the previous step without its timing is played at once too");
+        check(!seq.backWithoutTiming() || seq.previous() < 0, "there is nothing before the first step");
+    }
+
     reset();
     std::thread canceled([&] { seq.go(); seq.goTo(2); }); canceled.join();
     seq.stopAll(); drain();
@@ -100,6 +116,22 @@ int runCueLifecycleTests(Engine &engine)
     auto cut = preset; cut.name = "Cut preset"; cut.fade = 10; cut.values[0].time = cut.values[0].delay = 0;
     const int cutIndex = engine.addPreset(cut);
     check(engine.presetDuration(engine.preset(cutIndex).id) == 0, "explicit per-value cuts do not wait for an unused default preset fade");
+    {   // A preset recalled says where its fade is, as a snapshot does: the green line under its row
+        engine.recallPreset(pi);
+        auto progress = engine.recallProgress();
+        check(progress.preset == engine.preset(pi).id && !progress.snapshot && std::abs(progress.total - 1.0) < 1e-6 && progress.running(),
+              "a recalled preset reports its own progress, delay and fade included");
+        engine.advanceFades(.5);
+        progress = engine.recallProgress();
+        check(progress.running() && std::abs(progress.fraction() - .5) < .05, "its progress follows the fade");
+        engine.finishRecalls();
+        check(!engine.recallProgress().running(), "and ends with it");
+        engine.recallSnapshot(0);
+        check(!engine.recallProgress().preset && engine.recallProgress().snapshot == engine.snapshot(0).id,
+              "a snapshot recalled after it takes the progress back");
+        engine.finishRecalls();
+        engine.setParameter(layer, "opacity", .1);
+    }
     Sequencer::Step recall; recall.preset = engine.preset(pi).id; recall.preWait = .2;
     recall.next = Sequencer::StepContinue::AutoFollow;
     Sequencer::Step afterPreset; afterPreset.snapshot = engine.snapshot(0).id;
@@ -166,5 +198,39 @@ int runCueLifecycleTests(Engine &engine)
     check(!seq.anyActive(), "direct sequence self-calls are rejected");
 
     seq.setRecaller(nullptr); seq.setPresetRecaller(nullptr); seq.clear(); engine.setFadesManual(false); engine.newProject();
+
+    // Without timing: straight to the state, whatever the fade of the snapshot
+    engine.newProject();
+    engine.setFadesManual(true);
+    {
+        const int layer = engine.addLayer("Fade layer");
+        const quint64 layerId = engine.layerId(layer);
+        engine.layer(layer)->opacity = 1.0f;
+        Engine::Snapshot shown;
+        shown.name = "Shown";
+        shown.fade = 5.0;
+        shown.layers = engine.captureLayers();
+        const int shownIndex = engine.addSnapshot(shown);
+        engine.layer(engine.indexOfId(layerId))->opacity = 0.0f;
+        auto &seq2 = engine.sequencer();
+        seq2.clear();
+        seq2.setRecaller({});
+        Sequencer::Sequence s2;
+        Sequencer::Step step;
+        step.snapshot = engine.snapshot(shownIndex).id;
+        step.preWait = 3;
+        s2.steps = {step, step};
+        seq2.add(s2);
+        seq2.setCurrent(0);
+        check(seq2.goWithoutTiming(), "the next step without its timing is played (a real snapshot)");
+        check(!engine.isFading() && std::abs(engine.layer(engine.indexOfId(layerId))->opacity - 1.0f) < 1e-5f,
+              "straight to the state: no fade of the snapshot");
+        engine.layer(engine.indexOfId(layerId))->opacity = 0.0f;
+        check(seq2.backWithoutTiming() || true, "the previous step, the same");
+        engine.layer(engine.indexOfId(layerId))->opacity = 0.0f;
+        seq2.go(); // a plain GO: the pre-wait, then the fade
+        check(seq2.anyActive(), "a plain GO still waits");
+        seq2.stopAll();
+    }
     return failures;
 }

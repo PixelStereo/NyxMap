@@ -524,7 +524,7 @@ void LayerInspector::refreshPicker()
             key += QStringLiteral("%1:%2:%3;").arg(l->id).arg(depth).arg(e.text);
         }
     }
-    entries.insert(entries.end(), viewports.begin(), viewports.end()); // the viewports last
+    entries.insert(entries.begin(), viewports.begin(), viewports.end()); // the viewports first: handy with many layers
     if (key == m_pickerKey) return;
     m_pickerKey = key;
     const QSignalBlocker block(m_picker);
@@ -898,11 +898,19 @@ void LayerInspector::rebuild()
     }
     if (object3d && s.type != SourceType::Model)
     {
-        tabs->addTab(page(build3d(merge3d                          ? QStringList{QStringLiteral("merge/")}
-                                  : s.type == SourceType::Path   ? QStringList{QStringLiteral("path/")}
-                                  : s.type == SourceType::Camera ? QStringList{QStringLiteral("camera3d/")}
-                                                                 : QStringList{QStringLiteral("light/")})),
-                     QStringLiteral("3D"));
+        QWidget *place = build3d(merge3d                          ? QStringList{QStringLiteral("merge/")}
+                                 : s.type == SourceType::Path   ? QStringList{QStringLiteral("path/")}
+                                 : s.type == SourceType::Camera ? QStringList{QStringLiteral("camera3d/")}
+                                                                : QStringList{QStringLiteral("light/")});
+        if (s.type == SourceType::Light) { // a light travels along a Path of its scene: chosen here, like what it looks at
+            auto *both = new QWidget;
+            auto *bv = new QVBoxLayout(both);
+            bv->setContentsMargins(0, 0, 0, 0);
+            bv->addWidget(place);
+            bv->addWidget(buildLightPath());
+            place = both;
+        }
+        tabs->addTab(page(place), QStringLiteral("3D"));
         if (s.type != SourceType::Path) { // its 3D FX
             const int t = tabs->addTab(page(build3dFxChain()), QStringLiteral("FX"));
             tabs->setTabToolTip(t, QStringLiteral("3D FX: Follow Path moves it along a Path of its scene"));
@@ -4559,6 +4567,79 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
             QMessageBox::warning(this, QStringLiteral("3D"), err);
         emit layerChanged();
     });
+}
+
+// The Path a light travels along: one of the Paths of its scene (a circle, a rectangle, a line, a spiral), chosen here as
+// what it looks at is; it is the first Follow Path FX of the light (its FX tab), added or taken out by this choice
+QWidget *LayerInspector::buildLightPath()
+{
+    auto *box = new QGroupBox(QStringLiteral("Path"));
+    box->setObjectName(QStringLiteral("lightPathBox"));
+    auto *v = new QVBoxLayout(box);
+    auto *form = new QFormLayout;
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    v->addLayout(form);
+    auto *pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("lightPath"));
+    pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
+    quint64 current = 0, fx = 0;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_layer);
+        if (!l) return box;
+        if (const Fx3dEntry *e = l->fx3dFirst(Fx3d::FollowPath)) {
+            current = e->s.layer;
+            fx = e->id;
+        } else {
+            for (const Fx3dEntry &e : l->fx3d)
+                if (e.kind == Fx3d::FollowPath) { current = e.s.layer; fx = e.id; break; }
+        }
+        const auto sceneOf = [this](const Layer *o) {
+            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
+            return o;
+        };
+        for (int i = 0; i < m_engine->layerCount(); ++i) {
+            const Layer *o = m_engine->layer(i);
+            if (o && o != l && o->type == SourceType::Path && o->path3d.isPath() && sceneOf(o) == sceneOf(l))
+                pick->addItem(o->name, QVariant(qulonglong(o->id)));
+        }
+    }
+    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
+    pick->setEnabled(!m_locked);
+    pick->setToolTip(QStringLiteral("A Path of the scene (circle, rectangle, line, spiral) the light travels along: it is its Follow Path FX. "
+                                    "Make one with Layer › 3D › New Path"));
+    form->addRow(QStringLiteral("Object"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick](int i) { chooseLightPath(pick->itemData(i).toULongLong()); });
+    if (current && fx) // where it is on that Path, and how fast it goes
+        v->addWidget(build3d({QStringLiteral("fx3d/%1/position").arg(fx), QStringLiteral("fx3d/%1/speed").arg(fx)}));
+    return box;
+}
+
+void LayerInspector::chooseLightPath(quint64 path)
+{
+    if (m_engine->isLocked(m_layer)) return;
+    const quint64 layerId = m_layerId;
+    const cmd::SetFx3d::State before = cmd::SetFx3d::read(m_engine, layerId);
+    cmd::SetFx3d::State after = before;
+    auto it = std::find_if(after.list.begin(), after.list.end(), [](const Fx3dEntry &e) { return e.kind == Fx3d::FollowPath; });
+    if (!path) {
+        if (it != after.list.end()) after.list.erase(it); // no Path: no Follow Path
+    } else {
+        if (it == after.list.end()) {
+            Fx3dEntry e;
+            e.id = after.next++;
+            e.kind = Fx3d::FollowPath;
+            e.s = Fx3dSettings::defaults(Fx3d::FollowPath);
+            after.list.push_back(e);
+            it = after.list.end() - 1;
+        }
+        it->s.layer = path;
+        it->enabled = true;
+    }
+    if (!(after != before) && path == 0) return;
+    m_undo->push(new cmd::SetFx3d(m_engine, layerId, before, after, path ? QStringLiteral("Light Follows Path") : QStringLiteral("Light Leaves Path")));
+    emit layerChanged();
+    QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
 }
 
 // What a light looks at: the other 3D objects of its scene (it follows them), or the point below

@@ -34,7 +34,7 @@ Up to 8 lights per scene: directional, point, spot and area.
 - A spot's `light/falloff` goes from a sharp edge (0) to a gradient from its middle (1).
 - An area light is a rectangle lit on the side it faces, soft-shadowed as wide as it is.
 - A light can look at a point or follow a 3D object of its scene (`light/lookat`, instead of its yaw and pitch).
-- A light can travel around a circle or a rectangle in 3D (`light/path/…`): its position is the shape's middle, `light/path/rotation/…` tilts it, `light/path/position` places it on the way (0 to 1) and `light/path/speed` moves it on its own.
+- A light can travel along a **Path** of its scene (a circle, a rectangle, a line or a spiral: **Layer › 3D › New Path**). Choose it in the light's 3D tab › **Path** › Object, as what it looks at is chosen: this is the light's Follow Path FX (its FX list), whose `position` (0 to 1) places it on the way and `speed` (turns per second) moves it on its own.
 
 ## Shadows and effects
 
@@ -120,7 +120,7 @@ A preview cell showing a 3D scene (its source menu: "… (3D view)") is a 3D vie
 
 It draws the ground grid, the scene's lights and camera, and its models in flat colours with their edges (**Simple**, the lightest) or with their colours and pictures but no light on them (**Unlit**), chosen by its button. The scene's own picture is in the output, as it will be seen. A click picks a model or a light. **View from Camera** and **Camera = View** exchange the view's and the scene's cameras.
 
-Lights are drawn too: a lamp's head and its cone for a spot (down to the ground, its falloff dashed inside), a sun with parallel rays for a directional light, a bulb for a point light. A light's look-at target is a dashed line, its path is drawn, and a Merge 3D is a diamond with a line to each thing it holds.
+Lights are drawn too: a lamp's head and its cone for a spot (down to the ground, its falloff dashed inside), a sun with parallel rays for a directional light, a bulb for a point light. A light's look-at target is a dashed line, and a Merge 3D is a diamond with a line to each thing it holds.
 
 A scene shows its triangle count in the layer list, its inspector and its 3D view: those its last frame computed, in all its passes. What the camera or a light does not see is not drawn, and a scene where nothing moves keeps its picture (except with a layer's picture on a model or around the scene, which can change at any frame).
 

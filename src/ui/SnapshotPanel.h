@@ -116,7 +116,7 @@ private:
     QUndoStack *m_undo;
     class LibraryList *m_list;
     std::shared_ptr<class LibraryGroups> m_groups, m_presetGroups;
-    bool m_wasRunning = false;
+    bool m_wasRunning = false, m_presetWasRunning = false;
     QLabel *m_thumb, *m_title, *m_match;
     QLineEdit *m_name;
     QDoubleSpinBox *m_fade;

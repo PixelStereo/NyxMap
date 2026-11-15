@@ -1,6 +1,9 @@
+#include "Naming.h"
 #include "ControlsPanel.h"
 #include "ColorPicker.h"
 #include "Engine.h"
+#include "InteractionPanel.h"
+#include "PresetEditor.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
 
@@ -360,7 +363,9 @@ QToolButton *ControlsPanel::gearButton(const ShowControl &c, const std::vector<c
         const auto c = m_engine->control(id);
         if (!c) return;
         ShowControl copy = *c;
-        copy.name += QStringLiteral(" copy");
+        QStringList taken;
+        for (const ShowControl &other : m_engine->controls()) taken << other.name;
+        copy.name = numberedName(copy.name, taken);
         const QJsonArray before = m_engine->controlsJson();
         if (!m_engine->addControl(copy)) return;
         m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Duplicate Control")));
@@ -525,13 +530,27 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     }
     }
     const QString path = QStringLiteral("control/") + c.key;
-    if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad) {
+    if (field) {
+        // Its value as any value: in a preset (Edit mode, a click on its name, right-click), on a timeline, learned by an interaction
+        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")}
+                                  : c.kind == ShowControl::Kind::Color
+                                      ? QStringList{path + QStringLiteral("/r"), path + QStringLiteral("/g"), path + QStringLiteral("/b")}
+                                      : QStringList{path};
+        if (PresetEditor *pe = PresetEditor::instance()) {
+            pe->track(field, 0, paths);
+            if (auto *label = row->findChild<QLabel *>(QStringLiteral("controlName"))) pe->track(label, 0, paths);
+        }
         field->setContextMenuPolicy(Qt::CustomContextMenu);
-        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")} : QStringList{path};
         connect(field, &QWidget::customContextMenuRequested, this, [this, field, paths](const QPoint &pos) {
             auto *menu = new QMenu(field);
             menu->setAttribute(Qt::WA_DeleteOnClose);
+            if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, 0, paths);
             TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, paths, field);
+            InteractionPanel::fillValueMenu(menu, m_engine, 0, paths);
+            if (menu->isEmpty()) {
+                delete menu;
+                return;
+            }
             menu->popup(field->mapToGlobal(pos));
         });
     }

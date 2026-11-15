@@ -360,10 +360,19 @@ def light(name, kind, position, color, intensity, look=None, path=None, angle=25
         p["light/lookat"] = True
         for i, a in enumerate("xyz"):
             p[f"light/lookpoint/{a}"] = look[i]
-    if path:
-        p["light/path/shape"], p["light/path/width"], p["light/path/depth"], p["light/path/speed"] = path
     lid = new_id()
-    layers.append({"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "parent": STAGE, "source": {"type": "light"}, "fx": [], "params": p})
+    layer = {"id": lid, "name": name, "enable": True, "locked": False, "viewports": {}, "parent": STAGE, "source": {"type": "light"}, "fx": [], "params": p}
+    if path:
+        # The light travels along a Path object of the scene (shape: 1 circle, 2 rectangle; its size; its speed in turns per second)
+        shape, width, depth, speed = path
+        pid = new_id()
+        layers.append({"id": pid, "name": name + " Path", "enable": True, "locked": False, "viewports": {}, "parent": STAGE, "source": {"type": "path"}, "fx": [],
+                       "params": {"path/kind": "circle" if shape == 1 else "rectangle", "path/width": width, "path/depth": depth, "path/show": False,
+                                  "path/position/x": position[0], "path/position/y": position[1], "path/position/z": position[2]}})
+        layer["fx3d"] = [{"id": "1", "kind": "follow_path", "layer": pid, "stage": -1}]
+        layer["fx3d_next"] = "2"
+        p.update({"fx3d/1/enabled": True, "fx3d/1/speed": speed})
+    layers.append(layer)
     return lid
 
 

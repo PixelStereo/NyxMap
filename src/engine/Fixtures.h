@@ -110,9 +110,23 @@ struct Fixture {
     quint64 lineLayer = 0;
     int lineIndex = 0;
     bool onPath() const { return path.size() >= 2; }
+    quint64 group = 0; // the FixtureGroup it is in (0: none)
 
     QJsonObject toJson() const;
     static Fixture fromJson(const QJsonObject &o);
+};
+
+// A group of fixtures, as a folder of the list: its members are the fixtures whose `group` is its id. Its solo, lock and
+// intensity are set on its members together (the list does it); folded, its members are not listed under it
+struct FixtureGroup {
+    quint64 id = 0;
+    QString name;
+    bool open = true;
+    // Its own values, as a layer group's: they combine with its fixtures' (see FixturePatch::effectiveOf)
+    bool enabled = true, solo = false, locked = false;
+    double intensity = 1; // 0..1, a factor on its fixtures'
+    QJsonObject toJson() const;
+    static FixtureGroup fromJson(const QJsonObject &o);
 };
 
 struct DmxOutput {
@@ -143,6 +157,7 @@ struct FixturePatch {
     std::vector<FixtureType> types; // the project's own (the built-in ones are not here)
     std::vector<Fixture> fixtures;
     std::vector<DmxOutput> outputs;
+    std::vector<FixtureGroup> groups;
 
     const FixtureType *findType(const QString &id) const; // the project's, then the built-in ones
     // The type as the fixture uses it: with the fixture's own grid of pixels when its type has one pixel
@@ -150,6 +165,9 @@ struct FixturePatch {
     const DmxOutput *findOutput(quint64 id) const;
     Fixture *findFixture(quint64 id);
     const Fixture *findFixture(quint64 id) const;
+    const FixtureGroup *findGroup(quint64 id) const;
+    // The fixture as it sends: its group's values combined with its own (enabled and, solo or locked, intensity times)
+    Fixture effectiveOf(const Fixture &f) const;
     // Ids given where missing or taken, types colliding with a built-in one dropped, values clamped
     void normalize();
     QJsonObject toJson() const;

@@ -1,7 +1,11 @@
 #pragma once
 #include <QColor>
+#include <QHash>
+#include <QImage>
 #include <QList>
+#include <QPixmap>
 #include <QWidget>
+#include <array>
 #include <vector>
 
 class QTableWidget;
@@ -37,6 +41,7 @@ public:
         bool solo = false;       // soloed
         bool soloHidden = false; // left out by another layer's solo
         int effectCount = 0;
+        int category = 0;        // 1 video (a picture), 2 3D, 3 audio: what the filter buttons choose
     };
 
     explicit LayerTable(QWidget *parent = nullptr);
@@ -47,6 +52,8 @@ public:
     QList<int> selectedRows() const; // in order
     void startRename(int row);
     QWidget *table() const;
+    void setFilter(int mask);     // the kinds shown: a bit each (1 video, 2 3D, 3 audio); all three by default
+    void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
     void currentRowChanged(int row);
@@ -63,17 +70,20 @@ signals:
     void collapseToggled(int row);
     void renamed(int row, const QString &name);
     void opacityEdited(int row, double opacity);
+    void blendEdited(int row, int blendMode); // a BlendMode, chosen in the row's menu
     // Rows dragged: inserted before `beforeRow` (-1: at the end), into the group `parentRow` (-1: top level)
     void moveRequested(const QList<int> &rows, int beforeRow, int parentRow);
     void removeClicked();
     void duplicateClicked();
-    void moveClicked(int delta);
     void contextMenuRequested(int row, const QPoint &globalPos); // right-click on a row (-1: empty area)
 
 private:
     void updateRow(int r, const Row &row);
     void updateRowLevels(int r, const Row &row);
     QTableWidget *m_table;
-    std::vector<Row> m_rows;
+    std::vector<Row> m_rows, m_raw;
+    int m_filter = 0b1110;
+    std::array<class QToolButton *, 4> m_filterPills{}; // All, Video, 3D, Audio
+    QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };

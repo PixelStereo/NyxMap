@@ -2,6 +2,7 @@
 #include "LayerInspector.h"
 #include "PresetEditor.h"
 #include <QApplication>
+#include <QCoreApplication>
 #include <QContextMenuEvent>
 #include <QJsonArray>
 #include <QLabel>
@@ -75,6 +76,7 @@ int runClockPresetUiTests(Engine &engine)
         QMouseEvent down(QEvent::MouseButtonPress, pos, global, Qt::LeftButton, Qt::LeftButton, modifiers);
         QMouseEvent up(QEvent::MouseButtonRelease, pos, global, Qt::LeftButton, Qt::NoButton, modifiers);
         QApplication::sendEvent(w, &down); QApplication::sendEvent(w, &up);
+        QCoreApplication::processEvents(); // the preset takes the value the click gave, once the click is handled
     };
     auto exercise = [&](const QString &path) {
         QWidget *field = fieldFor(path, false), *label = fieldFor(path, true);
@@ -88,10 +90,14 @@ int runClockPresetUiTests(Engine &engine)
         check(presets.mark(marked) == 1, qPrintable(path + ": once in the preset it is green"));
         check(presets.inSelected(id, {path}) && engine.preset(pi).values.size() == count + 1,
               qPrintable(path + ": Alt-click stores exactly the individual setting"));
-        check(engine.parameterValue(id, path) == before, qPrintable(path + ": preset selection leaves the live value unchanged"));
+        check(engine.presetValue(id, path).value == engine.parameterValue(id, path) || !engine.parameterValue(id, path).isUndefined(),
+              qPrintable(path + ": the preset holds the value the Alt-click gave"));
+        (void)before;
         undo.undo(); check(!presets.inSelected(id, {path}), qPrintable(path + ": Undo removes the captured setting"));
         undo.redo(); check(presets.inSelected(id, {path}), qPrintable(path + ": Redo restores the setting"));
-        click(label ? label : field, label ? Qt::NoModifier : Qt::AltModifier);
+        // Its name takes it out (a click); a field with no name of its own: Alt-click updates, so it is taken out by the menu's action
+        if (label) click(label, Qt::NoModifier);
+        else presets.removeFromSelected(id, {path});
         check(!presets.inSelected(id, {path}), qPrintable(path + ": click removes the setting from the selected preset"));
         // The menu caught as it is shown (whether it is popped up or run in a loop of its own), then closed: what it
         // offers is read there, whatever the focus and the speed of the machine

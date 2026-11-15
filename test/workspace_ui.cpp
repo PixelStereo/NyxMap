@@ -2,6 +2,7 @@
 #include "MediaBin.h"
 #include <QFile>
 #include "MainWindow.h"
+#include "StatusLine.h"
 #include "SequencePanel.h"
 #include "SnapshotPanel.h"
 #include "TimelinePanel.h"
@@ -64,6 +65,7 @@ int runClockPresetUiTests(Engine &engine);
 int runLayerSourceUiTests(Engine &engine); // layer_source_ui.cpp
 int runScene3dUiTests(Engine &engine);     // scene3d_ui.cpp
 int runAudioFxUiTests(Engine &engine);     // audio_fx_ui.cpp
+int runConsoleUiTests(Engine &engine);     // console_ui.cpp
 int runControlsUiTests(Engine &engine);    // controls_ui.cpp
 int runShowControlUiTests(Engine &engine); // show_control_ui.cpp
 
@@ -285,7 +287,7 @@ int main(int argc, char **argv)
     if (!engine.initialize(&error)) return 1;
     engine.newProject();
     // Shared by workspace_ui (also under Valgrind), selection_ui (--selection) and color_parameter_ui (--color-animation).
-    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false;
+    bool xy = false, selection = false, colorAnimation = false, clockPresets = false, systemIsf = false, layerSource = false, audioFx = false, controlsUi = false, scene3dUi = false, consoleUi = false;
     bool showControlUi = false;
     QString capture;
     for (int k = 1; k < argc; ++k) {
@@ -297,6 +299,7 @@ int main(int argc, char **argv)
         else if (arg == QLatin1String("--layer-source")) layerSource = true;
         else if (arg == QLatin1String("--scene3d")) scene3dUi = true;
         else if (arg == QLatin1String("--audio-fx")) audioFx = true;
+        else if (arg == QLatin1String("--console")) consoleUi = true;
         else if (arg == QLatin1String("--controls")) controlsUi = true;
         else if (arg == QLatin1String("--show-control")) showControlUi = true;
         else if (arg == QLatin1String("--system-isf")) systemIsf = true;
@@ -314,6 +317,11 @@ int main(int argc, char **argv)
     }
     if (controlsUi) {
         const int failures = runControlsUiTests(engine);
+        engine.shutdown();
+        return failures ? 1 : 0;
+    }
+    if (consoleUi) {
+        const int failures = runConsoleUiTests(engine);
         engine.shutdown();
         return failures ? 1 : 0;
     }
@@ -516,6 +524,7 @@ int main(int argc, char **argv)
                 }
             }
         }
+        if (auto *line = window.findChild<StatusLine *>()) line->clearMessage(); // a message in the line hides what is hovered
         auto *contextHelp = window.findChild<QLabel *>("contextHelpStatus");
         auto *usageStatus = window.findChild<QLabel *>("systemUsageStatus");
         check(contextHelp && usageStatus, "context help and resource indicators have separate status fields");
@@ -657,7 +666,10 @@ int main(int argc, char **argv)
             auto *viewportList = window.findChild<QListWidget *>("viewportList");
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
-            check(mainTabs && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition", "Viewports sits between Layer and Composition");
+            auto *inspectorStack = window.findChild<QStackedWidget *>("inspectorStack");
+            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Composition" && mainTabs->count() == 3 &&
+                      inspectorStack && inspectorStack->count() == 3,
+                  "one Inspector tab (a layer, a viewport or a fixture), then Composition and Settings");
             check(viewportList && viewportList->currentRow() == 0 && viewportInspector && viewportInspector->layerIndex() == engine.viewports().front(), "first viewport selected by default");
             {
                 const quint64 viewport = engine.layerId(engine.viewports().front());
@@ -716,10 +728,10 @@ int main(int argc, char **argv)
                 auto *tree = bin->findChild<QTreeWidget *>();
                 check(tree && tree->columnCount() == 4 && tree->headerItem()->text(3) == "Color space",
                       "media bin has an explicit source color-space column");
-                auto *type = bin->findChild<QComboBox *>("typeFilter");
+                auto *type = bin->findChild<QToolButton *>("typePillAll"); // the media buttons: All, Video, Audio, 3D
                 auto *usage = bin->findChild<QComboBox *>("usageFilter");
                 auto *rebuild = bin->findChild<QToolButton *>("rebuild");
-                check(tree && type && usage && rebuild, "media bin has type, usage filters and a rebuild button");
+                check(tree && type && usage && rebuild, "media bin has media buttons, a usage filter and a rebuild button");
                 auto itemOf = [&](const QString &path) -> QTreeWidgetItem * {
                     for (QTreeWidgetItemIterator it(tree); *it; ++it)
                         if ((*it)->data(0, Qt::UserRole + 1).toString() == QDir::cleanPath(path)) return *it;
@@ -783,12 +795,14 @@ int main(int argc, char **argv)
                         kind->setCurrentIndex(kind->findText("Files"));
                         check(!videos->isHidden() && isfTop->isHidden(), "kind filter Files hides the ISF");
                         kind->setCurrentIndex(0);
-                        type->setCurrentIndex(type->findText("Audio"));
+                        bin->findChild<QToolButton *>("typePillAll")->click(); // All takes every kind away
+                        bin->findChild<QToolButton *>("typePillAudio")->click();
                         check(videoRoot->isHidden() && !audioRoot->isHidden(), "media filter Audio hides the Video root");
-                        type->setCurrentIndex(type->findText("Video"));
+                        bin->findChild<QToolButton *>("typePillAudio")->click(); // added up: Audio off again
+                        bin->findChild<QToolButton *>("typePillVideo")->click();
                         check(!videoRoot->isHidden() && audioRoot->isHidden(), "media filter Video hides the Audio root");
                     }
-                    type->setCurrentIndex(0);
+                    type->click();
                     usage->setCurrentIndex(0);
                     rebuild->click();
                     app.processEvents();
@@ -944,6 +958,33 @@ int main(int argc, char **argv)
             if (candidate->objectName() != "viewportInspector") inspector = candidate;
         auto opacityOf = [&](quint64 id) { return engine.parameterValue(id, "opacity").toDouble(); };
         check(table && undo && inspector, "layer list, undo stack and inspector present");
+        if (table) { // the filter buttons: generators are videos; none of the three is 3D or audio
+            auto *list = window.findChild<LayerTable *>();
+            auto *pill3d = list->findChild<QToolButton *>("layerPill3D"), *pillVideo = list->findChild<QToolButton *>("layerPillVideo"),
+                 *pillAll = list->findChild<QToolButton *>("layerPillAll");
+            check(pill3d && pillVideo && pillAll, "the layer list has All, Video, 3D and Audio buttons");
+            if (pill3d && pillVideo && pillAll) {
+                // The kinds add up: All takes them all away, then 3D alone shows no generator (a video kind)
+                pillAll->click(); app.processEvents();
+                pill3d->click(); app.processEvents();
+                bool anyGenerator = false;
+                for (int r = 0; r < table->rowCount(); ++r) anyGenerator |= !table->isRowHidden(r) && engine.layer(r)->type == SourceType::Isf;
+                check(!anyGenerator, "3D alone shows no generator");
+                pillVideo->click(); app.processEvents(); // added to 3D
+                bool generatorShown = false;
+                for (int r = 0; r < table->rowCount(); ++r) generatorShown |= !table->isRowHidden(r) && engine.layer(r)->type == SourceType::Isf;
+                check(generatorShown, "Video added to 3D shows the generators");
+                pillAll->click(); app.processEvents(); // not all three: All selects them all
+            }
+            auto *fixturePicker = window.findChild<QComboBox *>("fixturePicker");
+            check(fixturePicker != nullptr, "the Inspector has a menu of the fixtures");
+        }
+        if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty() && table) {
+            theme::applyToApplication(app); // as the application looks
+            table->setCurrentCell(0, 4);
+            app.processEvents();
+            window.findChild<LayerTable *>()->grab().save(captures + "/layer-list.png");
+        }
         if (table && undo && inspector) {
             const int a = engine.indexOfId(ids[0]), b = engine.indexOfId(ids[1]), c = engine.indexOfId(ids[2]);
             table->clearSelection();
@@ -1057,7 +1098,7 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             const quint64 v1 = engine.layerId(engine.addViewport("V1")), v2 = engine.layerId(engine.addViewport("V2")),
                           v3 = engine.layerId(engine.addViewport("V3"));
-            if (tabs) tabs->setCurrentIndex(1);
+            if (auto *stack = window.findChild<QStackedWidget *>("inspectorStack")) stack->setCurrentIndex(1);
             app.processEvents();
             check(viewportList && viewportList->selectionMode() == QAbstractItemView::ExtendedSelection,
                   "viewport list takes a multiple selection");

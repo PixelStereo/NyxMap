@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "SequencePanel.h"
 #include "FittedTableHeader.h"
 #include "Engine.h"
@@ -235,15 +236,17 @@ RecallProgressBar::RecallProgressBar(Engine *engine, QWidget *parent) : QWidget(
 void RecallProgressBar::poll()
 {
     const Engine::RecallProgress r = m_engine->recallProgress();
-    const double f = r.snapshot ? r.fraction() : 0.0;
+    const double f = r.snapshot || r.preset ? r.fraction() : 0.0;
     const bool running = r.running();
     if (std::abs(f - m_fraction) < 1e-4 && running == m_running) return;
     m_fraction = f;
     m_running = running;
-    const int mi = m_engine->indexOfSnapshot(r.snapshot);
-    setToolTip(mi < 0 ? QString()
-                      : QStringLiteral("%1. %2 — %3 / %4 s").arg(mi + 1).arg(m_engine->snapshot(mi).name)
-                            .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1));
+    const int mi = m_engine->indexOfSnapshot(r.snapshot), pi = m_engine->indexOfPreset(r.preset);
+    setToolTip(mi >= 0 ? QStringLiteral("%1. %2 — %3 / %4 s").arg(mi + 1).arg(m_engine->snapshot(mi).name)
+                             .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1)
+               : pi >= 0 ? QStringLiteral("Preset %1. %2 — %3 / %4 s").arg(pi + 1).arg(m_engine->preset(pi).name)
+                             .arg(std::min(r.elapsed, r.total), 0, 'f', 1).arg(r.total, 0, 'f', 1)
+                         : QString());
     update();
 }
 
@@ -380,9 +383,35 @@ public:
     {
         paintCell(p, opt, idx);
         paintFrame(p, opt, idx);
+        if (idx.column() == 0) paintGroupLine(p, opt, idx);
     }
 
 private:
+    // An open group: a thin frame around all it holds, its header and every step (four sides): the sides on each row,
+    // the top on the header, the bottom under its last step
+    void paintGroupLine(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
+    {
+        const int row = idx.row();
+        const int action = m_w->actionOfRow(row);
+        const bool header = action == SequenceWindow::kHeaderRow;
+        if (!header && action < 0) return;
+        // A header is open when the row after it holds its steps
+        if (header && !(row + 1 < m_w->m_steps->rowCount() && m_w->actionOfRow(row + 1) >= 0)) return;
+        const bool last = !header && !(row + 1 < m_w->m_steps->rowCount() && m_w->actionOfRow(row + 1) >= 0);
+        const QHeaderView *hv = m_w->m_steps->horizontalHeader();
+        const int firstCol = hv->logicalIndex(0), lastCol = hv->logicalIndex(hv->count() - 1);
+        const QColor c(150, 160, 185);
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        p->setPen(QPen(c, 1.2));
+        const QRectF r = QRectF(opt.rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        if (idx.column() == firstCol) p->drawLine(r.topLeft(), r.bottomLeft());
+        if (idx.column() == lastCol) p->drawLine(r.topRight(), r.bottomRight());
+        if (header) p->drawLine(r.topLeft(), r.topRight());
+        if (last) p->drawLine(r.bottomLeft(), r.bottomRight());
+        p->restore();
+    }
+
     // The step played and the one GO plays: a thin frame around their whole row (each cell draws its part of it)
     void paintFrame(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
     {
@@ -935,7 +964,9 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     connect(m_dup, &QPushButton::clicked, this, [this, current] {
         if (current() < 0) return;
         Sequencer::Sequence s = m_engine->sequencer().sequence(current());
-        s.name += QStringLiteral(" copy");
+        QStringList taken;
+        for (int k = 0; k < m_engine->sequencer().count(); ++k) taken << m_engine->sequencer().sequence(k).name;
+        s.name = numberedName(s.name, taken);
         m_engine->sequencer().setCurrent(m_engine->sequencer().add(s, current() + 1));
         emit edited();
     });
@@ -1073,7 +1104,7 @@ SequenceWindow::SequenceWindow(Engine *engine, QWidget *parent, QUndoStack *undo
     // GO: from the keyboard's Space too. Neither takes the focus: Space and Return stay with the rest of the panel
     m_back = new QPushButton(QStringLiteral("‹"));
     m_back->setObjectName(QStringLiteral("sequenceBack"));
-    m_back->setToolTip(QStringLiteral("GO BACK: the step before (Shift+Space)"));
+    m_back->setToolTip(QStringLiteral("GO BACK: the step before (Alt+Space)"));
     symbolButton(m_back);
     m_go = new QPushButton(QStringLiteral("GO ▶"));
     m_go->setObjectName(QStringLiteral("sequenceGo"));

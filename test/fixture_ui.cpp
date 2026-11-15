@@ -284,6 +284,30 @@ int main(int argc, char **argv)
         check(second != nullptr, "a preview's Fixtures switch");
     }
 
+    { // Fixture groups: their own values combine with their fixtures', a fixture put in one later obeys it, and it survives a save
+        FixturePatch q = engine.fixturePatch();
+        FixtureGroup g;
+        g.id = 4242;
+        g.name = "Stage left";
+        g.enabled = false;
+        g.intensity = .5;
+        q.groups.push_back(g);
+        Fixture f = q.fixtures.front();
+        f.id = 9000;
+        f.group = 4242;
+        f.intensity = .8;
+        f.solo = false;
+        q.fixtures.push_back(f);
+        const Fixture e = q.effectiveOf(f);
+        check(!e.enabled, "a fixture of a disabled group does not send");
+        check(std::abs(e.intensity - .4) < 1e-9, "its intensity times the group's");
+        FixturePatch loaded = FixturePatch::fromJson(q.toJson());
+        const FixtureGroup *back = loaded.findGroup(4242);
+        check(back && back->name == "Stage left" && !back->enabled && std::abs(back->intensity - .5) < 1e-9, "a group keeps its name and values in the project");
+        g.solo = true;
+        q.groups.back() = g;
+        check(q.effectiveOf(f).solo && !q.effectiveOf(q.fixtures.front()).solo, "a group's solo reaches its fixtures only");
+    }
     engine.shutdown();
     std::printf("fixture_ui: %s (%d failure%s)\n", failures ? "FAIL" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

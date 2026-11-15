@@ -178,6 +178,10 @@ public:
     // follows). GO BACK: the previous step at once, the waits still running are stopped.
     bool go();
     bool back();
+    // The next / the previous step at once, straight to its state: no pre-wait, nothing following it, and the fade of its
+    // snapshot or preset (with its values' own times and delays) over as it is recalled
+    bool goWithoutTiming();
+    bool backWithoutTiming();
     bool goTo(int step, bool chain = true);
     void stop();                   // cancel pending waits in the selected sequence only
     void stopAll();                // cancel every sequence's pending waits and follows (background ones too)
@@ -233,6 +237,7 @@ private:
     std::shared_ptr<std::atomic<bool>> commandTokenLocked(quint64 owner);
     bool relativeGo(quint64 owner, bool back, std::shared_ptr<std::atomic<bool>> valid = {});
     int sequenceIndexLocked(quint64 id) const; // under m_mutex; stable identity for queued GO
+    bool goCut(int step); // a step at once, with its fade and every delay over (goWithoutTiming, backWithoutTiming)
     bool goToSequence(quint64 id, int step, bool chain, std::shared_ptr<std::atomic<bool>> valid = {}, quint64 cue = 0);
     int nextOfLocked(int index) const;     // under m_mutex
     int previousOfLocked(int index) const; // under m_mutex

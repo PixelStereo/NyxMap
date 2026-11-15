@@ -166,6 +166,7 @@ public:
     void setOrigin(double v);          // where the fill starts (0 by default; 0 in the middle for a ± range)
     void setValue(double v);           // no signal
     void setCompact(bool on);          // a lower bar (the channels of a color)
+    void setNumberOnly(bool on);       // no bar: the number alone, dragged sideways to change it, double-clicked to type
     double value() const { return m_value; }
     bool isDragging() const { return m_drag; }
     QSize sizeHint() const override { return QSize(220, 20); }
@@ -179,6 +180,7 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void mouseDoubleClickEvent(QMouseEvent *e) override;
     void resizeEvent(QResizeEvent *e) override;
 
 private:
@@ -188,7 +190,8 @@ private:
     class QDoubleSpinBox *m_spin;
     double m_value = 0, m_min = 0, m_max = 1, m_origin = 0;
     int m_ticks = 0;
-    bool m_drag = false;
+    bool m_drag = false, m_numberOnly = false;
+    double m_pressX = 0, m_pressValue = 0;
     std::vector<double> m_snaps;
     QGradientStops m_gradient;
 };

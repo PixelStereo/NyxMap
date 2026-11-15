@@ -385,6 +385,9 @@ set(APP_SOURCES
   src/ui/MainWindow.cpp
   src/ui/LogPanel.cpp
   src/ui/LogModel.cpp
+  src/ui/AppConsole.cpp
+  src/ui/StatusLine.cpp
+  src/ui/ConsolePanel.cpp
   src/ui/ControlsPanel.cpp
   src/ui/ShowControlPanel.cpp
   src/ui/FxChainPanel.cpp
@@ -900,7 +903,7 @@ if(NYXMAP_TESTS)
   add_test(NAME line_ui COMMAND nyxmap_line_ui_test)
   set(WORKSPACE_TEST_SOURCES ${APP_SOURCES})
   list(REMOVE_ITEM WORKSPACE_TEST_SOURCES src/main.cpp)
-  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/scene3d_ui.cpp test/audio_fx_ui.cpp test/controls_ui.cpp test/show_control_ui.cpp ${WORKSPACE_TEST_SOURCES})
+  add_executable(nyxmap_workspace_ui_test test/workspace_ui.cpp test/xy_parameter_ui.cpp test/color_parameter_ui.cpp test/clock_preset_ui.cpp test/layer_source_ui.cpp test/scene3d_ui.cpp test/audio_fx_ui.cpp test/console_ui.cpp test/controls_ui.cpp test/show_control_ui.cpp ${WORKSPACE_TEST_SOURCES})
   target_include_directories(nyxmap_workspace_ui_test PRIVATE src src/ui "${CMAKE_BINARY_DIR}/generated")
   # Without Qt WebEngine (WebPageQt.cpp compiled empty): the Media Bin then does not offer the Web Page generator
   target_link_libraries(nyxmap_workspace_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
@@ -917,6 +920,8 @@ if(NYXMAP_TESTS)
   set_tests_properties(show_control_ui PROPERTIES TIMEOUT 60)
   set_tests_properties(controls_ui PROPERTIES TIMEOUT 60)
   add_test(NAME audio_fx_ui COMMAND nyxmap_workspace_ui_test --audio-fx)
+  add_test(NAME console_ui COMMAND nyxmap_workspace_ui_test --console)
+  set_tests_properties(console_ui PROPERTIES TIMEOUT 60)
   set_tests_properties(audio_fx_ui PROPERTIES TIMEOUT 60)
   add_test(NAME system_isf_ui COMMAND nyxmap_workspace_ui_test --system-isf)
   set_tests_properties(clock_preset_ui PROPERTIES TIMEOUT 60)
@@ -930,6 +935,10 @@ if(NYXMAP_TESTS)
   target_include_directories(nyxmap_preview_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_preview_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND nyxmap_preview_ui_test)
+  add_executable(nyxmap_naming_test test/naming.cpp)
+  target_include_directories(nyxmap_naming_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
+  add_test(NAME naming COMMAND nyxmap_naming_test)
   add_executable(nyxmap_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
                  src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/ShowMenus.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp

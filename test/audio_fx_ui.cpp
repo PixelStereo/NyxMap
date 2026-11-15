@@ -211,13 +211,13 @@ int runAudioFxUiTests(Engine &engine)
             check(picker->count() == engine.layerCount(), "it lists every layer, group and viewport");
             check(picker->itemText(picker->currentIndex()).contains("Instrument") && picker->itemData(picker->currentIndex()).toULongLong() == id,
                   "its current item is the layer inspected");
-            bool viewportsLast = true, seenViewport = false;
+            bool viewportsFirst = true, seenOther = false;
             for (int k = 0; k < picker->count(); ++k) {
                 const bool isViewport = picker->itemText(k).contains("◫");
-                if (seenViewport && !isViewport) viewportsLast = false;
-                seenViewport |= isViewport;
+                if (seenOther && isViewport) viewportsFirst = false;
+                seenOther |= !isViewport;
             }
-            check(viewportsLast, "the viewports come last");
+            check(viewportsFirst, "the viewports come first");
             bool indented = false;
             for (int k = 0; k < picker->count(); ++k)
                 if (picker->itemText(k).contains("In the group")) indented = picker->itemText(k).startsWith(QChar(0x2003));
@@ -291,15 +291,16 @@ int runAudioFxUiTests(Engine &engine)
         check(listed, "an instrument in use is listed under Audio > Generators");
         check(sounds && sounds->childCount() == 0, "and not among the sound files");
         auto *kind = bin.findChild<QComboBox *>("kindFilter");
-        auto *media = bin.findChild<QComboBox *>("typeFilter");
+        auto *media = bin.findChild<QToolButton *>("typePillAll");
         check(kind && media, "kind and media filters");
         if (kind && media && audio && inputs && generators) {
             kind->setCurrentIndex(kind->findText("Inputs"));
             check(!inputs->isHidden() && generators->isHidden(), "kind Inputs shows only the input categories");
             kind->setCurrentIndex(0);
-            media->setCurrentIndex(media->findText("Audio"));
+            media->click(); // All takes every kind away, then Audio alone
+            bin.findChild<QToolButton *>("typePillAudio")->click();
             check(tree->topLevelItem(0)->isHidden() && !audio->isHidden() && tree->topLevelItem(2)->isHidden(), "media Audio shows the Audio root only");
-            media->setCurrentIndex(0);
+            media->click();
         }
     }
     return failures;

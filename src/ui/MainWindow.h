@@ -13,6 +13,9 @@ class LayerInspector;
 class LayerTable;
 class MediaBin;
 class LogPanel;
+class StatusLine;
+class ConsolePanel;
+class QDockWidget;
 class CompositionPanel;
 class SettingsPanel;
 class FixturePanel;
@@ -72,6 +75,10 @@ private:
     QList<int> selectedRows() const; // the selection the layer actions act on (layers, or viewports in their tab)
     void refreshAll();
     void selectLayer(int index);
+    bool viewportMode() const;          // the Inspector shows a viewport
+    void showInspectorPage(int page);   // 0 layer, 1 viewport, 2 fixture
+    void refreshFixturePicker();
+    void stepFixturePicker(int delta);
     void syncLayerSelection(int row, bool focusInspector);
     void fillZonesMenu(QMenu *menu, int row);
     void assignZone(const QList<quint64> &layers, quint64 zone);
@@ -127,10 +134,14 @@ private:
     void pasteAttributesDialog(); // Paste Attributes…: the parts chosen (as last time) onto the selected layers
     void pasteLayerParams(int parts, const QString &what);     // Engine::LayerParts, onto the selected layers
     void togglePlayCurrent();
-    // Sequences: GO plays the next step of the current sequence, GO BACK the previous one (Space, Shift+Space)
+    // Sequences: GO plays the next step of the current sequence, GO BACK the previous one (Space, Alt+Space); Shift+Space and Alt+Shift+Space: the next and the previous step without their timing
     void emergencyStop(); // Ctrl+Esc (Cmd+Esc on macOS) from the interface or any output window
+    StatusLine *statusBar() const { return m_status; } // hides QMainWindow's: every message goes through the one line
+    void toggleConsole();
     void sequenceGo();
     void sequenceBack();
+    void sequenceGoWithoutTiming();    // Shift+Space: the next step at once, straight to its state
+    void sequenceBackWithoutTiming();  // Alt+Shift+Space: the previous step at once, straight to its state
     void sequenceGoTo(int step);
     void openSequences();
     void openShowControl();
@@ -161,11 +172,17 @@ private:
     LayerTable *m_layerTable = nullptr;
     MediaBin *m_bin = nullptr;
     LogPanel *m_logs = nullptr;
+    StatusLine *m_status = nullptr;     // the status bar: one line, and the alert button
+    QDockWidget *m_consoleDock = nullptr; // the Console, below
     CompositionPanel *m_composition = nullptr;
     SettingsPanel *m_settings = nullptr;
     FixturePanel *m_fixtures = nullptr;
     FixtureInspector *m_fixtureInspector = nullptr;
-    QWidget *m_fixtureTab = nullptr; // the inspector's scroll area, in the right tabs
+    QWidget *m_fixtureTab = nullptr; // the fixture's page of the Inspector
+    class QStackedWidget *m_inspectorStack = nullptr;
+    class QComboBox *m_fixturePicker = nullptr;
+    QString m_fixturePickerKey;
+    QWidget *m_settingsTab = nullptr, *m_compositionTab = nullptr;
     SnapshotPanel *m_snapshots = nullptr;
     SequenceFeedback *m_feedback = nullptr;
     SequenceWindow *m_seqWindow = nullptr;
@@ -191,7 +208,8 @@ private:
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
-    QTimer m_previewTimer;
+    QTimer m_previewTimer, m_layerThumbTimer, m_mouseTimer; // the pointer over the preview: the show's mouse/x and mouse/y // the layer list's pictures: one layer every moment, not live
+    int m_layerThumbNext = 0;
     QElapsedTimer m_previewClock;
 
     QAction *m_fullscreenAction = nullptr, *m_windowedAction = nullptr, *m_undoAction = nullptr, *m_redoAction = nullptr,
