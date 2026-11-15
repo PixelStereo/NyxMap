@@ -1,4 +1,5 @@
 #include "ImageFile.h"
+#include <QImageReader>
 #include "Psd.h"
 
 #include <QColorSpace>
@@ -218,6 +219,24 @@ static QImage readSvg(const QString &path, int longSide, QString *err)
     if (err) *err = QStringLiteral("SVG drawings need Qt SVG, absent from this build: ") + path;
     return {};
 #endif
+}
+
+QImage readThumbnail(const QString &path, QSize box, bool video)
+{
+    QImage img;
+    if (video) {
+        img = decodeWithFfmpeg(path);
+    } else if (!isSvgFile(path) && !isPsdFile(path)) {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        const QSize size = reader.size();
+        if (size.isValid()) { // read scaled: a large picture is never decoded in full for a thumbnail
+            reader.setScaledSize(size.scaled(box, Qt::KeepAspectRatio));
+            img = reader.read();
+        }
+    }
+    if (img.isNull() && !video) img = readImageFile(path, -1, nullptr, box.width());
+    return img.isNull() || (img.width() <= box.width() && img.height() <= box.height()) ? img : img.scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
 QImage readImageFile(const QString &path, int psdLayer, QString *err, int svgLongSide)

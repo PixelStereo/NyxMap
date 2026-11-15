@@ -12,6 +12,9 @@
 // longer side is at least `svgLongSide` (a layer: the composition's), at most kMaxSvgSide.
 QImage readImageFile(const QString &path, int psdLayer = -1, QString *err = nullptr, int svgLongSide = 0);
 constexpr int kMaxSvgSide = 8192;
+// A small picture of a file for a list: an image scaled to fit `box` (read scaled when Qt can), or a video's first frame
+// (decoded by FFmpeg, on the CPU: a codec it cannot give a picture for gives a null image). Any thread
+QImage readThumbnail(const QString &path, QSize box, bool video);
 bool isSvgFile(const QString &path);
 // A high dynamic range picture (.hdr, .exr): its pixels as linear floats, not clipped (a sun stays far above 1), RGBA,
 // its first row at the bottom, scaled down to maxWidth at most. False when it is not one or cannot be read

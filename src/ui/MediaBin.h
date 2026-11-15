@@ -1,5 +1,6 @@
 #pragma once
 #include <QHash>
+#include <QIcon>
 #include <array>
 #include <QWidget>
 
@@ -78,6 +79,7 @@ private:
     QToolButton *m_rebuild = nullptr;
     bool m_isfOpened = false; // ISF > Generators expanded once filled
     QHash<QString, QString> m_info;  // path -> description (resolution, duration…)
+    QHash<QString, QIcon> m_thumbs;  // path -> its picture, read off the UI thread
     QHash<QString, bool> m_probing;
     QStringList m_inputsSignature, m_audioInputsSignature;
     QStringList m_audioDevices;

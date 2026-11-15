@@ -521,6 +521,28 @@ int runScene3dUiTests(Engine &engine)
         check(primitives == QStringList({"Camera", "Empty", "Path", "Primitive 3D"}),
               "the Media Bin offers one configurable 3D primitive, a Camera, an Empty and a Path");
         check(models && models->parent() && models->parent()->text(0) == "3D", "models are separate from video in the Media Bin");
+        // Images show their picture in the list, read off the UI thread
+        {
+            QTemporaryDir pictures;
+            QImage wide(400, 200, QImage::Format_RGB32);
+            for (int y = 0; y < wide.height(); ++y)
+                for (int x = 0; x < wide.width(); ++x) wide.setPixel(x, y, qRgb(x * 255 / wide.width(), y * 255 / wide.height(), 128));
+            const QString path = pictures.path() + "/gradient.png";
+            check(wide.save(path), "write a picture for the Media Bin");
+            bin->importFiles({path});
+            QTreeWidgetItem *row = nullptr;
+            for (int round = 0; round < 200 && !(row && !row->icon(0).isNull()); ++round) {
+                pump();
+                QThread::msleep(10);
+                for (QTreeWidget *tree : bin->findChildren<QTreeWidget *>())
+                    for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                        if ((*it)->text(0) == "gradient.png") row = *it;
+            }
+            check(row && !row->icon(0).isNull(), "an image in the Media Bin shows its picture");
+            if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty()) bin->grab().save(captures + "/media-bin-thumbnail.png");
+            engine.removeBinItem(path);
+            bin->refresh();
+        }
         // The media buttons at the top: coloured, one at a time, each with its count; 3D shows only the 3D media
         auto *pill3d = bin->findChild<QToolButton *>("typePill3D");
         auto *pillVideo = bin->findChild<QToolButton *>("typePillVideo");
