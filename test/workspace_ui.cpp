@@ -666,7 +666,10 @@ int main(int argc, char **argv)
             auto *viewportList = window.findChild<QListWidget *>("viewportList");
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
-            check(mainTabs && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition", "Viewports sits between Layer and Composition");
+            auto *inspectorStack = window.findChild<QStackedWidget *>("inspectorStack");
+            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Composition" && mainTabs->count() == 3 &&
+                      inspectorStack && inspectorStack->count() == 3,
+                  "one Inspector tab (a layer, a viewport or a fixture), then Composition and Settings");
             check(viewportList && viewportList->currentRow() == 0 && viewportInspector && viewportInspector->layerIndex() == engine.viewports().front(), "first viewport selected by default");
             {
                 const quint64 viewport = engine.layerId(engine.viewports().front());
@@ -953,6 +956,25 @@ int main(int argc, char **argv)
             if (candidate->objectName() != "viewportInspector") inspector = candidate;
         auto opacityOf = [&](quint64 id) { return engine.parameterValue(id, "opacity").toDouble(); };
         check(table && undo && inspector, "layer list, undo stack and inspector present");
+        if (table) { // the filter buttons: generators are videos; none of the three is 3D or audio
+            auto *list = window.findChild<LayerTable *>();
+            auto *pill3d = list->findChild<QToolButton *>("layerPill3D"), *pillVideo = list->findChild<QToolButton *>("layerPillVideo"),
+                 *pillAll = list->findChild<QToolButton *>("layerPillAll");
+            check(pill3d && pillVideo && pillAll, "the layer list has All, Video, 3D and Audio buttons");
+            if (pill3d && pillVideo && pillAll) {
+                pill3d->click(); app.processEvents();
+                bool anyShown = false;
+                for (int r = 0; r < table->rowCount(); ++r) anyShown |= !table->isRowHidden(r);
+                check(!anyShown, "3D shows no generator");
+                pillVideo->click(); app.processEvents();
+                bool allShown = true;
+                for (int r = 0; r < table->rowCount(); ++r) allShown &= !table->isRowHidden(r) || engine.layer(r)->isViewport;
+                check(allShown, "Video shows the generators");
+                pillAll->click(); app.processEvents();
+            }
+            auto *fixturePicker = window.findChild<QComboBox *>("fixturePicker");
+            check(fixturePicker != nullptr, "the Inspector has a menu of the fixtures");
+        }
         if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty() && table) {
             theme::applyToApplication(app); // as the application looks
             table->setCurrentCell(0, 4);
@@ -1072,7 +1094,7 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             const quint64 v1 = engine.layerId(engine.addViewport("V1")), v2 = engine.layerId(engine.addViewport("V2")),
                           v3 = engine.layerId(engine.addViewport("V3"));
-            if (tabs) tabs->setCurrentIndex(1);
+            if (auto *stack = window.findChild<QStackedWidget *>("inspectorStack")) stack->setCurrentIndex(1);
             app.processEvents();
             check(viewportList && viewportList->selectionMode() == QAbstractItemView::ExtendedSelection,
                   "viewport list takes a multiple selection");

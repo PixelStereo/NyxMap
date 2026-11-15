@@ -4,6 +4,7 @@
 #include "../engine/Layer.h"
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDrag>
 #include <QDragEnterEvent>
@@ -508,22 +509,51 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     v->setContentsMargins(8, 4, 8, 4);
     v->setSpacing(4);
 
+    // What to show: all the layers, or only the videos (pictures), the 3D ones or the sounds, as the Media Bin does
+    {
+        struct Pill { const char *name; const char *colour; const char *tip; };
+        static const Pill pills[4] = {{"All", "#9fb0d0", "Show every layer"},
+                                      {"Video", "#5ad1e0", "Show the videos, images, generators, texts and live inputs"},
+                                      {"3D", "#b08cff", "Show the 3D scenes, models, lights, cameras and paths"},
+                                      {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"}};
+        auto *row = new QHBoxLayout;
+        row->setSpacing(6);
+        auto *buttons = new QButtonGroup(this);
+        buttons->setExclusive(true);
+        for (int i = 0; i < 4; ++i) {
+            auto *pill = new QToolButton;
+            pill->setObjectName(QStringLiteral("layerPill%1").arg(QLatin1String(pills[i].name)));
+            pill->setCheckable(true);
+            pill->setChecked(i == 0);
+            pill->setText(QLatin1String(pills[i].name));
+            pill->setToolTip(QLatin1String(pills[i].tip));
+            pill->setCursor(Qt::PointingHandCursor);
+            pill->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            const QString c = QLatin1String(pills[i].colour);
+            pill->setStyleSheet(QStringLiteral("QToolButton { background:#35353b; color:%1; border:1px solid #4a4a52; border-bottom:3px solid %1; "
+                                               "border-radius:8px; padding:4px 10px; font-weight:600; }"
+                                               "QToolButton:hover { background:#404048; }"
+                                               "QToolButton:checked { background:%1; color:#16161b; }").arg(c));
+            buttons->addButton(pill, i);
+            row->addWidget(pill);
+        }
+        connect(buttons, &QButtonGroup::idClicked, this, [this](int id) { setFilter(id); });
+        v->addLayout(row);
+    }
     auto *bar = new QHBoxLayout;
     auto *title = new QLabel(QStringLiteral("<b>Layers</b>"));
-    auto *add = barButton(QStringLiteral("+ Layer"), QStringLiteral("New Layer (empty: drop a media onto it)"));
+    auto *add = barButton(QStringLiteral("+"), QStringLiteral("New Layer (empty: drop a media onto it)"));
     auto *group = barButton(QStringLiteral("Group"), QStringLiteral("New Group (Ctrl+G): the selected layers go into it"));
     auto *vp = barButton(QStringLiteral("Viewport"), QStringLiteral("New Viewport: another window onto the composition, "
                                                              "with its own size, screen and publishing"));
     auto *scene = barButton(QStringLiteral("3D"), QStringLiteral("3D: a new 3D scene (with a light), or a light in the selected "
                                                                  "scene. Models: drop an FBX, glTF or OBJ onto a layer or a scene"));
     scene->setObjectName(QStringLiteral("layer3dButton"));
-    auto *remove = barButton(QStringLiteral("Delete"), QStringLiteral("Delete the selected layers (Del)"));
-    auto *dup = barButton(QStringLiteral("Duplicate"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
-    auto *up = barButton(QStringLiteral("▲"), QStringLiteral("Move Up (Ctrl+])"));
-    auto *down = barButton(QStringLiteral("▼"), QStringLiteral("Move Down (Ctrl+[)"));
+    auto *remove = barButton(QStringLiteral("−"), QStringLiteral("Delete the selected layers (Del)"));
+    auto *dup = barButton(QStringLiteral("⧉"), QStringLiteral("Duplicate Layer (Ctrl+D)"));
     (void)title;
     bar->setSpacing(2);
-    for (auto *b : {add, group, vp, scene, remove, dup, up, down}) bar->addWidget(b);
+    for (auto *b : {add, remove, group, vp, scene, dup}) bar->addWidget(b);
     bar->addStretch();
     v->addLayout(bar);
 
@@ -648,8 +678,6 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     connect(scene, &QToolButton::clicked, this, [this, scene] { emit scene3dClicked(scene); });
     connect(remove, &QToolButton::clicked, this, &LayerTable::removeClicked);
     connect(dup, &QToolButton::clicked, this, &LayerTable::duplicateClicked);
-    connect(up, &QToolButton::clicked, this, [this] { emit moveClicked(-1); });
-    connect(down, &QToolButton::clicked, this, [this] { emit moveClicked(+1); });
 }
 
 QWidget *LayerTable::table() const { return m_table; }
@@ -883,8 +911,38 @@ void LayerTable::updateRowLevels(int r, const Row &row)
     if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 }
 
-bool LayerTable::setRows(const std::vector<Row> &rows)
+void LayerTable::setFilter(int category)
 {
+    if (category == m_filter) return;
+    m_filter = category;
+    setRows(m_raw);
+}
+
+// With a filter, a row shows if it is of the kind (a group: if something it holds is)
+static std::vector<LayerTable::Row> filtered(std::vector<LayerTable::Row> rows, int filter)
+{
+    if (filter <= 0) return rows;
+    std::vector<bool> shown(rows.size(), false);
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].group && !rows[i].viewport && rows[i].category == filter) {
+            shown[i] = true;
+            // its groups, up the list (a member follows its group, and sits deeper)
+            int depth = rows[i].depth;
+            for (size_t k = i; k-- > 0 && depth > 0;)
+                if (rows[k].group && rows[k].depth < depth) {
+                    shown[k] = true;
+                    depth = rows[k].depth;
+                }
+        }
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].viewport && !shown[i]) rows[i].hidden = true;
+    return rows;
+}
+
+bool LayerTable::setRows(const std::vector<Row> &input)
+{
+    m_raw = input;
+    const std::vector<Row> rows = filtered(input, m_filter);
     const bool changed = !std::equal(m_rows.begin(), m_rows.end(), rows.begin(), rows.end(),
         [](const Row &a, const Row &b) { return a.id == b.id && a.hidden == b.hidden; });
     auto *grid = static_cast<LayerGrid *>(m_table);

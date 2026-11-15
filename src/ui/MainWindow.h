@@ -75,6 +75,10 @@ private:
     QList<int> selectedRows() const; // the selection the layer actions act on (layers, or viewports in their tab)
     void refreshAll();
     void selectLayer(int index);
+    bool viewportMode() const;          // the Inspector shows a viewport
+    void showInspectorPage(int page);   // 0 layer, 1 viewport, 2 fixture
+    void refreshFixturePicker();
+    void stepFixturePicker(int delta);
     void syncLayerSelection(int row, bool focusInspector);
     void fillZonesMenu(QMenu *menu, int row);
     void assignZone(const QList<quint64> &layers, quint64 zone);
@@ -174,7 +178,11 @@ private:
     SettingsPanel *m_settings = nullptr;
     FixturePanel *m_fixtures = nullptr;
     FixtureInspector *m_fixtureInspector = nullptr;
-    QWidget *m_fixtureTab = nullptr; // the inspector's scroll area, in the right tabs
+    QWidget *m_fixtureTab = nullptr; // the fixture's page of the Inspector
+    class QStackedWidget *m_inspectorStack = nullptr;
+    class QComboBox *m_fixturePicker = nullptr;
+    QString m_fixturePickerKey;
+    QWidget *m_settingsTab = nullptr, *m_compositionTab = nullptr;
     SnapshotPanel *m_snapshots = nullptr;
     SequenceFeedback *m_feedback = nullptr;
     SequenceWindow *m_seqWindow = nullptr;

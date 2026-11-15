@@ -524,7 +524,7 @@ void LayerInspector::refreshPicker()
             key += QStringLiteral("%1:%2:%3;").arg(l->id).arg(depth).arg(e.text);
         }
     }
-    entries.insert(entries.end(), viewports.begin(), viewports.end()); // the viewports last
+    entries.insert(entries.begin(), viewports.begin(), viewports.end()); // the viewports first: handy with many layers
     if (key == m_pickerKey) return;
     m_pickerKey = key;
     const QSignalBlocker block(m_picker);
