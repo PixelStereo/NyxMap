@@ -38,6 +38,7 @@ private:
     void refresh();
     void fillAddMenu();
     void duplicateFixtures();
+    bool hasFocusInside() const; // the list has the keyboard
     void removeFixtures();
     std::vector<quint64> selectedIds() const;
     quint64 idAt(int row) const;

@@ -2444,6 +2444,8 @@ void MainWindow::removeCurrentLayer()
 
 void MainWindow::duplicateCurrentLayer()
 {
+    // The Fixtures list has the keyboard: its selected fixtures are duplicated, not the layer under them
+    if (m_fixtures && m_fixtures->hasFocusInside()) return m_fixtures->duplicateFixtures();
     const int i = currentLayer();
     if (i < 0) return;
     const int members = int(tree::descendants(m_engine->structure(), m_engine->layerId(i)).size());
