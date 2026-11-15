@@ -46,7 +46,7 @@ private:
     void removeFixtures();
     std::vector<quint64> selectedIds() const;
     quint64 groupAt(int row) const;   // a group's row: its group; 0 for a fixture's
-    void editMembers(quint64 group, const QString &text, const std::function<void(Fixture &)> &change, bool lock = false, bool solo = false);
+    quint64 selectedGroup() const;   // the group whose row is selected (or the fixture's group): 0 none
     void editIntensity(SliderField *slider, double value);
     quint64 idAt(int row) const;
 

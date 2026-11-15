@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QSettings>
+#include <QRegularExpression>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QTableWidget>
@@ -145,6 +146,29 @@ FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     });
     connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
         if (m_updating) return;
+        if (const quint64 group = groupAt(it->row())) { // a group's enable or name
+            if (it->column() == ColOn) {
+                const bool on = it->checkState() == Qt::Checked;
+                cmd::editFixtures(m_undo, m_engine, on ? QStringLiteral("Enable Group") : QStringLiteral("Disable Group"),
+                                  [&](FixturePatch &p) {
+                                      for (FixtureGroup &g : p.groups)
+                                          if (g.id == group) g.enabled = on;
+                                  });
+                emit projectEdited();
+            } else if (it->column() == ColName) {
+                QString name = it->text().trimmed();
+                name.remove(QRegularExpression(QStringLiteral("^[▾▸]\\s*")));
+                name = name.trimmed();
+                if (!name.isEmpty()) {
+                    cmd::editFixtures(m_undo, m_engine, QStringLiteral("Rename Group"), [&](FixturePatch &p) {
+                        for (FixtureGroup &g : p.groups)
+                            if (g.id == group) g.name = name;
+                    });
+                    emit projectEdited();
+                }
+            }
+            return;
+        }
         const quint64 id = idAt(it->row());
         if (it->column() == ColOn) {
             const bool on = it->checkState() == Qt::Checked;
@@ -165,11 +189,15 @@ FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
         emit projectEdited();
     });
     connect(m_table, &QTableWidget::cellClicked, this, [this](int row, int col) {
-        if (const quint64 group = groupAt(row)) { // a group's row: fold it, or its fixtures are locked / soloed together
+        if (const quint64 group = groupAt(row)) { // a group's row: its lock and solo, or fold it
             if (col == ColLock || col == ColSolo) {
-                const bool lock = col == ColLock;
-                editMembers(group, lock ? QStringLiteral("Lock Group") : QStringLiteral("Solo Group"), [&](Fixture &x) {}, lock, !lock);
-            } else if (col == ColName || col == ColDmx || col == ColOn) {
+                cmd::editFixtures(m_undo, m_engine, col == ColLock ? QStringLiteral("Lock Group") : QStringLiteral("Solo Group"),
+                                  [&](FixturePatch &p) {
+                                      for (FixtureGroup &g : p.groups)
+                                          if (g.id == group) (col == ColLock ? g.locked : g.solo) ^= true;
+                                  });
+                emit projectEdited();
+            } else if (col == ColName || col == ColDmx) {
                 cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fold Group"), [&](FixturePatch &p) {
                     for (FixtureGroup &g : p.groups)
                         if (g.id == group) g.open = !g.open;
@@ -217,21 +245,19 @@ quint64 FixturePanel::groupAt(int row) const
     return i ? i->data(Qt::UserRole + 1).toULongLong() : 0;
 }
 
-// The fixtures of a group changed together, one undo step: `change` on each; a lock or solo goes the way the group is not
-void FixturePanel::editMembers(quint64 group, const QString &text, const std::function<void(Fixture &)> &change, bool lock, bool solo)
+// The group a new fixture goes into, and the one Cmd / Ctrl + G puts the selection in: a group's row selected, else the
+// group of the current fixture
+quint64 FixturePanel::selectedGroup() const
 {
-    cmd::editFixtures(m_undo, m_engine, text, [&](FixturePatch &p) {
-        bool allLocked = true, allSolo = true;
-        for (const Fixture &x : p.fixtures)
-            if (x.group == group) { allLocked &= x.locked; allSolo &= x.solo; }
-        for (Fixture &x : p.fixtures) {
-            if (x.group != group) continue;
-            if (lock) x.locked = !allLocked;
-            if (solo) x.solo = !allSolo;
-            change(x);
-        }
-    });
-    emit projectEdited();
+    if (m_table->selectionModel())
+        for (const QModelIndex &i : m_table->selectionModel()->selectedRows())
+            if (const quint64 g = groupAt(i.row())) return g;
+    const int row = m_table->currentRow();
+    if (const quint64 g = groupAt(row)) return g;
+    const quint64 id = idAt(row);
+    if (!id) return 0;
+    const Fixture *f = m_engine->fixturePatch().findFixture(id);
+    return f ? f->group : 0;
 }
 
 void FixturePanel::editIntensity(SliderField *slider, double value)
@@ -239,7 +265,11 @@ void FixturePanel::editIntensity(SliderField *slider, double value)
     for (int k = 0; k < m_table->rowCount(); ++k)
         if (QWidget *c = m_table->cellWidget(k, ColIntensity); c && c->isAncestorOf(slider)) {
             if (const quint64 group = groupAt(k)) {
-                editMembers(group, QStringLiteral("Group Intensity"), [value](Fixture &x) { x.intensity = value / 100.0; });
+                cmd::editFixtures(m_undo, m_engine, QStringLiteral("Group Intensity"), [&](FixturePatch &p) {
+                    for (FixtureGroup &g : p.groups)
+                        if (g.id == group) g.intensity = value / 100.0;
+                }, QStringLiteral("group-intensity-%1").arg(group));
+                emit projectEdited();
             } else {
                 const quint64 id = idAt(k);
                 cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Intensity"), [&](FixturePatch &q) {
@@ -257,17 +287,22 @@ void FixturePanel::groupSelected()
 {
     const std::vector<quint64> chosen = selectedIds();
     const std::set<quint64> ids(chosen.begin(), chosen.end());
+    const quint64 existing = selectedGroup(); // a group selected: the fixtures join it; else a new group
     quint64 made = 0;
     cmd::editFixtures(m_undo, m_engine, QStringLiteral("Group Fixtures"), [&](FixturePatch &p) {
-        for (const FixtureGroup &g : p.groups) made = std::max(made, g.id);
-        ++made;
-        FixtureGroup g;
-        g.id = made;
-        for (int n = 1;; ++n) {
-            g.name = QStringLiteral("Group %1").arg(n);
-            if (std::none_of(p.groups.begin(), p.groups.end(), [&](const FixtureGroup &o) { return o.name == g.name; })) break;
+        if (existing && p.findGroup(existing)) {
+            made = existing;
+        } else {
+            for (const FixtureGroup &g : p.groups) made = std::max(made, g.id);
+            ++made;
+            FixtureGroup g;
+            g.id = made;
+            for (int n = 1;; ++n) {
+                g.name = QStringLiteral("Group %1").arg(n);
+                if (std::none_of(p.groups.begin(), p.groups.end(), [&](const FixtureGroup &o) { return o.name == g.name; })) break;
+            }
+            p.groups.push_back(g);
         }
-        p.groups.push_back(g);
         for (Fixture &f : p.fixtures)
             if (ids.count(f.id)) f.group = made;
     });
@@ -387,29 +422,29 @@ void FixturePanel::refresh()
             }
             return it;
         };
-        if (entry.group) { // a group: its header row, over its fixtures
+        if (entry.group) { // a group: its own enable, lock, solo and intensity (its fixtures' combine with them)
             const FixtureGroup &g = p.groups[size_t(entry.index)];
-            int members = 0, locked = 0, soloed = 0;
-            double sum = 0;
+            int members = 0;
             for (const Fixture &x : p.fixtures)
-                if (x.group == g.id) { ++members; locked += x.locked; soloed += x.solo; sum += x.intensity; }
-            QTableWidgetItem *on = cell(ColOn, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            on->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            on->setData(Qt::CheckStateRole, QVariant());
+                if (x.group == g.id) ++members;
+            QTableWidgetItem *on = cell(ColOn, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+            on->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+            on->setCheckState(g.enabled ? Qt::Checked : Qt::Unchecked);
+            on->setToolTip(QStringLiteral("Enable the group: none of its fixtures sends when it is off"));
             QTableWidgetItem *lock = cell(ColLock, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            lock->setIcon(padlockIcon(members > 0 && locked == members));
+            lock->setIcon(padlockIcon(g.locked));
             lock->setData(Qt::UserRole, 0);
-            lock->setToolTip(QStringLiteral("Lock every fixture of the group (click again to unlock them)"));
+            lock->setToolTip(g.locked ? QStringLiteral("Group locked — click to unlock it") : QStringLiteral("Click to lock the group"));
             QTableWidgetItem *solo = cell(ColSolo, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             solo->setText(QStringLiteral("S"));
             solo->setTextAlignment(Qt::AlignCenter);
             QFont sf = solo->font();
             sf.setBold(true);
             solo->setFont(sf);
-            solo->setForeground(members > 0 && soloed == members ? QColor(255, 214, 90) : QColor(95, 95, 102));
-            solo->setToolTip(QStringLiteral("Solo every fixture of the group"));
-            QTableWidgetItem *name = cell(ColName, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            solo->setForeground(g.solo ? QColor(255, 214, 90) : QColor(95, 95, 102));
+            solo->setToolTip(g.solo ? QStringLiteral("Group soloed — click to show every group again") : QStringLiteral("Solo: only the soloed groups send"));
+            QTableWidgetItem *name = cell(ColName, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+            name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
             name->setData(Qt::UserRole, quint64(0)); // not a fixture
             name->setData(Qt::UserRole + 1, g.id);    // a group's row
             const QString shown = (g.open ? QStringLiteral("▾ ") : QStringLiteral("▸ ")) + (g.name.isEmpty() ? QStringLiteral("Group") : g.name);
@@ -418,7 +453,7 @@ void FixturePanel::refresh()
             nf.setBold(true);
             name->setFont(nf);
             name->setForeground(QColor(232, 214, 170));
-            name->setToolTip(QStringLiteral("Group of %1 fixture(s) — click to fold or unfold it").arg(members));
+            name->setToolTip(QStringLiteral("Group of %1 fixture(s) — click to fold or unfold it, double-click to rename").arg(members));
             QWidget *box = m_table->cellWidget(r, ColIntensity);
             SliderField *slider = box ? box->findChild<SliderField *>() : nullptr;
             if (!box) {
@@ -428,12 +463,12 @@ void FixturePanel::refresh()
                     if (!m_updating) editIntensity(slider, value);
                 });
             }
-            const double avg = std::round((members ? sum / members : 1.0) * 100);
-            if (!slider->isDragging() && std::abs(slider->value() - avg) > 1e-9) slider->setValue(avg);
+            const double want = std::round(g.intensity * 100);
+            if (!slider->isDragging() && std::abs(slider->value() - want) > 1e-9) slider->setValue(want);
             QTableWidgetItem *count = cell(ColDmx, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             count->setText(QStringLiteral("%1 fixture%2").arg(members).arg(members == 1 ? QString() : QStringLiteral("s")));
             count->setForeground(QColor(150, 150, 158));
-            count->setToolTip(QStringLiteral("The group's fixtures: their solo, lock and intensity are set together"));
+            count->setToolTip(QStringLiteral("The group's fixtures"));
             continue;
         }
         QTableWidgetItem *on = cell(ColOn, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
@@ -509,6 +544,7 @@ quint64 FixturePanel::addFixture(const QString &typeId)
 {
     const QSize comp = m_engine->compositionSize();
     quint64 made = 0;
+    const quint64 into = selectedGroup(); // a fixture made while a group is selected joins it, and obeys its values
     cmd::editFixtures(m_undo, m_engine, QStringLiteral("New Fixture"), [&](FixturePatch &p) {
         const FixtureType *t = p.findType(typeId);
         if (!t) return;
@@ -529,6 +565,7 @@ quint64 FixturePanel::addFixture(const QString &typeId)
         f.size = QSizeF(cell * t->cols / cw, cell * t->rows / ch);
         for (const Fixture &x : p.fixtures) made = std::max(made, x.id);
         f.id = ++made;
+        f.group = p.findGroup(into) ? into : 0;
         p.fixtures.push_back(f);
     });
     if (made) {

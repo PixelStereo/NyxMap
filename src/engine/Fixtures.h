@@ -122,6 +122,9 @@ struct FixtureGroup {
     quint64 id = 0;
     QString name;
     bool open = true;
+    // Its own values, as a layer group's: they combine with its fixtures' (see FixturePatch::effectiveOf)
+    bool enabled = true, solo = false, locked = false;
+    double intensity = 1; // 0..1, a factor on its fixtures'
     QJsonObject toJson() const;
     static FixtureGroup fromJson(const QJsonObject &o);
 };
@@ -162,6 +165,9 @@ struct FixturePatch {
     const DmxOutput *findOutput(quint64 id) const;
     Fixture *findFixture(quint64 id);
     const Fixture *findFixture(quint64 id) const;
+    const FixtureGroup *findGroup(quint64 id) const;
+    // The fixture as it sends: its group's values combined with its own (enabled and, solo or locked, intensity times)
+    Fixture effectiveOf(const Fixture &f) const;
     // Ids given where missing or taken, types colliding with a built-in one dropped, values clamped
     void normalize();
     QJsonObject toJson() const;

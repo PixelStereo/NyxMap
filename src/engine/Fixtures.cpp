@@ -291,7 +291,10 @@ QJsonObject Fixture::toJson() const
 
 QJsonObject FixtureGroup::toJson() const
 {
-    return QJsonObject{{"id", QString::number(id)}, {"name", name}, {"open", open}};
+    QJsonObject o{{"id", QString::number(id)}, {"name", name}, {"open", open}, {"enabled", enabled}, {"intensity", intensity}};
+    if (solo) o["solo"] = true;
+    if (locked) o["locked"] = true;
+    return o;
 }
 
 FixtureGroup FixtureGroup::fromJson(const QJsonObject &o)
@@ -300,6 +303,10 @@ FixtureGroup FixtureGroup::fromJson(const QJsonObject &o)
     g.id = o.value("id").toString().toULongLong();
     g.name = o.value("name").toString();
     g.open = o.value("open").toBool(true);
+    g.enabled = o.value("enabled").toBool(true);
+    g.solo = o.value("solo").toBool(false);
+    g.locked = o.value("locked").toBool(false);
+    g.intensity = o.value("intensity").toDouble(1);
     return g;
 }
 
@@ -458,6 +465,7 @@ void FixturePatch::normalize()
         o.port = std::clamp(o.port, 0, 65535);
     }
     giveIds(groups);
+    for (FixtureGroup &g : groups) g.intensity = std::clamp(std::isfinite(g.intensity) ? g.intensity : 1.0, 0.0, 1.0);
     for (Fixture &f : fixtures) // a fixture in no group that exists is in none
         if (f.group && std::none_of(groups.begin(), groups.end(), [&](const FixtureGroup &g) { return g.id == f.group; })) f.group = 0;
     giveIds(fixtures);
@@ -483,6 +491,25 @@ QJsonObject FixturePatch::toJson() const
     QJsonObject out{{"fixture_types", t}, {"fixtures", f}, {"dmx_outputs", o}};
     if (!g.isEmpty()) out["fixture_groups"] = g;
     return out;
+}
+
+const FixtureGroup *FixturePatch::findGroup(quint64 id) const
+{
+    for (const FixtureGroup &g : groups)
+        if (g.id == id) return &g;
+    return nullptr;
+}
+
+Fixture FixturePatch::effectiveOf(const Fixture &f) const
+{
+    Fixture e = f;
+    if (const FixtureGroup *g = f.group ? findGroup(f.group) : nullptr) {
+        e.enabled = f.enabled && g->enabled;
+        e.solo = f.solo || g->solo;
+        e.locked = f.locked || g->locked;
+        e.intensity = f.intensity * g->intensity;
+    }
+    return e;
 }
 
 FixturePatch FixturePatch::fromJson(const QJsonObject &o)
@@ -628,10 +655,14 @@ Prepared prepare(const Fixture &f, FixtureType t, const std::array<float, 3> *co
 template <typename F>
 void forEachPrepared(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors, F fn)
 {
-    const bool anySolo = std::any_of(p.fixtures.begin(), p.fixtures.end(),
+    // What each fixture sends: its own values with its group's (a fixture added to a group obeys it at once)
+    std::vector<Fixture> sending;
+    sending.reserve(p.fixtures.size());
+    for (const Fixture &f : p.fixtures) sending.push_back(p.effectiveOf(f));
+    const bool anySolo = std::any_of(sending.begin(), sending.end(),
                                      [&](const Fixture &f) { return f.solo && active(p, f); });
     size_t next = 0; // the first colour of the current fixture
-    for (const Fixture &f : p.fixtures) {
+    for (const Fixture &f : sending) {
         if (!active(p, f)) continue;
         FixtureType t = *p.resolvedType(f);
         const size_t first = next;
