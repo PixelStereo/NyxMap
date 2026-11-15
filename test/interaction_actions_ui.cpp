@@ -18,6 +18,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     theme::applyToApplication(app);
     Engine engine;
+    engine.ensureSequence(); // as a new project: "Sequence 1" to GO
     QUndoStack undo;
     int failures = 0;
     auto check = [&](bool ok, const char *why) { if (!ok) { ++failures; std::printf("FAIL interaction_actions_ui: %s\n", why); } };
@@ -64,18 +65,22 @@ int main(int argc, char **argv)
     if (auto *target = panel.findChild<QToolButton *>("trueTarget0"); target && target->menu()) {
         emit target->menu()->aboutToShow();
         for (QAction *owner : target->menu()->actions())
-            if (owner->text() == "Composition" && owner->menu()) {
+            if (owner->text() == "Sequences" && owner->menu()) {
                 emit owner->menu()->aboutToShow();
-                for (QAction *cat : owner->menu()->actions())
-                    if (cat->text() == "Show" && cat->menu())
-                        for (QAction *a : cat->menu()->actions())
-                            if (a->text() == "GO") go = a;
+                for (QAction *seq : owner->menu()->actions()) // the first sequence: "Sequence 1" by default
+                    if (seq->menu()) {
+                        emit seq->menu()->aboutToShow();
+                        for (QAction *a : seq->menu()->actions())
+                            if (a->text() == "GO" && !go) go = a;
+                    }
             }
     }
     check(go != nullptr, "the show's GO offered as an action");
     if (go) go->trigger();
     settle();
-    check(current().onTrue.size() == 1 && current().onTrue.front().param == "show/go", "GO chosen if true");
+    check(current().onTrue.size() == 1 && current().onTrue.front().param.startsWith("sequence/") &&
+              current().onTrue.front().param.endsWith("/go"),
+          "a sequence's GO chosen if true");
 
     // A switch: its value as Off / On
     Interaction edited = current();

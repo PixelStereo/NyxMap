@@ -229,7 +229,8 @@ void TimelineTrackRow::fillOwner(QMenu *menu, const showmenu::Owner &owner)
     const bool here = track().layer == layer;
     const auto events = mine(m_e->triggerParams(layer));
     if (!events.empty()) {
-        auto *eventMenu = menu->addMenu(QStringLiteral("Events (actions)"));
+        // A sequence's actions (GO, GO Back, Launch Step, Load as Next) are its own entries, not a submenu
+        QMenu *eventMenu = owner.kind == showmenu::Owner::Kind::Sequence ? menu : menu->addMenu(QStringLiteral("Events (actions)"));
         addParamMenu(eventMenu, events, [&](QMenu *into, const Engine::AnimParam &p, const QString &text) {
             auto *a = into->addAction(text, this, [this, choose, path = p.path] { choose([this](const QString &x) { selectEvent(x); }, path); });
             a->setCheckable(true);

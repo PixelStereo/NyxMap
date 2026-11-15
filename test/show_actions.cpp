@@ -55,12 +55,12 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     const QString recall = QStringLiteral("snapshot/%1/recall").arg(shotId);
     const QString play = QStringLiteral("timeline/%1/play").arg(timelineId);
     const auto comp = e.parameters(0);
-    check(has(comp, "show/go") && has(comp, "show/back") && has(comp, "show/stop_all") && has(comp, "show/blackout") &&
+    check(has(comp, "show/stop_all") && has(comp, "show/blackout") &&
               has(comp, "show/pause") && has(comp, recall) && has(comp, QStringLiteral("preset/%1/recall").arg(presetId)) &&
               has(comp, play) && has(comp, QStringLiteral("timeline/%1/playing").arg(timelineId)),
           "the composition lists the show's actions and states");
     const auto triggers = e.triggerParams(0), settable = e.settableParams(0);
-    check(has(triggers, "show/go") && has(triggers, recall) && has(triggers, play), "an event track fires the show's actions");
+    check(has(triggers, "show/stop_all") && has(triggers, recall) && has(triggers, play), "an event track fires the show's actions");
     check(has(settable, "show/blackout") && has(settable, "show/pause"), "an event track sets the blackout and the pause");
     ParamInfo info;
     check(e.parameterInfo(0, recall, &info) && info.label == QStringLiteral("Snapshots › Intro"), "a snapshot's recall named after it");
@@ -141,7 +141,7 @@ int runShowActionTests(Engine &e, const QString &root, const QString &tmp)
     check(has(e.parameters(0), QStringLiteral("sequence/%1/go").arg(sequenceId)), "a sequence's own GO, once it exists");
     recalls();
     recalled = 0;
-    check(e.setParameter(0, "show/go", true), "fire GO");
+    check(e.setParameter(0, QStringLiteral("sequence/%1/go").arg(sequenceId), true), "fire GO");
     for (int i = 0; i < 50 && !recalled; ++i) {
         settle(10);
         e.sequencer().advance(0.02);

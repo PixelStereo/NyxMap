@@ -59,11 +59,7 @@ void Engine::newProject()
 {
     clearProject();
     ensureViewport(); // a new project shows its composition through one viewport
-    { // and has a first sequence, selected: GO has somewhere to go from the start
-        Sequencer::Sequence first;
-        first.name = QStringLiteral("Sequence 1");
-        m_sequencer->setCurrent(m_sequencer->add(first));
-    }
+    ensureSequence();
     emit layersChanged();
     emit snapshotsChanged();
     emit presetsChanged();
@@ -71,6 +67,16 @@ void Engine::newProject()
     emit controlsChanged(); // the Controls panel made again: another project's controls
     emit m_sequencer->changed();
     emit m_sequencer->positionChanged();
+}
+
+void Engine::ensureSequence()
+{
+    if (m_sequencer->count() == 0) {
+        Sequencer::Sequence first;
+        first.name = QStringLiteral("Sequence 1");
+        m_sequencer->add(first);
+    }
+    if (m_sequencer->current() < 0) m_sequencer->setCurrent(0);
 }
 
 // Empties everything (layers, viewports, snapshots, media bin)

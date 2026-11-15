@@ -78,11 +78,8 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                   later([this, on] { setPaused(on); });
               });
 
-    // The selected sequence, as the GO bar
-    action("show/go", "Show › GO", QStringLiteral("go"), [this] { m_sequencer->go(); });
-    action("show/back", "Show › GO Back", QStringLiteral("go back"), [this] { m_sequencer->back(); });
-    action("show/stop", "Show › Stop", QStringLiteral("stop"), [this] { m_sequencer->stop(); });
-    action("show/stop_all", "Show › Stop All", QStringLiteral("stop all"), [this] { m_sequencer->stopAll(); });
+    // Stop All: the waits of every sequence, every timeline and play. GO, GO Back and Stop belong to each sequence (below)
+    action("show/stop_all", "Composition › Stop All", QStringLiteral("stop all"), [this] { m_sequencer->stopAll(); });
 
     // Each sequence, whatever is selected
     for (int i = 0; i < m_sequencer->count(); ++i) {
@@ -97,6 +94,20 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
         // Load as Next: the step (1 = first) GO plays next, the show left as it is — a key, a MIDI note, a control, a
         // timeline sets it as any value. Written only: read, it would ask the sequencer under the engine's lock
         const int steps = std::max(1, int(m_sequencer->sequence(i).steps.size()));
+        // Launch Step: the step (1 = first) played now, as a GO to it
+        add(base + "launch", cat + "Launch Step", T::Int)
+            .range(1, steps)
+            .limits(1, steps)
+            .step(1)
+            .transient()
+            .bind(nullptr, [this, id](const QVariant &v) {
+                const int step = int(std::lround(v.toDouble())) - 1;
+                journal(QStringLiteral("show"), QStringLiteral("sequence %1 launch %2").arg(id).arg(step + 1));
+                later([this, id, step] {
+                    const int index = m_sequencer->indexOfSequence(id);
+                    if (index >= 0) m_sequencer->goToStepOf(index, step);
+                });
+            });
         add(base + "next", cat + "Load as Next", T::Int)
             .range(1, steps)
             .limits(1, steps)

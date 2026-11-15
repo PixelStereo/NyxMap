@@ -847,7 +847,7 @@ if(NYXMAP_TESTS)
   # MediaPipe inference and decoder seeks are sensitive to CPU/GPU contention on Apple Silicon runners.
   # Keep these two integration tests isolated while the rest of the suite runs with ctest -j4.
   if(APPLE)
-    set_tests_properties(vision_hand_inference preset_actions PROPERTIES RUN_SERIAL TRUE)
+    set_tests_properties(vision_hand_inference preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
   endif()
 
   foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing

@@ -47,7 +47,7 @@ int main(int argc, char **argv)
         };
         for (const auto &[layer, path] : std::vector<std::pair<quint64, QString>>{
                  {movie, "rewind"}, {movie, "seek"}, {countdown, "clock/start"}, {countdown, "clock/reset"},
-                 {0, QStringLiteral("timeline/%1/play").arg(tl)}, {0, QStringLiteral("timeline/%1/stop").arg(tl)}, {0, "show/go"}}) {
+                 {0, QStringLiteral("timeline/%1/play").arg(tl)}, {0, QStringLiteral("timeline/%1/stop").arg(tl)}, {0, "show/stop_all"}}) {
             const ParamInfo i = info(layer, path);
             require(i.presettable && i.action && !i.stored, qPrintable(path + " is an action a preset can hold"));
         }
