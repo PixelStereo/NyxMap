@@ -742,6 +742,11 @@ void InteractionPanel::applyTree()
 }
 
 // A group of the selected interactions (none: an empty one, in the selected group)
+bool InteractionPanel::hasFocusInside() const
+{
+    return m_list->hasFocus() || m_list->isAncestorOf(QApplication::focusWidget());
+}
+
 void InteractionPanel::groupSelected()
 {
     auto list = m_engine->interactions();

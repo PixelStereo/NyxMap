@@ -37,6 +37,8 @@ public:
     // A key of the keyboard, pressed or let go, while no text is typed (the main window passes them all)
     void keyEvent(int key, Qt::KeyboardModifiers mods, bool pressed);
     static QString keyName(int key, Qt::KeyboardModifiers mods); // "Space", "Shift+A" (portable)
+    void groupSelected();          // a group of the selected interactions (none selected: an empty one)
+    bool hasFocusInside() const;   // the list has the keyboard
     static InteractionPanel *instance() { return s_instance; } // the application's (none in the tests)
     // A new interaction driving this value (a layer's id, 0: the composition), its source learnt of that kind (Internal:
     // chosen in its settings); the tab is shown
@@ -80,7 +82,6 @@ private:
     // The list and its groups together, as one undo step
     void commitGroups(const std::vector<Interaction> &list, const std::vector<InteractionGroup> &groups, const QString &text);
     void applyTree();                      // the tree after a drop: the groups' contents read back
-    void groupSelected();                  // a group of the selection
     void fillGroupMenu(QMenu *menu, quint64 group);
     QTreeWidgetItem *groupItem(quint64 group) const;
     void add(InteractionSource kind);

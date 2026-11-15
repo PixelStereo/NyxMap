@@ -29,6 +29,8 @@ public:
     int addLineFixtures(quint64 layer, const QString &typeId, int pixels);
     // Each mode of each file a type of the project (a type of the same id replaced); the report: imported, warnings
     QString importGdtf(const QStringList &paths);
+    void duplicateFixtures();     // the selected ones, at the next free addresses
+    bool hasFocusInside() const;  // the list has the keyboard
 
 signals:
     void fixtureSelected(quint64 id);
@@ -37,8 +39,6 @@ signals:
 private:
     void refresh();
     void fillAddMenu();
-    void duplicateFixtures();
-    bool hasFocusInside() const; // the list has the keyboard
     void removeFixtures();
     std::vector<quint64> selectedIds() const;
     quint64 idAt(int row) const;
