@@ -205,7 +205,18 @@ public:
     // could not be read.
     struct RhiSources {
         QString vertex, fragment, error;
-        int samplers = 0;
+        // The block's members as std140 lays them out (offset in bytes), with the input's default
+        struct Uniform {
+            enum Kind { Int, Float, Bool, Vec2, Vec4 } kind = Float;
+            QString name;
+            int offset = 0;
+            float value[4] = {0, 0, 0, 0};
+        };
+        std::vector<Uniform> uniforms;
+        int blockSize = 0; // bytes, a multiple of 16
+        // The images in binding order (1, 2…): inputs, then targets, then imported images
+        QStringList samplers;
+        QString inputImage; // the filter's input image (empty: a generator)
     };
     static RhiSources rhiSources(const QString &path);
 

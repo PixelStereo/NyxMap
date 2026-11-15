@@ -826,30 +826,57 @@ IsfInstance::RhiSources IsfInstance::rhiSources(const QString &path)
         r.error = isf.m_error;
         return r;
     }
-    QString block = QStringLiteral("layout(std140, binding = 0) uniform IsfUniforms {\n"
-                                   "    int PASSINDEX;\n    vec2 RENDERSIZE;\n    float TIME;\n    float TIMEDELTA;\n"
-                                   "    vec4 DATE;\n    int FRAMEINDEX;\n");
+    QString block = QStringLiteral("layout(std140, binding = 0) uniform IsfUniforms {\n");
+    using U = RhiSources::Uniform;
+    auto member = [&](U::Kind kind, const QString &name, std::initializer_list<float> value = {}) {
+        static const char *const glsl[] = {"int", "float", "bool", "vec2", "vec4"};
+        const int align = kind == U::Vec4 ? 16 : kind == U::Vec2 ? 8 : 4, size = align; // std140
+        U u;
+        u.kind = kind;
+        u.name = name;
+        u.offset = (r.blockSize + align - 1) / align * align;
+        std::copy(value.begin(), value.end(), u.value);
+        r.blockSize = u.offset + size;
+        r.uniforms.push_back(u);
+        block += QStringLiteral("    %1 %2;\n").arg(QLatin1String(glsl[kind]), name);
+    };
+    member(U::Int, QStringLiteral("PASSINDEX"));
+    member(U::Vec2, QStringLiteral("RENDERSIZE"));
+    member(U::Float, QStringLiteral("TIME"));
+    member(U::Float, QStringLiteral("TIMEDELTA"));
+    member(U::Vec4, QStringLiteral("DATE"));
+    member(U::Int, QStringLiteral("FRAMEINDEX"));
+    // -1 where the framebuffer's first row is the top of NDC (Metal, Direct3D): drawn upside down, the first row
+    // holds the picture's bottom as with OpenGL, so the shaders sample their images as they do there
+    member(U::Float, QStringLiteral("isf_ndcFlip"), {1});
     QString samplers;
     auto sampler = [&](const QString &n) {
-        samplers += QStringLiteral("layout(binding = %2) uniform sampler2D %1;\n").arg(n).arg(++r.samplers);
-        block += QStringLiteral("    vec2 _%1_imgSize;\n    vec4 _%1_imgRect;\n    bool _%1_flip;\n").arg(n);
+        r.samplers << n;
+        samplers += QStringLiteral("layout(binding = %2) uniform sampler2D %1;\n").arg(n).arg(r.samplers.size());
+        member(U::Vec2, QStringLiteral("_%1_imgSize").arg(n));
+        member(U::Vec4, QStringLiteral("_%1_imgRect").arg(n));
+        member(U::Bool, QStringLiteral("_%1_flip").arg(n));
     };
     for (const IsfInput &in : isf.m_inputs) {
         switch (in.type) {
-        case IsfInput::Event:
-        case IsfInput::Bool: block += QStringLiteral("    bool %1;\n").arg(in.name); break;
-        case IsfInput::Long: block += QStringLiteral("    int %1;\n").arg(in.name); break;
-        case IsfInput::Float: block += QStringLiteral("    float %1;\n").arg(in.name); break;
-        case IsfInput::Point2D: block += QStringLiteral("    vec2 %1;\n").arg(in.name); break;
-        case IsfInput::Color: block += QStringLiteral("    vec4 %1;\n").arg(in.name); break;
+        case IsfInput::Event: member(U::Bool, in.name); break;
+        case IsfInput::Bool: member(U::Bool, in.name, {in.bDefault ? 1.0f : 0.0f}); break;
+        case IsfInput::Long: member(U::Int, in.name, {float(in.lDefault)}); break;
+        case IsfInput::Float: member(U::Float, in.name, {float(in.fDefault)}); break;
+        case IsfInput::Point2D: member(U::Vec2, in.name, {float(in.pDefault.x()), float(in.pDefault.y())}); break;
+        case IsfInput::Color: member(U::Vec4, in.name, {in.cDefault[0], in.cDefault[1], in.cDefault[2], in.cDefault[3]}); break;
         case IsfInput::Image:
         case IsfInput::Audio:
-        case IsfInput::AudioFFT: sampler(in.name); break;
+        case IsfInput::AudioFFT:
+            if (in.isInputImage) r.inputImage = in.name;
+            sampler(in.name);
+            break;
         default: break;
         }
     }
     for (const IsfTarget &t : isf.m_targets) sampler(t.name);
     for (const IsfImported &im : isf.m_imported) sampler(im.name);
+    r.blockSize = (r.blockSize + 15) / 16 * 16;
     block += QStringLiteral("};\n");
     const QString uniforms = block + samplers;
 
@@ -892,7 +919,7 @@ IsfInstance::RhiSources IsfInstance::rhiSources(const QString &path)
                                 "    return centre + vec4(k * size / RENDERSIZE * centre.w, 0.0, 0.0);\n"
                                 "}\n"
                                 "void isf_vertShaderInit() {\n"
-                                "    gl_Position = vec4(isf_position, 0.0, 1.0);\n"
+                                "    gl_Position = vec4(isf_position.x, isf_position.y * isf_ndcFlip, 0.0, 1.0);\n"
                                 "    isf_FragNormCoord = isf_position * 0.5 + 0.5;\n"
                                 "}\n"
                                 "#define vv_vertShaderInit isf_vertShaderInit\n"
