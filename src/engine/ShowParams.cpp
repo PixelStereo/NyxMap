@@ -62,6 +62,11 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                   journal(QStringLiteral("show"), on ? QStringLiteral("blackout on") : QStringLiteral("blackout off"));
                   later([this, on] { setBlackout(on); });
               });
+    // The pointer over the preview (setMousePosition): read-only, as the pointer is
+    add("mouse/x", "Mouse › X", T::Float).range(0, 1).readOnly().bind(
+        [this] { return QVariant(m_mouseX); }, nullptr);
+    add("mouse/y", "Mouse › Y", T::Float).range(0, 1).readOnly().bind(
+        [this] { return QVariant(m_mouseY); }, nullptr);
     add("show/pause", "Show › Pause", T::Bool)
         .ramp(Parameter::Ramp::Cut)
         .byDefault(false)
@@ -325,7 +330,7 @@ void Engine::followSequenceClocks()
 
 bool Engine::isShowParam(const QString &path)
 {
-    for (const char *prefix : {"show/", "sequence/", "snapshot/", "preset/", "timeline/", "control/"})
+    for (const char *prefix : {"show/", "sequence/", "snapshot/", "preset/", "timeline/", "control/", "mouse/"})
         if (path.startsWith(QLatin1String(prefix))) return true;
     return false;
 }

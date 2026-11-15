@@ -119,6 +119,12 @@ private:
     void updateZoomLabel();
     QPointF toWidget(QPointF norm) const;
     QPointF toNorm(QPointF widgetPos) const;
+
+public:
+    // The pointer over the view, 0..1 across and down; false when it is not over it (the show's mouse position)
+    bool pointerNorm(QPointF *norm) const;
+
+private:
     QPointF handlePos(const Handle &h) const;
     void moveHandle(const Handle &h, QPointF norm);
     Handle hitHandle(QPointF widgetPos) const;

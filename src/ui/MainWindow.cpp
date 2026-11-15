@@ -849,6 +849,13 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         }
     });
     m_layerThumbTimer.start();
+    // The pointer over the preview is the show's mouse/x and mouse/y (interactions read it as any value)
+    m_mouseTimer.setInterval(33);
+    connect(&m_mouseTimer, &QTimer::timeout, this, [this] {
+        QPointF n;
+        if (m_view->isVisible() && m_view->pointerNorm(&n)) m_engine->setMousePosition(n.x(), n.y());
+    });
+    m_mouseTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
         // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.

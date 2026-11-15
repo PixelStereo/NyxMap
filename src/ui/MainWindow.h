@@ -208,7 +208,7 @@ private:
     QThread *m_remoteThread = nullptr;
     QTimer m_recallRefreshTimer;
     QTimer m_statusTimer, m_layerStatusTimer, m_renderTimer, m_autosaveTimer, m_binTimer, m_inspectorTimer;
-    QTimer m_previewTimer, m_layerThumbTimer; // the layer list's pictures: one layer every moment, not live
+    QTimer m_previewTimer, m_layerThumbTimer, m_mouseTimer; // the pointer over the preview: the show's mouse/x and mouse/y // the layer list's pictures: one layer every moment, not live
     int m_layerThumbNext = 0;
     QElapsedTimer m_previewClock;
 
