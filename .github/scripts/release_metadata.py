@@ -56,7 +56,7 @@ def downloads(release, urls, repository):
     preview = " · PREVIEW" if release.get("prerelease") else ""
     companion = (f"""
 
-<a href="https://companion.free/?ref=bitfocus"><img alt="Controllable by Companion" src="https://companion.free/img/companion-badge.png?ref=bitfocus" width="180"></a>
+<a href="https://bitfocus.io/companion"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://bitfocus.io/companion"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
 
 [Download the NyxMap module]({urls['companion']}) · [setup guide](docs/integrations/companion.md)""") if "companion" in urls else ""
     return f"""<!-- release-downloads:start -->
