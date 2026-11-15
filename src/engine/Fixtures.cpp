@@ -271,6 +271,7 @@ QJsonObject Fixture::toJson() const
                   {"white", white == White::Off ? "off" : "min"}};
     if (locked) o["locked"] = true;
     if (solo) o["solo"] = true;
+    if (group) o["group"] = QString::number(group);
     if (cols != 1 || rows != 1 || byColumns || start != FixtureType::Start::TopLeft || snake)
         o["pixels"] = QJsonObject{{"cols", cols}, {"rows", rows}, {"order", byColumns ? "columns" : "rows"},
                                   {"start", startName(start)}, {"snake", snake}};
@@ -288,10 +289,25 @@ QJsonObject Fixture::toJson() const
     return o;
 }
 
+QJsonObject FixtureGroup::toJson() const
+{
+    return QJsonObject{{"id", QString::number(id)}, {"name", name}, {"open", open}};
+}
+
+FixtureGroup FixtureGroup::fromJson(const QJsonObject &o)
+{
+    FixtureGroup g;
+    g.id = o.value("id").toString().toULongLong();
+    g.name = o.value("name").toString();
+    g.open = o.value("open").toBool(true);
+    return g;
+}
+
 Fixture Fixture::fromJson(const QJsonObject &o)
 {
     Fixture f;
     f.id = o.value("id").toString().toULongLong();
+    f.group = o.value("group").toString().toULongLong();
     f.name = o.value("name").toString();
     f.type = o.value("type").toString();
     f.enabled = o.value("enabled").toBool(true);
@@ -441,6 +457,9 @@ void FixturePatch::normalize()
         o.priority = std::clamp(o.priority, 0, 200);
         o.port = std::clamp(o.port, 0, 65535);
     }
+    giveIds(groups);
+    for (Fixture &f : fixtures) // a fixture in no group that exists is in none
+        if (f.group && std::none_of(groups.begin(), groups.end(), [&](const FixtureGroup &g) { return g.id == f.group; })) f.group = 0;
     giveIds(fixtures);
     for (Fixture &f : fixtures) {
         const DmxOutput *out = findOutput(f.output);
@@ -456,17 +475,21 @@ void FixturePatch::normalize()
 
 QJsonObject FixturePatch::toJson() const
 {
-    QJsonArray t, f, o;
+    QJsonArray t, f, o, g;
+    for (const FixtureGroup &x : groups) g.append(x.toJson());
     for (const FixtureType &x : types) t.append(x.toJson());
     for (const Fixture &x : fixtures) f.append(x.toJson());
     for (const DmxOutput &x : outputs) o.append(x.toJson());
-    return QJsonObject{{"fixture_types", t}, {"fixtures", f}, {"dmx_outputs", o}};
+    QJsonObject out{{"fixture_types", t}, {"fixtures", f}, {"dmx_outputs", o}};
+    if (!g.isEmpty()) out["fixture_groups"] = g;
+    return out;
 }
 
 FixturePatch FixturePatch::fromJson(const QJsonObject &o)
 {
     FixturePatch p;
     for (const QJsonValue &v : o.value("fixture_types").toArray()) p.types.push_back(FixtureType::fromJson(v.toObject()));
+    for (const QJsonValue &v : o.value("fixture_groups").toArray()) p.groups.push_back(FixtureGroup::fromJson(v.toObject()));
     for (const QJsonValue &v : o.value("fixtures").toArray()) p.fixtures.push_back(Fixture::fromJson(v.toObject()));
     for (const QJsonValue &v : o.value("dmx_outputs").toArray()) p.outputs.push_back(DmxOutput::fromJson(v.toObject()));
     p.normalize();

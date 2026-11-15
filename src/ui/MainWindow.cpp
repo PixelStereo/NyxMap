@@ -2775,6 +2775,7 @@ void MainWindow::createGroup()
 {
     // The Interactions list has the keyboard: its selected interactions are grouped, not the layers
     if (m_interactions && m_interactions->hasFocusInside()) return m_interactions->groupSelected();
+    if (m_fixtures && m_fixtures->hasFocusInside()) return m_fixtures->groupSelected();
     // Selected layers and groups (not locked) go into the new group, placed where the first of them was
     const LayerTree t = m_engine->structure();
     std::vector<quint64> ids;

@@ -977,6 +977,11 @@ void Engine::recallSnapshotCopy(const Snapshot &m, int i)
     if (!m.id) return;
     resumeAfterStop();
     journal(QStringLiteral("snapshot_recall"), m.name);
+    { // the snapshot recalled last, even one with nothing in it (its progress is then done)
+        Lock lk(&m_mutex);
+        m_recalledSnapshot = m.id;
+        m_recalledPreset = 0;
+    }
     if (!m.views.isEmpty()) emit viewsRecalled(m.views);
     if (m.layers.isEmpty() && m.composition.isEmpty() && m.interactions.isEmpty() && m.fixtures.isEmpty() &&
         interactions().empty())

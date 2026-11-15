@@ -5,8 +5,10 @@
 // files imported there too: Gdtf.h). Every edit is undoable.
 
 #include <QWidget>
+#include <functional>
 #include <vector>
 
+struct Fixture;
 class Engine;
 class QLabel;
 class QMenu;
@@ -14,6 +16,7 @@ class QTableWidget;
 class QTimer;
 class QToolButton;
 class QUndoStack;
+class SliderField;
 
 class FixturePanel : public QWidget
 {
@@ -30,6 +33,7 @@ public:
     // Each mode of each file a type of the project (a type of the same id replaced); the report: imported, warnings
     QString importGdtf(const QStringList &paths);
     void duplicateFixtures();     // the selected ones, at the next free addresses
+    void groupSelected();         // the selected fixtures in a new group (Cmd / Ctrl + G)
     bool hasFocusInside() const;  // the list has the keyboard
 
 signals:
@@ -41,6 +45,9 @@ private:
     void fillAddMenu();
     void removeFixtures();
     std::vector<quint64> selectedIds() const;
+    quint64 groupAt(int row) const;   // a group's row: its group; 0 for a fixture's
+    void editMembers(quint64 group, const QString &text, const std::function<void(Fixture &)> &change, bool lock = false, bool solo = false);
+    void editIntensity(SliderField *slider, double value);
     quint64 idAt(int row) const;
 
     Engine *m_engine;
