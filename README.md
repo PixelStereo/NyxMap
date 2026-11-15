@@ -2,92 +2,53 @@
 
 # NYXMAP
 
-### *Real-Time Projection Mapping & Show Composition Instrument*
-  
-From a single screen to a multi-output installation, design the image and run the show without switching tools.
+### Real-time visuals. Spatial mapping. Live performance.
 
-> **NyxMap is more than a media server.** It is a live composition instrument designed to write, shape, and perform hybrid visual & audio shows.
-> 
-<p>
-  <a href="#download"><img alt="Download" src="https://img.shields.io/badge/Download-latest-f6c453?style=for-the-badge"></a>
-  <a href="#download"><img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-24272C?style=for-the-badge"></a>
-  <a href="#download"><img alt="Free and open source" src="https://img.shields.io/badge/Free%20%26%20open%20source-AGPLv3-24272C?style=for-the-badge"></a>
-  <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-read-24272C?style=for-the-badge"></a>
-</p>
+A creative instrument for projection mapping, video, 3D, generative visuals and audio — built for the stage.
 
-**[Read the NyxMap documentation](https://pixelstereo.github.io/NyxMap/)**
+**LATEST VERSION · [v0.6.6](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.6)**
+
+[![macOS](https://img.shields.io/badge/macOS-Download-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-macos-v0.6.6.zip)
+[![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-windows-v0.6.6.zip)
+[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.AppImage)
+
+[All downloads & release notes](https://github.com/PixelStereo/NyxMap/releases) · [Documentation](https://pixelstereo.github.io/NyxMap/) · [Source code](https://github.com/PixelStereo/NyxMap)
 
 </div>
 
 <p align="center">
-  <img src="docs/assets/readme-mapping.png" alt="NYXMAP mapping a test pattern with corner pins, a plasma warped on a mesh and a floor grid onto a stage" width="100%">
+  <img src="docs/assets/readme-mapping.png" alt="NyxMap projection mapping and real-time visuals" width="100%">
 </p>
 
 ---
 
-## Why NYXMAP
+## Create. Map. Perform.
 
-> "This software is an instrument born from over 20 years of hands-on experience and reflection—using countless tools, yet always feeling something was missing. So, here it is!"
+NyxMap is a real-time visual instrument for building and performing immersive shows — from a single projector to complex multi-output installations.
 
----
+- **Visual engine** — video, live inputs, NDI, Syphon / Spout, HAP, ISF shaders, 3D scenes and effects.
+- **Projection mapping** — corner pin, mesh warping, shared mapping zones and multi-output workflows.
+- **Audio engine** — synthesis, granular sound, modular instruments and audio-reactive visuals.
+- **Modulation** — LFOs, envelopes, tracking, audio followers and MIDI / OSC control.
+- **Live performance** — presets, snapshots, cues, timelines and timecode.
 
-- **Free, open source, cross-platform.** macOS, Windows and Linux, licensed under the GNU AGPL v3.
+## Downloads
 
----
+| Platform | Package | Requirements |
+|:--|:--|:--|
+| **macOS** | [Download ZIP](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-macos-v0.6.6.zip) | Apple Silicon |
+| **Windows** | [Download ZIP](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-windows-v0.6.6.zip) | 64-bit |
+| **Linux** | [Download AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.AppImage) · [Portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.tar.gz) | Ubuntu 24.04+ · x86_64 |
 
-## 🎨 1. Compose & Play — Visual Engine
+[Stream Deck module for Bitfocus Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-Companion-v0.6.6.tgz) · [Setup guide](docs/integrations/companion.md)
 
-Mix, layer, and manipulate your media score with performance-grade speed.
+See the [installation guide](docs/getting-started/install.md) for platform-specific instructions.
 
-* **Unified Media Streams:** High-performance video (HAP, live capture, NDI, Syphon/Spout, DeckLink), generative ISF shaders, web streams, and dynamic text.
-* **Non-Destructive Routing:** Stack and blend layers, apply color correction, and reuse layer textures (pre- or post-effects) at **zero GPU performance cost**.
-* **Precise Spatial Mapping:** Corner pin onto flat surfaces or mesh warp over complex curves and architectural structures.
-* **Mapping Zones:** Use **Layer → Zones → Create Zone from Layer** to share corner pins and mesh warp across layers in the same group or composition. Edit the Zone row to adjust the shared mapping. Store its Spatial settings in a preset to move the whole Zone on a cue. **Unlink and Keep Mapping** copies the current pose back to the layer.
+## Build from source
 
----
-
-## 🎵 2. Synthesize & Sonify — Built-in Audio Engine
-
-Write sound directly into your performance, or let your visuals write the soundtrack.
-
-| Sound Generation | Processing & Interaction |
-| :--- | :--- |
-| **Generators:** FM synthesis, granular engines, white/pink noise. | **FX & Envelopes:** Modular Faust instruments, custom audio FX, and ADSR envelopes via `.nyxaudio` presets. |
-| **Live Sonification:** Translate pixel motion, camera tracking, and visual color shifts into live audio parameters. | **Cross-Modulation:** Route audio levels to drive visual structures, or drive synthesis engines directly from video playheads. |
-
----
-
-## ⚡ 3. Express & Animate — 1-Click Modulation
-
-Turn any setting into a dynamic, living parameter in a fraction of a second.
-
-* **Everything talks to everything.** Any parameter can be animated, recalled in a cue or driven by an external controller.
-* 🪄 **1-Click Modulation:** Right-click or hover **any** parameter to instantly link an LFO, envelope, video tracker, or audio amplitude follower.
-* 🔗 **Internal Linkages:** Seamlessly drive any spatial or visual property using audio, video playheads, or custom mathematical formulas.
-* 🎚️ **Smooth Takeovers:** Smart pick-up and jump takeover modes guarantee faders never cause abrupt parameter leaps live.
-
----
-
-## ⏱️ 4. Write & Sequence — Cues & Timecode
-
-Structure your artistic intent into flexible cues, timelines, and synchronized moments.
-
-## Download
-
-<!-- release-downloads:start -->
-Latest published build: **[v0.6.6](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.6)**.
-
-| macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
-| :---: | :---: | :---: |
-| **[Download macOS](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-macos-v0.6.6.zip)** | **[Download Windows](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-windows-v0.6.6.zip)** | **[Download Ubuntu AppImage](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.AppImage)** |
-
-Linux: Ubuntu 24.04 or newer. The **[portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.tar.gz)** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).
-
-**[Download the Stream Deck module for Companion](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-Companion-v0.6.6.tgz)** — import it in Companion; [setup guide](docs/integrations/companion.md).
-<!-- release-downloads:end -->
-
-Prefer building it yourself? Clone the repository and run `./build.sh` (macOS, Linux, Windows in Git Bash) or `build.cmd` (Windows): it installs what is needed, builds NYXMAP and opens it. See [build and technical details](docs/developers/build.md) and the [known limitations](docs/project/limitations.md).
+Clone the repository, then run `./build.sh` or `build.cmd` on Windows.  
+[Build instructions](docs/developers/build.md)
 
 ## License
 
-NYXMAP is free software under the [GNU AGPL v3 or later](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) for the NDI runtime and the TouchEngine SDK. Versions published before the move to the GPL remain available under the MIT License, and versions published under the GPL v3 remain available under it. Third-party components keep their own licences: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The NDI runtime included in the packages is covered by the NDI SDK License Agreement; NDI® is a registered trademark of Vizrt NDI AB.
+[GNU AGPL v3 or later](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md) and the [NDI runtime exception](LICENSE-EXCEPTION.md).
