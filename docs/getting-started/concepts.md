@@ -37,7 +37,7 @@ See [Editing snapshots, presets and sequences](../show/editing.md) and [Controls
 
 ## The main window
 
-The left side holds tabs, each with a shortcut:
+The left side holds the Media Bin, the combined Layers/Fixtures panel, Interactions, the event log, Controls and Show Control. Fixture rows sit below layer rows in the Layers panel; the **Light** button shows or hides that list. The left-side tabs have these shortcuts:
 
 | Tab | Shortcut |
 |---|---|
@@ -48,4 +48,4 @@ The left side holds tabs, each with a shortcut:
 | Controls | ++shift+5++ |
 | Show Control | ++shift+6++ |
 
-Drag a media from the **Media Bin** onto a layer to play it. The inspector on the right shows the selected layer's tabs; the **Composition** tab holds the outputs, [DMX](../visuals/pixel-mapping.md) and 3D quality settings.
+Drag media from the **Media Bin** onto the Layers list to create a layer. Drop a 3D model there to place it in the first 3D scene (NyxMap creates one if needed). The inspector on the right shows the selected layer's tabs; the **Composition** tab holds the outputs, [DMX](../visuals/pixel-mapping.md) and 3D quality settings.
