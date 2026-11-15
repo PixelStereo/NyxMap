@@ -1,5 +1,6 @@
 #include "VideoDecoder.h"
 #include "Hap.h"
+#include "VideoBudget.h"
 #include "VideoDecoderInternal.h"
 
 extern "C" {
@@ -26,84 +27,24 @@ static constexpr size_t kMinQueue = 2; // frames a stream keeps ahead whatever t
 static constexpr size_t kStagingBudget = size_t(128) << 20; // upload buffers of one stream, at most
 static constexpr size_t kBytePool = 8;
 
-// Decoded frames kept in memory, across every decoder: a soft limit (see VideoDecoderInternal.h)
-// NYXMAP_FRAME_BUDGET_MB overrides the 512 MiB (measurements)
-static size_t defaultDecodedLimit()
-{
-    const int mb = qEnvironmentVariableIntValue("NYXMAP_FRAME_BUDGET_MB");
-    return mb > 0 ? size_t(mb) << 20 : size_t(512) << 20;
-}
-static std::atomic<size_t> s_decodedLimit{defaultDecodedLimit()};
-static std::atomic<size_t> s_decodedBytes{0};
-
-void decodedBudget::add(size_t bytes)
-{
-    if (bytes) s_decodedBytes.fetch_add(bytes, std::memory_order_relaxed);
-}
-void decodedBudget::remove(size_t bytes)
-{
-    if (bytes) s_decodedBytes.fetch_sub(bytes, std::memory_order_relaxed);
-}
-bool decodedBudget::over() { return s_decodedBytes.load(std::memory_order_relaxed) > s_decodedLimit.load(std::memory_order_relaxed); }
-void decodedBudget::setLimit(size_t bytes) { s_decodedLimit = bytes; }
-size_t decodedBudget::used() { return s_decodedBytes.load(std::memory_order_relaxed); }
-
-// Byte buffers kept for reuse, across every decoder
-static constexpr size_t kBytePoolBudget = size_t(64) << 20;
-static std::atomic<size_t> s_bytePoolBytes{0};
-
-bool bytePoolBudget::reserve(size_t bytes)
-{
-    size_t used = s_bytePoolBytes.load(std::memory_order_relaxed);
-    for (;;) {
-        if (bytes > kBytePoolBudget || used > kBytePoolBudget - bytes) return false;
-        if (s_bytePoolBytes.compare_exchange_weak(used, used + bytes, std::memory_order_relaxed)) return true;
-    }
-}
-void bytePoolBudget::release(size_t bytes)
-{
-    if (bytes) s_bytePoolBytes.fetch_sub(bytes, std::memory_order_relaxed);
-}
-
 // FFmpeg's threads of a software decoder: the same for every one, whatever the order they were opened in (half the
 // cores, 2 to 16: one heavy stream keeps most of the machine, several share it evenly). NYXMAP_DECODE_THREADS
-// overrides it (measurements).
-//
-// A process-wide soft budget guides new allocations (audit P1): twice the cores by default (NYXMAP_DECODE_THREAD_BUDGET,
-// setSoftwareThreadBudget). Up to it, nothing changes (four heavy streams on any machine). Beyond it — 8, 16 software
-// streams — a new decoder gets an even share of the budget among the software decoders open, at least 2, instead of
-// half the cores. This reduces oversubscription but is not a hard cap: older decoders retain their threads,
-// each new decoder gets at least two, and concurrent opens may inspect the same count before registration.
+// overrides it (measurements). Beyond the process-wide limit, a new decoder gets an even share (see VideoBudget.h).
 // FFmpeg's threads are set at open; audio, worker-pool and hardware-driver threads are separate.
-static std::atomic<int> s_softwareThreadsInUse{0}, s_softwareDecodersOpen{0}, s_threadBudgetOverride{0};
-
-static int softwareThreadBudget()
-{
-    if (const int o = s_threadBudgetOverride.load(std::memory_order_relaxed); o > 0) return o;
-    static const int env = qEnvironmentVariableIntValue("NYXMAP_DECODE_THREAD_BUDGET");
-    if (env > 0) return env;
-    return 2 * int(std::max(1u, std::thread::hardware_concurrency()));
-}
-
-static int softwareThreads()
+static int threadsAlone()
 {
     static const int forced = qEnvironmentVariableIntValue("NYXMAP_DECODE_THREADS");
     if (forced > 0) return std::min(forced, 64);
     const int cores = int(std::max(1u, std::thread::hardware_concurrency()));
-    const int base = std::min(std::max(1, cores), std::clamp(cores / 2, 2, 16));
-    const int budget = softwareThreadBudget();
-    const int inUse = s_softwareThreadsInUse.load(std::memory_order_relaxed);
-    if (inUse + base <= budget) return base;
-    const int open = s_softwareDecodersOpen.load(std::memory_order_relaxed);
-    return std::min(base, std::max(2, budget / (open + 1)));
+    return std::min(std::max(1, cores), std::clamp(cores / 2, 2, 16));
 }
 
-int VideoDecoder::softwareThreadsInUse() { return s_softwareThreadsInUse.load(std::memory_order_relaxed); }
-int VideoDecoder::softwareDecodersOpen() { return s_softwareDecodersOpen.load(std::memory_order_relaxed); }
-int VideoDecoder::softwareThreadBudgetNow() { return softwareThreadBudget(); }
-void VideoDecoder::setSoftwareThreadBudget(int threads) { s_threadBudgetOverride = std::max(0, threads); }
-size_t VideoDecoder::decodedBytesInUse() { return decodedBudget::used(); }
-size_t VideoDecoder::decodedBytesLimit() { return s_decodedLimit.load(std::memory_order_relaxed); }
+int VideoDecoder::softwareThreadsInUse() { return videoBudget::threadsInUse(); }
+int VideoDecoder::softwareDecodersOpen() { return videoBudget::decodersOpen(); }
+int VideoDecoder::softwareThreadBudgetNow() { return videoBudget::threadLimit(); }
+void VideoDecoder::setSoftwareThreadBudget(int threads) { videoBudget::setThreadLimit(threads); }
+size_t VideoDecoder::decodedBytesInUse() { return videoBudget::decodedInUse(); }
+size_t VideoDecoder::decodedBytesLimit() { return videoBudget::decodedLimit(); }
 
 static std::atomic<bool> s_hardware{true}, s_s3tc{true}, s_bptc{false}, s_zeroCopy{false};
 
@@ -171,7 +112,7 @@ VideoFrame &VideoFrame::operator=(VideoFrame &&o) noexcept
 void VideoFrame::releaseAv()
 {
     if (av) av_frame_free(&av);
-    decodedBudget::remove(budgetBytes);
+    videoBudget::removeDecoded(budgetBytes);
     budgetBytes = 0;
 }
 
@@ -453,8 +394,10 @@ bool VideoDecoder::openStreams(const QString &path, const VideoSource &source, Q
         }
         m_codec->pkt_timebase = st->time_base;
         const bool hw = s_hardware && setupHardware(dec);
-        // Hardware: a few threads feed it. Software: an even share of the cores (see softwareThreads)
-        m_codec->thread_count = hw ? 4 : softwareThreads();
+        // Hardware: a few threads feed it. Software: an even share of the cores, reserved in the process-wide
+        // budget until it closes (released by releaseStreams, failed open included)
+        if (!hw) m_softwareThreads = videoBudget::reserveThreads(threadsAlone());
+        m_codec->thread_count = hw ? 4 : m_softwareThreads;
         // A live stream: each picture out as soon as it is decoded (frame threads would hold several back)
         m_codec->thread_type = source.live ? FF_THREAD_SLICE : FF_THREAD_FRAME | FF_THREAD_SLICE;
         if (source.live) m_codec->flags |= AV_CODEC_FLAG_LOW_DELAY;
@@ -462,11 +405,6 @@ bool VideoDecoder::openStreams(const QString &path, const VideoSource &source, Q
         if (r < 0) {
             if (err) *err = QStringLiteral("Decoder unavailable: ") + avErr(r);
             return false;
-        }
-        if (!hw) { // counted in the software budget until it closes
-            m_softwareThreads = std::max(1, m_codec->thread_count);
-            s_softwareThreadsInUse += m_softwareThreads;
-            ++s_softwareDecodersOpen;
         }
         m_codecName = QString::fromUtf8(dec->name);
         width = m_codec->width;
@@ -561,8 +499,8 @@ void VideoDecoder::close()
     m_queue.clear();
     m_backStack.clear();
     for (size_t reserved : m_bytePoolBudgetBytes) {
-        bytePoolBudget::release(reserved);
-        decodedBudget::remove(reserved);
+        videoBudget::releasePooled(reserved);
+        videoBudget::removeDecoded(reserved);
     }
     m_bytePool.clear();
     m_bytePoolBudgetBytes.clear();
@@ -594,8 +532,7 @@ void VideoDecoder::releaseStreams()
     if (m_packet) av_packet_free(&m_packet);
     if (m_codec) avcodec_free_context(&m_codec);
     if (m_softwareThreads) {
-        s_softwareThreadsInUse -= m_softwareThreads;
-        --s_softwareDecodersOpen;
+        videoBudget::releaseThreads(m_softwareThreads);
         m_softwareThreads = 0;
     }
     if (m_hwDevice) av_buffer_unref(&m_hwDevice);
@@ -712,7 +649,7 @@ void VideoDecoder::recycleLocked(VideoFrame &&f)
     // Kept for reuse when its whole capacity is counted (its count goes to the pool with it)
     const size_t pooledBytes = f.budgetBytes;
     if (f.bytes.capacity() && f.budgetBytes >= f.bytes.capacity() && m_bytePool.size() < kBytePool
-        && bytePoolBudget::reserve(pooledBytes)) {
+        && videoBudget::reservePooled(pooledBytes)) {
         m_bytePool.push_back(std::move(f.bytes));
         m_bytePoolBudgetBytes.push_back(pooledBytes);
         f.budgetBytes = 0; // the pool now owns the reservation with the allocation
@@ -729,9 +666,9 @@ void VideoDecoder::takePooledBytes(VideoFrame &f)
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_bytePool.empty()) return;
     f.bytes = std::move(m_bytePool.back());
-    decodedBudget::remove(f.budgetBytes);
+    videoBudget::removeDecoded(f.budgetBytes);
     f.budgetBytes = m_bytePoolBudgetBytes.back();
-    bytePoolBudget::release(f.budgetBytes);
+    videoBudget::releasePooled(f.budgetBytes);
     m_bytePool.pop_back();
     m_bytePoolBudgetBytes.pop_back();
 }
@@ -909,20 +846,23 @@ bool VideoDecoder::fallbackStartupSoftware()
     if (!software) return false;
     int result = avcodec_parameters_to_context(software, m_fmt->streams[m_stream]->codecpar);
     software->pkt_timebase = m_fmt->streams[m_stream]->time_base;
-    software->thread_count = softwareThreads();
+    const int threads = videoBudget::reserveThreads(threadsAlone());
+    software->thread_count = threads;
     software->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
     if (result >= 0) result = avcodec_open2(software, m_codec->codec, nullptr);
     if (result >= 0)
         result = av_seek_frame(m_fmt, m_stream, int64_t(m_startTime / m_timeBase), AVSEEK_FLAG_BACKWARD);
-    if (result < 0) { avcodec_free_context(&software); return false; }
+    if (result < 0) {
+        avcodec_free_context(&software);
+        videoBudget::releaseThreads(threads);
+        return false;
+    }
     avcodec_free_context(&m_codec);
     m_codec = software;
     av_buffer_unref(&m_hwDevice);
     m_hwPixFmt = -1;
     m_hwName.clear();
-    m_softwareThreads = std::max(1, m_codec->thread_count);
-    s_softwareThreadsInUse += m_softwareThreads;
-    ++s_softwareDecodersOpen;
+    m_softwareThreads = threads;
     av_frame_unref(m_frame);
     av_frame_unref(m_swFrame);
     av_packet_unref(m_packet);
@@ -1316,7 +1256,7 @@ void VideoDecoder::runLoop()
             m_cv.wait(lk, [&] {
                 if (m_quit || m_seekPending) return true;
                 if (m_eof || m_seekFailed || m_queue.size() >= kMaxQueue) return false;
-                if (m_queue.size() >= kMinQueue && decodedBudget::over()) {
+                if (m_queue.size() >= kMinQueue && videoBudget::decodedOver()) {
                     if (!held) ++m_metricBudgetHolds;
                     held = true;
                     return false;
@@ -1418,8 +1358,8 @@ void VideoDecoder::accountFrame(VideoFrame &frame)
     if (frame.staging >= 0 || !frame.layout) return;
     if (frame.av && frame.av->hw_frames_ctx) return;
     const size_t wanted = std::max(frame.layout->totalBytes, frame.bytes.capacity());
-    if (wanted > frame.budgetBytes) decodedBudget::add(wanted - frame.budgetBytes);
-    else decodedBudget::remove(frame.budgetBytes - wanted);
+    if (wanted > frame.budgetBytes) videoBudget::addDecoded(wanted - frame.budgetBytes);
+    else videoBudget::removeDecoded(frame.budgetBytes - wanted);
     frame.budgetBytes = wanted;
 }
 

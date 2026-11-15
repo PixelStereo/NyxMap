@@ -5,6 +5,7 @@
 #include "Gl.h"
 #include "Hap.h"
 #include "Snappy.h"
+#include "VideoBudget.h"
 #include "VideoDecoderInternal.h"
 
 extern "C" {
@@ -23,12 +24,15 @@ extern "C" {
 #include <QImage>
 #include <QImageReader>
 #include <QThread>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <atomic>
 #include <memory>
+#include <thread>
 
 static int g_failures = 0;
 #define VCHECK(cond)                                                                                    \
@@ -862,11 +866,11 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     // nothing is left counted
     e.newProject();
     {
-        VCHECK(decodedBudget::used() == 0); // the layers' videos closed: none left counted
+        VCHECK(videoBudget::decodedInUse() == 0); // the layers' videos closed: none left counted
         const bool hardware = VideoDecoder::hardwareDecoding();
         // Zero-copy hardware frames are deliberately excluded from this CPU payload budget.
         VideoDecoder::setHardwareDecoding(false);
-        decodedBudget::setLimit(1);
+        videoBudget::setDecodedLimit(1);
         std::vector<std::unique_ptr<VideoDecoder>> decs;
         for (int k = 0; k < 3; ++k) {
             auto d = std::make_unique<VideoDecoder>();
@@ -888,15 +892,15 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             for (int &g : got) ++g;
         }
         VCHECK(got[0] >= 12 && got[1] >= 12 && got[2] >= 12);
-        VCHECK(decodedBudget::used() > 0);
+        VCHECK(videoBudget::decodedInUse() > 0);
         for (const auto &d : decs) {
             const VideoDecoder::Metrics m = d->metrics();
             VCHECK(m.budgetHolds > 0 && m.queueHighWatermark <= 2 && m.fetchedFrames >= 12);
         }
         for (VideoFrame &f : out) f = VideoFrame();
         decs.clear();
-        VCHECK(decodedBudget::used() == 0);
-        decodedBudget::setLimit(size_t(512) << 20);
+        VCHECK(videoBudget::decodedInUse() == 0);
+        videoBudget::setDecodedLimit(0);
         VideoDecoder::setHardwareDecoding(hardware);
     }
     // Corrupt every HAP frame payload while keeping a valid MOV container. In
@@ -1031,7 +1035,9 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         {
             const QJsonObject r = e.resourcesJson();
             VCHECK(r.value("software_decoders").toInt() == open0 + 4 && r.value("software_decode_threads").toInt() == inUse0 + sum &&
-                   r.contains("decoded_frames_mb") && r.contains("upload_buffers_budget_mb") && r.value("warnings").isArray());
+                   r.contains("decoded_frames_mb") && r.contains("upload_buffers_budget_mb") && r.value("warnings").isArray()
+                   && r.value("video_memory_budget_mb").toDouble() == std::round(double(videoBudget::memoryLimit()) / 104857.6) / 10.0
+                   && r.contains("video_memory_mb"));
         }
         decs.clear();
         VCHECK(VideoDecoder::softwareThreadsInUse() == inUse0 && VideoDecoder::softwareDecodersOpen() == open0);
@@ -1063,6 +1069,87 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         VCHECK(e.resourcesJson().value("software_decode_thread_budget").toInt() == alone);
         decs.clear();
         VideoDecoder::setSoftwareThreadBudget(0);
+        VideoDecoder::setHardwareDecoding(hw);
+    }
+    // The video memory envelope: a quarter of the RAM up to 2.5 GiB, a fifth of it for the decoded frames, the rest
+    // for the upload buffers (a hard limit, shared evenly by the layers wanting some)
+    {
+        const size_t ram = videoBudget::physicalMemory();
+        VCHECK(videoBudget::memoryLimit() <= (size_t(2560) << 20) && videoBudget::memoryLimit() >= (size_t(256) << 20));
+        if (ram && !qEnvironmentVariableIsSet("NYXMAP_VIDEO_MEMORY_MB"))
+            VCHECK(videoBudget::memoryLimit() == std::clamp(ram / 4, size_t(256) << 20, size_t(2560) << 20));
+        VCHECK(videoBudget::decodedLimit() + videoBudget::uploadLimit() == videoBudget::memoryLimit());
+        videoBudget::setMemoryLimit(size_t(10) << 20); // 2 MiB of decoded frames, 8 MiB of upload buffers
+        const size_t used0 = videoBudget::uploadInUse(), mb3 = size_t(3) << 20;
+        VCHECK(used0 == 0);
+        VCHECK(videoBudget::reserveUpload(mb3) && videoBudget::reserveUpload(mb3));
+        VCHECK(!videoBudget::reserveUpload(mb3) && videoBudget::uploadInUse() == 2 * mb3); // refused, nothing counted
+        VCHECK(!videoBudget::reserveUpload(0));
+        videoBudget::releaseUpload(mb3);
+        VCHECK(videoBudget::reserveUpload(mb3));
+        videoBudget::releaseUpload(2 * mb3);
+        VCHECK(videoBudget::uploadInUse() == 0);
+        videoBudget::addUploadStream();
+        videoBudget::addUploadStream();
+        VCHECK(videoBudget::uploadShare() == videoBudget::uploadLimit() / 2);
+        videoBudget::removeUploadStream();
+        videoBudget::removeUploadStream();
+        videoBudget::setMemoryLimit(0);
+    }
+    // Threads reserved under one lock: decoders opening together never see the same room (one alone at most gets
+    // its full count once the limit holds just one)
+    {
+        e.newProject(); // no decoder open: the first one alone fits the limit
+        const int inUse0 = videoBudget::threadsInUse(), open0 = videoBudget::decodersOpen();
+        VCHECK(inUse0 == 0 && open0 == 0);
+        videoBudget::setThreadLimit(4);
+        std::vector<std::thread> threads;
+        std::vector<int> got(16, 0);
+        for (int k = 0; k < 16; ++k) threads.emplace_back([&got, k] { got[size_t(k)] = videoBudget::reserveThreads(4); });
+        for (auto &t : threads) t.join();
+        int full = 0, sum = 0;
+        for (int n : got) {
+            VCHECK(n >= 2 && n <= 4);
+            full += n == 4;
+            sum += n;
+        }
+        VCHECK(full == 1 && videoBudget::threadsInUse() == inUse0 + sum && videoBudget::decodersOpen() == open0 + 16);
+        for (int n : got) videoBudget::releaseThreads(n);
+        VCHECK(videoBudget::threadsInUse() == inUse0 && videoBudget::decodersOpen() == open0);
+        videoBudget::setThreadLimit(0);
+    }
+    // Upload buffers under a small envelope: four layers share it, never over it, and every one keeps playing (the
+    // frames without a buffer go through the decoders' memory); once closed, nothing is left counted
+    {
+        const bool hw = VideoDecoder::hardwareDecoding();
+        VideoDecoder::setHardwareDecoding(false); // frames through upload buffers, not hardware surfaces
+        e.newProject();
+        e.setCompositionSize(QSize(640, 360));
+        videoBudget::setMemoryLimit(size_t(2) << 20); // 1.6 MiB of upload buffers: about one 640×360 frame each
+        int layers[4];
+        for (int &i : layers) {
+            i = e.addLayer(QStringLiteral("v"));
+            QString err;
+            VCHECK(e.setLayerVideo(i, root + "/media/av.mp4", &err));
+        }
+        size_t peak = 0;
+        bool shown = false;
+        QElapsedTimer tm;
+        tm.start();
+        while (!shown && tm.elapsed() < 8000) {
+            e.renderFrame();
+            peak = std::max(peak, videoBudget::uploadInUse());
+            shown = true;
+            for (int i : layers) shown = shown && e.videoFramesShown(i) >= 10;
+            QThread::msleep(10);
+        }
+        std::printf("    upload buffers: %.2f MiB at most for 4 layers (limit %.2f MiB)\n", double(peak) / 1048576.0,
+                    double(videoBudget::uploadLimit()) / 1048576.0);
+        VCHECK(shown && peak > 0 && peak <= videoBudget::uploadLimit() && videoBudget::uploadStreams() == 4);
+        e.newProject();
+        e.renderFrame();
+        VCHECK(videoBudget::uploadInUse() == 0 && videoBudget::uploadStreams() == 0);
+        videoBudget::setMemoryLimit(0);
         VideoDecoder::setHardwareDecoding(hw);
     }
     e.newProject();

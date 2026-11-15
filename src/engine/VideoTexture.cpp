@@ -1,4 +1,5 @@
 #include "VideoTexture.h"
+#include "VideoBudget.h"
 #include "VideoDecoder.h"
 #include "VideoSurface.h"
 
@@ -49,26 +50,17 @@ extern "C" {
 #define GL_TEXTURE_RECTANGLE 0x84F5
 #endif
 
-// Upload buffers of every video layer: shared fairly among the layers that have some once they would take more than
-// 2 GiB (each keeps at least two). Fewer buffers than a stream's queue send its frames through the slow path (uploaded
-// from the decoder's memory by the render thread). NYXMAP_PBO_BUDGET_MB overrides it (measurements)
-static size_t pboBudget()
-{
-    static const size_t forced = size_t(std::max(0, qEnvironmentVariableIntValue("NYXMAP_PBO_BUDGET_MB"))) << 20;
-    return forced ? forced : size_t(2048) << 20;
-}
-static std::atomic<int> s_pboStreams{0};
-static std::atomic<size_t> s_pboBytes{0}; // upload buffers allocated, every layer (telemetry: Engine::resourcesJson)
-
-size_t VideoTexture::pboBytesInUse() { return s_pboBytes.load(std::memory_order_relaxed); }
-size_t VideoTexture::pboBudgetBytes() { return pboBudget(); }
-int VideoTexture::pboStreams() { return s_pboStreams.load(std::memory_order_relaxed); }
+// Upload buffers of every video layer: reserved in the process-wide budget before they are made (VideoBudget.h), the
+// layers wanting some sharing it evenly. Fewer buffers than a stream's queue send its frames through the slow path
+// (uploaded from the decoder's memory by the render thread); none at all when its share holds no whole frame.
+size_t VideoTexture::pboBytesInUse() { return videoBudget::uploadInUse(); }
+size_t VideoTexture::pboBudgetBytes() { return videoBudget::uploadLimit(); }
+int VideoTexture::pboStreams() { return videoBudget::uploadStreams(); }
 
 static int fairPboCount(size_t size, int decoderWants)
 {
     if (!size) return 0;
-    const size_t share = pboBudget() / size_t(std::max(1, s_pboStreams.load(std::memory_order_relaxed)));
-    return std::min(decoderWants, std::max(2, int(share / size)));
+    return int(std::min(videoBudget::uploadShare() / size, size_t(std::max(0, decoderWants))));
 }
 
 static constexpr GLenum kDxt1 = 0x83F0;  // GL_COMPRESSED_RGB_S3TC_DXT1_EXT
@@ -209,6 +201,7 @@ void VideoTexture::createPbo(VideoDecoder &dec)
         id = int(m_pbos.size());
         m_pbos.push_back({});
     }
+    if (!videoBudget::reserveUpload(m_pboSize)) return; // no room left: the slow path until some comes back
     Pbo &b = m_pbos[size_t(id)];
     f->glGenBuffers(1, &b.buffer);
     f->glBindBuffer(GL_PIXEL_UNPACK_BUFFER, b.buffer);
@@ -219,11 +212,11 @@ void VideoTexture::createPbo(VideoDecoder &dec)
     if (!ptr) { // no mapping: frames go through the decoder's memory
         f->glDeleteBuffers(1, &b.buffer);
         b = Pbo{};
+        videoBudget::releaseUpload(m_pboSize);
         return;
     }
     b.mapped = true;
-    s_pboBytes += b.size;
-    if (m_live++ == 0) ++s_pboStreams;
+    ++m_live;
     dec.addStaging(id, static_cast<uint8_t *>(ptr), m_pboSize);
 }
 
@@ -238,9 +231,19 @@ void VideoTexture::destroyPbo(int id)
         f->glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     }
     f->glDeleteBuffers(1, &b.buffer);
-    s_pboBytes -= b.size;
+    videoBudget::releaseUpload(b.size);
     b = Pbo{};
-    if (--m_live == 0) --s_pboStreams;
+    --m_live;
+}
+
+// Counted among the layers sharing the upload buffers while it wants some, whether it has any yet or not: a newcomer
+// lowers the others' share, and gets its own as they give back their extra buffers
+void VideoTexture::wantUpload(bool on)
+{
+    if (on == m_wantsUpload) return;
+    m_wantsUpload = on;
+    if (on) videoBudget::addUploadStream();
+    else videoBudget::removeUploadStream();
 }
 
 void VideoTexture::feed(VideoDecoder &dec)
@@ -250,6 +253,7 @@ void VideoTexture::feed(VideoDecoder &dec)
         for (int id : dec.takeFreeStaging()) destroyPbo(id);
         m_pboSize = want;
     }
+    wantUpload(want != 0);
     if (!want) return;
     for (int id : dec.takeStaleStaging(want)) destroyPbo(id); // of the old size, recycled by the decoder since
     // Its share: fewer when other layers come (the extra ones go as they come back from an upload)
@@ -538,6 +542,7 @@ void VideoTexture::destroy()
     m_pbos.clear();
     m_live = 0;
     m_pboSize = 0;
+    wantUpload(false);
     for (GLuint &t : m_planes)
         if (t) {
             f->glDeleteTextures(1, &t);

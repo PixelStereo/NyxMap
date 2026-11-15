@@ -44,7 +44,7 @@ private:
 class VideoTexture
 {
 public:
-    // Upload buffers of every video layer (any thread): bytes allocated, the budget they share, layers having some
+    // Upload buffers of every video layer (any thread): bytes allocated, the budget they share, layers wanting some
     static size_t pboBytesInUse();
     static size_t pboBudgetBytes();
     static int pboStreams();
@@ -79,6 +79,7 @@ private:
     };
     void createPbo(VideoDecoder &dec);
     void destroyPbo(int id);
+    void wantUpload(bool on);
     void ensurePlanes(const VideoLayout &L);
     void uploadPlane(int p, const VideoLayout::Plane &pl, const void *data, int rowPixels);
     void uploadFrom(const AVFrame *av, const VideoLayout &L); // planes read in place, rows repacked if need be
@@ -96,6 +97,7 @@ private:
     size_t m_pboSize = 0;
     int m_live = 0;
     int m_pboAllowed = 0; // its share of the upload buffers of every layer
+    bool m_wantsUpload = false; // counted among the layers sharing them
     uint64_t m_uploads = 0, m_staged = 0, m_surfaced = 0, m_serial = 0;
     void shown(); // a new picture: counted, and a new serial
     std::vector<uint8_t> m_repack; // rows of a plane the GPU cannot read in place

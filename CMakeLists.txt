@@ -54,6 +54,7 @@ add_library(nyxmap_engine STATIC
   src/engine/Psd.cpp
   src/engine/IsfLibrary.cpp
   src/engine/Mapping.cpp
+  src/engine/VideoBudget.cpp
   src/engine/VideoDecoder.cpp
   src/engine/VideoDecoderHap.cpp
   src/engine/VideoDecoderDelivery.cpp
