@@ -48,7 +48,10 @@ void fillOwners(QMenu *menu, Engine *e, const Fill &fill);
 // holding nothing; `container` is called with the menu of one that holds others (to put its own entry in, before them).
 using LayerLeaf = std::function<void(QMenu *into, quint64 id, const QString &name)>;
 using LayerContainer = std::function<void(QMenu *into, quint64 id, const QString &name, bool isGroup)>;
-void fillLayerTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerContainer &container, bool viewports = false);
+// `without3dObjects`: the 3D objects (models, lights, cameras, Paths) are left out, and a 3D scene or a Merge 3D is a layer like
+// the others (a menu only when it holds another Merge 3D), not a group
+void fillLayerTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerContainer &container, bool viewports = false,
+                   bool without3dObjects = false);
 // The interactions as their list has them (groups, nested)
 void fillInteractionTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerContainer &container);
 

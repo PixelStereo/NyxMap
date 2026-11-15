@@ -256,13 +256,13 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
             const auto labelOf = [this](quint64 id, const QString &name) {
                 Engine::Lock lock(&m_engine->mutex());
                 const Layer *l = m_engine->layer(m_engine->indexOfId(id));
-                return l && l->scene3d ? name + QStringLiteral(" (3D view)") : name;
+                return l && (l->scene3d || l->merge3d) ? name + QStringLiteral(" (3D view)") : name;
             };
             const auto leaf = [this, slot, labelOf](QMenu *into, quint64 id, const QString &name) {
                 const QString label = labelOf(id, name);
                 connect(into->addAction(label), &QAction::triggered, this, [this, slot, id, label] { selectSource(slot, id, label); });
             };
-            // A layer holding others (a 3D scene with its objects) can be looked at too, above them; a group is only a folder
+            // A 3D scene or a Merge 3D can be looked at, above what it holds; a group is only a folder
             const auto container = [this, slot, labelOf](QMenu *into, quint64 id, const QString &name, bool isGroup) {
                 if (isGroup) return;
                 const QString label = labelOf(id, name);
@@ -274,7 +274,7 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
             if (viewports->isEmpty()) delete viewports;
             else menu->addMenu(viewports);
             auto *layers = new QMenu(QStringLiteral("Layers"), menu);
-            showmenu::fillLayerTree(layers, m_engine, leaf, container, false);
+            showmenu::fillLayerTree(layers, m_engine, leaf, container, false, true); // 3D scenes and Merge 3D, not their objects
             if (layers->isEmpty()) delete layers;
             else menu->addMenu(layers);
         });
@@ -307,7 +307,7 @@ void PreviewWorkspace::selectSource(int slot, quint64 id, const QString &label)
     if (id) {
         Engine::Lock lock(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_engine->indexOfId(id));
-        scene = l && l->scene3d;
+        scene = l && (l->scene3d || l->merge3d); // a 3D view: a scene, or a Merge 3D of one
     }
     cell.pages->setCurrentWidget(scene                 ? static_cast<QWidget *>(cell.scene3d)
                                  : slot == 0 && !id ? static_cast<QWidget *>(m_mapping)

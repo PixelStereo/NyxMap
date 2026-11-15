@@ -137,8 +137,16 @@ Scene3DView::~Scene3DView()
 
 void Scene3DView::setScene(quint64 scene)
 {
+    // A 3D scene, or a Merge 3D of one (its scene's camera and background; only what it holds)
+    m_root = scene;
     m_scene = scene;
-    if (scene) pushCamera();
+    if (scene) {
+        Engine::Lock lk(&m_engine->mutex());
+        const Layer *l = m_engine->layer(m_engine->indexOfId(scene));
+        while (l && !l->scene3d) l = l->parent ? m_engine->layer(m_engine->indexOfId(l->parent)) : nullptr;
+        m_scene = l ? l->id : 0;
+    }
+    if (m_root) pushCamera();
     else m_engine->setPreviewScene(m_slot, false);
     update();
 }
@@ -293,10 +301,11 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
     std::vector<Object> out;
     Engine::Lock lk(&m_engine->mutex());
     // Those of a scene or a Merge 3D, then what each Merge 3D holds, under its transform
-    const std::function<void(quint64, const QMatrix4x4 &, quint64)> collect = [&](quint64 holder, const QMatrix4x4 &parent, quint64 parentId) {
+    // `only`: a Merge 3D looked at, alone of what holds it (0: all of them)
+    const std::function<void(quint64, const QMatrix4x4 &, quint64, quint64)> collect = [&](quint64 holder, const QMatrix4x4 &parent, quint64 parentId, quint64 only) {
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *l = m_engine->layer(i);
-            if (!l || l->parent != holder || !l->is3dObject()) continue;
+            if (!l || l->parent != holder || !l->is3dObject() || (only && l->id != only)) continue;
             Object o;
             o.id = l->id;
             o.parent = parent;
@@ -317,7 +326,7 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                     o.axes[a] = (frame * p.transform()).mapVector(unit);
                 }
                 out.push_back(o);
-                if (l->enabled) collect(l->id, frame * p.transform(), l->id);
+                if (l->enabled) collect(l->id, frame * p.transform(), l->id, 0);
                 continue;
             }
             if (l->type == SourceType::Path) {
@@ -370,13 +379,12 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
                 o.looks = placed.lookAt;
                 o.position = QVector3D(placed.position[0], placed.position[1], placed.position[2]);
                 o.direction = Camera3D::aim(placed.yaw, placed.pitch);
-                if (!(l->followEnabled && l->followPath)) // along a Path (its FX): the Path draws itself
+                if (!l->fx3dOn(Fx3d::FollowPath)) // along a Path (its FX): the Path draws itself
                     for (const QVector3D &point : l->light.pathOutline()) o.path.push_back(parent.map(point));
                 o.rotation = QVector3D(l->light.pitch, l->light.yaw, 0);
                 o.radius = 0.15f;
             } else {
-                o.parent = m_engine->followFrame(*l, parent); // on its Path, with its Follow Path FX
-                if (l->modelTransformFxEnabled) o.parent = o.parent * l->modelTransformFx.transform();
+                o.parent = m_engine->placementFrames(*l, parent, false).front(); // on its Path, under its placement FX
                 o.position = o.parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
                 o.rotation = QVector3D(p.rotation[0], p.rotation[1], p.rotation[2]);
                 o.axisScale = QVector3D(p.axisScale[0], p.axisScale[1], p.axisScale[2]);
@@ -394,7 +402,13 @@ std::vector<Scene3DView::Object> Scene3DView::objects() const
             out.push_back(o);
         }
     };
-    collect(m_scene, QMatrix4x4(), 0);
+    const Layer *root = m_engine->layer(m_engine->indexOfId(m_root));
+    if (root && root->merge3d) { // a Merge 3D: itself and what it holds, where it is in its scene
+        const Layer *above = root->parent ? m_engine->layer(m_engine->indexOfId(root->parent)) : nullptr;
+        collect(root->parent, m_engine->mergesOf(*root), above && above->merge3d ? above->id : 0, root->id);
+    } else {
+        collect(m_root, QMatrix4x4(), 0, 0);
+    }
     return out;
 }
 

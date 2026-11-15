@@ -1159,7 +1159,8 @@ void MediaBin::revealSelected()
 
 void MediaBin::fillLoadMenu(QMenu *menu, const QString &p, bool missing)
 {
-    const bool model = Model3D::isModelFile(p);
+    // A model, a primitive, a Path, a Camera or an Empty belongs to a 3D scene: never to a video or any other 2D layer
+    const bool model = Model3D::isModelFile(p) || isPath3dPath(p) || isEmpty3dPath(p) || isCamera3dPath(p);
     if (!model) {
         menu->addAction(QStringLiteral("Load into Selected Layer"), this, [this, p] { emit useAsSourceRequested(p); })->setEnabled(!missing);
     }

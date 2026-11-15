@@ -36,6 +36,7 @@ class ParamAnimPanel;
 class AnimateMenu;
 class QTabWidget;
 class FxChainPanel;
+enum class Fx3d;
 class NumberBox;
 class LevelMeter;
 class ViewportOutputPanel;
@@ -140,6 +141,7 @@ private:
     QLabel *m_multiNote = nullptr;
     int m_layer = -1;
     int m_selectedEffect = 0;
+    int m_selected3dFx = 0; // the row of the 3D FX list whose settings are shown
     QString m_subTab = QStringLiteral("Source"); // the tab shown, by its name: kept from one layer to the next
     quint64 m_layerId = 0;
     std::vector<std::pair<QPointer<NumberBox>, QString>> m_fxSpeeds; // each FX row's speed, and its parameter
@@ -156,6 +158,7 @@ public:
 private:
 
     QPointer<QWidget> m_fxDetail;
+    QPointer<QWidget> m_fx3dDetail;
     QPointer<SliderField> m_position, m_speed;
     QPointer<QComboBox> m_sourceColorSpace;
     QPointer<QLabel> m_sourceColorStatus;
@@ -177,9 +180,12 @@ private:
     QWidget *build3d(const QStringList &prefixes, const QStringList &except = {}, const std::function<void(class QFormLayout *)> &first = {});
     QWidget *buildModelLayers(); // a model: the layer shown on it, the layer whose luminance pushes its points
     void addLightLookAt(class QFormLayout *form); // a light: the object it looks at
-    QWidget *buildFollowPathFx();                        // a 3D object's Follow Path FX
+    QWidget *build3dFxChain();                           // a 3D object's FX: a list (none by default), + / − / order, settings below
+    void show3dFxParams();                               // the settings of the 3D FX selected in that list
+    QWidget *build3dFxSettings(Fx3d kind, quint64 fxId);
+    QWidget *buildDisplaceFx(quint64 fxId);              // a Displace FX: the picture whose luminance pushes the points
+    QWidget *buildPathFx(Fx3d kind, quint64 fxId);       // a Duplicate or Follow Path FX: its Path
     QWidget *buildInstanceSource();                      // an Instance's original
-    QWidget *buildDuplicateFx();                         // a model's Duplicate FX: copies on a Path's points
     void addActiveCameraPicker(class QFormLayout *form); // the camera a scene is seen through path
     void addSceneEnvironment(class QFormLayout *form); // a scene: the layer (an HDRI) around it, lighting it
     void addLayerChoice(class QFormLayout *form, const QString &name, const QString &none, quint64 current, int stage,

@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "fx3d_test.h"
 #include "ImageFile.h"
 #include "MaterialX.h"
 #include "Model3D.h"
@@ -258,26 +259,27 @@ int runScene3dTests(Engine &engine)
           "two inverting FX on the picture layer");
     const QColor final = at(32, 26);
     check(final.red() > 200 && final.blue() < 40, "its final picture: inverted twice, as it was");
-    check(engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1), "taken after its first FX");
+    check(engine.setModelLayer(engine.indexOfId(screen), picture, &error, 1), "taken after its first FX");
     const QColor afterFirst = at(32, 26);
     check(afterFirst.red() < 40 && afterFirst.green() > 200 && afterFirst.blue() > 200, "after its first FX: inverted (cyan)");
-    check(engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 0), "taken at its source");
+    check(engine.setModelLayer(engine.indexOfId(screen), picture, &error, 0), "taken at its source");
     const QColor source = at(32, 26);
     check(source.red() > 200 && source.blue() < 40, "its source, before its FX");
-    engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1);
+    engine.setModelLayer(engine.indexOfId(screen), picture, &error, 1);
     // The plane is about 40 px wide here: its edge, then bent toward the camera (its sides come forward, larger)
     int edge = 0;
     for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) edge = x;
-    engine.setParameter(screen, "model/bend", 120.0);
+    engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "enabled"), true);
+    engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "amount"), 120.0);
     int bentEdge = 0;
     for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) bentEdge = x;
     check(bentEdge != edge, "a bend curves the plane");
-    engine.setParameter(screen, "model/bend", 0.0);
+    engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "amount"), 0.0);
     // White everywhere pushes it toward the camera: it looks larger
     int before = 0;
     for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) before = x;
     check(engine.setModelDisplace(engine.indexOfId(screen), bump, &error), "a layer's luminance displaces the plane");
-    engine.setParameter(screen, "model/displace/amount", 1.0);
+    engine.setParameter(screen, fxPath(engine, screen, Fx3d::Displace, "amount"), 1.0);
     int pushed = 0;
     for (int x = 32; x < 64 && at(x, 32).lightness() > 0; ++x) pushed = x;
     check(pushed > before, "pushed toward the camera, it looks larger");
@@ -320,11 +322,12 @@ int runScene3dTests(Engine &engine)
         engine.setModelDisplace(engine.indexOfId(screen), 0, &error);
         engine.setParameter(stage, "camera/yaw", 25.0);
         engine.setParameter(stage, "camera/pitch", 10.0);
-        engine.setParameter(screen, "model/bend", 140.0);
+        engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "enabled"), true);
+        engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "amount"), 140.0);
         engine.setParameter(screen, "model/scale/x", 1.8);
         shot(0, "Plane · picture · bend 140° · unlit");
         engine.setLayerModel(engine.indexOfId(screen), Model3D::primitivePath("Dome"), &error);
-        engine.setParameter(screen, "model/bend", 0.0);
+        engine.setParameter(screen, fxPath(engine, screen, Fx3d::Bend, "amount"), 0.0);
         engine.setParameter(screen, "model/scale/x", 1.0);
         engine.setParameter(screen, "model/unlit", false);
         engine.setParameter(stage, "camera/pitch", 35.0);
@@ -333,15 +336,15 @@ int runScene3dTests(Engine &engine)
         engine.setModelPicture(engine.indexOfId(screen), 0, &error);
         engine.setModelDisplace(engine.indexOfId(screen), bump, &error);
         engine.setParameter(screen, "model/rotation/x", -60.0);
-        engine.setParameter(screen, "model/displace/amount", 0.25);
-        engine.setParameter(screen, "model/displace/mid", 0.5);
+        engine.setParameter(screen, fxPath(engine, screen, Fx3d::Displace, "amount"), 0.25);
+        engine.setParameter(screen, fxPath(engine, screen, Fx3d::Displace, "mid"), 0.5);
         const int key = engine.addLayer("Key", engine.indexOfId(screen) + 1);
         engine.setLayerLight(key);
         engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(key)}, stage));
         shot(2, "Plane · displaced by a luminance · detail 4");
         painter.end();
         sheet.save(captures + "/surfaces.png");
-        engine.setModelLayer(engine.indexOfId(screen), picture, false, &error, 1);
+        engine.setModelLayer(engine.indexOfId(screen), picture, &error, 1);
         engine.setCompositionSize({64, 64});
     }
     const QString surfaces = dir.path() + "/surfaces.nyxmap";
@@ -351,8 +354,9 @@ int runScene3dTests(Engine &engine)
     {
         Engine::Lock lk(&engine.mutex());
         const Layer *p = engine.layer(engine.indexOfId(screen));
-        check(p && p->modelPicture == picture && p->modelDisplace == bump, "its picture and displacement layers come back");
-        check(p && p->modelPictureStage == 1 && p->modelDisplaceStage == -1, "and the stages they are taken at");
+        const Fx3dEntry *displace = p ? p->fx3dFirst(Fx3d::Displace) : nullptr;
+        check(p && p->modelPicture == picture && displace && displace->s.layer == bump, "its picture and displacement layers come back");
+        check(p && p->modelPictureStage == 1 && displace && displace->s.stage == -1, "and the stages they are taken at");
     }
     // An environment (a layer's picture, as an HDRI would be): a scene without lights lit by it alone, shown behind if asked
     {
@@ -674,9 +678,10 @@ int runScene3dTests(Engine &engine)
         check(triangles() == 2 * 8 * 8, "detail 3: as cut as it asks");
         engine.setParameter(plane, "model/detail", 1);
         check(triangles() == 2, "back to the least");
-        engine.setParameter(plane, "model/bend", 90.0);
+        engine.setParameter(plane, fxPath(engine, plane, Fx3d::Bend, "enabled"), true);
+        engine.setParameter(plane, fxPath(engine, plane, Fx3d::Bend, "amount"), 90.0);
         check(triangles() == 2 * 64 * 64, "bent: as many as a curve needs");
-        engine.setParameter(plane, "model/bend", 0.0);
+        engine.setParameter(plane, fxPath(engine, plane, Fx3d::Bend, "amount"), 0.0);
         check(triangles() == 2, "straight again: the least");
         engine.newProject();
     }
@@ -729,7 +734,7 @@ int runScene3dTests(Engine &engine)
         check(engine.setLayerIsf(heightAt, white, &err), "a constant height map for the sphere");
         engine.setParameter(height, "enable", false);
         check(engine.setModelDisplace(engine.indexOfId(ball), height, &err), "displace the shaded sphere");
-        engine.setParameter(ball, "model/displace/amount", 0.2);
+        engine.setParameter(ball, fxPath(engine, ball, Fx3d::Displace, "amount"), 0.2);
         engine.setParameter(ball, "model/shading", QStringLiteral("flat"));
         // A dim lamp: a bright one saturates the sphere and hides the shading. What tells the two shadings apart is a small
         // shift of tone over the whole sphere, so count every pixel that changes at all, against a flat picture drawn twice.
@@ -832,11 +837,11 @@ int runScene3dTests(Engine &engine)
             return engine.grabOutput().pixelColor(x, y).lightness() > 12;
         };
         check(lit(64, 64), "what it holds is drawn by the scene");
-        engine.setParameter(cubeId, "model/transform_fx/position/x", .5);
-        engine.setParameter(cubeId, "model/transform_fx/enabled", true);
+        engine.setParameter(cubeId, fxPath(engine, cubeId, Fx3d::Transform, "position/x"), .5);
+        engine.setParameter(cubeId, fxPath(engine, cubeId, Fx3d::Transform, "enabled"), true);
         check(!lit(64, 64) && lit(86, 64), "Transform 3D modifier moves the rendered mesh");
         check(engine.parameterValue(cubeId, "model/position/x").toDouble() == 0.0, "modifier leaves Spatial values intact");
-        engine.setParameter(cubeId, "model/transform_fx/enabled", false);
+        engine.setParameter(cubeId, fxPath(engine, cubeId, Fx3d::Transform, "enabled"), false);
         check(lit(64, 64), "bypassing Transform 3D restores placement");
 
         // Each moves what it holds, and they add up: 4 away at 40° of view, 0.5 is 22 pixels of 128
@@ -1668,6 +1673,178 @@ int runScene3dTests(Engine &engine)
             }
             engine.setFadesManual(false);
         }
+        engine.newProject();
+    }
+    // The 3D FX: none by default; each is an entry of its own (several of a kind can follow each other) that acts while it is
+    // on; each shape FX changes what is drawn; the order they are listed in is the order they move the points; the list and
+    // each one's settings are saved with the project; a Noise can change its values over time
+    {
+        engine.newProject();
+        engine.setCompositionSize({96, 96});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {96, 96});
+        const int si = engine.addScene();
+        const quint64 stage = engine.layerId(si);
+        const int mi = engine.addLayer("Fx Plane", si + 1);
+        const quint64 plane = engine.layerId(mi);
+        QString err;
+        check(engine.setLayerModel(mi, Model3D::primitivePath("Cube"), &err), "a cube for the 3D FX");
+        engine.setStructure(tree::intoGroup(engine.structure(), {plane}, stage));
+        engine.setParameter(plane, "model/unlit", true);
+        engine.setParameter(plane, "model/detail", 8);
+        engine.setParameter(stage, "camera/yaw", 30.0);
+        engine.setParameter(stage, "camera/pitch", 20.0);
+        const auto picture = [&] {
+            engine.renderFrame();
+            return engine.grabOutput();
+        };
+        const auto kinds = [&](quint64 id) {
+            std::vector<Fx3d> out;
+            Engine::Lock lk(&engine.mutex());
+            for (const Fx3dEntry &e : engine.layer(engine.indexOfId(id))->fx3d) out.push_back(e.kind);
+            return out;
+        };
+        const auto differs = [](const QImage &a, const QImage &b) {
+            int different = 0;
+            for (int y = 0; y < a.height(); ++y)
+                for (int x = 0; x < a.width(); ++x)
+                    if (a.pixelColor(x, y) != b.pixelColor(x, y)) ++different;
+            return different;
+        };
+        const auto add = [&](Fx3d kind) { return engine.addFx3d(engine.indexOfId(plane), kind); };
+        const auto set = [&](quint64 fx, const char *name, const QJsonValue &value) {
+            engine.setParameter(plane, QStringLiteral("fx3d/%1/%2").arg(fx).arg(QLatin1String(name)), value);
+        };
+        check(kinds(plane).empty(), "a model has no 3D FX by default");
+        const QImage plain = picture();
+        // A FX acts while it is on; each of the shape FX moves the points
+        for (Fx3d kind : {Fx3d::Twist, Fx3d::Taper, Fx3d::Wave, Fx3d::Noise, Fx3d::Bend}) {
+            const quint64 fx = add(kind);
+            check(fx != 0, qPrintable(fx3dName(kind) + " can be added"));
+            engine.renderFrame();
+            check(differs(plain, picture()) > 20, qPrintable(fx3dName(kind) + " changes the cube"));
+            set(fx, "enabled", false);
+            check(differs(plain, picture()) == 0, qPrintable(fx3dName(kind) + " off: the cube as it was"));
+        }
+        check(kinds(plane).size() == 5, "a FX switched off stays in the list");
+        engine.newProject();
+        engine.setCompositionSize({96, 96});
+        engine.setViewportSize(engine.indexOfId(engine.mainViewportId()), {96, 96});
+    }
+    {
+        const int si = engine.addScene();
+        const quint64 stage = engine.layerId(si);
+        const int mi = engine.addLayer("Fx Plane", si + 1);
+        const quint64 plane = engine.layerId(mi);
+        QString err;
+        check(engine.setLayerModel(mi, Model3D::primitivePath("Cube"), &err), "a cube again");
+        engine.setStructure(tree::intoGroup(engine.structure(), {plane}, stage));
+        engine.setParameter(plane, "model/unlit", true);
+        engine.setParameter(plane, "model/detail", 8);
+        engine.setParameter(stage, "camera/yaw", 30.0);
+        engine.setParameter(stage, "camera/pitch", 20.0);
+        const auto picture = [&] {
+            engine.renderFrame();
+            return engine.grabOutput();
+        };
+        const auto differs = [](const QImage &a, const QImage &b) {
+            int different = 0;
+            for (int y = 0; y < a.height(); ++y)
+                for (int x = 0; x < a.width(); ++x)
+                    if (a.pixelColor(x, y) != b.pixelColor(x, y)) ++different;
+            return different;
+        };
+        const auto fxOf = [&](quint64 id) {
+            std::vector<Fx3dEntry> out;
+            Engine::Lock lk(&engine.mutex());
+            out = engine.layer(engine.indexOfId(id))->fx3d;
+            return out;
+        };
+        const auto set = [&](quint64 fx, const char *name, const QJsonValue &value) {
+            engine.setParameter(plane, QStringLiteral("fx3d/%1/%2").arg(fx).arg(QLatin1String(name)), value);
+        };
+        const QImage plain = picture();
+        // The same kind twice: two bends, each with its own settings, bend more than one
+        const quint64 bendA = engine.addFx3d(engine.indexOfId(plane), Fx3d::Bend);
+        const quint64 bendB = engine.addFx3d(engine.indexOfId(plane), Fx3d::Bend);
+        check(bendA && bendB && bendA != bendB, "two Bends in a row, each its own");
+        set(bendA, "amount", 60.0);
+        set(bendB, "enabled", false);
+        const QImage one = picture();
+        set(bendB, "enabled", true);
+        set(bendB, "amount", 60.0);
+        const QImage two = picture();
+        check(differs(plain, one) > 20 && differs(one, two) > 20, "a second Bend bends it further");
+        check(std::abs(engine.parameterValue(plane, QStringLiteral("fx3d/%1/amount").arg(bendA)).toDouble() - 60) < 1e-6 &&
+                  std::abs(engine.parameterValue(plane, QStringLiteral("fx3d/%1/amount").arg(bendB)).toDouble() - 60) < 1e-6,
+              "each one's value is its own");
+        // The order is the order they move the points: a taper then a bend is not a bend then a taper
+        engine.removeFx3d(engine.indexOfId(plane), bendB);
+        const quint64 taper = engine.addFx3d(engine.indexOfId(plane), Fx3d::Taper);
+        set(taper, "amount", 0.8);
+        set(bendA, "amount", 120.0);
+        const QImage listed = picture(); // bend, taper
+        {
+            Engine::Lock lk(&engine.mutex());
+            Layer *l = engine.layer(engine.indexOfId(plane));
+            std::swap(l->fx3d[0], l->fx3d[1]);
+        }
+        check(differs(listed, picture()) > 20, "the order of the 3D FX changes the shape");
+        // An animated Noise: its values change at its rate, a new field at each step; none, linear or smooth from one to the next
+        const quint64 noise = engine.addFx3d(engine.indexOfId(plane), Fx3d::Noise);
+        set(bendA, "enabled", false);
+        set(taper, "enabled", false);
+        set(noise, "amount", 0.3);
+        set(noise, "rate", 0.0);
+        const QImage still = picture();
+        engine.stepAnimations(0.0);
+        check(differs(still, picture()) == 0, "a Noise at rate 0 holds its values");
+        // Keep the interpolation checks at travel == 0: advancing the clock here would
+        // offset every manually selected phase and make the "next step" assertion test
+        // the wrong interval.
+        set(noise, "interp", QStringLiteral("none (sharp)"));
+        set(noise, "phase", 0.5);
+        const QImage half = picture();
+        set(noise, "phase", 0.75);
+        check(differs(half, picture()) == 0, "sharp: the values hold until the next step");
+        set(noise, "phase", 1.0);
+        check(differs(half, picture()) > 20, "sharp: then change at once");
+        set(noise, "interp", QStringLiteral("smooth"));
+        set(noise, "phase", 1.2);
+        const QImage a1 = picture();
+        set(noise, "phase", 1.4);
+        const QImage a2 = picture();
+        set(noise, "phase", 1.6);
+        check(differs(a1, a2) > 20 && differs(a2, picture()) > 20, "smooth: the values move between steps");
+        // Check the rate independently, after the deterministic phase/render assertions.
+        const auto travel = [&] {
+            for (const Fx3dEntry &fx : fxOf(plane))
+                if (fx.id == noise) return double(fx.travel);
+            return -1.0;
+        };
+        set(noise, "rate", 1.0);
+        const double beforeStep = travel();
+        engine.stepAnimations(0.5);
+        check(std::abs((travel() - beforeStep) - 0.5) < 1e-6, "Noise rate advances its step clock");
+        set(noise, "rate", 0.0);
+        // Saved with the project: the list in its order, each one's settings
+        set(noise, "scale", 5.0);
+        const std::vector<Fx3dEntry> order = fxOf(plane);
+        const QString file = dir.filePath("fx3d.nyxmap");
+        check(engine.saveProject(file, {}, &err), "a project with 3D FX is saved");
+        engine.newProject();
+        check(engine.loadProject(file, nullptr, &err), "and opened");
+        quint64 back = 0;
+        for (int i = 0; i < engine.layerCount(); ++i) {
+            Engine::Lock lk(&engine.mutex());
+            if (const Layer *l = engine.layer(i); l && l->name == "Fx Plane") back = l->id;
+        }
+        const std::vector<Fx3dEntry> after = back ? fxOf(back) : std::vector<Fx3dEntry>();
+        bool same = after.size() == order.size();
+        for (size_t i = 0; same && i < order.size(); ++i) same = after[i].id == order[i].id && after[i].kind == order[i].kind && after[i].enabled == order[i].enabled;
+        check(same, "the 3D FX come back in their order, on or off");
+        check(back && std::abs(engine.parameterValue(back, QStringLiteral("fx3d/%1/scale").arg(noise)).toDouble() - 5) < 1e-6 &&
+                  std::abs(engine.parameterValue(back, QStringLiteral("fx3d/%1/amount").arg(bendA)).toDouble() - 120) < 1e-6,
+              "and their settings");
         engine.newProject();
     }
     return failures;

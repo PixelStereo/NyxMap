@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "MappingView.h"
+#include "Model3D.h"
 #include "PreviewWorkspace.h"
 #include <QApplication>
 #include <QComboBox>
@@ -9,6 +10,7 @@
 #include <QToolButton>
 #include <QTimer>
 #include <cstdio>
+#include <functional>
 int main(int argc, char **argv)
 {
     QSurfaceFormat format;
@@ -52,6 +54,46 @@ int main(int argc, char **argv)
         engine.renderFrame(); workspace.refreshFrames(); app.processEvents();
         source->menu()->actions().first()->trigger(); app.processEvents();
         check(mapping->isVisible(), "Composition restores mapping editor");
+        {   // A 3D scene and a Merge 3D can be looked at, their objects (a model, a light, a Path) cannot
+            const int scene = engine.addScene("Stage");
+            const quint64 sceneId = engine.layerId(scene);
+            const int merge = engine.addMerge3d("Group of things", scene + 1);
+            const quint64 mergeId = engine.layerId(merge);
+            const int model = engine.addLayer("Box", merge + 1);
+            check(engine.setLayerModel(model, Model3D::primitivePath("Cube"), &error), "a model for the viewer menu");
+            const int light = engine.addLayer("Lamp", model + 1);
+            engine.setLayerLight(light);
+            engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(merge)}, sceneId));
+            engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(model)}, mergeId));
+            engine.setStructure(tree::intoGroup(engine.structure(), {engine.layerId(light)}, sceneId));
+            QMetaObject::invokeMethod(source->menu(), "aboutToShow", Qt::DirectConnection);
+            QStringList names;
+            std::function<void(QMenu *)> collect = [&](QMenu *menu) {
+                for (QAction *action : menu->actions()) {
+                    if (action->menu()) collect(action->menu());
+                    else if (!action->isSeparator()) names << action->text();
+                }
+            };
+            collect(source->menu());
+            check(names.contains("Stage (3D view)"), "the viewer offers a 3D scene");
+            check(names.contains("Group of things (3D view)"), "and a Merge 3D");
+            check(!names.contains("Box") && !names.contains("Lamp"), "but not the 3D objects of a scene");
+            // A Merge 3D shows its own 3D view
+            QAction *picked = nullptr;
+            std::function<void(QMenu *)> find = [&](QMenu *menu) {
+                for (QAction *action : menu->actions()) {
+                    if (action->menu()) find(action->menu());
+                    else if (action->text() == "Group of things (3D view)") picked = action;
+                }
+            };
+            find(source->menu());
+            if (picked) picked->trigger();
+            app.processEvents();
+            engine.renderFrame(); workspace.refreshFrames(); app.processEvents();
+            check(!mapping->isVisible() && source->text() == "Group of things (3D view)", "a Merge 3D is looked at in a 3D view");
+            source->menu()->actions().first()->trigger();
+            app.processEvents();
+        }
         layout->setCurrentIndex(0); app.processEvents();
         check(!workspace.grab().isNull(), "preview renders to a widget image");
         if (argc > 1) check(workspace.grab().save(QString::fromLocal8Bit(argv[1])), "save UI capture");

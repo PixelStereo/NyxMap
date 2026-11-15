@@ -26,10 +26,21 @@
 #include <atomic>
 #include <memory>
 #include <map>
+#include <optional>
 #include <vector>
 
 enum MaterialMap { BaseColorMap, RoughnessMap, MetallicMap, NormalMap, OcclusionMap, EmissionMap, HeightMap, MaterialMapCount };
 inline constexpr const char *materialMapNames[] = {"base_color", "roughness", "metallic", "normal", "occlusion", "emission", "height"};
+
+// The 3D FX of a 3D object, listed in the inspector (none by default) and applied in the order they are listed. The shape
+// FX (up to Noise) move the points of a model's mesh, in the shader; the placement FX place it afterwards: Transform 3D,
+// Duplicate (a copy on each point of a Path) and Follow Path
+enum class Fx3d { Displace, Bend, Twist, Taper, Wave, Noise, Transform, Duplicate, FollowPath };
+inline constexpr int kFx3dCount = 9;
+inline bool isShapeFx3d(Fx3d k) { return k <= Fx3d::Noise; }
+QString fx3dKey(Fx3d k);                      // its name in a project: "displace", "bend", "follow_path"…
+QString fx3dName(Fx3d k);                     // as the inspector says it: "Displace", "Follow Path"…
+std::optional<Fx3d> fx3dFromKey(const QString &key);
 
 // Where a model is in its scene
 struct ModelPlacement {
@@ -40,7 +51,6 @@ struct ModelPlacement {
     std::array<float, 3> axisScale{{1, 1, 1}};
     // A Merge 3D's own transform, around its position: all it holds moves with it
     QMatrix4x4 transform() const;
-    float bend = 0;      // degrees: curved around an upright axis, across its width (a plane becomes a curved screen)
     bool sharedMaterial = false;
     std::array<GLuint, MaterialMapCount> materialTextures{};
     std::array<float, 3> emission{};
@@ -50,14 +60,45 @@ struct ModelPlacement {
     bool unlit = false;  // its picture as it is (a screen), not lit as a material
     int detail = 1;      // a primitive's mesh: how finely it is cut (1, the least, to 8)
     int shading = 0;     // 0 as it is made (a sphere smooth, a cube with its edges), 1 smooth, 2 flat: its facets show
-    // What it takes for its shape: a bend or a displacement need points to move, whatever `detail` says
-    int meshDetail(bool displaced) const { return bend != 0 || displaced ? std::max(detail, 6) : detail; }
-    // Displacement: its points pushed along their normals by a layer's luminance (Layer::modelDisplace), times this,
-    // a luminance of `displaceMid` staying in place
-    float displaceAmount = 0.2f, displaceMid = 0;
+    // What it takes for its shape: a shape FX (a bend, a displacement…) needs points to move, whatever `detail` says
+    int meshDetail(bool shaped) const { return shaped ? std::max(detail, 6) : detail; }
     // A built-in primitive's material (a file keeps its own)
     std::array<float, 3> color{{0.8f, 0.8f, 0.8f}};
     float metal = 0, rough = 0.6f;
+};
+
+// The settings of one 3D FX (Fx3d): every kind reads its own. Lengths are in the units of the model's size (so any model
+// reads the same), angles in degrees, phases in turns
+//   Displace: amount, mid (a luminance staying in place), layer (the picture whose luminance pushes the points), stage
+//   Bend: amount (° across the model's width: a plane becomes a curved screen)
+//   Twist: angle (° from one end to the other), axis (0 X, 1 Y, 2 Z)
+//   Taper: amount (the far end is 1 + amount times as wide, the near end 1 - amount), axis
+//   Wave: amount (half the size), length (the size), phase, axis it travels along (it moves the points across it)
+//   Noise: amount (half the size), scale (features per size), rate (changes of value per second, 0: still), interp (how
+//          one value becomes the next: 0 not at all, a sharp change; 1 linearly; 2 smoothly), phase (steps), seed
+//   Transform 3D: move, turn, size
+//   Duplicate: layer (the Path), align, scale (of each copy), randomScale, randomRotation, seed
+//   Follow Path: layer (the Path), position (0 to 1), speed (turns per second), orient
+struct Fx3dSettings {
+    float amount = 0, mid = 0, angle = 0, length = 0.5f, phase = 0, scale = 1, rate = 0;
+    float randomScale = 0, randomRotation = 0, position = 0, speed = 0;
+    int axis = 1, interp = 2, align = 1, seed = 1;
+    bool orient = false;
+    std::array<float, 3> move{{0, 0, 0}}, turn{{0, 0, 0}}, size{{1, 1, 1}};
+    quint64 layer = 0;
+    int stage = -1; // where that layer's picture is taken (as an FX mask's)
+    static Fx3dSettings defaults(Fx3d kind);
+    QMatrix4x4 transform() const; // Transform 3D: a position, a rotation and a size
+};
+
+// One 3D FX of a 3D object: several of a kind can follow each other. Its id is its own within the layer, and the address
+// of its parameters ("fx3d/<id>/amount")
+struct Fx3dEntry {
+    quint64 id = 0;
+    Fx3d kind = Fx3d::Bend;
+    bool enabled = true;
+    Fx3dSettings s;
+    double travel = 0; // how far its speed or rate has taken it (Follow Path: turns; Noise: steps). Not kept in a project
 };
 
 struct Material3D {
@@ -263,6 +304,7 @@ public:
     void setSmooth(bool on);    // its normals averaged where its faces meet, its edges rounded (render thread)
     float centerX() const { return m_center.x(); }
     QVector3D center() const { return m_center; } // of its bounds, as read
+    QVector3D size() const { return m_size; }     // of its bounds, as read: what the shape FX measure themselves against
     float radius() const { return m_radius; }     // half its bounds' diagonal, as read
     void releaseGl();
 
@@ -310,7 +352,7 @@ private:
     std::vector<Material> m_materials;
     std::vector<QImage> m_images;
     std::vector<GLuint> m_textures;
-    QVector3D m_center;
+    QVector3D m_center, m_size{1, 1, 1};
     float m_radius = 1, m_width = 1;
     bool m_primitive = false;
     int m_displacementUvTopology = 0;
@@ -344,6 +386,12 @@ public:
         GLuint displace = 0; // a layer's picture whose luminance pushes its points (0: none)
         float displaceAmount = 0, displaceMid = 0;
         QMatrix4x4 parent;   // the Merge 3D it is in, all of them: applied after its placement
+        // Its shape FX, in the order they move its points (Displace and Bend take their settings above, in the placement)
+        struct ShapeOp {
+            Fx3d kind = Fx3d::Bend;
+            std::array<float, 4> a{}, b{}; // the settings of Bend, Twist, Taper, Wave and Noise, as the shader reads them
+        };
+        std::vector<ShapeOp> shape;
     };
     struct Lamp {
         LightSettings light;
@@ -383,8 +431,10 @@ private:
     GLuint m_picture = 0; // the texture returned to composition
     // Where a program takes a model's place, found once
     struct PlaceUniforms {
-        GLint model = -1, normal = -1, bend = -1, bendCx = -1, bendW = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
+        GLint model = -1, normal = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
+        GLint fxCount = -1, fxKind = -1, fxA = -1, fxB = -1, fxCenter = -1, fxSize = -1; // its shape FX
         void resolve(GLuint program);
+        void setShape(QOpenGLExtraFunctions *f, const Item &item) const; // a model's shape FX, in the order they apply
     };
     GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
     PlaceUniforms m_placePlain, m_placeUnlit;

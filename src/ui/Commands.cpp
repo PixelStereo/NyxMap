@@ -85,6 +85,35 @@ QJsonObject isfValueJson(const QString &prefix, const IsfInput &in, const IsfVal
 
 // --- SetLayerProp -----------------------------------------------------------
 
+SetFx3d::SetFx3d(Engine *e, quint64 layer, const State &before, const State &after, const QString &text)
+    : m_e(e), m_layer(layer), m_before(before), m_after(after)
+{
+    setText(text);
+}
+
+SetFx3d::State SetFx3d::read(Engine *e, quint64 layer)
+{
+    State s;
+    Engine::Lock lk(&e->mutex());
+    if (Layer *l = e->layer(e->indexOfId(layer))) {
+        s.list = l->fx3d;
+        s.next = l->fx3dNext;
+    }
+    return s;
+}
+
+void SetFx3d::apply(const State &s)
+{
+    {
+        Engine::Lock lk(&m_e->mutex());
+        Layer *l = m_e->layer(m_e->indexOfId(m_layer));
+        if (!l) return;
+        l->fx3d = s.list;
+        l->fx3dNext = s.next;
+    }
+    emit m_e->layersChanged();
+}
+
 static QString propText(SetLayerProp::Prop p)
 {
     switch (p) {

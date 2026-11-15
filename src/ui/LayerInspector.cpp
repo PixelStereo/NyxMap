@@ -904,7 +904,7 @@ void LayerInspector::rebuild()
                                                                  : QStringList{QStringLiteral("light/")})),
                      QStringLiteral("3D"));
         if (s.type != SourceType::Path) { // its 3D FX
-            const int t = tabs->addTab(page(buildFollowPathFx()), QStringLiteral("FX"));
+            const int t = tabs->addTab(page(build3dFxChain()), QStringLiteral("FX"));
             tabs->setTabToolTip(t, QStringLiteral("3D FX: Follow Path moves it along a Path of its scene"));
         }
     }
@@ -915,12 +915,7 @@ void LayerInspector::rebuild()
         tabs->addTab(page(build3d({QStringLiteral("model/instance/"), QStringLiteral("model/material/")})), QStringLiteral("Material"));
         tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/")})),
                      QStringLiteral("Spatial"));
-        auto *effects = new QWidget;
-        auto *fx = new QVBoxLayout(effects);
-        fx->addWidget(build3d({QStringLiteral("model/transform_fx/")}));
-        fx->addWidget(buildDuplicateFx());
-        fx->addWidget(buildFollowPathFx());
-        tabs->addTab(page(effects), QStringLiteral("FX"));
+        tabs->addTab(page(build3dFxChain()), QStringLiteral("FX"));
     } else if (s.type == SourceType::Model) {
         auto *surface = new QWidget;
         auto *layout = new QVBoxLayout(surface);
@@ -931,25 +926,7 @@ void LayerInspector::rebuild()
         tabs->addTab(page(surface), QStringLiteral("Material"));
         tabs->addTab(page(build3d({QStringLiteral("model/position/"), QStringLiteral("model/rotation/"), QStringLiteral("model/scale/"),
                                    QStringLiteral("model/fit")})), QStringLiteral("Spatial"));
-        auto *effects = new QWidget;
-        auto *fx = new QVBoxLayout(effects);
-        auto *displace = new QGroupBox(QStringLiteral("Displace Source"));
-        auto *form = new QFormLayout(displace);
-        quint64 source = 0;
-        int stage = -1;
-        {
-            Engine::Lock lock(&m_engine->mutex());
-            if (const auto *l = m_engine->layer(m_layer)) { source = l->modelDisplace; stage = l->modelDisplaceStage; }
-        }
-        addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None"), source, stage, QStringLiteral("modelDisplace"),
-                       QStringLiteral("A layer whose luminance pushes the mesh along its normals."),
-                       QStringLiteral("Displace Model"),
-                       [this](quint64 id, int st, QString *err) { return m_engine->setModelLayer(m_layer, id, true, err, st); });
-        fx->addWidget(displace);
-        fx->addWidget(build3d({QStringLiteral("model/displace/"), QStringLiteral("model/transform_fx/"), QStringLiteral("model/bend")}));
-        fx->addWidget(buildDuplicateFx());
-        fx->addWidget(buildFollowPathFx());
-        tabs->addTab(page(effects), QStringLiteral("FX"));
+        tabs->addTab(page(build3dFxChain()), QStringLiteral("FX"));
     }
     tabs->addTab(page(buildRoi(s)), QStringLiteral("ROI"));
     tabs->addTab(page(buildColor(s)), QStringLiteral("Color"));
@@ -1387,50 +1364,6 @@ QWidget *LayerInspector::buildSource(const LayerValues &s)
 
 // The Source tab: what the source is made of and how it plays — the media's transport and sound, the generator's
 // parameters and resolution, the text and its style, the tap of a layer used as the source
-// The Duplicate 3D FX of a model or an Instance: a copy on every point of a Path of its scene (any kind: a grid, a
-// sphere, random points as well as a circle or a spiral), then its on/off, alignment, size and variations
-QWidget *LayerInspector::buildDuplicateFx()
-{
-    auto *box = new QGroupBox(QStringLiteral("Duplicate"));
-    box->setObjectName(QStringLiteral("duplicateFx"));
-    auto *form = new QFormLayout(box);
-    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    auto *pick = new QComboBox;
-    pick->setObjectName(QStringLiteral("duplicatePath"));
-    pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
-    quint64 current = 0;
-    {
-        Engine::Lock lk(&m_engine->mutex());
-        const Layer *l = m_engine->layer(m_layer);
-        if (!l) return box;
-        current = l->duplicatePath;
-        const auto sceneOf = [this](const Layer *o) {
-            while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
-            return o;
-        };
-        for (int i = 0; i < m_engine->layerCount(); ++i) {
-            const Layer *o = m_engine->layer(i);
-            if (o && o->type == SourceType::Path && sceneOf(o) == sceneOf(l))
-                pick->addItem(QStringLiteral("%1 (%2 points)").arg(o->name).arg(o->path3d.pointCount()), QVariant(qulonglong(o->id)));
-        }
-    }
-    pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
-    pick->setToolTip(QStringLiteral("A Path of the scene: a copy on each of its points. Its point count is the number of copies; "
-                                    "the copies share this model's meshes"));
-    form->addRow(QStringLiteral("On the Points of"), pick);
-    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
-        const quint64 id = pick->itemData(i).toULongLong();
-        editSource(QStringLiteral("Duplicate On"), [&] { m_engine->setDuplicatePath(m_layer, id); });
-        emit layerChanged();
-    });
-    auto *v = new QWidget;
-    auto *layout = new QVBoxLayout(v);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(box);
-    layout->addWidget(build3d({QStringLiteral("duplicate/")}));
-    return v;
-}
-
 // An Instance's original: any model of the project (a primitive, an FBX, an OBJ, a glTF)
 QWidget *LayerInspector::buildInstanceSource()
 {
@@ -4601,10 +4534,10 @@ void LayerInspector::addLayerChoice(QFormLayout *form, const QString &name, cons
                         quint64 after, int afterStage, const QString &text)
                 : QUndoCommand(text), e(e), object(object), before(before), after(after),
                   beforeStage(beforeStage), afterStage(afterStage) {}
-            void undo() override { e->setModelLayer(e->indexOfId(object), before, false, nullptr, beforeStage); }
+            void undo() override { e->setModelLayer(e->indexOfId(object), before, nullptr, beforeStage); }
             void redo() override {
                 if (first) { first = false; return; }
-                e->setModelLayer(e->indexOfId(object), after, false, nullptr, afterStage);
+                e->setModelLayer(e->indexOfId(object), after, nullptr, afterStage);
             }
         private:
             Engine *e; quint64 object, before, after; int beforeStage, afterStage; bool first = true;
@@ -4663,48 +4596,231 @@ void LayerInspector::addLightLookAt(QFormLayout *form)
     });
 }
 
-// The Follow Path 3D FX of a model, a Merge 3D (an Empty), a camera or a light: the Path of its scene it travels along
-// (a circle, a rectangle, a line or a spiral), then its on/off, position, speed and orientation
-QWidget *LayerInspector::buildFollowPathFx()
+// The Displace FX of a model: the picture whose luminance pushes its points, then its amount and neutral level
+QWidget *LayerInspector::buildDisplaceFx(quint64 fxId)
 {
-    auto *box = new QGroupBox(QStringLiteral("Follow Path"));
-    box->setObjectName(QStringLiteral("followPathFx"));
+    auto *v = new QWidget;
+    auto *layout = new QVBoxLayout(v);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto *displace = new QGroupBox(QStringLiteral("Displace Source"));
+    auto *form = new QFormLayout(displace);
+    quint64 source = 0;
+    int stage = -1;
+    {
+        Engine::Lock lock(&m_engine->mutex());
+        if (const auto *l = m_engine->layer(m_layer))
+            if (const Fx3dEntry *e = l->fx3dById(fxId)) { source = e->s.layer; stage = e->s.stage; }
+    }
+    addLayerChoice(form, QStringLiteral("Picture"), QStringLiteral("None"), source, stage, QStringLiteral("modelDisplace"),
+                   QStringLiteral("A layer whose luminance pushes the mesh along its normals."), QStringLiteral("Displace Model"),
+                   [this, fxId](quint64 id, int st, QString *err) { return m_engine->setFx3dLayer(m_layer, fxId, id, err, st); });
+    layout->addWidget(displace);
+    return v;
+}
+
+// The Path a Duplicate FX puts its copies on, or a Follow Path FX travels along: one of the Paths of the object's scene
+QWidget *LayerInspector::buildPathFx(Fx3d kind, quint64 fxId)
+{
+    const bool follow = kind == Fx3d::FollowPath;
+    auto *box = new QGroupBox(follow ? QStringLiteral("Follow Path") : QStringLiteral("Duplicate"));
+    box->setObjectName(follow ? QStringLiteral("followPathFx") : QStringLiteral("duplicateFx"));
     auto *form = new QFormLayout(box);
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     auto *pick = new QComboBox;
-    pick->setObjectName(QStringLiteral("followPath"));
+    pick->setObjectName(follow ? QStringLiteral("followPath") : QStringLiteral("duplicatePath"));
+    pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
     quint64 current = 0;
     {
         Engine::Lock lk(&m_engine->mutex());
         const Layer *l = m_engine->layer(m_layer);
         if (!l) return box;
-        current = l->followPath;
-        pick->addItem(QStringLiteral("None"), QVariant(qulonglong(0)));
+        if (const Fx3dEntry *e = l->fx3dById(fxId)) current = e->s.layer;
         const auto sceneOf = [this](const Layer *o) {
             while (o && !o->scene3d) o = o->parent ? m_engine->layer(m_engine->indexOfId(o->parent)) : nullptr;
             return o;
         };
         for (int i = 0; i < m_engine->layerCount(); ++i) {
             const Layer *o = m_engine->layer(i);
-            if (o && o != l && o->type == SourceType::Path && o->path3d.isPath() && sceneOf(o) == sceneOf(l))
-                pick->addItem(o->name, QVariant(qulonglong(o->id)));
+            if (!o || o == l || o->type != SourceType::Path || sceneOf(o) != sceneOf(l)) continue;
+            if (follow && !o->path3d.isPath()) continue;
+            pick->addItem(follow ? o->name : QStringLiteral("%1 (%2 points)").arg(o->name).arg(o->path3d.pointCount()), QVariant(qulonglong(o->id)));
         }
     }
     pick->setCurrentIndex(std::max(0, pick->findData(QVariant(qulonglong(current)))));
-    pick->setToolTip(QStringLiteral("A Path of the scene (circle, rectangle, line, spiral) to travel along: Position and Speed "
-                                    "place it on it"));
-    form->addRow(QStringLiteral("Path"), pick);
-    connect(pick, &QComboBox::activated, this, [this, pick](int i) {
+    pick->setToolTip(follow ? QStringLiteral("A Path of the scene (circle, rectangle, line, spiral) to travel along: Position and Speed "
+                                             "place it on it")
+                            : QStringLiteral("A Path of the scene: a copy on each of its points. Its point count is the number of copies; "
+                                             "the copies share this model's meshes"));
+    form->addRow(follow ? QStringLiteral("Path") : QStringLiteral("On the Points of"), pick);
+    connect(pick, &QComboBox::activated, this, [this, pick, follow, fxId](int i) {
         const quint64 id = pick->itemData(i).toULongLong();
-        editSource(QStringLiteral("Follow Path"), [&] { m_engine->setFollowPath(m_layer, id); });
+        editSource(follow ? QStringLiteral("Follow Path") : QStringLiteral("Duplicate On"), [&] { m_engine->setFx3dLayer(m_layer, fxId, id); });
         emit layerChanged();
     });
+    return box;
+}
+
+// The settings of one 3D FX (its switch is its row's in the list)
+QWidget *LayerInspector::build3dFxSettings(Fx3d kind, quint64 fxId)
+{
+    const QString at = QStringLiteral("fx3d/%1/").arg(fxId);
     auto *v = new QWidget;
     auto *layout = new QVBoxLayout(v);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(box);
-    layout->addWidget(build3d({QStringLiteral("follow/")}));
+    if (kind == Fx3d::Displace) layout->addWidget(buildDisplaceFx(fxId));
+    if (kind == Fx3d::Duplicate || kind == Fx3d::FollowPath) layout->addWidget(buildPathFx(kind, fxId));
+    layout->addWidget(build3d({at}, {at + QStringLiteral("enabled")}));
     return v;
+}
+
+// The 3D FX of the selected 3D object, as a list like the FX of a video layer: none by default; "Add 3D FX…" lists one of
+// those this object can have (any number of the same kind: they stay in the menu), − takes the selected one out, ▲ ▼ set
+// the order they apply in, a row's box switches it; below, the settings of the selected one. Shape FX move the points of
+// a model's mesh, in list order; the placement FX (Follow Path, Duplicate, Transform 3D) then place it, in list order
+QWidget *LayerInspector::build3dFxChain()
+{
+    auto *panel = new FxChainPanel(QStringLiteral("3D FX"));
+    panel->masterSwitch()->hide();
+    panel->addButton()->setText(QStringLiteral("Add 3D FX…"));
+    panel->addButton()->setToolTip(QStringLiteral("Add a 3D FX to this object"));
+    panel->setEmptyText(QStringLiteral("No 3D FX. They apply in list order."));
+    const quint64 layerId = m_layerId;
+
+    std::vector<Fx3d> available;
+    {
+        Engine::Lock lk(&m_engine->mutex());
+        if (const Layer *l = m_engine->layer(m_layer))
+            for (int k = 0; k < kFx3dCount; ++k)
+                if (l->canHaveFx3d(Fx3d(k))) available.push_back(Fx3d(k));
+    }
+    const cmd::SetFx3d::State state = cmd::SetFx3d::read(m_engine, layerId);
+    panel->addButton()->setEnabled(!available.empty());
+
+    // One edit of the list: an undo step; the list is built again after it
+    const auto edit = [this, layerId](const QString &text, const std::function<void(cmd::SetFx3d::State &)> &change) {
+        if (m_engine->isLocked(m_layer)) return;
+        const cmd::SetFx3d::State before = cmd::SetFx3d::read(m_engine, layerId);
+        cmd::SetFx3d::State after = before;
+        change(after);
+        if (after == before) return;
+        m_undo->push(new cmd::SetFx3d(m_engine, layerId, before, after, text)); // the list follows it (indexChanged, below)
+        emit layerChanged();
+    };
+    // An edit, its undo or its redo: the list is built again when it is no longer what it shows
+    connect(m_undo, &QUndoStack::indexChanged, panel, [this, built = state, layerId] {
+        if (cmd::SetFx3d::read(m_engine, layerId) != built) QMetaObject::invokeMethod(this, &LayerInspector::rebuild, Qt::QueuedConnection);
+    });
+
+    connect(panel, &FxChainPanel::addRequested, this, [this, available, edit](QWidget *anchor) {
+        QMenu menu(this);
+        bool placement = false, shape = false;
+        for (Fx3d k : available) { // all of them, whatever the list holds
+            if (isShapeFx3d(k) && !shape) {
+                menu.addSection(QStringLiteral("Shape: move the points of the mesh"));
+                shape = true;
+            } else if (!isShapeFx3d(k) && !placement) {
+                menu.addSection(QStringLiteral("Placement: where it is, and its copies"));
+                placement = true;
+            }
+            menu.addAction(fx3dName(k), this, [this, k, edit] {
+                m_selected3dFx = 1 << 20; // the one just added: the last row
+                edit(QStringLiteral("Add %1").arg(fx3dName(k)), [k](cmd::SetFx3d::State &st) {
+                    Fx3dEntry e;
+                    e.id = st.next++;
+                    e.kind = k;
+                    e.s = Fx3dSettings::defaults(k);
+                    st.list.push_back(e);
+                });
+            });
+        }
+        menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    });
+
+    std::vector<FxChainPanel::Row> rows;
+    std::array<int, kFx3dCount> seen{};
+    bool displaceSeen = false;
+    for (const Fx3dEntry &e : state.list) {
+        FxChainPanel::Row row;
+        const int ordinal = ++seen[size_t(e.kind)];
+        row.label = ordinal > 1 ? QStringLiteral("%1 %2").arg(fx3dName(e.kind)).arg(ordinal) : fx3dName(e.kind);
+        row.enabled = e.enabled;
+        row.tooltip = isShapeFx3d(e.kind) ? QStringLiteral("Shape FX: moves the points of the mesh") : QStringLiteral("Placement FX: where the object is");
+        if (e.kind == Fx3d::Displace) { // one picture pushes the points at a time
+            if (displaceSeen) {
+                row.warning = true;
+                row.tooltip = QStringLiteral("Only the first Displace acts: one picture pushes the points at a time");
+            }
+            displaceSeen = true;
+        }
+        rows.push_back(row);
+    }
+    const int count = int(rows.size());
+    m_selected3dFx = count ? std::clamp(m_selected3dFx, 0, count - 1) : 0;
+    panel->setRows(rows, m_selected3dFx, true);
+    {
+        auto *note = new QLabel(QStringLiteral("Shape FX (Displace, Bend, Twist, Taper, Wave, Noise) move the points of the mesh in list "
+                                               "order; then Follow Path, Duplicate and Transform 3D place it, in list order."));
+        note->setWordWrap(true);
+        note->setStyleSheet(QStringLiteral("color:#888;"));
+        panel->footerLayout()->addWidget(note);
+    }
+    if (!count) return panel;
+
+    std::vector<quint64> ids;
+    for (const Fx3dEntry &e : state.list) ids.push_back(e.id);
+    const auto nameOf = [state](quint64 id) {
+        for (const Fx3dEntry &e : state.list)
+            if (e.id == id) return fx3dName(e.kind);
+        return QString();
+    };
+    connect(panel, &FxChainPanel::toggled, this, [ids, edit, nameOf](int row, bool on) {
+        if (row < 0 || row >= int(ids.size())) return;
+        const quint64 id = ids[size_t(row)];
+        edit(on ? QStringLiteral("Enable %1").arg(nameOf(id)) : QStringLiteral("Disable %1").arg(nameOf(id)), [id, on](cmd::SetFx3d::State &st) {
+            for (Fx3dEntry &e : st.list)
+                if (e.id == id) e.enabled = on;
+        });
+    });
+    connect(panel, &FxChainPanel::currentChanged, this, [this](int row) {
+        if (row != m_selected3dFx) {
+            m_selected3dFx = row;
+            show3dFxParams();
+        }
+    });
+    connect(panel, &FxChainPanel::removeRequested, this, [ids, edit, nameOf](int row) {
+        if (row < 0 || row >= int(ids.size())) return;
+        const quint64 id = ids[size_t(row)];
+        edit(QStringLiteral("Remove %1").arg(nameOf(id)), [id](cmd::SetFx3d::State &st) {
+            st.list.erase(std::remove_if(st.list.begin(), st.list.end(), [id](const Fx3dEntry &e) { return e.id == id; }), st.list.end());
+        });
+    });
+    connect(panel, &FxChainPanel::moveRequested, this, [this, ids, edit](int from, int to) {
+        if (from < 0 || to < 0 || from >= int(ids.size()) || to >= int(ids.size())) return;
+        const quint64 a = ids[size_t(from)], b = ids[size_t(to)];
+        m_selected3dFx = to;
+        edit(QStringLiteral("Reorder 3D FX"), [a, b](cmd::SetFx3d::State &st) {
+            const auto ia = std::find_if(st.list.begin(), st.list.end(), [a](const Fx3dEntry &e) { return e.id == a; });
+            const auto ib = std::find_if(st.list.begin(), st.list.end(), [b](const Fx3dEntry &e) { return e.id == b; });
+            if (ia != st.list.end() && ib != st.list.end()) std::iter_swap(ia, ib);
+        });
+    });
+    lockInputs(panel->list(), m_locked);
+    m_fx3dDetail = panel->detail();
+    show3dFxParams();
+    return panel;
+}
+
+void LayerInspector::show3dFxParams()
+{
+    if (!m_fx3dDetail) return;
+    auto *lay = static_cast<QVBoxLayout *>(m_fx3dDetail->layout());
+    clearLayout(lay);
+    const cmd::SetFx3d::State state = cmd::SetFx3d::read(m_engine, m_layerId);
+    if (state.list.empty()) return;
+    m_selected3dFx = std::clamp(m_selected3dFx, 0, int(state.list.size()) - 1);
+    const Fx3dEntry &e = state.list[size_t(m_selected3dFx)];
+    lay->addWidget(build3dFxSettings(e.kind, e.id));
+    lockInputs(m_fx3dDetail, m_locked);
 }
 
 // The Camera object a scene is seen through, or its own orbit camera (the settings above)
@@ -4846,7 +4962,7 @@ QWidget *LayerInspector::buildModelLayers()
                    QStringLiteral("A layer's picture laid on the model, over its UVs: a video on a screen, a dome. The layer "
                                   "can stay hidden. Unlit (below): shown as it is."),
                    QStringLiteral("Show Layer on Model"),
-                   [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, false, err, stage); });
+                   [this](quint64 id, int stage, QString *err) { return m_engine->setModelLayer(m_layer, id, err, stage); });
     return box;
 }
 

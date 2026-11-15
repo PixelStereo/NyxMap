@@ -117,8 +117,46 @@ void Model3D::computeBounds()
             hi = QVector3D(std::max(hi.x(), p.x()), std::max(hi.y(), p.y()), std::max(hi.z(), p.z()));
         }
     m_center = (lo + hi) / 2;
+    m_size = QVector3D(std::max(1e-6f, hi.x() - lo.x()), std::max(1e-6f, hi.y() - lo.y()), std::max(1e-6f, hi.z() - lo.z()));
     m_radius = std::max(1e-6f, (hi - lo).length() / 2);
     m_width = std::max(1e-6f, hi.x() - lo.x());
+}
+
+Fx3dSettings Fx3dSettings::defaults(Fx3d kind)
+{
+    Fx3dSettings d;
+    switch (kind) {
+    case Fx3d::Displace: d.amount = 0.2f; break;
+    case Fx3d::Bend: d.amount = 45; break;
+    case Fx3d::Twist: d.angle = 90; d.axis = 1; break;
+    case Fx3d::Taper: d.amount = 0.5f; d.axis = 1; break;
+    case Fx3d::Wave: d.amount = 0.1f; d.length = 0.5f; d.axis = 0; break;
+    case Fx3d::Noise: d.amount = 0.1f; d.scale = 2; d.rate = 1; d.interp = 2; break;
+    case Fx3d::Transform:
+    case Fx3d::Duplicate:
+    case Fx3d::FollowPath: break;
+    }
+    return d;
+}
+
+QMatrix4x4 Fx3dSettings::transform() const
+{
+    ModelPlacement p;
+    p.position = move;
+    p.rotation = turn;
+    p.axisScale = size;
+    return p.transform();
+}
+
+static const char *const kFx3dKeys[kFx3dCount] = {"displace", "bend", "twist", "taper", "wave", "noise", "transform", "duplicate", "follow_path"};
+static const char *const kFx3dNames[kFx3dCount] = {"Displace", "Bend", "Twist", "Taper", "Wave", "Noise", "Transform 3D", "Duplicate", "Follow Path"};
+QString fx3dKey(Fx3d k) { return QString::fromLatin1(kFx3dKeys[int(k)]); }
+QString fx3dName(Fx3d k) { return QString::fromLatin1(kFx3dNames[int(k)]); }
+std::optional<Fx3d> fx3dFromKey(const QString &key)
+{
+    for (int i = 0; i < kFx3dCount; ++i)
+        if (key == QLatin1String(kFx3dKeys[i])) return Fx3d(i);
+    return std::nullopt;
 }
 
 // --- Built-in primitives -------------------------------------------------------------------------------------------
@@ -673,9 +711,10 @@ void MaterialTextureCache::release()
 static const char *kVertex = R"(#version 330 core
 layout(location=0) in vec3 a_pos; layout(location=1) in vec3 a_n; layout(location=2) in vec2 a_uv;
 uniform mat4 u_model, u_view, u_proj; uniform mat3 u_normal;
-uniform float u_bend, u_bendCx, u_bendW; // radians across its width, around an upright axis in front of it
 uniform vec2 u_uvTiling;
 uniform int u_hasDisp, u_shading, u_dispTopology; uniform sampler2D u_disp; uniform float u_dispAmount, u_dispMid; // pushed along its normals
+uniform int u_fxCount; uniform int u_fxKind[8]; uniform vec4 u_fxA[8], u_fxB[8]; // its shape FX, in the order they move its points
+uniform vec3 u_fxCenter, u_fxSize;                                 // of its bounds: what Twist, Taper, Wave and Noise measure against
 out vec3 v_pos; out vec3 v_n; out vec2 v_uv;
 out vec3 v_basePos; out float v_heightScale; out vec2 v_heightSlope;
 float rawHeight(vec2 uv) {
@@ -711,28 +750,95 @@ float heightAt(vec2 uv) {
     for (int i = 0; i < 8; ++i) mean += rawHeight(vec2((float(i) + 0.5) / 8.0, pole));
     return mix(stitchedU(uv), mean / 8.0, blend);
 }
-vec3 bendPosition(vec3 p, float r) {
-    float t = (p.x - u_bendCx) / r;
-    return vec3(u_bendCx + (r - p.z) * sin(t), p.y, r - (r - p.z) * cos(t));
+vec3 bendPosition(vec3 p, float r) { // around an upright axis in front of it, across its width
+    float t = (p.x - u_fxCenter.x) / r;
+    return vec3(u_fxCenter.x + (r - p.z) * sin(t), p.y, r - (r - p.z) * cos(t));
+}
+float fxCoord(vec3 q, int ax) { return ax == 0 ? q.x : ax == 1 ? q.y : q.z; }
+float fxLength(int ax) { return max(ax == 0 ? u_fxSize.x : ax == 1 ? u_fxSize.y : u_fxSize.z, 1e-6); }
+float hash31(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float valueNoise(vec3 x) { // smooth, from -1 to 1
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash31(i), b = hash31(i + vec3(1, 0, 0)), c = hash31(i + vec3(0, 1, 0)), d = hash31(i + vec3(1, 1, 0));
+    float e = hash31(i + vec3(0, 0, 1)), g = hash31(i + vec3(1, 0, 1)), h = hash31(i + vec3(0, 1, 1)), k = hash31(i + vec3(1, 1, 1));
+    return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z) * 2.0 - 1.0;
+}
+vec3 turnAround(vec3 q, int ax, float angle) {
+    float c = cos(angle), s = sin(angle);
+    if (ax == 0) return vec3(q.x, c * q.y - s * q.z, s * q.y + c * q.z);
+    if (ax == 1) return vec3(c * q.x + s * q.z, q.y, c * q.z - s * q.x);
+    return vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
+}
+// One shape FX on a point: 2 Twist (a: radians end to end, axis), 3 Taper (amount, axis), 4 Wave (amplitude, length, phase,
+// axis it travels along: it moves the points across, along the next axis), 5 Noise (a: amount, features per length, how far
+// it is into its step, how a step becomes the next: 0 not at all, 1 linearly, 2 smoothly; b: the step, the seed)
+vec3 noiseField(vec3 x, float step) { // a field of noise of its own at each step
+    vec3 o = vec3(step * 7.19, step * 3.83, step * 9.41);
+    return vec3(valueNoise(x + o), valueNoise(x + o + vec3(17.3, 5.1, 9.7)), valueNoise(x + o + vec3(3.9, 21.7, 13.1)));
+}
+vec3 shapeOp(int kind, vec4 a, vec4 b, vec3 p) {
+    vec3 q = p - u_fxCenter;
+    if (kind == 2) {
+        int ax = int(a.y + 0.5);
+        q = turnAround(q, ax, a.x * fxCoord(q, ax) / fxLength(ax));
+    } else if (kind == 3) {
+        int ax = int(a.y + 0.5);
+        float k = max(1.0 + a.x * 2.0 * fxCoord(q, ax) / fxLength(ax), 0.0);
+        if (ax == 0) q.yz *= k; else if (ax == 1) q.zx *= k; else q.xy *= k;
+    } else if (kind == 4) {
+        int ax = int(a.w + 0.5), across = (ax + 1) % 3;
+        float s = sin(6.2831853 * (fxCoord(q, ax) / max(a.y, 1e-6) + a.z)) * a.x;
+        if (across == 0) q.x += s; else if (across == 1) q.y += s; else q.z += s;
+    } else if (kind == 5) {
+        vec3 x = q / max(max(u_fxSize.x, u_fxSize.y), max(u_fxSize.z, 1e-6)) * a.y + vec3(b.y * 11.3, b.y * 5.7, b.y * 8.9);
+        float f = a.w < 0.5 ? 0.0 : (a.w < 1.5 ? a.z : a.z * a.z * (3.0 - 2.0 * a.z));
+        q += mix(noiseField(x, b.x), noiseField(x, b.x + 1.0), f) * a.x;
+    }
+    return q + u_fxCenter;
 }
 void main() {
     vec3 p = a_pos, n = a_n, base = a_pos;
     v_heightSlope = vec2(0.0);
-    if (u_hasDisp != 0) {
-        vec2 uv = u_hasDisp == 2 ? a_uv * u_uvTiling : vec2(a_uv.x, 1.0 - a_uv.y);
-        p += normalize(n) * (heightAt(uv) - u_dispMid) * u_dispAmount;
-        if (u_shading == 1) {
-            vec2 stepUV = 1.0 / vec2(textureSize(u_disp, 0));
-            vec2 dx = vec2(stepUV.x, 0), dy = vec2(0, stepUV.y);
-            v_heightSlope = vec2(heightAt(uv + dx) - heightAt(uv - dx),
-                                 heightAt(uv + dy) - heightAt(uv - dy)) / (2.0 * stepUV);
+    for (int i = 0; i < u_fxCount; ++i) {
+        int kind = u_fxKind[i];
+        if (kind == 0) {
+            if (u_hasDisp != 0) {
+                vec2 uv = u_hasDisp == 2 ? a_uv * u_uvTiling : vec2(a_uv.x, 1.0 - a_uv.y);
+                p += normalize(n) * (heightAt(uv) - u_dispMid) * u_dispAmount;
+                if (u_shading == 1) {
+                    vec2 stepUV = 1.0 / vec2(textureSize(u_disp, 0));
+                    vec2 dx = vec2(stepUV.x, 0), dy = vec2(0, stepUV.y);
+                    v_heightSlope = vec2(heightAt(uv + dx) - heightAt(uv - dx),
+                                         heightAt(uv + dy) - heightAt(uv - dy)) / (2.0 * stepUV);
+                }
+            }
+        } else if (kind == 1) {
+            float bend = u_fxA[i].x; // radians across its width
+            if (abs(bend) > 1e-4) {
+                float R = u_fxSize.x / bend, t = (p.x - u_fxCenter.x) / R, s = sin(t), c = cos(t);
+                p = bendPosition(p, R);
+                base = bendPosition(base, R);
+                n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
+            }
+        } else {
+            // Its normal follows what the FX does to its surface: the inverse transpose of the FX's slope, from three small steps
+            vec4 a = u_fxA[i], b = u_fxB[i];
+            vec3 q = shapeOp(kind, a, b, p);
+            float e = 0.001 * max(max(u_fxSize.x, u_fxSize.y), u_fxSize.z);
+            vec3 jx = (shapeOp(kind, a, b, p + vec3(e, 0, 0)) - q) / e;
+            vec3 jy = (shapeOp(kind, a, b, p + vec3(0, e, 0)) - q) / e;
+            vec3 jz = (shapeOp(kind, a, b, p + vec3(0, 0, e)) - q) / e;
+            vec3 c = cross(jy, jz) * n.x + cross(jz, jx) * n.y + cross(jx, jy) * n.z;
+            if (dot(jx, cross(jy, jz)) < 0.0) c = -c;
+            if (dot(c, c) > 1e-18) n = normalize(c);
+            p = q;
+            base = shapeOp(kind, a, b, base);
         }
-    }
-    if (abs(u_bend) > 1e-4) {
-        float R = u_bendW / u_bend, t = (p.x - u_bendCx) / R, s = sin(t), c = cos(t);
-        p = bendPosition(p, R);
-        base = bendPosition(base, R);
-        n = vec3(n.x * c - n.z * s, n.y, n.x * s + n.z * c);
     }
     vec4 w = u_model * vec4(p, 1.0);
     v_pos = w.xyz; v_n = u_normal * n; v_uv = a_uv * u_uvTiling;
@@ -1714,7 +1820,7 @@ struct Placed {
 // Whether that sphere is seen through a camera's matrix. A bent or pushed model is not where its sphere says: always
 static bool inView(const QMatrix4x4 &viewProj, const Placed &p)
 {
-    if (p.item->placement.bend != 0 || p.item->displace) return true;
+    if (p.item->displace || !p.item->shape.empty()) return true;
     const QVector4D row0 = viewProj.row(0), row1 = viewProj.row(1), row2 = viewProj.row(2), row3 = viewProj.row(3);
     for (const QVector4D &plane : {row3 + row0, row3 - row0, row3 + row1, row3 - row1, row3 + row2, row3 - row2}) {
         const float length = plane.toVector3D().length();
@@ -1729,14 +1835,42 @@ void Scene3D::PlaceUniforms::resolve(GLuint program)
     const auto loc = [&](const char *name) { return f->glGetUniformLocation(program, name); };
     model = loc("u_model");
     normal = loc("u_normal");
-    bend = loc("u_bend");
-    bendCx = loc("u_bendCx");
-    bendW = loc("u_bendW");
     hasDisp = loc("u_hasDisp");
     dispAmount = loc("u_dispAmount");
     dispMid = loc("u_dispMid");
     dispTopology = loc("u_dispTopology");
     uvTiling = loc("u_uvTiling");
+    fxCount = loc("u_fxCount");
+    fxKind = loc("u_fxKind");
+    fxA = loc("u_fxA");
+    fxB = loc("u_fxB");
+    fxCenter = loc("u_fxCenter");
+    fxSize = loc("u_fxSize");
+}
+
+// The shape FX of a model, in the order they move its points (the shader's loop reads them in turn)
+void Scene3D::PlaceUniforms::setShape(QOpenGLExtraFunctions *f, const Item &item) const
+{
+    constexpr int kMax = 8;
+    const int count = int(std::min<size_t>(item.shape.size(), kMax));
+    GLint kinds[kMax] = {};
+    GLfloat settings[kMax * 4] = {}, more[kMax * 4] = {};
+    for (int i = 0; i < count; ++i) {
+        kinds[i] = int(item.shape[size_t(i)].kind);
+        for (int k = 0; k < 4; ++k) {
+            settings[i * 4 + k] = item.shape[size_t(i)].a[size_t(k)];
+            more[i * 4 + k] = item.shape[size_t(i)].b[size_t(k)];
+        }
+    }
+    f->glUniform1i(fxCount, count);
+    if (count > 0) {
+        f->glUniform1iv(fxKind, count, kinds);
+        f->glUniform4fv(fxA, count, settings);
+        f->glUniform4fv(fxB, count, more);
+    }
+    const QVector3D c = item.model->center(), size = item.model->size();
+    f->glUniform3f(fxCenter, c.x(), c.y(), c.z());
+    f->glUniform3f(fxSize, size.x(), size.y(), size.z());
 }
 
 bool Scene3D::lite(const QString &renderer)
@@ -1954,7 +2088,13 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             add(p.uvTiling.data(), sizeof(float) * 2);
             add(p.emission.data(), sizeof(float) * 3);
             add(&item.displaceAmount, sizeof(float));
-            for (float v : {p.metal, p.rough, p.bend, p.normalStrength, p.occlusionStrength, p.ior, p.specular}) add(&v, sizeof v);
+            add(&item.displaceMid, sizeof(float));
+            for (float v : {p.metal, p.rough, p.normalStrength, p.occlusionStrength, p.ior, p.specular}) add(&v, sizeof v);
+            for (const Item::ShapeOp &op : item.shape) { // its shape FX, in order
+                add(&op.kind, sizeof op.kind);
+                add(op.a.data(), sizeof(float) * 4);
+                add(op.b.data(), sizeof(float) * 4);
+            }
             for (int v : {p.detail, p.shading, int(p.unlit), int(p.sharedMaterial)}) add(&v, sizeof v);
         }
         for (const Lamp &lamp : lamps) {
@@ -1980,14 +2120,12 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         const Item &item = *p.item;
         f->glUniformMatrix4fv(u.model, 1, GL_FALSE, p.model.constData());
         f->glUniformMatrix3fv(u.normal, 1, GL_FALSE, p.normal.constData());
-        f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
-        f->glUniform1f(u.bendCx, item.model->centerX());
-        f->glUniform1f(u.bendW, item.model->width());
         f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
         f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
         f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
+        u.setShape(f, item);
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);
@@ -2163,7 +2301,11 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
                 const Model3D *which = item.model.get();
                 addTo(&which, sizeof which);
                 addTo(p.model.constData(), sizeof(float) * 16);
-                addTo(&item.placement.bend, sizeof(float));
+                for (const Item::ShapeOp &op : item.shape) {
+                    addTo(&op.kind, sizeof op.kind);
+                    addTo(op.a.data(), sizeof(float) * 4);
+                    addTo(op.b.data(), sizeof(float) * 4);
+                }
                 addTo(&item.placement.detail, sizeof(int));
                 if (item.placement.materialHeight) {
                     addTo(&item.displace, sizeof item.displace);
@@ -2814,7 +2956,11 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         add(item.placement.materialTextures.data(), sizeof(GLuint) * MaterialMapCount);
         add(item.placement.uvTiling.data(), sizeof(float) * 2);
         add(item.placement.emission.data(), sizeof(float) * 3);
-        add(&item.placement.bend, sizeof(float));
+        for (const Item::ShapeOp &op : item.shape) {
+            add(&op.kind, sizeof op.kind);
+            add(op.a.data(), sizeof(float) * 4);
+            add(op.b.data(), sizeof(float) * 4);
+        }
         add(&item.placement.detail, sizeof(int));
     }
     if (!m_plainFbo || w != m_w || h != m_h) {
@@ -2874,14 +3020,12 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
         p.normal = p.model.normalMatrix();
         f->glUniformMatrix4fv(u.model, 1, GL_FALSE, p.model.constData());
         f->glUniformMatrix3fv(u.normal, 1, GL_FALSE, p.normal.constData());
-        f->glUniform1f(u.bend, qDegreesToRadians(std::clamp(item.placement.bend, -359.0f, 359.0f)));
-        f->glUniform1f(u.bendCx, item.model->centerX());
-        f->glUniform1f(u.bendW, item.model->width());
         f->glUniform2fv(u.uvTiling, 1, item.placement.uvTiling.data());
         f->glUniform1i(u.hasDisp, item.displace ? (item.placement.materialHeight ? 2 : 1) : 0);
         f->glUniform1f(u.dispAmount, item.displaceAmount);
         f->glUniform1f(u.dispMid, item.displaceMid);
         f->glUniform1i(u.dispTopology, item.model->displacementUvTopology());
+        u.setShape(f, item);
         f->glActiveTexture(GL_TEXTURE1);
         f->glBindTexture(GL_TEXTURE_2D, item.displace);
         f->glActiveTexture(GL_TEXTURE0);

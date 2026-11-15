@@ -314,7 +314,8 @@ std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
         forEachImageLayer(*l, [&](quint64 used) { shown = shown || used == id; });
         if (shown) add(QStringLiteral("image in a shader"));
         if (l->modelPicture == id) add(QStringLiteral("picture on the model"));
-        if (l->modelDisplace == id) add(QStringLiteral("displacement"));
+        for (const Fx3dEntry &fx : l->fx3d)
+            if (fx.kind == Fx3d::Displace && fx.s.layer == id) add(QStringLiteral("displacement"));
         if (l->sceneEnvironment == id) add(QStringLiteral("environment"));
         if (l->lightLookAt == id) add(QStringLiteral("what is looked at by the light"));
         for (const Animation &a : l->anims)
@@ -372,7 +373,8 @@ void Engine::forEachRenderDependency(const Layer &l, const std::function<void(si
     forEachImageLayer(l, [&](quint64 id) { add(id); });
     if (l.type == SourceType::Model && l.model) {
         add(l.modelPicture, l.modelPictureStage);
-        if (l.modelDisplaceEnabled) add(l.modelDisplace, l.modelDisplaceStage);
+        for (const Fx3dEntry &fx : l.fx3d)
+            if (fx.kind == Fx3d::Displace && fx.enabled) add(fx.s.layer, fx.s.stage);
     }
     if (l.scene3d) add(l.sceneEnvironment, l.sceneEnvironmentStage);
 }
@@ -474,7 +476,7 @@ void Engine::markNeeded()
     }
     for (const auto &slot : m_previewSlots) {
         const size_t row = renderLayerIndex(slot.id);
-        if (slot.sceneView && row < n && m_layers[row]->scene3d) needModels(row);
+        if (slot.sceneView && row < n && (m_layers[row]->scene3d || m_layers[row]->merge3d)) needModels(row);
     }
     for (auto &[id, transition] : m_transitions) {
         if (const size_t row = renderLayerIndex(id); row < n) {
@@ -513,7 +515,8 @@ void Engine::markNeeded()
         for (const auto &fx : l.effects) showsViewport(fx->maskLayer);
         forEachImageLayer(l, showsViewport);
         showsViewport(l.modelPicture);
-        showsViewport(l.modelDisplace);
+        for (const Fx3dEntry &fx : l.fx3d)
+            if (fx.kind == Fx3d::Displace) showsViewport(fx.s.layer);
         showsViewport(l.sceneEnvironment);
     };
     for (auto &l : m_layers) showsViewports(*l);
@@ -1248,9 +1251,18 @@ QMatrix4x4 Engine::mergesOf(const Layer &object)
 
 QMatrix4x4 Engine::pathMatrix(const Layer &path) { return mergesOf(path) * path.modelPlacement.transform(); }
 
+// All its Follow Path FX that are on, in order (each from where the one before left it)
 QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
 {
-    const Layer *path = object.followEnabled && object.followPath ? layer(indexOfId(object.followPath)) : nullptr;
+    QMatrix4x4 frame = parent;
+    for (const Fx3dEntry &fx : object.fx3d)
+        if (fx.kind == Fx3d::FollowPath && fx.enabled) frame = followFrame(object, fx, frame);
+    return frame;
+}
+
+QMatrix4x4 Engine::followFrame(const Layer &object, const Fx3dEntry &fx, const QMatrix4x4 &parent)
+{
+    const Layer *path = fx.s.layer ? layer(indexOfId(fx.s.layer)) : nullptr;
     if (!path || path->type != SourceType::Path || !path->path3d.isPath() || path == &object) return parent;
     // Paths in Merge 3Ds that follow paths: a chain, not a loop (A in a Merge 3D following B, B in one following A)
     static thread_local int depth = 0;
@@ -1258,10 +1270,10 @@ QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
     ++depth;
     const QMatrix4x4 m = pathMatrix(*path);
     --depth;
-    const double t = double(object.followPosition) + object.followTravel;
+    const double t = double(fx.s.position) + fx.travel;
     QMatrix4x4 frame;
     frame.translate(m.map(path->path3d.along(t)));
-    if (object.followOrient) { // its +Z the way it goes, its +Y as up as can be
+    if (fx.s.orient) { // its +Z the way it goes, its +Y as up as can be
         const double eps = 0.002;
         QVector3D forward = m.map(path->path3d.along(t + eps)) - m.map(path->path3d.along(t - eps));
         if (forward.lengthSquared() > 1e-12f) {
@@ -1280,22 +1292,22 @@ QMatrix4x4 Engine::followFrame(const Layer &object, const QMatrix4x4 &parent)
     return frame;
 }
 
-std::vector<QMatrix4x4> Engine::duplicateFrames(const Layer &model, const QMatrix4x4 &frame)
+std::vector<QMatrix4x4> Engine::duplicateFrames(const Fx3dEntry &fx, const QMatrix4x4 &frame)
 {
-    const Layer *path = model.duplicateEnabled && model.duplicatePath ? layer(indexOfId(model.duplicatePath)) : nullptr;
+    const Layer *path = fx.s.layer ? layer(indexOfId(fx.s.layer)) : nullptr;
     if (!path || path->type != SourceType::Path) return {frame};
     // On the Path's points, where the Path is (whatever holds the model); its Follow Path does not apply then
     const QMatrix4x4 m = pathMatrix(*path);
     const auto points = path->path3d.pointsLocal();
     const auto ways = path->path3d.directionsLocal();
-    std::mt19937 rng{static_cast<uint32_t>(model.duplicateSeed)};
+    std::mt19937 rng{static_cast<uint32_t>(fx.s.seed)};
     std::uniform_real_distribution<float> unit(0.f, 1.f);
     std::vector<QMatrix4x4> out;
     out.reserve(points.size());
     for (size_t k = 0; k < points.size(); ++k) {
         QMatrix4x4 copy;
         copy.translate(m.map(points[k]));
-        if (model.duplicateAlign == 1) { // its +Z the way the point goes, +Y up (on a sphere: its +Y outward)
+        if (fx.s.align == 1) { // its +Z the way the point goes, +Y up (on a sphere: its +Y outward)
             QVector3D way = m.mapVector(ways[k]);
             if (way.lengthSquared() > 1e-12f) {
                 way.normalize();
@@ -1312,8 +1324,8 @@ std::vector<QMatrix4x4> Engine::duplicateFrames(const Layer &model, const QMatri
                 copy *= turn;
             }
         }
-        const float spin = (unit(rng) * 2 - 1) * model.duplicateRandomRotation;
-        const float size = model.duplicateScale * (1 + (unit(rng) * 2 - 1) * model.duplicateRandomScale);
+        const float spin = (unit(rng) * 2 - 1) * fx.s.randomRotation;
+        const float size = fx.s.scale * (1 + (unit(rng) * 2 - 1) * fx.s.randomScale);
         copy.rotate(spin, 0, 1, 0);
         copy.scale(std::max(0.001f, size));
         out.push_back(copy);
@@ -1358,10 +1370,30 @@ SceneSettings Engine::cameraView(const Layer &camera, const SceneSettings &base)
     return s;
 }
 
+std::vector<QMatrix4x4> Engine::placementFrames(const Layer &object, const QMatrix4x4 &parent, bool copies)
+{
+    std::vector<QMatrix4x4> frames{parent};
+    for (const Fx3dEntry &fx : object.fx3d) {
+        if (isShapeFx3d(fx.kind) || !fx.enabled) continue;
+        if (fx.kind == Fx3d::FollowPath) {
+            for (QMatrix4x4 &frame : frames) frame = followFrame(object, fx, frame);
+        } else if (fx.kind == Fx3d::Transform) {
+            const QMatrix4x4 t = fx.s.transform();
+            for (QMatrix4x4 &frame : frames) frame *= t;
+        } else if (fx.kind == Fx3d::Duplicate && copies) {
+            std::vector<QMatrix4x4> next;
+            for (const QMatrix4x4 &frame : frames)
+                for (const QMatrix4x4 &copy : duplicateFrames(fx, frame)) next.push_back(copy);
+            frames.swap(next);
+        }
+    }
+    return frames;
+}
+
 QVector3D Engine::lightPosition(const Layer &light, const QMatrix4x4 &parent)
 {
     // Its Follow Path FX: on the path's point
-    if (light.followEnabled && light.followPath) {
+    if (light.fx3dOn(Fx3d::FollowPath)) {
         const QMatrix4x4 frame = followFrame(light, parent);
         if (frame != parent) return frame.map(QVector3D());
     }
@@ -1374,13 +1406,13 @@ QVector3D Engine::placeOf3dObject(const Layer &object)
     if (object.type == SourceType::Light) return lightPosition(object, parent);
     if (object.type == SourceType::Path) return pathMatrix(object).map(QVector3D());
     if (object.type == SourceType::Camera) return cameraPosition(object);
-    parent = followFrame(object, parent);
     if (const auto model = object.type == SourceType::Model ? modelOf(object) : nullptr) {
-        if (object.modelTransformFxEnabled) parent *= object.modelTransformFx.transform();
+        parent = placementFrames(object, parent, false).front();
         ModelPlacement p = object.modelPlacement;
         if (const Layer *o = object.instanceOf ? originalOf(object) : nullptr) p.fit = o->modelPlacement.fit;
         return (parent * model->matrix(p)).map(model->center());
     }
+    parent = followFrame(object, parent);
     const ModelPlacement &p = object.modelPlacement;
     return parent.map(QVector3D(p.position[0], p.position[1], p.position[2]));
 }
@@ -1422,7 +1454,11 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             if (!model) continue;
             if (look == m) model->setSmooth(m->modelPlacement.shading == 1); // an original sets its shared mesh
             const Layer *pic = look->modelPicture ? layer(indexOfId(look->modelPicture)) : nullptr;
-            const Layer *disp = look->modelDisplaceEnabled && look->modelDisplace ? layer(indexOfId(look->modelDisplace)) : nullptr;
+            // Its Displace: the first that is on and has a picture (one picture at a time)
+            const Fx3dEntry *displaceFx = nullptr;
+            for (const Fx3dEntry &fx : look->fx3d)
+                if (fx.kind == Fx3d::Displace && fx.enabled && fx.s.layer && !displaceFx) displaceFx = &fx;
+            const Layer *disp = displaceFx ? layer(indexOfId(displaceFx->s.layer)) : nullptr;
             auto placement = look->modelPlacement;
             if (look != m) {
                 const ModelPlacement &own = m->modelPlacement;
@@ -1438,20 +1474,56 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
                 }
             }
             if (look->material && !(look != m && m->instanceOwnMaterial)) m_materialTextures.apply(*look->material, placement);
-            GLuint displacement = disp ? stagePicture(*disp, look->modelDisplaceStage) : 0;
-            float amount = placement.displaceAmount, mid = placement.displaceMid;
+            GLuint displacement = disp ? stagePicture(*disp, displaceFx->s.stage) : 0;
+            float amount = displaceFx ? displaceFx->s.amount : 0, mid = displaceFx ? displaceFx->s.mid : 0;
             if (!displacement && placement.materialTextures[HeightMap]) {
                 displacement = placement.materialTextures[HeightMap];
                 placement.materialHeight = true;
                 amount = look->material->height;
                 mid = 0;
             }
-            if (look == m) model->setDetail(placement.meshDetail(displacement != 0));
+            // Its shape FX, in the order they are listed (a height map of its material pushes its points as a Displace first)
+            std::vector<Scene3D::Item::ShapeOp> shape;
+            bool displaced = false;
+            const QVector3D size = model->size();
+            const float widest = std::max({size.x(), size.y(), size.z()});
+            const auto along = [&size](int axis) { return axis == 0 ? size.x() : axis == 1 ? size.y() : size.z(); };
+            for (const Fx3dEntry &fx : look->fx3d) {
+                if (!isShapeFx3d(fx.kind) || !fx.enabled) continue;
+                const Fx3dSettings &s = fx.s;
+                Scene3D::Item::ShapeOp op;
+                op.kind = fx.kind;
+                if (fx.kind == Fx3d::Displace) {
+                    if (&fx != displaceFx || !displacement) continue;
+                    displaced = true;
+                } else if (fx.kind == Fx3d::Bend) {
+                    if (s.amount == 0) continue;
+                    op.a = {qDegreesToRadians(std::clamp(s.amount, -359.0f, 359.0f)), 0, 0, 0};
+                } else if (fx.kind == Fx3d::Twist) {
+                    op.a = {qDegreesToRadians(s.angle), float(s.axis), 0, 0};
+                } else if (fx.kind == Fx3d::Taper) {
+                    op.a = {s.amount, float(s.axis), 0, 0};
+                } else if (fx.kind == Fx3d::Wave) {
+                    op.a = {s.amount * 0.5f * widest, s.length * along(s.axis), s.phase, float(s.axis)};
+                } else if (fx.kind == Fx3d::Noise) {
+                    // Its values: a new field of noise at each whole step, the one before it turning into it as the step comes
+                    // (not at all, linearly or smoothly); the step it is at is kept small so the noise stays precise
+                    const double at = fx.travel + double(s.phase);
+                    const double step = std::floor(at);
+                    op.a = {s.amount * 0.5f * widest, s.scale, float(at - step), float(s.interp)};
+                    op.b = {float(std::fmod(step, 256.0) + (step < 0 ? 256.0 : 0.0)), float(s.seed), 0, 0};
+                }
+                shape.push_back(op);
+            }
+            if (displacement && !displaced) shape.insert(shape.begin(), {Fx3d::Displace, {}}); // a material's height map, with no Displace listed
+            if (look == m) model->setDetail(placement.meshDetail(!shape.empty()));
             const GLuint picture = pic ? stagePicture(*pic, look->modelPictureStage) : 0;
-            // Its Duplicate FX: a copy on each point of its Path (the same meshes, drawn again, not built again)
-            for (QMatrix4x4 frame : duplicateFrames(*m, followFrame(*m, parent))) {
-                if (m->modelTransformFxEnabled) frame *= m->modelTransformFx.transform();
-                items.push_back({model, placement, picture, displacement, amount, mid, frame});
+            // Its placement FX: Follow Path, Duplicate (a copy on each point of its Path: the same meshes, drawn again,
+            // not built again) and Transform 3D, in the order they are listed
+            for (const QMatrix4x4 &frame : placementFrames(*m, parent, true)) {
+                Scene3D::Item item{model, placement, picture, displacement, amount, mid, frame};
+                item.shape = shape;
+                items.push_back(item);
             }
         } else if (m->type == SourceType::Light) {
             lamps.push_back({placedLight(*m, parent), m->opacity});
@@ -2039,15 +2111,30 @@ void Engine::frame(double dt)
         const int index = indexOfId(slot.id);
         if (index < 0) { slot.target[m_back].destroy(); continue; }
         const Layer &layer = *m_layers[size_t(index)];
-        if (slot.sceneView && layer.scene3d) { // a 3D view: the scene from the view's own camera
+        if (slot.sceneView && (layer.scene3d || layer.merge3d)) { // a 3D view: a scene, or a Merge 3D in its scene, from the view's own camera
             std::vector<Layer *> members;
-            for (auto &m : m_layers)
-                if (m->parent == layer.id) members.push_back(m.get());
+            QMatrix4x4 within; // a Merge 3D: where it is in its scene (what holds it)
+            const Layer *scene = &layer;
+            if (layer.merge3d) {
+                members.push_back(m_layers[size_t(index)].get()); // itself, with what it holds
+                within = mergesOf(layer);
+                for (quint64 up = layer.parent; up; ) {
+                    const int aboveIndex = indexOfId(up);
+                    const Layer *above = aboveIndex >= 0 ? m_layers[size_t(aboveIndex)].get() : nullptr;
+                    if (!above) break;
+                    scene = above;
+                    if (above->scene3d) break;
+                    up = above->parent;
+                }
+            } else {
+                for (auto &m : m_layers)
+                    if (m->parent == layer.id) members.push_back(m.get());
+            }
             std::vector<Scene3D::Item> items;
             std::vector<Scene3D::Lamp> lamps;
-            collectScene(members, items, lamps);
+            collectScene(members, items, lamps, within);
             if (!slot.editor[m_back]) slot.editor[m_back] = std::make_shared<Scene3D>();
-            SceneSettings view = layer.scene; // the view's camera and background
+            SceneSettings view = scene->scene; // the view's camera and background (a Merge 3D: its scene's)
             for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
             view.distance = slot.camera.distance;
             view.yaw = slot.camera.yaw;

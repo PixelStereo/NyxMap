@@ -38,6 +38,10 @@ quint64 keyOf(const Layer &l)
     // An allocator can reuse a replaced generator's address. Its kind changes
     // which parameters exist even when the pointer and text source stay equal.
     if (l.clockGen) mix(quint64(l.clockGen->kind()));
+    for (const Fx3dEntry &e : l.fx3d) { // its 3D FX: which, in what order (their parameters are by id)
+        mix(e.id);
+        mix(quint64(e.kind));
+    }
     if (l.audioEffects)
         mix(l.audioEffects->revision());
     auto inputs = [&mix](const IsfInstance *i) {
@@ -701,6 +705,102 @@ const std::vector<Parameter *> &Layer::parameters()
         return num(path, label, lo, hi, def, [field] { return double(*field); }, [field](double v) { *field = float(v); });
     };
     const QStringList xyz{QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")}, XYZ{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+    // One 3D FX of this layer (Layer::fx3d): its parameters are "fx3d/<id>/…", reached by its id so they stay with it when
+    // the list changes. Its label says which it is when a kind comes several times ("Bend", "Bend 2")
+    const auto fx3dParameters = [&](const Fx3dEntry &entry, int ordinal) {
+        const quint64 id = entry.id;
+        const QString at = QStringLiteral("fx3d/%1/").arg(id);
+        const QString name = ordinal > 1 ? QStringLiteral("%1 %2").arg(fx3dName(entry.kind)).arg(ordinal) : fx3dName(entry.kind);
+        const Fx3dSettings d = Fx3dSettings::defaults(entry.kind);
+        add(at + QStringLiteral("enabled"), name + QStringLiteral(" › Enabled"), T::Bool)
+            .byDefault(true)
+            .ramp(Parameter::Ramp::Cut)
+            .bind([self, id] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e && e->enabled); },
+                  [self, id](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->enabled = v.toBool(); });
+        const auto number = [&](const QString &key, const QString &label, double lo, double hi, float Fx3dSettings::*field, double step = 0.01) -> Parameter & {
+            return add(at + key, name + QStringLiteral(" › ") + label, T::Float)
+                .range(lo, hi)
+                .byDefault(double(d.*field))
+                .step(step)
+                .bind([self, id, field] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? double(e->s.*field) : 0.0); },
+                      [self, id, field](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.*field = float(v.toDouble()); });
+        };
+        const auto choice = [&](const QString &key, const QString &label, const QStringList &names, int Fx3dSettings::*field) -> Parameter & {
+            return add(at + key, name + QStringLiteral(" › ") + label, T::Choice)
+                .choices(names)
+                .byDefault(names.value(d.*field))
+                .ramp(Parameter::Ramp::Cut)
+                .bind([self, id, field, names] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(names.value(e ? e->s.*field : 0)); },
+                      [self, id, field, names](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.*field = std::max(0, int(names.indexOf(v.toString()))); });
+        };
+        static const QStringList kAxes{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+        switch (entry.kind) {
+        case Fx3d::Displace:
+            number(QStringLiteral("amount"), QStringLiteral("Amount"), -2, 2, &Fx3dSettings::amount);
+            number(QStringLiteral("mid"), QStringLiteral("Neutral Level"), 0, 1, &Fx3dSettings::mid);
+            break;
+        case Fx3d::Bend: number(QStringLiteral("amount"), QStringLiteral("Amount (°)"), -360, 360, &Fx3dSettings::amount, 0.1); break;
+        case Fx3d::Twist:
+            number(QStringLiteral("angle"), QStringLiteral("Angle (°, end to end)"), -720, 720, &Fx3dSettings::angle, 0.1).ramp(Parameter::Ramp::Angle);
+            choice(QStringLiteral("axis"), QStringLiteral("Around Axis"), kAxes, &Fx3dSettings::axis);
+            break;
+        case Fx3d::Taper:
+            number(QStringLiteral("amount"), QStringLiteral("Amount"), -1, 1, &Fx3dSettings::amount);
+            choice(QStringLiteral("axis"), QStringLiteral("Along Axis"), kAxes, &Fx3dSettings::axis);
+            break;
+        case Fx3d::Wave:
+            number(QStringLiteral("amount"), QStringLiteral("Amplitude"), 0, 1, &Fx3dSettings::amount, 0.001);
+            number(QStringLiteral("length"), QStringLiteral("Length"), 0.02, 4, &Fx3dSettings::length);
+            number(QStringLiteral("phase"), QStringLiteral("Phase (turns)"), -100, 100, &Fx3dSettings::phase);
+            choice(QStringLiteral("axis"), QStringLiteral("Travels Along Axis"), kAxes, &Fx3dSettings::axis);
+            break;
+        case Fx3d::Noise: {
+            static const QStringList kInterp{QStringLiteral("none (sharp)"), QStringLiteral("linear"), QStringLiteral("smooth")};
+            number(QStringLiteral("amount"), QStringLiteral("Amount"), 0, 1, &Fx3dSettings::amount, 0.001);
+            number(QStringLiteral("scale"), QStringLiteral("Scale (features per size)"), 0.1, 20, &Fx3dSettings::scale);
+            number(QStringLiteral("rate"), QStringLiteral("Changes per Second (0: still)"), 0, 60, &Fx3dSettings::rate);
+            choice(QStringLiteral("interp"), QStringLiteral("From One Value to the Next"), kInterp, &Fx3dSettings::interp);
+            number(QStringLiteral("phase"), QStringLiteral("Phase (steps)"), -1000, 1000, &Fx3dSettings::phase);
+            add(at + QStringLiteral("seed"), name + QStringLiteral(" › Seed"), T::Int).range(0, 99999).byDefault(1).ramp(Parameter::Ramp::Cut)
+                .bind([self, id] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? e->s.seed : 1); },
+                      [self, id](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.seed = std::clamp(v.toInt(), 0, 99999); });
+            break;
+        }
+        case Fx3d::Transform:
+            for (int a = 0; a < 3; ++a) {
+                const QString axis = QString(QChar("xyz"[a])), axisName = QString(QChar("XYZ"[a]));
+                add(at + QStringLiteral("position/") + axis, name + QStringLiteral(" › Position ") + axisName, T::Float).range(-10, 10).byDefault(0.0).step(0.01)
+                    .bind([self, id, a] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? double(e->s.move[size_t(a)]) : 0.0); },
+                          [self, id, a](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.move[size_t(a)] = float(v.toDouble()); });
+                add(at + QStringLiteral("rotation/") + axis, name + QStringLiteral(" › Rotation ") + axisName, T::Float).range(-180, 180).byDefault(0.0).step(0.1)
+                    .ramp(Parameter::Ramp::Angle)
+                    .bind([self, id, a] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? double(e->s.turn[size_t(a)]) : 0.0); },
+                          [self, id, a](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.turn[size_t(a)] = float(v.toDouble()); });
+                add(at + QStringLiteral("scale/") + axis, name + QStringLiteral(" › Scale ") + axisName, T::Float).range(0.01, 10).byDefault(1.0).step(0.01)
+                    .bind([self, id, a] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? double(e->s.size[size_t(a)]) : 1.0); },
+                          [self, id, a](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.size[size_t(a)] = float(v.toDouble()); });
+            }
+            break;
+        case Fx3d::Duplicate: {
+            static const QStringList kAlign{QStringLiteral("as it is"), QStringLiteral("turned along the path")};
+            choice(QStringLiteral("align"), QStringLiteral("Copies"), kAlign, &Fx3dSettings::align);
+            number(QStringLiteral("scale"), QStringLiteral("Copy Size"), 0.01, 4, &Fx3dSettings::scale).limits(0.001, 100);
+            number(QStringLiteral("random_scale"), QStringLiteral("Size Variation"), 0, 1, &Fx3dSettings::randomScale);
+            number(QStringLiteral("random_rotation"), QStringLiteral("Turn Variation (°)"), 0, 180, &Fx3dSettings::randomRotation, 0.1);
+            add(at + QStringLiteral("seed"), name + QStringLiteral(" › Seed"), T::Int).range(0, 99999).byDefault(1).ramp(Parameter::Ramp::Cut)
+                .bind([self, id] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e ? e->s.seed : 1); },
+                      [self, id](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.seed = std::clamp(v.toInt(), 0, 99999); });
+            break;
+        }
+        case Fx3d::FollowPath:
+            number(QStringLiteral("position"), QStringLiteral("Position"), 0, 1, &Fx3dSettings::position, 0.001);
+            number(QStringLiteral("speed"), QStringLiteral("Speed (turns/s)"), -2, 2, &Fx3dSettings::speed, 0.001);
+            add(at + QStringLiteral("orient"), name + QStringLiteral(" › Turned Along It"), T::Bool).byDefault(false).ramp(Parameter::Ramp::Cut)
+                .bind([self, id] { const Fx3dEntry *e = self->fx3dById(id); return QVariant(e && e->s.orient); },
+                      [self, id](const QVariant &v) { if (Fx3dEntry *e = self->fx3dById(id)) e->s.orient = v.toBool(); });
+            break;
+        }
+    };
     if (scene3d) {
         SceneSettings *sc = &scene;
         const SceneSettings d;
@@ -761,7 +861,6 @@ const std::vector<Parameter *> &Layer::parameters()
                 .step(0.1)
                 .ramp(Parameter::Ramp::Angle);
         f3("model/scale/all", "Model › Scale", 0.01, 10, 1, &mp->scale).step(0.01);
-        f3("model/bend", "Model › Bend (°)", -360, 360, 0, &mp->bend).step(0.1);
         flag("model/unlit", "Model › Unlit (its picture as it is)", false, &mp->unlit).ramp(Parameter::Ramp::Cut);
         static const QStringList kShading{QStringLiteral("as made"), QStringLiteral("smooth"), QStringLiteral("flat")};
         add("model/shading", "Model › Shading", T::Choice)
@@ -775,21 +874,6 @@ const std::vector<Parameter *> &Layer::parameters()
             .byDefault(1)
             .ramp(Parameter::Ramp::Cut)
             .bind([mp] { return QVariant(mp->detail); }, [mp](const QVariant &v) { mp->detail = std::clamp(v.toInt(), 1, 8); });
-        // Its Duplicate 3D FX: a copy on every point of a Path
-        flag("duplicate/enabled", "Duplicate › Enabled", false, &duplicateEnabled).ramp(Parameter::Ramp::Cut);
-        static const QStringList kAlign{QStringLiteral("as it is"), QStringLiteral("turned along the path")};
-        add("duplicate/align", "Duplicate › Copies", T::Choice)
-            .choices(kAlign)
-            .byDefault(kAlign.value(1))
-            .ramp(Parameter::Ramp::Cut)
-            .bind([self] { return QVariant(kAlign.value(self->duplicateAlign)); },
-                  [self](const QVariant &v) { self->duplicateAlign = std::max(0, int(kAlign.indexOf(v.toString()))); });
-        f3("duplicate/scale", "Duplicate › Copy Size", 0.01, 4, 1, &duplicateScale).step(0.01).limits(0.001, 100);
-        f3("duplicate/random_scale", "Duplicate › Size Variation", 0, 1, 0, &duplicateRandomScale).step(0.01);
-        f3("duplicate/random_rotation", "Duplicate › Turn Variation (°)", 0, 180, 0, &duplicateRandomRotation).step(0.1);
-        add("duplicate/seed", "Duplicate › Seed", T::Int).range(0, 99999).byDefault(1).ramp(Parameter::Ramp::Cut)
-            .bind([self] { return QVariant(self->duplicateSeed); },
-                  [self](const QVariant &v) { self->duplicateSeed = std::clamp(v.toInt(), 0, 99999); });
         if (instanceOf) // an Instance: its original's material, or its own colours
             flag("model/instance/own_material", "Instance › Own Material", false, &instanceOwnMaterial).ramp(Parameter::Ramp::Cut);
         if (instanceOf || material || (model && model->isPrimitive())) {
@@ -800,23 +884,12 @@ const std::vector<Parameter *> &Layer::parameters()
             f3("model/material/metal", "Material › Metal", 0, 1, 0, shared ? &shared->metal : &mp->metal).step(0.01);
             f3("model/material/rough", "Material › Roughness", 0, 1, 0.6, shared ? &shared->rough : &mp->rough).step(0.01);
         }
-        flag("model/displace/enabled", "Displace › Enabled", false, &modelDisplaceEnabled).ramp(Parameter::Ramp::Cut);
-        flag("model/transform_fx/enabled", "Transform 3D › Enabled", false, &modelTransformFxEnabled).ramp(Parameter::Ramp::Cut);
-        for (int a = 0; a < 3; ++a) {
-            f3("model/transform_fx/position/" + xyz[a], "Transform 3D › Position " + XYZ[a], -10, 10, 0, &modelTransformFx.position[size_t(a)]).step(0.01);
-            f3("model/transform_fx/rotation/" + xyz[a], "Transform 3D › Rotation " + XYZ[a], -180, 180, 0, &modelTransformFx.rotation[size_t(a)]).step(0.1).ramp(Parameter::Ramp::Angle);
-            f3("model/transform_fx/scale/" + xyz[a], "Transform 3D › Scale " + XYZ[a], 0.01, 10, 1, &modelTransformFx.axisScale[size_t(a)]).step(0.01);
-        }
-        f3("model/displace/amount", "Displace › Amount", -2, 2, 0.2, &mp->displaceAmount).step(0.01);
-        f3("model/displace/mid", "Displace › Neutral Level", 0, 1, 0, &mp->displaceMid).step(0.01);
         for (int a = 0; a < 3; ++a)
             f3("model/scale/" + xyz[a], "Model › Scale " + XYZ[a], 0.01, 10, 1, &mp->axisScale[size_t(a)]).step(0.01).limits(-100, 100);
     }
-    if (type == SourceType::Model || type == SourceType::Camera || type == SourceType::Light || merge3d) { // Follow Path FX
-        flag("follow/enabled", "Follow Path › Enabled", false, &followEnabled).ramp(Parameter::Ramp::Cut);
-        f3("follow/position", "Follow Path › Position", 0, 1, 0, &followPosition).step(0.001);
-        f3("follow/speed", "Follow Path › Speed (turns/s)", -2, 2, 0, &followSpeed).step(0.001);
-        flag("follow/orient", "Follow Path › Turned Along It", false, &followOrient).ramp(Parameter::Ramp::Cut);
+    if (type == SourceType::Model || type == SourceType::Camera || type == SourceType::Light || merge3d) { // 3D FX
+        std::array<int, kFx3dCount> seen{};
+        for (const Fx3dEntry &entry : fx3d) fx3dParameters(entry, ++seen[size_t(entry.kind)]);
     }
     if (type == SourceType::Camera) {
         CameraSettings *cm = &camera;

@@ -474,8 +474,13 @@ void Engine::stepAnimations(double dt)
     for (auto &lp : m_layers) {
         if (lp->type == SourceType::Light && lp->light.pathShape && lp->light.pathSpeed != 0)
             lp->light.pathTravel = std::fmod(lp->light.pathTravel + double(lp->light.pathSpeed) * dt, 2.0);
-        if (lp->followEnabled && lp->followPath && lp->followSpeed != 0) // a 3D object's Follow Path FX
-            lp->followTravel = std::fmod(lp->followTravel + double(lp->followSpeed) * dt, 2.0);
+        for (Fx3dEntry &fx : lp->fx3d) {
+            if (!fx.enabled) continue;
+            if (fx.kind == Fx3d::FollowPath && fx.s.layer && fx.s.speed != 0) // a 3D object's Follow Path FX
+                fx.travel = std::fmod(fx.travel + double(fx.s.speed) * dt, 2.0);
+            else if (fx.kind == Fx3d::Noise && fx.s.rate != 0) // a Noise changing its values: its steps, as many as it has gone through
+                fx.travel = std::fmod(fx.travel + double(fx.s.rate) * dt, 1048576.0);
+        }
     }
     // The layers' own numbers first: a timeline playing the same number wins
     for (auto &lp : m_layers) {

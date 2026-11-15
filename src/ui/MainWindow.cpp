@@ -1830,6 +1830,16 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     }
     if (refuseLocked(i)) return false;
     if (isPath3dPath(path) || isEmpty3dPath(path) || isCamera3dPath(path)) { // into the 3D scene it is dropped on
+        {   // only into a 3D scene or one of its objects: never onto a video, an image or any other 2D layer
+            const LayerTree t = m_engine->structure();
+            const auto holds3d = [&](int k) { return t[size_t(k)].role == TreeNode::Scene3d || t[size_t(k)].role == TreeNode::Merge3d; };
+            int s = i;
+            if (!holds3d(s)) s = t[size_t(s)].parent ? tree::indexOf(t, t[size_t(s)].parent) : -1;
+            if (s < 0 || !holds3d(s)) {
+                statusBar()->showMessage(QStringLiteral("A Path, a Camera or an Empty goes into a 3D scene: drop it onto one, or use Load into New 3D Scene."), 6000);
+                return false;
+            }
+        }
         selectLayer(i);
         if (isPath3dPath(path)) addPathToScene();
         else if (isCamera3dPath(path)) addCameraToScene();
@@ -2199,8 +2209,11 @@ bool MainWindow::refuseLocked(int layer)
 // A new layer (above the selected one) with that media: one undo step
 void MainWindow::loadIntoNewLayer(const QString &path)
 {
-    m_undo->beginMacro(QStringLiteral("Load into New Layer"));
-    addEmptyLayer();
+    // A Path, a Camera or an Empty goes into a 3D scene: a new one (with its light) is made for it, not a 2D layer
+    const bool object3d = isPath3dPath(path) || isEmpty3dPath(path) || isCamera3dPath(path);
+    m_undo->beginMacro(object3d ? QStringLiteral("Load into New 3D Scene") : QStringLiteral("Load into New Layer"));
+    if (object3d) createScene();
+    else addEmptyLayer();
     const bool ok = loadIntoLayer(currentLayer(), path);
     m_undo->endMacro();
     if (!ok) m_undo->undo(); // nothing loaded: no empty layer left behind

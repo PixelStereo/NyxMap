@@ -6,6 +6,7 @@
 #include "Engine.h"
 
 #include <QJsonArray>
+#include <array>
 #include <QJsonObject>
 #include <QUndoCommand>
 #include <QVariant>
@@ -80,6 +81,34 @@ private:
     Prop m_prop;
     QVariant m_before, m_after;
     qint64 m_time;
+};
+
+// The 3D FX of a 3D object (Fx3d): which are listed, in what order, and which are on, before / after an edit of the list
+class SetFx3d : public QUndoCommand
+{
+public:
+    struct State {
+        std::vector<Fx3dEntry> list; // with their settings: a FX taken out comes back as it was
+        quint64 next = 1;
+        bool operator==(const State &o) const
+        {
+            if (list.size() != o.list.size()) return false;
+            for (size_t i = 0; i < list.size(); ++i)
+                if (list[i].id != o.list[i].id || list[i].kind != o.list[i].kind || list[i].enabled != o.list[i].enabled) return false;
+            return true;
+        }
+        bool operator!=(const State &o) const { return !(*this == o); }
+    };
+    SetFx3d(Engine *e, quint64 layer, const State &before, const State &after, const QString &text);
+    static State read(Engine *e, quint64 layer);
+    void undo() override { apply(m_before); }
+    void redo() override { apply(m_after); }
+
+private:
+    void apply(const State &s);
+    Engine *m_e;
+    quint64 m_layer;
+    State m_before, m_after;
 };
 
 // Full mapping (corners + mesh) before / after an edit

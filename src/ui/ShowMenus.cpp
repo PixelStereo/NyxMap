@@ -82,7 +82,7 @@ void walk(QMenu *menu, const std::vector<Node> &nodes, const LayerLeaf &leaf, co
 
 } // namespace
 
-void fillLayerTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerContainer &container, bool viewports)
+void fillLayerTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerContainer &container, bool viewports, bool without3dObjects)
 {
     std::vector<Node> nodes;
     {
@@ -90,8 +90,12 @@ void fillLayerTree(QMenu *menu, Engine *e, const LayerLeaf &leaf, const LayerCon
         QHash<quint64, QString> names;
         for (int i = 0; i < e->layerCount(); ++i)
             if (const auto *layer = e->layer(i)) names.insert(layer->id, layer->name);
-        for (const TreeNode &n : e->structure())
-            if ((n.kind == TreeNode::Viewport) == viewports) nodes.push_back({n.id, n.parent, names.value(n.id), n.isGroup()});
+        for (const TreeNode &n : e->structure()) {
+            if ((n.kind == TreeNode::Viewport) != viewports) continue;
+            if (without3dObjects && n.role == TreeNode::Object3d) continue;
+            const bool scene = n.role == TreeNode::Scene3d || n.role == TreeNode::Merge3d;
+            nodes.push_back({n.id, n.parent, names.value(n.id), n.isGroup() && !(without3dObjects && scene)});
+        }
     }
     walk(menu, nodes, leaf, container);
 }

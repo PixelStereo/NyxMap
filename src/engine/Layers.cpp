@@ -509,7 +509,7 @@ int Engine::sceneTriangles(int scene) const
             if (l->parent != holder || !l->enabled) continue;
             if (l->merge3d) walk(l->id);
             else if (const auto m = l->type == SourceType::Model ? modelOf(*l) : nullptr) // every copy of its Duplicate FX
-                total += m->triangleCount() * int(const_cast<Engine *>(this)->duplicateFrames(*l, QMatrix4x4()).size());
+                total += m->triangleCount() * int(const_cast<Engine *>(this)->placementFrames(*l, QMatrix4x4(), true).size());
         }
     };
     walk(top->id);
@@ -543,28 +543,40 @@ int Engine::addMerge3d(const QString &name, int at)
 
 // The picture laid on a 3D model: another layer's, after its FX (0: its materials). Refused when that layer is made from
 // the model's scene (a scene shown on itself)
-bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, false, err); }
-bool Engine::setModelDisplace(int i, quint64 layerId, QString *err) { return setModelLayer(i, layerId, true, err); }
+bool Engine::setModelPicture(int i, quint64 picture, QString *err) { return setModelLayer(i, picture, err); }
 
-bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, int stage)
+// The 3D scene a layer is in (itself for a scene), through its Merge 3Ds (lock held)
+template <typename Find> static const Layer *sceneOfLayer(const Layer *o, Find layerOfId)
+{
+    while (o && !o->scene3d) o = o->parent ? layerOfId(o->parent) : nullptr;
+    return o;
+}
+
+// Whether a layer is a source that can feed a 3D FX or a model: not a viewport, not a 3D object, and not made from the
+// model's own scene (a scene shown on itself)
+bool Engine::feedsModel(const Layer &model, quint64 picture, QString *err)
+{
+    const Layer *p = layer(indexOfId(picture));
+    if (!p || p->isViewport || p->is3dObject()) {
+        if (err) *err = QStringLiteral("A layer, a group or a 3D scene can be shown on a model.");
+        return false;
+    }
+    for (quint64 up = model.id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
+        if (up == picture || layerDependsOn(picture, up)) {
+            if (err) *err = QStringLiteral("\"%1\" is made from this model's scene: it cannot be shown on it.").arg(p->name);
+            return false;
+        }
+    return true;
+}
+
+bool Engine::setModelLayer(int i, quint64 picture, QString *err, int stage)
 {
     {
         Lock lk(&m_mutex);
         Layer *l = layer(i);
         if (!l || l->type != SourceType::Model) return false;
-        if (picture) {
-            const Layer *p = layer(indexOfId(picture));
-            if (!p || p->isViewport || p->is3dObject()) {
-                if (err) *err = QStringLiteral("A layer, a group or a 3D scene can be shown on a model.");
-                return false;
-            }
-            for (quint64 up = l->id; up; up = layer(indexOfId(up)) ? layer(indexOfId(up))->parent : 0)
-                if (up == picture || layerDependsOn(picture, up)) {
-                    if (err) *err = QStringLiteral("\"%1\" is made from this model's scene: it cannot be shown on it.").arg(p->name);
-                    return false;
-                }
-        }
-        if (!displace && l->material) {
+        if (picture && !feedsModel(*l, picture, err)) return false;
+        if (l->material) {
             for (const auto &object : m_layers)
                 if (picture && object->material == l->material && layerDependsOn(picture, object->id)) {
                     if (err) *err = QStringLiteral("This picture feeds back through another object using the material.");
@@ -577,12 +589,92 @@ bool Engine::setModelLayer(int i, quint64 picture, bool displace, QString *err, 
                 object->modelPictureStage = picture ? stage : -1;
             }
         }
-        if (displace && picture) l->modelDisplaceEnabled = true;
-        (displace ? l->modelDisplace : l->modelPicture) = picture;
-        (displace ? l->modelDisplaceStage : l->modelPictureStage) = picture ? stage : -1;
+        l->modelPicture = picture;
+        l->modelPictureStage = picture ? stage : -1;
     }
     emit layersChanged();
     return true;
+}
+
+// A 3D FX added to a 3D object, at the end of its list and on (0 when that object cannot have it)
+quint64 Engine::addFx3d(int i, Fx3d kind)
+{
+    quint64 id = 0;
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        if (!l || !l->canHaveFx3d(kind)) return 0;
+        id = l->addFx3d(kind).id;
+    }
+    emit layersChanged();
+    return id;
+}
+
+bool Engine::removeFx3d(int i, quint64 fx)
+{
+    bool removed = false;
+    {
+        Lock lk(&m_mutex);
+        if (Layer *l = layer(i)) {
+            const auto it = std::find_if(l->fx3d.begin(), l->fx3d.end(), [fx](const Fx3dEntry &e) { return e.id == fx; });
+            if (it != l->fx3d.end()) {
+                l->fx3d.erase(it);
+                removed = true;
+            }
+        }
+    }
+    if (removed) emit layersChanged();
+    return removed;
+}
+
+// The first 3D FX of a kind of a layer (0: none)
+quint64 Engine::fx3dOfKind(int i, Fx3d kind)
+{
+    const Layer *l = layer(i);
+    if (l)
+        for (const Fx3dEntry &e : l->fx3d)
+            if (e.kind == kind) return e.id;
+    return 0;
+}
+
+// The layer a 3D FX reads: Displace's picture (a layer whose luminance pushes the points, taken at a stage), the Path
+// Duplicate puts its copies on, the Path Follow Path travels along (0: none)
+bool Engine::setFx3dLayer(int i, quint64 fx, quint64 target, QString *err, int stage)
+{
+    {
+        Lock lk(&m_mutex);
+        Layer *l = layer(i);
+        Fx3dEntry *e = l ? l->fx3dById(fx) : nullptr;
+        if (!e) return false;
+        const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
+        if (e->kind == Fx3d::Displace) {
+            if (target && !feedsModel(*l, target, err)) return false;
+            e->s.stage = target ? stage : -1;
+        } else if (e->kind == Fx3d::Duplicate || e->kind == Fx3d::FollowPath) {
+            if (target) {
+                const Layer *p = find(target);
+                if (!p || p->type != SourceType::Path || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
+                if (e->kind == Fx3d::FollowPath) {
+                    if (p == l) return false;
+                    for (quint64 up = p->parent; up; up = find(up) ? find(up)->parent : 0)
+                        if (up == l->id) return false; // a Merge 3D cannot follow a path it holds: it would chase itself
+                }
+            }
+        } else {
+            return false;
+        }
+        e->s.layer = target;
+    }
+    emit layersChanged();
+    return true;
+}
+
+// The first Displace of a model (one is added when it has none): the layer whose luminance pushes its points
+bool Engine::setModelDisplace(int i, quint64 picture, QString *err)
+{
+    quint64 fx = fx3dOfKind(i, Fx3d::Displace);
+    if (!fx && picture) fx = addFx3d(i, Fx3d::Displace);
+    return fx && setFx3dLayer(i, fx, picture, err);
 }
 
 // A 3D scene's environment: a layer's picture (an HDRI, a video…), equirectangular, at a stage (0: none). Refused when
@@ -665,15 +757,6 @@ bool Engine::setLayerPath(int i)
     releaseGarbage(g);
     emit layersChanged();
     return true;
-}
-
-namespace {
-// The 3D scene a layer is in (itself for a scene), through its Merge 3Ds (lock held)
-template <typename Find> const Layer *sceneOfLayer(const Layer *o, Find layerOfId)
-{
-    while (o && !o->scene3d) o = o->parent ? layerOfId(o->parent) : nullptr;
-    return o;
-}
 }
 
 bool Engine::setLayerCamera(int i)
@@ -771,41 +854,20 @@ bool Engine::setCameraLookAt(int i, quint64 object)
     return true;
 }
 
+// The Path the first Duplicate of a model puts its copies on (one is added when it has none)
 bool Engine::setDuplicatePath(int i, quint64 path)
 {
-    {
-        Lock lk(&m_mutex);
-        Layer *l = layer(i);
-        if (!l || l->type != SourceType::Model) return false;
-        if (path) {
-            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *p = find(path);
-            if (!p || p->type != SourceType::Path || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
-        }
-        l->duplicatePath = path;
-    }
-    emit layersChanged();
-    return true;
+    quint64 fx = fx3dOfKind(i, Fx3d::Duplicate);
+    if (!fx && path) fx = addFx3d(i, Fx3d::Duplicate);
+    return fx && setFx3dLayer(i, fx, path);
 }
 
+// The Path the first Follow Path of an object travels along (one is added when it has none)
 bool Engine::setFollowPath(int i, quint64 path)
 {
-    {
-        Lock lk(&m_mutex);
-        Layer *l = layer(i);
-        if (!l || !(l->type == SourceType::Model || l->type == SourceType::Camera || l->type == SourceType::Light || l->merge3d))
-            return false;
-        if (path) {
-            const auto find = [this](quint64 id) { return layer(indexOfId(id)); };
-            const Layer *p = find(path);
-            if (!p || p->type != SourceType::Path || p == l || sceneOfLayer(p, find) != sceneOfLayer(l, find)) return false;
-            for (quint64 up = p->parent; up; up = find(up) ? find(up)->parent : 0)
-                if (up == l->id) return false; // a Merge 3D cannot follow a path it holds: it would chase itself
-        }
-        l->followPath = path;
-    }
-    emit layersChanged();
-    return true;
+    quint64 fx = fx3dOfKind(i, Fx3d::FollowPath);
+    if (!fx && path) fx = addFx3d(i, Fx3d::FollowPath);
+    return fx && setFx3dLayer(i, fx, path);
 }
 
 quint64 Engine::newIdLocked()
@@ -1467,9 +1529,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.instanceOf = 0;
     l.instanceOwnMaterial = false;
     l.modelPlacement = ModelPlacement();
-    l.modelTransformFx = ModelPlacement();
-    l.modelTransformFxEnabled = false;
-    l.modelDisplaceEnabled = false;
+    l.fx3d.clear();
     l.light = LightSettings();
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
@@ -1535,8 +1595,9 @@ bool Engine::layerDependsOn(quint64 id, quint64 onId) const
         for (const auto &l : m_layers) {
             if (l->id != cur) continue;
             if (l->type == SourceType::Layer && l->sourceLayer && visit(l->sourceLayer)) return true;
-            if (l->type == SourceType::Model && ((l->modelPicture && visit(l->modelPicture)) || (l->modelDisplace && visit(l->modelDisplace))))
-                return true; // its pictures
+            if (l->type == SourceType::Model && l->modelPicture && visit(l->modelPicture)) return true; // its picture
+            for (const Fx3dEntry &e : l->fx3d) // the picture that displaces it
+                if (e.kind == Fx3d::Displace && e.s.layer && visit(e.s.layer)) return true;
             if (l->scene3d && l->sceneEnvironment && visit(l->sceneEnvironment)) return true; // its environment
             if (l->type == SourceType::Tox)
                 for (quint64 input : l->tox.inputs) if (input && visit(input)) return true;
