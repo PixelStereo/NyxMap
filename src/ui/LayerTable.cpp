@@ -13,6 +13,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMimeData>
 #include <memory>
 #include <QPainter>
@@ -568,6 +569,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     h->setStretchLastSection(false);
     h->setSectionResizeMode(ColHandle, QHeaderView::Fixed);
     m_table->setColumnWidth(ColHandle, 16);
+    m_table->setColumnHidden(ColHandle, true); // a layer is dragged from anywhere in its row
     h->setSectionResizeMode(ColVisible, QHeaderView::Fixed);
     m_table->setColumnWidth(ColVisible, 28);
     h->setSectionResizeMode(ColLock, QHeaderView::Fixed);
@@ -614,6 +616,18 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         if (row == m_table->currentRow() && m_table->selectionModel()->isRowSelected(row, QModelIndex()))
             emit rowClicked(row);
         if (col == ColLock) emit lockToggled(row);
+        if (col == ColBlend && row >= 0 && row < int(m_rows.size())) {
+            const Row &r = m_rows[size_t(row)];
+            if (r.noPicture || r.viewport || r.locked || r.lockedByGroup) return;
+            QMenu menu(m_table);
+            for (BlendMode m : kBlendModes) {
+                QAction *a = menu.addAction(blendModeName(m));
+                a->setCheckable(true);
+                a->setChecked(blendModeName(m) == r.blend);
+                connect(a, &QAction::triggered, this, [this, row, m] { emit blendEdited(row, int(m)); });
+            }
+            menu.exec(m_table->viewport()->mapToGlobal(QPoint(m_table->columnViewportPosition(ColBlend), m_table->rowViewportPosition(row) + m_table->rowHeight(row))));
+        }
         if (col == ColSolo && row >= 0 && row < int(m_rows.size()) && !m_rows[size_t(row)].viewport) emit soloToggled(row);
     });
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -802,36 +816,12 @@ void LayerTable::updateRow(int r, const Row &row)
         if (QTableWidgetItem *it = m_table->item(r, c)) it->setBackground(bg);
     m_table->setRowHidden(r, row.hidden);
 
-    // Blend Mode: a compact menu right in the row; "—" without a picture
+    // Blend Mode: its name in the row; a click opens the menu (flat, like the rest of the list)
     {
-        auto *combo = qobject_cast<QComboBox *>(m_table->cellWidget(r, ColBlend));
-        if (!combo) {
-            combo = new QComboBox;
-            for (BlendMode m : kBlendModes) combo->addItem(blendModeName(m), int(m));
-            combo->setFocusPolicy(Qt::NoFocus);
-            combo->setToolTip(QStringLiteral("Blend Mode"));
-            QWidget *cell = new QWidget;
-            auto *hl = new QHBoxLayout(cell);
-            hl->setContentsMargins(2, 9, 2, 9);
-            hl->addWidget(combo);
-            m_table->setCellWidget(r, ColBlend, cell);
-            connect(combo, qOverload<int>(&QComboBox::activated), this, [this, combo](int i) {
-                if (m_updating) return;
-                for (int k = 0; k < m_table->rowCount(); ++k)
-                    if (QWidget *c = m_table->cellWidget(k, ColBlend); c && c->isAncestorOf(combo)) {
-                        emit blendEdited(k, combo->itemData(i).toInt());
-                        break;
-                    }
-            });
-        } else if (!m_table->cellWidget(r, ColBlend)->findChild<QComboBox *>()) {
-            combo = nullptr;
-        }
-        combo = m_table->cellWidget(r, ColBlend)->findChild<QComboBox *>();
-        const int at = combo->findText(row.blend);
-        QSignalBlocker b(combo);
-        if (at >= 0) combo->setCurrentIndex(at);
-        combo->setVisible(!row.noPicture && !row.viewport);
-        combo->setEnabled(!row.locked && !row.lockedByGroup);
+        QTableWidgetItem *blend = text(ColBlend, row.noPicture || row.viewport ? QString() : row.blend + QStringLiteral("  ▾"),
+                                       QStringLiteral("Blend Mode: click to change"));
+        blend->setTextAlignment(Qt::AlignCenter);
+        blend->setForeground(row.locked || row.lockedByGroup ? QColor(110, 110, 115) : QColor(190, 190, 198));
     }
 
     // Opacity: the application's own bar (SliderField, as in the inspector) right in the row; "—" without a picture

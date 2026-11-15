@@ -954,6 +954,8 @@ int main(int argc, char **argv)
         auto opacityOf = [&](quint64 id) { return engine.parameterValue(id, "opacity").toDouble(); };
         check(table && undo && inspector, "layer list, undo stack and inspector present");
         if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty() && table) {
+            theme::applyToApplication(app); // as the application looks
+            table->setCurrentCell(0, 4);
             app.processEvents();
             window.findChild<LayerTable *>()->grab().save(captures + "/layer-list.png");
         }

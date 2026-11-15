@@ -1337,6 +1337,14 @@ void SliderField::setNumberOnly(bool on)
 {
     m_numberOnly = on;
     m_spin->setAttribute(Qt::WA_TransparentForMouseEvents, on);
+    if (on) { // the row's colour shows through the number
+        QPalette pal = m_spin->palette();
+        pal.setColor(QPalette::Base, Qt::transparent);
+        pal.setColor(QPalette::Window, Qt::transparent);
+        m_spin->setPalette(pal);
+        m_spin->setAutoFillBackground(false);
+        if (auto *le = m_spin->findChild<QLineEdit *>()) le->setAutoFillBackground(false);
+    }
     if (on) connect(m_spin, &QAbstractSpinBox::editingFinished, this, [this] { m_spin->setAttribute(Qt::WA_TransparentForMouseEvents, true); });
     resizeEvent(nullptr);
 }
