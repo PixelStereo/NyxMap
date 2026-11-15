@@ -703,6 +703,9 @@ public:
     bool removeControl(quint64 id);
     bool moveControl(quint64 id, int to);
     bool setControlValue(quint64 id, double value); // a number, a switch, an index; any thread
+    // The pointer over the preview, 0..1 across and down (the interface feeds it): the show's "mouse/x" and "mouse/y",
+    // read by an interaction like any show value (an Internal source; both together, an XY input, for a pad)
+    void setMousePosition(double x, double y);
     bool setControlPoint(quint64 id, double x, double y); // a 2D slider's two numbers; any thread
     bool setControlColor(quint64 id, double r, double g, double b);
     // The show's musical clock (tempo, bar, position in beats): steps counted in beats and quantized (Sequencer), OSC /clock
@@ -1313,6 +1316,7 @@ private:
     void releaseRetired(bool wait);                                       // render thread, lock held: their OpenGL
     double m_fadeElapsed = 0; // seconds since the last recall
     quint64 m_recalledSnapshot = 0;
+    double m_mouseX = 0, m_mouseY = 0; // (m_mutex) the pointer, see setMousePosition
     quint64 m_recalledPreset = 0;   // the last recall was this preset's (a snapshot's recall clears it)
     void noteRecallTotal();         // m_recallTotal from the fades this recall began (lock held)
     double m_recallTotal = 0;

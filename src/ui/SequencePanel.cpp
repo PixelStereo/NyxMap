@@ -383,9 +383,35 @@ public:
     {
         paintCell(p, opt, idx);
         paintFrame(p, opt, idx);
+        if (idx.column() == 0) paintGroupLine(p, opt, idx);
     }
 
 private:
+    // An open group: a thin frame around all it holds, its header and every step (four sides): the sides on each row,
+    // the top on the header, the bottom under its last step
+    void paintGroupLine(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
+    {
+        const int row = idx.row();
+        const int action = m_w->actionOfRow(row);
+        const bool header = action == SequenceWindow::kHeaderRow;
+        if (!header && action < 0) return;
+        // A header is open when the row after it holds its steps
+        if (header && !(row + 1 < m_w->m_steps->rowCount() && m_w->actionOfRow(row + 1) >= 0)) return;
+        const bool last = !header && !(row + 1 < m_w->m_steps->rowCount() && m_w->actionOfRow(row + 1) >= 0);
+        const QHeaderView *hv = m_w->m_steps->horizontalHeader();
+        const int firstCol = hv->logicalIndex(0), lastCol = hv->logicalIndex(hv->count() - 1);
+        const QColor c(150, 160, 185);
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        p->setPen(QPen(c, 1.2));
+        const QRectF r = QRectF(opt.rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        if (idx.column() == firstCol) p->drawLine(r.topLeft(), r.bottomLeft());
+        if (idx.column() == lastCol) p->drawLine(r.topRight(), r.bottomRight());
+        if (header) p->drawLine(r.topLeft(), r.topRight());
+        if (last) p->drawLine(r.bottomLeft(), r.bottomRight());
+        p->restore();
+    }
+
     // The step played and the one GO plays: a thin frame around their whole row (each cell draws its part of it)
     void paintFrame(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const
     {

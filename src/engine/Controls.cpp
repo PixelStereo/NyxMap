@@ -313,6 +313,14 @@ bool Engine::setControlValue(quint64 id, double value)
     return true;
 }
 
+void Engine::setMousePosition(double x, double y)
+{
+    Lock lk(&m_mutex);
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    m_mouseX = std::clamp(x, 0.0, 1.0);
+    m_mouseY = std::clamp(y, 0.0, 1.0);
+}
+
 bool Engine::setControlPoint(quint64 id, double x, double y)
 {
     Lock lk(&m_mutex);
