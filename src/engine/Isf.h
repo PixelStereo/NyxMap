@@ -199,6 +199,16 @@ public:
     // instance (an input is found again by its name: a reloaded shader keeps them); labels "<title> › <input>"
     std::vector<Parameter> parameters(const QString &title) const;
 
+    // QRhi prototype (docs/developers/qrhi-prototype.md): the shader as Vulkan-flavoured GLSL 440, what
+    // QShaderBaker bakes into SPIR-V, Metal and HLSL. Its values in one std140 block (binding 0), each image at its
+    // own binding, the varyings at explicit locations (matched by name between the stages). No GL. error: why it
+    // could not be read.
+    struct RhiSources {
+        QString vertex, fragment, error;
+        int samplers = 0;
+    };
+    static RhiSources rhiSources(const QString &path);
+
     // Lightweight header parsing (for the library, no GL).
     struct Header {
         QString name, description;
@@ -211,6 +221,7 @@ public:
     static std::vector<std::pair<QString, QString>> dependencies(const QString &path);
 
 private:
+    bool readSources(const QString &path, QString *fragment, QString *vertex);
     bool parse(const QString &src, QString *body);
     bool compile(const QString &fsBody, const QString &vsBody);
     QString uniformBlock() const;
