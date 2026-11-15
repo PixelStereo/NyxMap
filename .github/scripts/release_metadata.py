@@ -52,27 +52,24 @@ def select_release(releases, repository):
 
 
 def downloads(release, urls, repository):
+    """Render the README's established download layout; only versions and asset URLs vary."""
     tag = release["tag_name"]
     preview = " · PREVIEW" if release.get("prerelease") else ""
     companion = (f"""
+<a href="{urls['companion']}"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="{urls['companion']}"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
 
-<a href="https://bitfocus.io/companion"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://bitfocus.io/companion"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
-
-[Download the NyxMap module]({urls['companion']}) · [setup guide](docs/integrations/companion.md)""") if "companion" in urls else ""
+[Setup Guide for the Companion Module](docs/integrations/companion.md)""" if "companion" in urls else "")
     return f"""<!-- release-downloads:start -->
 **LATEST VERSION · [{tag}{preview}](https://github.com/{repository}/releases/tag/{tag})**
 
-[![macOS](https://img.shields.io/badge/macOS-Download-111111?style=for-the-badge&logo=apple&logoColor=white)]({urls['mac']})
-[![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)]({urls['win']})
-[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
+[![macOS](https://img.shields.io/badge/macOS-Download-34CC34?style=for-the-badge&logo=apple&logoColor=white)]({urls['mac']})
+[![Windows](https://img.shields.io/badge/Windows-Download-CCCC34?style=for-the-badge&logo=windows&logoColor=white)]({urls['win']})
+[![Linux](https://img.shields.io/badge/Linux-Download-CC3434?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
+
+<a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/documentation-blue?style=for-the-badge&logo=material%20for%20mkdocs" height="28"></a>
+
 {companion}
-
-[All downloads & release notes](https://github.com/{repository}/releases) · <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-Read-24272C?style=for-the-badge" /></a>
-
-Linux: Ubuntu 24.04+ · x86_64. [Portable archive]({urls['portable']}) (no FUSE or installation).
 <!-- release-downloads:end -->"""
-
-
 def update_files(root, releases, repository):
     release, urls = select_release(releases, repository)
     path = root / "README.md"

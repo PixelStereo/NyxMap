@@ -30,8 +30,14 @@ class ReleaseMetadataTests(unittest.TestCase):
             metadata.update_files(root, [current], REPO)
             text = (root / "README.md").read_text(encoding="utf-8")
             self.assertTrue(text.startswith("before\n") and text.endswith("\nafter\n"))
-            for asset in current["assets"]:
+            for asset in current["assets"][:3]:
                 self.assertIn(asset["browser_download_url"], text)
+            self.assertNotIn(current["assets"][3]["browser_download_url"], text)
+            self.assertIn("documentation-blue", text)
+            self.assertIn("34CC34", text)
+            self.assertIn("CCCC34", text)
+            self.assertIn("CC3434", text)
+            self.assertNotIn("Portable archive", text)
             self.assertEqual((root / "VERSION").read_text(), "1.2.3\n")
             metadata.update_files(root, [current], REPO)
             self.assertEqual((root / "README.md").read_text(encoding="utf-8"), text)
@@ -75,7 +81,7 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_companion_link_only_when_asset_is_published(self):
         current = release()
         _, urls = metadata.select_release([current], REPO)
-        self.assertNotIn('Download the Stream Deck module', metadata.downloads(current, urls, REPO))
+        self.assertNotIn('alt="Module for Companion"', metadata.downloads(current, urls, REPO))
         companion = {'name': 'NyxMap-Companion-v1.2.3.tgz', 'state': 'uploaded', 'size': 123,
                      'browser_download_url': f'https://github.com/{REPO}/releases/download/v1.2.3/NyxMap-Companion-v1.2.3.tgz'}
         current['assets'].append(companion)
@@ -85,7 +91,10 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png", rendered)
         self.assertIn("alt=\"Module for Companion\"", rendered)
         self.assertNotIn("Controllable by Companion", rendered)
-        self.assertIn("Download the NyxMap module", rendered)
+        self.assertIn("Setup Guide for the Companion Module", rendered)
+        self.assertIn(companion['browser_download_url'], rendered)
+        self.assertNotIn("bitfocus.io/companion", rendered)
+        self.assertNotIn("Portable archive", rendered)
         companion['browser_download_url'] = 'https://example.org/module.tgz'
         with self.assertRaises(ValueError):
             metadata.select_release([current], REPO)
