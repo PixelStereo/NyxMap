@@ -67,7 +67,7 @@ def downloads(release, urls, repository):
 [![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
 {companion}
 
-[All downloads & release notes](https://github.com/{repository}/releases) · [Documentation](https://pixelstereo.github.io/NyxMap/)
+[All downloads & release notes](https://github.com/{repository}/releases) · <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-Read-24272C?style=for-the-badge" /></a>
 
 Linux: Ubuntu 24.04+ · x86_64. [Portable archive]({urls['portable']}) (no FUSE or installation).
 <!-- release-downloads:end -->"""
