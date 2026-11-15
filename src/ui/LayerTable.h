@@ -67,6 +67,7 @@ signals:
     void collapseToggled(int row);
     void renamed(int row, const QString &name);
     void opacityEdited(int row, double opacity);
+    void blendEdited(int row, int blendMode); // a BlendMode, chosen in the row's menu
     // Rows dragged: inserted before `beforeRow` (-1: at the end), into the group `parentRow` (-1: top level)
     void moveRequested(const QList<int> &rows, int beforeRow, int parentRow);
     void removeClicked();

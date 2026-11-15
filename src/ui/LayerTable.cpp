@@ -1,8 +1,10 @@
 #include "LayerTable.h"
 #include <QSet>
 #include "Widgets.h"
+#include "../engine/Layer.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -31,7 +33,7 @@
 #include <functional>
 #include <tuple>
 
-enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColOpacity, ColAudio, ColCount };
+enum Col { ColHandle, ColVisible, ColLock, ColSolo, ColName, ColBlend, ColOpacity, ColAudio, ColCount };
 enum NameRole { RoleMeta = Qt::UserRole + 1, RoleDepth, RoleArrow, RoleTag, RoleThumb };
 
 static const char *const kRowsMime = kLayerRowsMime;
@@ -538,7 +540,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     grid->onRename = [this](int row) { startRename(row); };
     m_table = grid;
     m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QString(), QStringLiteral("Layer"),
-                                        QStringLiteral("Opacity"), QStringLiteral("Audio")});
+                                        QStringLiteral("Blend"), QStringLiteral("Opa."), QStringLiteral("Audio")});
     m_table->setToolTip(QStringLiteral("Top layer is drawn on top · drop a media onto a layer to load it · "
                                        "drag layers onto a group · double-click a name to rename · "
                                        "the viewports, at the top, are windows onto the composition"));
@@ -546,6 +548,8 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeaderItem(ColVisible)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: no edit allowed"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: only the soloed layers are drawn"));
+    m_table->horizontalHeaderItem(ColBlend)->setToolTip(QStringLiteral("Blend Mode"));
+    m_table->horizontalHeaderItem(ColOpacity)->setToolTip(QStringLiteral("Opacity: drag the number sideways, double-click to type"));
     m_table->horizontalHeaderItem(ColAudio)->setToolTip(QStringLiteral("Layer output after Audio FX and volume · left / right"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -572,13 +576,15 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->setColumnWidth(ColSolo, 24);
     h->setSectionResizeMode(ColName, QHeaderView::Stretch);
     h->setSectionResizeMode(ColOpacity, QHeaderView::Fixed);
-    m_table->setColumnWidth(ColOpacity, 108);
+    m_table->setColumnWidth(ColOpacity, 62);
+    h->setSectionResizeMode(ColBlend, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColBlend, 92);
     h->setSectionResizeMode(ColAudio, QHeaderView::Fixed);
     m_table->setColumnWidth(ColAudio, 64);
     h->setMinimumSectionSize(16);
     h->moveSection(h->visualIndex(ColAudio), h->visualIndex(ColName) + 1);
     m_table->setColumnHidden(ColAudio, true);
-    h->setStretchLastSection(true);
+    h->setStretchLastSection(false);
     v->addWidget(m_table, 1);
 
     connect(m_table, &QTableWidget::currentCellChanged, this, [this](int row, int, int prev, int) {
@@ -762,7 +768,6 @@ void LayerTable::updateRow(int r, const Row &row)
     // The name cell is painted by its delegate: depth, fold arrow, picture, name, then what it is and how it plays
     QTableWidgetItem *name = text(ColName, row.name, row.name + (row.source.isEmpty() ? QString() : QStringLiteral("\n") + row.source));
     QStringList meta;
-    if (!row.noPicture && !row.viewport) meta << row.blend;
     if (row.effectCount) meta << QStringLiteral("%1 FX%2").arg(row.effectCount).arg(row.effectsOn ? QString() : QStringLiteral(" (off)"));
     if (!row.playback.isEmpty() && !row.viewport) meta << row.playback;
     if (!row.source.isEmpty()) meta << row.source;
@@ -797,6 +802,38 @@ void LayerTable::updateRow(int r, const Row &row)
         if (QTableWidgetItem *it = m_table->item(r, c)) it->setBackground(bg);
     m_table->setRowHidden(r, row.hidden);
 
+    // Blend Mode: a compact menu right in the row; "—" without a picture
+    {
+        auto *combo = qobject_cast<QComboBox *>(m_table->cellWidget(r, ColBlend));
+        if (!combo) {
+            combo = new QComboBox;
+            for (BlendMode m : kBlendModes) combo->addItem(blendModeName(m), int(m));
+            combo->setFocusPolicy(Qt::NoFocus);
+            combo->setToolTip(QStringLiteral("Blend Mode"));
+            QWidget *cell = new QWidget;
+            auto *hl = new QHBoxLayout(cell);
+            hl->setContentsMargins(2, 9, 2, 9);
+            hl->addWidget(combo);
+            m_table->setCellWidget(r, ColBlend, cell);
+            connect(combo, qOverload<int>(&QComboBox::activated), this, [this, combo](int i) {
+                if (m_updating) return;
+                for (int k = 0; k < m_table->rowCount(); ++k)
+                    if (QWidget *c = m_table->cellWidget(k, ColBlend); c && c->isAncestorOf(combo)) {
+                        emit blendEdited(k, combo->itemData(i).toInt());
+                        break;
+                    }
+            });
+        } else if (!m_table->cellWidget(r, ColBlend)->findChild<QComboBox *>()) {
+            combo = nullptr;
+        }
+        combo = m_table->cellWidget(r, ColBlend)->findChild<QComboBox *>();
+        const int at = combo->findText(row.blend);
+        QSignalBlocker b(combo);
+        if (at >= 0) combo->setCurrentIndex(at);
+        combo->setVisible(!row.noPicture && !row.viewport);
+        combo->setEnabled(!row.locked && !row.lockedByGroup);
+    }
+
     // Opacity: the application's own bar (SliderField, as in the inspector) right in the row; "—" without a picture
     auto *cell = m_table->cellWidget(r, ColOpacity);
     SliderField *slider = cell ? cell->findChild<SliderField *>() : nullptr;
@@ -804,7 +841,7 @@ void LayerTable::updateRow(int r, const Row &row)
     if (!cell) {
         cell = new QWidget;
         auto *h = new QHBoxLayout(cell);
-        h->setContentsMargins(4, 12, 4, 12);
+        h->setContentsMargins(2, 12, 2, 12);
         slider = new SliderField;
         slider->setRange(0, 100);
         slider->setDecimals(0);
@@ -812,6 +849,7 @@ void LayerTable::updateRow(int r, const Row &row)
         slider->setSingleStep(1);
         slider->setSnaps({100});
         slider->setCompact(true);
+        slider->setNumberOnly(true);
         slider->setFocusPolicy(Qt::NoFocus);
         none = new QLabel(QStringLiteral("—"));
         none->setAlignment(Qt::AlignCenter);

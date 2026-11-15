@@ -1,6 +1,7 @@
 #include "Widgets.h"
 #include "Mapping.h"
 #include "ColorPicker.h"
+#include <QAbstractItemView>
 #include <QDateTime>
 #include <QSpinBox>
 #include <QPointer>
@@ -230,8 +231,33 @@ QIcon icon()
 
 namespace theme {
 // Dark interface, with the accent wherever a selection or an active control is shown
+namespace {
+// A selected row of a list is tinted, not filled: its content stays readable
+class SoftSelection : public QObject
+{
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if (e->type() == QEvent::Polish)
+            if (auto *view = qobject_cast<QAbstractItemView *>(o)) {
+                QPalette p = view->palette();
+                const QColor base = p.color(QPalette::Base), a = accent();
+                const double k = 0.30;
+                const QColor soft(int(base.red() + (a.red() - base.red()) * k), int(base.green() + (a.green() - base.green()) * k),
+                                  int(base.blue() + (a.blue() - base.blue()) * k));
+                p.setColor(QPalette::Highlight, soft);
+                p.setColor(QPalette::HighlightedText, QColor(240, 240, 242));
+                view->setPalette(p);
+            }
+        return false;
+    }
+};
+} // namespace
+
 void applyToApplication(QApplication &app)
 {
+    app.installEventFilter(new SoftSelection(&app));
     app.setStyle(checkStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     QPalette p;
     const QColor base(30, 30, 33), window(40, 40, 44), text(225, 225, 228), a = accent();
@@ -1301,13 +1327,30 @@ void SliderField::setValue(double v)
 
 void SliderField::resizeEvent(QResizeEvent *)
 {
-    const int w = fieldWidth(m_spin);
+    const int w = m_numberOnly ? width() : fieldWidth(m_spin);
     m_spin->setFixedHeight(height() - 2);
     m_spin->setGeometry(width() - w, 1, w, height() - 2);
     update();
 }
 
-QRectF SliderField::bar() const { return QRectF(0, 1, width() - m_spin->width() - 4, height() - 2); }
+void SliderField::setNumberOnly(bool on)
+{
+    m_numberOnly = on;
+    m_spin->setAttribute(Qt::WA_TransparentForMouseEvents, on);
+    if (on) connect(m_spin, &QAbstractSpinBox::editingFinished, this, [this] { m_spin->setAttribute(Qt::WA_TransparentForMouseEvents, true); });
+    resizeEvent(nullptr);
+}
+
+void SliderField::mouseDoubleClickEvent(QMouseEvent *)
+{
+    if (!m_numberOnly || !isEnabled()) return;
+    m_drag = false;
+    m_spin->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    m_spin->setFocus(Qt::MouseFocusReason);
+    m_spin->selectAll();
+}
+
+QRectF SliderField::bar() const { if (m_numberOnly) return QRectF(); return QRectF(0, 1, width() - m_spin->width() - 4, height() - 2); }
 
 void SliderField::setCompact(bool on) { setFixedHeight(on ? kFieldHeight - 4 : kFieldHeight); }
 double SliderField::valueAt(double x) const
@@ -1333,6 +1376,7 @@ void SliderField::apply(double v, bool finished)
 
 void SliderField::paintEvent(QPaintEvent *)
 {
+    if (m_numberOnly) return;
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF r = bar();
@@ -1379,6 +1423,14 @@ void SliderField::paintEvent(QPaintEvent *)
 
 void SliderField::mousePressEvent(QMouseEvent *e)
 {
+    if (m_numberOnly) {
+        if (e->button() != Qt::LeftButton || !isEnabled()) return;
+        m_drag = true;
+        m_pressX = e->position().x();
+        m_pressValue = m_value;
+        setFocus(Qt::MouseFocusReason);
+        return;
+    }
     if (e->button() != Qt::LeftButton || !isEnabled() || e->position().x() > bar().right()) return;
     m_drag = true;
     setFocus(Qt::MouseFocusReason);
@@ -1387,6 +1439,10 @@ void SliderField::mousePressEvent(QMouseEvent *e)
 void SliderField::mouseMoveEvent(QMouseEvent *e)
 {
     if (!m_drag) return;
+    if (m_numberOnly) { // the whole range over 160 px (ten times finer with Shift)
+        const double per = (m_max - m_min) / 160.0 * (e->modifiers() & Qt::ShiftModifier ? 0.1 : 1.0);
+        return apply(m_pressValue + (e->position().x() - m_pressX) * per, false);
+    }
     const double v = valueAt(e->position().x());
     // Shift: ten times finer, from where the value is
     if (e->modifiers() & Qt::ShiftModifier) return apply(m_value + (v - m_value) * 0.1, false);

@@ -17,12 +17,39 @@
 #include <QPointer>
 #include <QHeaderView>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
+#include <QPainter>
 #include <QTimer>
 #include "TimelineActivity.h"
 #include <QUndoStack>
 #include <QVBoxLayout>
 
 static const QColor kPlaying(76, 217, 100);
+
+namespace {
+constexpr int kPlayZone = 20; // px at the left of the number: the small play
+// The small ▶ at the left of a timeline's row: clicking it plays the timeline, as in the steps of a sequence
+class TimelineRowDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::paint(p, opt, index);
+        if (index.column() != 0 || !index.data(TimelineList::TimelineRole).toULongLong()) return;
+        const bool live = index.data(Qt::ForegroundRole).value<QBrush>().color() == kPlaying;
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        const QRectF r(opt.rect.left() + 6, opt.rect.center().y() - 5, 9, 10);
+        QPolygonF tri;
+        tri << r.topLeft() << r.bottomLeft() << QPointF(r.right(), r.center().y());
+        p->setPen(Qt::NoPen);
+        p->setBrush(live ? kPlaying : QColor(150, 150, 158));
+        p->drawPolygon(tri);
+        p->restore();
+    }
+};
+} // namespace
 
 void TimelineWindow::fillParameterMenu(QMenu *menu, Engine *engine, QUndoStack *undo, quint64 layer,
                                       const QStringList &paths, QWidget *anchor)
@@ -504,6 +531,15 @@ TimelineWindow::TimelineWindow(Engine *engine, QUndoStack *undo, QWidget *parent
     m_list->setColumnWidth(0, 54); // room for the groups' indentation
     m_list->setColumnWidth(2, 58);
     new FittedTableHeader(m_list, m_list->header(), 1);
+    m_list->setItemDelegate(new TimelineRowDelegate(m_list));
+    connect(m_list, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem *it, int column) {
+        const quint64 id = it->data(0, TimelineList::TimelineRole).toULongLong();
+        if (column != 0 || !id) return;
+        const QRect r = m_list->visualItemRect(it);
+        const int x = m_list->viewport()->mapFromGlobal(QCursor::pos()).x();
+        if (x >= r.left() && x < r.left() + kPlayZone && m_engine->indexOfAnimation(id) >= 0)
+            m_engine->controlAnimation(id, AnimAction::Play); // the small play
+    });
     m_list->setToolTip(QStringLiteral("Drag a timeline onto a step of a sequence (Play by default: the step can also pause, stop, rewind, "
                                       "seek or change its loop), or into a group\n"
                                       "Double-click or Return: rename · ⌘Return: play · Delete: delete · ⌘D: duplicate · ⌘G: new group"));
