@@ -60,8 +60,24 @@ The pictures are the OpenGL path's, and as close to FFmpeg's own decoding. The
 cost is the same order: neither API is the bottleneck for one stream. The
 `rhi_video` test checks the colours (skipped without Metal or hardware frames).
 
-Still to do: HAP's compressed textures (`QRhiTexture::BC1`/`BC3`/`BC4`/`BC7`),
-D3D11VA surfaces on Windows, VAAPI (dmabuf to Vulkan) on Linux. The probe makes
+HAP: `test/rhi_hap.cpp` uploads HAP's compressed blocks as they are into QRhi's
+block-compressed textures (BC1, BC3, BC4, BC7), decompressed by the GPU as it
+samples, and converts them with the OpenGL path's formula (RGB(A), scaled
+YCoCg, alpha). Per frame, upload and conversion, GPU done:
+
+| HAP 3840×2160 | QRhi against OpenGL | QRhi Metal, median / P95 | OpenGL, median / P95 |
+|---|---|---|---|
+| Hap · DXT1 | identical | 0.69 / 0.83 ms | 0.74 / 0.83 ms |
+| Hap Alpha · DXT5 | identical | 0.93 / 1.22 ms | 0.93 / 1.17 ms |
+| Hap Q · YCoCg DXT5 | identical | 0.89 / 1.18 ms | 0.92 / 1.15 ms |
+
+The same pictures, the same cost. One gain: on Apple Silicon OpenGL offers no
+BPTC, so Hap R (BC7) and Hap HDR (BC6H) are decoded on the CPU there, while
+QRhi's Metal backend samples BC7 as it is. The `rhi_hap` test checks the
+colours. HAP Q Alpha is left out of this probe (FFmpeg does not encode it); its
+two textures are a BC3 and a BC4, both covered here.
+
+Still to do: D3D11VA surfaces on Windows, VAAPI (dmabuf to Vulkan) on Linux. The probe makes
 the planes' QRhi textures again for each frame; a cache by surface would lower
 its cost.
 
