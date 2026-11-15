@@ -54,18 +54,22 @@ def select_release(releases, repository):
 def downloads(release, urls, repository):
     tag = release["tag_name"]
     preview = " · PREVIEW" if release.get("prerelease") else ""
-    companion = (f"\\n\\n[Stream Deck module for Companion]({urls['companion']}) · "
-                 "[setup guide](docs/integrations/companion.md)") if "companion" in urls else ""
+    companion = (f"""
+
+<a href="https://companion.free/?ref=bitfocus"><img alt="Controllable by Companion" src="https://companion.free/img/companion-badge.png?ref=bitfocus" width="180"></a>
+
+[Download the NyxMap module]({urls['companion']}) · [setup guide](docs/integrations/companion.md)""") if "companion" in urls else ""
     return f"""<!-- release-downloads:start -->
 **LATEST VERSION · [{tag}{preview}](https://github.com/{repository}/releases/tag/{tag})**
 
 [![macOS](https://img.shields.io/badge/macOS-Download-111111?style=for-the-badge&logo=apple&logoColor=white)]({urls['mac']})
 [![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)]({urls['win']})
 [![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
+{companion}
 
 [All downloads & release notes](https://github.com/{repository}/releases) · [Documentation](https://pixelstereo.github.io/NyxMap/)
 
-Linux: Ubuntu 24.04+ · x86_64. [Portable archive]({urls['portable']}) (no FUSE or installation).{companion}
+Linux: Ubuntu 24.04+ · x86_64. [Portable archive]({urls['portable']}) (no FUSE or installation).
 <!-- release-downloads:end -->"""
 
 
