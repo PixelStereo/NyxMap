@@ -58,6 +58,25 @@ int main(int argc, char **argv)
         const quint64 a = engine.addControl(slider), b = engine.addControl(toggle), c = engine.addControl(choice), d = engine.addControl(button),
                       e = engine.addControl(color);
         require(a && b && c && d && e && a != b, "five controls with their own ids");
+        {   // A preset holds the controls' values: a slider, a switch, a selector and a color, recalled as any value
+            const auto key = [&](quint64 id) { return engine.control(id)->key; };
+            Engine::Preset preset;
+            preset.name = "Controls";
+            preset.fade = 0;
+            preset.values.push_back({0, "control/" + key(a), 150.0, -1, QString(), 0});
+            preset.values.push_back({0, "control/" + key(b), true, -1, QString(), 0});
+            preset.values.push_back({0, "control/" + key(c), QString("drop"), -1, QString(), 0});
+            preset.values.push_back({0, "control/" + key(e) + "/r", 0.0, -1, QString(), 0});
+            const int pi = engine.addPreset(preset);
+            require(pi >= 0, "a preset made with the controls' values");
+            engine.recallPreset(pi, 0);
+            engine.finishRecalls();
+            const auto now = [&](quint64 id) { return *engine.control(id); };
+            require(near(now(a).value, 150), "a preset sets a slider control");
+            require(now(b).value >= 0.5, "a preset sets a toggle control");
+            require(near(now(c).value, 2), "a preset sets a selector control");
+            require(near(now(e).rgb[0], 0) && near(now(e).rgb[1], 0.5), "a preset sets one channel of a color control");
+        }
         const auto list = engine.controls();
         require(list.size() == 5 && list[0].key == "master_level" && list[1].key == "strobe" && list[4].key == "wash", "keys from names");
         require(engine.addControl(slider) != 0 && engine.controls().back().key == "master_level_2", "a second one of the same name gets its own key");

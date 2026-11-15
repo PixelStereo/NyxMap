@@ -1,6 +1,8 @@
 #include "ControlsPanel.h"
 #include "ColorPicker.h"
 #include "Engine.h"
+#include "InteractionPanel.h"
+#include "PresetEditor.h"
 #include "TimelinePanel.h"
 #include "Widgets.h"
 
@@ -525,13 +527,27 @@ QWidget *ControlsPanel::makeRow(const ShowControl &c, const std::vector<const Sh
     }
     }
     const QString path = QStringLiteral("control/") + c.key;
-    if (c.kind == ShowControl::Kind::Slider || c.kind == ShowControl::Kind::Pad) {
+    if (field) {
+        // Its value as any value: in a preset (Edit mode, a click on its name, right-click), on a timeline, learned by an interaction
+        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")}
+                                  : c.kind == ShowControl::Kind::Color
+                                      ? QStringList{path + QStringLiteral("/r"), path + QStringLiteral("/g"), path + QStringLiteral("/b")}
+                                      : QStringList{path};
+        if (PresetEditor *pe = PresetEditor::instance()) {
+            pe->track(field, 0, paths);
+            if (auto *label = row->findChild<QLabel *>(QStringLiteral("controlName"))) pe->track(label, 0, paths);
+        }
         field->setContextMenuPolicy(Qt::CustomContextMenu);
-        const QStringList paths = c.kind == ShowControl::Kind::Pad ? QStringList{path + QStringLiteral("/x"), path + QStringLiteral("/y")} : QStringList{path};
         connect(field, &QWidget::customContextMenuRequested, this, [this, field, paths](const QPoint &pos) {
             auto *menu = new QMenu(field);
             menu->setAttribute(Qt::WA_DeleteOnClose);
+            if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, 0, paths);
             TimelineWindow::fillParameterMenu(menu, m_engine, m_undo, 0, paths, field);
+            InteractionPanel::fillValueMenu(menu, m_engine, 0, paths);
+            if (menu->isEmpty()) {
+                delete menu;
+                return;
+            }
             menu->popup(field->mapToGlobal(pos));
         });
     }
