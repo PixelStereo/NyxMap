@@ -71,6 +71,12 @@ int main(int argc, char **argv)
             require(pi >= 0, "a preset made with the controls' values");
             engine.recallPreset(pi, 0);
             engine.finishRecalls();
+            { // what a preset captures for a control is its value, as the operator set it (not the default)
+                engine.setControlValue(a, 42);
+                const auto captured = engine.presetValue(0, "control/" + key(a));
+                require(near(captured.value.toDouble(), 42), "a control's value is captured by a preset");
+                engine.setControlValue(a, 150);
+            }
             const auto now = [&](quint64 id) { return *engine.control(id); };
             require(near(now(a).value, 150), "a preset sets a slider control");
             require(now(b).value >= 0.5, "a preset sets a toggle control");
