@@ -11,18 +11,16 @@ Every effect can be applied to a layer or through an RGBA mask — compositing a
 <!-- release-downloads:start -->
 **LATEST VERSION · [v0.6.6](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.6)**
 
-[![macOS](https://img.shields.io/badge/macOS-Download-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-macos-v0.6.6.zip)
-[![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-windows-v0.6.6.zip)
-[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.AppImage)
+[![macOS](https://img.shields.io/badge/macOS-Download-34CC34?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-macos-v0.6.6.zip)
+[![Windows](https://img.shields.io/badge/Windows-Download-CCCC34?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-windows-v0.6.6.zip)
+[![Linux](https://img.shields.io/badge/Linux-Download-CC3434?style=for-the-badge&logo=linux&logoColor=111111)](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.AppImage)
+
+<a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/documentation-blue?style=for-the-badge&logo=material%20for%20mkdocs" height="28"></a>
 
 
-<a href="https://bitfocus.io/companion"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://bitfocus.io/companion"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
+<a href="https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-Companion-v0.6.6.tgz"><img alt="Companion" src="https://raw.githubusercontent.com/bitfocus/companion-icons/main/Companion/companion.png" height="28"></a> <a href="https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-Companion-v0.6.6.tgz"><img alt="Module for Companion" src="https://img.shields.io/badge/Module_for-Companion-24272C?style=for-the-badge"></a>
 
-[Download the NyxMap module](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-Companion-v0.6.6.tgz) · [setup guide](docs/integrations/companion.md)
-
-[All downloads & release notes](https://github.com/PixelStereo/NyxMap/releases) · <a href="https://pixelstereo.github.io/NyxMap/"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-Read-24272C?style=for-the-badge" /></a>
-
-Linux: Ubuntu 24.04+ · x86_64. [Portable archive](https://github.com/PixelStereo/NyxMap/releases/download/v0.6.6/NyxMap-linux-x86_64-v0.6.6.tar.gz) (no FUSE or installation).
+[Setup Guide for the Companion Module](docs/integrations/companion.md)
 <!-- release-downloads:end -->
 
 </div>
