@@ -452,6 +452,11 @@ int FixturePanel::addLineFixtures(quint64 layer, const QString &typeId, int pixe
     return count;
 }
 
+bool FixturePanel::hasFocusInside() const
+{
+    return m_table->hasFocus() || m_table->isAncestorOf(QApplication::focusWidget());
+}
+
 void FixturePanel::duplicateFixtures()
 {
     const std::vector<quint64> chosen = selectedIds();
