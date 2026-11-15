@@ -975,7 +975,18 @@ int main(int argc, char **argv)
                 for (int r = 0; r < table->rowCount(); ++r) generatorShown |= !table->isRowHidden(r) && engine.layer(r)->type == SourceType::Isf;
                 check(generatorShown, "Video added to 3D shows the generators");
                 pillAll->click(); app.processEvents(); // not all three: All selects them all
+                // The fixtures' list sits under the layers' (one panel); its button shows or hides it
+                auto *pillFixture = list->findChild<QToolButton *>("layerPillLight");
+                auto *fixtures = window.findChild<QWidget *>("fixturePanel");
+                check(pillFixture && fixtures && !fixtures->isHidden() && pillAll->isChecked(), "the fixtures' list is shown under the layers");
+                if (pillFixture && fixtures) {
+                    pillFixture->click(); app.processEvents();
+                    check(fixtures->isHidden() && !pillAll->isChecked(), "the Light button hides the fixtures' list, All lets go");
+                    pillFixture->click(); app.processEvents();
+                    check(!fixtures->isHidden() && pillAll->isChecked(), "and shows it again, All is on once more");
+                }
             }
+            check(window.findChild<QToolButton *>("stopAllButton") != nullptr, "STOP ALL is a button of the bar at the bottom");
             auto *fixturePicker = window.findChild<QComboBox *>("fixturePicker");
             check(fixturePicker != nullptr, "the Inspector has a menu of the fixtures");
         }

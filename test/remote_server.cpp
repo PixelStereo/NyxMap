@@ -194,7 +194,8 @@ int main(int argc, char **argv)
             step.next = k ? Sequencer::StepContinue::Wait : Sequencer::StepContinue::AutoFollow;
             sequence.steps.push_back(step);
         }
-        engine.sequencer().setCurrent(engine.sequencer().add(sequence));
+        engine.sequencer().setSequence(0, sequence); // the project's first sequence (Sequence 1), filled
+        engine.sequencer().setCurrent(0);
         const quint64 sequenceId = engine.sequencer().sequenceId(0);
         const int layerIndex = engine.addLayer("Wash");
         engine.layer(layerIndex)->type = SourceType::Text;

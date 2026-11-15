@@ -1549,6 +1549,7 @@ private:
     DmxFrame m_fixtureDmx;
     bool m_hadInteractionDmx = false;
     DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
+    DmxFrame m_dmxOwnedLast;                 // (m_dmxMutex) and the channels that were ours (sACN priorities)
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
     GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
     GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;

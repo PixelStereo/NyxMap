@@ -52,7 +52,8 @@ int runShowControlUiTests(Engine &engine)
         sequence.steps.push_back(step);
     }
     auto &sq = engine.sequencer();
-    sq.setCurrent(sq.add(sequence));
+    sq.setSequence(0, sequence); // the project's first sequence (Sequence 1), filled
+    sq.setCurrent(0);
 
     ShowControlPanel panel(&engine);
     panel.resize(420, 900);

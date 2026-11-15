@@ -935,6 +935,20 @@ QColor flagEdge(bool hover, bool enabled)
 } // namespace
 
 // A check box as a square: its edge, and when it is on, a square of the accent inside it (no tick)
+QColor theme::foldArrowColor() { return QColor(238, 238, 244); }
+
+void theme::paintFoldArrow(QPainter &p, const QPointF &center, bool open)
+{
+    const QPolygonF points = open ? QPolygonF{center + QPointF(-6, -3.5), center + QPointF(6, -3.5), center + QPointF(0, 4.5)}
+                                  : QPolygonF{center + QPointF(-3.5, -6), center + QPointF(4.5, 0), center + QPointF(-3.5, 6)};
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(QColor(0, 0, 0, 110), 1)); // a dark edge: seen on a light row too
+    p.setBrush(foldArrowColor());
+    p.drawPolygon(points);
+    p.restore();
+}
+
 void theme::paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled)
 {
     p.save();

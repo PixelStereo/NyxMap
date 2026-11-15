@@ -137,6 +137,16 @@ static void modelTests()
 static void frameTests()
 {
     using C = std::array<float, 3>;
+    { // The channels that are ours: a patched fixture's, but the Ignore ones (left to another device)
+        FixturePatch p = onePatch("rgb", 1, 2, 10);
+        QByteArray mine = buildDmxOwnership(p).count({1, 2}) ? buildDmxOwnership(p).at({1, 2}) : QByteArray();
+        check(mine.size() == 512 && mine[9] == 1 && mine[10] == 1 && mine[11] == 1 && mine[8] == 0 && mine[12] == 0,
+              "ours: the fixture's three channels, no other");
+        p.fixtures[0].channels[2] = FixtureChannel{ChannelRole::Ignore, false, 0};
+        mine = buildDmxOwnership(p).at({1, 2});
+        check(mine[9] == 1 && mine[10] == 0 && mine[11] == 1, "an Ignore channel is not ours");
+        check(at(buildDmxFrame(p, {C{1.0f, 1.0f, 1.0f}}).at({1, 2}), 11) == 0, "and is sent at 0 (Art-Net)");
+    }
     {
         const FixturePatch p = onePatch("rgb", 1, 2, 10);
         const DmxFrame f = buildDmxFrame(p, {C{1.0f, 0.5f, 0.0f}});
@@ -310,6 +320,8 @@ static void packetTests()
     check(quint8(s[108]) == 120 && quint8(s[111]) == 9 && s[112] == 0 && u16(113) == 300, "E1.31: priority, sequence, universe");
     check(u16(123) == 513 && s[125] == 0 && s[126] == 11 && s[637] == 22, "E1.31: start code and slots");
     check(quint8(dmx::sacnPacket(cid, "x", 100, 0, 1, data, true)[112]) == 0x40, "E1.31: stream terminated");
+    check(quint8(dmx::sacnPacket(cid, "x", 100, 0, 1, data, false, dmx::kSacnPerChannelPriority)[125]) == 0xDD,
+          "E1.31: a priority for each channel (start code 0xDD)");
     check(dmx::sacnMulticastAddress(300) == "239.255.1.44", "E1.31: multicast group");
 }
 
@@ -680,6 +692,18 @@ static void networkTests(Engine &e)
         check(!packet.isEmpty(), art ? "an Art-Net packet arrives" : "an sACN packet arrives");
         if (art) check(packet.size() == 530 && packet.startsWith("Art-Net") && quint8(packet[14]) == 3, "Art-Net: universe 3");
         else check(packet.size() == 638 && quint8(packet[113]) == 0 && quint8(packet[114]) == 3, "sACN: universe 3");
+        if (!art) { // the dimmer's channel ours, at the output's priority; the 511 others given away (0)
+            QByteArray priorities = packet.size() == 638 && quint8(packet[125]) == 0xDD ? packet : QByteArray();
+            for (int i = 0; i < 100 && priorities.isEmpty(); ++i) {
+                e.renderFrame();
+                while (priorities.isEmpty() && rx.waitForReadyRead(20)) {
+                    const QByteArray d = rx.receiveDatagram().data();
+                    if (d.size() == 638 && quint8(d[125]) == 0xDD) priorities = d;
+                }
+            }
+            check(!priorities.isEmpty() && quint8(priorities[126]) == quint8(o.priority) && priorities[127] == 0 && priorities[637] == 0,
+                  "sACN: a priority for each channel, 0 for the channels that are not ours");
+        }
         // The UDP datagram can reach the receiver just before the sender thread
         // publishes its corresponding status snapshot. Wait for that publication
         // instead of making this assertion depend on thread scheduling.

@@ -48,7 +48,7 @@ QByteArray artDmxPacket(int portAddress, quint8 sequence, const QByteArray &data
 }
 
 QByteArray sacnPacket(const QUuid &cid, const QString &sourceName, quint8 priority, quint8 sequence, int universe,
-                      const QByteArray &data, bool terminated)
+                      const QByteArray &data, bool terminated, quint8 startCode)
 {
     const QByteArray d = padded(data, 1);
     const int total = 126 + int(d.size());
@@ -77,7 +77,7 @@ QByteArray sacnPacket(const QUuid &cid, const QString &sourceName, quint8 priori
     put16(p, 119, 0);    // first property address
     put16(p, 121, 1);    // address increment
     put16(p, 123, int(d.size()) + 1);
-    p[125] = 0; // start code
+    p[125] = char(startCode);
     return p + d;
 }
 
@@ -96,6 +96,8 @@ struct DmxSender::Link {
     std::vector<QHostAddress> destinations; // unicast, or Art-Net's broadcast (none: sACN multicast, by universe)
     std::map<int, quint8> sequence;
     std::chrono::steady_clock::time_point next{};
+    std::chrono::steady_clock::time_point nextPriority{}; // sACN: the priorities of each channel sent again
+    std::shared_ptr<const DmxFrame> ownedSent;            // those last sent
     QString error;
 };
 
@@ -133,11 +135,13 @@ void DmxSender::follow(const std::vector<DmxOutput> &outputs)
     m_cv.notify_all();
 }
 
-void DmxSender::submit(DmxFrame frame)
+void DmxSender::submit(DmxFrame frame, DmxFrame owned)
 {
     auto f = std::make_shared<const DmxFrame>(std::move(frame));
+    auto o = std::make_shared<const DmxFrame>(std::move(owned));
     std::lock_guard<std::mutex> lk(m_mutex);
     m_frame = std::move(f);
+    m_owned = std::move(o);
 }
 
 void DmxSender::stop()
@@ -166,7 +170,7 @@ void DmxSender::run()
     using clock = std::chrono::steady_clock;
     std::map<quint64, Link> links; // only this thread's: the sockets live and die here
 
-    auto send = [&](Link &l, int universe, const QByteArray &data, bool terminated) {
+    auto send = [&](Link &l, int universe, const QByteArray &data, bool terminated, quint8 startCode = 0) {
         const DmxOutput &o = l.settings;
         QByteArray packet;
         std::vector<QHostAddress> to = l.destinations;
@@ -178,7 +182,7 @@ void DmxSender::run()
         } else {
             if (universe < 1 || universe > 63999) return QStringLiteral("sACN universe %1 out of 1..63999").arg(universe);
             ++seq;
-            packet = dmx::sacnPacket(m_cid, o.sourceName, quint8(o.priority), seq, universe, data, terminated);
+            packet = dmx::sacnPacket(m_cid, o.sourceName, quint8(o.priority), seq, universe, data, terminated, startCode);
             if (to.empty()) to.emplace_back(dmx::sacnMulticastAddress(universe));
         }
         QString error;
@@ -261,6 +265,7 @@ void DmxSender::run()
             continue;
         }
         const std::shared_ptr<const DmxFrame> frame = m_frame;
+        const std::shared_ptr<const DmxFrame> owned = m_owned;
         lk.unlock();
         const auto now = clock::now();
         auto wake = now + std::chrono::milliseconds(100);
@@ -277,6 +282,22 @@ void DmxSender::run()
                         else sent[id].second = error;
                     }
             }
+            // sACN: each channel's priority — the output's for ours, 0 for the others (Ignore, or no fixture on it), so
+            // a console or another device drives those. About once a second, and at once when they change
+            if (l.settings.protocol == DmxOutput::Protocol::Sacn && owned && (now >= l.nextPriority || owned != l.ownedSent)) {
+                l.nextPriority = now + std::chrono::seconds(1);
+                l.ownedSent = owned;
+                for (auto it = owned->lower_bound({id, std::numeric_limits<int>::min()}); it != owned->end() && it->first.first == id; ++it) {
+                    if (!it->second.contains('\0')) continue; // every channel ours: the universe's priority says it
+                    QByteArray priorities(512, '\0');
+                    for (int k = 0; k < 512 && k < it->second.size(); ++k)
+                        if (it->second[k]) priorities[k] = char(std::clamp(l.settings.priority, 1, 200));
+                    const QString error = send(l, it->first.second, priorities, false, dmx::kSacnPerChannelPriority);
+                    if (error.isEmpty()) ++sent[id].first;
+                    else sent[id].second = error;
+                }
+            }
+            if (l.settings.protocol == DmxOutput::Protocol::Sacn && owned) wake = std::min(wake, l.nextPriority);
             wake = std::min(wake, l.next);
         }
         lk.lock();

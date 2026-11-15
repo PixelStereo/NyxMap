@@ -62,9 +62,8 @@ public:
         int x = opt.rect.left() + 8 + depth * kIndent;
         const QString arrow = ix.data(RoleArrow).toString();
         const QColor name = ix.data(Qt::ForegroundRole).value<QBrush>().color();
-        if (!arrow.isEmpty()) {
-            p->setPen(name);
-            p->drawText(QRect(x, opt.rect.top(), kArrowZone - 6, opt.rect.height()), Qt::AlignCenter, arrow);
+        if (!arrow.isEmpty()) { // the same fold mark as every list's
+            theme::paintFoldArrow(*p, QPointF(x + (kArrowZone - 6) / 2.0, opt.rect.center().y() + 0.5), arrow == QStringLiteral("▾"));
             x += kArrowZone - 4;
         }
         const QRect box(x, opt.rect.top() + 5, 56, opt.rect.height() - 10);
@@ -453,9 +452,20 @@ protected:
             int lastVp = -1;
             for (int r = 0; r < int(rows->size()) && (*rows)[size_t(r)].viewport; ++r) lastVp = r;
             if (lastVp >= 0 && lastVp + 1 < int(rows->size())) {
+                // A soft line: fading out at both ends, so the block reads as its own without a hard rule
                 const int y = rowViewportPosition(lastVp) + rowHeight(lastVp);
-                p.setPen(QPen(QColor(120, 120, 130), 2));
-                p.drawLine(0, y, viewport()->width(), y);
+                const int w = viewport()->width();
+                QColor mid = palette().color(QPalette::Text);
+                mid.setAlpha(120);
+                QColor edge = mid;
+                edge.setAlpha(0);
+                QLinearGradient fade(QPointF(10, 0), QPointF(w - 10, 0));
+                fade.setColorAt(0, edge);
+                fade.setColorAt(0.5, mid);
+                fade.setColorAt(1, edge);
+                p.setPen(Qt::NoPen);
+                p.setBrush(fade);
+                p.drawRect(QRectF(0, y - 1, w, 2));
             }
         }
         if (m_internal) {
@@ -512,16 +522,18 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     // What to show: all the layers, or only the videos (pictures), the 3D ones or the sounds, as the Media Bin does
     {
         struct Pill { const char *name; const char *colour; const char *tip; };
-        static const Pill pills[4] = {{"All", "#9fb0d0", "Show every layer"},
-                                      {"Video", "#5ad1e0", "Show the videos, images, generators, texts and live inputs"},
-                                      {"3D", "#b08cff", "Show the 3D scenes, models, lights, cameras and paths"},
-                                      {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"}};
+        static const Pill pills[5] = {{"All", "#9fb0d0", "Show every layer and the fixtures"},
+                                      {"Video", "#b08cff", "Show the videos, images, generators, texts and live inputs"},
+                                      {"3D", "#5ad1e0", "Show the 3D scenes, models, lights, cameras and paths"},
+                                      {"Audio", "#3fbf6f", "Show the sounds and the audio inputs"},
+                                      {"Light", "#e8c35a", "Show the list of the fixtures (DMX lights), under the layers"}};
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
-        // Video, 3D and Audio add up (each is a bit of m_filter, as its category); All selects them all, or takes them all away
+        // Video, 3D and Audio add up (each is a bit of m_filter, as its category); Light shows or hides the fixtures' list;
+        // All selects them all, or takes them all away
         auto *buttons = new QButtonGroup(this);
         buttons->setExclusive(false);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             auto *pill = new QToolButton;
             pill->setObjectName(QStringLiteral("layerPill%1").arg(QLatin1String(pills[i].name)));
             pill->setCheckable(true);
@@ -542,14 +554,17 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
         connect(buttons, &QButtonGroup::idClicked, this, [this](int id) {
             if (id == 0) { // All: every kind follows it
                 const bool on = m_filterPills[0]->isChecked();
-                for (int k = 1; k < 4; ++k) m_filterPills[size_t(k)]->setChecked(on);
+                for (int k = 1; k < 5; ++k) m_filterPills[size_t(k)]->setChecked(on);
             } else {
-                m_filterPills[0]->setChecked(m_filterPills[1]->isChecked() && m_filterPills[2]->isChecked() && m_filterPills[3]->isChecked());
+                bool all = true;
+                for (int k = 1; k < 5; ++k) all &= m_filterPills[size_t(k)]->isChecked();
+                m_filterPills[0]->setChecked(all);
             }
             int mask = 0;
             for (int k = 1; k < 4; ++k)
                 if (m_filterPills[size_t(k)]->isChecked()) mask |= 1 << k;
             setFilter(mask);
+            emit fixturesShownChanged(m_filterPills[4]->isChecked());
         });
         v->addLayout(row);
     }

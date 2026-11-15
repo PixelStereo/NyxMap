@@ -94,6 +94,22 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::showParams()
                [this, id] { m_sequencer->backById(id); });
         action(base + "stop", cat + "Stop", QStringLiteral("sequence %1 stop").arg(id),
                [this, id] { m_sequencer->stopById(id); });
+        // Load as Next: the step (1 = first) GO plays next, the show left as it is — a key, a MIDI note, a control, a
+        // timeline sets it as any value. Written only: read, it would ask the sequencer under the engine's lock
+        const int steps = std::max(1, int(m_sequencer->sequence(i).steps.size()));
+        add(base + "next", cat + "Load as Next", T::Int)
+            .range(1, steps)
+            .limits(1, steps)
+            .step(1)
+            .transient()
+            .bind(nullptr, [this, id](const QVariant &v) {
+                const int step = int(std::lround(v.toDouble())) - 1;
+                journal(QStringLiteral("show"), QStringLiteral("sequence %1 load next %2").arg(id).arg(step + 1));
+                later([this, id, step] {
+                    const int index = m_sequencer->indexOfSequence(id);
+                    if (index >= 0) m_sequencer->loadAsNext(index, step);
+                });
+            });
     }
 
     // Each snapshot and each preset, recalled (with its fade)

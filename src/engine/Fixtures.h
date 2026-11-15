@@ -78,6 +78,13 @@ struct FixtureType {
 // Dimmer, RGB, RGBW, Dimmer RGB: always there, not saved with the project
 const std::vector<FixtureType> &builtInFixtureTypes();
 
+// Templates: fixture types kept on this machine, offered in every project (a fixture made of one copies its type into the
+// project). In one file: $NYXMAP_FIXTURE_TEMPLATES, else the application's data folder
+QString fixtureTemplatesPath();
+std::vector<FixtureType> fixtureTemplates();
+bool saveFixtureTemplate(const FixtureType &t, QString *error = nullptr); // one of the same id replaced
+bool removeFixtureTemplate(const QString &id);
+
 struct Fixture {
     enum class White { Off, Min }; // RGBW: white left at 0, or the grey part of the colour (min of R, G, B) moved there
     quint64 id = 0;
@@ -111,6 +118,10 @@ struct Fixture {
     int lineIndex = 0;
     bool onPath() const { return path.size() >= 2; }
     quint64 group = 0; // the FixtureGroup it is in (0: none)
+    // Its own channels, over its type's: channel counted from its address (1: the address itself) → its role (one the
+    // pixel mapping drives, or Fixed with the value sent as it is) — a mode, a shutter open, a macro at 0. A channel past
+    // the type's last is added to it (the gaps between: Fixed at 0)
+    std::map<int, FixtureChannel> channels;
 
     QJsonObject toJson() const;
     static Fixture fromJson(const QJsonObject &o);
@@ -189,6 +200,9 @@ std::array<QPointF, 4> fixtureCorners(const Fixture &f, QSize comp);
 using DmxKey = std::pair<quint64, int>; // output, universe
 using DmxFrame = std::map<DmxKey, QByteArray>; // 512 bytes each
 DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors);
+// The channels that are NyxMap's, by output and universe (512 bytes, 1: ours): every channel of a patched fixture
+// (on or off) but the Ignore ones. sACN gives the others away (a priority of 0 for them), so another device drives them
+DmxFrame buildDmxOwnership(const FixturePatch &p);
 // What each pixel of the enabled fixtures gives out, from the same colours (0..1, by fixture id): its colour (a fixture
 // without colour channels: the grey of its level), intensity and solo included — what a view shows
 std::map<quint64, std::vector<std::array<float, 3>>> fixtureOutput(const FixturePatch &p,
@@ -200,3 +214,17 @@ struct DmxSpan {
     int universe = 0, first = 1, last = 1; // addresses, 1..512
 };
 std::vector<DmxSpan> fixtureFootprint(const FixtureType &t, int universe, int address);
+
+// A fixture's Fixed channels, in DMX order: the channel counted from its address (1: the address), the value it sends
+// (its own, else its type's), its type's value, and whether it is one the fixture adds past its type's channels
+struct FixedChannel {
+    int channel = 1;
+    int value = 0;
+    int typeValue = 0;
+    bool extra = false;
+};
+std::vector<FixedChannel> fixedChannels(const FixturePatch &p, const Fixture &f);
+
+// A type with its channels given one by one (dmxMap, offsets from its address), in DMX order: the same channels, pixels
+// and grid. What a fixture's own channels and the channel editor work on
+FixtureType explicitChannels(const FixtureType &t);

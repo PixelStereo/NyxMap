@@ -3,22 +3,32 @@
 #include "Commands.h"
 #include "Engine.h"
 #include "FixtureOverlay.h"
+#include "FixtureInspector.h"
 #include "Gdtf.h"
 #include "Widgets.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QFormLayout>
+#include <QSpinBox>
+#include <QUuid>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
 #include <QMenu>
 #include <QMessageBox>
 #include <QSettings>
 #include <QRegularExpression>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -29,7 +39,9 @@
 #include <tuple>
 
 namespace {
-enum Column { ColOn, ColLock, ColSolo, ColName, ColIntensity, ColDmx, ColCount };
+// The same columns as the layers' list: enable, lock, solo, the name with its picture, then the address (where Blend
+// is) and the intensity (where Opacity is), and a last one for what the fixture is made of
+enum Column { ColOn, ColLock, ColSolo, ColName, ColDmx, ColIntensity, ColCount };
 
 QToolButton *barButton(const QString &text, const QString &tip)
 {
@@ -70,7 +82,7 @@ QWidget *makeIntensityBox(SliderField **out)
 {
     auto *box = new QWidget;
     auto *hl = new QHBoxLayout(box);
-    hl->setContentsMargins(4, 0, 4, 0);
+    hl->setContentsMargins(2, 12, 2, 12); // as the layers' opacity
     auto *slider = new SliderField;
     slider->setObjectName(QStringLiteral("fixtureIntensity"));
     slider->setRange(0, 100);
@@ -79,11 +91,137 @@ QWidget *makeIntensityBox(SliderField **out)
     slider->setSingleStep(1);
     slider->setSnaps({100});
     slider->setCompact(true);
+    slider->setNumberOnly(true); // the number alone, as on the layers
     slider->setFocusPolicy(Qt::NoFocus);
     hl->addWidget(slider, 1);
     *out = slider;
     return box;
 }
+} // namespace
+
+namespace {
+constexpr int kMetaRole = Qt::UserRole + 2;    // under a name: what the fixture is
+constexpr int kGroupOfRole = Qt::UserRole + 3; // the group a row is (its header) or is in (a member); 0: none
+constexpr int kOpenRole = Qt::UserRole + 4;    // a group's header: open
+constexpr int kLookWidth = 56;              // the preview's box, as the layers' small picture
+
+// What a fixture's pixels give out now, in a box: a dimmer in black and white (its level the fill, written on it),
+// a colour as its swatch, a bar of pixels as one cell each
+using Looks = std::map<quint64, std::vector<std::array<float, 3>>>;
+void paintLook(QPainter *p, const QRect &box, const Looks &looks, quint64 id)
+{
+    p->fillRect(box, QColor(18, 18, 22));
+    const auto it = looks.find(id);
+    if (it != looks.end() && !it->second.empty()) {
+        const auto &px = it->second;
+        const auto colour = [](const std::array<float, 3> &c) {
+            return QColor::fromRgbF(qBound(0.f, c[0], 1.f), qBound(0.f, c[1], 1.f), qBound(0.f, c[2], 1.f));
+        };
+        const bool grey = px.size() == 1 && std::abs(px[0][0] - px[0][1]) < 0.01f && std::abs(px[0][1] - px[0][2]) < 0.01f;
+        if (grey) {
+            const float level = qBound(0.f, px[0][0], 1.f);
+            p->fillRect(QRect(box.left(), box.top(), int(box.width() * level + 0.5f), box.height()), QColor::fromRgbF(level, level, level));
+            p->setPen(level > 0.5f ? QColor(0, 0, 0) : QColor(235, 235, 240));
+            p->drawText(box.adjusted(0, 0, -3, 0), Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("%1%").arg(qRound(level * 100)));
+        } else if (px.size() == 1) {
+            p->fillRect(box, colour(px[0]));
+        } else {
+            const int n = int(std::min<size_t>(px.size(), 64)); // in DMX order, sampled past 64
+            for (int k = 0; k < n; ++k) {
+                const size_t src = px.size() <= 64 ? size_t(k) : size_t(k) * px.size() / 64;
+                const int x0 = box.left() + k * box.width() / n, x1 = box.left() + (k + 1) * box.width() / n;
+                p->fillRect(QRect(x0, box.top(), std::max(1, x1 - x0 - 1), box.height()), colour(px[src]));
+            }
+        }
+    }
+    p->setPen(QColor(70, 70, 78));
+    p->setBrush(Qt::NoBrush);
+    p->drawRect(box.adjusted(0, 0, -1, -1));
+}
+
+// The name cell, as the layers': the live box where the layer's picture is, the name in bold and, under it, what it is
+class FixtureNameDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    Looks looks; // by fixture id, 0..1 per pixel, as last sent
+
+    void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &ix) const override
+    {
+        QStyleOptionViewItem o = opt;
+        initStyleOption(&o, ix);
+        o.text.clear();
+        o.icon = QIcon();
+        QStyle *st = o.widget ? o.widget->style() : QApplication::style();
+        st->drawControl(QStyle::CE_ItemViewItem, &o, p, o.widget);
+        p->save();
+        p->setClipRect(opt.rect);
+        const bool group = ix.data(Qt::UserRole + 1).toULongLong() != 0;
+        const QColor name = ix.data(Qt::ForegroundRole).value<QBrush>().color();
+        int x = opt.rect.left() + 8;
+        if (group) { // its fold mark, as every list's
+            theme::paintFoldArrow(*p, QPointF(x + 7, opt.rect.center().y() + 0.5), ix.data(kOpenRole).toBool());
+            x += 20;
+        } else if (ix.data(kGroupOfRole).toULongLong()) {
+            x += 16; // a member: under its group, as a layer in a group
+        }
+        if (!group) {
+            p->fillRect(QRect(opt.rect.left(), opt.rect.top() + 1, 3, opt.rect.height() - 2), QColor(232, 195, 90)); // the kind's band
+            const QRect box(x, opt.rect.top() + 5, kLookWidth, opt.rect.height() - 10);
+            paintLook(p, box, looks, ix.data(Qt::UserRole).toULongLong());
+            x = box.right() + 9;
+        }
+        const QRect textBox(x, opt.rect.top(), opt.rect.right() - x - 4, opt.rect.height());
+        QFont f = opt.font;
+        f.setBold(true);
+        QFontMetrics fm(f);
+        p->setFont(f);
+        p->setPen(name);
+        p->drawText(QRect(textBox.left(), textBox.top() + 5, textBox.width(), fm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    fm.elidedText(ix.data(Qt::DisplayRole).toString(), Qt::ElideRight, textBox.width()));
+        QFont g = opt.font;
+        g.setPointSizeF(std::max(7.0, g.pointSizeF() - 1.5));
+        QFontMetrics gm(g);
+        p->setFont(g);
+        p->setPen(QColor(140, 140, 150));
+        p->drawText(QRect(textBox.left(), textBox.top() + 6 + fm.height(), textBox.width(), gm.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                    gm.elidedText(ix.data(kMetaRole).toString(), Qt::ElideRight, textBox.width()));
+        p->restore();
+    }
+    QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return QSize(160, 44); }
+    void updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &opt, const QModelIndex &ix) const override
+    {
+        const bool group = ix.data(Qt::UserRole + 1).toULongLong() != 0;
+        const int member = !group && ix.data(kGroupOfRole).toULongLong() ? 16 : 0;
+        editor->setGeometry(opt.rect.adjusted(group ? 28 : 8 + member + kLookWidth + 9, 4, -4, -4)); // over the name, not the box
+    }
+};
+// The list: each group a fine line around its header and its fixtures, as the layers' groups
+class FixtureGrid : public QTableWidget
+{
+public:
+    using QTableWidget::QTableWidget;
+
+protected:
+    void paintEvent(QPaintEvent *e) override
+    {
+        QTableWidget::paintEvent(e);
+        QPainter p(viewport());
+        QColor line(232, 214, 170);
+        line.setAlpha(170);
+        p.setPen(QPen(line, 1));
+        p.setBrush(Qt::NoBrush);
+        const auto groupOf = [this](int r) { const QTableWidgetItem *it = item(r, ColName); return it ? it->data(kGroupOfRole).toULongLong() : 0; };
+        const auto header = [this](int r) { const QTableWidgetItem *it = item(r, ColName); return it && it->data(Qt::UserRole + 1).toULongLong(); };
+        for (int r = 0; r < rowCount(); ++r) {
+            if (!header(r) || isRowHidden(r)) continue;
+            int last = r;
+            for (int k = r + 1; k < rowCount() && !header(k) && groupOf(k) == groupOf(r); ++k) last = k;
+            const int top = rowViewportPosition(r);
+            p.drawRect(1, top, viewport()->width() - 3, rowViewportPosition(last) + rowHeight(last) - top - 1);
+        }
+    }
+};
 } // namespace
 
 FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
@@ -106,32 +244,34 @@ FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     bar->addStretch(1);
     v->addLayout(bar);
 
-    m_table = new QTableWidget(0, ColCount);
+    m_table = new FixtureGrid(0, ColCount);
     m_table->setObjectName(QStringLiteral("fixturesTable"));
-    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QStringLiteral("Fixture"),
-                                        QStringLiteral("Intensity"), QStringLiteral("DMX")});
+    m_table->setHorizontalHeaderLabels({QString(), QString(), QString(), QStringLiteral("Fixture"), QStringLiteral("DMX"),
+                                        QStringLiteral("Int.")});
+    m_table->horizontalHeaderItem(ColName)->setToolTip(QStringLiteral("The box shows what it sends now: black and white for a dimmer, its colour, its pixels"));
     m_table->horizontalHeaderItem(ColOn)->setToolTip(QStringLiteral("Enable"));
     m_table->horizontalHeaderItem(ColLock)->setToolTip(QStringLiteral("Locked: not moved in the views"));
     m_table->horizontalHeaderItem(ColSolo)->setToolTip(QStringLiteral("Solo: the other fixtures send black"));
-    m_table->horizontalHeaderItem(ColIntensity)->setToolTip(QStringLiteral("A factor on everything the fixture sends"));
+    m_table->horizontalHeaderItem(ColIntensity)->setToolTip(QStringLiteral("A factor on everything the fixture sends: drag the number sideways, double-click to type"));
     m_table->horizontalHeaderItem(ColDmx)->setToolTip(QStringLiteral("Universe · channels"));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     m_table->verticalHeader()->setVisible(false);
-    m_table->verticalHeader()->setDefaultSectionSize(26);
+    m_table->verticalHeader()->setDefaultSectionSize(44);
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setIconSize(QSize(16, 16));
     auto *h = m_table->horizontalHeader();
     h->setHighlightSections(false);
-    for (auto [col, width] : {std::pair{ColOn, 30}, {ColLock, 28}, {ColSolo, 26}, {ColIntensity, 150}}) {
+    // The widths of the layers' list, so the two lists line up one under the other; the name takes what is left
+    for (auto [col, width] : {std::pair{ColOn, 28}, {ColLock, 26}, {ColSolo, 24}, {ColDmx, 92}, {ColIntensity, 62}}) {
         h->setSectionResizeMode(col, QHeaderView::Fixed);
         m_table->setColumnWidth(col, width);
     }
-    h->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColName, 170);
-    h->setStretchLastSection(true);
+    h->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    h->setStretchLastSection(false);
+    h->setMinimumSectionSize(16);
     v->addWidget(m_table, 1);
     m_summary = new QLabel;
     m_summary->setWordWrap(true);
@@ -222,6 +362,17 @@ FixturePanel::FixturePanel(Engine *engine, QUndoStack *undo, QWidget *parent)
     m_refreshTimer->setInterval(60);
     connect(m_refreshTimer, &QTimer::timeout, this, &FixturePanel::refresh);
     connect(m_engine, &Engine::fixturesChanged, m_refreshTimer, qOverload<>(&QTimer::start));
+    // The live column follows the frames: repainted while shown, from what the pixels last gave out
+    auto *preview = new FixtureNameDelegate(m_table);
+    m_table->setItemDelegateForColumn(ColName, preview);
+    auto *live = new QTimer(this);
+    live->setInterval(33);
+    connect(live, &QTimer::timeout, this, [this, preview] {
+        if (!m_table->isVisible()) return;
+        preview->looks = m_engine->fixtureLooks();
+        m_table->viewport()->update();
+    });
+    live->start();
     refresh();
 }
 
@@ -340,12 +491,26 @@ void FixturePanel::fillAddMenu()
     auto add = [this](const FixtureType &t) {
         QAction *a = m_addMenu->addAction(t.pixelCount() > 1 ? QStringLiteral("%1  (%2 px)").arg(t.name).arg(t.pixelCount()) : t.name);
         const QString id = t.id;
-        connect(a, &QAction::triggered, this, [this, id] { addFixture(id); });
+        connect(a, &QAction::triggered, this, [this, id] { newFixture(id); });
     };
     for (const FixtureType &t : builtInFixtureTypes()) add(t);
     if (!p.types.empty()) m_addMenu->addSeparator();
     for (const FixtureType &t : p.types) add(t);
+    // The templates of this machine: a fixture of one copies its type into the project
+    const std::vector<FixtureType> templates = fixtureTemplates();
+    if (!templates.empty()) {
+        QMenu *list = m_addMenu->addMenu(QStringLiteral("Templates"));
+        list->setObjectName(QStringLiteral("fixtureTemplatesMenu"));
+        for (const FixtureType &t : templates)
+            list->addAction(t.pixelCount() > 1 ? QStringLiteral("%1  (%2 px)").arg(t.name).arg(t.pixelCount()) : t.name, this,
+                            [this, t] { newFixtureFrom(t); });
+        list->addSeparator();
+        QMenu *remove = list->addMenu(QStringLiteral("Remove Template"));
+        for (const FixtureType &t : templates)
+            remove->addAction(t.name, this, [id = t.id] { removeFixtureTemplate(id); });
+    }
     m_addMenu->addSeparator();
+    m_addMenu->addAction(QStringLiteral("New Fixture Type…"), this, &FixturePanel::newFixtureType);
     m_addMenu->addAction(QStringLiteral("Import GDTF…"), this, [this] {
         QSettings s;
         const QStringList paths = QFileDialog::getOpenFileNames(this, QStringLiteral("Import GDTF fixtures"),
@@ -353,7 +518,8 @@ void FixturePanel::fillAddMenu()
                                                                 QStringLiteral("GDTF fixtures (*.gdtf)"));
         if (paths.isEmpty()) return;
         s.setValue(QStringLiteral("fixtures/gdtfFolder"), QFileInfo(paths.first()).absolutePath());
-        QMessageBox::information(this, QStringLiteral("Import GDTF"), importGdtf(paths));
+        QMessageBox::information(this, QStringLiteral("Import GDTF"),
+                                 importGdtf(paths, [this](FixtureType &t) { return reviewImported(t); }));
     });
     QAction *clean = m_addMenu->addAction(QStringLiteral("Remove Unused Types"), this, [this] {
         cmd::editFixtures(m_undo, m_engine, QStringLiteral("Remove Unused Fixture Types"), [](FixturePatch &q) {
@@ -447,8 +613,10 @@ void FixturePanel::refresh()
             name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
             name->setData(Qt::UserRole, quint64(0)); // not a fixture
             name->setData(Qt::UserRole + 1, g.id);    // a group's row
-            const QString shown = (g.open ? QStringLiteral("▾ ") : QStringLiteral("▸ ")) + (g.name.isEmpty() ? QStringLiteral("Group") : g.name);
+            const QString shown = g.name.isEmpty() ? QStringLiteral("Group") : g.name; // its fold mark drawn before it
             if (name->text() != shown) name->setText(shown);
+            name->setData(kGroupOfRole, g.id);
+            name->setData(kOpenRole, g.open);
             QFont nf = name->font();
             nf.setBold(true);
             name->setFont(nf);
@@ -463,12 +631,11 @@ void FixturePanel::refresh()
                     if (!m_updating) editIntensity(slider, value);
                 });
             }
+            attachShowValue(slider, m_engine, m_undo, {QStringLiteral("fixture/g%1/intensity").arg(g.id)});
             const double want = std::round(g.intensity * 100);
             if (!slider->isDragging() && std::abs(slider->value() - want) > 1e-9) slider->setValue(want);
-            QTableWidgetItem *count = cell(ColDmx, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            count->setText(QStringLiteral("%1 fixture%2").arg(members).arg(members == 1 ? QString() : QStringLiteral("s")));
-            count->setForeground(QColor(150, 150, 158));
-            count->setToolTip(QStringLiteral("The group's fixtures"));
+            name->setData(kMetaRole, QStringLiteral("%1 fixture%2").arg(members).arg(members == 1 ? QString() : QStringLiteral("s")));
+            cell(ColDmx, Qt::ItemIsEnabled | Qt::ItemIsSelectable)->setText(QString());
             continue;
         }
         QTableWidgetItem *on = cell(ColOn, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
@@ -493,6 +660,7 @@ void FixturePanel::refresh()
         QTableWidgetItem *name = cell(ColName, Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
         name->setData(Qt::UserRole, f.id);
         name->setData(Qt::UserRole + 1, quint64(0));
+        name->setData(kGroupOfRole, f.group);
         name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
         const QString shown = f.name.isEmpty() ? QStringLiteral("Fixture %1").arg(f.id) : f.name;
         if (name->text() != shown) name->setText(shown);
@@ -515,9 +683,12 @@ void FixturePanel::refresh()
                 if (!m_updating) editIntensity(slider, value);
             });
         }
+        attachShowValue(slider, m_engine, m_undo, {QStringLiteral("fixture/%1/intensity").arg(f.id)});
         const double pct = std::round(f.intensity * 100);
         if (!slider->isDragging() && std::abs(slider->value() - pct) > 1e-9) slider->setValue(pct);
 
+        name->setData(kMetaRole, t ? QStringLiteral("%1 · %2 px · %3 ch").arg(t->name).arg(t->pixelCount()).arg(t->channelCount())
+                                   : QStringLiteral("Missing type"));
         QTableWidgetItem *dmx = cell(ColDmx, Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         dmx->setText(fixtureview::address(p, f));
         bool clash = false;
@@ -679,17 +850,22 @@ void FixturePanel::removeFixtures()
     emit projectEdited();
 }
 
-QString FixturePanel::importGdtf(const QStringList &paths)
+QString FixturePanel::importGdtf(const QStringList &paths, const std::function<bool(FixtureType &)> &review)
 {
     std::vector<FixtureType> types;
     QStringList report;
     for (const QString &path : paths) {
         const gdtf::Import im = gdtf::readFile(path);
         if (!im.error.isEmpty()) report << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(), im.error);
-        for (const FixtureType &t : im.types)
+        for (FixtureType t : im.types) {
+            if (review && !review(t)) {
+                report << QStringLiteral("Left out %1").arg(t.name);
+                continue;
+            }
             report << QStringLiteral("Imported %1 (%2 px, %3 channels)").arg(t.name).arg(t.pixelCount()).arg(t.channelCount());
+            types.push_back(t);
+        }
         report += im.warnings;
-        types.insert(types.end(), im.types.begin(), im.types.end());
     }
     if (!types.empty()) {
         cmd::editFixtures(m_undo, m_engine, QStringLiteral("Import GDTF"), [&](FixturePatch &p) {
@@ -702,4 +878,138 @@ QString FixturePanel::importGdtf(const QStringList &paths)
         emit projectEdited();
     }
     return report.join(QLatin1Char('\n'));
+}
+
+namespace {
+// The channel editor in a dialog: what each channel follows (pixel mapping or a fixed value), channels added
+bool chooseChannels(QWidget *parent, const QString &title, const QString &accept, const QString &reject,
+                    std::vector<ChannelEditor::Row> &rows)
+{
+    QDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("fixtureChannelsDialog"));
+    dialog.setWindowTitle(title);
+    auto *v = new QVBoxLayout(&dialog);
+    auto *say = new QLabel(QStringLiteral("Each channel follows the pixel mapping (a colour, a dimmer) or sends a fixed value, "
+                                          "as it is: a mode, a shutter open, a macro at 0. + Channel adds one after the last."));
+    say->setWordWrap(true);
+    v->addWidget(say);
+    auto *editor = new ChannelEditor;
+    editor->setRows(rows);
+    v->addWidget(editor, 1);
+    auto *buttons = new QDialogButtonBox;
+    buttons->addButton(accept, QDialogButtonBox::AcceptRole)->setDefault(true);
+    buttons->addButton(reject, QDialogButtonBox::RejectRole);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    v->addWidget(buttons);
+    dialog.resize(440, 480);
+    if (dialog.exec() != QDialog::Accepted) return false;
+    rows = editor->rows();
+    return true;
+}
+} // namespace
+
+quint64 FixturePanel::newFixture(const QString &typeId)
+{
+    const FixturePatch p = m_engine->fixturePatch();
+    const FixtureType *type = p.findType(typeId);
+    return type ? newFixtureFrom(*type) : 0;
+}
+
+quint64 FixturePanel::newFixtureFrom(const FixtureType &type)
+{
+    std::vector<ChannelEditor::Row> rows = ChannelEditor::rowsOf(type);
+    if (!chooseChannels(this, QStringLiteral("New Fixture — %1").arg(type.name), QStringLiteral("Create"), QStringLiteral("Cancel"), rows))
+        return 0;
+    return addFixtureOfType(type, ChannelEditor::ownChannels(rows));
+}
+
+quint64 FixturePanel::addFixtureOfType(const FixtureType &type, const std::map<int, FixtureChannel> &own)
+{
+    m_undo->beginMacro(QStringLiteral("New Fixture"));
+    const FixturePatch p = m_engine->fixturePatch();
+    if (!type.builtIn && !p.findType(type.id)) // a template, or a type made here: into the project
+        cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Type"), [&](FixturePatch &q) { q.types.push_back(type); });
+    const quint64 id = addFixture(type.id);
+    if (id && !own.empty())
+        cmd::editFixtures(m_undo, m_engine, QStringLiteral("Fixture Channels"), [&](FixturePatch &q) {
+            if (Fixture *f = q.findFixture(id)) f->channels = own;
+        });
+    m_undo->endMacro();
+    return id;
+}
+
+void FixturePanel::newFixtureType()
+{
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("newFixtureTypeDialog"));
+    dialog.setWindowTitle(QStringLiteral("New Fixture Type"));
+    auto *v = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+    auto *name = new QLineEdit(QStringLiteral("My Fixture"));
+    auto *maker = new QLineEdit;
+    maker->setPlaceholderText(QStringLiteral("optional"));
+    auto *cols = new QSpinBox;
+    auto *rows = new QSpinBox;
+    for (QSpinBox *b : {cols, rows}) b->setRange(1, 1024);
+    auto *grid = new QHBoxLayout;
+    grid->addWidget(cols);
+    grid->addWidget(new QLabel(QStringLiteral("×")));
+    grid->addWidget(rows);
+    form->addRow(QStringLiteral("Name"), name);
+    form->addRow(QStringLiteral("Manufacturer"), maker);
+    form->addRow(QStringLiteral("Pixels"), grid);
+    v->addLayout(form);
+    // Its channels: those of the whole fixture first, then those of each pixel, repeated pixel after pixel
+    auto *wholeLabel = new QLabel(QStringLiteral("<b>Channels of the whole fixture</b> — before its pixels (a dimmer, a mode, a shutter)"));
+    wholeLabel->setWordWrap(true);
+    v->addWidget(wholeLabel);
+    auto *whole = new ChannelEditor;
+    v->addWidget(whole, 1);
+    auto *pixelLabel = new QLabel(QStringLiteral("<b>Channels of each pixel</b> — repeated for every pixel, in DMX order"));
+    pixelLabel->setWordWrap(true);
+    v->addWidget(pixelLabel);
+    auto *pixel = new ChannelEditor;
+    pixel->setRows({{1, -1, FixtureChannel{ChannelRole::Red, false, 0}, std::nullopt},
+                    {2, -1, FixtureChannel{ChannelRole::Green, false, 0}, std::nullopt},
+                    {3, -1, FixtureChannel{ChannelRole::Blue, false, 0}, std::nullopt}});
+    v->addWidget(pixel, 1);
+    auto *keep = new QCheckBox(QStringLiteral("Save as template (offered in every project)"));
+    keep->setChecked(true);
+    v->addWidget(keep);
+    auto *buttons = new QDialogButtonBox;
+    buttons->addButton(QStringLiteral("Create"), QDialogButtonBox::AcceptRole)->setDefault(true);
+    buttons->addButton(QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    v->addWidget(buttons);
+    dialog.resize(480, 640);
+    while (dialog.exec() == QDialog::Accepted) {
+        FixtureType t;
+        t.id = QStringLiteral("custom-%1").arg(QUuid::createUuid().toString(QUuid::Id128).left(10));
+        t.name = name->text().trimmed().isEmpty() ? QStringLiteral("My Fixture") : name->text().trimmed();
+        t.manufacturer = maker->text().trimmed();
+        t.cols = cols->value();
+        t.rows = rows->value();
+        for (const ChannelEditor::Row &r : whole->rows()) t.header.push_back({r.now.role, false, r.now.value});
+        for (const ChannelEditor::Row &r : pixel->rows()) t.perPixel.push_back({r.now.role, false, r.now.value});
+        QString why;
+        if (!t.valid(&why)) {
+            QMessageBox::warning(&dialog, QStringLiteral("New Fixture Type"), QStringLiteral("This type cannot be made: %1.").arg(why));
+            continue;
+        }
+        if (keep->isChecked() && !saveFixtureTemplate(t, &why))
+            QMessageBox::warning(this, QStringLiteral("New Fixture Type"), QStringLiteral("Not saved as a template: %1").arg(why));
+        addFixtureOfType(t);
+        return;
+    }
+}
+
+bool FixturePanel::reviewImported(FixtureType &type)
+{
+    std::vector<ChannelEditor::Row> rows = ChannelEditor::rowsOf(type);
+    if (!chooseChannels(this, QStringLiteral("Import — %1").arg(type.name), QStringLiteral("Import"), QStringLiteral("Leave Out"), rows))
+        return false;
+    type = ChannelEditor::withRows(type, rows);
+    return true;
 }
