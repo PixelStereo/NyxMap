@@ -256,6 +256,11 @@ Engine::PresetValue Engine::presetValue(quint64 layer, const QString &path) cons
     v.layer = layer;
     v.path = path;
     v.value = parameterValue(layer, path);
+    if (v.value.isUndefined()) { // a transient value (an operator's control, a switch): held as it is now, not stored by a cue
+        Lock lock(&m_mutex);
+        if (const Parameter *p = const_cast<Engine *>(this)->findParameter(layer, path); p && p->info().presettable && !p->info().action)
+            v.value = p->json();
+    }
     // An action: a trigger is held as "do it"; a value it can only be sent (Seek To) as where the media is now
     ParamInfo info;
     if (v.value.isUndefined() && parameterInfo(layer, path, &info) && info.action) {

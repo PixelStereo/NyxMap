@@ -508,9 +508,14 @@ void Engine::recallPreset(int i, double fadeOverride)
             applyComposition(c, fade);
             // An interaction's values ("interaction/<id>/…"): faded in the preset's time, each one's own if it has one
             std::map<quint64, QJsonObject> byInteraction;
+            QJsonObject controls; // the operator's controls: they fade in the preset's time, as any value
             for (auto it = params.begin(); it != params.end(); ++it) {
                 if (it.key().startsWith(QLatin1String("interaction/"))) {
                     byInteraction[it.key().section('/', 1, 1).toULongLong()].insert(it.key(), it.value());
+                    continue;
+                }
+                if (it.key().startsWith(QLatin1String("control/"))) {
+                    controls.insert(it.key(), it.value());
                     continue;
                 }
                 if (it.key() == "opacity" || it.key() == "volume") continue;
@@ -522,6 +527,7 @@ void Engine::recallPreset(int i, double fadeOverride)
                     setParameter(0, it.key(), it.value());
                 }
             }
+            if (!controls.isEmpty()) applyStoredValues(QString(), {}, controls, timing, easing, fade, delays);
             if (!byInteraction.empty()) {
                 {
                     Lock lk(&m_mutex);

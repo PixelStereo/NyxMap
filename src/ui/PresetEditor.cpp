@@ -310,13 +310,21 @@ bool PresetEditor::eventFilter(QObject *o, QEvent *e)
         if (type == QEvent::MouseButtonRelease) m_swallow = nullptr;
         return true;
     }
-    if (type != QEvent::MouseButtonPress) return false;
     auto *me = static_cast<QMouseEvent *>(e);
     if (me->button() != Qt::LeftButton) return false;
     const Tracked *t = trackedFor(o);
     if (!t) return false;
-    // Its name: a click; its field: an Alt-click (a plain click edits the value, as always)
-    if (!t->name && !(me->modifiers() & Qt::AltModifier)) return false;
+    if (type == QEvent::MouseButtonRelease) {
+        // Alt on a field: its value was changed by the click (the widget got it); the preset takes that value now
+        if (t->name || !(me->modifiers() & Qt::AltModifier) || !m_selected) return false;
+        const Tracked copy = *t;
+        QTimer::singleShot(0, this, [this, copy] { addToSelected(copy.layer, copy.paths); });
+        return false;
+    }
+    if (type != QEvent::MouseButtonPress) return false;
+    // Its name: a click puts it in the preset or takes it out. Its field: a plain click edits the value, as always;
+    // an Alt-click edits it too, and the preset takes the value (see the release above)
+    if (!t->name) return false;
     const Tracked copy = *t;
     m_swallow = o;
     toggle(copy);
