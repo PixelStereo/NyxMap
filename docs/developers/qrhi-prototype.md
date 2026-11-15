@@ -35,17 +35,40 @@ persistent buffers, POINTS passes and image flips are translated but not drawn,
 and QRhi's clip space and texture origin differ from OpenGL's (handled with
 `QRhi::isYUpInFramebuffer` and `isYUpInNDC` when drawing).
 
-## 2. Video interop: next
+## 2. Video interop: answered on macOS
 
-On macOS, VideoToolbox decodes into IOSurfaces. Through a `CVMetalTextureCache`
-each plane becomes an `MTLTexture`, which `QRhiTexture::createFrom` adopts
-without a copy. HAP's DXT/BC blocks upload as `QRhiTexture::BC1`/`BC3`/`BC4`/`BC7`.
-On Windows, D3D11VA surfaces can be adopted by the D3D11 backend. VAAPI
-(dmabuf to Vulkan) is the hardest case. The prototype starts with macOS.
+`test/rhi_video.mm` hands VideoToolbox's frames to an offscreen Metal QRhi with
+no copy: a `CVMetalTextureCache` makes each plane of the frame's IOSurface an
+`MTLTexture`, which `QRhiTexture::createFrom` adopts. One draw converts it to
+RGBA with the OpenGL path's formula (`VideoLayout`: channels, bit depth, chroma
+siting, matrix, range). The same frames also go through the OpenGL path
+(`VideoTexture::upload`), to compare.
 
-## 3. Cost: next
+```bash
+build/nyxmap_rhi_video_test [--frames N] [video files...]
+```
 
-One window with a QRhi swapchain draws the same slice as OpenGL: a 4K video,
-an ISF effect, an RGBA mask, one output. It is measured with the frame timing
-NyxMap already records (P95/P99 intervals, missed frames, GPU memory) on the
-same machine and media as `test/bench_4k.sh`.
+Results (Apple M4 Max, Qt 6.12), per frame with the GPU done:
+
+| Video | QRhi against OpenGL | QRhi Metal, median / P95 | OpenGL, median / P95 |
+|---|---|---|---|
+| H.264 1280×720 NV12 | max 1, mean 0.12 (rounding) | 0.21 / 0.77 ms | 0.24 / 1.91 ms |
+| H.264 3840×2160 NV12 | identical | 0.83 / 2.56 ms | 0.75 / 2.46 ms |
+| HEVC 10-bit 3840×2160 P010 | identical | 0.29 / 1.02 ms | 0.36 / 0.82 ms |
+
+The pictures are the OpenGL path's, and as close to FFmpeg's own decoding. The
+cost is the same order: neither API is the bottleneck for one stream. The
+`rhi_video` test checks the colours (skipped without Metal or hardware frames).
+
+Still to do: HAP's compressed textures (`QRhiTexture::BC1`/`BC3`/`BC4`/`BC7`),
+D3D11VA surfaces on Windows, VAAPI (dmabuf to Vulkan) on Linux. The probe makes
+the planes' QRhi textures again for each frame; a cache by surface would lower
+its cost.
+
+## 3. Cost of a whole composition: next
+
+One window with a QRhi swapchain draws the same slice as OpenGL: several 4K
+videos, an ISF effect, an RGBA mask, one output. It is measured with the frame
+timing NyxMap already records (P95/P99 intervals, missed frames, GPU memory),
+on the same machine and media as `test/bench_4k.sh`. That, more than one
+stream's conversion, decides whether the move is worth it.
