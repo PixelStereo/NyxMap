@@ -256,6 +256,7 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_tree->setUniformRowHeights(true);
     m_tree->setIndentation(12); // ISF > Generators > category > shader: keep room for the names
+    m_tree->setIconSize(QSize(44, 26)); // the pictures of the videos and images
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_tree->header()->setSectionResizeMode(1, QHeaderView::Interactive);
@@ -488,6 +489,7 @@ void MediaBin::refresh()
         it->setData(0, UsersRole, int(r.users.size()));
         const bool stream = Engine::isStreamUrl(r.path);
         it->setText(0, stream ? Engine::streamName(r.path) : QFileInfo(r.path).fileName());
+        it->setIcon(0, r.missing ? QIcon() : m_thumbs.value(r.path)); // its picture, once read
         if (stream) { // never probed: that would connect to it
             const bool rtsp = r.path.startsWith(QLatin1String("rtsp"), Qt::CaseInsensitive);
             it->setText(1, QStringLiteral("Stream · ") + r.path.section(QLatin1Char(':'), 0, 0).toUpper() +
@@ -1013,11 +1015,15 @@ void MediaBin::probe(const QString &path)
         // Three fields: short info, tooltip details, explicit source color tags.
         if (!info.contains('\t')) info += '\t';
         info += '\t' + color;
+        // Its picture: an image, a video's first frame (a sound or a sequence has none)
+        QImage thumb;
+        if (image || (!sound && !QFileInfo(path).isDir() && Engine::isVideoFile(path))) thumb = readThumbnail(path, QSize(96, 54), !image);
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
-            [self, path, info] {
+            [self, path, info, thumb] {
                 if (!self) return;
                 self->m_info[path] = info;
+                if (!thumb.isNull()) self->m_thumbs[path] = QIcon(QPixmap::fromImage(thumb));
                 self->m_probing.remove(path);
                 self->refresh();
             },
