@@ -2,6 +2,9 @@
 #include "Gl.h"
 #include <QByteArray>
 #include <QDebug>
+#include <QHash>
+#include <QPair>
+#include <mutex>
 
 static GLuint compileStage(GLenum type, const QString &src, QString *log)
 {
@@ -55,6 +58,24 @@ GLuint compileProgram(const QString &vs, const QString &fs, QString *log)
         return 0;
     }
     return p;
+}
+
+GLuint sharedProgram(const QString &vs, const QString &fs, QString *log)
+{
+    QOpenGLContext *context = QOpenGLContext::currentContext();
+    if (!context) return 0;
+    static std::mutex lock;
+    static QHash<QOpenGLContextGroup *, QHash<QPair<QString, QString>, GLuint>> programs;
+    std::lock_guard<std::mutex> hold(lock);
+    QOpenGLContextGroup *group = context->shareGroup();
+    if (!programs.contains(group))
+        QObject::connect(group, &QObject::destroyed, [group] {
+            std::lock_guard<std::mutex> hold(lock);
+            programs.remove(group);
+        });
+    GLuint &program = programs[group][{vs, fs}];
+    if (!program) program = compileProgram(vs, fs, log);
+    return program;
 }
 
 static std::atomic<int> g_renderBits{16}; // before the first frame, never allocate 8-bit composition targets

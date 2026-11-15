@@ -1847,19 +1847,19 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
         m_compiled = true;
         m_lite = lite(QString::fromLatin1(reinterpret_cast<const char *>(f->glGetString(GL_RENDERER))));
         QString log;
-        m_program = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kFragment), &log);
+        m_program = sharedProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kFragment), &log);
         if (!m_program) qWarning("3D scene shader: %s", qPrintable(log));
-        m_shadowProgram = compileProgram(QString::fromLatin1(kVertex), QStringLiteral("#version 330 core\nvoid main() {}\n"), &log);
+        m_shadowProgram = sharedProgram(QString::fromLatin1(kVertex), QStringLiteral("#version 330 core\nvoid main() {}\n"), &log);
         if (!m_shadowProgram) qWarning("3D shadow shader: %s", qPrintable(log));
-        m_pointProgram = compileProgram(QString::fromLatin1(kVertex),
+        m_pointProgram = sharedProgram(QString::fromLatin1(kVertex),
                                         QStringLiteral("#version 330 core\nin vec3 v_pos; uniform vec3 u_light; uniform float u_far;\n"
                                                        "void main() { gl_FragDepth = length(v_pos - u_light) / u_far; }\n"), &log);
         if (!m_pointProgram) qWarning("3D point shadow shader: %s", qPrintable(log));
-        m_aoProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kAoFragment), &log);
+        m_aoProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kAoFragment), &log);
         if (!m_aoProgram) qWarning("3D occlusion shader: %s", qPrintable(log));
-        m_aoBlurProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kAoBlurFragment), &log);
+        m_aoBlurProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kAoBlurFragment), &log);
         if (!m_aoBlurProgram) qWarning("3D occlusion blur shader: %s", qPrintable(log));
-        m_sky = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kSkyFragment), &log);
+        m_sky = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kSkyFragment), &log);
         if (!m_sky) qWarning("3D environment shader: %s", qPrintable(log));
         f->glGenVertexArrays(1, &m_skyVao);
         if (m_program) {
@@ -1919,16 +1919,16 @@ GLuint Scene3D::draw(const SceneSettings &s, const std::vector<Item> &items, con
             m_shadingAt = f->glGetUniformLocation(m_program, "u_shading");
         }
         if (!m_lite) {
-            m_glowDownProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowDown), &log);
+            m_glowDownProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowDown), &log);
             if (!m_glowDownProgram) qWarning("3D glow shader: %s", qPrintable(log));
-            m_glowUpProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowUp), &log);
+            m_glowUpProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kGlowUp), &log);
             if (!m_glowUpProgram) qWarning("3D glow shader: %s", qPrintable(log));
-            m_fogProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogFragment), &log);
+            m_fogProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogFragment), &log);
             if (!m_fogProgram) qWarning("3D fog shader: %s", qPrintable(log));
-            m_fogBlurProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogBlur), &log);
+            m_fogBlurProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kFogBlur), &log);
             if (!m_fogBlurProgram) qWarning("3D fog shader: %s", qPrintable(log));
         }
-        m_postProgram = compileProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kPostFragment), &log);
+        m_postProgram = sharedProgram(QString::fromLatin1(kSkyVertex), QString::fromLatin1(kPostFragment), &log);
         if (!m_postProgram) qWarning("3D post shader: %s", qPrintable(log));
         f->glGenSamplers(1, &m_rawSampler); // a shadow map as distances, not as a comparison
         f->glSamplerParameteri(m_rawSampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -2871,7 +2871,7 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
     auto f = gl();
     if (!m_plainProgram) {
         QString log;
-        m_plainProgram = compileProgram(QString::fromLatin1(kVertex),
+        m_plainProgram = sharedProgram(QString::fromLatin1(kVertex),
                                         QStringLiteral("#version 330 core\nuniform vec4 u_ink; out vec4 o; void main() { o = u_ink; }\n"), &log);
         if (!m_plainProgram) {
             qWarning("3D plain shader: %s", qPrintable(log));
@@ -2881,7 +2881,7 @@ GLuint Scene3D::drawView(const SceneSettings &s, const std::vector<Item> &items,
     }
     if (look == ViewLook::Unlit && !m_unlitProgram) {
         QString log;
-        m_unlitProgram = compileProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kUnlitFragment), &log);
+        m_unlitProgram = sharedProgram(QString::fromLatin1(kVertex), QString::fromLatin1(kUnlitFragment), &log);
         if (!m_unlitProgram) {
             qWarning("3D unlit shader: %s", qPrintable(log));
             return 0;
@@ -3040,25 +3040,19 @@ void Scene3D::releaseGl()
 {
     if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
-    if (m_plainProgram) f->glDeleteProgram(m_plainProgram);
-    if (m_unlitProgram) f->glDeleteProgram(m_unlitProgram);
     m_unlitProgram = 0;
     if (m_plainFbo) f->glDeleteFramebuffers(1, &m_plainFbo);
     if (m_plainColor) f->glDeleteTextures(1, &m_plainColor);
     if (m_plainDepth) f->glDeleteRenderbuffers(1, &m_plainDepth);
     m_plainProgram = m_plainFbo = m_plainColor = m_plainDepth = 0;
-    if (m_program) f->glDeleteProgram(m_program);
-    if (m_sky) f->glDeleteProgram(m_sky);
     if (m_skyVao) f->glDeleteVertexArrays(1, &m_skyVao);
     if (m_env) f->glDeleteTextures(1, &m_env);
     if (m_envFbo) f->glDeleteFramebuffers(1, &m_envFbo);
     if (m_readFbo) f->glDeleteFramebuffers(1, &m_readFbo);
     m_sky = m_skyVao = m_env = m_envFbo = m_readFbo = 0;
     releaseLook();
-    for (GLuint *program : {&m_glowDownProgram, &m_glowUpProgram, &m_fogProgram, &m_fogBlurProgram, &m_postProgram}) {
-        if (*program) f->glDeleteProgram(*program);
-        *program = 0;
-    }
+    for (GLuint *program : {&m_glowDownProgram, &m_glowUpProgram, &m_fogProgram, &m_fogBlurProgram, &m_postProgram})
+        *program = 0; // shared programs: kept by the cache
     if (m_rawSampler) f->glDeleteSamplers(1, &m_rawSampler);
     m_rawSampler = 0;
     m_picture = 0;
@@ -3068,16 +3062,12 @@ void Scene3D::releaseGl()
     if (m_depth) f->glDeleteRenderbuffers(1, &m_depth);
     if (m_msFbo) f->glDeleteFramebuffers(1, &m_msFbo);
     if (m_msColor) f->glDeleteRenderbuffers(1, &m_msColor);
-    if (m_shadowProgram) f->glDeleteProgram(m_shadowProgram);
     if (m_shadowFbo) f->glDeleteFramebuffers(1, &m_shadowFbo);
     if (m_shadowMaps) f->glDeleteTextures(1, &m_shadowMaps);
     m_program = m_fbo = m_color = m_depth = m_msFbo = m_msColor = m_shadowProgram = m_shadowFbo = m_shadowMaps = 0;
-    if (m_pointProgram) f->glDeleteProgram(m_pointProgram);
     f->glDeleteTextures(kMaxPointShadows, m_pointMaps);
     if (m_preFbo) f->glDeleteFramebuffers(1, &m_preFbo);
     if (m_preDepth) f->glDeleteTextures(1, &m_preDepth);
-    if (m_aoProgram) f->glDeleteProgram(m_aoProgram);
-    if (m_aoBlurProgram) f->glDeleteProgram(m_aoBlurProgram);
     if (m_aoFbo) f->glDeleteFramebuffers(1, &m_aoFbo);
     f->glDeleteTextures(2, m_aoTex);
     m_pointProgram = m_preFbo = m_preDepth = m_aoProgram = m_aoBlurProgram = m_aoFbo = 0;

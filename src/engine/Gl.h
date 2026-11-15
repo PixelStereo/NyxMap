@@ -49,6 +49,10 @@ inline QImage prepareImageUpload(const QImage &image)
 
 // Compiles and links a program. Returns 0 on failure (log filled in).
 GLuint compileProgram(const QString &vs, const QString &fs, QString *log);
+// The same, compiled once per group of shared contexts and kept while the group lives: its users never delete it, and
+// set every uniform they read at each draw (another user may have left its own values). For the fixed programs many
+// objects of a kind hold (each 3D scene): a slow driver compiles them once, not once per object.
+GLuint sharedProgram(const QString &vs, const QString &fs, QString *log);
 
 // Texture + render framebuffer.
 // Precision of the render targets (the layers, groups, viewports and the composition): 8 bits per channel, or 10
