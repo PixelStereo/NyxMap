@@ -27,10 +27,8 @@ MSL 2.0 and HLSL 5.0. No GPU is needed.
 build/nyxmap_isf_rhi_test --verbose [folders or .fs files]
 ```
 
-Result (Qt 6.12): **311 of the 312 shipped shaders** bake for all three backends,
-in 0.6 s. The one that does not, `Textured Refraction.fs`, is cut short in the
-middle of a line and fails with OpenGL too. The `isf_rhi` test fails if a shipped
-shader stops baking.
+Result (Qt 6.12): **all 311 shipped shaders** bake for all three backends, in
+0.6 s. The `isf_rhi` test fails if a shipped shader stops baking.
 
 Not covered yet: the generated code has not run on a GPU. Multi-pass targets,
 persistent buffers, POINTS passes and image flips are translated but not drawn,

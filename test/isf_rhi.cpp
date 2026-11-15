@@ -95,10 +95,5 @@ int main(int argc, char **argv)
     std::printf("ISF → QRhi: %d of %d shaders bake for Metal, Direct3D and Vulkan (%d not read by NyxMap either), %.1f s\n", ok,
                 read, unreadable, timer.elapsed() / 1000.0);
     for (const auto &[cause, count] : causes) std::printf("  %3d  %s\n", count, qPrintable(cause));
-    // Shipped shaders broken for every backend, OpenGL included (not a QRhi matter): known, fixed apart
-    static const QStringList broken = {QStringLiteral("Textured Refraction.fs")}; // cut short in the middle of a line
-    int expected = read;
-    for (const QString &f : files)
-        if (broken.contains(QFileInfo(f).fileName())) --expected;
-    return shipped && ok < expected ? 1 : 0;
+    return shipped && ok < read ? 1 : 0;
 }
