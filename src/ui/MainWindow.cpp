@@ -338,10 +338,20 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_layerTable = new LayerTable;
     m_leftTabs = new QTabWidget;
     m_leftTabs->addTab(m_bin, QStringLiteral("Media Bin"));
-    m_leftTabs->addTab(m_layerTable, QStringLiteral("Layers"));
     m_fixtures = new FixturePanel(m_engine, m_undo);
     m_fixtures->setObjectName(QStringLiteral("fixturePanel"));
-    m_leftTabs->addTab(m_fixtures, QStringLiteral("Fixtures"));
+    { // One panel: the layers' list, the fixtures' list under it, the space between them moved by the handle.
+      // The Light button of the layers' filters shows or hides the second one
+        auto *page = new QSplitter(Qt::Vertical);
+        page->setObjectName(QStringLiteral("layersAndFixtures"));
+        page->setChildrenCollapsible(false);
+        page->addWidget(m_layerTable);
+        page->addWidget(m_fixtures);
+        page->setStretchFactor(0, 3);
+        page->setStretchFactor(1, 2);
+        connect(m_layerTable, &LayerTable::fixturesShownChanged, m_fixtures, &QWidget::setVisible);
+        m_leftTabs->addTab(page, QStringLiteral("Layers"));
+    }
     // A fixture picked in the list or in the view: selected in both, its settings shown
     auto showFixture = [this](quint64 id) {
         m_view->setFixture(id);
@@ -500,6 +510,18 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_consoleDock->hide();
     connect(m_status, &StatusLine::alertsClicked, this, &MainWindow::toggleConsole);
 
+    // STOP ALL, always at hand: every wait, timeline and play stopped (as Cmd / Ctrl + Esc)
+    auto *stopAll = new QToolButton(statusBar());
+    stopAll->setObjectName(QStringLiteral("stopAllButton"));
+    stopAll->setText(QStringLiteral("■ STOP ALL"));
+    stopAll->setToolTip(QStringLiteral("Stop every sequence's waits, every timeline and every play, the fades where they are (%1)")
+                            .arg(emergencyStopKeyText()));
+    stopAll->setCursor(Qt::PointingHandCursor);
+    stopAll->setStyleSheet(QStringLiteral("QToolButton { background:#7a1f1f; color:#fff; border:1px solid #a33; border-radius:4px; "
+                                          "padding:1px 10px; font-weight:700; }"
+                                          "QToolButton:hover { background:#9b2727; } QToolButton:pressed { background:#c33; }"));
+    connect(stopAll, &QToolButton::clicked, this, &MainWindow::emergencyStop);
+    statusBar()->addPermanentWidget(stopAll);
     auto *usageLabel = new QLabel(statusBar());
     usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
     usageLabel->setToolTip(tr("System CPU and RAM usage, GPU activity and dedicated video memory when the driver reports them. "
@@ -624,9 +646,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_bin, &MediaBin::loadIntoNewLayerRequested, this, &MainWindow::loadIntoNewLayer);
     connect(m_bin, &MediaBin::loadIntoLayerRequested, this, [this](int i, const QString &p) { loadIntoLayer(i, p); });
     connect(m_layerTable, &LayerTable::addClicked, this, &MainWindow::addEmptyLayer);
-    connect(m_layerTable, &LayerTable::filesDropped, this, [this](int row, const QStringList &paths) {
-        loadDropped(row >= 0 ? row : currentLayer(), paths);
-    });
+    connect(m_layerTable, &LayerTable::filesDropped, this, &MainWindow::dropOnLayerTable);
     connect(m_bin, &MediaBin::reloadIsfRequested, this, [this](const QString &path) {
         QString error;
         const int count = m_engine->reloadIsfFile(path, &error);
@@ -1284,7 +1304,11 @@ void MainWindow::buildMenus()
     seq->addAction(QStringLiteral("Previous step without its timing, straight to its state (Alt+Shift+Space)"), this, &MainWindow::sequenceBackWithoutTiming);
     seq->addAction(QStringLiteral("Stop the waits (pre-waits and follows still to come)"), &m_engine->sequencer(), &Sequencer::stop);
     // The key is handled by the event filter (also from the output windows): only shown here, after the tab
-    seq->addAction(QStringLiteral("STOP ALL\t%1").arg(emergencyStopKeyText()), this, &MainWindow::emergencyStop);
+    { // A real shortcut of the application: the macOS menu catches Cmd+Esc itself (the key filter alone may not see it)
+        QAction *stop = seq->addAction(QStringLiteral("STOP ALL"), this, &MainWindow::emergencyStop);
+        stop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Escape));
+        stop->setShortcutContext(Qt::ApplicationShortcut);
+    }
     seq->addSeparator();
     seq->addAction(QStringLiteral("Sequences…"), this, &MainWindow::openSequences);
     seq->addAction(QStringLiteral("Timelines…"), this, &MainWindow::openTimelines);
@@ -2269,6 +2293,30 @@ bool MainWindow::loadIntoLayer(int i, const QString &path)
     refreshAll();
     if (!err.isEmpty()) statusBar()->showMessage(fi.fileName() + QStringLiteral(": ") + err.section('\n', 0, 0), 8000);
     return true;
+}
+
+void MainWindow::dropOnLayerTable(int row, const QStringList &paths)
+{
+    if (row >= 0) { // onto a layer: that layer takes the media (a model makes a 3D scene around it)
+        loadDropped(row, paths);
+        return;
+    }
+    // Onto the list itself, below or between the layers: a 3D model goes into the first 3D scene, one is made
+    // when there is none; any other media is a new layer
+    QStringList models, rest;
+    for (const QString &p : paths) (Model3D::isModelFile(p) ? models : rest) << p;
+    if (!models.isEmpty()) {
+        int scene = -1;
+        const LayerTree t = m_engine->structure();
+        for (int k = 0; k < int(t.size()) && scene < 0; ++k)
+            if (t[size_t(k)].role == TreeNode::Scene3d) scene = k;
+        if (scene < 0) {
+            createScene();
+            scene = currentLayer();
+        }
+        for (const QString &p : models) loadIntoLayer(scene, p);
+    }
+    for (const QString &p : rest) loadIntoNewLayer(p);
 }
 
 void MainWindow::loadDropped(int layer, const QStringList &paths)

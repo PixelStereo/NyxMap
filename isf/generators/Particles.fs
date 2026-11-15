@@ -194,6 +194,8 @@ void main(){
   gl_FragColor=vec4(mod(C.x+dt*camSpeed*.05,4.),C.y,C.z,min(C.w+dt*.5,1.));
  }else if(PASSINDEX<4){
   uint id=ptId();ivec2 c=ivec2(gl_FragCoord.xy);
+  // Past the particles drawn (Particles below its maximum): nothing to compute, each born anew once it is drawn again
+  if(float(id)>=262144.*count){gl_FragColor=vec4(0);return;}
   vec4 P=texelFetch(pos,c,0),V=texelFetch(vel,c,0);
   bool born=P.w<=0.;
   float dt=min(TIMEDELTA,.1)*timeScale;

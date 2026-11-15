@@ -38,6 +38,10 @@ class ColorPicker;
 namespace theme {
 // A check box, as the application draws them all: a square edge, the accent's square inside it when on
 void paintCheck(QPainter &p, const QRectF &box, bool on, bool partial, bool hover, bool enabled);
+// A group's fold mark, the same in every list (layers, fixtures, interactions, sequences): a filled triangle around
+// `center`, pointing down when open, right when folded, light enough to be seen on any row
+void paintFoldArrow(QPainter &p, const QPointF &center, bool open);
+QColor foldArrowColor();
 class Notifier : public QObject
 {
     Q_OBJECT

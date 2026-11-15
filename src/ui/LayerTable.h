@@ -56,6 +56,7 @@ public:
     void setThumbnail(quint64 id, const QImage &image); // the small picture of a layer, shown in its row
 
 signals:
+    void fixturesShownChanged(bool shown); // the Light button: the fixtures' list shown or hidden
     void currentRowChanged(int row);
     void rowClicked(int row);
     void selectionChanged(); // the rows selected (selectedRows) changed
@@ -83,7 +84,7 @@ private:
     QTableWidget *m_table;
     std::vector<Row> m_rows, m_raw;
     int m_filter = 0b1110;
-    std::array<class QToolButton *, 4> m_filterPills{}; // All, Video, 3D, Audio
+    std::array<class QToolButton *, 5> m_filterPills{}; // All, Video, 3D, Audio, Light (the fixtures)
     QHash<quint64, QPixmap> m_thumbs;
     bool m_updating = false;
 };

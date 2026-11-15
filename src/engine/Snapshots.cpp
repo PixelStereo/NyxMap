@@ -1954,7 +1954,9 @@ QJsonArray Engine::captureFixtures() const
     for (const Fixture &f : m_fixtures.fixtures) {
         QJsonObject params;
         const QString prefix = QStringLiteral("fixture/%1/").arg(f.id);
-        for (const QString &k : fixtureKeys())
+        QStringList keys = fixtureKeys();
+        for (const FixedChannel &fc : fixedChannels(m_fixtures, f)) keys << QStringLiteral("ch%1").arg(fc.channel); // its fixed channels
+        for (const QString &k : keys)
             if (const Parameter *p = self->findParameter(0, prefix + k)) params.insert(k, p->json());
         out.append(QJsonObject{{"id", QString::number(f.id)}, {"name", f.name}, {"included", true}, {"params", params}});
     }
@@ -1968,7 +1970,10 @@ void Engine::applyFixtures(const QJsonArray &states, double fade)
         const QJsonObject o = v.toObject();
         const quint64 id = o.value("id").toString().toULongLong();
         if (!o.value("included").toBool(true) || !m_fixtures.findFixture(id)) continue;
-        applyStoredValues(QStringLiteral("fixture/%1/").arg(id), fixtureKeys(), o.value("params").toObject(),
+        QStringList keys = fixtureKeys();
+        for (const QString &k : o.value("params").toObject().keys())
+            if (k.startsWith(QLatin1String("ch"))) keys << k; // its fixed channels stored
+        applyStoredValues(QStringLiteral("fixture/%1/").arg(id), keys, o.value("params").toObject(),
                           o.value("timing").toObject(), o.value("easing").toObject(), fade, o.value("delay").toObject());
     }
 }

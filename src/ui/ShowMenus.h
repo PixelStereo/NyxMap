@@ -6,8 +6,10 @@
 //     Composition ▸ its values
 //     Viewports   ▸ each viewport ▸ its values
 //     Layers      ▸ the layers as the bin has them (groups, 3D scenes with their objects) ▸ each layer ▸ its values
+//     Fixtures    ▸ the groups (their own values, then their fixtures) and the fixtures ▸ each one ▸ its values
 //     Interactions▸ the interactions as their list has them (groups) ▸ each interaction ▸ the values in play
 //     Timelines   ▸ each timeline ▸ its transport, speed, loop mode, its oscillators' period, amplitude…
+//     Sequences   ▸ each sequence ▸ GO, GO Back, Stop
 //
 // What a menu does with an owner is its own business (it says which values it takes, and what choosing one does): it is
 // given the owner's menu to fill. Nothing else builds these menus.
@@ -24,14 +26,19 @@ namespace showmenu {
 // Whose values they are. The composition's own list (Engine::parameters(0)) holds the composition's values, the
 // interactions' ("interaction/<id>/…") and the timelines' ("timeline/<id>/…"): an owner picks its own out of it.
 struct Owner {
-    enum class Kind { Composition, Layer, Interaction, Timeline };
+    enum class Kind { Composition, Layer, Interaction, Timeline, Fixture, FixtureGroup, Sequence };
     Kind kind = Kind::Composition;
     quint64 id = 0; // the layer's, the interaction's or the timeline's
     // The id to ask the engine's lists with (parameters(), animatablePoints()…): the layer's, else 0
     quint64 layer() const { return kind == Kind::Layer ? id : 0; }
     bool owns(const QString &path) const;
     // How many leading " › " parts of a label name the owner itself (not shown under its own menu)
-    int labelDrop() const { return kind == Kind::Interaction ? 2 : kind == Kind::Timeline ? 1 : 0; }
+    int labelDrop() const
+    {
+        return kind == Kind::Interaction || kind == Kind::Fixture || kind == Kind::FixtureGroup ? 2
+               : kind == Kind::Timeline || kind == Kind::Sequence                               ? 1
+                                                                                                : 0;
+    }
     static Owner composition() { return {}; }
     static Owner forLayer(quint64 id) { return {id ? Kind::Layer : Kind::Composition, id}; }
 };

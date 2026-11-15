@@ -2,6 +2,9 @@
 #include "Commands.h"
 #include "Engine.h"
 #include "FixtureOverlay.h"
+#include "InteractionPanel.h"
+#include "PresetEditor.h"
+#include "TimelinePanel.h"
 #include "Widgets.h"
 
 #include <QCheckBox>
@@ -10,13 +13,30 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QUuid>
+#include <QMessageBox>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QMenu>
 #include <QSignalBlocker>
+#include <QHeaderView>
+#include <QTableWidget>
+#include <QTimer>
+#include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
 #include <cmath>
 #include <memory>
 #include <vector>
+
+FixtureType templateOf(const FixtureType &type, const QString &name)
+{
+    FixtureType t = type;
+    t.id = QStringLiteral("template-%1").arg(QUuid::createUuid().toString(QUuid::Id128).left(10));
+    t.name = name;
+    t.builtIn = false;
+    return t;
+}
 
 FixtureInspector::FixtureInspector(Engine *engine, QUndoStack *undo, QWidget *parent)
     : QWidget(parent), m_engine(engine), m_undo(undo)
@@ -72,6 +92,24 @@ FixtureInspector::FixtureInspector(Engine *engine, QUndoStack *undo, QWidget *pa
     m_typeInfo->setStyleSheet(QStringLiteral("color:#888; font-size:11px;"));
     m_typeInfo->setWordWrap(true);
     fx->addRow(QString(), m_typeInfo);
+    // Its type as it is here (its own channels included), kept on this machine: offered in every project
+    auto *keep = new QToolButton;
+    keep->setObjectName(QStringLiteral("fixtureSaveTemplate"));
+    keep->setText(QStringLiteral("Save as Template…"));
+    keep->setToolTip(QStringLiteral("Keep this fixture's type, with its channels as set here, as a template offered in every project"));
+    fx->addRow(QString(), keep);
+    connect(keep, &QToolButton::clicked, this, [this] {
+        const FixturePatch p = m_engine->fixturePatch();
+        const Fixture *f = p.findFixture(m_id);
+        const std::optional<FixtureType> t = f ? p.resolvedType(*f) : std::nullopt;
+        if (!t) return;
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, QStringLiteral("Save as Template"), QStringLiteral("Name"), QLineEdit::Normal, t->name, &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        QString why;
+        if (!saveFixtureTemplate(templateOf(*t, name), &why))
+            QMessageBox::warning(this, QStringLiteral("Save as Template"), QStringLiteral("Not saved: %1").arg(why));
+    });
     auto *grid = new QHBoxLayout;
     m_cols = integer("fixtureCols", 1, 1024);
     m_rows = integer("fixtureRows", 1, 1024);
@@ -138,6 +176,16 @@ FixtureInspector::FixtureInspector(Engine *engine, QUndoStack *undo, QWidget *pa
     m_white->addItems({QStringLiteral("From the colour (min of R, G, B)"), QStringLiteral("Off")});
     m_white->setToolTip(QStringLiteral("A white channel (RGBW): the grey part of the colour moved to it, or left at 0"));
     out->addRow(QStringLiteral("White"), m_white);
+
+    // --- Channels: each one follows the pixel mapping or sends a fixed value; channels added after its own. A fixed
+    // value is a value of the show too ("Channel 5" of the fixture): snapshots, presets, timelines and controls set it
+    QFormLayout *channelsForm = group(QStringLiteral("Channels"));
+    m_channels = new ChannelEditor;
+    channelsForm->addRow(m_channels);
+    connect(m_channels, &ChannelEditor::edited, this, [this] {
+        const std::map<int, FixtureChannel> own = ChannelEditor::ownChannels(m_channels->rows());
+        edit(QStringLiteral("Fixture Channels"), QStringLiteral("channels"), [&](Fixture &f, const FixturePatch &) { f.channels = own; });
+    });
 
     // --- Edits
     connect(m_name, &QLineEdit::editingFinished, this, [this] {
@@ -286,5 +334,267 @@ void FixtureInspector::refresh()
     if (!m_intensity->isDragging()) m_intensity->setValue(std::round(f.intensity * 100));
     m_gamma->setValue(f.gamma);
     m_white->setCurrentIndex(f.white == Fixture::White::Off ? 1 : 0);
+    m_channels->setOwner(m_engine, m_undo, f.id);
+    m_channels->setRows(ChannelEditor::rowsOf(p, f));
+    attachShowValue(m_intensity, m_engine, m_undo, {QStringLiteral("fixture/%1/intensity").arg(f.id)});
     m_updating = false;
+}
+
+// --- Channel editor
+
+namespace {
+// The roles offered, as the pixel mapping uses them, then a fixed value or nothing
+const ChannelRole kRoles[] = {ChannelRole::Dimmer, ChannelRole::Red,  ChannelRole::Green,   ChannelRole::Blue,
+                              ChannelRole::White,  ChannelRole::Amber, ChannelRole::Uv,     ChannelRole::Cyan,
+                              ChannelRole::Magenta, ChannelRole::Yellow, ChannelRole::Fixed, ChannelRole::Ignore};
+enum EditorColumn { ColChannel, ColPixel, ColRole, ColValue, ColReset, EditorColumns };
+
+const QString kIgnoreTip = QStringLiteral(
+    "Not NyxMap's: another device on the DMX network drives it.\n"
+    "sACN: given away (a priority of 0 for this channel), for receivers and nodes that know priorities by channel.\n"
+    "Art-Net: sent at 0; a node merging HTP lets the other device through.");
+
+bool same(const FixtureChannel &a, const FixtureChannel &b)
+{
+    return a.role == b.role && (a.role != ChannelRole::Fixed || a.value == b.value);
+}
+} // namespace
+
+ChannelEditor::ChannelEditor(QWidget *parent) : QWidget(parent)
+{
+    auto *v = new QVBoxLayout(this);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(4);
+    m_table = new QTableWidget(0, EditorColumns);
+    m_table->setObjectName(QStringLiteral("fixtureChannels"));
+    m_table->setHorizontalHeaderLabels({QStringLiteral("Ch"), QStringLiteral("Px"), QStringLiteral("Role"), QStringLiteral("Value"), QString()});
+    m_table->horizontalHeaderItem(ColRole)->setToolTip(QStringLiteral("What drives it: the pixel mapping (a colour, a dimmer), a fixed value, or nothing"));
+    m_table->horizontalHeaderItem(ColValue)->setToolTip(QStringLiteral("A fixed channel's value, sent as it is (0..255)"));
+    m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(28);
+    m_table->setSelectionMode(QAbstractItemView::NoSelection);
+    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_table->setShowGrid(false);
+    m_table->setAlternatingRowColors(true);
+    auto *h = m_table->horizontalHeader();
+    h->setHighlightSections(false);
+    for (auto [col, width] : {std::pair{ColChannel, 34}, {ColPixel, 34}, {ColRole, 104}, {ColReset, 28}}) {
+        h->setSectionResizeMode(col, QHeaderView::Fixed);
+        m_table->setColumnWidth(col, width);
+    }
+    h->setSectionResizeMode(ColValue, QHeaderView::Stretch);
+    m_table->setMinimumHeight(120);
+    v->addWidget(m_table, 1);
+    m_add = new QToolButton;
+    m_add->setObjectName(QStringLiteral("fixtureAddChannel"));
+    m_add->setText(QStringLiteral("+ Channel"));
+    m_add->setToolTip(QStringLiteral("A fixed channel after the last: its value is sent as it is"));
+    v->addWidget(m_add, 0, Qt::AlignLeft);
+    connect(m_add, &QToolButton::clicked, this, [this] {
+        int next = 1;
+        for (const Row &r : m_rows) next = std::max(next, r.channel + r.now.width());
+        m_rows.push_back({next, -1, FixtureChannel{ChannelRole::Fixed, false, 0}, std::nullopt});
+        rebuild();
+        emit edited();
+    });
+}
+
+void ChannelEditor::setRows(const std::vector<Row> &rows)
+{
+    bool sameChannels = rows.size() == m_rows.size();
+    for (size_t i = 0; sameChannels && i < rows.size(); ++i)
+        sameChannels = rows[i].channel == m_rows[i].channel && rows[i].now.role == m_rows[i].now.role &&
+                       rows[i].type.has_value() == m_rows[i].type.has_value();
+    m_rows = rows;
+    if (sameChannels && !m_ownerChanged) showValues();
+    else rebuild();
+    m_ownerChanged = false;
+}
+
+void ChannelEditor::setOwner(Engine *e, QUndoStack *undo, quint64 fixture)
+{
+    m_ownerChanged = m_ownerChanged || fixture != m_fixture;
+    m_engine = e;
+    m_undo = undo;
+    m_fixture = fixture;
+}
+
+void attachShowValue(QWidget *w, Engine *e, QUndoStack *undo, const QStringList &paths)
+{
+    if (!w) return;
+    w->setProperty("showValuePaths", paths);
+    if (PresetEditor *pe = PresetEditor::instance()) pe->track(w, 0, paths);
+    if (w->property("showValueMenu").toBool()) return; // its right-click is there already: it reads the paths above
+    w->setProperty("showValueMenu", true);
+    w->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(w, &QWidget::customContextMenuRequested, w, [w, e, undo](const QPoint &pos) {
+        const QStringList now = w->property("showValuePaths").toStringList();
+        auto *menu = new QMenu(w);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        if (PresetEditor *pe = PresetEditor::instance()) pe->fillMenu(menu, 0, now);
+        TimelineWindow::fillParameterMenu(menu, e, undo, 0, now, w);
+        InteractionPanel::fillValueMenu(menu, e, 0, now);
+        if (menu->isEmpty()) {
+            delete menu;
+            return;
+        }
+        menu->popup(w->mapToGlobal(pos));
+    });
+}
+
+void ChannelEditor::change(int index, const FixtureChannel &c)
+{
+    if (m_updating || index < 0 || index >= int(m_rows.size())) return;
+    Row &r = m_rows[size_t(index)];
+    const bool roleChanged = r.now.role != c.role;
+    r.now.role = c.role;
+    r.now.value = c.value;
+    if (roleChanged) rebuild();
+    else showValues();
+    emit edited();
+}
+
+void ChannelEditor::rebuild()
+{
+    m_updating = true;
+    m_table->clearContents();
+    m_table->setRowCount(int(m_rows.size()));
+    for (int i = 0; i < int(m_rows.size()); ++i) {
+        const Row &r = m_rows[size_t(i)];
+        auto *ch = new QTableWidgetItem(r.now.fine ? QStringLiteral("%1-%2").arg(r.channel).arg(r.channel + 1) : QString::number(r.channel));
+        ch->setTextAlignment(Qt::AlignCenter);
+        ch->setForeground(r.type ? QColor(200, 200, 205) : QColor(232, 195, 90));
+        ch->setToolTip(r.type ? QStringLiteral("Channel %1 from the fixture's address").arg(r.channel)
+                              : QStringLiteral("Added after the type's channels"));
+        m_table->setItem(i, ColChannel, ch);
+        auto *px = new QTableWidgetItem(r.pixel < 0 ? QStringLiteral("—") : QString::number(r.pixel + 1));
+        px->setTextAlignment(Qt::AlignCenter);
+        px->setForeground(QColor(140, 140, 150));
+        px->setToolTip(r.pixel < 0 ? QStringLiteral("The whole fixture") : QStringLiteral("Pixel %1").arg(r.pixel + 1));
+        m_table->setItem(i, ColPixel, px);
+
+        auto *role = new QComboBox;
+        role->setObjectName(QStringLiteral("channelRole%1").arg(r.channel));
+        for (ChannelRole x : kRoles) {
+            role->addItem(channelRoleName(x), int(x));
+            if (x == ChannelRole::Fixed)
+                role->setItemData(role->count() - 1, QStringLiteral("A value sent as it is (0..255)"), Qt::ToolTipRole);
+            else if (x == ChannelRole::Ignore)
+                role->setItemData(role->count() - 1, kIgnoreTip, Qt::ToolTipRole);
+            else
+                role->setItemData(role->count() - 1, QStringLiteral("Driven by the pixel mapping"), Qt::ToolTipRole);
+        }
+        role->setCurrentIndex(std::max(0, role->findData(int(r.now.role))));
+        m_table->setCellWidget(i, ColRole, role);
+        connect(role, &QComboBox::currentIndexChanged, this, [this, i, role] {
+            FixtureChannel c = m_rows[size_t(i)].now;
+            c.role = ChannelRole(role->currentData().toInt());
+            QTimer::singleShot(0, this, [this, i, c] { change(i, c); }); // not while its own combo is being handled
+        });
+
+        if (r.now.role == ChannelRole::Fixed) {
+            auto *value = new SliderField;
+            value->setObjectName(QStringLiteral("fixtureChannel%1").arg(r.channel));
+            value->setRange(0, 255);
+            value->setDecimals(0);
+            value->setSingleStep(1);
+            value->setCompact(true);
+            m_table->setCellWidget(i, ColValue, value);
+            if (m_engine && m_fixture) // a show value: marked, its right-click (preset, timeline, interaction)
+                attachShowValue(value, m_engine, m_undo, {QStringLiteral("fixture/%1/ch%2").arg(m_fixture).arg(r.channel)});
+            connect(value, &SliderField::valueEdited, this, [this, i](double v) {
+                FixtureChannel c = m_rows[size_t(i)].now;
+                c.value = quint8(std::clamp(int(std::lround(v)), 0, 255));
+                change(i, c);
+            });
+        } else {
+            const bool ignored = r.now.role == ChannelRole::Ignore;
+            auto *what = new QTableWidgetItem(ignored ? QStringLiteral("left to others") : QStringLiteral("pixel mapping"));
+            if (ignored) what->setToolTip(kIgnoreTip);
+            what->setForeground(QColor(140, 140, 150));
+            m_table->setItem(i, ColValue, what);
+        }
+
+        auto *reset = new QToolButton;
+        reset->setAutoRaise(true);
+        if (r.type) {
+            reset->setText(QStringLiteral("↺"));
+            reset->setToolTip(QStringLiteral("Back to the type's: %1").arg(r.type->role == ChannelRole::Fixed
+                                                                             ? QStringLiteral("Fixed %1").arg(r.type->value)
+                                                                             : channelRoleName(r.type->role)));
+            connect(reset, &QToolButton::clicked, this, [this, i] {
+                QTimer::singleShot(0, this, [this, i] {
+                    if (i < int(m_rows.size()) && m_rows[size_t(i)].type) change(i, *m_rows[size_t(i)].type);
+                });
+            });
+        } else {
+            reset->setText(QStringLiteral("×"));
+            reset->setToolTip(QStringLiteral("Take this channel away"));
+            connect(reset, &QToolButton::clicked, this, [this, i] {
+                QTimer::singleShot(0, this, [this, i] {
+                    if (i >= int(m_rows.size())) return;
+                    m_rows.erase(m_rows.begin() + i);
+                    rebuild();
+                    emit edited();
+                });
+            });
+        }
+        m_table->setCellWidget(i, ColReset, reset);
+    }
+    m_updating = false;
+    showValues();
+}
+
+void ChannelEditor::showValues()
+{
+    m_updating = true;
+    for (int i = 0; i < int(m_rows.size()) && i < m_table->rowCount(); ++i) {
+        const Row &r = m_rows[size_t(i)];
+        if (auto *value = qobject_cast<SliderField *>(m_table->cellWidget(i, ColValue)))
+            if (!value->isDragging() && std::abs(value->value() - r.now.value) > 1e-9) value->setValue(r.now.value);
+        if (auto *reset = qobject_cast<QToolButton *>(m_table->cellWidget(i, ColReset)); reset && r.type)
+            reset->setEnabled(!same(r.now, *r.type));
+    }
+    m_updating = false;
+}
+
+std::vector<ChannelEditor::Row> ChannelEditor::rowsOf(const FixtureType &t)
+{
+    FixtureType e = explicitChannels(t);
+    std::sort(e.dmxMap.begin(), e.dmxMap.end(), [](const FixtureSlot &a, const FixtureSlot &b) { return a.offset < b.offset; });
+    std::vector<Row> rows;
+    for (const FixtureSlot &s : e.dmxMap) rows.push_back({s.offset + 1, s.pixel, s.channel, s.channel});
+    return rows;
+}
+
+std::vector<ChannelEditor::Row> ChannelEditor::rowsOf(const FixturePatch &p, const Fixture &f)
+{
+    const std::optional<FixtureType> t = p.resolvedType(f);
+    if (!t) return {};
+    Fixture plain = f;
+    plain.channels.clear();
+    std::map<int, FixtureChannel> type;
+    for (const Row &r : rowsOf(*p.resolvedType(plain))) type[r.channel] = r.now;
+    std::vector<Row> rows = rowsOf(*t);
+    for (Row &r : rows) {
+        const auto it = type.find(r.channel);
+        r.type = it != type.end() ? std::optional<FixtureChannel>(it->second) : std::nullopt;
+    }
+    return rows;
+}
+
+std::map<int, FixtureChannel> ChannelEditor::ownChannels(const std::vector<Row> &rows)
+{
+    std::map<int, FixtureChannel> own;
+    for (const Row &r : rows)
+        if (!r.type || !same(r.now, *r.type)) own[r.channel] = FixtureChannel{r.now.role, false, r.now.value};
+    return own;
+}
+
+FixtureType ChannelEditor::withRows(const FixtureType &t, const std::vector<Row> &rows)
+{
+    FixtureType r = explicitChannels(t);
+    r.dmxMap.clear();
+    for (const Row &row : rows) r.dmxMap.push_back({row.channel - 1, row.now, row.pixel});
+    return r;
 }

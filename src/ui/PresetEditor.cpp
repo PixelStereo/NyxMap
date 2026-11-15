@@ -527,7 +527,14 @@ void PresetEditor::fillAddElements(QMenu *menu)
     const auto addValues = [this](QMenu *into, quint64 layer) {
         const int selected = m_engine->indexOfPreset(m_selected);
         const auto add = [this, layer](const QStringList &paths) { addToSelected(layer, paths); };
-        const auto groups = layerValues(m_engine, layer);
+        auto groups = layerValues(m_engine, layer);
+        if (!layer) // the fixtures and the sequences have roots of their own, below
+            for (auto &g : groups)
+                g.second.erase(std::remove_if(g.second.begin(), g.second.end(), [](const QString &p) {
+                                   return p.startsWith(QLatin1String("fixture/")) || p.startsWith(QLatin1String("sequence/"));
+                               }),
+                               g.second.end());
+        groups.erase(std::remove_if(groups.begin(), groups.end(), [](const auto &g) { return g.second.isEmpty(); }), groups.end());
         QStringList all;
         for (const auto &g : groups) all << g.second;
         into->addAction(QStringLiteral("All Values"), this, [add, all] { add(all); });
@@ -559,11 +566,54 @@ void PresetEditor::fillAddElements(QMenu *menu)
     }
     if (!layers.empty()) menu->addSeparator();
     for (const auto &[id, name] : layers) addValues(menu->addMenu(name), id);
+    // The values of one owner of the composition's list (a fixture, a fixture group, a sequence): each a ticked entry
+    const auto addOwned = [this](QMenu *into, const QString &prefix) {
+        const int selected = m_engine->indexOfPreset(m_selected);
+        QStringList paths;
+        for (const ParamInfo &info : m_engine->parameters(0))
+            if (info.path.startsWith(prefix) && info.presettable) paths << info.path;
+        if (paths.isEmpty()) {
+            into->addAction(QStringLiteral("No values"))->setEnabled(false);
+            return;
+        }
+        into->addAction(QStringLiteral("All Values"), this, [this, paths] { addToSelected(0, paths); });
+        into->addSeparator();
+        for (const QString &path : paths) {
+            ParamInfo info;
+            QString label = path;
+            if (m_engine->parameterInfo(0, path, &info)) label = info.label.section(QStringLiteral(" › "), -1);
+            QAction *a = into->addAction(label, this, [this, path] { addToSelected(0, {path}); });
+            a->setToolTip(path);
+            a->setCheckable(true);
+            a->setChecked(selected >= 0 && inSelected(0, {path}));
+        }
+    };
+    const FixturePatch patch = m_engine->fixturePatch();
+    if (!patch.fixtures.empty() || !patch.groups.empty()) {
+        QMenu *sub = menu->addMenu(QStringLiteral("Fixtures"));
+        const auto name = [](const Fixture &f) { return f.name.isEmpty() ? QStringLiteral("Fixture %1").arg(f.id) : f.name; };
+        for (const FixtureGroup &g : patch.groups) {
+            QMenu *group = sub->addMenu(g.name.isEmpty() ? QStringLiteral("Group %1").arg(g.id) : g.name);
+            addOwned(group->addMenu(QStringLiteral("Group Parameters")), QStringLiteral("fixture/g%1/").arg(g.id));
+            for (const Fixture &f : patch.fixtures)
+                if (f.group == g.id) addOwned(group->addMenu(name(f)), QStringLiteral("fixture/%1/").arg(f.id));
+        }
+        for (const Fixture &f : patch.fixtures)
+            if (!f.group) addOwned(sub->addMenu(name(f)), QStringLiteral("fixture/%1/").arg(f.id));
+    }
     const std::vector<Interaction> interactions = m_engine->interactions();
     if (!interactions.empty()) {
         QMenu *sub = menu->addMenu(QStringLiteral("Interactions"));
         for (const Interaction &it : interactions)
             sub->addAction(it.name, this, [this, id = it.id] { addInteraction(id, false); });
+    }
+    if (m_engine->sequencer().count() > 0) {
+        QMenu *sub = menu->addMenu(QStringLiteral("Sequences"));
+        for (int i = 0; i < m_engine->sequencer().count(); ++i) {
+            const QString n = m_engine->sequencer().sequence(i).name;
+            addOwned(sub->addMenu(n.isEmpty() ? QStringLiteral("Sequence %1").arg(i + 1) : n),
+                     QStringLiteral("sequence/%1/").arg(m_engine->sequencer().sequenceId(i)));
+        }
     }
 }
 

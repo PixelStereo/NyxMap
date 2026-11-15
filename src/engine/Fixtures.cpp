@@ -1,6 +1,12 @@
 #include "Fixtures.h"
 #include "LineGenerator.h"
 
+#include <QStandardPaths>
+#include <QSaveFile>
+#include <QJsonDocument>
+#include <QFileInfo>
+#include <QFile>
+#include <QDir>
 #include <QJsonArray>
 #include <QtMath>
 #include <algorithm>
@@ -272,6 +278,11 @@ QJsonObject Fixture::toJson() const
     if (locked) o["locked"] = true;
     if (solo) o["solo"] = true;
     if (group) o["group"] = QString::number(group);
+    if (!channels.empty()) {
+        QJsonObject own; // keys are strings in JSON
+        for (const auto &[channel, c] : channels) own[QString::number(channel)] = c.toJson();
+        o["channels"] = own;
+    }
     if (cols != 1 || rows != 1 || byColumns || start != FixtureType::Start::TopLeft || snake)
         o["pixels"] = QJsonObject{{"cols", cols}, {"rows", rows}, {"order", byColumns ? "columns" : "rows"},
                                   {"start", startName(start)}, {"snake", snake}};
@@ -343,6 +354,14 @@ Fixture Fixture::fromJson(const QJsonObject &o)
     }
     if (f.path.size() < 2) f.path.clear();
     f.pathClosed = po.value("closed").toBool(false);
+    const QJsonObject own = o.value("channels").toObject();
+    for (auto it = own.begin(); it != own.end(); ++it) {
+        const int channel = it.key().toInt();
+        if (channel < 1 || channel > 512) continue;
+        FixtureChannel c = FixtureChannel::fromJson(it.value());
+        c.fine = false; // one channel each
+        f.channels[channel] = c;
+    }
     f.lineLayer = po.value("line_layer").toString().toULongLong();
     f.lineIndex = std::max(0, po.value("line").toInt(0));
     return f;
@@ -414,6 +433,21 @@ std::optional<FixtureType> FixturePatch::resolvedType(const Fixture &f) const
         r.byColumns = f.byColumns;
         r.start = f.start;
         r.snake = f.snake;
+    }
+    // The fixture's own channels: the roles and fixed values set on it, the channels it adds past its type's last
+    if (!f.channels.empty()) {
+        r = explicitChannels(r);
+        const int count = r.channelCount();
+        for (FixtureSlot &s : r.dmxMap)
+            if (const auto own = f.channels.find(s.offset + 1); own != f.channels.end()) {
+                s.channel.role = own->second.role;
+                s.channel.value = own->second.value;
+            }
+        for (int ch = count + 1; ch <= f.channels.rbegin()->first; ++ch) {
+            FixtureChannel c{ChannelRole::Fixed, false, 0};
+            if (const auto own = f.channels.find(ch); own != f.channels.end()) c = {own->second.role, false, own->second.value};
+            r.dmxMap.push_back({ch - 1, c, -1});
+        }
     }
     return r;
 }
@@ -579,6 +613,41 @@ std::vector<QPointF> fixtureSamplePoints(const FixturePatch &p, QSize comp)
     return pts;
 }
 
+FixtureType explicitChannels(const FixtureType &t)
+{
+    if (!t.dmxMap.empty()) return t;
+    FixtureType r = t;
+    for (const Placed &c : place(t, 0, 1)) r.dmxMap.push_back({c.universe * 512 + c.address - 1, c.channel, c.pixel});
+    r.header.clear();
+    r.perPixel.clear();
+    r.footer.clear();
+    return r;
+}
+
+std::vector<FixedChannel> fixedChannels(const FixturePatch &p, const Fixture &f)
+{
+    const std::optional<FixtureType> t = p.resolvedType(f);
+    if (!t) return {};
+    Fixture plain = f; // its type's channels alone: the ones past them are the fixture's own
+    plain.channels.clear();
+    const FixtureType type = explicitChannels(*p.resolvedType(plain));
+    std::map<int, int> typeValues;
+    for (const FixtureSlot &s : type.dmxMap) typeValues[s.offset + 1] = s.channel.role == ChannelRole::Fixed ? s.channel.value : 0;
+    std::vector<FixedChannel> out;
+    FixtureType mine = explicitChannels(*t);
+    std::sort(mine.dmxMap.begin(), mine.dmxMap.end(), [](const FixtureSlot &a, const FixtureSlot &b) { return a.offset < b.offset; });
+    for (const FixtureSlot &s : mine.dmxMap) {
+        if (s.channel.role != ChannelRole::Fixed) continue;
+        FixedChannel fc;
+        fc.channel = s.offset + 1;
+        fc.value = s.channel.value;
+        fc.extra = fc.channel > type.channelCount();
+        fc.typeValue = typeValues.count(fc.channel) ? typeValues[fc.channel] : 0;
+        out.push_back(fc);
+    }
+    return out;
+}
+
 std::vector<DmxSpan> fixtureFootprint(const FixtureType &t, int universe, int address)
 {
     std::vector<DmxSpan> spans;
@@ -673,6 +742,23 @@ void forEachPrepared(const FixturePatch &p, const std::vector<std::array<float, 
 }
 } // namespace
 
+DmxFrame buildDmxOwnership(const FixturePatch &p)
+{
+    DmxFrame owned;
+    for (const Fixture &f : p.fixtures) {
+        const DmxOutput *out = p.findOutput(f.output);
+        const std::optional<FixtureType> t = p.resolvedType(f);
+        if (!out || !t) continue;
+        for (const Placed &c : place(*t, f.universe, f.address)) {
+            QByteArray &u = owned[{out->id, c.universe}];
+            if (u.isEmpty()) u = QByteArray(512, '\0');
+            if (c.channel.role == ChannelRole::Ignore) continue; // left to another device
+            for (int k = 0; k < c.channel.width() && c.address - 1 + k < 512; ++k) u[c.address - 1 + k] = 1;
+        }
+    }
+    return owned;
+}
+
 DmxFrame buildDmxFrame(const FixturePatch &p, const std::vector<std::array<float, 3>> &colors)
 {
     DmxFrame frame;
@@ -731,4 +817,67 @@ std::map<quint64, std::vector<std::array<float, 3>>> fixtureOutput(const Fixture
         }
     });
     return out;
+}
+
+// --- Templates
+
+QString fixtureTemplatesPath()
+{
+    const QString env = qEnvironmentVariable("NYXMAP_FIXTURE_TEMPLATES");
+    if (!env.isEmpty()) return env;
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/fixture-templates.json");
+}
+
+std::vector<FixtureType> fixtureTemplates()
+{
+    QFile file(fixtureTemplatesPath());
+    std::vector<FixtureType> out;
+    if (!file.open(QIODevice::ReadOnly)) return out;
+    for (const QJsonValue &v : QJsonDocument::fromJson(file.readAll()).object().value("templates").toArray()) {
+        FixtureType t = FixtureType::fromJson(v.toObject());
+        t.builtIn = false;
+        if (t.valid()) out.push_back(std::move(t));
+    }
+    return out;
+}
+
+namespace {
+bool writeTemplates(const std::vector<FixtureType> &all, QString *error)
+{
+    const QString path = fixtureTemplatesPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QJsonArray list;
+    for (const FixtureType &t : all) list.append(t.toJson());
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error) *error = file.errorString();
+        return false;
+    }
+    file.write(QJsonDocument(QJsonObject{{"templates", list}}).toJson());
+    if (!file.commit()) {
+        if (error) *error = file.errorString();
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool saveFixtureTemplate(const FixtureType &t, QString *error)
+{
+    if (!t.valid(error)) return false;
+    std::vector<FixtureType> all = fixtureTemplates();
+    const auto same = std::find_if(all.begin(), all.end(), [&](const FixtureType &x) { return x.id == t.id; });
+    FixtureType kept = t;
+    kept.builtIn = false;
+    if (same != all.end()) *same = kept;
+    else all.push_back(kept);
+    return writeTemplates(all, error);
+}
+
+bool removeFixtureTemplate(const QString &id)
+{
+    std::vector<FixtureType> all = fixtureTemplates();
+    const auto before = all.size();
+    all.erase(std::remove_if(all.begin(), all.end(), [&](const FixtureType &x) { return x.id == id; }), all.end());
+    return all.size() != before && writeTemplates(all, nullptr);
 }

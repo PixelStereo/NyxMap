@@ -105,6 +105,7 @@ private:
     void loadIntoNewLayer(const QString &path);          // right-click in the media bin
     bool loadIntoLayer(int layer, const QString &path); // media, ISF generator or ISF effect (undoable)
     void loadDropped(int layer, const QStringList &paths);
+    void dropOnLayerTable(int row, const QStringList &paths); // row -1: dropped on the list, not on a layer
     void addEmptyLayer();
     void removeCurrentLayer(); // the selected layers (a group with its layers)
     void createGroup();         // the selected layers go into it

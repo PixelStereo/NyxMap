@@ -1,0 +1,23 @@
+name: Compiler cache
+description: Restores and saves a ccache directory for one job, and makes CMake compile through it (ccache already installed).
+inputs:
+  key:
+    description: The job's cache name (one per compiler setup)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-${{ inputs.key }}-${{ github.sha }}
+        restore-keys: ccache-${{ inputs.key }}-
+    - shell: bash
+      run: |
+        export CCACHE_DIR="$HOME/.ccache"
+        ccache --max-size=500M --set-config=compression=true
+        ccache --zero-stats
+        {
+          echo "CCACHE_DIR=$CCACHE_DIR"
+          for language in C CXX OBJC OBJCXX; do echo "CMAKE_${language}_COMPILER_LAUNCHER=ccache"; done
+        } >> "$GITHUB_ENV"

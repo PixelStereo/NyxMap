@@ -490,8 +490,14 @@ void main(){
                 }
             };
             // The shipped particle generator: a cloud appears, from every camera path
+            // A tenth of the grains (26 000): enough to light the picture, and a software renderer (a CI runner) simulates
+            // only those
+            const auto fewGrains = [&] {
+                inst = e.layer(g)->generator.get();
+                if (IsfInput *count = inst ? inst->input(QStringLiteral("count")) : nullptr) count->fValue = .1;
+            };
             CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
-            inst = e.layer(g)->generator.get();
+            fewGrains();
             IsfInput *path = inst ? inst->input(QStringLiteral("camPath")) : nullptr;
             CHECK(path != nullptr && path->lValues.size() == 6);
             for (int p = 0; path && p < 6; ++p) {
@@ -539,7 +545,7 @@ void main(){
             // A disperser (a negative strength) on the left of the point the grains are born at: they go right. The
             // generator loaded again first: none of the grains the attractor gathered (alive up to 9 s) left
             CHECK(e.setLayerIsf(g, isf + "/generators/Particles.fs", &err));
-            inst = e.layer(g)->generator.get();
+            fewGrains();
             if (IsfInput *p = inst->input(QStringLiteral("camPath"))) p->lValue = 0;
             setF("camPitch", 0);
             setF("vortex", 0);
@@ -2518,6 +2524,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         }
         // Sequences: steps recalling snapshots, GO / GO BACK, loop, saved with the project
         {
+            while (e.sequencer().count() > 0) // a new project holds "Sequence 1": start from none
+                e.sequencer().remove(0);
             Sequencer::Sequence seq;
             seq.name = "Show";
             seq.steps = {{e.snapshot(1).id, "Act 1", {}}, {e.snapshot(0).id, "Act 2", {}}, {987654, "gone", {}}};

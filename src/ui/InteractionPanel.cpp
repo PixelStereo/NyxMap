@@ -206,6 +206,13 @@ protected:
         QTreeWidget::dropEvent(event);
         if (dropped) dropped();
     }
+    // A group's fold mark: the one of every list, not the style's small arrow
+    void drawBranches(QPainter *p, const QRect &rect, const QModelIndex &index) const override
+    {
+        if (!model()->hasChildren(index)) return;
+        const int zone = std::max(16, indentation());
+        theme::paintFoldArrow(*p, QPointF(rect.right() - zone / 2.0, rect.center().y() + 0.5), isExpanded(index));
+    }
 };
 
 constexpr int kGroupRole = Qt::UserRole + 1; // an item of a group: its id (an interaction's item: 0)

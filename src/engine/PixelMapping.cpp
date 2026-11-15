@@ -62,6 +62,68 @@ const std::vector<std::unique_ptr<Parameter>> &Engine::fixtureParams()
                 x->intensity = std::clamp(v.toDouble(), 0.0, 1.0);
                 fixtureValuesTouched();
             });
+        // Each fixed channel ("ch5": the fifth from its address): what it sends, set by the show as any value
+        for (const FixedChannel &fc : fixedChannels(m_fixtures, f)) {
+            const int channel = fc.channel, typeValue = fc.typeValue;
+            m_fixtureParams.push_back(std::make_unique<Parameter>(prefix + QStringLiteral("ch%1").arg(channel),
+                                                                  cat + QStringLiteral("Channel %1").arg(channel), T::Int));
+            m_fixtureParams.back()->range(0, 255).limits(0, 255).step(1).byDefault(typeValue).animatable().bind(
+                [find, channel, typeValue] {
+                    const Fixture *x = find();
+                    if (!x) return QVariant();
+                    const auto own = x->channels.find(channel);
+                    return QVariant(own != x->channels.end() && own->second.role == ChannelRole::Fixed ? int(own->second.value) : typeValue);
+                },
+                [this, find, channel](const QVariant &v) {
+                    Fixture *x = find();
+                    if (!x) return;
+                    const int value = std::clamp(int(std::lround(v.toDouble())), 0, 255);
+                    const auto own = x->channels.find(channel);
+                    if (own != x->channels.end() && own->second.role == ChannelRole::Fixed && own->second.value == value) return;
+                    x->channels[channel] = FixtureChannel{ChannelRole::Fixed, false, quint8(value)};
+                    fixtureValuesTouched();
+                });
+        }
+    }
+    // Each group's values ("fixture/g<id>/…"): on / off, solo, intensity, combined with its fixtures' (effectiveOf)
+    for (const FixtureGroup &g : m_fixtures.groups) {
+        const quint64 id = g.id;
+        const QString prefix = QStringLiteral("fixture/g%1/").arg(id);
+        const QString cat = QStringLiteral("Fixtures › %1 › ").arg(g.name.isEmpty() ? QStringLiteral("Group %1").arg(id) : g.name);
+        auto find = [this, id]() -> FixtureGroup * {
+            for (FixtureGroup &x : m_fixtures.groups)
+                if (x.id == id) return &x;
+            return nullptr;
+        };
+        auto flag = [&](const QString &key, const QString &name, bool def, bool FixtureGroup::*field) {
+            m_fixtureParams.push_back(std::make_unique<Parameter>(prefix + key, cat + name, T::Bool));
+            m_fixtureParams.back()->byDefault(def).ramp(Parameter::Ramp::Cut).bind(
+                [find, field] {
+                    const FixtureGroup *x = find();
+                    return x ? QVariant(x->*field) : QVariant();
+                },
+                [this, find, field](const QVariant &v) {
+                    FixtureGroup *x = find();
+                    if (!x || x->*field == v.toBool()) return;
+                    x->*field = v.toBool();
+                    ++m_fixturesVersion; // the pixels sampled
+                    fixtureValuesTouched();
+                });
+        };
+        flag(QStringLiteral("enable"), QStringLiteral("On"), true, &FixtureGroup::enabled);
+        flag(QStringLiteral("solo"), QStringLiteral("Solo"), false, &FixtureGroup::solo);
+        m_fixtureParams.push_back(std::make_unique<Parameter>(prefix + QStringLiteral("intensity"), cat + QStringLiteral("Intensity"), T::Float));
+        m_fixtureParams.back()->range(0, 1).limits(0, 1).step(0.01).byDefault(1.0).animatable().bind(
+            [find] {
+                const FixtureGroup *x = find();
+                return x ? QVariant(x->intensity) : QVariant();
+            },
+            [this, find](const QVariant &v) {
+                FixtureGroup *x = find();
+                if (!x) return;
+                x->intensity = std::clamp(v.toDouble(), 0.0, 1.0);
+                fixtureValuesTouched();
+            });
     }
     return m_fixtureParams;
 }
@@ -147,19 +209,26 @@ void Engine::stepPixelMapping()
     if (got || m_fixturePoints.empty() || !m_actionDmx.empty() || !m_interactionDmx.empty() || m_hadInteractionDmx) {
         m_hadInteractionDmx = !m_interactionDmx.empty();
         auto frame = m_fixtureDmx;
+        DmxFrame owned = buildDmxOwnership(m_fixtures); // the channels that are ours: sACN gives the others away
         for (const auto *overrides : {&m_actionDmx, &m_interactionDmx}) {
             for (const auto &[key, values] : *overrides) {
                 const auto *output = m_fixtures.findOutput(key.first);
                 if (!output || !output->enabled) continue;
                 auto &universe = frame[key];
                 if (universe.isEmpty()) universe = QByteArray(512, char(0));
-                for (const auto &[channel, value] : values) universe[channel] = char(value);
+                auto &mine = owned[key];
+                if (mine.isEmpty()) mine = QByteArray(512, char(0));
+                for (const auto &[channel, value] : values) {
+                    universe[channel] = char(value);
+                    mine[channel] = 1; // a channel an action or an interaction sets: ours
+                }
             }
         }
         std::lock_guard<std::mutex> lk(m_dmxMutex);
-        if (frame != m_dmxLast) {
-            m_dmx.submit(frame);
+        if (frame != m_dmxLast || owned != m_dmxOwnedLast) {
+            m_dmx.submit(frame, owned);
             m_dmxLast = std::move(frame);
+            m_dmxOwnedLast = std::move(owned);
         }
     }
     const RenderTarget &out = m_output[m_back];

@@ -176,20 +176,9 @@ jobs:
           key: ffmpeg-lgpl-linux-${{ steps.linux-abi.outputs.key }}-${{ hashFiles('scripts/build_ffmpeg_linux.py') }}
       - name: Compiler cache
         if: needs.scope.outputs.linux_engine == 'true'
-        uses: actions/cache@v4
+        uses: ./.github/actions/ccache
         with:
-          path: ~/.ccache
-          key: ccache-linux-${{ github.sha }}
-          restore-keys: ccache-linux-
-      - name: Use the compiler cache
-        if: needs.scope.outputs.linux_engine == 'true'
-        run: |
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          export CCACHE_DIR="$HOME/.ccache"
-          ccache --max-size=500M --set-config=compression=true
-          ccache --zero-stats
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          key: linux
       - name: Build
         if: needs.scope.outputs.linux_engine == 'true'
         run: |
@@ -300,19 +289,9 @@ jobs:
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/ccache
         with:
-          path: ~/.ccache
-          key: ccache-asan-${{ github.sha }}
-          restore-keys: ccache-asan-
-      - name: Use the compiler cache
-        run: |
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          export CCACHE_DIR="$HOME/.ccache"
-          ccache --max-size=500M --set-config=compression=true
-          ccache --zero-stats
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          key: asan
       - name: Build with AddressSanitizer
         timeout-minutes: 15
         run: |
@@ -354,19 +333,9 @@ jobs:
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind ccache
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/ccache
         with:
-          path: ~/.ccache
-          key: ccache-valgrind-${{ github.sha }}
-          restore-keys: ccache-valgrind-
-      - name: Use the compiler cache
-        run: |
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          export CCACHE_DIR="$HOME/.ccache"
-          ccache --max-size=500M --set-config=compression=true
-          ccache --zero-stats
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          key: valgrind
       - name: Build with debug symbols
         run: |
           cmake -S . -B build-memory -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -415,19 +384,9 @@ jobs:
             qt6-multimedia-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/ccache
         with:
-          path: ~/.ccache
-          key: ccache-tsan-${{ github.sha }}
-          restore-keys: ccache-tsan-
-      - name: Use the compiler cache
-        run: |
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          export CCACHE_DIR="$HOME/.ccache"
-          ccache --max-size=500M --set-config=compression=true
-          ccache --zero-stats
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          key: tsan
       - name: Build
         run: |
           /usr/bin/clang --version
@@ -572,24 +531,17 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
-        # Homebrew's qt includes Qt WebEngine (the Web Page generator) on macOS 14 or later
+        # Homebrew's qt includes Qt WebEngine (the Web Page generator) on macOS 14 or later. The runner image's
+        # Homebrew as it is: no update of every formula first, no cleanup or dependents check after
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: brew install qt ffmpeg pkg-config ccache
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: ./.github/actions/ccache
         with:
-          path: ~/.ccache
-          key: ccache-macos-${{ github.sha }}
-          restore-keys: ccache-macos-
-      - name: Use the compiler cache
-        run: |
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-          export CCACHE_DIR="$HOME/.ccache"
-          ccache --max-size=500M --set-config=compression=true
-          ccache --zero-stats
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_OBJC_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          echo "CMAKE_OBJCXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          key: macos
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
@@ -837,8 +789,16 @@ jobs:
             throw "FFmpeg archive checksum mismatch"
           }
           Expand-Archive ffmpeg.zip -DestinationPath C:\ffmpeg
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: windows
+          max-size: 500M
       - name: Build
         shell: pwsh
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: |
           # pwsh stops on cmdlet errors only: every native command's exit code is checked
           $ErrorActionPreference = "Stop"

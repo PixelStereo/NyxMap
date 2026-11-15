@@ -461,14 +461,7 @@ private:
                 const auto kind = CueKind(type.toInt());
                 p->fillRect(QRect(left + 1, opt.rect.top() + 3, 3, opt.rect.height() - 6), theme::cueColor(kind));
                 if (const QVariant expanded = idx.data(kStepExpandedRole); expanded.isValid()) {
-                    const QPointF center(left + 15, opt.rect.center().y() + .5);
-                    const QPolygonF points = expanded.toBool()
-                        ? QPolygonF{center + QPointF(-5, -3), center + QPointF(5, -3), center + QPointF(0, 4)}
-                        : QPolygonF{center + QPointF(-3, -5), center + QPointF(4, 0), center + QPointF(-3, 5)};
-                    p->setRenderHint(QPainter::Antialiasing);
-                    p->setPen(Qt::NoPen);
-                    p->setBrush(ink);
-                    p->drawPolygon(points);
+                    theme::paintFoldArrow(*p, QPointF(left + 15, opt.rect.center().y() + .5), expanded.toBool());
                     textLeft = left + kDisclosureWidth;
                 }
                 if (const QChar initial = stepInitial(kind); !initial.isNull()) {

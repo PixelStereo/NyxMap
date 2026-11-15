@@ -192,9 +192,9 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     {
         struct Pill { const char *name; const char *colour; const char *tip; };
         static const Pill pills[4] = {{"All", "#9fb0d0", "Show all media"},
-                                      {"Video", "#5ad1e0", "Show videos, images, video generators and live inputs"},
+                                      {"Video", "#b08cff", "Show videos, images, video generators and live inputs"},
                                       {"Audio", "#3fbf6f", "Show sounds, instruments and audio inputs"},
-                                      {"3D", "#b08cff", "Show 3D models and primitives"}};
+                                      {"3D", "#5ad1e0", "Show 3D models and primitives"}};
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
         auto *group = new QButtonGroup(this);

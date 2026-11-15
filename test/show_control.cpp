@@ -19,7 +19,11 @@ int runShowControlTests(Engine &e)
         check(status == 200, "OSCQuery endpoint exists");
         return QJsonDocument::fromJson(reply.value("VALUE").toArray().at(0).toString().toUtf8()).object();
     };
-    check(get("/show/catalog").value("sequences").toArray().isEmpty(), "empty show returns empty catalogs");
+    const auto initialSequences = get("/show/catalog").value("sequences").toArray();
+    check(initialSequences.size() == 1 &&
+          initialSequences[0].toObject().value("name").toString() == "Sequence 1" &&
+          initialSequences[0].toObject().value("cues").toArray().isEmpty(),
+          "new project exposes its default empty sequence");
     const quint64 layer = e.layerId(e.addLayer("Control target"));
     e.setParameter(layer, "opacity", .2);
     const QString layerPath = QStringLiteral("/show/layer/by-id/%1").arg(layer);
@@ -83,9 +87,17 @@ int runShowControlTests(Engine &e)
     auto data = get("/show/catalog");
     check(data.value("version").toInt() == 1 && data.value("snapshots").toArray()[0].toObject().value("id").toString() == QString::number(sid),
           "catalog IDs are strings and schema is versioned");
-    const auto cues = data.value("sequences").toArray()[0].toObject().value("cues").toArray();
-    check(cues.size() == 2 && cues[0].toObject().value("description") == "Intro" && !cues[0].toObject().contains("text") && cues[1].toObject().value("target_type") == "preset" &&
-          cues[1].toObject().value("id").toString() == QString::number(cueId), "catalog lists all cue metadata with runtime identity");
+    const auto sequences = data.value("sequences").toArray();
+    const auto mainEntry = std::find_if(sequences.cbegin(), sequences.cend(), [qid](const QJsonValue &entry) {
+        return entry.toObject().value("id").toString() == QString::number(qid);
+    });
+    QJsonArray cues;
+    if (mainEntry != sequences.cend()) cues = mainEntry->toObject().value("cues").toArray();
+    check(mainEntry != sequences.cend() && cues.size() == 2 &&
+          cues[0].toObject().value("description") == "Intro" && !cues[0].toObject().contains("text") &&
+          cues[1].toObject().value("target_type") == "preset" &&
+          cues[1].toObject().value("id").toString() == QString::number(cueId),
+          "catalog lists Main's cue metadata by stable sequence identity");
     const QString snapshotPath = QStringLiteral("/snapshot/by-id/%1/recall").arg(sid);
     e.addSnapshot(snapshot, 0); // identical labels still change the structure identity
     e.setParameter(layer, "opacity", .9);
@@ -103,8 +115,10 @@ int runShowControlTests(Engine &e)
     check(server.handleMessage({sequencePath + "/cue/go", "s", {QString::number(cueId)}}) && e.sequencer().position() == 0,
           "cue-ID commands follow a cue after reordering");
     e.sequencer().add(Sequencer::Sequence{}, 0);
-    check(server.handleMessage({sequencePath + "/select", "", {}}) && e.sequencer().current() == 1,
-          "sequence selection uses identity instead of old list index");
+    check(server.handleMessage({sequencePath + "/select", "", {}}) &&
+          e.sequencer().indexOfSequence(qid) >= 0 &&
+          e.sequencer().current() == e.sequencer().indexOfSequence(qid),
+          "sequence selection follows identity after insertion before it");
     check(server.handleMessage({sequencePath + "/go", "", {}}), "stable GO advances the selected sequence");
     data = get("/show/state");
     const auto values = data.value("values").toObject();

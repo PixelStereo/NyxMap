@@ -10,8 +10,11 @@
 #include "Widgets.h"
 #include "MappingView.h"
 #include "PreviewWorkspace.h"
+#include "ShowMenus.h"
 
 #include <QApplication>
+#include <QFile>
+#include <QDir>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QDoubleSpinBox>
@@ -127,9 +130,9 @@ int main(int argc, char **argv)
         }
     }
     auto *table = panel.findChild<QTableWidget *>("fixturesTable");
-    check(table && table->rowCount() == 2 && table->columnCount() == 6, "the list: on, lock, solo, name, intensity, DMX");
+    check(table && table->rowCount() == 2 && table->columnCount() == 6, "the list: on, lock, solo, name, DMX, intensity");
     if (!table || table->rowCount() != 2) return 1;
-    check(table->item(0, 5)->text() == "0 · 1-3", "the list shows the DMX address");
+    check(table->item(0, 4) && table->item(0, 4)->text() == "0 · 1-3", "the list shows the DMX address");
 
     // --- The inspector: the place, the grid of pixels, the address
     panel.selectFixture(first);
@@ -142,15 +145,15 @@ int main(int argc, char **argv)
     check(p.resolvedType(p.fixtures[0])->pixelCount() == 4 && std::abs(p.fixtures[0].size.width() - 4 * width) < 1e-9,
           "an RGB fixture given 4 pixels across, each keeping its size");
     wait(100);
-    check(table->item(0, 5)->text() == "0 · 1-12", "its address spans its pixels");
+    check(table->item(0, 4)->text() == "0 · 1-12", "its address spans its pixels");
     emit panel.fixtureSelected(p.fixtures[1].id);
     inspector.setFixture(p.fixtures[1].id);
     inspector.findChild<QSpinBox *>("fixtureAddress")->setValue(4); // still free? no: the first now ends at 12
     wait(100);
-    check(table->item(1, 5)->foreground().color() == QColor(255, 110, 95), "an address conflict shows");
+    check(table->item(1, 4)->foreground().color() == QColor(255, 110, 95), "an address conflict shows");
     inspector.findChild<QSpinBox *>("fixtureAddress")->setValue(13);
     wait(100);
-    check(table->item(1, 5)->foreground().color() != QColor(255, 110, 95), "and goes once moved");
+    check(table->item(1, 4)->foreground().color() != QColor(255, 110, 95), "and goes once moved");
 
     // --- Lock and solo, from the list
     emit table->cellClicked(0, 1);
@@ -309,6 +312,165 @@ int main(int argc, char **argv)
         check(q.effectiveOf(f).solo && !q.effectiveOf(q.fixtures.front()).solo, "a group's solo reaches its fixtures only");
     }
     engine.shutdown();
+    // --- Fixed channels: one added to a fixture after its last, sent as set (not by the pixel mapping), a value of the
+    // show (snapshots, presets, timelines, controls), kept in the project
+    if (!engine.fixturePatch().fixtures.empty()) {
+        const quint64 id = engine.fixturePatch().fixtures[0].id;
+        engine.setParameter(0, QStringLiteral("fixture/%1/enable").arg(id), true);
+        engine.setParameter(0, QStringLiteral("fixture/%1/solo").arg(id), false);
+        inspector.setFixture(id);
+        wait(50);
+        const int before = engine.fixturePatch().resolvedType(engine.fixturePatch().fixtures[0])->channelCount();
+        auto *add = inspector.findChild<QToolButton *>("fixtureAddChannel");
+        check(add != nullptr, "the inspector adds a fixed channel");
+        if (add) add->click();
+        wait(50);
+        FixturePatch fp = engine.fixturePatch();
+        const std::vector<FixedChannel> fixed = fixedChannels(fp, *fp.findFixture(id));
+        check(fixed.size() == 1 && fixed[0].channel == before + 1 && fixed[0].extra && fixed[0].value == 0,
+              "the channel is added after the fixture's last, at 0");
+        check(fp.resolvedType(*fp.findFixture(id))->channelCount() == before + 1, "the fixture takes one channel more");
+        check(inspector.findChild<SliderField *>(QStringLiteral("fixtureChannel%1").arg(before + 1)) != nullptr,
+              "its value is in the inspector");
+        const QString key = QStringLiteral("ch%1").arg(before + 1);
+        check(engine.setParameter(0, QStringLiteral("fixture/%1/%2").arg(id).arg(key), 200), "a value of the show: fixture/<id>/chN");
+        fp = engine.fixturePatch();
+        const Fixture &f = *fp.findFixture(id);
+        FixturePatch alone = fp; // the other fixture starts on the channel added (a conflict): left out here
+        alone.fixtures = {f};
+        const DmxFrame frame = buildDmxFrame(alone, std::vector<std::array<float, 3>>(4096, {0.f, 0.f, 0.f}));
+        const auto universe = frame.find({f.output, f.universe});
+        check(universe != frame.end() && quint8(universe->second[f.address - 1 + before]) == 200, "sent as set, colours black");
+        check(Fixture::fromJson(f.toJson()).channels == f.channels, "kept in the project");
+        bool stored = false;
+        for (const QJsonValue &v : engine.captureFixtures())
+            if (v.toObject().value("id").toString().toULongLong() == id)
+                stored = std::lround(v.toObject().value("params").toObject().value(key).toDouble()) == 200;
+        check(stored, "a snapshot holds it");
+        undo.undo(); // the channel added: taken back
+        wait(50);
+        fp = engine.fixturePatch();
+        check(fp.resolvedType(*fp.findFixture(id))->channelCount() == before, "undone, the fixture has its channels again");
+
+        // A channel of its type given a fixed value instead of the pixel mapping (its role in the editor), then back
+        inspector.setFixture(id);
+        wait(50);
+        auto *role = inspector.findChild<QComboBox *>("channelRole1");
+        check(role != nullptr, "each channel's role is in the inspector");
+        if (role) {
+            role->setCurrentIndex(role->findData(int(ChannelRole::Fixed)));
+            wait(50);
+            const std::map<int, FixtureChannel> own = engine.fixturePatch().findFixture(id)->channels;
+            check(own.count(1) && own.at(1).role == ChannelRole::Fixed, "channel 1 sends a fixed value, not the pixel mapping");
+            check(engine.setParameter(0, QStringLiteral("fixture/%1/ch1").arg(id), 77), "and is a value of the show");
+            FixturePatch one = engine.fixturePatch();
+            one.fixtures = {*one.findFixture(id)};
+            const Fixture &g = one.fixtures[0];
+            const DmxFrame sent = buildDmxFrame(one, std::vector<std::array<float, 3>>(4096, {1.f, 1.f, 1.f}));
+            const auto u = sent.find({g.output, g.universe});
+            check(u != sent.end() && quint8(u->second[g.address - 1]) == 77, "its value is sent, the colours white");
+            undo.undo();
+            wait(50);
+            check(engine.fixturePatch().findFixture(id)->channels.empty(), "undone, it follows the pixel mapping again");
+        }
+    }
+    { // A type's channels chosen before it is imported (or a fixture made): changed, one added
+        const FixtureType t = *engine.fixturePatch().findType("rgb");
+        std::vector<ChannelEditor::Row> rows = ChannelEditor::rowsOf(t);
+        check(rows.size() == 3 && rows[0].now.role == ChannelRole::Red, "a type's channels as rows");
+        if (rows.size() == 3) {
+            rows[2].now = FixtureChannel{ChannelRole::Fixed, false, 9};
+            rows.push_back({4, -1, FixtureChannel{ChannelRole::Fixed, false, 255}, std::nullopt});
+            const FixtureType chosen = ChannelEditor::withRows(t, rows);
+            check(chosen.channelCount() == 4 && chosen.dmxMap[2].channel.role == ChannelRole::Fixed &&
+                      chosen.dmxMap[2].channel.value == 9 && chosen.dmxMap[3].channel.value == 255,
+                  "the type takes the channels chosen");
+            const std::map<int, FixtureChannel> own = ChannelEditor::ownChannels(rows);
+            check(own.size() == 2 && own.count(3) && own.count(4), "a fixture keeps only what differs from its type");
+        }
+    }
+
+    // --- Fixtures and sequences as owners of their own values: at the root of every menu, not the composition's
+    {
+        using O = showmenu::Owner;
+        check(!O::composition().owns("fixture/5/intensity") && !O::composition().owns("sequence/3/go") &&
+                  O::composition().owns("show/blackout"),
+              "the composition does not hold the fixtures' or the sequences' values");
+        check(O{O::Kind::Fixture, 5}.owns("fixture/5/ch4") && !O{O::Kind::Fixture, 5}.owns("fixture/55/ch4") &&
+                  O{O::Kind::FixtureGroup, 5}.owns("fixture/g5/intensity") && O{O::Kind::Sequence, 3}.owns("sequence/3/next"),
+              "a fixture, a group and a sequence each hold their own");
+    }
+    // --- A group's values are show values (an interaction, a timeline, a preset set them)
+    if (!engine.fixturePatch().fixtures.empty()) {
+        FixturePatch withGroup = engine.fixturePatch();
+        FixtureGroup g;
+        g.id = 900;
+        g.name = "Front";
+        withGroup.groups.push_back(g);
+        withGroup.fixtures[0].group = 900;
+        engine.setFixturePatch(withGroup);
+        wait(200); // the list made again
+        ParamInfo groupIntensity;
+        check(engine.parameterInfo(0, "fixture/g900/intensity", &groupIntensity) && groupIntensity.label == "Fixtures › Front › Intensity",
+              "a group's intensity: fixture/g<id>/intensity");
+        check(engine.setParameter(0, "fixture/g900/solo", true), "a group's values are set as any value");
+        const FixturePatch soloed = engine.fixturePatch();
+        check(soloed.findGroup(900) && soloed.findGroup(900)->solo, "its solo set");
+        // Its intensity in the list and the fixture's in the inspector: marked, with the right-click of any value
+        bool groupWired = false;
+        for (auto *slider : panel.findChildren<SliderField *>("fixtureIntensity"))
+            groupWired |= slider->property("showValuePaths").toStringList() == QStringList{"fixture/g900/intensity"};
+        check(groupWired, "the group's intensity in the list is a show value (right-click: interaction, timeline, preset)");
+        const quint64 id = engine.fixturePatch().fixtures[0].id;
+        inspector.setFixture(id);
+        wait(50);
+        auto *intensity = inspector.findChild<SliderField *>("fixtureInspectorIntensity");
+        check(intensity && intensity->property("showValuePaths").toStringList() == QStringList{QStringLiteral("fixture/%1/intensity").arg(id)} &&
+                  intensity->contextMenuPolicy() == Qt::CustomContextMenu,
+              "the inspector's intensity too");
+    }
+    // --- Templates: a type made from nothing kept on this machine, offered again, a fixture of it copies it into the project
+    {
+        const QString file = QDir::temp().filePath(QStringLiteral("nyxmap-fixture-templates-%1.json").arg(QCoreApplication::applicationPid()));
+        QFile::remove(file);
+        qputenv("NYXMAP_FIXTURE_TEMPLATES", file.toLocal8Bit());
+        FixtureType t;
+        t.id = "custom-test";
+        t.name = "Bar 4";
+        t.cols = 4;
+        t.header = {FixtureChannel{ChannelRole::Fixed, false, 255}};
+        t.perPixel = {FixtureChannel{ChannelRole::Red, false, 0}, FixtureChannel{ChannelRole::Green, false, 0},
+                      FixtureChannel{ChannelRole::Blue, false, 0}};
+        check(saveFixtureTemplate(t), "a type made from nothing is kept as a template");
+        const std::vector<FixtureType> kept = fixtureTemplates();
+        check(kept.size() == 1 && kept[0].name == "Bar 4" && kept[0].channelCount() == 13 && kept[0].pixelCount() == 4,
+              "offered again, its pixels and channels kept");
+        const quint64 made = kept.empty() ? 0 : panel.addFixtureOfType(kept[0]);
+        const FixturePatch withTemplate = engine.fixturePatch();
+        check(made && withTemplate.findType("custom-test") && withTemplate.findFixture(made) &&
+                  withTemplate.findFixture(made)->type == "custom-test",
+              "a fixture of a template: its type copied into the project");
+        check(!kept.empty() && templateOf(kept[0], "Copy").id != kept[0].id && templateOf(kept[0], "Copy").name == "Copy",
+              "a fixture's type saved as a template gets an id of its own");
+        check(removeFixtureTemplate("custom-test") && fixtureTemplates().empty(), "a template removed");
+        QFile::remove(file);
+        qunsetenv("NYXMAP_FIXTURE_TEMPLATES");
+    }
+
+    // --- A new project has a first sequence, and each sequence a Load as Next value; its controls are said to be gone
+    int controlsSaid = 0;
+    QObject::connect(&engine, &Engine::controlsChanged, &panel, [&controlsSaid] { ++controlsSaid; });
+    engine.newProject();
+    check(controlsSaid > 0, "a new project tells the Controls panel (its widgets go)");
+    check(engine.sequencer().count() == 1 && engine.sequencer().sequence(0).name == "Sequence 1" && engine.sequencer().current() == 0,
+          "a new project has Sequence 1, selected");
+    {
+        ParamInfo info;
+        check(engine.parameterInfo(0, QStringLiteral("sequence/%1/next").arg(engine.sequencer().sequenceId(0)), &info) &&
+                  info.label.endsWith("Load as Next"),
+              "Load as Next is a value an interaction or a timeline drives");
+    }
+
     std::printf("fixture_ui: %s (%d failure%s)\n", failures ? "FAIL" : "OK", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

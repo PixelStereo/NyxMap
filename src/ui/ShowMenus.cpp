@@ -12,9 +12,15 @@ bool Owner::owns(const QString &path) const
 {
     switch (kind) {
     case Kind::Layer: return true;
-    case Kind::Composition: return !path.startsWith(QLatin1String("interaction/")) && !path.startsWith(QLatin1String("timeline/"));
+    case Kind::Composition: // what has a root of its own is not the composition's
+        for (const char *own : {"interaction/", "timeline/", "fixture/", "sequence/"})
+            if (path.startsWith(QLatin1String(own))) return false;
+        return true;
     case Kind::Interaction: return path.startsWith(QStringLiteral("interaction/%1/").arg(id));
     case Kind::Timeline: return path.startsWith(QStringLiteral("timeline/%1/").arg(id));
+    case Kind::Fixture: return path.startsWith(QStringLiteral("fixture/%1/").arg(id));
+    case Kind::FixtureGroup: return path.startsWith(QStringLiteral("fixture/g%1/").arg(id));
+    case Kind::Sequence: return path.startsWith(QStringLiteral("sequence/%1/").arg(id));
     }
     return false;
 }
@@ -155,6 +161,23 @@ void fillOwners(QMenu *menu, Engine *e, const Fill &fill)
     if (!layers->isEmpty()) menu->addMenu(layers);
     else delete layers;
 
+    // The fixtures as their list has them: each group a menu (its own values first), then the fixtures in none
+    auto *fixtures = new QMenu(QStringLiteral("Fixtures"), menu);
+    {
+        const FixturePatch patch = e->fixturePatch();
+        const auto fixtureName = [](const Fixture &f) { return f.name.isEmpty() ? QStringLiteral("Fixture %1").arg(f.id) : f.name; };
+        for (const FixtureGroup &g : patch.groups) {
+            QMenu *group = fixtures->addMenu(g.name.isEmpty() ? QStringLiteral("Group %1").arg(g.id) : g.name);
+            addOwner(group, QStringLiteral("Group Parameters"), {Owner::Kind::FixtureGroup, g.id}, fill);
+            for (const Fixture &f : patch.fixtures)
+                if (f.group == g.id) addOwner(group, fixtureName(f), {Owner::Kind::Fixture, f.id}, fill);
+        }
+        for (const Fixture &f : patch.fixtures)
+            if (!f.group) addOwner(fixtures, fixtureName(f), {Owner::Kind::Fixture, f.id}, fill);
+    }
+    if (!fixtures->isEmpty()) menu->addMenu(fixtures);
+    else delete fixtures;
+
     auto *interactions = new QMenu(QStringLiteral("Interactions"), menu);
     fillInteractionTree(
         interactions, e,
@@ -170,6 +193,15 @@ void fillOwners(QMenu *menu, Engine *e, const Fill &fill)
     }
     if (!timelines->isEmpty()) menu->addMenu(timelines);
     else delete timelines;
+
+    auto *sequences = new QMenu(QStringLiteral("Sequences"), menu);
+    for (int i = 0; i < e->sequencer().count(); ++i) {
+        const QString name = e->sequencer().sequence(i).name;
+        addOwner(sequences, name.isEmpty() ? QStringLiteral("Sequence %1").arg(i + 1) : name,
+                 {Owner::Kind::Sequence, e->sequencer().sequenceId(i)}, fill);
+    }
+    if (!sequences->isEmpty()) menu->addMenu(sequences);
+    else delete sequences;
 }
 
 QString valueLabel(Engine *e, quint64 layer, const QString &param, const QString &none)

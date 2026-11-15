@@ -891,7 +891,12 @@ if(NYXMAP_TESTS)
       list(APPEND nyxmap_window_tests ${test})
     endif()
   endforeach()
-  set_tests_properties(${nyxmap_window_tests} PROPERTIES RESOURCE_LOCK desktop)
+  set_tests_properties(${nyxmap_window_tests} PROPERTIES RESOURCE_LOCK desktop COST 50)
+  # The longest first (CTest starts the highest cost first; a CI runner has no timings of a previous run): the window
+  # tests' queue, then what a software renderer (macOS runner) takes minutes over, the rest beside them
+  set_tests_properties(scene3d_ui preview_ui PROPERTIES COST 100)
+  set_tests_properties(isf_safe scene3d instance3d PROPERTIES COST 90)
+  set_tests_properties(project output_color video masks PROPERTIES COST 40)
   # Several videos played together: cmake --build build --target nyxmap_bench
   add_executable(nyxmap_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(nyxmap_bench PRIVATE nyxmap_engine)
