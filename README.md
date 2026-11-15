@@ -6,6 +6,8 @@
 
 A creative instrument for projection mapping, video, 3D, generative visuals and audio — built for the stage.
 
+Every effect can be applied to a layer or through an RGBA mask — compositing at its core.
+
 <!-- release-downloads:start -->
 **LATEST VERSION · [v0.6.6](https://github.com/PixelStereo/NyxMap/releases/tag/v0.6.6)**
 
