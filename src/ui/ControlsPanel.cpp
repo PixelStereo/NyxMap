@@ -1,3 +1,4 @@
+#include "Naming.h"
 #include "ControlsPanel.h"
 #include "ColorPicker.h"
 #include "Engine.h"
@@ -362,7 +363,9 @@ QToolButton *ControlsPanel::gearButton(const ShowControl &c, const std::vector<c
         const auto c = m_engine->control(id);
         if (!c) return;
         ShowControl copy = *c;
-        copy.name += QStringLiteral(" copy");
+        QStringList taken;
+        for (const ShowControl &other : m_engine->controls()) taken << other.name;
+        copy.name = numberedName(copy.name, taken);
         const QJsonArray before = m_engine->controlsJson();
         if (!m_engine->addControl(copy)) return;
         m_undo->push(new SetControlsCommand(m_engine, before, m_engine->controlsJson(), QStringLiteral("Duplicate Control")));

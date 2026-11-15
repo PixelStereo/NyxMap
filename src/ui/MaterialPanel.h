@@ -1,4 +1,5 @@
 #pragma once
+#include "Naming.h"
 #include "Engine.h"
 #include "Model3D.h"
 #include "MaterialX.h"
@@ -116,7 +117,9 @@ public:
             Material3D copy = *m;
             copy.id = this->engine->addMaterial();
             this->engine->removeUnusedMaterial(copy.id);
-            copy.name += " copy";
+            QStringList taken;
+            for (const auto &[otherId, other] : this->engine->materials()) if (other) taken << other->name;
+            copy.name = numberedName(copy.name, taken);
             commit({}, copy); selected = copy.id; refresh();
         });
         button("Import .mtlx…", "importMaterialX", [this] {

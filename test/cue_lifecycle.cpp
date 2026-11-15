@@ -116,6 +116,22 @@ int runCueLifecycleTests(Engine &engine)
     auto cut = preset; cut.name = "Cut preset"; cut.fade = 10; cut.values[0].time = cut.values[0].delay = 0;
     const int cutIndex = engine.addPreset(cut);
     check(engine.presetDuration(engine.preset(cutIndex).id) == 0, "explicit per-value cuts do not wait for an unused default preset fade");
+    {   // A preset recalled says where its fade is, as a snapshot does: the green line under its row
+        engine.recallPreset(pi);
+        auto progress = engine.recallProgress();
+        check(progress.preset == engine.preset(pi).id && !progress.snapshot && std::abs(progress.total - 1.0) < 1e-6 && progress.running(),
+              "a recalled preset reports its own progress, delay and fade included");
+        engine.advanceFades(.5);
+        progress = engine.recallProgress();
+        check(progress.running() && std::abs(progress.fraction() - .5) < .05, "its progress follows the fade");
+        engine.finishRecalls();
+        check(!engine.recallProgress().running(), "and ends with it");
+        engine.recallSnapshot(0);
+        check(!engine.recallProgress().preset && engine.recallProgress().snapshot == engine.snapshot(0).id,
+              "a snapshot recalled after it takes the progress back");
+        engine.finishRecalls();
+        engine.setParameter(layer, "opacity", .1);
+    }
     Sequencer::Step recall; recall.preset = engine.preset(pi).id; recall.preWait = .2;
     recall.next = Sequencer::StepContinue::AutoFollow;
     Sequencer::Step afterPreset; afterPreset.snapshot = engine.snapshot(0).id;

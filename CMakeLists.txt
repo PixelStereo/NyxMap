@@ -935,6 +935,10 @@ if(NYXMAP_TESTS)
   target_include_directories(nyxmap_preview_ui_test PRIVATE src/ui)
   target_link_libraries(nyxmap_preview_ui_test PRIVATE nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
   add_test(NAME preview_ui COMMAND nyxmap_preview_ui_test)
+  add_executable(nyxmap_naming_test test/naming.cpp)
+  target_include_directories(nyxmap_naming_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
+  add_test(NAME naming COMMAND nyxmap_naming_test)
   add_executable(nyxmap_fixture_ui_test test/fixture_ui.cpp src/ui/FixturePanel.cpp src/ui/FixtureInspector.cpp
                  src/ui/DmxOutputsPanel.cpp src/ui/FixtureOverlay.cpp
                  src/ui/MappingView.cpp src/ui/MappingViewLines.cpp src/ui/PreviewWorkspace.cpp src/ui/ShowMenus.cpp src/ui/Scene3DView.cpp src/ui/GlDraw.cpp src/ui/Commands.cpp

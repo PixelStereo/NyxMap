@@ -610,6 +610,8 @@ void Engine::recallPreset(int i, double fadeOverride)
     }
     Lock lk(&m_mutex);
     m_fadeElapsed = 0;
+    m_recalledPreset = p.id; // the last recall (a snapshot's recall clears it)
+    noteRecallTotal();
 }
 
 // ---------------------------------------------------------------------------
@@ -825,11 +827,28 @@ void Engine::restoreRecallLayers(const QJsonArray &states)
     }
 }
 
+// What the recall that was just made lasts: its longest fade, delayed value, transition (lock held)
+void Engine::noteRecallTotal()
+{
+    double total = 0;
+    for (const auto &job : m_fades)
+        if (job->elapsed <= 0) total = std::max(total, job->longest()); // this recall's, not the older ones
+    for (const auto &[id, t] : m_transitions) total = std::max(total, t->duration - t->elapsed);
+    if (m_compFade.opacity && m_compFade.opacityElapsed <= 0) total = std::max(total, m_compFade.opacityDur);
+    if (m_compFade.volume && m_compFade.volumeElapsed <= 0) total = std::max(total, m_compFade.volumeDur);
+    for (const InteractionFade &f : m_interactionFades)
+        if (f.elapsed <= 0) total = std::max(total, f.time);
+    for (const auto &[due, v] : m_deferredRecall)
+        total = std::max(total, std::max(0.0, due - m_recallClock) + v.duration);
+    m_recallTotal = total;
+}
+
 Engine::RecallProgress Engine::recallProgress() const
 {
     Lock lk(&m_mutex);
     RecallProgress r;
-    r.snapshot = m_recalledSnapshot;
+    r.snapshot = m_recalledPreset ? 0 : m_recalledSnapshot;
+    r.preset = m_recalledPreset;
     r.total = m_recallTotal;
     r.elapsed = m_fades.empty() && m_deferredRecall.empty() && m_transitions.empty() && !m_compFade.opacity && !m_compFade.volume ? m_recallTotal
                                                                                                   : m_fadeElapsed;
@@ -973,17 +992,8 @@ void Engine::recallSnapshotCopy(const Snapshot &m, int i)
     {
         Lock lk(&m_mutex);
         m_recalledSnapshot = m.id;
-        double total = 0;
-        for (const auto &job : m_fades)
-            if (job->elapsed <= 0) total = std::max(total, job->longest()); // this recall's, not the older ones
-        for (const auto &[id, t] : m_transitions) total = std::max(total, t->duration - t->elapsed);
-        if (m_compFade.opacity && m_compFade.opacityElapsed <= 0) total = std::max(total, m_compFade.opacityDur);
-        if (m_compFade.volume && m_compFade.volumeElapsed <= 0) total = std::max(total, m_compFade.volumeDur);
-        for (const InteractionFade &f : m_interactionFades)
-            if (f.elapsed <= 0) total = std::max(total, f.time);
-        for (const auto &[due, v] : m_deferredRecall)
-            total = std::max(total, std::max(0.0, due - m_recallClock) + v.duration);
-        m_recallTotal = total;
+        m_recalledPreset = 0;
+        noteRecallTotal();
     }
     emit snapshotRecalled(i);
 }
