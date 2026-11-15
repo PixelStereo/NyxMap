@@ -25,6 +25,12 @@ The same typed clipboard transfers supported values, structural definitions, ani
 
 Library Delete removes the entire snapshot/preset. Contents-tree Delete removes only selected stored elements. Copy/paste shortcuts are scoped to their tree/table, leaving text editors' ordinary clipboard behavior available. All new content edits and duplicates support the main undo stack.
 
+## Sequence values and Load as Next
+
+Every project starts with a selected **Sequence 1**. A sequence exposes its **Load as Next** value: set it to the snapshot, preset, timeline or other supported target that should become the next cue. Because it is a show value, it can be driven by an interaction or a timeline, and can be included in presets. Use the value's context menu in the inspector or list to add it to a control workflow.
+
+Fixture and fixture-group values are also first-class show values. In the Layers panel, right-click a fixture or group value (enable, solo, intensity, and fixed channel values where present) to use it in snapshots, presets, timelines, controls or interactions. The same value menu exposes **Fixtures** and **Sequences** at its root, so you can target them without navigating through the composition owner.
+
 ## Edit a timecoded sequence
 
 Open **Sequences** and enable **Edit mode · mute TC / AUTO** for the sequence you want to edit.
