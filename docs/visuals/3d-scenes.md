@@ -1,13 +1,13 @@
 # 3D scenes
 
-A **3D Scene** (**Layer › New 3D Scene**, or a model dropped onto a layer) is a group whose picture is its models seen by its camera, under its lights. It holds only 3D objects, and they stay in it. Each object is a layer: shown, soloed, animated and recalled like any other. Its values are parameters (`model/…`, `light/…`; the scene's `camera/…`, `scene/…`), so they can be driven by animations, interactions, timelines and [OSC](../reference/osc.md). See `examples/pbr/` in the repository.
+A **3D Scene** (**Layer › New 3D Scene**, or a model dropped onto a layer) is a group whose picture is its models seen by its camera, under its lights. Dropping a 3D model onto the Layers list puts it in the first 3D scene; if the project has none, NyxMap creates one first. It holds only 3D objects, and they stay in it. Each object is a layer: shown, soloed, animated and recalled like any other. Its values are parameters (`model/…`, `light/…`; the scene's `camera/…`, `scene/…`), so they can be driven by animations, interactions, timelines and [OSC](../reference/osc.md). See `examples/pbr/` in the repository.
 
 ## Models and primitives
 
 - **Files:** FBX, glTF/GLB and OBJ (read with ufbx and cgltf).
 - **Primitives** from **Media Bin › 3D Primitives**: cube, open cube, plane, disc, cylinder, open cylinder, cone, pyramid, sphere, dome, torus, capsule — all unwrapped.
 
-A primitive starts with as few triangles as its shape needs (a cube is 12, a plane 2, a sphere 576). `model/detail` (1–8) cuts it finer; a bend or a displacement take what they need on their own.
+A primitive starts with as few triangles as its shape needs (a cube is 12, a plane 2, a sphere 576). `model/detail` (1–8) cuts it finer; a bend or a displacement take what they need on their own. Model scale has an overall multiplier (`model/scale/all`) and independent X, Y and Z multipliers (`model/scale/x`, `/y`, `/z`); negative axis values mirror the model on that axis.
 
 A model can:
 

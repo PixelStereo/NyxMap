@@ -8,7 +8,7 @@ The **Controls** tab (Shift+5), next to the Media Bin and the Interactions, hold
 default). **+ New** makes one; **⋯** edits, duplicates, moves or deletes it, each one undo step. They are saved with the
 project (not in snapshots: a control is the operator's, not the scene's).
 
-**Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
+A new project starts with an empty Controls panel; its controls belong to the project and are cleared when you create a new project. **Group** (also in **+ New**) is a titled frame that lays its controls out in 1 to 4 columns. **⋯ › Move to Group** puts a
 control or another group into one (or back on the page), **⋯ › Width** sets how many of the group's columns a control takes,
 **⋯ › Columns** the group's own, and **Move up / down** orders what is beside it. The remote's `/control` page shows the same
 groups, columns and widths.
