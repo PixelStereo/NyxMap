@@ -53,18 +53,20 @@ def select_release(releases, repository):
 
 def downloads(release, urls, repository):
     tag = release["tag_name"]
-    preview = " (preview)" if release.get("prerelease") else ""
-    companion = (f"\n\n**[Download the Stream Deck module for Companion]({urls['companion']})** "
-                 "— import it in Companion; [setup guide](docs/integrations/companion.md).") if 'companion' in urls else ''
-    return f"""{START}
-Latest published build: **[{tag}](https://github.com/{repository}/releases/tag/{tag})**{preview}.
+    preview = " · PREVIEW" if release.get("prerelease") else ""
+    companion = (f"\\n\\n[Stream Deck module for Companion]({urls['companion']}) · "
+                 "[setup guide](docs/integrations/companion.md)") if "companion" in urls else ""
+    return f"""<!-- release-downloads:start -->
+**LATEST VERSION · [{tag}{preview}](https://github.com/{repository}/releases/tag/{tag})**
 
-| macOS — Apple Silicon | Windows — 64-bit | Ubuntu — 64-bit (x86_64) |
-| :---: | :---: | :---: |
-| **[Download macOS]({urls['mac']})** | **[Download Windows]({urls['win']})** | **[Download Ubuntu AppImage]({urls['linux']})** |
+[![macOS](https://img.shields.io/badge/macOS-Download-111111?style=for-the-badge&logo=apple&logoColor=white)]({urls['mac']})
+[![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)]({urls['win']})
+[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=111111)]({urls['linux']})
 
-Linux: Ubuntu 24.04 or newer. The **[portable archive]({urls['portable']})** runs without FUSE or installation. Both Linux packages include Qt, FFmpeg, NDI and OMT; see the [launch instructions](docs/getting-started/install.md).{companion}
-{END}"""
+[All downloads & release notes](https://github.com/{repository}/releases) · [Documentation](https://pixelstereo.github.io/NyxMap/)
+
+Linux: Ubuntu 24.04+ · x86_64. [Portable archive]({urls['portable']}) (no FUSE or installation).{companion}
+<!-- release-downloads:end -->"""
 
 
 def update_files(root, releases, repository):
