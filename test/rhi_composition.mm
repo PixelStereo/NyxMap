@@ -685,7 +685,7 @@ private:
 // ---------------------------------------------------------------------------
 struct Diff {
     int max = 0;
-    double mean = 0;
+    double mean = 0, over8 = 0; // share of channels more than 8 apart
     bool sameSize = false;
 };
 static Diff compare(const QImage &a, const QImage &b)
@@ -700,9 +700,11 @@ static Diff compare(const QImage &a, const QImage &b)
             const int v = std::abs(int(p[x]) - int(q[x]));
             d.max = std::max(d.max, v);
             sum += v;
+            d.over8 += v > 8;
         }
     }
     d.mean = sum / (double(a.width()) * a.height() * 4);
+    d.over8 /= double(a.width()) * a.height() * 4;
     return d;
 }
 
@@ -792,8 +794,9 @@ int main(int argc, char **argv)
     for (Layer &l : layers) l.fresh = true;
     CHECK(glc.render(layers, 0, &viaGl));
     const Diff d = compare(viaRhi, viaGl);
-    std::printf("  first frame, QRhi against OpenGL: max %d mean %.3f\n", d.max, d.mean);
-    CHECK(d.sameSize && d.max <= 3 && d.mean <= 0.3);
+    std::printf("  first frame, QRhi against OpenGL: max %d mean %.3f, %.2f%% over 8\n", d.max, d.mean, d.over8 * 100);
+    // The same picture: rounding everywhere, and on some GPUs (paravirtualized ones) a few edge pixels filtered apart
+    CHECK(d.sameSize && d.mean <= 0.5 && d.over8 <= 0.005);
     if (const QByteArray dir = qgetenv("NYXMAP_RHI_DUMP"); !dir.isEmpty()) {
         viaRhi.mirrored(false, true).save(QString::fromUtf8(dir) + QStringLiteral("/composition_rhi.png"));
         viaGl.mirrored(false, true).save(QString::fromUtf8(dir) + QStringLiteral("/composition_opengl.png"));
