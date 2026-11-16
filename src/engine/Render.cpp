@@ -121,6 +121,22 @@ QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, 
     return flippedVertically(img.convertToFormat(QImage::Format_RGBA8888));
 }
 
+// A render target's pixels, the bottom row first (the interface's views through QRhi take them as pixels)
+static QImage readTargetImage(const RenderTarget &t)
+{
+    if (!t.fbo || t.w <= 0 || t.h <= 0) return QImage();
+    auto f = gl();
+    GLint previous = 0;
+    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo);
+    QImage img(t.w, t.h, QImage::Format_RGBA8888);
+    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
+    return img;
+}
+
+
 void Engine::drawQuad()
 {
     auto f = gl();
@@ -1971,7 +1987,7 @@ void Engine::frame(double dt)
             if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
         }
         // The pixel readers' pictures, read back too (the offscreen frame completes at once, so they are this frame's)
-        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000, publishSlot = 5000;
+        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000, publishSlot = 5000, compositionSlot = 6000;
         std::vector<quint64> listened; // the viewports (0: the composition) sonifications listen to, by slot
         {
             std::set<quint64> seen;
@@ -2002,6 +2018,7 @@ void Engine::frame(double dt)
             q.tap = RhiRenderer::PreviewRequest::Raw;
             asked.push_back(q);
         }
+        if (qint64(RealtimeTiming::nowNs()) < m_compositionWantedUntilNs.load()) asked.push_back({compositionSlot, 0, 1600}); // the mapping view
         // The viewports being published (NDI, OMT, DeckLink: pixels; Syphon, Spout: an OpenGL texture of the picture)
         std::vector<std::pair<quint64, PublishSettings>> publish;
         std::vector<quint64> published; // by slot
@@ -2023,15 +2040,16 @@ void Engine::frame(double dt)
         bool sourcePreviewGiven = false;
         {
             auto f = gl();
-            for (auto &slot : m_previewSlots) { // the interface may still sample this buffer on the GPU: wait there
-                if (slot.reader[m_back]) {
-                    f->glWaitSync(slot.reader[m_back], 0, GL_TIMEOUT_IGNORED);
-                    f->glDeleteSync(slot.reader[m_back]);
-                    slot.reader[m_back] = nullptr;
-                }
-                slot.renderedId[m_back] = 0;
-            }
+            std::array<QImage, 4> images;
+            std::array<quint64, 4> ids{};
+            QImage composition;
             for (const auto &p : m_rhi->takePreviews()) {
+                if (p.slot >= compositionSlot) { // the mapping view
+                    composition = QImage(reinterpret_cast<const uchar *>(p.pixels.constData()), p.size.width(), p.size.height(),
+                                         p.size.width() * 4, QImage::Format_RGBA8888)
+                                      .copy();
+                    continue;
+                }
                 if (p.slot >= publishSlot) {
                     const size_t k = size_t(p.slot - publishSlot);
                     if (k >= published.size()) continue;
@@ -2073,14 +2091,18 @@ void Engine::frame(double dt)
                     listenedColors[p.slot - sonificationSlot] = rgb;
                     continue;
                 }
-                PreviewSlot &slot = m_previewSlots[size_t(p.slot)];
-                RenderTarget &target = p.id ? slot.target[m_back] : m_output[m_back];
-                target.ensure(p.size.width(), p.size.height());
-                if (!target.tex) continue;
-                f->glBindTexture(GL_TEXTURE_2D, target.tex);
-                f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-                f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
-                slot.renderedId[m_back] = p.id;
+                if (p.slot >= 0 && size_t(p.slot) < images.size()) { // a preview cell's picture, as pixels
+                    images[size_t(p.slot)] = QImage(reinterpret_cast<const uchar *>(p.pixels.constData()), p.size.width(),
+                                                    p.size.height(), p.size.width() * 4, QImage::Format_RGBA8888)
+                                                 .copy();
+                    ids[size_t(p.slot)] = p.id;
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lk(m_previewMutex);
+                m_previewImages = std::move(images);
+                m_previewImageIds = ids;
+                m_compositionImage = std::move(composition);
             }
             if (sourcePreviewDue && !sourcePreviewGiven) { // the layer has no picture: nothing to show
                 std::lock_guard<std::mutex> lk(m_previewMutex);
@@ -2308,6 +2330,30 @@ void Engine::frame(double dt)
         if (!target.fbo) continue;
         blit(texture, target);
         slot.renderedId[m_back] = slot.id;
+    }
+    { // the interface's views draw through QRhi: the pictures as pixels
+        std::array<QImage, 4> images;
+        std::array<quint64, 4> ids{};
+        for (size_t i = 0; i < m_previewSlots.size(); ++i) {
+            const PreviewSlot &slot = m_previewSlots[i];
+            if (!slot.asked || slot.sceneView || slot.renderedId[m_back] != slot.id) continue;
+            images[i] = readTargetImage(slot.id ? slot.target[m_back] : m_output[m_back]);
+            ids[i] = slot.id;
+        }
+        QImage composition;
+        if (qint64(RealtimeTiming::nowNs()) < m_compositionWantedUntilNs.load() && m_output[m_back].w > 0) {
+            QSize size(m_output[m_back].w, m_output[m_back].h);
+            if (size.width() > 1600 || size.height() > 1600) size.scale(1600, 1600, Qt::KeepAspectRatio);
+            m_compositionTarget.ensure(std::max(1, size.width()), std::max(1, size.height()));
+            if (m_compositionTarget.fbo) {
+                blit(m_output[m_back].tex, m_compositionTarget);
+                composition = readTargetImage(m_compositionTarget);
+            }
+        }
+        std::lock_guard<std::mutex> lk(m_previewMutex);
+        m_previewImages = std::move(images);
+        m_previewImageIds = ids;
+        m_compositionImage = std::move(composition);
     }
     readSourcePreview();
     // Publishing follows the viewports, however they changed (added, removed, undone, loaded, edited)

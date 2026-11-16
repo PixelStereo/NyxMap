@@ -17,7 +17,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Network)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Network)
 
 # ---------------------------------------------------------------------------
 # FFmpeg: pkg-config (macOS Homebrew, Linux) or FFMPEG_ROOT (Windows, "shared" build)
@@ -423,6 +423,7 @@ set(UI_SOURCES
   src/ui/MaskPanel.cpp
   src/ui/OutputWindow.cpp
   src/ui/GlDraw.cpp
+  src/ui/RhiDraw.cpp
   src/ui/Commands.cpp
   src/ui/LayerTable.cpp
   src/ui/MediaBin.cpp
@@ -446,6 +447,12 @@ if(APPLE)
   list(APPEND UI_SOURCES src/ui/MacPresentation.mm)
 endif()
 add_library(nyxmap_ui STATIC ${UI_SOURCES})
+# The interface's shaders (RhiDraw), baked for every backend
+qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
+  PREFIX "/shaders"
+  NOGLSL
+  BASE src/ui/shaders
+  FILES src/ui/shaders/uidraw.vert src/ui/shaders/uidraw_tex.frag src/ui/shaders/uidraw_color.frag)
 target_include_directories(nyxmap_ui PUBLIC src src/ui PRIVATE "${CMAKE_BINARY_DIR}/generated") # NyxMapVersion.h
 target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
 target_compile_options(nyxmap_ui PRIVATE ${NYXMAP_WARNINGS})

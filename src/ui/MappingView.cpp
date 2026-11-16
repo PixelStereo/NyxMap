@@ -6,6 +6,8 @@
 #include "Commands.h"
 #include "Engine.h"
 #include "FixtureOverlay.h"
+#include "PaintOverlay.h"
+#include <rhi/qrhi.h>
 #include "Widgets.h"
 
 #include <QUndoStack>
@@ -36,8 +38,9 @@ static const QColor kGrid(255, 255, 255, 110);
 static const QColor kViewport(120, 190, 255, 230);
 static const QColor kGuide(255, 70, 200, 230);
 
-MappingView::MappingView(Engine *engine, QWidget *parent) : QOpenGLWidget(parent), m_engine(engine)
+MappingView::MappingView(Engine *engine, QWidget *parent) : QRhiWidget(parent), m_engine(engine)
 {
+    m_overlay = new PaintOverlay(this, [this](QPainter &p) { paintOverlay(p); }); // under the bars
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(false);
     setMinimumSize(320, 200);
@@ -119,12 +122,11 @@ void MappingView::setFixture(quint64 id)
     update();
 }
 
-void MappingView::paintFixtures()
+void MappingView::paintFixtures(QPainter &p)
 {
     if (!m_showFixtures) return;
     const FixturePatch patch = m_engine->fixturePatch();
     if (patch.fixtures.empty()) return;
-    QPainter p(this);
     const bool locked = std::any_of(patch.fixtures.begin(), patch.fixtures.end(),
                                     [&](const Fixture &f) { return f.id == m_fixture && f.locked; });
     fixtureview::paint(p, patch, m_engine->compositionSize(), [this](QPointF n) { return toWidget(n); },
@@ -329,7 +331,8 @@ void MappingView::updateZoomLabel()
 
 void MappingView::resizeEvent(QResizeEvent *e)
 {
-    QOpenGLWidget::resizeEvent(e);
+    QRhiWidget::resizeEvent(e);
+    m_overlay->follow();
     updateZoomLabel();
 }
 
@@ -402,17 +405,12 @@ bool MappingView::event(QEvent *e)
             return true;
         }
     }
-    return QOpenGLWidget::event(e);
+    return QRhiWidget::event(e);
 }
 
 
 
-MappingView::~MappingView()
-{
-    makeCurrent();
-    m_draw.destroy();
-    doneCurrent();
-}
+MappingView::~MappingView() = default;
 
 void MappingView::setLayer(int index)
 {
@@ -565,22 +563,31 @@ std::vector<QPointF> MappingView::outline(const Mapping &m, int steps) const
     return pts;
 }
 
-void MappingView::initializeGL() { m_draw.init(); }
+void MappingView::initialize(QRhiCommandBuffer *) { m_draw.initialize(rhi(), renderTarget()); }
+void MappingView::releaseResources() { m_draw.release(); }
 
-void MappingView::paintGL()
+void MappingView::render(QRhiCommandBuffer *cb)
 {
+    m_draw.initialize(rhi(), renderTarget());
+    m_draw.begin(QColor::fromRgbF(0.10f, 0.10f, 0.11f));
     paintScene();
     paintMasks();
     paintLines();
     paintGuides();
-    paintViewportNames();
-    paintFixtures();
-    paintCoordinates();
+    m_draw.render(cb, renderTarget());
     refreshCoordinateBar();
+    m_overlay->update(); // the names, labels and fixtures, with a QPainter, over the picture
+}
+
+void MappingView::paintOverlay(QPainter &p)
+{
+    paintViewportNames(p);
+    paintFixtures(p);
+    paintCoordinates(p);
 }
 
 // Next to each selected point (a few at most), its position in composition pixels
-void MappingView::paintCoordinates()
+void MappingView::paintCoordinates(QPainter &p)
 {
     if (m_maskEditMode) return;
     std::vector<std::pair<QPointF, QString>> labels;
@@ -598,7 +605,6 @@ void MappingView::paintCoordinates()
                                                 .arg(n.y() * comp.height(), 0, 'f', 1)});
         }
     }
-    QPainter p(this);
     QFont f = p.font();
     f.setPointSizeF(f.pointSizeF() * 0.85);
     p.setFont(f);
@@ -612,7 +618,7 @@ void MappingView::paintCoordinates()
 }
 
 // Names of the viewports, at the top left of their frame
-void MappingView::paintViewportNames()
+void MappingView::paintViewportNames(QPainter &p)
 {
     std::vector<std::pair<QRectF, QString>> frames;
     {
@@ -624,7 +630,6 @@ void MappingView::paintViewportNames()
             frames.push_back({poly.boundingRect(), l->name});
         }
     }
-    QPainter p(this);
     QFont f = p.font();
     f.setPointSizeF(f.pointSizeF() * 0.9);
     p.setFont(f);
@@ -672,19 +677,18 @@ void MappingView::paintGuides()
 
 void MappingView::paintScene()
 {
-    auto f = context()->extraFunctions();
-    const qreal dpr = devicePixelRatioF();
-    f->glViewport(0, 0, int(width() * dpr), int(height() * dpr));
-    f->glClearColor(0.10f, 0.10f, 0.11f, 1);
-    f->glClear(GL_COLOR_BUFFER_BIT);
-
     const QRectF r = viewRect();
-    // The OpenGL viewport origin is at the bottom left.
-    f->glViewport(int(std::round(r.left() * dpr)), int(std::round((height() - r.bottom()) * dpr)),
-                  int(std::round(r.width() * dpr)), int(std::round(r.height() * dpr)));
-    m_engine->waitForFrame(f);
-    m_draw.drawTexture(m_engine->outputTexture());
-    f->glViewport(0, 0, int(width() * dpr), int(height() * dpr));
+    m_engine->wantCompositionImage();
+    const QImage image = m_engine->compositionImage();
+    if (!image.isNull()) {
+        if (image.cacheKey() != m_pictureKey) {
+            m_draw.setPicture(image);
+            m_pictureKey = image.cacheKey();
+        }
+        const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+        m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
+                           float(1 - r.top() / h * 2));
+    }
 
     // Composition frame
     std::vector<float> frame;
@@ -1517,7 +1521,7 @@ void MappingView::keyPressEvent(QKeyEvent *e)
         m_selection.clear();
         update();
         return;
-    default: QOpenGLWidget::keyPressEvent(e); return;
+    default: QRhiWidget::keyPressEvent(e); return;
     }
     if (!m || mappingLocked()) return;
     const Mapping before = *m;
@@ -1812,13 +1816,13 @@ void MappingView::mouseDoubleClickEvent(QMouseEvent *e)
         }
         return;
     }
-    QOpenGLWidget::mouseDoubleClickEvent(e);
+    QRhiWidget::mouseDoubleClickEvent(e);
 }
 
 
 void MappingView::contextMenuEvent(QContextMenuEvent *event)
 {
-    if (!m_maskEditMode || m_drawing) { QOpenGLWidget::contextMenuEvent(event); return; }
+    if (!m_maskEditMode || m_drawing) { QRhiWidget::contextMenuEvent(event); return; }
     Engine::Lock lock(&m_engine->mutex());
     Layer *layer = m_engine->layer(m_layer);
     Mask *mask = editedMask();

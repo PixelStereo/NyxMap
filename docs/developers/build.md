@@ -40,7 +40,7 @@ Run it again after `git pull` to rebuild. CI runs the scripts on fresh macOS, Ub
 
 ### Step by step
 
-**Requirements:** CMake 3.21+, Qt 6.2+, FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
+**Requirements:** CMake 3.21+, Qt 6.7+ (QRhiWidget), FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/PixelStereo/NyxMap.git

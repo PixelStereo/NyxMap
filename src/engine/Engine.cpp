@@ -601,6 +601,7 @@ void Engine::releaseAll()
     for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
     m_isfAudioTextures.clear();
     m_previewTarget.destroy();
+    m_compositionTarget.destroy();
     for (auto &[key, target] : m_rhiReaders) target.destroy();
     m_rhiReaders.clear();
     for (auto &slot : m_previewSlots) {
@@ -912,6 +913,21 @@ void Engine::finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f)
     reader = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     f->glFlush(); // make the reader fence visible to the render context without a CPU wait
 }
+
+QImage Engine::previewImage(int slot) const
+{
+    if (slot < 0 || slot >= int(m_previewImages.size())) return QImage();
+    std::lock_guard<std::mutex> lk(m_previewMutex);
+    return m_previewImages[size_t(slot)];
+}
+
+QImage Engine::compositionImage() const
+{
+    std::lock_guard<std::mutex> lk(m_previewMutex);
+    return m_compositionImage;
+}
+
+void Engine::wantCompositionImage() { m_compositionWantedUntilNs = qint64(RealtimeTiming::nowNs()) + 500'000'000; }
 
 GLuint Engine::outputTexture() const { return m_output[m_published.load()].tex; }
 

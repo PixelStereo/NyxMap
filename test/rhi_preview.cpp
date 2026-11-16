@@ -1,5 +1,4 @@
-// The interface's previews with the QRhi renderer: its slots are OpenGL textures still, filled from the QRhi pictures
-// read back. The composition's and a layer's previews are compared with the pictures the engine gives out.
+// The interface's previews with the QRhi renderer: its slots give the QRhi pictures read back, as pixels. The composition's and a layer's previews are compared with the pictures the engine gives out.
 //
 // nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
 #include "Engine.h"
@@ -25,28 +24,8 @@ static void check(bool ok, const char *what)
     g_failures += !ok;
 }
 
-// A preview slot's texture as an image, top row first (a framebuffer over the texture, read)
-static QImage readSlot(Engine &e, int slot)
-{
-    QImage img;
-    e.runGl([&] {
-        Engine::Lock lock(&e.mutex());
-        QSize size;
-        const GLuint tex = e.previewTexture(slot, &size);
-        if (!tex || size.isEmpty()) return;
-        QOpenGLExtraFunctions *f = QOpenGLContext::currentContext()->extraFunctions();
-        GLuint fbo = 0;
-        f->glGenFramebuffers(1, &fbo);
-        f->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-        img = QImage(size, QImage::Format_RGBA8888);
-        f->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
-        f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        f->glDeleteFramebuffers(1, &fbo);
-        img = img.mirrored(false, true);
-    });
-    return img;
-}
+// A preview slot's picture as an image, top row first (the engine gives it bottom row first)
+static QImage readSlot(Engine &e, int slot) { return e.previewImage(slot).flipped(Qt::Vertical); }
 
 static double meanDifference(const QImage &a, const QImage &b)
 {
@@ -98,15 +77,18 @@ int main(int argc, char **argv)
     const double a = meanDifference(composition, e.grabOutput());
     std::printf("  composition preview against the composition: mean %.3f\n", a);
     check(a < 1.0, "the composition's preview is its picture, the right way up");
+    // The mapping view's picture of the composition, made while it asks for it
+    QImage mapping;
+    for (int k = 0; k < 5 && mapping.isNull(); ++k) {
+        e.wantCompositionImage();
+        e.renderFrame();
+        mapping = e.compositionImage();
+    }
+    check(!mapping.isNull() && meanDifference(mapping.flipped(Qt::Vertical), e.grabOutput()) < 1.0, "the mapping view gets the composition");
     // A layer that is not there shows nothing, never a stale picture
     e.setPreviewSource(2, 987654321);
     for (int k = 0; k < 3; ++k) e.renderFrame();
-    GLuint missing = 1;
-    e.runGl([&] {
-        Engine::Lock lock(&e.mutex());
-        missing = e.previewTexture(2, nullptr);
-    });
-    check(!missing, "a layer that is not there shows nothing");
+    check(e.previewImage(2).isNull(), "a layer that is not there shows nothing");
     // The inspector's source preview: the layer's picture before its ROI, as the OpenGL renderer gives it
     e.requestSourcePreview(id, 200);
     QImage source;

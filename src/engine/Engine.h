@@ -909,6 +909,12 @@ public:
     void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {}, Scene3D::ViewLook look = Scene3D::ViewLook::Simple);
     GLuint previewTexture(int slot, QSize *size, int *buffer = nullptr) const; // caller holds mutex(), shared GL context current
     void finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f); // mutex held
+    // The interface's views through QRhi (RhiDraw): the pictures as pixels, RGBA8888, the picture's bottom row first (as an
+    // OpenGL texture holds them), reduced to 1024 px at most (the composition: 1600). Null: nothing to show (no such
+    // source). Any thread. The composition is made only while a view asks for it (wantCompositionImage, every paint)
+    QImage previewImage(int slot) const;
+    QImage compositionImage() const;
+    void wantCompositionImage();
     GLuint outputTexture() const;        // last published frame (readable from a shared context)
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
@@ -1275,6 +1281,11 @@ private:
     int m_previewPboW = 0, m_previewPboH = 0;
     quint64 m_previewPboId = 0; // the layer the buffer holds (0: nothing pending)
     mutable std::mutex m_previewMutex;
+    std::array<QImage, 4> m_previewImages;    // by preview slot (m_previewMutex)
+    std::array<quint64, 4> m_previewImageIds{}; // the source each one shows
+    QImage m_compositionImage;
+    std::atomic<qint64> m_compositionWantedUntilNs{0};
+    RenderTarget m_compositionTarget; // the OpenGL renderer: the composition reduced, to read
     QImage m_previewImage;
     quint64 m_previewImageId = 0;
 

@@ -52,11 +52,15 @@ it and the parts ported so far.
   Vulkan). The window the frame follows the screen by waits for its vsync, the
   others do not. `rhi_output` presents into a real window and reads the
   swapchain back: the viewport's picture, scaled to the window, mean 0.002 apart.
-- **Previews**, while the interface still draws through OpenGL: the pictures its
-  preview slots ask for (the composition, a layer, a viewport) are reduced to at
-  most 1024 px, read back during the frame and uploaded into the slots' OpenGL
-  textures, which the interface reads as before (`rhi_preview`). This bridge goes
-  with the interface's own views. Not yet: 3D views.
+- **Previews and views**: the pictures the interface's preview cells ask for (the
+  composition, a layer, a viewport) are reduced to at most 1024 px and read back
+  during the frame (`Engine::previewImage`; the composition for the mapping view,
+  up to 1600 px, only while it asks: `compositionImage`). The preview cells and the
+  mapping view are `QRhiWidget`s (Qt 6.7) that draw them through `RhiDraw` on
+  the window's own QRhi: a picture, then the lines and triangles of the handles;
+  names, labels and fixtures go through a transparent `PaintOverlay` child with a
+  QPainter. The OpenGL renderer gives the same pictures (a readback of its
+  targets) until it goes. `rhi_preview` checks them. Not yet: 3D views.
 - **Publishing**, through the same bridge: the pictures of the viewports that are
   published are read back whole during the frame. NDI, OMT, DeckLink and the tests'
   tap get them as BGRA, top row first (`Publishing::submitPixels`, flipped and
