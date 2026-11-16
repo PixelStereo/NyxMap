@@ -42,23 +42,26 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
     m_nearest->create();
     m_trilinear->create();
     m_black.reset(rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
-    m_black->create();
+    const bool blackOk = m_black->create();
     m_quad.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, 12 * sizeof(float)));
-    m_quad->create();
+    const bool quadOk = m_quad->create();
     m_blitUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
-    m_blitUbuf->create();
+    const bool blitOk = m_blitUbuf->create();
     m_blitFlippedUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
-    m_blitFlippedUbuf->create();
+    const bool flippedOk = m_blitFlippedUbuf->create();
+    if (!blackOk || !quadOk || !blitOk || !flippedOk)
+        qWarning("RhiResources: shared resources not created (black %d, quad %d, blit %d, flipped %d) on %s", blackOk, quadOk, blitOk,
+                 flippedOk, rhi->backendName());
     m_uploads = rhi->nextResourceUpdateBatch();
     QImage black(1, 1, QImage::Format_RGBA8888);
     black.fill(Qt::transparent);
-    m_uploads->uploadTexture(m_black.get(), black);
+    if (blackOk) m_uploads->uploadTexture(m_black.get(), black);
     static const float quad[12] = {-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1};
-    m_uploads->uploadStaticBuffer(m_quad.get(), quad);
+    if (quadOk) m_uploads->uploadStaticBuffer(m_quad.get(), quad);
     const float flip[4] = {m_flip, 0, 0, 0};
-    m_uploads->uploadStaticBuffer(m_blitUbuf.get(), flip);
+    if (blitOk) m_uploads->uploadStaticBuffer(m_blitUbuf.get(), flip);
     const float flipped[4] = {-m_flip, 0, 0, 0};
-    m_uploads->uploadStaticBuffer(m_blitFlippedUbuf.get(), flipped);
+    if (flippedOk) m_uploads->uploadStaticBuffer(m_blitFlippedUbuf.get(), flipped);
 }
 
 RhiResources::~RhiResources()

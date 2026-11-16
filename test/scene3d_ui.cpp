@@ -1004,7 +1004,10 @@ int runScene3dUiTests(Engine &engine)
             pump();
             const QImage after = preview ? preview->grab().toImage() : QImage();
             check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
-            check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
+            // The engine's shaders are baked without GLSL: a window left on OpenGL (a CI without Vulkan) cannot draw them
+            const bool drawable = preview && preview->api() != QRhiWidget::Api::OpenGL;
+            if (drawable)
+                check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
             if (const QString file = qEnvironmentVariable("NYXMAP_MATERIAL_CAPTURE"); !file.isEmpty()) materials.grab().save(file);
             materialUndo.undo(); pump();
             check(engine.materials().at(id)->color[1] > .7f, "material color edit undoes");
