@@ -195,6 +195,14 @@ jobs:
         if: needs.scope.outputs.linux_engine == 'true' || needs.scope.outputs.package == 'true'
         with:
           python-version: '3.11'
+      - name: QRhi on Vulkan (validation layers, the interface's previews)
+        if: needs.scope.outputs.linux_engine == 'true'
+        continue-on-error: true
+        run: |
+          # What Vulkan says about the renderer's calls (lavapipe, no GPU): read this step's output when pictures are wrong
+          sudo apt-get install -y vulkan-validationlayers
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation QT_LOGGING_RULES='qt.vulkan*=true;qt.rhi*=true' \
+            xvfb-run -a ctest --test-dir build --output-on-failure --timeout 300 -R '^(rhi_preview|compositing)$' 2>&1 | head -300
       - name: Engine tests
         if: needs.scope.outputs.linux_engine == 'true'
         run: |
@@ -277,7 +285,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -321,7 +329,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -372,7 +380,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -441,7 +449,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
+            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
         timeout-minutes: 15
@@ -487,7 +495,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |
