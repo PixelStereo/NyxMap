@@ -127,7 +127,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev \
-            libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
+            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core ccache
@@ -555,6 +555,10 @@ jobs:
         with:
           python-version: '3.11'
       - name: Engine tests
+        env:
+          # The runner's paravirtual GPU does not run the QRhi renderer's pictures (a dozen engine tests draw wrong or crash
+          # there); these tests run on OpenGL here, QRhi's on Metal are run on a Mac with a real GPU (rhi_* tests)
+          NYXMAP_RENDERER: gl
         run: |
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
