@@ -237,10 +237,6 @@ bool Engine::initialize(QString *err)
     m_blitOpaqueLoc = f->glGetUniformLocation(m_blitProgram, "u_opaque");
     m_presentTexLoc = f->glGetUniformLocation(m_presentProgram, "u_tex");
     m_publishing.initGl(&log);
-    if (!m_sampler.initGl(&log)) {
-        if (err) *err = QStringLiteral("Pixel mapping shader: ") + log;
-        return false;
-    }
     // Layer preparation: roi (part of the source used), color (added / removed), unpremultiplied alpha (groups)
     m_prepProgram = compileProgram(quadVs,
                                    "#version 330 core\nuniform sampler2D u_tex; uniform vec4 u_roi; uniform vec3 u_add;\n"

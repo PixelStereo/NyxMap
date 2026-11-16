@@ -231,8 +231,9 @@ void Engine::stepPixelMapping()
             m_dmxOwnedLast = std::move(owned);
         }
     }
-    // QRhi mode: the composition read back from it (Render.cpp), for the frame it was asked at
-    const auto bridged = m_rhiReaders.find({0, 0});
-    const RenderTarget &out = m_rhi && bridged != m_rhiReaders.end() ? bridged->second : m_output[m_back];
-    if (!m_fixturePoints.empty() && out.tex) m_sampler.sample(out.tex, m_fixturePoints, m_fixturePoints.size());
+    // The composition read back from the QRhi renderer (Render.cpp), a new one since the last frame
+    if (m_mappingFresh) {
+        m_mappingFresh = false;
+        if (!m_fixturePoints.empty()) m_sampler.sample(m_mappingPixels, m_mappingSize, m_fixturePoints, m_fixturePoints.size());
+    }
 }

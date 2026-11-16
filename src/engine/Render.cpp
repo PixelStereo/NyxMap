@@ -2222,13 +2222,10 @@ void Engine::frame(double dt)
                     sourcePreviewGiven = true;
                     continue;
                 }
-                if (p.slot >= pixelMappingSlot) { // pixel mapping's sampler reads the composition as an OpenGL texture
-                    RenderTarget &target = m_rhiReaders[{0, 0}];
-                    target.ensure(p.size.width(), p.size.height());
-                    if (!target.tex) continue;
-                    f->glBindTexture(GL_TEXTURE_2D, target.tex);
-                    f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-                    f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
+                if (p.slot >= pixelMappingSlot) { // pixel mapping samples the composition's pixels
+                    m_mappingPixels = p.pixels;
+                    m_mappingSize = p.size;
+                    m_mappingFresh = true;
                     continue;
                 }
                 if (p.slot >= sonificationSlot) { // 16 × 16: the mean colour

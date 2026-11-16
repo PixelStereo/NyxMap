@@ -1575,7 +1575,10 @@ private:
     quint64 m_fixturesFollowed = 0;          // render thread: the version the points and the sender follow
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread
-    PixelSampler m_sampler{[this] { drawQuad(); }};
+    PixelSampler m_sampler;
+    QByteArray m_mappingPixels; // the composition's pixels the QRhi renderer read back for pixel mapping (the latest)
+    QSize m_mappingSize;
+    bool m_mappingFresh = false;
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;
     using DmxOverrides = std::map<DmxKey, std::map<int, quint8>>;
