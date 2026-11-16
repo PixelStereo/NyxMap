@@ -84,11 +84,8 @@ QRhiResourceUpdateBatch *RhiResources::takeUploads()
 
 void RhiResources::frameStarted()
 {
-    ++m_frame;
-    // Kept a few frames after their last use: QRhi has at most three frames in flight
-    if (m_bindings.size() > 64)
-        for (auto it = m_bindings.begin(); it != m_bindings.end();)
-            it = m_frame - it->second.used > 8 ? m_bindings.erase(it) : std::next(it);
+    // QRhi pipelines keep a non-owning pointer to their shader resource bindings. Keep every created
+    // binding alive until RhiResources is released, after all pipelines using it have been destroyed.
 }
 
 QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list)
@@ -102,21 +99,20 @@ QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list
         key.push_back(b.tex ? b.tex->globalResourceId() : 0);
         key.push_back(b.sampler ? b.sampler->globalResourceId() : 0);
     }
-    Kept &k = m_bindings[key];
-    k.used = m_frame;
-    if (!k.srb) {
+    std::unique_ptr<QRhiShaderResourceBindings> &srb = m_bindings[key];
+    if (!srb) {
         std::vector<QRhiShaderResourceBinding> rb;
         for (const Bind &b : list)
             rb.push_back(b.ubuf ? QRhiShaderResourceBinding::uniformBuffer(b.binding, b.stages, b.ubuf)
                                 : QRhiShaderResourceBinding::sampledTexture(b.binding, b.stages, b.tex, b.sampler));
-        k.srb.reset(m_rhi->newShaderResourceBindings());
-        k.srb->setBindings(rb.cbegin(), rb.cend());
-        if (!k.srb->create()) {
+        srb.reset(m_rhi->newShaderResourceBindings());
+        srb->setBindings(rb.cbegin(), rb.cend());
+        if (!srb->create()) {
             m_bindings.erase(key);
             return nullptr;
         }
     }
-    return k.srb.get();
+    return srb.get();
 }
 
 bool RhiResources::blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads)
