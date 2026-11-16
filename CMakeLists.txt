@@ -121,10 +121,6 @@ add_library(nyxmap_engine STATIC
   src/engine/ClockGenerator.cpp
   src/engine/TextWriting.cpp
   src/engine/Interactions.cpp
-  src/engine/PixelAnalysis.cpp
-  src/engine/HandTracking.cpp
-  src/engine/VisionRuntime.cpp
-  src/engine/VisionEngine.cpp
   src/engine/InteractionsEngine.cpp
   src/engine/Presets.cpp
   src/engine/Animations.cpp
@@ -149,12 +145,6 @@ if(NYXMAP_FAUST_COMPILER)
     message(STATUS "libfaust compiler not found: built-in audio instruments available; user .dsp loading disabled")
   endif()
 endif()
-
-# Embed the worker so installed builds do not need a source checkout.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe_worker.py)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" NYXMAP_MEDIAPIPE_WORKER)
-configure_file(src/engine/MediaPipeWorkerScript.h.in generated/MediaPipeWorkerScript.h @ONLY)
-target_include_directories(nyxmap_engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # QRhi (Metal, Direct3D, Vulkan) and its shaders, baked at run time (ISF)
 set(QT_NO_PRIVATE_MODULE_WARNING ON) # QRhi is semi-public: Qt pinned, the renderer isolated behind it
@@ -732,9 +722,6 @@ if(NYXMAP_TESTS)
   nyxmap_test_main(nyxmap_engine_tests beat_clock test/beat_clock.cpp)
   nyxmap_test_main(nyxmap_engine_tests audio_levels test/audio_levels.cpp)
   nyxmap_test_main(nyxmap_engine_tests show_editing test/show_editing.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_analysis test/vision_analysis.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_engine test/vision_engine.cpp)
-  nyxmap_test_main(nyxmap_engine_tests vision_hand_inference test/hand_inference.cpp)
   nyxmap_test_main(nyxmap_engine_tests preset_actions test/preset_actions.cpp)
   nyxmap_test_main(nyxmap_engine_tests isf_library test/isf_library.cpp)
   nyxmap_test_main(nyxmap_engine_tests pixel_mapping test/pixel_mapping.cpp WARNINGS)
@@ -754,7 +741,6 @@ if(NYXMAP_TESTS)
   nyxmap_test_main(nyxmap_ui_tests output_color_state test/output_color_state.cpp)
   nyxmap_test_main(nyxmap_ui_tests color_timeline_ui test/color_timeline_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests timeline_events_ui test/timeline_events_ui.cpp)
-  nyxmap_test_main(nyxmap_ui_tests vision_interaction_ui test/vision_interaction_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests audio_interaction_ui test/audio_interaction_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests interaction_actions_ui test/interaction_actions_ui.cpp)
   nyxmap_test_main(nyxmap_ui_tests animation_drivers test/animation_drivers.cpp)
@@ -885,7 +871,6 @@ if(NYXMAP_TESTS)
       $<TARGET_FILE:NyxMap> ${CMAKE_SOURCE_DIR}/examples/pbr/PBR.nyxmap ${CMAKE_BINARY_DIR}/pbr-preview.png)
     set_tests_properties(pbr_render PROPERTIES TIMEOUT 300)
     add_test(NAME endurance_analysis COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/test -p test_endurance_analysis.py)
-    add_test(NAME vision_model_download COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/hand_model_download.py)
     add_test(NAME ci_scope COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/.github/scripts -p test_ci_scope.py)
   endif()
   add_executable(nyxmap_mask_geometry_test test/mask_geometry.cpp src/engine/Masks.cpp)
@@ -916,21 +901,20 @@ if(NYXMAP_TESTS)
   add_test(NAME web_page COMMAND nyxmap_web_page_test)
   set_tests_properties(web_page PROPERTIES TIMEOUT 120)
   set_tests_properties(audio_generators audio_generators_portable audio_generator_engine beat_clock
-    audio_levels audio_effects show_editing vision_analysis vision_engine preset_actions pixel_mapping line_generator
-    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine
+    audio_levels audio_effects show_editing preset_actions pixel_mapping line_generator
+    publishing_concurrency cue_dispatch animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
   # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
   set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
-  set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui
     PROPERTIES TIMEOUT 30)
   set_tests_properties(show_clock decoder_alpha PROPERTIES TIMEOUT 15)
 
-  # MediaPipe inference and decoder seeks are sensitive to CPU/GPU contention on Apple Silicon runners.
+  # Decoder seeks are sensitive to CPU/GPU contention on Apple Silicon runners.
   # Keep these two integration tests isolated while the rest of the suite runs with ctest -j4.
   if(APPLE)
-    set_tests_properties(vision_hand_inference preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
+    set_tests_properties(preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
   endif()
 
   foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing

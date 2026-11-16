@@ -310,7 +310,6 @@ struct RhiRenderer::Impl {
                 case LayerTap::Source: tex = s->isGroup ? sr.final : sr.raw; break;
                 case LayerTap::PreFx: tex = sr.preFx; break;
                 case LayerTap::PostFx: tex = sr.final; break;
-                default: warnOnce(QStringLiteral("MediaPipe taps")); break;
                 }
                 if (tex) size = tex->pixelSize();
             }

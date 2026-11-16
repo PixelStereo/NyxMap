@@ -326,7 +326,7 @@ std::vector<Engine::LayerUse> Engine::layerUses(quint64 id) const
     }
     const auto other = [&](const QString &what) { uses.push_back({0, what, false}); };
     const std::function<bool(const Interaction &)> involves = [&](const Interaction &it) {
-        if (it.layer == id || it.sourceLayer == id || it.pixels.layer == id) return true;
+        if (it.layer == id || it.sourceLayer == id) return true;
         for (const auto *list : {&it.onTrue, &it.onFalse})
             for (const InteractionConsequence &c : *list)
                 if (c.layer == id) return true;
@@ -489,22 +489,9 @@ void Engine::markNeeded()
         transition->from->needed = true;
         forEachRenderDependency(*transition->from, use);
     }
-    auto visionReference = [&](const Interaction &input) {
-        if (!input.enabled || (input.source != InteractionSource::Pixels && input.source != InteractionSource::Hands)) return;
-        if (const size_t row = renderLayerIndex(input.pixels.layer); row < n) use(row, -1);
-    };
-    if (m_visionSetupInput)
-        if (const size_t row = renderLayerIndex(m_visionSetupInput->pixels.layer); row < n) use(row, -1);
-    for (const auto &input : m_interactions)
-        if (input.enabled) {
-            visionReference(input);
-            for (const auto &axis : input.xyInputs) visionReference(axis);
-        }
-    for (const auto &node : m_interactionGraph.nodes)
-        if (node.kind == InteractionGraph::Kind::Source) visionReference(node.settings);
 
     // A viewport's own picture (not its output) shown by something else: a layer taking it as its source, a mask, a
-    // matte, a shader's image, a model, the vision, the inspector's source preview
+    // matte, a shader's image, a model, the inspector's source preview
     for (auto &l : m_layers)
         if (l->isViewport) l->vpPictureUsed = l->referenced || !l->stagesWanted.empty() || l->id == m_previewId;
     const auto showsViewport = [&](quint64 id) {
@@ -665,17 +652,6 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
                 break;
             case LayerTap::PreFx: tex = s->preFxTex, w = s->preFxW, h = s->preFxH; break;
             case LayerTap::PostFx: tex = s->finalTex, w = s->finalW, h = s->finalH; break;
-            case LayerTap::MediaPipeMask:
-            case LayerTap::MediaPipeHair:
-            case LayerTap::MediaPipeParts:
-            case LayerTap::MediaPipeCutout:
-            case LayerTap::MediaPipePose:
-            case LayerTap::MediaPipeLandscape:
-            case LayerTap::MediaPipeHairDetail:
-            case LayerTap::MediaPipeDeepLab:
-            case LayerTap::MediaPipePartsForeground:
-                tex = segmentationTexture(s->id, l.sourceTap, w, h);
-                break;
             }
             l.srcWidth = w; // what the inspector and the ROI editor show
             l.srcHeight = h;
@@ -1995,7 +1971,7 @@ void Engine::frame(double dt)
             if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
         }
         // The pixel readers' pictures, read back too (the offscreen frame completes at once, so they are this frame's)
-        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, visionSlot = 3000, sourcePreviewSlot = 4000;
+        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000;
         std::vector<quint64> listened; // the viewports (0: the composition) sonifications listen to, by slot
         {
             std::set<quint64> seen;
@@ -2019,12 +1995,6 @@ void Engine::frame(double dt)
             asked.push_back(q);
         }
         if (!m_fixturePoints.empty()) asked.push_back({pixelMappingSlot, 0, 1 << 20});
-        const std::vector<std::pair<quint64, int>> visionWanted(m_rhiVisionWanted.begin(), m_rhiVisionWanted.end());
-        for (size_t i = 0; i < visionWanted.size(); ++i) {
-            RhiRenderer::PreviewRequest q{visionSlot + int(i), visionWanted[i].first, 1 << 20};
-            q.tap = visionWanted[i].second == 1 ? RhiRenderer::PreviewRequest::PreFx : RhiRenderer::PreviewRequest::Final;
-            asked.push_back(q);
-        }
         const bool sourcePreviewDue = m_previewId && m_frameStampNs >= m_previewNextNs;
         if (sourcePreviewDue) {
             m_previewNextNs = m_frameStampNs + 66'666'667;
@@ -2055,11 +2025,8 @@ void Engine::frame(double dt)
                     sourcePreviewGiven = true;
                     continue;
                 }
-                if (p.slot >= visionSlot || p.slot >= pixelMappingSlot) {
-                    // pixel mapping (the composition) and vision (a layer, by its tap) read these as OpenGL textures
-                    const bool mapping = p.slot < visionSlot;
-                    const int tap = mapping ? 0 : visionWanted[size_t(p.slot - visionSlot)].second;
-                    RenderTarget &target = m_rhiReaders[{mapping ? 0 : p.id, tap}];
+                if (p.slot >= pixelMappingSlot) { // pixel mapping's sampler reads the composition as an OpenGL texture
+                    RenderTarget &target = m_rhiReaders[{0, 0}];
                     target.ensure(p.size.width(), p.size.height());
                     if (!target.tex) continue;
                     f->glBindTexture(GL_TEXTURE_2D, target.tex);
@@ -2106,7 +2073,6 @@ void Engine::frame(double dt)
                         if (const auto c = listenedColors.find(int(i)); c != listenedColors.end())
                             layer->audio->generator()->setColor(c->second[0], c->second[1], c->second[2]);
             }
-            stepVision();
             stepPixelMapping(); // the fixtures read the composition as it goes out
             { // the others' GPUs wait for these uploads (waitForFrame)
                 std::lock_guard<std::mutex> lk(m_fenceMutex);
@@ -2234,7 +2200,6 @@ void Engine::frame(double dt)
             }
         }
     }
-    stepVision();
     stepPixelMapping(); // the fixtures read the composition as it goes out (opacity and blackout included)
     // Multisampled buffers of sizes no longer drawn (antialiasing off, a size changed): released
     for (auto it = m_msaa.begin(); it != m_msaa.end();) {

@@ -9,7 +9,6 @@
 #include "VideoBudget.h"
 #include "VideoDecoder.h"
 #include "VideoTexture.h"
-#include "VisionRuntime.h"
 #include "WorkerPool.h"
 
 #include <QDebug>
@@ -586,7 +585,6 @@ void Engine::releaseAll()
     m_publishing.release();
     // Pixel mapping: the sACN streams terminated, the sampler's GPU objects deleted
     m_dmx.stop();
-    releaseVision();
     m_sampler.release();
     m_fixturesFollowed = 0;
     {

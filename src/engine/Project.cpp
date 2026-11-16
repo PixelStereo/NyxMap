@@ -87,7 +87,6 @@ void Engine::clearProject()
         Lock lk(&m_mutex);
         old.swap(m_layers);
         m_materials.clear();
-        m_visionReset = true;
         m_projectPath.clear();
         m_media.clear();
         m_nextMediaId = 1;

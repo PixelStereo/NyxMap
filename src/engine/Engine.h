@@ -69,7 +69,6 @@ namespace midi {
 class Input;
 }
 
-class VisionRuntime;
 
 class Engine : public QObject
 {
@@ -914,12 +913,6 @@ public:
     // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
     // frame to be drawn (the CPU does not)
     void waitForFrame(QOpenGLExtraFunctions *f) const;
-    void setVisionSetupInput(std::optional<Interaction> input);
-    QJsonObject visionSignals(const Interaction &input) const;
-    QImage visionPreview(const PixelAnalysis::Settings &settings, bool hands = false) const;
-    QString visionStatus(const PixelAnalysis::Settings &settings, bool hands = false) const;
-    QString handModelsDirectory() const;
-    void setHandModelsDirectory(const QString &directory);
     double fps() const { return m_fps.load(); }
     // Frame timing (FrameTiming.h): intervals, missed deadlines, compute and present times, OSC / cue to frame
     FrameTiming::Stats frameTiming() const { return m_frameTiming.stats(); }
@@ -1275,9 +1268,8 @@ private:
     int m_previewSide = 360;
     int64_t m_previewNextNs = 0;
     RenderTarget m_previewTarget;
-    // QRhi mode: the pictures the pixel readers (pixel mapping, vision) take from OpenGL textures, read back from QRhi's
+    // QRhi mode: the pictures pixel mapping takes from OpenGL textures, read back from QRhi's
     std::map<std::pair<quint64, int>, RenderTarget> m_rhiReaders; // by layer and tap (0: the composition)
-    std::set<std::pair<quint64, int>> m_rhiVisionWanted;          // what vision asked for at its last step
     GLuint m_previewPbo = 0;
     GLsync m_previewFence = nullptr; // map only after the GPU has finished writing
     int m_previewPboW = 0, m_previewPboH = 0;
@@ -1556,13 +1548,6 @@ private:
     quint64 m_fixturesFollowed = 0;          // render thread: the version the points and the sender follow
     QSize m_fixturePointsComp;               // render thread: the composition size the points were placed in
     std::vector<QPointF> m_fixturePoints;    // render thread
-    void stepVision();
-    GLuint segmentationTexture(quint64 source, LayerTap tap, int &width, int &height) const;
-    double visionValue(const Interaction &input);
-    void releaseVision();
-    std::unique_ptr<VisionRuntime> m_vision;
-    bool m_visionReset = false;
-    std::optional<Interaction> m_visionSetupInput;
     PixelSampler m_sampler{[this] { drawQuad(); }};
     DmxSender m_dmx;
     mutable std::mutex m_dmxMutex;

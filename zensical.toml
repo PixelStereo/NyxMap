@@ -26,7 +26,6 @@ nav = [
     { "Parameter control" = "control/parameters.md" },
     { "Animations" = "control/animations.md" },
     { "Clock and envelopes" = "control/clock-and-envelopes.md" },
-    { "Vision interactions" = "control/vision.md" },
   ] },
   { "Show" = [
     { "Snapshots, presets and sequences" = "show/editing.md" },
