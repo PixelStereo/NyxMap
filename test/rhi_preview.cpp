@@ -2,6 +2,7 @@
 //
 // nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
 #include "Engine.h"
+#include <rhi/qrhi.h>
 #include "Layer.h"
 #include "LayerTree.h"
 #include "Model3D.h"
@@ -48,7 +49,7 @@ static double meanDifference(const QImage &a, const QImage &b)
 namespace {
 // A component that gives a green picture and records the texture it is given for its input
 struct FakeTox final : ToxPlayer {
-    static inline GLuint inputTexture = 0;
+    static inline QRhiTexture *inputTexture = nullptr;
     static inline int inputWidth = 0;
     void configure(const ToxSettings &) override {}
     void reload() override {}
@@ -58,12 +59,16 @@ struct FakeTox final : ToxPlayer {
     std::vector<std::pair<QString, QString>> outputs() const override { return {{"out1", "Result"}}; }
     quint64 revision() const override { return 1; }
     QString error() const override { return {}; }
-    void setInputTexture(const QString &, GLuint texture, int width, int) override { inputTexture = texture, inputWidth = width; }
-    bool update(Texture2D &target) override
+    void setInputRhiTexture(const QString &, QRhiTexture *texture) override
     {
-        QImage image(16, 16, QImage::Format_RGBA8888);
-        image.fill(QColor(0, 200, 0));
-        target.upload(image.constBits(), 16, 16);
+        inputTexture = texture;
+        inputWidth = texture ? texture->pixelSize().width() : 0;
+    }
+    bool update(Texture2D &) override { return false; }
+    bool takeFrame(QImage *out) override
+    {
+        *out = QImage(16, 16, QImage::Format_RGBA8888);
+        out->fill(QColor(0, 200, 0));
         return true;
     }
 };
@@ -308,7 +313,7 @@ int main(int argc, char **argv)
             if (!got.isNull() && QColor(got.pixel(32, 16)).green() > 150 && FakeTox::inputTexture) break;
         }
         check(!got.isNull() && QColor(got.pixel(32, 16)) == QColor(0, 200, 0), "tox: its picture is in the composition");
-        check(FakeTox::inputTexture != 0 && FakeTox::inputWidth == 64, "tox: its input gets the source layer's picture");
+        check(FakeTox::inputTexture != nullptr && FakeTox::inputWidth == 64, "tox: its input gets the source layer's picture");
         setToxFactoryForTests({});
     }
 

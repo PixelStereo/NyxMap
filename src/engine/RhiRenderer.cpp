@@ -445,59 +445,51 @@ struct RhiRenderer::Impl {
             size = r.imageSize;
             break;
         }
-        case SourceType::Tox:
-            if (l.toxPlayer && l.toxPlayer->usesRhi(rhi.get())) {
-                // Through Metal, on this QRhi's device: the inputs are the source layers' textures, the output a texture
-                for (const auto &top : l.toxPlayer->inputs()) {
-                    const auto found = layers.find(l.tox.inputs.value(top.first));
-                    l.toxPlayer->setInputRhiTexture(top.first, found != layers.end() ? found->second.final : nullptr);
+        case SourceType::Tox: {
+            if (!l.toxPlayer) break;
+            // The inputs are the source layers' textures; the output a texture of this QRhi's device (a native player), else
+            // pixels (a player of another kind)
+            for (const auto &top : l.toxPlayer->inputs()) {
+                const auto found = layers.find(l.tox.inputs.value(top.first));
+                l.toxPlayer->setInputRhiTexture(top.first, found != layers.end() ? found->second.final : nullptr);
+            }
+            auto fit = [&](QSize s) {
+                const bool first = !l.srcWidth;
+                l.srcWidth = s.width();
+                l.srcHeight = s.height();
+                if (first && l.mapping.isIdentity() && l.srcHeight > 0)
+                    l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
+            };
+            bool upsideDown = false;
+            QSize shared;
+            if (QRhiTexture *t = l.toxPlayer->usesRhi(rhi.get()) ? l.toxPlayer->takeTexture(rhi.get(), &shared, &upsideDown) : nullptr) {
+                if (shared != r.liveSize) {
+                    r.liveSize = shared;
+                    fit(shared);
                 }
-                bool upsideDown = false;
-                QSize shared;
-                if (QRhiTexture *t = l.toxPlayer->takeTexture(rhi.get(), &shared, &upsideDown)) {
-                    if (shared != r.liveSize) {
-                        r.liveSize = shared;
-                        l.srcWidth = shared.width();
-                        l.srcHeight = shared.height();
-                        if (l.mapping.isIdentity() && l.srcHeight > 0)
-                            l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
-                    }
-                    if (!upsideDown) {
-                        tex = t;
+                if (!upsideDown) {
+                    tex = t;
+                    size = shared;
+                } else {
+                    if (!r.liveTarget.ready() || r.liveTarget.size() != shared) r.liveTarget.ensure(rhi.get(), shared);
+                    if (r.liveTarget.ready() && res().blit(cb, t, r.liveTarget, nullptr, true)) {
+                        tex = r.liveTarget.texture();
                         size = shared;
-                    } else {
-                        if (!r.liveTarget.ready() || r.liveTarget.size() != shared) r.liveTarget.ensure(rhi.get(), shared);
-                        if (r.liveTarget.ready() && res().blit(cb, t, r.liveTarget, nullptr, true)) {
-                            tex = r.liveTarget.texture();
-                            size = shared;
-                        }
                     }
                 }
                 l.error = l.toxPlayer->error();
                 break;
             }
-            // Through its OpenGL path for now: the inputs are the last frame's pictures read back into OpenGL textures
-            // (Engine::m_rhiReaders), the output is read back from its texture
-            if (l.toxPlayer) {
-                for (const auto &top : l.toxPlayer->inputs()) {
-                    const auto found = e.m_rhiReaders.find({l.tox.inputs.value(top.first), 2});
-                    const bool have = found != e.m_rhiReaders.end() && found->second.tex;
-                    l.toxPlayer->setInputTexture(top.first, have ? found->second.tex : 0, have ? found->second.w : 0, have ? found->second.h : 0);
-                }
-                if (l.toxPlayer->update(l.sourceTex)) {
-                    const bool first = !l.srcWidth;
-                    l.srcWidth = l.sourceTex.w;
-                    l.srcHeight = l.sourceTex.h;
-                    if (first && l.mapping.isIdentity() && l.srcHeight > 0)
-                        l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
-                    const QImage picture = readGlTexture(l.sourceTex);
-                    if (!picture.isNull()) uploadPicture(r, picture);
-                }
-                l.error = l.toxPlayer->error();
-                tex = r.image.get();
-                size = r.imageSize;
+            QImage frame;
+            if (l.toxPlayer->takeFrame(&frame)) {
+                fit(frame.size());
+                uploadPicture(r, frame);
             }
+            l.error = l.toxPlayer->error();
+            tex = r.image.get();
+            size = r.imageSize;
             break;
+        }
         default: break;
         }
         if (!tex) return;

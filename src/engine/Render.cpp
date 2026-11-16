@@ -781,11 +781,6 @@ void Engine::renderLayer(Layer &l, const IsfRenderContext &rc)
         break;
     case SourceType::Tox:
         if (l.toxPlayer) {
-            for (const auto &top : l.toxPlayer->inputs()) {
-                const Layer *source = layer(indexOfId(l.tox.inputs.value(top.first)));
-                l.toxPlayer->setInputTexture(top.first, source ? source->finalTex : 0,
-                                            source ? source->finalW : 0, source ? source->finalH : 0);
-            }
             if (l.toxPlayer->update(l.sourceTex)) {
                 const bool first = !l.srcWidth;
                 l.srcWidth = l.sourceTex.w; l.srcHeight = l.sourceTex.h;
@@ -2100,7 +2095,7 @@ void Engine::frame(double dt)
             if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
         }
         // The pixel readers' pictures, read back too (the offscreen frame completes at once, so they are this frame's)
-        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000, publishSlot = 5000, compositionSlot = 6000, toxInputSlot = 7000;
+        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000, publishSlot = 5000, compositionSlot = 6000;
         std::vector<quint64> listened; // the viewports (0: the composition) sonifications listen to, by slot
         {
             std::set<quint64> seen;
@@ -2132,14 +2127,7 @@ void Engine::frame(double dt)
             asked.push_back(q);
         }
         if (qint64(RealtimeTiming::nowNs()) < m_compositionWantedUntilNs.load()) asked.push_back({compositionSlot, 0, 1600}); // the mapping view
-        // TouchEngine layers read their input TOPs as OpenGL textures: the pictures of the layers they take, read back
-        std::vector<quint64> toxSources;
-        for (const auto &layer : m_layers)
-            if (layer->toxPlayer && !layer->toxPlayer->usesRhi(m_rhi->rhi()))
-                for (const auto &[top, source] : layer->tox.inputs.asKeyValueRange())
-                    if (source && std::find(toxSources.begin(), toxSources.end(), source) == toxSources.end()) toxSources.push_back(source);
-        for (size_t i = 0; i < toxSources.size(); ++i) asked.push_back({toxInputSlot + int(i), toxSources[i], 2048});
-        // The viewports being published (NDI, OMT, DeckLink: pixels; Syphon, Spout: an OpenGL texture of the picture)
+        // The viewports being published (NDI, OMT, DeckLink, Syphon, Spout: pixels)
         std::vector<std::pair<quint64, PublishSettings>> publish;
         std::vector<quint64> published; // by slot
         std::vector<std::optional<Timecode>> atc;
@@ -2180,17 +2168,6 @@ void Engine::frame(double dt)
             std::array<quint64, 4> ids{};
             QImage composition;
             for (const auto &p : m_rhi->takePreviews()) {
-                if (p.slot >= toxInputSlot) { // a TouchEngine input
-                    const size_t k = size_t(p.slot - toxInputSlot);
-                    if (k >= toxSources.size()) continue;
-                    RenderTarget &target = m_rhiReaders[{toxSources[k], 2}];
-                    target.ensure(p.size.width(), p.size.height());
-                    if (!target.tex) continue;
-                    f->glBindTexture(GL_TEXTURE_2D, target.tex);
-                    f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-                    f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
-                    continue;
-                }
                 if (p.slot >= compositionSlot) { // the mapping view
                     composition = QImage(reinterpret_cast<const uchar *>(p.pixels.constData()), p.size.width(), p.size.height(),
                                          p.size.width() * 4, QImage::Format_RGBA8888)

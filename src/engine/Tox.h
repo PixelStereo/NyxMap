@@ -42,9 +42,6 @@ public:
     virtual std::vector<ToxControl> controls() const = 0;
     virtual std::vector<std::pair<QString, QString>> outputs() const = 0; // identifier, label
     virtual std::vector<std::pair<QString, QString>> inputs() const = 0;
-    // Render thread, before update(): borrowed until update returns. The backend
-    // copies to an owned GPU buffer before handing it to an asynchronous cook.
-    virtual void setInputTexture(const QString &identifier, GLuint texture, int width, int height) = 0;
     // Through a QRhi (Metal, macOS): the player works with Metal textures of that QRhi, without OpenGL. True when it can
     // (takeTexture() then gives its picture, setInputRhiTexture() the pictures of its inputs: the QRhi textures of the
     // layers they take, valid for the call)
