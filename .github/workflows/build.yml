@@ -829,6 +829,18 @@ jobs:
           echo "NYXMAP_MEDIAPIPE_ALL_MODELS=1" >> "$GITHUB_ENV"
           echo "NYXMAP_MEDIAPIPE_SEGMENTATION_MODELS=1" >> "$GITHUB_ENV"
           echo "NYXMAP_MEDIAPIPE_DELEGATE=cpu" >> "$GITHUB_ENV"
+      - name: Capture native Windows crash dumps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Keep full user-mode dumps for native test crashes; CTest's "SegFault" alone has no useful stack.
+          $dumpDir = Join-Path $env:RUNNER_TEMP "nyxmap-crash-dumps"
+          New-Item -ItemType Directory -Force $dumpDir | Out-Null
+          $wer = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"
+          New-Item -Path $wer -Force | Out-Null
+          New-ItemProperty -Path $wer -Name DumpFolder -Value $dumpDir -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $wer -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $wer -Name DumpCount -Value 10 -PropertyType DWord -Force | Out-Null
       - name: Engine tests
         shell: pwsh
         env:
@@ -840,6 +852,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload native crash dumps
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyxmap-windows-crash-dumps
+          path: ${{ runner.temp }}/nyxmap-crash-dumps/
+          if-no-files-found: ignore
       - name: Package with runtime dependencies
         if: needs.scope.outputs.package == 'true'
         shell: pwsh
