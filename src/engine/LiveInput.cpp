@@ -90,14 +90,6 @@ public:
         m_h = h;
         m_fresh = true;
     }
-    bool take(Texture2D &tex)
-    {
-        QMutexLocker lk(&m_mutex);
-        if (!m_fresh) return false;
-        m_fresh = false;
-        tex.upload(m_rgba.constData(), m_w, m_h);
-        return true;
-    }
     bool takeImage(QImage *out) // the same, as a picture (QRhi): RGBA, the first row the bottom
     {
         QMutexLocker lk(&m_mutex);
@@ -124,7 +116,6 @@ public:
         img.fill(c);
         m_frame.put(img.constBits(), img.width(), img.height(), int(img.bytesPerLine()), false);
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
     bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
 
 private:
@@ -144,7 +135,6 @@ public:
         m_quit = true;
         if (m_thread.joinable()) m_thread.join();
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
     bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override { return m_connected ? QString() : QStringLiteral("Waiting for the NDI source"); }
 
@@ -213,7 +203,6 @@ public:
         m_quit = true;
         if (m_thread.joinable()) m_thread.join();
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
     bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override { return m_connected ? QString() : QStringLiteral("Waiting for the OMT source"); }
 
@@ -342,7 +331,6 @@ public:
 #endif
     }
     ~CameraInput() override { m_holder->deleteLater(); } // stopped and released in its own thread
-    bool update(Texture2D &tex) override { return m_frame->take(tex); }
     bool takeFrame(QImage *image) override { return m_frame->takeImage(image); }
     QString status() const override
     {
@@ -369,7 +357,6 @@ public:
     {
         return m_in.open(port, [this](const decklink::InputFrame &f) { receive(f); }, err);
     }
-    bool update(Texture2D &tex) override { return m_frame.take(tex); }
     bool takeFrame(QImage *image) override { return m_frame.takeImage(image); }
     QString status() const override
     {
@@ -402,7 +389,6 @@ class SpoutInput : public LiveInput
 {
 public:
     explicit SpoutInput(const QString &name) : m_name(name) {}
-    bool update(Texture2D &) override { return false; } // the picture comes with takeTexture()
     QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override // QRhi (Direct3D 11)
     {
         if (!m_rhiReceive) m_rhiReceive = createSpoutReceiveRhi(m_name);
@@ -549,7 +535,6 @@ public:
         });
     }
     ~ScreenInput() override { m_holder->deleteLater(); } // stopped and released in its own thread
-    bool update(Texture2D &tex) override { return m_frame->take(tex); }
     bool takeFrame(QImage *image) override { return m_frame->takeImage(image); }
     QString status() const override
     {

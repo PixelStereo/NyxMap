@@ -17,7 +17,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Network)
+find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 # ---------------------------------------------------------------------------
 # FFmpeg: pkg-config (macOS Homebrew, Linux) or FFMPEG_ROOT (Windows, "shared" build)
@@ -43,7 +43,6 @@ endif()
 # Engine: no dependency on widgets (reusable with another UI)
 # ---------------------------------------------------------------------------
 add_library(nyxmap_engine STATIC
-  src/engine/Gl.cpp
   src/engine/Model3D.cpp
   src/engine/Path3D.cpp
   src/engine/MaterialX.cpp
@@ -63,7 +62,6 @@ add_library(nyxmap_engine STATIC
   src/engine/VideoDecoderSeek.cpp
   src/engine/VideoDecoderMetrics.cpp
   src/engine/ProcessMemory.cpp
-  src/engine/VideoTexture.cpp
   src/engine/Hap.cpp
   src/engine/Snappy.cpp
   src/engine/WorkerPool.cpp
@@ -109,10 +107,10 @@ add_library(nyxmap_engine STATIC
   src/engine/Fixtures.cpp
   src/engine/Dmx.cpp
   src/engine/PixelSampler.cpp
+  src/engine/TestCard.cpp
   src/engine/PixelMapping.cpp
   src/engine/Zip.cpp
   src/engine/Gdtf.cpp
-  src/engine/TestCard.cpp
   src/engine/Masks.cpp
   src/engine/Timecode.cpp
   src/engine/TimecodeClock.cpp
@@ -170,7 +168,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
         src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
         src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag
-        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag
+        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag src/engine/shaders/testcard.frag
         src/engine/shaders/sceneview.vert src/engine/shaders/sceneplain.frag src/engine/shaders/sceneunlit.frag
         src/engine/shaders/scenelit.frag src/engine/shaders/scenepost.vert src/engine/shaders/scenepost.frag
         src/engine/shaders/sceneshadow.frag src/engine/shaders/scenepoint.frag
@@ -178,8 +176,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
         src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
         src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
-target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()
@@ -230,7 +227,7 @@ if(APPLE)
   # Link the Core Audio frameworks directly rather than loading them at runtime
   target_compile_definitions(nyxmap_engine PRIVATE MA_NO_RUNTIME_LINKING)
   target_link_libraries(nyxmap_engine PRIVATE "-framework CoreFoundation" "-framework CoreAudio"
-    "-framework AudioToolbox" "-framework OpenGL")
+    "-framework AudioToolbox")
 elseif(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(nyxmap_engine PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
@@ -306,17 +303,16 @@ option(NYXMAP_SPOUT "Spout publishing and inputs (Windows)" ON)
 # macOS: the output windows shown through Metal (OpenGL into a window only works on the main thread there)
 if(APPLE)
   enable_language(OBJCXX)
-  target_sources(nyxmap_engine PRIVATE src/engine/PresentMetal.mm src/engine/Permissions.mm src/engine/VideoSurfaceMac.cpp
+  target_sources(nyxmap_engine PRIVATE src/engine/Permissions.mm
     src/engine/RhiVideoSurfaceMac.mm)
-  set_source_files_properties(src/engine/PresentMetal.mm src/engine/RhiVideoSurfaceMac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-  target_compile_definitions(nyxmap_engine PRIVATE GL_SILENCE_DEPRECATION)
+  set_source_files_properties(src/engine/RhiVideoSurfaceMac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(nyxmap_engine PRIVATE "-framework Metal" "-framework QuartzCore" "-framework IOSurface"
     "-framework AppKit" "-framework Network" "-framework CoreVideo" "-framework CoreGraphics" "-framework IOKit")
 elseif(WIN32)
-  target_sources(nyxmap_engine PRIVATE src/engine/VideoSurfaceNone.cpp src/engine/RhiVideoSurfaceD3D11.cpp)
+  target_sources(nyxmap_engine PRIVATE src/engine/RhiVideoSurfaceD3D11.cpp)
   target_link_libraries(nyxmap_engine PRIVATE d3d11)
 else()
-  target_sources(nyxmap_engine PRIVATE src/engine/VideoSurfaceNone.cpp src/engine/RhiVideoSurfaceNone.cpp)
+  target_sources(nyxmap_engine PRIVATE src/engine/RhiVideoSurfaceNone.cpp)
 endif()
 
 if(APPLE AND NYXMAP_SYPHON)
@@ -327,15 +323,15 @@ if(APPLE AND NYXMAP_SYPHON)
   file(GLOB SYPHON_HEADERS "${syphon_SOURCE_DIR}/*.h")
   file(COPY ${SYPHON_HEADERS} DESTINATION "${CMAKE_BINARY_DIR}/syphon-include/Syphon")
   file(GLOB SYPHON_SOURCES "${syphon_SOURCE_DIR}/*.m" "${syphon_SOURCE_DIR}/*.c")
-  # The OpenGL server and clients, and the Metal client (an IOSurface as a texture); the Metal server would require
-  # compiling .metal shaders
-  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "SyphonMetalServer")
+  # The base server (an IOSurface), the Metal client (an IOSurface as a texture) and the server directory: neither the
+  # OpenGL servers and clients nor the Metal server (it would require compiling .metal shaders)
+  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "SyphonMetalServer|OpenGL|GLShader|GLVertices|RendererGL|RendererCoreGL|RendererLegacyGL|IOSurfaceImageCore|IOSurfaceImageLegacy|SyphonServer\\.m|SyphonClient\\.m|SyphonImage\\.m")
   add_library(syphon STATIC ${SYPHON_SOURCES})
   target_include_directories(syphon PUBLIC "${CMAKE_BINARY_DIR}/syphon-include" PRIVATE "${syphon_SOURCE_DIR}")
-  target_compile_definitions(syphon PRIVATE SYPHON_CORE_SHARE GL_SILENCE_DEPRECATION)
+  target_compile_definitions(syphon PRIVATE SYPHON_CORE_SHARE)
   target_compile_options(syphon PRIVATE -w "SHELL:-include ${syphon_SOURCE_DIR}/Syphon_Prefix.pch"
     $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
-  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework OpenGL" "-framework IOSurface" "-framework Foundation" "-framework Metal")
+  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework IOSurface" "-framework Foundation" "-framework Metal")
   target_sources(nyxmap_engine PRIVATE src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm)
   set_source_files_properties(src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(nyxmap_engine PRIVATE syphon)
@@ -461,7 +457,7 @@ qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
   BASE src/ui/shaders
   FILES src/ui/shaders/uidraw.vert src/ui/shaders/uidraw_tex.frag src/ui/shaders/uidraw_color.frag)
 target_include_directories(nyxmap_ui PUBLIC src src/ui PRIVATE "${CMAKE_BINARY_DIR}/generated") # NyxMapVersion.h
-target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets Qt6::OpenGLWidgets)
+target_link_libraries(nyxmap_ui PUBLIC nyxmap_engine Qt6::Widgets)
 target_compile_options(nyxmap_ui PRIVATE ${NYXMAP_WARNINGS})
 if(APPLE)
   target_link_libraries(nyxmap_ui PUBLIC "-framework AppKit")
@@ -686,7 +682,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NYXMAP_TESTS "Build the engine tests" ON)
 if(NYXMAP_TESTS)
-  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/gpu_targets.cpp test/image_precision.cpp test/show_hold.cpp test/scene3d.cpp test/path3d.cpp test/instance3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
+  add_executable(nyxmap_tests EXCLUDE_FROM_ALL test/engine_test.cpp test/text_writing.cpp test/operator_state.cpp test/video_test.cpp test/cue_capture.cpp test/cue_lifecycle.cpp test/show_hold.cpp test/scene3d.cpp test/path3d.cpp test/instance3d.cpp test/output_color.cpp test/golden_render.cpp test/timeline_repeat.cpp test/timeline_events.cpp test/media_playhead.cpp test/show_actions.cpp test/interaction_actions.cpp test/interaction_filters.cpp test/color_animation.cpp test/xy_controls.cpp test/show_control.cpp test/preview_sources.cpp test/recall_delay.cpp test/recall_integrity.cpp test/emergency_stop.cpp test/psd_layers.cpp test/live_inputs.cpp test/clock_generators.cpp test/file_sources.cpp test/tox.cpp src/ui/Commands.cpp src/ui/LogModel.cpp)
   target_include_directories(nyxmap_tests PRIVATE src/ui)
   target_link_libraries(nyxmap_tests PRIVATE nyxmap_engine)
   target_compile_options(nyxmap_tests PRIVATE ${NYXMAP_WARNINGS})
@@ -805,20 +801,6 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_isf_rhi_test PRIVATE nyxmap_engine)
   target_compile_definitions(nyxmap_isf_rhi_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
-  # Every ISF drawn by the QRhi renderer and by the OpenGL one: the same pictures
-  add_executable(nyxmap_isf_render_test test/isf_render.cpp)
-  target_include_directories(nyxmap_isf_render_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_isf_render_test PRIVATE nyxmap_engine Qt6::OpenGL)
-  target_compile_definitions(nyxmap_isf_render_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-  add_test(NAME isf_render COMMAND nyxmap_isf_render_test)
-  set_tests_properties(isf_render PROPERTIES SKIP_RETURN_CODE 77)
-  # The engine's frame through QRhi against the same through OpenGL: two engines, one scene
-  add_executable(nyxmap_rhi_engine_test test/rhi_engine.cpp)
-  target_include_directories(nyxmap_rhi_engine_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_rhi_engine_test PRIVATE nyxmap_engine)
-  target_compile_definitions(nyxmap_rhi_engine_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
-  add_test(NAME rhi_engine COMMAND nyxmap_rhi_engine_test)
-  set_tests_properties(rhi_engine PROPERTIES SKIP_RETURN_CODE 77)
   # An output window shown through the QRhi renderer's swapchain: what it presents is the viewport's picture
   add_executable(nyxmap_rhi_output_test test/rhi_output.cpp)
   target_include_directories(nyxmap_rhi_output_test PRIVATE src/engine)
@@ -826,47 +808,27 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_rhi_output_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_output COMMAND nyxmap_rhi_output_test)
   set_tests_properties(rhi_output PROPERTIES SKIP_RETURN_CODE 77)
-  # The interface's previews with the QRhi renderer: OpenGL slots filled from its pictures
+  # The interface's previews with the QRhi renderer: its pictures read back as pixels
   add_executable(nyxmap_rhi_preview_test test/rhi_preview.cpp)
   target_include_directories(nyxmap_rhi_preview_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_rhi_preview_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  target_link_libraries(nyxmap_rhi_preview_test PRIVATE nyxmap_engine)
   target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
   set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
   # What the interface's pictures cost a frame: cmake --build build --target nyxmap_preview_cost
   add_executable(nyxmap_preview_cost EXCLUDE_FROM_ALL test/preview_cost.cpp)
   target_include_directories(nyxmap_preview_cost PRIVATE src/engine)
-  target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine Qt6::OpenGL)
-  # The 3D views through QRhi against OpenGL
-  add_executable(nyxmap_rhi_scene_test test/rhi_scene.cpp)
-  target_include_directories(nyxmap_rhi_scene_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_rhi_scene_test PRIVATE nyxmap_engine Qt6::OpenGL)
-  add_test(NAME rhi_scene COMMAND nyxmap_rhi_scene_test)
-  set_tests_properties(rhi_scene PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+  target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine)
   # A real TouchDesigner component (NYXMAP_TOX): skipped without one
   add_executable(nyxmap_tox_real_test test/tox_real.cpp)
   target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_tox_real_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  target_link_libraries(nyxmap_tox_real_test PRIVATE nyxmap_engine)
   add_test(NAME tox_real COMMAND nyxmap_tox_real_test)
   set_tests_properties(tox_real PROPERTIES SKIP_RETURN_CODE 77)
-  # The QRhi renderer's video pictures against the OpenGL renderer's, every layout: the same pictures, the cost
-  add_executable(nyxmap_rhi_video_test test/rhi_video.cpp)
-  target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_rhi_video_test PRIVATE nyxmap_engine Qt6::OpenGL)
-  target_compile_definitions(nyxmap_rhi_video_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
-  add_test(NAME rhi_video COMMAND nyxmap_rhi_video_test --frames 4)
-  set_tests_properties(rhi_video PROPERTIES SKIP_RETURN_CODE 77)
-  # A whole composition (videos, ISF effects, an RGBA mask) through QRhi and OpenGL: the same pictures, the cost
-  add_executable(nyxmap_rhi_composition_test test/rhi_composition.cpp)
-  target_include_directories(nyxmap_rhi_composition_test PRIVATE src/engine)
-  target_link_libraries(nyxmap_rhi_composition_test PRIVATE nyxmap_engine Qt6::OpenGL)
-  target_compile_definitions(nyxmap_rhi_composition_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-  add_test(NAME rhi_composition COMMAND nyxmap_rhi_composition_test --seconds 0.5)
-  set_tests_properties(rhi_composition PROPERTIES SKIP_RETURN_CODE 77)
   # These tests each create their own native GPU device/context (D3D11 on Windows, Metal on macOS,
   # Vulkan elsewhere). Running several at once can exhaust software/CI adapters and crash drivers;
   # serialize GPU integration tests while keeping the CPU-only suite parallel.
-  set_tests_properties(isf_rhi isf_render rhi_engine rhi_output rhi_preview rhi_video rhi_composition PROPERTIES RUN_SERIAL TRUE)
+  set_tests_properties(isf_rhi rhi_output rhi_preview PROPERTIES RUN_SERIAL TRUE)
   add_executable(nyxmap_naming_test test/naming.cpp)
   target_include_directories(nyxmap_naming_test PRIVATE src/engine)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
@@ -947,7 +909,7 @@ if(NYXMAP_TESTS)
     set_tests_properties(preset_actions cue_dispatch PROPERTIES RUN_SERIAL TRUE)
   endif()
 
-  foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity image_precision operator_state preview_sources emergency_stop cue_capture cue_lifecycle gpu_targets golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
+  foreach(area scene3d path3d instance3d show_control xy_controls color_animation output_color show_hold recall_integrity operator_state preview_sources emergency_stop cue_capture cue_lifecycle  golden timeline_repeat timeline_events media_playhead show_actions interaction_actions interaction_filters recall_delay isf_safe video project playback undo structure compositing osc snapshots masks rendering thread publishing
           media sound layersource timecode interactions psd live_inputs clocks text_writing file_sources tox)
     add_test(NAME ${area} COMMAND nyxmap_tests --area ${area})
   endforeach()

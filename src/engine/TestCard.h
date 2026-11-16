@@ -7,30 +7,21 @@
 //    shows at once);
 //  - color bars and a grey ramp in steps;
 //  - motion, so that a frozen output is seen: a sweep turning in the circle and a block going to and fro.
-// Render thread, its context current.
+// The still part is an image (here); its motion is drawn over it by the QRhi renderer (testcard.frag).
 
-#include "Gl.h"
-
-#include <QElapsedTimer>
+#include <QImage>
 #include <QSize>
 #include <QString>
-#include <map>
-#include <tuple>
 
 class TestCard
 {
 public:
-    // The card for a viewport named `name`, drawn into `target` (sized to `size`)
-    void render(const QString &name, QSize size, RenderTarget &target, GLuint quadVao, const QString &outputName = {});
-    void release();
-
-    // The still part of the card, top row first (tests and tools)
+    // The still part of the card, top row first
     static QImage still(const QString &name, QSize size, const QString &outputName = {});
-
-private:
-    bool init();
-    GLuint m_program = 0;
-    GLint m_texLoc = -1, m_timeLoc = -1, m_sizeLoc = -1, m_circleLoc = -1, m_bandLoc = -1;
-    std::map<std::tuple<QString, QString, int, int>, Texture2D> m_stills; // viewport, output, width, height
-    QElapsedTimer m_clock;
+    // Where its moving parts are, in pixels from the bottom left (the sweep's circle: centre and radius; the block's band:
+    // x0, x1, y0, y1)
+    struct Motion {
+        float size[2], circle[4], band[4];
+    };
+    static Motion motion(QSize size);
 };

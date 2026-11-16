@@ -9,11 +9,7 @@
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
-    QOpenGLContext context;
-    if (!context.create()) return 1;
-    QOffscreenSurface surface; surface.setFormat(context.format()); surface.create();
-    if (!context.makeCurrent(&surface)) return 1;
-    Publishing publishing([] {});
+    Publishing publishing;
     std::atomic<bool> ready{false}, done{false};
     std::atomic<unsigned> reads{0}, failures{0};
     std::thread reader([&] {

@@ -30,9 +30,8 @@ struct FakeTox final : ToxPlayer {
     std::vector<std::pair<QString, QString>> outputs() const override { return {{"out1", "Result"}, {"out2", "Preview"}}; }
     quint64 revision() const override { return 1; }
     QString error() const override { return {}; }
-    bool update(Texture2D &target) override {
-        QImage image(16, 16, QImage::Format_RGBA8888); image.fill(Qt::green);
-        target.upload(image.constBits(), 16, 16); return true;
+    bool takeFrame(QImage *out) override {
+        *out = QImage(16, 16, QImage::Format_RGBA8888); out->fill(Qt::green); return true;
     }
 };
 }

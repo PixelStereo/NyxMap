@@ -1,6 +1,6 @@
 // GPU preview regression: independent layer/viewport sources, bounded copies, deletion and source switching.
 #include "Engine.h"
-#include "Gl.h"
+#include "ImageUtil.h"
 #include <QFile>
 #include <QImage>
 #include <cstdio>
@@ -17,6 +17,7 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     const QString path = tmp + "/preview-red.png";
     check(image.save(path), "save image");
     const int index = e.addLayer("Red");
+    const auto drawn = [&](quint64 layerId) { return e.layerPicture(layerId, Engine::LayerPicture::Final) != nullptr; };
     QString error;
     check(e.setLayerImage(index, path, &error), "load image");
     const quint64 id = e.layerId(index);
@@ -25,32 +26,21 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     e.setPreviewSource(2, 0);
     e.setPreviewSource(3, id);
     e.renderFrame();
-    e.runGl([&] {
-        Engine::Lock lock(&e.mutex());
-        auto *f = gl();
-        for (int slot = 0; slot < 4; ++slot) {
-            QSize size;
-            const GLuint texture = e.previewTexture(slot, &size);
-            check(texture && !size.isEmpty(), "all four sources published");
-            check(size.width() <= 1024 && size.height() <= 1024, "bounded preview dimensions");
-            GLuint framebuffer = 0;
-            f->glGenFramebuffers(1, &framebuffer);
-            f->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-            f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-            unsigned char pixel[4] = {};
-            f->glReadPixels(size.width()/2, size.height()/2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-            check(pixel[0] > 240 && pixel[1] < 10 && pixel[2] < 10, "selected source has red pixels");
-            f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            f->glDeleteFramebuffers(1, &framebuffer);
-        }
-    });
+    for (int slot = 0; slot < 4; ++slot) {
+        const QImage picture = e.previewImage(slot);
+        check(!picture.isNull(), "all four sources published");
+        check(picture.width() <= 1024 && picture.height() <= 1024, "bounded preview dimensions");
+        const QColor centre = picture.isNull() ? QColor() : picture.pixelColor(picture.width() / 2, picture.height() / 2);
+        check(centre.red() > 240 && centre.green() < 10 && centre.blue() < 10, "selected source has red pixels");
+    }
     e.setPreviewSource(0, 999999);
-    e.runGl([&] { Engine::Lock lock(&e.mutex()); check(!e.previewTexture(0, nullptr), "source switch never shows previous source"); });
     e.renderFrame();
-    e.runGl([&] { Engine::Lock lock(&e.mutex()); check(!e.previewTexture(0, nullptr), "missing source stays empty"); });
+    check(e.previewImage(0).isNull(), "source switch never shows previous source");
+    e.renderFrame();
+    check(e.previewImage(0).isNull(), "missing source stays empty");
     e.removeLayer(e.indexOfId(id));
     e.renderFrame();
-    e.runGl([&] { Engine::Lock lock(&e.mutex()); check(!e.previewTexture(3, nullptr), "deleted layer never leaves a stale image"); });
+    check(e.previewImage(3).isNull(), "deleted layer never leaves a stale image");
     for (int slot = 0; slot < 4; ++slot) e.setPreviewSource(slot, 0);
 
     const int sourceRow = e.addLayer("Hidden source");
@@ -66,25 +56,25 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
           "a transparent, unused link does not render its source");
     e.setPreviewSource(0, intermediate);
     e.renderFrame();
-    check(e.layer(e.indexOfId(source))->finalTex && e.layer(e.indexOfId(intermediate))->finalTex,
+    check(drawn(source) && drawn(intermediate),
           "an explicit preview still renders the transparent link and its source");
     e.setPreviewSource(0, 0);
     const int visible = e.addLayer("Visible link");
     check(e.setLayerSourceLayer(visible, intermediate, LayerTap::PostFx, &error), "link through the transparent layer");
     e.renderFrame();
-    check(e.layer(e.indexOfId(source))->finalTex && e.layer(visible)->finalTex,
+    check(drawn(source) && drawn(e.layerId(visible)),
           "a visible link still follows a chain through transparent layers");
     const quint64 child = e.layerId(visible);
     const quint64 group = e.layerId(e.addGroup("Transparent group"));
     e.setStructure(tree::intoGroup(e.structure(), {child}, group));
     e.setParameter(group, "opacity", 0.0);
     e.renderFrame();
-    check(!e.layer(e.indexOfId(group))->finalTex && !e.layer(e.indexOfId(child))->needed &&
+    check(!drawn(group) && !e.layer(e.indexOfId(child))->needed &&
               !e.layer(e.indexOfId(intermediate))->needed && !e.layer(e.indexOfId(source))->needed,
           "a transparent group and its otherwise unused source chain go idle");
     e.setPreviewSource(0, group);
     e.renderFrame();
-    check(e.layer(e.indexOfId(group))->finalTex && e.layer(e.indexOfId(source))->finalTex,
+    check(drawn(group) && drawn(source),
           "a preview still composites a transparent group and wakes its source chain");
     e.setPreviewSource(0, 0);
     e.newProject();
@@ -101,7 +91,7 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     check(e.setLayerImage(outside, path, &error), "load offscreen image");
     e.layer(outside)->mapping.position = QPointF(2.5, 0.5);
     e.renderFrame();
-    check(!e.layer(outside)->needed && !e.layer(outside)->finalTex, "offscreen image is skipped");
+    check(!e.layer(outside)->needed && !drawn(e.layerId(outside)), "offscreen image is skipped");
     setViewCenter(160);
     e.renderFrame();
     check(e.layer(outside)->needed && e.grabViewport(shifted).pixelColor(32, 16).red() > 240,
@@ -128,8 +118,8 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     const quint64 generatorId = e.layerId(generator);
     e.setParameter(generatorId, "opacity", 0.0);
     for (int k = 0; k < 3; ++k) e.renderFrame();
-    check(!e.layer(generator)->needed && !e.layer(generator)->generatorTarget.tex,
-          "an unused single-pass ISF performs no GL draw or allocation");
+    check(!e.layer(generator)->needed && !drawn(generatorId),
+          "an unused single-pass ISF performs no draw or allocation");
     e.setParameter(generatorId, "opacity", 1.0);
     e.renderFrame();
     check(std::abs(e.grabOutput().pixelColor(32, 16).red() - 77) <= 2,
@@ -154,20 +144,18 @@ int runPreviewSourceTests(Engine &e, const QString &tmp)
     check(e.setLayerIsf(persistent, feedback, &error), "load feedback generator");
     e.setParameter(e.layerId(persistent), "opacity", 0.0);
     e.renderFrame();
-    check(e.layer(persistent)->needed && e.layer(persistent)->generatorTarget.tex,
+    check(e.layer(persistent)->needed && drawn(e.layerId(persistent)),
           "a persistent shader keeps rendering while transparent");
 
     const quint64 scene = e.layerId(e.addScene("Invisible 3D scene"));
     check(e.setParameter(scene, "scene/reflections", 0.0), "turn off temporal reflections");
     e.setParameter(scene, "opacity", 0.0);
-    const auto renderer = e.layer(e.indexOfId(scene))->sceneRenderer;
-    const int drawnBefore = renderer->framesDrawn();
     e.renderFrame();
-    check(renderer->framesDrawn() == drawnBefore && !e.layer(e.indexOfId(scene))->finalTex,
+    check(!drawn(scene),
           "invisible 3D scene without temporal effects skips rendering");
     e.setPreviewSource(0, scene);
     e.renderFrame();
-    check(renderer->framesDrawn() > drawnBefore && e.layer(e.indexOfId(scene))->finalTex,
+    check(drawn(scene),
           "preview wakes an invisible 3D scene");
     e.setPreviewSource(0, 0);
     e.newProject();

@@ -40,15 +40,6 @@ class FakePage : public WebPage
 {
 public:
     explicit FakePage(const WebSource &s) : m_settings(s) { fakeLog.url = s.url; }
-    bool update(Texture2D &tex) override
-    {
-        if (m_sent) return false;
-        m_sent = true;
-        QImage img(m_settings.width, m_settings.height, QImage::Format_RGBA8888);
-        img.fill(QColor(0, 0, 255));
-        tex.upload(img.constBits(), img.width(), img.height());
-        return true;
-    }
     bool takeFrame(QImage *out) override // the QRhi renderer's
     {
         if (m_sentFrame) return false;
@@ -67,7 +58,7 @@ public:
 
 private:
     WebSource m_settings;
-    bool m_sent = false, m_sentFrame = false;
+    bool m_sentFrame = false;
 };
 
 QColor centre(const QImage &img) { return img.isNull() ? QColor() : img.pixelColor(img.width() / 2, img.height() / 2); }

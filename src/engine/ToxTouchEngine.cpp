@@ -222,7 +222,6 @@ public:
     quint64 revision() const override { return m_revision; }
     QString error() const override { std::lock_guard<std::mutex> lock(m_mutex); return m_error; }
     QString status() const override { std::lock_guard<std::mutex> lock(m_mutex); return m_status; }
-    bool update(Texture2D &) override { return false; } // no OpenGL: the picture comes with takeTexture()
     // Through QRhi's Metal device: the newest picture (the last one while there is no new)
     QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override {
 #ifdef NYXMAP_TOX_RHI
@@ -314,7 +313,6 @@ std::unique_ptr<ToxPlayer> createNativeToxPlayer(const QString &path, const ToxS
 namespace {
 class UnavailableTox final : public ToxPlayer {
 public:
-    bool update(Texture2D &) override { return false; }
     void configure(const ToxSettings &) override {}
     void reload() override {}
     void pulse(const QString &) override {}

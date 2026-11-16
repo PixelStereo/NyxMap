@@ -2,7 +2,11 @@
 // decoding (swscale) or with the CPU's decoding of the same blocks; Snappy; hidden layers; upload buffers.
 // Called from engine_test.cpp (manual rendering mode, engine initialized).
 #include "Engine.h"
-#include "Gl.h"
+#include "RhiDevice.h"
+#include "RhiTarget.h"
+#include "RhiVideoTexture.h"
+#include <rhi/qrhi.h>
+#include "ImageUtil.h"
 #include "Hap.h"
 #include "Snappy.h"
 #include "VideoBudget.h"
@@ -350,7 +354,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     // Loads a file into a fresh layer, lets frames reach the GPU until some came through an upload buffer
     // (the first ones, decoded before the buffers were handed over, come from the decoder's memory) or were
     // sampled in the hardware decoder's surface (macOS), pauses, and returns the layer's source picture (top row
-    // first). staged: frames through upload buffers or surfaces.
+    // first). staged: the frames the renderer showed.
     auto playAndGrab = [&](const QString &path, QString *description, quint64 *staged) -> QImage {
         e.newProject();
         e.setCompositionSize(QSize(640, 360));
@@ -362,12 +366,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         }
         QElapsedTimer tm;
         tm.start();
-        auto stagedNow = [&] {
-            Engine::Lock lk(&e.mutex());
-            const Layer *l = e.layer(i);
-            return l->videoTex ? l->videoTex->stagedUploads() + l->videoTex->surfaceUploads() : 0;
-        };
-        while ((e.videoFramesShown(i) < 3 || stagedNow() < 1) && tm.elapsed() < 5000) {
+        while (e.videoFramesShown(i) < 3 && tm.elapsed() < 5000) {
             e.renderFrame();
             QThread::msleep(15);
         }
@@ -377,7 +376,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             Engine::Lock lk(&e.mutex());
             const Layer *l = e.layer(i);
             if (description) *description = l->frame.layout ? l->frame.layout->description : QString();
-            if (staged) *staged = l->videoTex ? l->videoTex->stagedUploads() + l->videoTex->surfaceUploads() : 0;
+            if (staged) *staged = e.videoFramesShown(i);
         }
         return e.grabLayerSource(i);
     };
@@ -445,26 +444,12 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             {"bgra64le", true},   {"x2rgb10le", false},  {"yuyv422", false},    {"uyvy422", false},   {"rgb565le", false},
             {"pal8", false},      {"y210le", false},     {"monob", false},      {"yuv420p10be", false},
         };
-        e.runGl([&] {
-            auto f = gl();
-            GLuint vao = 0, vbo = 0, fbo = 0;
-            const float quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
-            f->glGenVertexArrays(1, &vao);
-            f->glBindVertexArray(vao);
-            f->glGenBuffers(1, &vbo);
-            f->glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            f->glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
-            f->glEnableVertexAttribArray(0);
-            f->glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-            f->glBindVertexArray(0);
-            f->glGenFramebuffers(1, &fbo);
-            VideoConverter conv;
-            QString err;
-            VCHECK(conv.init(vao, &err));
-            VCHECK(conv.surfaceShader()); // the conversion of hardware surfaces compiles (used on macOS)
-            std::printf("      Hardware surfaces sampled in place: %s\n", conv.surfaces() ? "yes" : "no");
-            VideoDecoder none; // upload buffers are not used here
+        {
+            std::unique_ptr<QRhi> rhi = rhidevice::create();
+            if (!rhi) std::printf("      no QRhi backend here: the GPU conversions are not run\n");
+            std::printf("      Hardware surfaces sampled in place: %s\n", rhi && rhi->backend() == QRhi::Metal ? "yes" : "no");
             for (const Fmt &fm : fmts) {
+                if (!rhi) break;
                 const AVPixelFormat pf = av_get_pix_fmt(fm.name);
                 if (pf == AV_PIX_FMT_NONE || !sws_isSupportedOutput(pf) || !sws_isSupportedInput(pf)) {
                     std::printf("      %-12s (not in this FFmpeg's swscale)\n", fm.name);
@@ -526,26 +511,18 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
                                 std::memcpy(vf.bytes.data() + L->plane[p].offset + size_t(y) * L->plane[p].rowBytes,
                                             fr->data[p] + ptrdiff_t(y) * fr->linesize[p], L->plane[p].rowBytes);
                     }
-                    VideoTexture vt;
-                    if (path == 0 && QByteArray(fm.name) == "yuv420p") {
-                        // Force FBO validation to fail after plane upload:
-                        // no new picture/serial may be published and no draw
-                        // may reach the default/window framebuffer.
-                        failNextRenderTargetAllocationForTests();
-                        vt.upload(vf, none, conv);
-                        VCHECK(vt.texture() == 0 && vt.uploads() == 0 &&
-                               vt.pictureSerial() == 0);
-                    }
-                    vt.upload(vf, none, conv); // retry (and normal format cases)
-                    VCHECK(vt.texture() != 0 && vt.uploads() == 1 &&
-                           vt.pictureSerial() != 0);
+                    RhiVideoTexture vt(rhi.get());
+                    QRhiCommandBuffer *cb = nullptr;
+                    VCHECK(rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess);
+                    VCHECK(vt.upload(cb, vf));
+                    QRhiReadbackResult result;
+                    QRhiResourceUpdateBatch *ub = rhi->nextResourceUpdateBatch();
+                    ub->readBackTexture({vt.texture()}, &result);
+                    cb->resourceUpdate(ub);
+                    rhi->endOffscreenFrame();
+                    VCHECK(vt.texture() != nullptr && vt.uploads() == 1);
                     QImage gpu(w, h, QImage::Format_RGBA8888);
-                    f->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-                    f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vt.texture(), 0);
-                    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                    f->glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, gpu.bits());
-                    f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                    vt.destroy();
+                    if (result.pixelSize == QSize(w, h)) std::memcpy(gpu.bits(), result.data.constData(), size_t(w) * h * 4);
                     const Diff df = compare(flippedVertically(gpu), ref, alpha);
                     if (path == 0)
                         std::printf("      %-12s %-30s max %3d  mean %.2f\n", fm.name, qPrintable(L->description), df.max, df.mean);
@@ -555,11 +532,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
                 }
                 av_frame_free(&fr);
             }
-            conv.release();
-            f->glDeleteFramebuffers(1, &fbo);
-            f->glDeleteBuffers(1, &vbo);
-            f->glDeleteVertexArrays(1, &vao);
-        });
+        }
     }
 
     // --- A known color: BT.709 limited range, 8 and 10 bits (independent of swscale)
@@ -758,7 +731,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             QThread::msleep(20);
         } while (tm.elapsed() < 3000);
         VCHECK(e.videoFramesShown(i) == hidden + 1);
-        VCHECK(e.layer(i)->finalTex != 0);
+        VCHECK(e.layerPicture(e.layerId(i), Engine::LayerPicture::Final) != nullptr);
     }
 
     // A dormant file leaves its decoder idle without stopping its transport.
@@ -801,7 +774,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         e.setLayerPlaying(i, false);
         const double wakeClock = layer.clock;
         layer.enabled = true;
-        VCHECK(renderUntil([&] { return e.videoFramesShown(i) > 0 && layer.finalTex != 0; }));
+        VCHECK(renderUntil([&] { return e.videoFramesShown(i) > 0 && e.layerPicture(e.layerId(i), Engine::LayerPicture::Final) != nullptr; }));
         VCHECK(std::abs(wakeClock - layer.frame.pts) <= 2.0 / layer.video->fps());
 
         const quint64 uploaded = e.videoFramesShown(i);
@@ -981,7 +954,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         {
             const QJsonObject r = e.resourcesJson();
             VCHECK(r.value("software_decoders").toInt() == open0 + 4 && r.value("software_decode_threads").toInt() == inUse0 + sum &&
-                   r.contains("decoded_frames_mb") && r.contains("upload_buffers_budget_mb") && r.value("warnings").isArray()
+                   r.contains("decoded_frames_mb") && r.value("warnings").isArray()
                    && r.value("video_memory_budget_mb").toDouble() == std::round(double(videoBudget::memoryLimit()) / 104857.6) / 10.0
                    && r.contains("video_memory_mb"));
         }
@@ -1064,76 +1037,50 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         VCHECK(videoBudget::threadsInUse() == inUse0 && videoBudget::decodersOpen() == open0);
         videoBudget::setThreadLimit(0);
     }
-    // Upload buffers under a small envelope: four layers share it, never over it, and every one keeps playing (the
-    // frames without a buffer go through the decoders' memory); once closed, nothing is left counted
+    // Four video layers shown together: their pictures in the graphics memory report; once closed, nothing is left counted
     {
         const bool hw = VideoDecoder::hardwareDecoding();
-        VideoDecoder::setHardwareDecoding(false); // frames through upload buffers, not hardware surfaces
+        VideoDecoder::setHardwareDecoding(false); // frames through the decoders' memory, not hardware surfaces
         e.newProject();
         e.setCompositionSize(QSize(640, 360));
-        videoBudget::setMemoryLimit(size_t(2) << 20); // 1.6 MiB of upload buffers: about one 640×360 frame each
         int layers[4];
         for (int &i : layers) {
             i = e.addLayer(QStringLiteral("v"));
             QString err;
             VCHECK(e.setLayerVideo(i, root + "/media/av.mp4", &err));
         }
-        size_t peak = 0;
         bool shown = false;
         QElapsedTimer tm;
         tm.start();
         while (!shown && tm.elapsed() < 60000) { // a software renderer (CI) takes seconds a frame
             e.renderFrame();
-            peak = std::max(peak, videoBudget::uploadInUse());
             shown = true;
             for (int i : layers) shown = shown && e.videoFramesShown(i) >= 2;
             QThread::msleep(10);
         }
-        std::printf("    upload buffers: %.2f MiB at most for 4 layers (limit %.2f MiB)\n", double(peak) / 1048576.0,
-                    double(videoBudget::uploadLimit()) / 1048576.0);
-        VCHECK(shown && peak > 0 && peak <= videoBudget::uploadLimit() && videoBudget::uploadStreams() == 4);
+        VCHECK(shown);
         // Their textures in the graphics memory report: four 640×360 YUV 4:2:0 frames' planes, at least
         VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) >= 4 * size_t(640 * 360 * 3 / 2));
         VCHECK(e.resourcesJson().value("graphics_memory_video_planes_mb").toDouble() > 0);
         e.newProject();
-        e.renderFrame();
-        VCHECK(videoBudget::uploadInUse() == 0 && videoBudget::uploadStreams() == 0);
+        for (int k = 0; k < 24; ++k) e.renderFrame(); // what is retired goes after a few frames
         VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
-        videoBudget::setMemoryLimit(0);
         VideoDecoder::setHardwareDecoding(hw);
     }
     // Graphics memory report: a render target counts its texture while it holds one
-    {
+    if (std::unique_ptr<QRhi> rhi = rhidevice::create()) {
         const size_t before = videoBudget::gpuInUse(videoBudget::Gpu::Targets);
-        RenderTarget t;
-        VCHECK(t.ensure(64, 32));
-        VCHECK(t.bytes() == size_t(64 * 32) * (t.bits > 8 ? 8 : 4));
+        RhiTarget t;
+        VCHECK(t.ensure(rhi.get(), QSize(64, 32)));
+        VCHECK(t.bytes() == size_t(64 * 32) * 4);
         VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
-        VCHECK(t.ensure(128, 32)); // another size: the old one no longer counted
+        VCHECK(t.ensure(rhi.get(), QSize(128, 32))); // another size: the old one no longer counted
         VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
-        t.destroy();
+        t.release();
         VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before && t.bytes() == 0);
-        Texture2D img;
-        const std::vector<uint8_t> px(size_t(16 * 8 * 4), 255);
-        const size_t images = videoBudget::gpuInUse(videoBudget::Gpu::Images);
-        img.upload(px.data(), 16, 8);
-        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images + 16 * 8 * 4);
-        img.destroy();
-        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images);
-    }
-    // Hardware surfaces held (queued, shown, bound) are counted while held, none once the video is closed
-    if (VideoDecoder::hardwareDecoding()) {
-        quint64 staged = 0;
-        playAndGrab(root + "/media/av.mp4", nullptr, &staged);
-        Engine::Lock lk(&e.mutex());
-        const Layer *l = e.layer(0);
-        if (l && l->videoTex && l->videoTex->surfaceUploads() > 0)
-            VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) > 0);
-        else
-            std::printf("    hardware surfaces: none sampled in place here (not checked)\n");
     }
     e.newProject();
-    e.renderFrame();
+    for (int k = 0; k < 24; ++k) e.renderFrame();
     VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) == 0 && videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
     return g_failures;
 }

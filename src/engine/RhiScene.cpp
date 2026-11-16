@@ -392,7 +392,7 @@ struct Placed {
 // Whether that sphere is seen through a camera's matrix. A bent or pushed model is not where its sphere says: always
 bool inView(const QMatrix4x4 &viewProj, const Placed &p)
 {
-    if (p.item->displace || !p.item->shape.empty()) return true;
+    if (p.item->displaceRhi || !p.item->shape.empty()) return true;
     const QVector4D row0 = viewProj.row(0), row1 = viewProj.row(1), row2 = viewProj.row(2), row3 = viewProj.row(3);
     for (const QVector4D &plane : {row3 + row0, row3 - row0, row3 + row1, row3 - row1, row3 + row2, row3 - row2}) {
         const float length = plane.toVector3D().length();

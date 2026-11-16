@@ -64,7 +64,6 @@ struct FakeTox final : ToxPlayer {
         inputTexture = texture;
         inputWidth = texture ? texture->pixelSize().width() : 0;
     }
-    bool update(Texture2D &) override { return false; }
     bool takeFrame(QImage *out) override
     {
         *out = QImage(16, 16, QImage::Format_RGBA8888);
@@ -82,7 +81,6 @@ int main(int argc, char **argv)
     QSurfaceFormat::setDefaultFormat(fmt);
     QGuiApplication app(argc, argv);
     Engine e;
-    e.setRhiRendering(true);
     QString err;
     if (!e.initialize(&err)) {
         std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));

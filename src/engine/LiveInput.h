@@ -7,7 +7,6 @@
 //   input:test:<r>,<g>,<b>     (a solid color, made here: the tests)
 // Frames arrive on threads of their own; the render thread takes the newest one (update) into the layer's texture.
 
-#include "Gl.h"
 
 #include <QImage>
 #include <QSize>
@@ -40,8 +39,6 @@ class LiveInput
 {
 public:
     virtual ~LiveInput() = default;
-    // Render thread, context current: the newest picture into `tex` (RGBA); true when a new one came
-    virtual bool update(Texture2D &tex) = 0;
     // QRhi: the newest picture as RGBA, the first row the bottom, when a new one came. The inputs that arrive as pixels give
     // it; Syphon and Spout (a GPU texture of another API) do not yet
     virtual bool takeFrame(QImage *) { return false; }

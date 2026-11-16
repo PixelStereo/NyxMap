@@ -453,7 +453,6 @@ int Engine::addScene(const QString &name, int at)
         for (const auto &l : m_layers) scenes += l->scene3d;
         Layer &g = *m_layers[size_t(i)];
         g.scene3d = true;
-        g.sceneRenderer = std::make_shared<Scene3D>();
         if (name.isEmpty()) g.name = QStringLiteral("3D Scene %1").arg(scenes + 1);
         g.sceneDefaultMaterial = addMaterial(g.name + QStringLiteral(" Default"));
         for (quint64 up = g.parent; up;) { // out of any scene it would land in
@@ -494,7 +493,7 @@ int Engine::sceneTrianglesComputed(int scene) const
 {
     Lock lk(&m_mutex);
     const Layer *top = scene >= 0 && scene < int(m_layers.size()) ? m_layers[size_t(scene)].get() : nullptr;
-    return top && top->sceneRenderer ? top->sceneRenderer->trianglesComputed() : 0;
+    return top ? top->sceneComputed : 0;
 }
 
 int Engine::addMerge3d(const QString &name, int at)
@@ -1022,42 +1021,11 @@ void Engine::releaseLayer(Layer &l)
     if (l.video) l.video->close();
     l.video.reset();
     l.frame = VideoFrame{};
-    if (l.videoTex) l.videoTex->destroy();
-    l.videoTex.reset();
     releaseAudio(*m_audio, l.audio);
     l.toxPlayer.reset();
-    l.sourceTex.destroy();
-    l.imageAutoTex.destroy();
-    l.hdrTex.destroy();
-    l.sourceColorTarget.destroy();
-    l.textTex.destroy();
-    if (l.generator) l.generator->releaseGl();
     l.generator.reset();
-    l.generatorTarget.destroy();
-    for (auto &fx : l.effects) fx->releaseGl();
     l.effects.clear();
-    l.fxTarget[0].destroy();
-    l.fxTarget[1].destroy();
-    l.maskTarget[0].destroy();
-    for (auto &[stage, target] : l.stageTargets) target.destroy();
-    l.stageTargets.clear();
-    l.maskTarget[1].destroy();
-    if (l.model) l.model->releaseGl();
-    if (l.sceneRenderer) l.sceneRenderer->releaseGl();
-    l.groupTarget.destroy();
-    l.prepTarget.destroy();
-    l.matteTarget.destroy();
-    l.mattePicture.destroy();
-    l.shapeMaskSurface.destroy();
-    l.linesTex.destroy();
-    l.linesTexRev = 0;
-    l.shapeMaskComp.destroy();
-    l.shapeMaskTarget.destroy();
-    l.shapeMaskSurfaceRev = l.shapeMaskCompRev = 0;
-    for (RenderTarget &out : l.vpOut) out.destroy();
-    if (l.meshVbo) gl()->glDeleteBuffers(1, &l.meshVbo);
-    l.meshVbo = 0;
-    l.finalTex = l.rawTex = 0;
+    if (l.model) l.model->releaseRhi();
 }
 
 void Engine::removeLayer(int i) { removeLayers({i}); }
@@ -1432,7 +1400,7 @@ void Engine::setEffectsJsonById(quint64 id, const QJsonArray &a)
         g->effects = std::move(l->effects);
         l->effects.clear();
     }
-    runGl([g] { for (auto &e : g->effects) e->releaseGl(); }, false);
+    runGl([g] { for (auto &e : g->effects) e->releaseRhi(); }, false);
     for (const QJsonValue &v : a) {
         const QJsonObject e = v.toObject();
         // An undo, a snapshot: the chain as it was, a broken effect included (its path and values are not lost)
@@ -1450,7 +1418,7 @@ void Engine::setEffectsJsonById(quint64 id, const QJsonArray &a)
             else unused.reset(inst.release()); // the layer is gone
         }
         if (unused) {
-            runGl([unused] { unused->releaseGl(); }, false);
+            runGl([unused] { unused->releaseRhi(); }, false);
             return;
         }
     }
@@ -1479,26 +1447,17 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     auto g = std::make_shared<Garbage>();
     l.extraParams = QJsonObject(); // another source: what its missing file kept is not for this one
     g->video = std::move(l.video);
-    g->videoTex = std::move(l.videoTex);
     l.frame = VideoFrame{}; // its upload buffer belongs to the texture that goes
     l.frameUploaded = true;
     l.videoHiddenSeconds = 0;
     l.videoDecodeIdle = false;
     g->audio = std::move(l.audio);
-    g->tex = l.sourceTex;
-    l.sourceTex = Texture2D{};
-    g->imageAutoTex = l.imageAutoTex;
-    l.imageAutoTex = Texture2D{};
-    g->hdrTex = l.hdrTex;
-    l.hdrTex = Texture2D{};
     l.pendingHdr.clear();
     l.imageProfile = QColorSpace();
     l.imageColorInfo.clear();
     l.sourceColorSpace = QStringLiteral("auto");
     l.pendingAutoImage = QImage();
     l.sourceColorCachedKey.clear();
-    g->textTex = l.textTex;
-    l.textTex = Texture2D{};
     l.textKey.clear();
     l.text.stopTyping();
     g->generator = std::move(l.generator);
@@ -1515,8 +1474,6 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     g->timecode = std::move(l.tcClock);
     l.timecode.reset();
     l.clockGen.reset();
-    g->generatorTarget = l.generatorTarget;
-    l.generatorTarget = RenderTarget{};
     l.pendingImage = QImage();
     l.type = SourceType::None;
     l.sourcePath.clear();
@@ -1527,8 +1484,6 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     l.srcWidth = l.srcHeight = 0;
     l.missingType = SourceType::None;
     l.sourceLayer = 0;
-    l.finalTex = 0;
-    l.preFxTex = 0;
     return g;
 }
 
@@ -1539,14 +1494,7 @@ void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
     releaseAudio(*m_audio, g->audio);
     runGl([g] {
         g->toxPlayer.reset();
-        if (g->model) g->model->releaseGl();
-        g->tex.destroy();
-        g->imageAutoTex.destroy();
-        g->hdrTex.destroy();
-        g->textTex.destroy();
-        if (g->videoTex) g->videoTex->destroy();
-        if (g->generator) g->generator->releaseGl();
-        g->generatorTarget.destroy();
+        if (g->model) g->model->releaseRhi();
     }, false);
 }
 
@@ -1690,7 +1638,6 @@ void Engine::fixLayerReferences(QStringList *warnings)
                                      (si < 0 ? QStringLiteral(": the layer its image showed is gone, image dropped.")
                                              : QStringLiteral(": its image would feed back on the layer, image dropped."));
                 in.imageLayer = 0;
-                in.extTex = 0;
             }
     }
     // Mask of the color section: the same rules
@@ -2300,7 +2247,7 @@ bool Engine::setLayerIsf(int i, const QString &path, QString *err, IsfFailure on
     if (!ok) {
         if (err) *err = raw->error();
         if (onFailure == IsfFailure::Refuse) {
-            runGl([raw] { raw->releaseGl(); });
+            runGl([raw] { raw->releaseRhi(); });
             return false; // leave the previous source and GPU picture untouched
         }
     }
@@ -2310,7 +2257,7 @@ bool Engine::setLayerIsf(int i, const QString &path, QString *err, IsfFailure on
         Layer *l = layer(i);
         if (!l) {
             // Not waited for under the lock: the render thread may need it before it runs its tasks
-            runGl([gone = std::shared_ptr<IsfInstance>(std::move(inst))] { gone->releaseGl(); }, false);
+            runGl([gone = std::shared_ptr<IsfInstance>(std::move(inst))] { gone->releaseRhi(); }, false);
             return false;
         }
         g = detachSource(*l);
@@ -2856,14 +2803,14 @@ int Engine::addEffect(int li, const QString &path, QString *err, IsfFailure onFa
     if (!ok) {
         if (err) *err = raw->error();
         if (onFailure == IsfFailure::Refuse) {
-            runGl([raw] { raw->releaseGl(); });
+            runGl([raw] { raw->releaseRhi(); });
             return -1; // an operator adding it live: a broken effect never joins the chain
         }
     }
     Lock lk(&m_mutex);
     Layer *l = layer(li);
     if (!l) {
-        runGl([raw] { raw->releaseGl(); });
+        runGl([raw] { raw->releaseRhi(); });
         return -1;
     }
     l->effects.push_back(std::move(inst));
@@ -2886,7 +2833,7 @@ void Engine::removeEffect(int li, int fx)
             targets.push_back({before[size_t(i)], i == fx ? QString() : shaderPrefix(l->id, i < fx ? i : i - 1).chopped(1)});
         remapAnimationTargets(l->id, targets);
     }
-    runGl([victim] { victim->releaseGl(); }, false);
+    runGl([victim] { victim->releaseRhi(); }, false);
 }
 
 void Engine::moveEffect(int li, int from, int to)
@@ -2966,7 +2913,7 @@ bool Engine::setIsfImageLayer(IsfInstance *inst, int input, quint64 layerId, QSt
                                 .arg(m_layers[size_t(si)]->name));
         }
         in.imageLayer = layerId;
-        if (!layerId) in.extTex = 0; // back to its file
+        if (!layerId) in.rhiExt = nullptr; // back to its file
     }
     emit layersChanged();
     return true;

@@ -1,5 +1,8 @@
 #include "RhiRenderer.h"
 
+#include "AudioAnalysis.h"
+#include "AudioInput.h"
+#include "AudioOutput.h"
 #include "ColorInfo.h"
 #include "Engine.h"
 #include "EngineInternal.h"
@@ -13,10 +16,13 @@
 #include "RhiScene.h"
 #include "RhiVideoTexture.h"
 #include "SourceColor.h"
+#include "TestCard.h"
 #include "TextWriting.h"
+#include "VideoDecoder.h"
 #include "TimecodeClock.h"
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontMetrics>
 #include <QRectF>
@@ -33,7 +39,7 @@
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
-enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade, Restore };
+enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade, Restore, TestCard };
 
 // The blending of a layer composited (Render.cpp's compositeLayers), premultiplied
 QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
@@ -64,25 +70,6 @@ QSize maskRasterSize(QSize s)
 }
 } // namespace
 
-// An OpenGL texture's pixels, the bottom row first (TouchEngine's output, until it has a path of its own)
-static QImage readGlTexture(const Texture2D &t)
-{
-    if (!t.tex || t.w <= 0 || t.h <= 0) return QImage();
-    auto f = gl();
-    GLint previous = 0;
-    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
-    GLuint fbo = 0;
-    f->glGenFramebuffers(1, &fbo);
-    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.tex, 0);
-    QImage img(t.w, t.h, QImage::Format_RGBA8888);
-    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
-    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
-    f->glDeleteFramebuffers(1, &fbo);
-    return img;
-}
-
 struct RhiRenderer::Impl {
     Engine &e;
     std::unique_ptr<QRhi> rhi;
@@ -94,6 +81,7 @@ struct RhiRenderer::Impl {
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> pipelines; // by draw, blending and target format
     QRhiResourceUpdateBatch *pending = nullptr;                       // uploads for the next pass
     std::set<QString> warned;
+    QElapsedTimer cardClock = [] { QElapsedTimer t; t.start(); return t; }(); // the test cards' motion
 
     struct Effect {
         QString path;
@@ -104,6 +92,9 @@ struct RhiRenderer::Impl {
         std::unique_ptr<QRhiTexture> image;
         QSize imageSize;
         std::unique_ptr<QRhiTexture> hdr; // an HDR file's pixels, in floats
+        QRhiTexture *incoming = nullptr; // what the layer shows once its source transition is over (the held frame, until it is drawn again)
+        std::unique_ptr<QRhiTexture> card; // a viewport's test card, still (TestCard.h)
+        QString cardKey;
         std::unique_ptr<QRhiTexture> segments; // a Line generator's lines (LineGenerator.h), two rows of floats
         unsigned segmentsRev = 0;
         QSize segmentsSize;
@@ -195,6 +186,11 @@ struct RhiRenderer::Impl {
         if (!pending) pending = rhi->nextResourceUpdateBatch();
         return pending;
     }
+    // The uploads waiting go now (a pass that is not ours, a shader of an ISF, would sample the textures before they hold anything)
+    void flushUploads()
+    {
+        if (pending) cb->resourceUpdate(take());
+    }
     QRhiResourceUpdateBatch *take()
     {
         QRhiResourceUpdateBatch *u = batch();
@@ -230,12 +226,14 @@ struct RhiRenderer::Impl {
         case Draw::ShapeMask:
         case Draw::PictureMatte:
         case Draw::Fade:
+        case Draw::TestCard:
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")},
                                  {QRhiShaderStage::Fragment, shader(draw == Draw::Prep ? "prep.frag"
                                                                     : draw == Draw::EffectMask ? "effectmask.frag"
                                                                     : draw == Draw::ShapeMask ? "shapemask.frag"
                                                                     : draw == Draw::PictureMatte ? "matte.frag"
-                                                                    : draw == Draw::Fade ? "fade.frag" : "outputcolor.frag")}});
+                                                                    : draw == Draw::Fade ? "fade.frag"
+                                                                    : draw == Draw::TestCard ? "testcard.frag" : "outputcolor.frag")}});
             break;
         case Draw::Restore: // a picture copied over the whole target (no blending)
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
@@ -304,6 +302,47 @@ struct RhiRenderer::Impl {
     // ---------------------------------------------------------------------------------------------------------------
     // Sources
     // ---------------------------------------------------------------------------------------------------------------
+    // ISF "audio" and "audioFFT" inputs: the live input's sound or the program's, now, a row per channel, as 32-bit float
+    // RGBA (grey), one picture for each kind and width, made once a frame
+    struct AudioPicture {
+        std::unique_ptr<QRhiTexture> tex;
+        quint64 frame = 0, used = 0;
+    };
+    std::map<std::array<int, 3>, AudioPicture> audioPictures; // program, waveform, columns
+    std::vector<float> audioValues, audioRgba;
+    QRhiTexture *audioPicture(const IsfInput &in, int *width)
+    {
+        const quint64 frame = e.m_frameCount.load(std::memory_order_relaxed);
+        const bool program = in.audioSource == IsfInput::Program;
+        const bool waveform = in.type == IsfInput::Audio;
+        const int w = waveform ? AudioAnalysis::waveWidth(in.audioMax) : AudioAnalysis::spectrumWidth(in.audioMax);
+        *width = w;
+        AudioPicture &entry = audioPictures[{program, waveform, w}];
+        entry.used = frame + 1;
+        if (!entry.tex || entry.frame != frame + 1) {
+            if (!entry.tex || entry.tex->pixelSize() != QSize(w, 2)) {
+                entry.tex.reset(rhi->newTexture(QRhiTexture::RGBA32F, QSize(w, 2)));
+                if (!entry.tex->create()) entry.tex.reset();
+            }
+            if (!entry.tex) return nullptr;
+            audioValues.resize(size_t(2 * w));
+            if (waveform)
+                AudioAnalysis::waveColumns(program ? e.m_audio->wave() : e.m_audioInput->wave(), w, audioValues.data());
+            else
+                AudioAnalysis::spectrumColumns(program ? e.m_audio->spectrum() : e.m_audioInput->spectrum(), w, audioValues.data());
+            audioRgba.resize(audioValues.size() * 4);
+            for (size_t k = 0; k < audioValues.size(); ++k) {
+                audioRgba[4 * k] = audioRgba[4 * k + 1] = audioRgba[4 * k + 2] = audioValues[k];
+                audioRgba[4 * k + 3] = 1.f;
+            }
+            QRhiTextureSubresourceUploadDescription sub(audioRgba.data(), quint32(audioRgba.size() * sizeof(float)));
+            sub.setSourceSize(QSize(w, 2));
+            batch()->uploadTexture(entry.tex.get(), QRhiTextureUploadDescription({0, 0, sub}));
+            entry.frame = frame + 1;
+        }
+        return entry.tex.get();
+    }
+
     // An ISF instance of this renderer following the engine's one (its values, images, speed); loaded again when the
     // engine's changes file
     void follow(std::unique_ptr<IsfInstance> &mine, QString &path, IsfInstance &theirs)
@@ -334,7 +373,12 @@ struct RhiRenderer::Impl {
                     d.extH = found->second.final->pixelSize().height();
                 }
             }
-            if (s.type == IsfInput::Audio || s.type == IsfInput::AudioFFT) warnOnce(QStringLiteral("audio inputs of ISF shaders"));
+            if (s.type == IsfInput::Audio || s.type == IsfInput::AudioFFT) { // the sound now, a row per channel
+                int w = 0;
+                d.rhiExt = audioPicture(s, &w);
+                d.extW = w;
+                d.extH = 2;
+            }
         }
     }
 
@@ -342,7 +386,17 @@ struct RhiRenderer::Impl {
     {
         r.final = r.raw = r.preFx = nullptr;
         if (l.isGroup || l.is3dObject() || l.ended) return;
-        if (!l.needed) return;
+        if (!l.needed) {
+            // A single-pass generator nobody sees keeps its clock (its frame count too), without drawing
+            if (l.enabled && l.parentEnabled && !l.soloHidden && l.generator && l.generator->canSkipDraw()) {
+                follow(r.generator, r.generatorPath, *l.generator);
+                if (r.generator && r.generator->isValidRhi()) {
+                    r.generator->advanceWithoutDrawing(rc);
+                    l.generator->adoptClock(*r.generator);
+                }
+            }
+            return;
+        }
         QRhiTexture *tex = nullptr;
         QSize size;
         switch (l.type) {
@@ -358,6 +412,8 @@ struct RhiRenderer::Impl {
                 }
                 if (tex) size = tex->pixelSize();
             }
+            l.srcWidth = size.width(); // what the inspector and the ROI editor show
+            l.srcHeight = size.height();
             break;
         case SourceType::Video:
             if (l.video) {
@@ -397,7 +453,9 @@ struct RhiRenderer::Impl {
                     }
                     r.generator->setExtraRhiTexture(QStringLiteral("nyxmapSegments"), r.segments.get());
                 }
-                r.generator->renderRhi(cb, rc, nullptr, r.generatorTarget, QSize(l.genWidth, l.genHeight));
+                const bool repeatFrame = l.pictureCulled && l.generator->canSkipDraw();
+                flushUploads();
+                r.generator->renderRhi(cb, rc, nullptr, r.generatorTarget, QSize(l.genWidth, l.genHeight), repeatFrame);
                 l.generator->adoptClock(*r.generator);
                 if (r.generatorTarget.ready()) tex = r.generatorTarget.texture(), size = r.generatorTarget.size();
             }
@@ -450,7 +508,8 @@ struct RhiRenderer::Impl {
             // The inputs are the source layers' textures; the output a texture of this QRhi's device (a native player), else
             // pixels (a player of another kind)
             for (const auto &top : l.toxPlayer->inputs()) {
-                const auto found = layers.find(l.tox.inputs.value(top.first));
+                const quint64 source = l.tox.inputs.value(top.first);
+                const auto found = e.indexOfId(source) >= 0 ? layers.find(source) : layers.end(); // a deleted source: disconnected
                 l.toxPlayer->setInputRhiTexture(top.first, found != layers.end() ? found->second.final : nullptr);
             }
             auto fit = [&](QSize s) {
@@ -588,6 +647,7 @@ struct RhiRenderer::Impl {
                 follow(mine.isf, mine.path, theirs);
                 QRhiTexture *input = tex;
                 RhiTarget &dst = r.fx[ping];
+                flushUploads(); // the pictures uploaded this frame are there for the shader
                 mine.isf->renderRhi(cb, rc, tex, dst, cur);
                 theirs.adoptClock(*mine.isf);
                 if (!dst.ready()) {
@@ -741,6 +801,7 @@ struct RhiRenderer::Impl {
             const float u[4] = {float(eased), 0, 0, 0};
             if (!fullscreen(Draw::Fade, r.transitionTarget, u, sizeof u, {a, b})) return;
         }
+        r.incoming = b;
         r.final = r.transitionTarget.texture();
     }
 
@@ -1065,6 +1126,7 @@ struct RhiRenderer::Impl {
         QRhiTexture *envTexture = environment ? stageTexture(environment->id, g.sceneEnvironmentStage) : nullptr;
         const bool linear = environment && g.sceneEnvironmentStage == Engine::kStageHdrFile && layers.count(environment->id) && layers[environment->id].hdr;
         QRhiTexture *picture = r.scene->draw(cb, take(), e.placedCamera(g), items, lamps, e.m_compSize.width(), e.m_compSize.height(), e.m_quality3d, envTexture, linear);
+        g.sceneComputed = r.scene->triangles();
         if (picture) processLayer(g, r, picture, picture->pixelSize(), true, rc);
     }
 
@@ -1074,7 +1136,25 @@ struct RhiRenderer::Impl {
         r.final = r.raw = r.preFx = nullptr;
         if (!v.enabled) return;
         const QSize size = v.viewportSize();
-        if (v.testCard) warnOnce(QStringLiteral("test cards"));
+        if (v.testCard) { // what goes to its screen, as it is (no ROI, color or effect)
+            const QString output = v.vpResolvedScreen.isEmpty() ? v.vpScreen : v.vpResolvedScreen;
+            const QString key = QStringLiteral("%1|%2|%3x%4").arg(v.name, output).arg(size.width()).arg(size.height());
+            if (!r.card || r.cardKey != key) {
+                const QImage still = TestCard::still(v.name, size, output);
+                r.card.reset(rhi->newTexture(QRhiTexture::RGBA8, still.size()));
+                if (!r.card->create()) r.card.reset();
+                else batch()->uploadTexture(r.card.get(), still);
+                r.cardKey = key;
+            }
+            r.out.ensure(rhi.get(), size);
+            if (!r.card || !r.out.ready()) return;
+            const TestCard::Motion m = TestCard::motion(size);
+            const float u[12] = {float(cardClock.elapsed() / 1000.0), m.size[0], m.size[1], 0, m.circle[0], m.circle[1], m.circle[2], 0,
+                                 m.band[0], m.band[1], m.band[2], m.band[3]};
+            if (!fullscreen(Draw::TestCard, r.out, u, sizeof u, {r.card.get()})) return;
+            r.final = r.raw = r.preFx = r.out.texture();
+            return;
+        }
         const Mapping::Rect rr = v.mapping.rect(e.m_compSize);
         const double cw = std::max(1, e.m_compSize.width()), ch = std::max(1, e.m_compSize.height());
         QRectF view(0, 0, rr.w / cw, rr.h / ch);
@@ -1200,7 +1280,8 @@ struct RhiRenderer::Impl {
     }
 
     // Every layer in dependency order (Render.cpp's renderPass)
-    void renderPass(const IsfRenderContext &rc, double level)
+    // `only`: just these layers (by id) are drawn, the others hold the picture they have (the pause)
+    void renderPass(const IsfRenderContext &rc, double level, const std::set<quint64> *only = nullptr)
     {
         auto &all = e.m_layers;
         const size_t n = all.size();
@@ -1208,6 +1289,10 @@ struct RhiRenderer::Impl {
         marks.assign(n, Todo);
         std::function<void(size_t)> render = [&](size_t i) {
             if (marks[i] != Todo) return;
+            if (only && !only->count(all[i]->id)) { // held: its picture stays as it is
+                marks[i] = Done;
+                return;
+            }
             marks[i] = Doing;
             Layer &l = *all[i];
             if (!l.isGroup && !l.isViewport) adoptOutgoing(l.id);
@@ -1241,6 +1326,9 @@ struct RhiRenderer::Impl {
                 if (const auto t = e.m_transitions.find(l.id); t != e.m_transitions.end()) renderTransition(l, r, *t->second, rc);
             }
             if (!l.isViewport) prepareMatte(l, r); // before it is composited (a viewport or a group draws it later)
+            if (l.needed) l.pictureCulled = false;
+            l.finalW = r.final ? r.final->pixelSize().width() : 0; // the size of its picture, after its ROI (the mask editor's frame)
+            l.finalH = r.final ? r.final->pixelSize().height() : 0;
             marks[i] = Done;
         };
         for (size_t i = 0; i < n; ++i) render(i);
@@ -1282,6 +1370,21 @@ bool RhiRenderer::init(QString *err)
     }
     qInfo().noquote() << "QRhi renderer:" << backend << d->rhi->driverInfo().deviceName;
     QRhi *rhi = d->rhi.get();
+    {   // What the device is, and what the decoders may leave to it
+        const QRhiDriverInfo info = rhi->driverInfo();
+        const char *vendor = info.vendorId == 0x10DE ? "NVIDIA" : info.vendorId == 0x1002 ? "AMD" : info.vendorId == 0x8086 ? "Intel"
+                             : info.vendorId == 0x106B ? "Apple" : "";
+        d->e.m_gpuRenderer = QString::fromUtf8(info.deviceName);
+        d->e.m_gpuApi = backend;
+        d->e.m_gpuVendor = *vendor ? QString::fromLatin1(vendor) : QStringLiteral("0x%1").arg(info.vendorId, 0, 16);
+        d->e.m_gpuDxt = rhi->isTextureFormatSupported(QRhiTexture::BC1) && rhi->isTextureFormatSupported(QRhiTexture::BC3);
+        d->e.m_gpuBptc = rhi->isTextureFormatSupported(QRhiTexture::BC7) && rhi->isTextureFormatSupported(QRhiTexture::BC6H);
+        VideoDecoder::setGpuFormats(d->e.m_gpuDxt, d->e.m_gpuBptc);
+        // Hardware-decoded frames sampled where they were decoded (macOS: VideoToolbox's surfaces as Metal textures)
+        VideoDecoder::setZeroCopy(rhi->backend() == QRhi::Metal);
+        qInfo().noquote() << "Compressed textures: DXT" << (d->e.m_gpuDxt ? "yes" : "no") << "- BPTC"
+                          << (d->e.m_gpuBptc ? "yes" : "no (Hap R and Hap HDR decoded on the CPU)");
+    }
     QRhiResourceUpdateBatch *u = d->batch();
     d->flip.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
     d->flip->create();
@@ -1345,10 +1448,34 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     d->nextUbuf = 0;
     if (d->dstCopies.size() > 8) d->dstCopies.clear();
     d->res().frameStarted();
-    for (auto &[id, r] : d->layers) r.used = false;
+    for (auto it = d->audioPictures.begin(); it != d->audioPictures.end();) { // not asked for two seconds: gone
+        const quint64 now = d->e.m_frameCount.load(std::memory_order_relaxed) + 1;
+        it = now - it->second.used > 120 ? d->audioPictures.erase(it) : std::next(it);
+    }
+    for (auto &[id, r] : d->layers) { // a transition over (stopped): the picture the layer shows is the incoming one, even held
+        if (r.final && r.incoming && r.final == r.transitionTarget.texture() && !d->e.m_transitions.count(id)) r.final = r.incoming;
+        r.used = false;
+    }
     for (auto &[from, r] : d->outgoing) r.used = false;
     const double level = d->e.m_compositionOpacity.load() * d->e.m_blackLevel.load();
-    d->renderPass(rc, level);
+    if (!rc.paused) {
+        d->renderPass(rc, level);
+        for (auto &l : d->e.m_layers) l->renderPaused = false;
+    } else {
+        // Paused, nothing is drawn (feedback buffers and FRAMEINDEX hold too), except a picture loaded meanwhile: that layer,
+        // the groups it is in and the viewports that show it are drawn once, the others keep their frame
+        std::set<quint64> only;
+        for (auto &lp : d->e.m_layers) {
+            if (!lp->renderPaused) continue;
+            lp->renderPaused = false;
+            for (const Layer *x = lp.get(); x && only.insert(x->id).second; x = x->parent ? d->e.layer(d->e.indexOfId(x->parent)) : nullptr) {}
+        }
+        // The viewports are composited again from their layers' held pictures (the composition's fader and the blackout apply
+        // to them as they move)
+        for (auto &vp : d->e.m_layers)
+            if (vp->isViewport) only.insert(vp->id);
+        d->renderPass(rc, level, &only);
+    }
     // The whole composition (the interface's preview)
     std::vector<Layer *> top;
     for (auto &l : d->e.m_layers)
@@ -1465,6 +1592,27 @@ QImage RhiRenderer::grabViewport(quint64 viewport)
 {
     const auto found = d->layers.find(viewport);
     return found == d->layers.end() ? QImage() : readBack(d->rhi.get(), found->second.out.texture());
+}
+
+const void *RhiRenderer::picture(quint64 layer, int which, QSize *size) const
+{
+    const auto found = d->layers.find(layer);
+    if (found == d->layers.end()) return nullptr;
+    const QRhiTexture *t = which == 0 ? found->second.final : which == 1 ? found->second.preFx : found->second.raw;
+    if (size) *size = t ? t->pixelSize() : QSize();
+    return t;
+}
+
+QSize RhiRenderer::videoSize(quint64 layer) const
+{
+    const auto found = d->layers.find(layer);
+    return found == d->layers.end() || !found->second.video ? QSize() : QSize(found->second.video->width(), found->second.video->height());
+}
+
+quint64 RhiRenderer::videoFramesShown(quint64 layer) const
+{
+    const auto found = d->layers.find(layer);
+    return found == d->layers.end() ? 0 : found->second.videoSerial;
 }
 
 QImage RhiRenderer::grabSource(quint64 layer)

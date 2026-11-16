@@ -10,7 +10,7 @@
 // pass with physically based materials (base colour, metal, roughness, emission, the base colour's texture) under its
 // lights, their shadows, and its environment or a studio's light.
 
-#include "Gl.h"
+#include <QtGlobal>
 
 class QRhi;
 class QRhiBuffer;
@@ -57,7 +57,6 @@ struct ModelPlacement {
     // A Merge 3D's own transform, around its position: all it holds moves with it
     QMatrix4x4 transform() const;
     bool sharedMaterial = false;
-    std::array<GLuint, MaterialMapCount> materialTextures{};
     std::array<QRhiTexture *, MaterialMapCount> materialRhi{}; // the same maps as textures of a QRhi (its renderer makes them)
     std::array<float, 3> emission{};
     std::array<float, 2> uvTiling{{1, 1}};
@@ -182,18 +181,10 @@ struct Material3D {
 // Import editable metallic-roughness surfaces without importing the model's geometry.
 std::vector<Material3D> importGltfMaterials(const QString &path, QString *error = nullptr);
 
-// One cache per GL owner. A shared material uploads each image once even when used by multiple objects.
+// A shared material's parameters on a placement (its maps are textures the QRhi renderer makes)
 class MaterialTextureCache {
 public:
-    void apply(const Material3D &material, ModelPlacement &placement);
-    // Its parameters on a placement, no textures (a QRhi renderer makes its own)
     static void applyParameters(const Material3D &material, ModelPlacement &placement);
-    void advance();
-    void release();
-private:
-    struct Entry { Texture2D texture; quint64 used = 0; };
-    std::map<qint64, Entry> m_textures;
-    quint64 m_frame = 0;
 };
 
 // A light of a scene
@@ -255,14 +246,6 @@ struct Scene3DQuality {
     int antialiasing = 2, shadows = 2, contact = 2, reflections = 2, glow = 2, atmosphere = 2;
 };
 
-// Where the program that shades a mesh takes what its material says, found once
-struct MeshUniforms {
-    GLint dielectric = -1;
-    GLint base = -1, metal = -1, rough = -1, emissive = -1, alphaMode = -1, alphaCutoff = -1, normalScale = -1, aoStrength = -1;
-    GLint roughCh = -1, metalCh = -1, hasTex = -1, layerTex = -1, has[5] = {-1, -1, -1, -1, -1};
-    void resolve(GLuint program);
-};
-
 class Model3D
 {
 public:
@@ -286,14 +269,8 @@ public:
     int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;
 
-    // Its model matrix: fitted (if asked), then placed. Its meshes drawn with the scene's program bound (render thread)
+    // Its model matrix: fitted (if asked), then placed
     QMatrix4x4 matrix(const ModelPlacement &p) const;
-    // Its meshes drawn with the scene's program bound (render thread); `picture`: a layer's picture over its UVs instead
-    // of its materials' colours
-    // pass 0: its opaque and cut-out meshes; 1: its blended ones (a picture laid on it: all of it in pass 0)
-    void drawMeshes(const MeshUniforms &uniforms, GLuint picture = 0, int pass = 0, const ModelPlacement *look = nullptr);
-    void drawDepth(bool picture); // only where it is: no colour is computed (shadows, depth)
-    void drawEdges(); // only its edges, as lines (made when first asked)
     bool hasBlended() const;
     float width() const { return m_width; }     // across X, as read: what a bend curves
     bool isPrimitive() const { return m_primitive; }
@@ -305,8 +282,6 @@ public:
     QVector3D center() const { return m_center; } // of its bounds, as read
     QVector3D size() const { return m_size; }     // of its bounds, as read: what the shape FX measure themselves against
     float radius() const { return m_radius; }     // half its bounds' diagonal, as read
-    void releaseGl();
-
     // QRhi (render thread): its meshes' buffers and its maps' textures, made the first time (and again after setSmooth or
     // setDetail); `u` carries the uploads. What to draw with: one entry per mesh, its material as the renderer takes it
     // (the primitive's or shared material's parameters when `look` is given; a layer's picture instead when `picture`).
@@ -352,9 +327,6 @@ private:
         std::vector<quint32> indices;
         int material = 0;
         QString object;
-        GLuint vao = 0, vbo = 0, ibo = 0;
-        GLuint edgeVao = 0, edgeIbo = 0;
-        GLsizei edgeCount = 0;
     };
     std::vector<quint32> edgeIndices(const Mesh &m) const;
     bool loadPrimitive(const QString &name, QString *err);
@@ -363,9 +335,6 @@ private:
     int addImage(const QImage &image);
     void computeBounds();
     void mergeMeshes();
-    void makeEdges(Mesh &m);
-    void upload();
-    bool uploadGl();
 
     QString m_path;
     QStringList m_hidden;
@@ -374,14 +343,11 @@ private:
     int m_meshesRead = 0;
     std::vector<Material> m_materials;
     std::vector<QImage> m_images;
-    std::vector<GLuint> m_textures;
     QVector3D m_center, m_size{1, 1, 1};
     float m_radius = 1, m_width = 1;
     bool m_primitive = false;
     int m_displacementUvTopology = 0;
     int m_detail = 1;
-    void releaseMeshes();
-    bool m_uploaded = false;
     bool m_smooth = false;
 };
 
@@ -395,18 +361,15 @@ struct Camera3D {
     static void anglesOf(const QVector3D &direction, float *yawDeg, float *pitchDeg); // the reverse
 };
 
-// Draws a scene: its models in one pass, with depth, under its lights, into its own target
+// What a scene is drawn from (RhiScene.h): its models with their placements and its lamps
 class Scene3D
 {
 public:
-    static constexpr int kMaxLights = 8;
     static constexpr int kMaxShadows = 4;      // spots and directional lights
     static constexpr int kMaxPointShadows = 2; // point lights, all around
     struct Item {
         std::shared_ptr<Model3D> model;
         ModelPlacement placement;
-        GLuint picture = 0; // a layer's picture laid on it (straight alpha), 0: its materials
-        GLuint displace = 0; // a layer's picture whose luminance pushes its points (0: none)
         float displaceAmount = 0, displaceMid = 0;
         QMatrix4x4 parent;   // the Merge 3D it is in, all of them: applied after its placement
         // Its shape FX, in the order they move its points (Displace and Bend take their settings above, in the placement)
@@ -425,131 +388,10 @@ public:
         LightSettings light;
         float gain = 1; // its layer's opacity
     };
-    Scene3D() = default;
-    Scene3D(const Scene3D &) = delete;
-    Scene3D &operator=(const Scene3D &) = delete;
-    // Its picture (premultiplied), w × h; render thread, a GL context current
-    // environment: a layer's picture (equirectangular, its first row at the bottom), 0 none
-    // environmentLinear: its values linear light (an HDR file as read), else display encoded (a layer's picture)
-    GLuint draw(const SceneSettings &s, const std::vector<Item> &items, const std::vector<Lamp> &lamps, int w, int h,
-                GLuint environment = 0, bool environmentLinear = false, const Scene3DQuality &quality = {});
-    // A view for placing things, nothing of the lights in it (its picture, w × h; render thread). Simple: flat colours and
-    // edges; Unlit: the models' colours and pictures as they are
+    // A view for placing things, nothing of the lights in it. Simple: flat colours and edges; Unlit: the models' colours
+    // and pictures as they are
     enum class ViewLook { Simple, Unlit };
-    GLuint drawView(const SceneSettings &s, const std::vector<Item> &items, int w, int h, ViewLook look = ViewLook::Simple);
-    void releaseGl();
-    int shadowRenders() const { return m_shadowRenders; } // how many times its shadow maps were drawn: when something moved
-    int shadowMapsDrawn() const { return m_mapsDrawn; }   // and how many maps in all: a light moving draws only its own
-    // Its last frame: the triangles it has, those it had to compute in all its passes (0: nothing moved, it was kept)
-    int triangles() const { return m_triangles.load(); }
-    int trianglesComputed() const { return m_computed.load(); }
-    int framesDrawn() const { return m_framesDrawn; }
     // Without a graphics card (a renderer that runs on the processor; NYXMAP_3D_LITE to try it): what costs the most goes,
     // no antialiasing, shadows, contact shadows or reflections
     static bool lite(const QString &renderer);
-
-private:
-    bool copyEnvironment(GLuint source); // into m_env, blurred levels made (render thread)
-    void makeLookTargets(int w, int h);
-    void releaseLook();
-    static constexpr int kGlowLevels = 6;
-    GLuint m_glowDownProgram = 0, m_glowUpProgram = 0, m_fogProgram = 0, m_fogBlurProgram = 0, m_postProgram = 0, m_rawSampler = 0;
-    GLuint m_msBright = 0, m_bright = 0, m_glowTex[kGlowLevels] = {}, m_fogTex[2] = {}, m_final = 0, m_lookFbo = 0;
-    RenderTarget m_aaOutput; // composition-sized resolve of the high-quality 3D render
-    GLuint m_picture = 0; // the texture returned to composition
-    // Where a program takes a model's place, found once
-    struct PlaceUniforms {
-        GLint model = -1, normal = -1, hasDisp = -1, dispAmount = -1, dispMid = -1, uvTiling = -1, dispTopology = -1;
-        GLint fxCount = -1, fxKind = -1, fxA = -1, fxB = -1, fxCenter = -1, fxSize = -1; // its shape FX
-        void resolve(GLuint program);
-        void setShape(QOpenGLExtraFunctions *f, const Item &item) const; // a model's shape FX, in the order they apply
-    };
-    GLuint m_plainProgram = 0, m_unlitProgram = 0, m_plainFbo = 0, m_plainColor = 0, m_plainDepth = 0;
-    PlaceUniforms m_placePlain, m_placeUnlit;
-    MeshUniforms m_unlitUniforms;
-    MeshUniforms m_meshUniforms;
-    PlaceUniforms m_placeMain, m_placeDepth, m_placePoint;
-    struct SceneUniforms {
-        GLint u_ambient = -1;
-        GLint u_aoAmount = -1;
-        GLint u_aoTex = -1;
-        GLint u_color = -1;
-        GLint u_cos = -1;
-        GLint u_cosIn = -1;
-        GLint u_count = -1;
-        GLint u_depthRange = -1;
-        GLint u_disp = -1;
-        GLint u_env = -1;
-        GLint u_envIntensity = -1;
-        GLint u_envLinear = -1;
-        GLint u_envMaxLod = -1;
-        GLint u_envRot = -1;
-        GLint u_exposure = -1;
-        GLint u_eye = -1;
-        GLint u_glowLimit = -1;
-        GLint u_hasEnv = -1;
-        GLint u_hasLast = -1;
-        GLint u_last = -1;
-        GLint u_lastExposure = -1;
-        GLint u_ldir = -1;
-        GLint u_lhalf = -1;
-        GLint u_lpos = -1;
-        GLint u_lright = -1;
-        GLint u_lup = -1;
-        GLint u_penumbra = -1;
-        GLint u_pointFar = -1;
-        GLint u_pointMap0 = -1;
-        GLint u_pointMap1 = -1;
-        GLint u_pointRaw0 = -1;
-        GLint u_pointRaw1 = -1;
-        GLint u_pointShadow = -1;
-        GLint u_pointSoft = -1;
-        GLint u_proj = -1;
-        GLint u_reflections = -1;
-        GLint u_screen = -1;
-        GLint u_seen = -1;
-        GLint u_shadow = -1;
-        GLint u_shadowBias = -1;
-        GLint u_shadowRadius = -1;
-        GLint u_shadowRaw = -1;
-        GLint u_shadows = -1;
-        GLint u_steps = -1;
-        GLint u_studio = -1;
-        GLint u_taps = -1;
-        GLint u_tex = -1;
-        GLint u_type = -1;
-        GLint u_view = -1;
-        GLint u_viewProj = -1;
-    } m_sceneUniforms;
-    GLint m_unlitAt = -1, m_shadingAt = -1;
-    struct DepthUniforms {
-        GLint view = -1, projection = -1, displacement = -1, light = -1, farPlane = -1;
-    } m_depthUniforms, m_pointUniforms;
-    std::array<GLint, kMaxShadows> m_shadowPlaneAt{}, m_shadowMatrixAt{}, m_fogShadowMatrixAt{};
-    GLint m_targetLimit = 0, m_sampleLimit = 1;
-    GLuint m_program = 0, m_sky = 0, m_skyVao = 0;
-    bool m_compiled = false;
-    GLuint m_fbo = 0, m_color = 0;                          // its picture
-    GLuint m_msFbo = 0, m_msColor = 0, m_depth = 0;         // drawn antialiased here
-    GLuint m_shadowProgram = 0, m_shadowFbo = 0, m_shadowMaps = 0; // the lights' views of the models, one layer each
-    GLuint m_pointProgram = 0, m_pointMaps[kMaxPointShadows] = {}; // a point light's: the distances all around it
-    QByteArray m_shadowKey; // the models its maps show
-    QMatrix4x4 m_shadowSeen[kMaxShadows]; // each map's light, as it was drawn
-    bool m_shadowFresh[kMaxShadows] = {};
-    QVector3D m_pointSeenAt[kMaxPointShadows];
-    float m_pointSeenFar[kMaxPointShadows] = {};
-    bool m_pointFresh[kMaxPointShadows] = {};
-    int m_shadowRenders = 0, m_mapsDrawn = 0;
-    GLuint m_preFbo = 0, m_preDepth = 0;                    // the depth of what is seen
-    GLuint m_aoProgram = 0, m_aoBlurProgram = 0, m_aoFbo = 0, m_aoTex[2] = {}; // the occlusion it makes, half its size, blurred
-    bool m_lite = false;
-    std::atomic<int> m_triangles{0}, m_computed{0};
-    int m_framesDrawn = 0, m_stillFrames = 0;
-    QByteArray m_frameKey;    // what its picture shows: while it does not change, it is kept
-    GLuint m_envSource = 0;   // an HDR file's picture copied into m_env: it does not change
-    int m_samples = 0, m_shadowSize = 0; // of its targets and its shadow maps, as its quality asks
-    bool m_hasPicture = false;                              // m_color holds the last frame: what a reflection shows
-    GLuint m_env = 0, m_envFbo = 0, m_readFbo = 0; // the environment, RGBA16F with its blurred levels
-    static constexpr int kEnvW = 1024, kEnvH = 512;
-    int m_w = 0, m_h = 0;
 };

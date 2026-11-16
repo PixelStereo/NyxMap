@@ -7,6 +7,8 @@
 #include "Engine.h"
 #include "EngineInternal.h"
 #include "ImageFile.h"
+#include "RhiDevice.h"
+#include "TestCard.h"
 #include "AudioOutput.h"
 #include "AudioStream.h"
 #include "LayerTree.h"
@@ -32,7 +34,6 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QGuiApplication>
-#include <QOpenGLContext>
 #include <QScreen>
 #include <QWindow>
 #include <QJsonDocument>
@@ -51,8 +52,6 @@ static int failures = 0;
 int runVideoTests(Engine &e, const QString &root, const QString &tmp); // video_test.cpp
 int runCueCaptureTests(Engine &e); // cue_capture.cpp
 int runCueLifecycleTests(Engine &e);
-int runGpuTargetTests(Engine &e); // gpu_targets.cpp
-int runImagePrecisionTests(Engine &engine);
 int runShowHoldTests(Engine &engine);
 int runScene3dTests(Engine &engine); // scene3d.cpp
 int runPath3dTests(Engine &engine); // path3d.cpp
@@ -207,10 +206,6 @@ int main(int argc, char **argv)
     if (area("scene3d")) failures += runScene3dTests(e);
     if (area("path3d")) failures += runPath3dTests(e);
     if (area("instance3d")) failures += runInstance3dTests(e);
-    if (area("image_precision")) failures += runImagePrecisionTests(e);
-    if (area("gpu_targets")) {
-        failures += runGpuTargetTests(e);
-    } // gpu_targets
     if (area("operator_state")) failures += runOperatorStateTests(e);
     if (area("recall_delay")) {
         failures += runRecallDelayTests(e);
@@ -1111,10 +1106,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         do {
             e.renderFrame();
             QThread::msleep(10);
-        } while ((e.layer(v)->playing || !e.layer(v)->videoTex || e.layer(v)->videoTex->width() != 1280) && t.elapsed() < 5000);
+        } while ((e.layer(v)->playing || e.videoPictureSize(v).width() != 1280) && t.elapsed() < 5000);
     }
     CHECK(!e.layer(v)->playing);           // stops at end of media
-    CHECK(e.layer(v)->videoTex && e.layer(v)->videoTex->width() == 1280); // a frame was indeed uploaded to the GPU
+    CHECK(e.videoPictureSize(v).width() == 1280); // a frame was indeed uploaded to the GPU
     e.setLayerPlaying(v, true);             // restarts from the beginning
     CHECK(e.layer(v)->position() < 0.01);
 
@@ -1355,7 +1350,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.requestSourcePreview(e.layerId(V + 1));
         e.setPreviewSource(0, e.layerId(V + 1));
         render();
-        CHECK(!e.layer(V + 1)->needed && e.layer(V + 1)->finalTex == 0);
+        CHECK(!e.layer(V + 1)->needed && !e.layerPicture(e.layerId(V + 1), Engine::LayerPicture::Final));
         e.layer(V + 0)->enabled = true;
         render();
         CHECK(e.layer(V + 1)->needed); // switched back on: previewed again
@@ -4589,22 +4584,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         };
         CHECK(near(grab(BlendMode::Subtract), 150, 0, 30));   // below minus above, never under zero
         CHECK(near(grab(BlendMode::Difference), 150, 80, 30)); // |below - above|
-        // Allocation/validation failure of Difference's destination-copy
-        // target must never blit into framebuffer 0. Preserve the picture by
-        // falling back to ordinary source-over for that frame only.
-        Engine::failNextDifferenceCopyForTests();
-        e.renderFrame();
-        // renderPass() prepares the viewport before composite() assembles the
-        // master output. The one-shot failure affects that FIRST Difference
-        // pass, so inspect the viewport (not the later master output).
-        const QImage viewportOnFailure = e.grabViewport(e.mainViewportId());
-        const QColor fallbackPixel = viewportOnFailure.isNull()
-                                         ? QColor() : viewportOnFailure.pixelColor(viewportOnFailure.width() / 2,
-                                                                                   viewportOnFailure.height() / 2);
-        std::printf("Difference copy unavailable -> viewport RGB %d,%d,%d\n",
-                    fallbackPixel.red(), fallbackPixel.green(), fallbackPixel.blue());
-        CHECK(!viewportOnFailure.isNull() && near(fallbackPixel, 50, 200, 20));
-        CHECK(near(grab(BlendMode::Difference), 150, 80, 30)); // mode recovers next frame
+        CHECK(near(grab(BlendMode::Difference), 150, 80, 30)); // Difference, once more
         CHECK(near(grab(BlendMode::Normal), 50, 200, 20));
         {
             Engine::Lock lk(&e.mutex());
@@ -4636,19 +4616,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             none.depth = -1;
             e.setRenderDefaults(none);
             for (int k = 0; k < 2; ++k) e.renderFrame();
-            CHECK(e.effectiveRender().depth == 10 && renderBits() == 16);
+            CHECK(e.effectiveRender().depth == 10);
             none.depth = 8; // 8 bits chosen
             e.setRenderDefaults(none);
         }
         for (int k = 0; k < 2; ++k) e.renderFrame();
         const QColor c8 = e.grabOutput().pixelColor(8, 8);
-        CHECK(renderBits() == 8);
+        CHECK(e.effectiveRender().depth == 8);
         Engine::RenderSettings rs = e.renderSettings();
         rs.depth = 10;
         e.setRenderSettings(rs);
         for (int k = 0; k < 3; ++k) e.renderFrame();
         const QColor c10 = e.grabOutput().pixelColor(8, 8);
-        CHECK(renderBits() == 16 && e.effectiveRender().depth == 10);
+        CHECK(e.effectiveRender().depth == 10);
         CHECK(std::abs(c10.red() - c8.red()) <= 1 && std::abs(c10.green() - c8.green()) <= 1 && std::abs(c10.blue() - c8.blue()) <= 1);
         CHECK(std::abs(c10.red() - 100) <= 1 && std::abs(c10.green() - 50) <= 1); // half of (200, 100, 50)
         // Rendering is the machine's (Settings): a project does not keep it
@@ -4666,7 +4646,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         d.depth = 8;
         e.setRenderDefaults(d);
         for (int k = 0; k < 2; ++k) e.renderFrame();
-        CHECK(renderBits() == 8);
+        CHECK(e.effectiveRender().depth == 8);
     }
 
     // 4e. Viewports: windows onto one composition, routing, groups inside groups
@@ -4712,8 +4692,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             QWindow w1, w2;
             int x = 100;
             for (QWindow *w : {&w1, &w2}) { // side by side: a window under another one would be grabbed as it
-                w->setSurfaceType(QSurface::OpenGLSurface);
-                w->setFormat(QSurfaceFormat::defaultFormat());
+                w->setSurfaceType(e.outputSurfaceType());
+                rhidevice::prepareWindow(w);
                 w->setGeometry(x, 100, 64, 32);
                 x += 200;
                 w->create();
@@ -4727,19 +4707,18 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(w1.isExposed() && w2.isExposed());
             e.setViewportExposed(vp1, w1.isExposed(), w1.size() * w1.devicePixelRatio());
             e.setViewportExposed(vp2, w2.isExposed(), w2.size() * w2.devicePixelRatio());
-            // Read the real window back buffers before swap. Desktop capture can be unavailable
-            // on macOS even when the application can draw and swap both windows.
-            QColor c1, c2;
-            e.setWindowDrawProbeForTests([&](quint64 id, QSize size) {
-                if (id != vp1 && id != vp2) return;
-                std::array<GLubyte, 4> rgba{};
-                gl()->glReadPixels(size.width() / 2, size.height() / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-                (id == vp1 ? c1 : c2) = QColor(rgba[0], rgba[1], rgba[2]);
-            });
+            // What each window was given, read back from its swapchain
+            e.setCapturePresentedForTests(true);
             const auto before1 = e.windowFrames(vp1), before2 = e.windowFrames(vp2);
-            e.renderFrame();
-            e.setWindowDrawProbeForTests({});
+            for (int k = 0; k < 4; ++k) {
+                e.renderFrame();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            }
+            const QImage p1 = e.presentedForTests(vp1), p2 = e.presentedForTests(vp2);
+            e.setCapturePresentedForTests(false);
             CHECK(e.windowFrames(vp1) > before1 && e.windowFrames(vp2) > before2);
+            const QColor c1 = p1.isNull() ? QColor() : p1.pixelColor(p1.width() / 2, p1.height() / 2);
+            const QColor c2 = p2.isNull() ? QColor() : p2.pixelColor(p2.width() / 2, p2.height() / 2);
             CHECK(c1.isValid() && c1.red() > 200 && c1.blue() < 50);
             CHECK(c2.isValid() && c2.blue() > 200 && c2.red() < 50);
             e.setViewportWindow(vp1, nullptr);
@@ -4973,9 +4952,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     };
     // macOS: Qt renders OpenGL on the main thread only (AppKit), so the engine renders on the UI thread there and
     // what needs the render thread is left to the other platforms
-    if (!QOpenGLContext::supportsThreadedOpenGL() && !Engine::metalOutput()) {
-        std::printf("SKIP render thread, sound and threaded video: no OpenGL on another thread on this platform\n");
-    } else {
+    {
     e.newProject();
     // The render thread cannot make its OpenGL context current: what waits on it returns at once (nothing hangs), and
     // a new start works
@@ -4995,10 +4972,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     CHECK(e.isThreaded() && !e.renderFailed());
     CHECK(waitFrames(5));
     if (area("thread")) {
-    { // A window gets the viewport's picture from the render thread: through Metal on macOS, OpenGL elsewhere
+    { // A window gets the viewport's picture from the render thread, through its swapchain
         QWindow w;
-        w.setSurfaceType(Engine::metalOutput() ? QSurface::MetalSurface : QSurface::OpenGLSurface);
-        if (w.surfaceType() == QSurface::OpenGLSurface) w.setFormat(QSurfaceFormat::defaultFormat());
+        w.setSurfaceType(e.outputSurfaceType());
+        rhidevice::prepareWindow(&w);
         w.setGeometry(100, 100, 160, 90);
         w.create();
         w.show();
@@ -5009,8 +4986,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.setViewportWindow(vp, &w);
         e.setViewportExposed(vp, true, w.size() * w.devicePixelRatio(), 50.0); // its screen: 50 Hz
         CHECK(waitFrames(10));
-        std::printf("       window frames: %llu (%s)\n", (unsigned long long)e.windowFrames(vp),
-                    Engine::metalOutput() ? "Metal" : "OpenGL");
+        std::printf("       window frames: %llu\n", (unsigned long long)e.windowFrames(vp));
         CHECK(e.windowFrames(vp) >= 5);
         // The output in the frame timing (sampled once a second): its screen's rate is the render's pace, its pictures
         // shown and those not shown by cause
@@ -5110,14 +5086,8 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         uint64_t uploads = 0;
         QSize videoSize;
         while (videoWait.elapsed() < 10000) {
-            {
-                Engine::Lock lk(&e.mutex());
-                const Layer *layer = e.layer(v2);
-                if (layer && layer->videoTex) {
-                    uploads = layer->videoTex->uploads();
-                    videoSize = QSize(layer->videoTex->width(), layer->videoTex->height());
-                }
-            }
+            uploads = e.videoFramesShown(v2);
+            videoSize = e.videoPictureSize(v2);
             if (uploads >= 2 && videoSize == QSize(1280, 720)) break;
             QThread::msleep(5); // never hold the engine lock while waiting for the render thread
         }
@@ -5572,7 +5542,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     if (area("sound")) {
     // --- Sound: audio layer, sound of a video layer, synchronized with the playhead. Not with Apple's software
     // renderer (CI's macOS): one core for everything, its timings mean nothing there
-    if (e.glRenderer().contains(QLatin1String("Apple Software Renderer"))) {
+    if (e.gpuRenderer().contains(QLatin1String("Apple Software Renderer"))) {
         std::printf("SKIP sound timings: Apple Software Renderer\n");
     } else {
         CHECK(e.startAudio(QString(), &err, true)); // null device: no sound card, but the callback runs in real time
@@ -6077,7 +6047,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             settle(100);
             {
                 Engine::Lock lk(&e.mutex());
-                CHECK(!e.layer(s1)->playing && e.layer(s1)->finalTex == 0);
+                CHECK(!e.layer(s1)->playing && !e.layerPicture(e.layerId(s1), Engine::LayerPicture::Final));
             }
             CHECK(silent());
             e.setLayerPlayMode(s1, PlayMode::OneShot);
@@ -6090,7 +6060,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             settle(100);
             {
                 Engine::Lock lk(&e.mutex());
-                CHECK(!e.layer(s1)->ended && e.layer(s1)->finalTex != 0);
+                CHECK(!e.layer(s1)->ended && e.layerPicture(e.layerId(s1), Engine::LayerPicture::Final));
             }
             CHECK(paramOf(e.layerJson(s1), "play_mode").toString() == "oneshot");
             // Default mode (preference) given to a newly loaded video
@@ -7461,25 +7431,25 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.renderFrame();
         {
             Engine::Lock lk(&e.mutex());
-            CHECK(e.layer(B())->type == SourceType::Layer && e.layer(B())->rawTex != 0);
-            CHECK(e.layer(B())->rawTex == e.layer(A())->finalTex);
-            CHECK(e.layer(A())->preFxTex != e.layer(A())->finalTex); // A has a ROI, a color and an effect
+            CHECK(e.layer(B())->type == SourceType::Layer && e.layerPicture(idB, Engine::LayerPicture::Source));
+            CHECK(e.layerPicture(idB, Engine::LayerPicture::Source) == e.layerPicture(idA, Engine::LayerPicture::Final));
+            CHECK(e.layerPicture(idA, Engine::LayerPicture::PreFx) != e.layerPicture(idA, Engine::LayerPicture::Final)); // A has a ROI, a color and an effect
         }
         // ... or before it
         CHECK(e.setLayerTap(B(), LayerTap::PreFx));
         e.renderFrame();
         {
-            Engine::Lock lk(&e.mutex());
-            CHECK(e.layer(B())->rawTex == e.layer(A())->preFxTex);
+            CHECK(e.layerPicture(idB, Engine::LayerPicture::Source) == e.layerPicture(idA, Engine::LayerPicture::PreFx));
         }
         // ... or its source's own picture, before its ROI, its color and its effects (nothing made again)
         CHECK(e.setLayerTap(B(), LayerTap::Source));
         e.renderFrame();
         {
+            QSize sizeA;
+            CHECK(e.layerPicture(idA, Engine::LayerPicture::Source, &sizeA) && e.layerPicture(idB, Engine::LayerPicture::Source) == e.layerPicture(idA, Engine::LayerPicture::Source));
+            CHECK(e.layerPicture(idA, Engine::LayerPicture::Source) != e.layerPicture(idA, Engine::LayerPicture::PreFx)); // A's ROI and color make another picture
             Engine::Lock lk(&e.mutex());
-            CHECK(e.layer(A())->rawTex != 0 && e.layer(B())->rawTex == e.layer(A())->rawTex);
-            CHECK(e.layer(A())->rawTex != e.layer(A())->preFxTex); // A's ROI and color make another picture
-            CHECK(e.layer(B())->srcWidth == e.layer(A())->rawW && e.layer(B())->srcHeight == e.layer(A())->rawH);
+            CHECK(e.layer(B())->srcWidth == sizeA.width() && e.layer(B())->srcHeight == sizeA.height());
         }
         {
             const QJsonObject saved = e.layerJson(B());
@@ -7507,9 +7477,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         }
         e.renderFrame();
         {
+            CHECK(e.layerPicture(idG, Engine::LayerPicture::Final) != nullptr);
+            CHECK(e.layerPicture(idB, Engine::LayerPicture::Source) == e.layerPicture(idG, Engine::LayerPicture::Final));
             Engine::Lock lk(&e.mutex());
-            CHECK(e.layer(e.indexOfId(idG))->finalTex != 0 && e.layer(e.indexOfId(idG))->referenced);
-            CHECK(e.layer(B())->rawTex == e.layer(e.indexOfId(idG))->finalTex);
+            CHECK(e.layer(e.indexOfId(idG))->referenced);
         }
         // A member of a group cannot use its own group: the group is made of it
         CHECK(!e.setLayerSourceLayer(e.indexOfId(idA), idG, LayerTap::PostFx, &err));

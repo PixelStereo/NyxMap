@@ -42,7 +42,6 @@ int main(int argc, char **argv)
         }
     }
     Engine e;
-    e.setRhiRendering(true);
     QString err;
     if (!e.initialize(&err)) {
         std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));

@@ -39,7 +39,6 @@ public:
             m_image = nil;
         }
     }
-    bool update(Texture2D &) override { return false; } // the picture comes with takeTexture()
     // QRhi (Metal): the server's IOSurface as a texture of QRhi's device, no copy
     QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override
     {

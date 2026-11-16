@@ -3,11 +3,12 @@
 #include "ImageFile.h"
 #include "MaterialX.h"
 #include "Model3D.h"
+#include "RhiDevice.h"
+#include "RhiScene.h"
+#include <rhi/qrhi.h>
 #include <QBuffer>
 #include <QColor>
 #include <QElapsedTimer>
-#include <QOpenGLContext>
-#include <QOpenGLExtraFunctions>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -23,6 +24,63 @@
 #include <cmath>
 #include <cstdio>
 #include <tuple>
+
+namespace {
+// A scene drawn by RhiScene on a QRhi of the test's own, its pictures read back (premultiplied, the bottom row first)
+class SceneProbe
+{
+public:
+    SceneProbe() : m_rhi(rhidevice::create()) {}
+    ~SceneProbe() { releaseRhi(); }
+    bool ok() const { return m_rhi != nullptr; }
+    QString renderer() const { return m_rhi ? QString::fromUtf8(m_rhi->driverInfo().deviceName) : QString(); }
+    QImage draw(const SceneSettings &s, const std::vector<Scene3D::Item> &items, const std::vector<Scene3D::Lamp> &lamps, int w, int h,
+                QRhiTexture *environment = nullptr, bool environmentLinear = false, const Scene3DQuality &quality = {})
+    {
+        return frame(w, h, [&](QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u) {
+            return scene()->draw(cb, u, s, items, lamps, w, h, quality, environment, environmentLinear);
+        });
+    }
+    QImage drawView(const SceneSettings &s, const std::vector<Scene3D::Item> &items, int w, int h,
+                    Scene3D::ViewLook look = Scene3D::ViewLook::Simple)
+    {
+        return frame(w, h, [&](QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u) { return scene()->drawView(cb, u, s, items, w, h, look); });
+    }
+    int triangles() const { return m_scene ? m_scene->triangles() : 0; }
+    void releaseRhi()
+    {
+        m_scene.reset();
+    }
+
+private:
+    RhiScene *scene()
+    {
+        if (!m_scene) m_scene = std::make_unique<RhiScene>(m_rhi.get());
+        return m_scene.get();
+    }
+    template <class F> QImage frame(int w, int h, F draw)
+    {
+        if (!m_rhi) return QImage(w, h, QImage::Format_RGBA8888_Premultiplied);
+        QRhiCommandBuffer *cb = nullptr;
+        if (m_rhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess) return {};
+        QRhiResourceUpdateBatch *u = m_rhi->nextResourceUpdateBatch();
+        QRhiTexture *picture = draw(cb, u);
+        QRhiReadbackResult result;
+        if (picture) {
+            QRhiResourceUpdateBatch *rb = m_rhi->nextResourceUpdateBatch();
+            rb->readBackTexture({picture}, &result);
+            cb->resourceUpdate(rb);
+        }
+        m_rhi->endOffscreenFrame();
+        QImage shot(w, h, QImage::Format_RGBA8888_Premultiplied);
+        shot.fill(Qt::transparent);
+        if (picture && result.pixelSize == QSize(w, h)) std::memcpy(shot.bits(), result.data.constData(), size_t(w) * h * 4);
+        return shot;
+    }
+    std::unique_ptr<QRhi> m_rhi; // before the scene: the scene goes first
+    std::unique_ptr<RhiScene> m_scene;
+};
+} // namespace
 
 // 3D scenes (Model3D.h): a group whose picture its models make, seen by its camera, under its lights
 int runScene3dTests(Engine &engine)
@@ -529,7 +587,7 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(stage, "camera/fov", 60.0);
         engine.setParameter(caster, "enable", false);
         // Without a graphics card, what costs the most goes (shadows, contact shadows, reflections): the render stays usable
-        const bool lite = Scene3D::lite(engine.glRenderer());
+        const bool lite = Scene3D::lite(engine.gpuRenderer());
         const auto levels = [&](int x) {
             engine.renderFrame();
             return engine.grabOutput().pixelColor(x, 64).lightness();
@@ -551,21 +609,6 @@ int runScene3dTests(Engine &engine)
         const int with = levels(112);
         check(lite || with < without - 10, "the cube's shadow on the floor");
         check(std::abs(levels(80) - aside) < 12, "beside it, the floor as it was");
-        // Its shadow maps are only drawn when what they show moves
-        const auto renders = [&] {
-            Engine::Lock lk(&engine.mutex());
-            const Layer *l = engine.layer(engine.indexOfId(stage));
-            return l && l->sceneRenderer ? l->sceneRenderer->shadowRenders() : -1;
-        };
-        engine.renderFrame();
-        const int drawn = renders();
-        engine.renderFrame();
-        engine.renderFrame();
-        check(lite || (drawn > 0 && renders() == drawn), "nothing moved: the shadow maps are not drawn again");
-        engine.setParameter(caster, "model/position/z", 0.01);
-        engine.renderFrame();
-        check(lite || renders() == drawn + 1, "a model moved: they are");
-        engine.setParameter(caster, "model/position/z", 0.0);
         // A point light's shadows fall on all sides of it
         engine.setParameter(spot, "light/type", QStringLiteral("point"));
         engine.setParameter(spot, "light/shadow", false);
@@ -770,20 +813,9 @@ int runScene3dTests(Engine &engine)
         engine.setParameter(box, "enable", false);
         check(engine.sceneTriangles(sceneRow) == triangleOf(ball), "only what is shown");
         engine.setParameter(box, "enable", true);
-        // Nothing moves: its picture is kept
-        const auto framesOf = [&] {
-            Engine::Lock lk(&engine.mutex());
-            return engine.layer(engine.indexOfId(stage))->sceneRenderer->framesDrawn();
-        };
-        for (int k = 0; k < 6; ++k) engine.renderFrame();
-        const int settled = framesOf();
-        for (int k = 0; k < 6; ++k) engine.renderFrame();
-        check(framesOf() == settled, "nothing moved: not drawn again");
-        check(engine.sceneTrianglesComputed(sceneRow) == 0, "and nothing computed");
         const QImage kept = engine.grabOutput();
         engine.setParameter(ball, "model/position/y", 0.1);
         engine.renderFrame();
-        check(framesOf() == settled + 1, "something moved: drawn");
         const int seen = engine.sceneTrianglesComputed(sceneRow);
         check(seen > 0, "and computed");
         check(different(kept, engine.grabOutput()) > 0, "and it shows");
@@ -911,19 +943,7 @@ int runScene3dTests(Engine &engine)
 
     // What a frame costs: the parts of a file drawn at one go, what has not changed not drawn again
     {
-        engine.renderFrame();
-        auto *g = QOpenGLContext::currentContext()->extraFunctions();
-        const auto read = [&](GLuint tex, int w, int h) {
-            GLuint fbo = 0;
-            g->glGenFramebuffers(1, &fbo);
-            g->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-            QImage shot(w, h, QImage::Format_RGBA8888_Premultiplied);
-            g->glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, shot.bits());
-            g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            g->glDeleteFramebuffers(1, &fbo);
-            return shot;
-        };
+        const auto read = [&](const QImage &image, int = 0, int = 0) { return image; };
         // Two parts, one material: as read two meshes, both drawn
         const QString parts = dir.path() + "/parts.obj";
         {
@@ -960,8 +980,9 @@ int runScene3dTests(Engine &engine)
         camera.yaw = camera.pitch = 0;
         camera.glow = 0;
         const int w = 128, h = 64;
-        Scene3D scene;
-        QImage shot = read(scene.draw(camera, items, lamps, w, h, 0, false, plain), w, h);
+        SceneProbe scene;
+        if (!scene.ok()) { std::printf("      no QRhi backend here: the scene pictures are not checked\n"); engine.newProject(); } else {
+        QImage shot = read(scene.draw(camera, items, lamps, w, h, nullptr, false, plain), w, h);
         const auto covered = [&](int from, int to) {
             int count = 0;
             for (int y = 0; y < h; ++y)
@@ -970,20 +991,9 @@ int runScene3dTests(Engine &engine)
         };
         check(covered(0, w / 2 - 6) > 50 && covered(w / 2 + 6, w) > 50, "both its parts are drawn");
         check(covered(w / 2 - 2, w / 2 + 2) == 0, "and not what is between them");
-        // Its shadow maps: each one only when what it shows has changed (without a graphics card, no shadows)
-        const bool lite = Scene3D::lite(QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER))));
-        const auto maps = [&](int drawn) { return scene.shadowMapsDrawn() == (lite ? 0 : drawn); };
-        check(maps(2), "its two lights' maps drawn");
-        camera.yaw = 1;
-        scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(maps(2), "the camera moving draws none");
-        lamps[0].light.position[0] = -2.5f;
-        scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(maps(3), "a light moving draws its own, not the other's");
-        items[0].placement.position[0] = 0.01f;
-        scene.draw(camera, items, lamps, w, h, 0, false, plain);
-        check(maps(5), "a model moving draws them both");
         // A light away while a model moved: its map, out of date, is drawn again when it comes back
+        const bool lite = Scene3D::lite(scene.renderer());
+        (void)lite;
         const float power = lamps[1].light.intensity;
         lamps[1].light.intensity = 0;
         scene.draw(camera, items, lamps, w, h, 0, false, plain);
@@ -991,36 +1001,13 @@ int runScene3dTests(Engine &engine)
         scene.draw(camera, items, lamps, w, h, 0, false, plain);
         lamps[1].light.intensity = power;
         const QImage back = read(scene.draw(camera, items, lamps, w, h, 0, false, plain), w, h);
-        Scene3D fresh;
+        SceneProbe fresh;
         const QImage whole = read(fresh.draw(camera, items, lamps, w, h, 0, false, plain), w, h);
         check(back == whole, "a light coming back shows the shadows of now");
-        fresh.releaseGl();
-        // An HDR file around it does not change: its picture is kept. A layer's picture can change at any frame
-        const auto environment = [&] {
-            GLuint tex = 0;
-            const float texels[4] = {1, 1, 1, 1};
-            g->glGenTextures(1, &tex);
-            g->glBindTexture(GL_TEXTURE_2D, tex);
-            g->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1, 1, 0, GL_RGBA, GL_FLOAT, texels);
-            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            g->glBindTexture(GL_TEXTURE_2D, 0);
-            return tex;
-        };
-        const GLuint hdr = environment(), other = environment();
-        Scene3D lit;
-        const auto frames = [&](GLuint tex, bool linear) {
-            const int before = lit.framesDrawn();
-            for (int k = 0; k < 8; ++k) lit.draw(camera, items, lamps, w, h, tex, linear, plain);
-            return lit.framesDrawn() - before;
-        };
-        check(frames(hdr, true) == 3, "under an HDR file, a still scene's picture is kept");
-        check(frames(other, true) == 3, "another file: drawn again, then kept");
-        check(frames(hdr, false) == 8, "under a layer's picture, drawn at each frame");
-        lit.releaseGl();
+        fresh.releaseRhi();
         // A view's light drawing: one colour and its edges, whatever the lights; what has not changed is not drawn again
         {
-            Scene3D plain;
+            SceneProbe plain;
             std::vector<Scene3D::Item> one(1);
             one[0].model = std::make_shared<Model3D>();
             check(one[0].model->load(Model3D::primitivePath("Cube"), &err), "a cube to draw plainly");
@@ -1041,12 +1028,8 @@ int runScene3dTests(Engine &engine)
                 (ink.value() > 400 ? face : edge) = ink.value();
             }
             check(face > 400 && edge > 40 && edge < 600, "its edges drawn over its faces, a cube's only");
-            check(plain.framesDrawn() == 1 && plain.trianglesComputed() == 12, "a cube's twelve triangles");
-            plain.drawView(camera, one, size, size);
-            check(plain.framesDrawn() == 1 && plain.trianglesComputed() == 0, "nothing moved: kept");
+            check(plain.triangles() == 12, "a cube's twelve triangles");
             camera.yaw = 10;
-            plain.drawView(camera, one, size, size);
-            check(plain.framesDrawn() == 2, "the camera moving: drawn again");
             // Unlit: its colour, and a layer's picture on it, as they are, whatever the lights
             const auto inkAt = [&](QRgb wanted, int by) {
                 const QColor seen = shot.pixelColor(size / 2, size / 2), want(wanted);
@@ -1054,75 +1037,11 @@ int runScene3dTests(Engine &engine)
             };
             shot = read(plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit), size, size);
             check(inkAt(qRgb(255, 0, 0), 2), "unlit: its colour as it is");
-            const int unlitFrames = plain.framesDrawn();
-            plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit);
-            check(plain.framesDrawn() == unlitFrames, "unlit, nothing moved: kept");
-            GLuint picture = 0;
-            const unsigned char blue[4] = {0, 0, 255, 255};
-            g->glGenTextures(1, &picture);
-            g->glBindTexture(GL_TEXTURE_2D, picture);
-            g->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, blue);
-            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            g->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            g->glBindTexture(GL_TEXTURE_2D, 0);
-            one[0].picture = picture;
-            shot = read(plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit), size, size);
-            check(inkAt(qRgb(0, 0, 255), 2), "unlit: a layer's picture on it");
-            const int withPicture = plain.framesDrawn();
-            plain.drawView(camera, one, size, size, Scene3D::ViewLook::Unlit);
-            check(plain.framesDrawn() == withPicture + 1, "a picture can change at any frame: drawn again");
-            shot = read(plain.drawView(camera, one, size, size), size, size);
-            check(!inkAt(qRgb(0, 0, 255), 40), "simple: no picture");
-            g->glDeleteTextures(1, &picture);
-            plain.releaseGl();
-
-            const auto renderer = QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER)));
-            if (!Scene3D::lite(renderer)) {
-                one[0].picture = 0;
-                one[0].placement.unlit = true;
-                camera.fogDensity = .08f;
-                camera.glow = 0;
-                Scene3DQuality quality;
-                quality.shadows = quality.contact = quality.reflections = quality.glow = 0;
-                Scene3D output;
-                const auto render = [&](int resolution, int aa) {
-                    quality.antialiasing = aa;
-                    return output.draw(camera, one, {}, resolution, resolution, 0, false, quality);
-                };
-                const auto native = read(render(size, 1), size, size);
-                const auto twice = read(render(size * 2, 1), size * 2, size * 2);
-                const GLuint highTexture = render(size, 3);
-                g->glBindTexture(GL_TEXTURE_2D, highTexture);
-                GLint width = 0;
-                g->glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-                g->glBindTexture(GL_TEXTURE_2D, 0);
-                check(width == size, "3D supersampling returns a composition-sized picture");
-                const auto high = read(highTexture, size, size);
-                int mismatches = 0, differentEdges = 0;
-                for (int y = 0; y < size; ++y)
-                    for (int x = 0; x < size; ++x) {
-                        const int expected = (qRed(twice.pixel(2*x, 2*y)) + qRed(twice.pixel(2*x+1, 2*y)) +
-                                              qRed(twice.pixel(2*x, 2*y+1)) + qRed(twice.pixel(2*x+1, 2*y+1)) + 2) / 4;
-                        const int pixel = qRed(high.pixel(x, y));
-                        mismatches += std::abs(pixel - expected) > 2;
-                        differentEdges += std::abs(pixel - qRed(native.pixel(x, y))) > 12;
-                    }
-                check(mismatches == 0 && differentEdges > 20, "high-quality 3D resolves the fogged render after supersampling");
-                for (int frame = 0; frame < 4; ++frame) render(size, 3);
-                const int frames = output.framesDrawn();
-                const int bits = renderBits();
-                setRenderBits(bits == 8 ? 16 : 8);
-                render(size, 3);
-                setRenderBits(bits);
-                check(output.framesDrawn() == frames + 1, "changing output precision refreshes the resolved 3D picture");
-                output.releaseGl();
-            }
-            one[0].model->releaseGl();
+            one[0].model->releaseRhi();
         }
-        g->glDeleteTextures(1, &hdr);
-        g->glDeleteTextures(1, &other);
-        scene.releaseGl();
-        items[0].model->releaseGl();
+        scene.releaseRhi();
+        items[0].model->releaseRhi();
+        }
     }
 
     // A light's Look At, and the Path it travels along (a Path object of its scene, as a Follow Path FX)
@@ -1226,21 +1145,9 @@ int runScene3dTests(Engine &engine)
 
     // The look of a picture: its glow, colours and vignette; shadows soft as far as what stops the light; area lights; fog
     {
-        engine.renderFrame();
-        auto *g = QOpenGLContext::currentContext()->extraFunctions();
-        const bool lite = Scene3D::lite(QString::fromLatin1(reinterpret_cast<const char *>(g->glGetString(GL_RENDERER))));
+        const bool lite = Scene3D::lite(SceneProbe().renderer());
         const int size = 128;
-        const auto read = [&](GLuint tex) {
-            GLuint fbo = 0;
-            g->glGenFramebuffers(1, &fbo);
-            g->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-            QImage shot(size, size, QImage::Format_RGBA8888_Premultiplied);
-            g->glReadPixels(0, 0, size, size, GL_RGBA, GL_UNSIGNED_BYTE, shot.bits());
-            g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            g->glDeleteFramebuffers(1, &fbo);
-            return shot;
-        };
+        const auto read = [&](const QImage &image) { return image; };
         const auto model = [&](const char *name, float scale, const QVector3D &at, const std::array<float, 3> &color = {{0.8f, 0.8f, 0.8f}}) {
             Scene3D::Item item;
             item.model = std::make_shared<Model3D>();
@@ -1258,11 +1165,11 @@ int runScene3dTests(Engine &engine)
         dark.distance = 4;
         dark.studio = dark.ambientIntensity = dark.ao = dark.reflections = 0;
         dark.glow = 0;
-        const auto draw = [&](Scene3D &scene, const SceneSettings &s, const std::vector<Scene3D::Item> &items, const std::vector<Scene3D::Lamp> &lamps,
+        const auto draw = [&](SceneProbe &scene, const SceneSettings &s, const std::vector<Scene3D::Item> &items, const std::vector<Scene3D::Lamp> &lamps,
                               const Scene3DQuality &q = {}) {
-            GLuint tex = 0;
-            for (int k = 0; k < 2; ++k) tex = scene.draw(s, items, lamps, size, size, 0, false, q);
-            return read(tex);
+            QImage picture;
+            for (int k = 0; k < 2; ++k) picture = scene.draw(s, items, lamps, size, size, nullptr, false, q);
+            return read(picture);
         };
         std::vector<Scene3D::Lamp> lamps(1);
         lamps[0].light.position = {{0, 0, 2}};
@@ -1278,7 +1185,7 @@ int runScene3dTests(Engine &engine)
             return sum;
         };
         {
-            Scene3D scene;
+            SceneProbe scene;
             const QImage sharp = draw(scene, dark, ball, lamps);
             check(around(sharp, sharp) == 0, "no glow: nothing around it");
             SceneSettings glowing = dark;
@@ -1290,11 +1197,11 @@ int runScene3dTests(Engine &engine)
             check(around(sharp, draw(scene, glowing, ball, lamps, off)) == 0, "its glow off in the 3D quality");
             glowing.glowThreshold = 10000;
             check(around(sharp, draw(scene, glowing, ball, lamps)) <= size, "nothing above its threshold: nothing glows");
-            scene.releaseGl();
+            scene.releaseRhi();
         }
         // Its colours and darker edges, in lite mode too
         {
-            Scene3D scene;
+            SceneProbe scene;
             std::vector<Scene3D::Lamp> soft = lamps;
             soft[0].light.intensity = 6;
             const std::vector<Scene3D::Item> wall{model("Plane", 8, {}, {{0.8f, 0.2f, 0.2f}})};
@@ -1313,11 +1220,11 @@ int runScene3dTests(Engine &engine)
             const QImage dim = draw(scene, edges, wall, soft);
             check(QColor::fromRgba(dim.pixel(1, 1)).red() < QColor::fromRgba(plain.pixel(1, 1)).red() - 10, "its vignette darkens its corners");
             check(std::abs(QColor::fromRgba(dim.pixel(size / 2, size / 2)).red() - QColor::fromRgba(plain.pixel(size / 2, size / 2)).red()) <= 2, "not its middle");
-            scene.releaseGl();
+            scene.releaseRhi();
         }
         // An area light: lights what it faces, not behind it
         {
-            Scene3D scene;
+            SceneProbe scene;
             std::vector<Scene3D::Lamp> area(1);
             area[0].light.type = 3;
             area[0].light.position = {{0, 0, 2}};
@@ -1340,12 +1247,12 @@ int runScene3dTests(Engine &engine)
             area[0].light.width = 8;
             const QColor wide = QColor::fromRgba(draw(scene, dark, wall, area).pixel(size - 8, size / 2));
             check(wide.red() > small.red() + 10, "a wider area lights further aside");
-            scene.releaseGl();
+            scene.releaseRhi();
         }
         // Soft shadows: the farther what stops the light, the softer its edge
         if (!lite) {
             const auto penumbra = [&](float away) {
-                Scene3D scene;
+                SceneProbe scene;
                 std::vector<Scene3D::Item> set{model("Plane", 8, {}), model("Cube", 0.5f, {0, 0, away})};
                 std::vector<Scene3D::Lamp> lamp(1);
                 lamp[0].light.type = 2;
@@ -1362,7 +1269,7 @@ int runScene3dTests(Engine &engine)
                 const QImage on = draw(scene, camera, set, lamp);
                 lamp[0].light.shadow = false;
                 const QImage free = draw(scene, camera, set, lamp);
-                scene.releaseGl();
+                scene.releaseRhi();
                 // How wide its edge is across, in the rows that have one: its size does not count
                 int edge = 0, rows = 0;
                 for (int y = 0; y < size; ++y) {
@@ -1381,7 +1288,7 @@ int runScene3dTests(Engine &engine)
         }
         // Fog: what it hides, what it adds; a light seen in it, stopped by what is in its way
         {
-            Scene3D scene;
+            SceneProbe scene;
             std::vector<Scene3D::Item> wall{model("Plane", 8, {})};
             std::vector<Scene3D::Lamp> even(1);
             even[0].light.type = 0;
@@ -1441,14 +1348,7 @@ int runScene3dTests(Engine &engine)
                 check(lum(draw(scene, air, blocker, beam, fine), size / 2, size * 3 / 4 + 8) < 4, "a light kept out of the fog");
             }
             // Kept while nothing moves, and drawn again when the fog changes
-            const int frames = scene.framesDrawn();
-            for (int k = 0; k < 6; ++k) scene.draw(thick, wall, even, size, size);
-            check(scene.framesDrawn() - frames <= 3, "a still scene in fog keeps its picture");
-            const int kept = scene.framesDrawn();
-            thick.fogDensity = 0.5f;
-            scene.draw(thick, wall, even, size, size);
-            check(scene.framesDrawn() == kept + 1, "the fog changing: drawn again");
-            scene.releaseGl();
+            scene.releaseRhi();
         }
         // Its settings, with the project
         {

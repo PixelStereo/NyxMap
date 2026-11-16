@@ -16,8 +16,6 @@
 //    which runs it on the render thread. These tasks never take the lock: it is safe to wait
 //    on a task while holding the lock, with no risk of deadlock.
 
-#include "TestCard.h"
-#include "PresentMetal.h"
 #include "BeatClock.h"
 #include "ShowControl.h"
 #include "Sequencer.h"
@@ -70,20 +68,6 @@ class Input;
 }
 
 
-// A picture read back from the GPU without waiting: two pixel buffers in turn, each with the fence that says when the GPU is
-// done (render thread). The interface's views get their pictures this way (the OpenGL renderer)
-struct AsyncImageRead {
-    GLuint pbo[2] = {0, 0};
-    GLsync fence[2] = {nullptr, nullptr};
-    int w[2] = {0, 0}, h[2] = {0, 0};
-    size_t capacity[2] = {0, 0};
-    quint64 serial[2] = {0, 0};
-    quint64 started = 0;
-    qint64 last = 0; // when the last read began (ns)
-    GLuint fbo = 0;  // to read a texture that is not a render target's
-    void release();
-};
-
 class Engine : public QObject
 {
     Q_OBJECT
@@ -96,29 +80,24 @@ public:
     Mutex &mutex() { return m_mutex; }
 
     bool initialize(QString *err);
-    // The frame drawn through QRhi (RhiRenderer.h) instead of OpenGL: set before initialize(), or NYXMAP_RENDERER=rhi.
-    // A transition: outputs, previews and publishing still read OpenGL's pictures, none here yet
-    void setRhiRendering(bool on) { m_wantRhi = on; }
-    bool rhiRendering() const { return m_wantRhi; }
+    // False when QRhi could not start (nothing is drawn)
+    bool rhiRendering() const { return !m_rhiFailed; }
     bool start();          // starts the render thread (returns false if the platform does not support it)
     void stop();
     // Emergency stop: cancel every sequence/WAIT, fade, running animation and media transport;
     // retain parameter values and source/effect frames. GO/Play/recall or releasing Pause resumes rendering.
     void stopShowPlayback();
     bool isThreaded() const { return m_threaded; }
-    // The render thread could not make its OpenGL context current: nothing is rendered (start() again to retry)
+    // The render thread could not start: nothing is rendered (start() again to retry)
     bool renderFailed() const
     {
         std::lock_guard<std::mutex> lk(m_taskMutex);
         return m_renderFailed;
     }
     static void failNextRenderStartForTests() { s_failRenderStart = true; }
-    // One-shot simulation of a missing Difference-blend copy target; only
-    // used by the rendering regression tests, no GPU resources destroyed.
-    static void failNextDifferenceCopyForTests() { s_failDifferenceCopyForTests = true; }
     void shutdown();
 
-    // Runs fn on the render thread with the OpenGL context current (or immediately in manual mode).
+    // Runs fn on the render thread (or immediately in manual mode).
     void runGl(std::function<void()> fn, bool wait = true);
 
     // --- Composition (take Lock to access Layer objects)
@@ -200,7 +179,6 @@ public:
     // A layer's picture at a stage: -1 final, 0 its source (before its FX), k after its FX k, kStageHdrFile an HDR
     // image's file as read (linear, unclipped; its final picture when it has none) (render thread, lock held)
     static constexpr int kStageHdrFile = -2;
-    GLuint stagePicture(const Layer &l, int stage) const;
     // Removes a layer; a removed group's members go back to the top level.
     void removeLayer(int i);
     QList<int> removeLayers(const QList<int> &rows); // returns the original indices actually removed
@@ -890,20 +868,15 @@ public:
     void requestSourcePreview(quint64 layerId, int maxSide = 360); // 0: stop
     QImage sourcePreview(quint64 *layerId = nullptr) const;
 
-    // --- Output: window in which the render thread presents the composition
-    // One window per viewport; the render thread presents the viewport's picture into it
-    // macOS: the output windows are shown through Metal (their surface type must then be Metal), the engine rendering
-    // on its own thread; elsewhere (or without Metal) through OpenGL
-    static bool metalOutput() { return MetalOutput::available(); }
     // With the QRhi renderer (setRhiRendering) the output windows are shown by it, through a swapchain of the platform's
     // QRhi (RhiDevice.h): their surface type is that API's (Metal, Direct3D, Vulkan), the engine on its own thread
     QSurface::SurfaceType outputSurfaceType() const;
     // Tests: the pictures the QRhi renderer presented are kept (render thread; before the window's first frame), and read
     void setCapturePresentedForTests(bool on);
     QImage presentedForTests(quint64 viewport);
-    QString glRenderer() const { return m_glRenderer; } // the OpenGL renderer's name
-    QString glVersion() const { return m_glVersion; }
-    QString glVendor() const { return m_glVendor; }
+    QString gpuRenderer() const { return m_gpuRenderer; } // the graphics device's name
+    QString gpuApi() const { return m_gpuApi; }
+    QString gpuVendor() const { return m_gpuVendor; }
     quint64 windowFrames(quint64 viewport); // pictures the viewport's window was given (tests)
     // Manual rendering tests only. The output context and its back buffer are current before swap.
     void setWindowDrawProbeForTests(std::function<void(quint64, QSize)> probe) {
@@ -921,18 +894,13 @@ public:
     // The slot's source, a 3D scene, drawn from this camera (its framing, its distance) at this size: a 3D view. Off:
     // the slot shows the source's picture again
     void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {}, Scene3D::ViewLook look = Scene3D::ViewLook::Simple);
-    GLuint previewTexture(int slot, QSize *size, int *buffer = nullptr) const; // caller holds mutex(), shared GL context current
-    void finishPreviewRead(int slot, int buffer, QOpenGLExtraFunctions *f); // mutex held
+ // mutex held
     // The interface's views through QRhi (RhiDraw): the pictures as pixels, RGBA8888, the picture's bottom row first (as an
     // OpenGL texture holds them), reduced to 1024 px at most (the composition: 1600). Null: nothing to show (no such
     // source). Any thread. The composition is made only while a view asks for it (wantCompositionImage, every paint)
     QImage previewImage(int slot) const;
     QImage compositionImage() const;
     void wantCompositionImage();
-    GLuint outputTexture() const;        // last published frame (readable from a shared context)
-    // Another context reading the published pictures calls this first, with itself current: its GPU waits for the
-    // frame to be drawn (the CPU does not)
-    void waitForFrame(QOpenGLExtraFunctions *f) const;
     double fps() const { return m_fps.load(); }
     // Frame timing (FrameTiming.h): intervals, missed deadlines, compute and present times, OSC / cue to frame
     FrameTiming::Stats frameTiming() const { return m_frameTiming.stats(); }
@@ -953,13 +921,18 @@ public:
     quint64 mipmapsMade() const { return m_mipmapsMade.load(); } // layers' mipmaps generated since the start
     QImage grabOutput();                 // the whole composition (interface preview)
     QImage grabViewport(quint64 viewport);
+    // The pictures of a layer at the last frame, by an opaque handle (equal handles: the same picture) and their size
+    // (tests, tools). Final: after its effects; PreFx: before them; Source: its source before its ROI. nullptr: none
+    enum class LayerPicture { Final, PreFx, Source };
+    const void *layerPicture(quint64 id, LayerPicture which, QSize *size = nullptr);
+    QSize videoPictureSize(int index); // its video's picture, as drawn
     QImage grabLayerSource(int index); // a layer's source picture, full size, before its ROI (tests, tools)
     quint64 frameCount() const { return m_frameCount.load(); }
     // Video frames a layer has shown so far (uploaded to the GPU): its playback rate, measured
     quint64 videoFramesShown(int index) const;
     // Compressed texture formats the GPU samples (HAP): DXT, and BC7 / BC6 (not on macOS)
-    bool gpuSamplesDxt() const { return m_videoConv.s3tc(); }
-    bool gpuSamplesBptc() const { return m_videoConv.bptc(); }
+    bool gpuSamplesDxt() const { return m_gpuDxt; }
+    bool gpuSamplesBptc() const { return m_gpuBptc; }
 
     // --- Project
     void newProject();   // empty, with one viewport
@@ -1036,7 +1009,6 @@ private:
     friend class RenderThread;
     friend class RhiRenderer;
     friend class Sequencer;
-    friend struct ScopedCurrent;
 
     struct Garbage; // detached resources, released in the render thread
     void makeCurrent();
@@ -1052,26 +1024,10 @@ private:
     void updateSource(Layer &l, double dt);
     void markNeeded(); // which layers are drawn this frame (shown, or used by another one)
     void forEachRenderDependency(const Layer &layer, const std::function<void(size_t, int)> &use) const;
-    // every layer, in dependency order; `only`: just these (by id), the others keep the frame they have
-    void renderPass(const IsfRenderContext &rc, const std::set<quint64> *only = nullptr);
     size_t renderLayerIndex(quint64 id) const;
     bool layerPreviewed(const Layer &layer) const;
-    void renderPausedSources(const IsfRenderContext &rc); // paused: the pictures loaded since, and what shows them
-    void renderLayer(Layer &l, const IsfRenderContext &rc);
-    void processLayer(Layer &l, GLuint tex, int w, int h, bool premultiplied, const IsfRenderContext &rc);
-    void renderGroup(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
-    void renderScene(Layer &g, const std::vector<Layer *> &members, const IsfRenderContext &rc);
-    // `view`: the part of the composition the target shows (normalized, origin top left)
-    // The target is cleared to `clear` first (through a multisampled buffer when antialiasing is on)
-    void compositeLayers(const RenderTarget &target, const std::vector<Layer *> &topToBottom,
-                         const QRectF &view = QRectF(0, 0, 1, 1), QColor clear = QColor(0, 0, 0, 0),
-                         quint64 viewport = 0, double angle = 0); // angle (degrees): the view turned about its center; viewport: the one drawn for (its share of each layer's opacity)
-    std::map<std::pair<int, int>, MsaaBuffer> m_msaa; // by size (render thread)
-    int m_maxSamples = 0;
     void renderViewport(Layer &v, const std::vector<Layer *> &shown, const IsfRenderContext &rc, bool sameRouting);
     bool viewportIsPlain(const Layer &v, const std::vector<Layer *> &shown) const;
-    void composite();
-    void readSourcePreview();
     void stepFade(double dt); // snapshot fades (render thread, lock held)
     // Nonblocking per-parameter delayed recall. The show/render clock executes
     // these actions even while the Qt user interface is blocked.
@@ -1099,20 +1055,11 @@ private:
     quint64 newIdLocked();
     void clearProject();
     int viewportCountLocked() const;
-    void drawQuad();
     void forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const;
     void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
     void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (GL context current)
-    void drawPoints(int count); // an ISF particle pass: count squares of two triangles, no attribute
-    void blit(GLuint tex, const RenderTarget &target);
-    bool bindMesh(Layer &l);
-    void drawBoundMesh(bool subdivided);
-    // A layer's matte (Layer.h): the other layer as it is in the composition this frame (Composition space), or its
-    // picture through the matte (Picture space)
-    void prepareMatte(Layer &l);
-    void applyPictureMatte(Layer &l, GLuint &tex, int w, int h);
     static int matteMode(const LayerMatte &m) { return 1 + int(m.channel) + (m.invert ? 2 : 0); }         // its mapped mesh (render thread, mesh vertex array bound)
-    void bindMeshBuffer(GLuint vbo); // any mesh vertex buffer
+ // any mesh vertex buffer
     QString resolvePath(const QJsonObject &o, const QString &projectDir) const;
     QJsonObject layerToJson(Layer &l, const QString &projectDir) const;
     void layerFromJson(int index, const QJsonObject &o, const QString &projectDir, QStringList *warnings);
@@ -1130,16 +1077,14 @@ private:
 
     mutable Mutex m_mutex;
 
-    QOpenGLContext *m_context = nullptr;
-    bool m_wantRhi = true;
+    bool m_released = false; // releaseAll() has run
+    bool m_rhiFailed = false; // QRhi could not start: nothing is drawn
     std::unique_ptr<RhiRenderer> m_rhi; // made by the render thread at its first frame
-    QOffscreenSurface *m_surface = nullptr;
-    QSurface *m_currentSurface = nullptr;
     QThread *m_thread = nullptr;
     QThread *m_ownerThread = nullptr;
     std::atomic<bool> m_threaded{false}, m_quit{false}, m_framePending{false};
 
-    // OpenGL task queue
+    // Render thread task queue
     struct Task {
         std::function<void()> fn;
         bool done = false;
@@ -1152,17 +1097,11 @@ private:
     std::deque<std::shared_ptr<Task>> m_tasks;
 
     // Output window (read by the render thread)
-    // Each output window has a context of its own, sharing textures and programs with the engine's: its
-    // drawable never changes (on macOS, moving one context from window to window every frame left them black).
     struct OutputSurface {
         QWindow *window = nullptr;
         bool exposed = false;
         QSize pixels;
-        QOpenGLContext *context = nullptr; // created on first presentation (render thread)
-        GLuint vao = 0;                    // vertex arrays are not shared between contexts
-        std::shared_ptr<MetalOutput> metal; // macOS: the window shown through Metal instead (PresentMetal.h)
         quint64 presented = 0;              // pictures it was given
-        quint64 dropped = 0;                // pictures it could not show (Metal), as last counted
         double hz = 0;                      // its screen's refresh rate (0: not known)
         // Pictures not shown, by cause: no surface from macOS, every shared surface still read, an error, no
         // picture yet, not drawn by the render thread (macOS: OpenGL into a window is the main thread's)
@@ -1186,73 +1125,23 @@ private:
     void present(const Layer &viewport, OutputSurface &out);
     std::map<quint64, OutputSurface> m_outWindows; // by viewport id (render thread)
 
-    GLuint m_quadVao = 0, m_quadVbo = 0;
-    GLuint m_pointsVao = 0; // no attribute: a particle's vertex finds its data from gl_VertexID
-    GLuint m_meshVao = 0, m_meshVbo = 0, m_meshIbo = 0;
-    GLsizei m_meshIndexCount = 0;
-    GLuint m_outputColorProgram = 0;
-    GLint m_outputTexLoc = -1, m_outputOpacityLoc = -1, m_outputDecodeLoc = -1, m_outputEncodeLoc = -1, m_outputGainLoc = -1;
-    GLint m_outputSourceLoc = -1;
-    GLuint m_diffProgram = 0, m_blitProgram = 0, m_compProgram = 0, m_presentProgram = 0, m_prepProgram = 0;
-    GLint m_compRotLoc = -1, m_compAspLoc = -1, m_diffRotLoc = -1, m_diffAspLoc = -1;
-    GLint m_diffTexLoc = -1, m_diffDstLoc = -1, m_diffOpacityLoc = -1, m_diffViewLoc = -1;
-    RenderTarget m_dstCopy; // what is drawn so far, for Difference
-    static inline std::atomic<bool> s_failDifferenceCopyForTests{false};
-    GLint m_blitTexLoc = -1, m_compTexLoc = -1, m_compOpacityLoc = -1, m_compViewLoc = -1, m_presentTexLoc = -1;
-    GLint m_blitOpaqueLoc = -1;
-    GLint m_prepRoiModeLoc = -1, m_prepRoiTriangleLoc = -1, m_prepRoiQuadLoc = -1;
-    GLint m_prepTexLoc = -1, m_prepRoiLoc = -1, m_prepAddLoc = -1, m_prepRemoveLoc = -1, m_prepUnpremulLoc = -1, m_prepBalanceLoc = -1;
-    GLint m_prepMaskLoc = -1, m_prepMaskModeLoc = -1;
-    GLuint m_blackTex = 0;
-    VideoConverter m_videoConv; // video frames to RGBA (render thread)
     MaterialTextureCache m_materialTextures;
-    TestCard m_testCard;        // the viewports' test cards (render thread)
     struct PreviewSlot {
         quint64 id = 0;
         bool asked = false; // the interface set a source: with the QRhi renderer, its picture is read back for it
         quint64 renderedId[2] = {0, 0};
-        RenderTarget target[2];
-        GLsync reader[2] = {nullptr, nullptr};
         // A 3D scene seen from the view's own camera (its 3D view), not its picture
         bool sceneView = false;
         SceneSettings camera;
         QSize sceneSize;
         Scene3D::ViewLook sceneLook = Scene3D::ViewLook::Simple;
         std::shared_ptr<Scene3D> editor[2];
-        GLuint editorTex[2] = {0, 0};
     };
     // A scene's objects as its renderer takes them (shown ones only; render thread, lock held)
     void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
                       const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     void sceneViewOf(const PreviewSlot &slot, int index, std::vector<Scene3D::Item> &items, SceneSettings &view);
-    RenderTarget m_output[2];
-    GLuint m_compositionReuseTexture = 0; // raw, full-size viewport rendered during this frame
-    RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only
-    // What the sound hears of one viewport's picture (0: the composition): read through two pixel buffers, never waited for
-    struct AudioVisualTap {
-        GLuint pbo[2] = {0, 0};
-        GLsync fence[2] = {nullptr, nullptr};
-        int next = 0;               // the buffer the next read goes to
-        std::array<float, 3> rgb{}; // the mean color of the newest read the GPU finished
-        bool used = false;          // listened to this frame
-        void release(QOpenGLExtraFunctions *f)
-        {
-            for (GLsync &s : fence)
-                if (s) f->glDeleteSync(s);
-            for (GLuint &b : pbo)
-                if (b) f->glDeleteBuffers(1, &b);
-            *this = {};
-        }
-    };
-    std::map<quint64, AudioVisualTap> m_audioVisualTaps; // render thread only
-    struct IsfAudioTexture {
-        Texture2D texture;
-        quint64 frame = 0;
-    };
-    // Program/input, waveform/spectrum, and actual column count.
-    std::map<std::array<int, 3>, IsfAudioTexture> m_isfAudioTextures;
-    std::vector<float> m_isfAudioValues, m_isfAudioRgba;
     std::atomic<int> m_published{0};
     int m_back = 1;
 
@@ -1288,11 +1177,6 @@ private:
     quint64 m_previewId = 0;
     int m_previewSide = 360;
     int64_t m_previewNextNs = 0;
-    RenderTarget m_previewTarget;
-    // QRhi mode: the pictures pixel mapping takes from OpenGL textures, read back from QRhi's
-    std::map<std::pair<quint64, int>, RenderTarget> m_rhiReaders; // by layer and tap (0: the composition)
-    GLuint m_previewPbo = 0;
-    GLsync m_previewFence = nullptr; // map only after the GPU has finished writing
     int m_previewPboW = 0, m_previewPboH = 0;
     quint64 m_previewPboId = 0; // the layer the buffer holds (0: nothing pending)
     mutable std::mutex m_previewMutex;
@@ -1300,14 +1184,8 @@ private:
     std::array<quint64, 4> m_previewImageIds{}; // the source each one shows
     QImage m_compositionImage;
     std::atomic<qint64> m_compositionWantedUntilNs{0};
-    std::array<AsyncImageRead, 5> m_imageReads;  // the OpenGL renderer: the preview slots' pictures, then the composition's
-    RenderTarget m_imageTargets[5];              // those that are reduced first (a viewport's size, the composition's)
     QImage m_previewImage;
     quint64 m_previewImageId = 0;
-
-    // The frame's end, for the other contexts (output windows, interface)
-    GLsync m_frameFence = nullptr;
-    mutable std::mutex m_fenceMutex;
 
     QElapsedTimer m_clock;
     qint64 m_lastNs = 0;
@@ -1325,7 +1203,8 @@ private:
     std::vector<SnapshotNode> m_presetTree, m_timelineTree;
     quint64 m_nextPresetId = 1;
     std::vector<std::shared_ptr<FadeJob>> m_fades;
-    QString m_glRenderer, m_glVersion, m_glVendor;
+    QString m_gpuRenderer, m_gpuApi, m_gpuVendor; // the graphics device's name, the API, the vendor (the renderer's start)
+    std::atomic<bool> m_gpuDxt{false}, m_gpuBptc{false}; // the compressed textures QRhi's device samples
     // A snapshot gives a layer another source: the outgoing one keeps playing, invisible, and the two pictures
     // are mixed by an ISF transition into the layer's picture (before its mapping) until it is over
     struct SourceTransition {
@@ -1334,8 +1213,6 @@ private:
         std::unique_ptr<IsfInstance> shader; // loaded by the render thread (none: a crossfade)
         bool loaded = false;
         bool crossfadeOnly = false; // a sound on either side: no shader, the levels cross (tests: transitionUsesShader)
-        RenderTarget target;
-        GLuint incomingTex = 0; // the incoming picture mixed last (what the layer shows once it is over)
         int incomingW = 0, incomingH = 0;
         double elapsed = 0, duration = 1;
     };
@@ -1350,7 +1227,6 @@ private:
     QString m_defaultTransition;
     void startSourceTransition(quint64 id, const QJsonObject &state, double duration);
     void stepTransitions(double dt);                                      // render thread, lock held
-    void renderTransition(Layer &l, SourceTransition &t, const IsfRenderContext &rc);
     // Over (at its time, or at once): the layer `l` (if still there) shows its incoming source alone (lock held)
     void endTransition(Layer *l, std::unique_ptr<SourceTransition> t);
     void retireTransition(std::unique_ptr<SourceTransition> t);           // sound now, decoders closed off the render thread
@@ -1566,7 +1442,7 @@ private:
     QSet<QString> m_binStreamsUdp; // streams of the Media Bin loaded with RTSP over UDP
 
     // Publishing: the viewports' publishers (Publishing.h)
-    Publishing m_publishing{[this] { drawQuad(); }};
+    Publishing m_publishing;
     // Pixel mapping (Fixtures.h, PixelMapping.cpp)
     void stepPixelMapping(); // render thread, lock held, after the composition is drawn
     FixturePatch m_fixtures;                 // (m_mutex)
@@ -1588,17 +1464,5 @@ private:
     DmxFrame m_dmxLast;                      // (m_dmxMutex) the universes last handed to the sender
     DmxFrame m_dmxOwnedLast;                 // (m_dmxMutex) and the channels that were ours (sACN priorities)
     std::map<quint64, std::vector<std::array<float, 3>>> m_fixtureLooks; // (m_dmxMutex) and what the pixels gave out
-    GLuint m_maskProgram = 0; // an effect's result over its input, through a mask
-    GLint m_maskInLoc = -1, m_maskFxLoc = -1, m_maskMaskLoc = -1, m_maskInvertLoc = -1;
-    GLint m_maskHasLoc = -1, m_maskChannelsLoc = -1, m_maskMixLoc = -1;
-    GLuint m_shapeMaskProgram = 0; // a picture through its masks' alpha
-    GLint m_shapeMaskTexLoc = -1, m_shapeMaskMaskLoc = -1, m_shapeMaskRgbLoc = -1;
-    GLuint m_matteProgram = 0; // a picture through a matte in Picture space (Layer.h)
-    GLint m_matteTexLoc = -1, m_matteMatteLoc = -1, m_matteModeLoc = -1;
-    GLint m_compMatteLoc = -1, m_compMatteModeLoc = -1, m_diffMatteLoc = -1, m_diffMatteModeLoc = -1;
-    GLint m_compMaskLoc = -1, m_compMaskOnLoc = -1, m_diffMaskLoc = -1, m_diffMaskOnLoc = -1;
-    void applySurfaceMasks(Layer &l, GLuint &tex, int w, int h);  // render thread
-    bool bindCompositionMasks(Layer &l);                          // render thread: true if it has some
-    GLuint m_fadeProgram = 0; // a crossfade of two pictures (a source transition without a shader)
-    GLint m_fadeALoc = -1, m_fadeBLoc = -1, m_fadeKLoc = -1;
+                          // render thread: true if it has some
 };

@@ -36,9 +36,6 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
       IMPORTED_LOCATION "${NYXMAP_TOUCHENGINE_FRAMEWORK}/TouchEngine"
       FRAMEWORK TRUE
       INTERFACE_INCLUDE_DIRECTORIES "${nyxmap_touchengine_SOURCE_DIR}")
-    # Qt hides deprecated OpenGL SDK declarations; TouchEngine's headers use CGL.
-    target_compile_definitions(nyxmap_engine PRIVATE GL_SILENCE_DEPRECATION)
-    target_link_libraries(nyxmap_engine PRIVATE "-framework OpenGL")
     # Through QRhi's Metal device (no OpenGL): ToxMetal
     target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm)
     set_source_files_properties(${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
@@ -48,7 +45,7 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
       IMPORTED_IMPLIB "${nyxmap_touchengine_SOURCE_DIR}/lib/TouchEngine.lib"
       IMPORTED_LOCATION "${NYXMAP_TOUCHENGINE_DLL}"
       INTERFACE_INCLUDE_DIRECTORIES "${nyxmap_touchengine_SOURCE_DIR}/include")
-    target_link_libraries(nyxmap_engine PRIVATE opengl32 d3d11 dxgi)
+    target_link_libraries(nyxmap_engine PRIVATE d3d11 dxgi)
     # Through QRhi's Direct3D 11 device (no OpenGL): ToxD3D11
     target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxD3D11.cpp)
     # Also used by the tests; multi-config executables are in their configuration directory.

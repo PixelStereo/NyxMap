@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -481,29 +482,7 @@ IsfInput *IsfInstance::input(const QString &name)
     return nullptr;
 }
 
-void IsfInstance::setImageTexture(const QString &name, GLuint tex, int w, int h)
-{
-    if (IsfInput *in = input(name)) {
-        in->extTex = tex;
-        in->extW = w;
-        in->extH = h;
-    }
-}
-
-IsfInstance::~IsfInstance()
-{
-    // The engine calls releaseGl() with its context current before destruction.
-}
-
-void IsfInstance::releaseGl()
-{
-    if (!QOpenGLContext::currentContext()) return;
-    if (m_program) gl()->glDeleteProgram(m_program);
-    m_program = 0;
-    for (IsfTarget &t : m_targets) { t.rt[0].destroy(); t.rt[1].destroy(); }
-    for (IsfImported &im : m_imported) im.tex.destroy();
-    for (IsfInput &in : m_inputs) in.imageTex.destroy();
-}
+IsfInstance::~IsfInstance() = default;
 
 bool IsfInstance::parse(const QString &src, QString *body)
 {
@@ -630,137 +609,6 @@ bool IsfInstance::parse(const QString &src, QString *body)
         for (const QJsonValue &x : imp.toArray())
             addImport(x.toObject().value("NAME").toString(), x.toObject().value("PATH").toString());
     }
-    return true;
-}
-
-QString IsfInstance::uniformBlock() const
-{
-    QString u;
-    u += "uniform int PASSINDEX;\nuniform vec2 RENDERSIZE;\nuniform float TIME;\nuniform float TIMEDELTA;\n"
-         "uniform vec4 DATE;\nuniform int FRAMEINDEX;\n";
-    auto sampler = [&](const QString &n) {
-        // _imgRect / _flip: VVISF internal variables that some shaders use directly
-        u += QStringLiteral("uniform sampler2D %1;\nuniform vec2 _%1_imgSize;\nuniform vec4 _%1_imgRect;\n"
-                            "uniform bool _%1_flip;\n").arg(n);
-    };
-    for (const IsfInput &in : m_inputs) {
-        switch (in.type) {
-        case IsfInput::Event:
-        case IsfInput::Bool: u += QStringLiteral("uniform bool %1;\n").arg(in.name); break;
-        case IsfInput::Long: u += QStringLiteral("uniform int %1;\n").arg(in.name); break;
-        case IsfInput::Float: u += QStringLiteral("uniform float %1;\n").arg(in.name); break;
-        case IsfInput::Point2D: u += QStringLiteral("uniform vec2 %1;\n").arg(in.name); break;
-        case IsfInput::Color: u += QStringLiteral("uniform vec4 %1;\n").arg(in.name); break;
-        case IsfInput::Image:
-        case IsfInput::Audio:
-        case IsfInput::AudioFFT: sampler(in.name); break;
-        default: break;
-        }
-    }
-    for (const IsfTarget &t : m_targets) sampler(t.name);
-    for (const IsfImported &im : m_imported) sampler(im.name);
-    return u;
-}
-
-bool IsfInstance::compile(const QString &fsBody, const QString &vsBody)
-{
-    const QString uniforms = uniformBlock();
-
-    QString fs = QStringLiteral(
-        "#version 330 core\n"
-        "in vec2 isf_FragNormCoord;\n"
-        "out vec4 isf_FragColor;\n"
-        "#define gl_FragColor isf_FragColor\n"
-        "#define texture2D texture\n"
-        "#define texture2DRect texture\n"
-        "#define varying in\n"
-        "#define vv_FragNormCoord isf_FragNormCoord\n"
-        "in vec2 isf_PointCoord;\n" // a POINTS pass: where in its square (0..1)
-        "#define gl_PointCoord isf_PointCoord\n");
-    fs += uniforms;
-    fs += "#line 1\n";
-    fs += fsBody;
-
-    QString vs = QStringLiteral(
-        "#version 330 core\n"
-        "layout(location = 0) in vec2 isf_position;\n"
-        "out vec2 isf_FragNormCoord;\n"
-        "out vec2 isf_PointCoord;\n");
-    vs += uniforms;
-    // A POINTS pass: which point this vertex belongs to, and the corner of its square around its centre (clip
-    // coordinates) for a size in pixels
-    vs += QStringLiteral(
-        "int isf_PointIndex() { return gl_VertexID / 6; }\n"
-        "vec4 isf_PointSprite(vec4 centre, float size) {\n"
-        "    const vec2 corners[6] = vec2[6](vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(-1, 1), vec2(1, -1), vec2(1, 1));\n"
-        "    vec2 k = corners[gl_VertexID % 6];\n"
-        "    isf_PointCoord = k * 0.5 + 0.5;\n"
-        "    return centre + vec4(k * size / RENDERSIZE * centre.w, 0.0, 0.0);\n"
-        "}\n");
-    vs += QStringLiteral(
-        "void isf_vertShaderInit() {\n"
-        "    gl_Position = vec4(isf_position, 0.0, 1.0);\n"
-        "    isf_FragNormCoord = isf_position * 0.5 + 0.5;\n"
-        "}\n"
-        "#define vv_vertShaderInit isf_vertShaderInit\n"
-        "#define vv_FragNormCoord isf_FragNormCoord\n"
-        "#define varying out\n"
-        "#define attribute in\n"
-        "#define texture2D texture\n");
-    if (vsBody.isEmpty()) {
-        vs += "void main() { isf_vertShaderInit(); }\n";
-    } else {
-        vs += "#line 1\n";
-        vs += vsBody;
-    }
-
-    QString log;
-    m_program = compileProgram(vs, fs, &log);
-    if (!m_program) {
-        m_error = QStringLiteral("Compilation error:\n") + log;
-        return false;
-    }
-    cacheLocations();
-    return true;
-}
-
-void IsfInstance::cacheLocations()
-{
-    auto f = gl();
-    auto loc = [&](const QString &n) { return f->glGetUniformLocation(m_program, n.toUtf8().constData()); };
-    m_locPassIndex = loc("PASSINDEX");
-    m_locRenderSize = loc("RENDERSIZE");
-    m_locTime = loc("TIME");
-    m_locTimeDelta = loc("TIMEDELTA");
-    m_locDate = loc("DATE");
-    m_locFrameIndex = loc("FRAMEINDEX");
-    for (IsfInput &in : m_inputs) {
-        in.loc = loc(in.name);
-        in.sizeLoc = loc("_" + in.name + "_imgSize");
-        in.rectLoc = loc("_" + in.name + "_imgRect");
-    }
-    for (IsfTarget &t : m_targets) {
-        t.loc = loc(t.name);
-        t.sizeLoc = loc("_" + t.name + "_imgSize");
-        t.rectLoc = loc("_" + t.name + "_imgRect");
-    }
-    for (IsfImported &im : m_imported) {
-        im.loc = loc(im.name);
-        im.sizeLoc = loc("_" + im.name + "_imgSize");
-        im.rectLoc = loc("_" + im.name + "_imgRect");
-    }
-}
-
-static bool loadImageTexture(const QString &path, Texture2D &tex, QString *err)
-{
-    QImage img = readImageFile(path);
-    if (img.isNull()) {
-        if (err) *err = QStringLiteral("Unreadable image: ") + path;
-        return false;
-    }
-    // OpenGL convention: first row = bottom of the image.
-    img = prepareImageUpload(img);
-    tex.uploadImage(img);
     return true;
 }
 
@@ -952,55 +800,48 @@ IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const Q
 
 bool IsfInstance::load(const QString &path)
 {
-    releaseGl();
     m_inputs.clear();
     m_passes.clear();
     m_targets.clear();
     m_imported.clear();
     m_error.clear();
+    m_valid = false;
     m_isFilter = false;
     m_canSkipDraw = false;
+    m_usesTime = false;
     m_time = 0;
     m_frameIndex = 0;
     QString fragment, vsBody;
     if (!readSources(path, &fragment, &vsBody)) return false;
-    if (!compile(fragment, vsBody)) return false;
+    // The shaders are drawn by the QRhi renderer (loadRhi, with its own instance); this one holds what the file says, and
+    // has seen that they compile
+    {
+        QString why;
+        if (!checkShaders(rhiSourcesOf(fragment, vsBody), &why)) {
+            m_error = why;
+            return false;
+        }
+    }
     // A fullscreen pass with no intermediate buffers or discard cannot read
     // or retain pixels from the previous frame. Custom vertex shaders can.
     static const QRegularExpression discard(QStringLiteral("\\bdiscard\\b"));
+    static const QRegularExpression timeUse(QStringLiteral("\\bTIME(DELTA)?\\b"));
     m_canSkipDraw = vsBody.isEmpty() && m_targets.empty() &&
                     (m_passes.empty() || (m_passes.size() == 1 && m_passes.front().pointsExpr.isEmpty())) &&
                     !fragment.contains(discard);
-
-    for (IsfImported &im : m_imported) {
-        QString e;
-        if (!loadImageTexture(im.path, im.tex, &e)) m_error += e + '\n';
-    }
+    m_usesTime = fragment.contains(timeUse) || vsBody.contains(timeUse);
+    m_valid = true;
     return true;
-}
-
-void IsfInstance::setExtraTexture(const QByteArray &uniform, GLuint tex)
-{
-    for (ExtraTexture &x : m_extraTextures)
-        if (x.uniform == uniform) {
-            x.tex = tex;
-            return;
-        }
-    m_extraTextures.push_back({uniform, tex});
 }
 
 bool IsfInstance::reloadSafely()
 {
-    // A new shader must never destroy the live picture before it is valid.
-    // Build all OpenGL programs, image imports and sampler locations in a
-    // separate instance, then exchange resource ownership in one GL task.
+    // A new shader must never replace the live one before it is valid: read in a separate instance, then exchanged
     IsfInstance prepared;
     if (!prepared.load(m_path)) {
         m_error = prepared.error();
-        prepared.releaseGl(); // a failed compile may have allocated import textures
         return false;
     }
-
     // Preserve user controls and current playback time. The shader may add
     // or remove inputs; restore matches by their parameter path/name.
     const QJsonObject state = save(QString());
@@ -1009,16 +850,11 @@ bool IsfInstance::reloadSafely()
     prepared.m_frameIndex = m_frameIndex;
     for (IsfInput &in : prepared.m_inputs) {
         if (IsfInput *old = input(in.name)) {
-            // Engine-provided texture inputs are not serialized.
-            in.extTex = old->extTex;
+            in.rhiExt = old->rhiExt;
             in.extW = old->extW;
             in.extH = old->extH;
         }
     }
-
-    // Keep *this and all existing IsfInstance* references stable. The
-    // temporary now owns the retired GL objects and disposes them here,
-    // while the engine's context is current. No stale program is drawn.
     using std::swap;
     swap(m_path, prepared.m_path);
     swap(m_name, prepared.m_name);
@@ -1027,29 +863,23 @@ bool IsfInstance::reloadSafely()
     swap(m_error, prepared.m_error);
     swap(m_isFilter, prepared.m_isFilter);
     swap(m_canSkipDraw, prepared.m_canSkipDraw);
+    swap(m_usesTime, prepared.m_usesTime);
+    swap(m_valid, prepared.m_valid);
     swap(m_inputs, prepared.m_inputs);
     swap(m_passes, prepared.m_passes);
     swap(m_targets, prepared.m_targets);
     swap(m_imported, prepared.m_imported);
-    swap(m_program, prepared.m_program);
-    swap(m_locPassIndex, prepared.m_locPassIndex);
-    swap(m_locRenderSize, prepared.m_locRenderSize);
-    swap(m_locTime, prepared.m_locTime);
-    swap(m_locTimeDelta, prepared.m_locTimeDelta);
-    swap(m_locDate, prepared.m_locDate);
-    swap(m_locFrameIndex, prepared.m_locFrameIndex);
     swap(m_time, prepared.m_time);
     swap(m_frameIndex, prepared.m_frameIndex);
-    prepared.releaseGl();
+    m_rhi.reset(); // the renderer's own instance follows the new file
     return true;
 }
 
 bool IsfInstance::setImageInput(int index, const QString &path, QString *err)
 {
     if (index < 0 || index >= int(m_inputs.size())) return false;
-    IsfInput &in = m_inputs[index];
+    IsfInput &in = m_inputs[size_t(index)];
     if (path.isEmpty()) {
-        in.imageTex.destroy();
         in.imagePath.clear();
         return true;
     }
@@ -1057,7 +887,10 @@ bool IsfInstance::setImageInput(int index, const QString &path, QString *err)
         if (err) *err = QStringLiteral("%1 shows a layer, not an image file.").arg(in.label);
         return false;
     }
-    if (!loadImageTexture(path, in.imageTex, err)) return false;
+    if (!QImageReader(path).canRead()) {
+        if (err) *err = QStringLiteral("Cannot read the image %1.").arg(path);
+        return false;
+    }
     in.imagePath = QFileInfo(path).absoluteFilePath();
     return true;
 }
@@ -1067,163 +900,6 @@ void IsfInstance::advanceWithoutDrawing(const IsfRenderContext &rc)
     m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
     for (IsfInput &in : m_inputs) in.eventFired = false;
     ++m_frameIndex;
-}
-
-void IsfInstance::render(const IsfRenderContext &rc, GLuint inputTex, int inW, int inH, RenderTarget &out, int outW,
-                         int outH, bool repeatFrame)
-{
-    auto f = gl();
-    out.ensure(outW, outH);
-    if (!out.ready(outW, outH)) return; // a stale FBO of another size/depth is unsafe too
-    if (!m_program) {
-        // Broken shader: pass the image through (filter) or render black (generator).
-        if (inputTex) rc.blit(inputTex, out);
-        else out.clear();
-        return;
-    }
-
-    if (m_restartPending) { // from its first frame: its time, its frame count and what its persistent buffers kept
-        m_restartPending = false;
-        m_time = 0;
-        m_frameIndex = 0;
-        for (IsfTarget &t : m_targets)
-            for (RenderTarget &rt : t.rt)
-                if (rt.fbo) rt.clear();
-    }
-    const double dt = repeatFrame ? 0.0 : rc.dt * speed;
-    if (!repeatFrame) m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
-    f->glUseProgram(m_program);
-    f->glDisable(GL_BLEND);
-    if (m_locTime >= 0) f->glUniform1f(m_locTime, float(m_time));
-    if (m_locTimeDelta >= 0) f->glUniform1f(m_locTimeDelta, float(dt));
-    if (m_locFrameIndex >= 0) f->glUniform1i(m_locFrameIndex, repeatFrame ? std::max(0, m_frameIndex - 1) : m_frameIndex);
-    if (m_locDate >= 0) {
-        QDateTime now = QDateTime::currentDateTime();
-        f->glUniform4f(m_locDate, now.date().year(), now.date().month(), now.date().day(),
-                       now.time().msecsSinceStartOfDay() / 1000.0f);
-    }
-
-    int unit = 0;
-    auto bindSampler = [&](GLint loc, GLint sizeLoc, GLint rectLoc, GLuint tex, int w, int h) {
-        if (rectLoc >= 0) f->glUniform4f(rectLoc, 0.f, 0.f, tex ? float(w) : 1.f, tex ? float(h) : 1.f);
-        if (loc < 0 && sizeLoc < 0) return;
-        f->glActiveTexture(GL_TEXTURE0 + unit);
-        f->glBindTexture(GL_TEXTURE_2D, tex ? tex : rc.blackTex);
-        if (loc >= 0) f->glUniform1i(loc, unit);
-        if (sizeLoc >= 0) f->glUniform2f(sizeLoc, tex ? float(w) : 1.f, tex ? float(h) : 1.f);
-        ++unit;
-    };
-
-    for (IsfInput &in : m_inputs) {
-        switch (in.type) {
-        case IsfInput::Float: if (in.loc >= 0) f->glUniform1f(in.loc, float(in.fValue)); break;
-        case IsfInput::Bool: if (in.loc >= 0) f->glUniform1i(in.loc, in.bValue ? 1 : 0); break;
-        case IsfInput::Event: if (in.loc >= 0) f->glUniform1i(in.loc, !repeatFrame && in.eventFired ? 1 : 0); break;
-        case IsfInput::Long: if (in.loc >= 0) f->glUniform1i(in.loc, in.lValue); break;
-        case IsfInput::Point2D: if (in.loc >= 0) f->glUniform2f(in.loc, float(in.pValue.x()), float(in.pValue.y())); break;
-        case IsfInput::Color: if (in.loc >= 0) f->glUniform4fv(in.loc, 1, in.cValue); break;
-        default: break;
-        }
-    }
-    // Its pictures, bound again at every pass (a copy between two passes uses the texture units)
-    auto bindPictures = [&] {
-        unit = 0;
-        for (IsfInput &in : m_inputs) {
-            switch (in.type) {
-            case IsfInput::Image:
-                if (in.isInputImage) bindSampler(in.loc, in.sizeLoc, in.rectLoc, inputTex, inW, inH);
-                else if (in.extTex) bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.extTex, in.extW, in.extH);
-                else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
-                break;
-            case IsfInput::Audio:
-            case IsfInput::AudioFFT:
-                if (in.extTex) bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.extTex, in.extW, in.extH);
-                else bindSampler(in.loc, in.sizeLoc, in.rectLoc, in.imageTex.tex, in.imageTex.w, in.imageTex.h);
-                break;
-            default: break;
-            }
-        }
-        for (IsfImported &im : m_imported) bindSampler(im.loc, im.sizeLoc, im.rectLoc, im.tex.tex, im.tex.w, im.tex.h);
-        // Already-rendered targets are readable ("front" buffer).
-        for (IsfTarget &t : m_targets) {
-            const RenderTarget &fr = t.rt[t.front];
-            bindSampler(t.loc, t.sizeLoc, t.rectLoc, fr.tex, fr.w, fr.h);
-        }
-        for (ExtraTexture &x : m_extraTextures) {
-            if (x.program != m_program) {
-                x.loc = f->glGetUniformLocation(m_program, x.uniform.constData());
-                x.program = m_program;
-            }
-            bindSampler(x.loc, -1, -1, x.tex, 1, 1);
-        }
-    };
-
-    static const std::vector<IsfPass> kSinglePass{IsfPass{}};
-    const std::vector<IsfPass> &passes = m_passes.empty() ? kSinglePass : m_passes; // no copy per frame
-
-    for (size_t i = 0; i < passes.size(); ++i) {
-        const IsfPass &pass = passes[i];
-        const bool last = i + 1 == passes.size();
-        // Bounded before rounding: lround of a value beyond a long is unspecified (1e30 became 0, then 1 pixel)
-        const int pw = int(std::lround(std::clamp(evalSize(pass.widthExpr, outW, outH, outW), 1.0, 16384.0)));
-        const int ph = int(std::lround(std::clamp(evalSize(pass.heightExpr, outW, outH, outH), 1.0, 16384.0)));
-        // Points of a particle pass (at most 4M: a 2048 x 2048 state)
-        const int points = pass.pointsExpr.isEmpty()
-                               ? -1
-                               : int(std::lround(std::clamp(evalSize(pass.pointsExpr, outW, outH, 0), 0.0, 4194304.0)));
-
-        IsfTarget *target = nullptr;
-        if (!pass.target.isEmpty())
-            for (IsfTarget &t : m_targets) if (t.name == pass.target) target = &t;
-        if (target) {
-            target->rt[0].ensure(pw, ph, target->isFloat);
-            target->rt[1].ensure(pw, ph, target->isFloat);
-            if (!target->rt[0].ready(pw, ph, target->isFloat) ||
-                !target->rt[1].ready(pw, ph, target->isFloat)) {
-                // A failed realloc may retain an old complete FBO. Never use
-                // it with the new pass dimensions/precision.
-                return;
-            }
-        }
-
-        // Points drawn over the target's picture: it is carried into the buffer they are drawn in
-        if (target && points >= 0 && !pass.clear) {
-            rc.blit(target->rt[target->front].tex, target->rt[1 - target->front]);
-            f->glUseProgram(m_program);
-        }
-        bindPictures();
-
-        if (m_locPassIndex >= 0) f->glUniform1i(m_locPassIndex, int(i));
-
-        // Double buffer: read "front", write "back", then swap. Without target: the output (output size).
-        const RenderTarget &dst = target ? target->rt[1 - target->front] : out;
-        dst.bind();
-        if (m_locRenderSize >= 0) f->glUniform2f(m_locRenderSize, dst.w, dst.h);
-        if (points < 0) {
-            rc.drawQuad();
-        } else {
-            if (pass.clear) dst.clear();
-            if (points > 0 && rc.drawPoints) {
-                f->glEnable(GL_BLEND);
-                f->glBlendFunc(GL_ONE, pass.alphaBlend ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE);
-                rc.drawPoints(points);
-                f->glDisable(GL_BLEND);
-            }
-        }
-        if (target) {
-            target->front = 1 - target->front;
-            if (last) {
-                rc.blit(target->rt[target->front].tex, out);
-                f->glUseProgram(m_program);
-            }
-        }
-    }
-
-    if (!repeatFrame) {
-        for (IsfInput &in : m_inputs) in.eventFired = false;
-        ++m_frameIndex;
-    }
-    f->glActiveTexture(GL_TEXTURE0);
 }
 
 // ---------------------------------------------------------------------------

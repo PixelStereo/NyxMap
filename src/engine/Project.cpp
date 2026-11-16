@@ -380,7 +380,6 @@ void Engine::layerFromJson(int index, const QJsonObject &stored, const QString &
         }
 
         l->sceneDefaultMaterial = l->scene3d ? o.value("default_material").toString().toULongLong() : 0;
-        if (l->scene3d && !l->sceneRenderer) l->sceneRenderer = std::make_shared<Scene3D>();
         if (l->scene3d) {
             const QJsonObject env = o.value("environment").toObject();
             l->sceneEnvironment = env.value("layer").toString().toULongLong();

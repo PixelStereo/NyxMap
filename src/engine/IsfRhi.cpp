@@ -3,6 +3,7 @@
 // instance's own.
 #include "Isf.h"
 #include "ImageFile.h"
+#include "ImageUtil.h"
 #include "RhiResources.h"
 #include "RhiTarget.h"
 
@@ -16,11 +17,28 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <utility>
 
 namespace {
+// Baked shaders are kept by their source (the engine's instance of a shader checks it when it loads it, the renderer's
+// instance bakes it again): the same text is baked once. Errors are kept too
+struct Baked {
+    QShader shader;
+    QString error;
+};
 QShader bake(const QString &src, QShader::Stage stage, QString *err)
 {
+    static std::mutex mutex;
+    static std::map<std::pair<QString, int>, Baked> cache;
+    const std::pair<QString, int> key{src, int(stage)};
+    {
+        std::lock_guard<std::mutex> lk(mutex);
+        if (const auto found = cache.find(key); found != cache.end()) {
+            if (!found->second.shader.isValid() && err) *err += found->second.error;
+            return found->second.shader;
+        }
+    }
     QShaderBaker b;
     b.setSourceString(src.toUtf8(), stage);
     b.setGeneratedShaders({{QShader::SpirvShader, QShaderVersion(100)},
@@ -28,7 +46,11 @@ QShader bake(const QString &src, QShader::Stage stage, QString *err)
                            {QShader::HlslShader, QShaderVersion(50)}});
     b.setGeneratedShaderVariants({QShader::StandardShader});
     const QShader s = b.bake();
-    if (!s.isValid() && err) *err += b.errorMessage();
+    const QString error = s.isValid() ? QString() : b.errorMessage();
+    if (!s.isValid() && err) *err += error;
+    std::lock_guard<std::mutex> lk(mutex);
+    if (cache.size() > 512) cache.clear();
+    cache[key] = {s, error};
     return s;
 }
 
@@ -98,6 +120,14 @@ void IsfInstance::releaseRhi()
 void IsfInstance::setExtraRhiTexture(const QString &name, QRhiTexture *tex)
 {
     if (m_rhi) m_rhi->extras[name] = tex;
+}
+
+bool IsfInstance::checkShaders(const RhiSources &src, QString *err)
+{
+    QString e;
+    const bool ok = bake(src.vertex, QShader::VertexStage, &e).isValid() && bake(src.fragment, QShader::FragmentStage, &e).isValid();
+    if (!ok && err) *err = QStringLiteral("Compilation error:\n") + e;
+    return ok;
 }
 
 bool IsfInstance::isValidRhi() const { return m_rhi && m_rhi->valid; }
