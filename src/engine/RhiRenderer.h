@@ -58,6 +58,8 @@ public:
         int slot = 0;
         quint64 id = 0;
         int maxSide = 1024;
+        enum Tap { Final, PreFx, Raw } tap = Final; // a layer's picture: finished, before its effects, as its source gave it
+        QSize exact;                                 // when set: this size, whatever the aspect (a mean over a few texels)
     };
     struct PreviewPicture {
         int slot = 0;

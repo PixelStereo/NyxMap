@@ -42,6 +42,11 @@ void Engine::stepVision()
     }
     if (!m_vision && !requests.empty())
         m_vision = std::make_unique<VisionRuntime>([this] { drawQuad(); }, handModelsDirectory());
+    if (m_rhi) { // the pictures it reads come back from QRhi (Render.cpp), asked a frame ahead
+        m_rhiVisionWanted.clear();
+        for (const auto &r : requests)
+            if (r.settings.layer) m_rhiVisionWanted.insert({r.settings.layer, r.settings.tap <= 1 ? 1 : 2});
+    }
     if (!m_vision)
         return;
     m_vision->step(
@@ -52,6 +57,11 @@ void Engine::stepVision()
             const auto *source = layer(indexOfId(settings.layer));
             if (!source)
                 return {};
+            if (m_rhi) {
+                const auto picture = m_rhiReaders.find({settings.layer, settings.tap <= 1 ? 1 : 2});
+                if (picture == m_rhiReaders.end() || !picture->second.tex) return {};
+                return {picture->second.tex, picture->second.w, picture->second.h};
+            }
             if (settings.tap <= 1)
                 return {source->preFxTex, source->preFxW, source->preFxH};
             return {source->finalTex, source->finalW, source->finalH};

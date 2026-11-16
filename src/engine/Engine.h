@@ -1275,6 +1275,9 @@ private:
     int m_previewSide = 360;
     int64_t m_previewNextNs = 0;
     RenderTarget m_previewTarget;
+    // QRhi mode: the pictures the pixel readers (pixel mapping, vision) take from OpenGL textures, read back from QRhi's
+    std::map<std::pair<quint64, int>, RenderTarget> m_rhiReaders; // by layer and tap (0: the composition)
+    std::set<std::pair<quint64, int>> m_rhiVisionWanted;          // what vision asked for at its last step
     GLuint m_previewPbo = 0;
     GLsync m_previewFence = nullptr; // map only after the GPU has finished writing
     int m_previewPboW = 0, m_previewPboH = 0;

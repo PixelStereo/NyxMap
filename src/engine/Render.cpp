@@ -1994,8 +1994,48 @@ void Engine::frame(double dt)
             const PreviewSlot &slot = m_previewSlots[i];
             if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
         }
+        // The pixel readers' pictures, read back too (the offscreen frame completes at once, so they are this frame's)
+        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, visionSlot = 3000, sourcePreviewSlot = 4000;
+        std::vector<quint64> listened; // the viewports (0: the composition) sonifications listen to, by slot
+        {
+            std::set<quint64> seen;
+            for (const auto &layer : m_layers) {
+                if (!layer->audio || !layer->audio->generator() || !layer->audio->generator()->sonification()) continue;
+                const Layer *viewport = nullptr;
+                for (const auto &candidate : m_layers) {
+                    if (!candidate->isViewport) continue;
+                    if (!viewport) viewport = candidate.get();
+                    if (layer->sonificationViewport && candidate->id == layer->sonificationViewport) {
+                        viewport = candidate.get();
+                        break;
+                    }
+                }
+                if (seen.insert(viewport ? viewport->id : 0).second) listened.push_back(viewport ? viewport->id : 0);
+            }
+        }
+        for (size_t i = 0; i < listened.size(); ++i) {
+            RhiRenderer::PreviewRequest q{sonificationSlot + int(i), listened[i], 16};
+            q.exact = QSize(16, 16);
+            asked.push_back(q);
+        }
+        if (!m_fixturePoints.empty()) asked.push_back({pixelMappingSlot, 0, 1 << 20});
+        const std::vector<std::pair<quint64, int>> visionWanted(m_rhiVisionWanted.begin(), m_rhiVisionWanted.end());
+        for (size_t i = 0; i < visionWanted.size(); ++i) {
+            RhiRenderer::PreviewRequest q{visionSlot + int(i), visionWanted[i].first, 1 << 20};
+            q.tap = visionWanted[i].second == 1 ? RhiRenderer::PreviewRequest::PreFx : RhiRenderer::PreviewRequest::Final;
+            asked.push_back(q);
+        }
+        const bool sourcePreviewDue = m_previewId && m_frameStampNs >= m_previewNextNs;
+        if (sourcePreviewDue) {
+            m_previewNextNs = m_frameStampNs + 66'666'667;
+            RhiRenderer::PreviewRequest q{sourcePreviewSlot, m_previewId, std::max(1, m_previewSide)};
+            q.tap = RhiRenderer::PreviewRequest::Raw;
+            asked.push_back(q);
+        }
         m_rhi->setPreviewRequests(std::move(asked));
         m_rhi->render(rc);
+        std::map<int, std::array<float, 3>> listenedColors;
+        bool sourcePreviewGiven = false;
         {
             auto f = gl();
             for (auto &slot : m_previewSlots) { // the interface may still sample this buffer on the GPU: wait there
@@ -2007,6 +2047,34 @@ void Engine::frame(double dt)
                 slot.renderedId[m_back] = 0;
             }
             for (const auto &p : m_rhi->takePreviews()) {
+                if (p.slot >= sourcePreviewSlot) {
+                    QImage img(reinterpret_cast<const uchar *>(p.pixels.constData()), p.size.width(), p.size.height(), QImage::Format_RGBA8888);
+                    std::lock_guard<std::mutex> lk(m_previewMutex);
+                    m_previewImage = flippedVertically(img.copy());
+                    m_previewImageId = p.id;
+                    sourcePreviewGiven = true;
+                    continue;
+                }
+                if (p.slot >= visionSlot || p.slot >= pixelMappingSlot) {
+                    // pixel mapping (the composition) and vision (a layer, by its tap) read these as OpenGL textures
+                    const bool mapping = p.slot < visionSlot;
+                    const int tap = mapping ? 0 : visionWanted[size_t(p.slot - visionSlot)].second;
+                    RenderTarget &target = m_rhiReaders[{mapping ? 0 : p.id, tap}];
+                    target.ensure(p.size.width(), p.size.height());
+                    if (!target.tex) continue;
+                    f->glBindTexture(GL_TEXTURE_2D, target.tex);
+                    f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                    f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
+                    continue;
+                }
+                if (p.slot >= sonificationSlot) { // 16 × 16: the mean colour
+                    std::array<float, 3> rgb{};
+                    const auto *px = reinterpret_cast<const unsigned char *>(p.pixels.constData());
+                    for (int i = 0; i < 16 * 16 * 4; i += 4)
+                        for (int c = 0; c < 3; ++c) rgb[size_t(c)] += px[i + c] / (255.f * 16 * 16);
+                    listenedColors[p.slot - sonificationSlot] = rgb;
+                    continue;
+                }
                 PreviewSlot &slot = m_previewSlots[size_t(p.slot)];
                 RenderTarget &target = p.id ? slot.target[m_back] : m_output[m_back];
                 target.ensure(p.size.width(), p.size.height());
@@ -2016,6 +2084,30 @@ void Engine::frame(double dt)
                 f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
                 slot.renderedId[m_back] = p.id;
             }
+            if (sourcePreviewDue && !sourcePreviewGiven) { // the layer has no picture: nothing to show
+                std::lock_guard<std::mutex> lk(m_previewMutex);
+                m_previewImage = QImage();
+                m_previewImageId = m_previewId;
+            }
+            for (const auto &layer : m_layers) { // a sonification takes the colour of the viewport it listens to
+                if (!layer->audio || !layer->audio->generator() || !layer->audio->generator()->sonification()) continue;
+                const Layer *viewport = nullptr;
+                for (const auto &candidate : m_layers) {
+                    if (!candidate->isViewport) continue;
+                    if (!viewport) viewport = candidate.get();
+                    if (layer->sonificationViewport && candidate->id == layer->sonificationViewport) {
+                        viewport = candidate.get();
+                        break;
+                    }
+                }
+                const quint64 id = viewport ? viewport->id : 0;
+                for (size_t i = 0; i < listened.size(); ++i)
+                    if (listened[i] == id)
+                        if (const auto c = listenedColors.find(int(i)); c != listenedColors.end())
+                            layer->audio->generator()->setColor(c->second[0], c->second[1], c->second[2]);
+            }
+            stepVision();
+            stepPixelMapping(); // the fixtures read the composition as it goes out
             { // the others' GPUs wait for these uploads (waitForFrame)
                 std::lock_guard<std::mutex> lk(m_fenceMutex);
                 if (m_frameFence) f->glDeleteSync(m_frameFence);

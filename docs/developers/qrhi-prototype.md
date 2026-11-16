@@ -56,9 +56,18 @@ it and the parts ported so far.
   preview slots ask for (the composition, a layer, a viewport) are reduced to at
   most 1024 px, read back during the frame and uploaded into the slots' OpenGL
   textures, which the interface reads as before (`rhi_preview`). This bridge goes
-  with the interface's own views. Not yet: 3D views, the inspector's source
-  preview, publishing (Syphon, Spout, NDI, OMT), and what reads the composition's
-  pixels (sonification, vision, pixel mapping): they read OpenGL's pictures.
+  with the interface's own views. Not yet: 3D views, publishing (Syphon, Spout,
+  NDI, OMT).
+- **Pixel readers**, through the same bridge: the pictures they need are read back
+  from QRhi during the frame and, where an OpenGL reader still takes a texture,
+  uploaded into one. The inspector's source preview (a layer's picture before
+  its ROI, at up to 15 Hz), pixel mapping (the composition, read back whole while
+  there are fixtures; `rhi_preview` checks the universe), vision (the layers and
+  taps it asks for, one frame behind) and the sonification's mean colour (a
+  16 × 16 read of the viewport listened to, averaged on the CPU). Unlike OpenGL's
+  they do not trail the GPU by a frame (the offscreen frame completes at once),
+  but they cost a whole picture's readback each frame; a GPU sampler would
+  replace them. Sonification and vision are not covered by a test yet.
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

@@ -603,6 +603,8 @@ void Engine::releaseAll()
     for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
     m_isfAudioTextures.clear();
     m_previewTarget.destroy();
+    for (auto &[key, target] : m_rhiReaders) target.destroy();
+    m_rhiReaders.clear();
     for (auto &slot : m_previewSlots) {
         for (auto &target : slot.target) target.destroy();
         for (auto &editor : slot.editor) if (editor) editor->releaseGl();

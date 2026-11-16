@@ -7,6 +7,7 @@
 
 #include <QGuiApplication>
 #include <QImage>
+#include <QTemporaryDir>
 #include <QSurfaceFormat>
 #include <QThread>
 
@@ -102,6 +103,56 @@ int main(int argc, char **argv)
         missing = e.previewTexture(2, nullptr);
     });
     check(!missing, "a layer that is not there shows nothing");
+    // The inspector's source preview: the layer's picture before its ROI, as the OpenGL renderer gives it
+    e.requestSourcePreview(id, 200);
+    QImage source;
+    quint64 sourceId = 0;
+    for (int k = 0; k < 40 && source.isNull(); ++k) {
+        e.renderFrame();
+        QThread::msleep(20);
+        source = e.sourcePreview(&sourceId);
+    }
+    check(!source.isNull() && sourceId == id, "the source preview comes back");
+    check(!source.isNull() && std::max(source.width(), source.height()) == 200, "reduced to the side asked");
+    e.requestSourcePreview(0);
+
+    // Pixel mapping: the composition sampled at the fixtures' pixels (a red left half, a blue right half)
+    QTemporaryDir tmp;
+    QImage halves(64, 32, QImage::Format_RGB32);
+    for (int y = 0; y < 32; ++y)
+        for (int x = 0; x < 64; ++x) halves.setPixel(x, y, x < 32 ? qRgb(255, 0, 0) : qRgb(0, 0, 255));
+    const QString halvesPath = tmp.path() + "/halves.png";
+    halves.save(halvesPath);
+    e.newProject();
+    e.setCompositionSize(QSize(64, 32));
+    e.setLayerImage(e.addLayer(QStringLiteral("Halves")), halvesPath, &err);
+    FixturePatch patch;
+    FixtureType pair;
+    pair.id = "pair";
+    pair.cols = 2;
+    pair.perPixel = {{ChannelRole::Red}, {ChannelRole::Green}, {ChannelRole::Blue}};
+    patch.types.push_back(pair);
+    DmxOutput output;
+    output.id = 1;
+    output.enabled = false; // nothing on the network here
+    patch.outputs.push_back(output);
+    Fixture fixture;
+    fixture.type = "pair";
+    fixture.output = 1;
+    fixture.universe = 5;
+    fixture.address = 100;
+    fixture.size = {1.0, 0.5};
+    patch.fixtures.push_back(fixture);
+    e.setFixturePatch(patch);
+    QByteArray u;
+    for (int k = 0; k < 60; ++k) {
+        e.renderFrame();
+        u = e.dmxUniverse(1, 5);
+        if (u.size() == 512 && quint8(u.at(99)) == 255) break;
+    }
+    auto at = [&](int address) { return u.size() == 512 ? int(quint8(u.at(address - 1))) : -1; };
+    check(at(100) == 255 && at(101) == 0 && at(102) == 0, "pixel mapping: the left pixel is red");
+    check(at(103) == 0 && at(104) == 0 && at(105) == 255, "pixel mapping: the right pixel is blue");
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
     return g_failures ? 1 : 0;

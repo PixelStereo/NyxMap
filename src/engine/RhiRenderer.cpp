@@ -1175,11 +1175,14 @@ void RhiRenderer::render(const IsfRenderContext &rc)
         if (!q.id) tex = d->compositionOut.texture();
         else if (const auto found = d->layers.find(q.id); found != d->layers.end()) {
             const Layer *l = d->e.layer(d->e.indexOfId(q.id));
-            tex = l && l->isViewport ? found->second.out.texture() : found->second.final;
+            if (q.tap == PreviewRequest::Raw) tex = found->second.raw;
+            else if (q.tap == PreviewRequest::PreFx) tex = found->second.preFx;
+            else tex = l && l->isViewport ? found->second.out.texture() : found->second.final;
         }
         if (!tex) continue;
         QSize size = tex->pixelSize();
-        if (size.width() > q.maxSide || size.height() > q.maxSide) size.scale(q.maxSide, q.maxSide, Qt::KeepAspectRatio);
+        if (!q.exact.isEmpty()) size = q.exact;
+        else if (size.width() > q.maxSide || size.height() > q.maxSide) size.scale(q.maxSide, q.maxSide, Qt::KeepAspectRatio);
         RhiTarget &small = d->previewTargets[q.slot];
         small.ensure(d->rhi.get(), size);
         if (!small.ready() || !d->res().blit(d->cb, tex, small, d->take())) continue;
