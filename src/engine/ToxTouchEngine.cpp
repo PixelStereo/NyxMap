@@ -19,8 +19,15 @@
 #endif
 #include <TouchEngine/TEOpenGL.h>
 #include <TouchEngine/TEObject.h>
-#ifdef Q_OS_MACOS
+// Through QRhi's own device, without OpenGL: Metal on macOS (ToxMetal), Direct3D 11 on Windows (ToxD3D11)
+#if defined(Q_OS_MACOS)
 #include "ToxMetal.h"
+using ToxRhiBackend = ToxMetal;
+#define NYXMAP_TOX_RHI
+#elif defined(Q_OS_WIN)
+#include "ToxD3D11.h"
+using ToxRhiBackend = ToxD3D11;
+#define NYXMAP_TOX_RHI
 #endif
 
 namespace {
@@ -116,9 +123,9 @@ class NativeTox final : public ToxPlayer {
     // readback or glFinish in the render loop; the next update polls this fence.
     TEOpenGLTexture *m_output = nullptr;
     GLsync m_fence = nullptr;
-#ifdef Q_OS_MACOS
-    // Through QRhi's Metal device (no OpenGL): chosen by the first takeTexture()
-    std::unique_ptr<ToxMetal> m_metal;
+#ifdef NYXMAP_TOX_RHI
+    // Through QRhi's device (no OpenGL): chosen by the first takeTexture()
+    std::unique_ptr<ToxRhiBackend> m_metal; // the backend's own context and textures
     QRhi *m_rhi = nullptr;
     QMap<QString, QRhiTexture *> m_rhiImages;
     QRhiTexture *m_picture = nullptr;
@@ -126,14 +133,14 @@ class NativeTox final : public ToxPlayer {
     bool m_pictureFlipped = false;
 #endif
     bool metalMode() const {
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         return m_rhi != nullptr;
 #else
         return false;
 #endif
     }
     bool contextReady() const {
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         if (m_rhi) return m_metal != nullptr;
 #endif
         return m_context != nullptr;
@@ -182,13 +189,13 @@ class NativeTox final : public ToxPlayer {
     }
     void close() {
         releaseOutput(true);
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         if (m_metal) m_metal->releaseOutput(m_instance);
         m_picture = nullptr;
 #endif
         if (m_instance && m_cooking) TEInstanceCancelFrame(m_instance);
         TERelease(&m_instance); // joins callbacks before their owner/pool is destroyed
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         m_metal.reset(); // its textures went with the instance's last use
 #endif
         for (auto &pool : m_pool) for (auto &slot : pool) if (slot) { TERelease(&slot->handle); m_retired.push_back(slot); }
@@ -206,11 +213,11 @@ class NativeTox final : public ToxPlayer {
         if (!check(TEInstanceCreate(event, link, this, &m_instance))) return false;
         const QByteArray enginePath = qgetenv("TOUCHENGINE_APP_PATH");
         if (!enginePath.isEmpty() && !check(TEInstanceSetPreferredEnginePath(m_instance, enginePath.constData()))) return false;
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         if (m_rhi) { // Metal, on QRhi's device
             QString why;
-            m_metal = ToxMetal::create(m_rhi, &why);
-            if (!m_metal) { message(why.isEmpty() ? QStringLiteral("TouchEngine cannot use QRhi's Metal device") : why, true); return false; }
+            m_metal = ToxRhiBackend::create(m_rhi, &why);
+            if (!m_metal) { message(why.isEmpty() ? QStringLiteral("TouchEngine cannot use QRhi's device") : why, true); return false; }
             if (!check(TEInstanceAssociateGraphicsContext(m_instance, m_metal->context()))) return false;
         } else
 #endif
@@ -341,7 +348,7 @@ class NativeTox final : public ToxPlayer {
         return true;
     }
     void sendInputs(const ToxSettings &s) {
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         if (m_metal) {
             for (const auto &top : inputs()) {
                 const QByteArray id = top.first.toUtf8();
@@ -381,8 +388,8 @@ class NativeTox final : public ToxPlayer {
             }
         }
     }
-#ifdef Q_OS_MACOS
-    // The output TOP's newest picture as a QRhi texture (Metal)
+#ifdef NYXMAP_TOX_RHI
+    // The output TOP's newest picture as a QRhi texture
     bool receiveRhi(const ToxSettings &s) {
         const auto tops = outputs();
         QString selected = s.output;
@@ -468,7 +475,7 @@ public:
     bool update(Texture2D &dest) override { return run(&dest); }
     // Through QRhi's Metal device: the newest picture (the last one while there is no new)
     QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override {
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         if (!usesRhi(rhi)) return nullptr;
         m_rhi = rhi;
         run(nullptr);
@@ -481,15 +488,15 @@ public:
 #endif
     }
     bool usesRhi(QRhi *rhi) const override {
-#ifdef Q_OS_MACOS
-        return rhi && rhi->backend() == QRhi::Metal;
+#ifdef NYXMAP_TOX_RHI
+        return rhi && rhi->backend() == ToxRhiBackend::kBackend;
 #else
         (void)rhi;
         return false;
 #endif
     }
     void setInputRhiTexture(const QString &id, QRhiTexture *t) override {
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
         m_rhiImages[id] = t;
 #else
         (void)id; (void)t;
@@ -516,7 +523,7 @@ public:
         bool copied = false;
         if (m_finished.load() && !m_output) {
             m_finished = false; m_cooking = false;
-#ifdef Q_OS_MACOS
+#ifdef NYXMAP_TOX_RHI
             if (m_metal) copied = receiveRhi(s);
             else
 #endif

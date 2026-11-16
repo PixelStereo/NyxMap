@@ -9,12 +9,14 @@
 #include <QString>
 #include <memory>
 
-class QRhi;
+#include <rhi/qrhi.h>
+
 class QRhiTexture;
 
 class ToxMetal
 {
 public:
+    static constexpr QRhi::Implementation kBackend = QRhi::Metal;
     // The Metal device of `rhi` (nullptr when it is not a Metal QRhi)
     static std::unique_ptr<ToxMetal> create(QRhi *rhi, QString *error);
     ~ToxMetal();

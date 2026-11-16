@@ -61,9 +61,16 @@ it and the parts ported so far.
   ("No TouchDesigner or TouchPlayer key was found"), so a cook was never run: the
   instance is created, the Metal context associated and the component loaded up
   to the licence check. `NYXMAP_TOX=<component> NYXMAP_RENDERER=rhi nyxmap_tox_real_test`
-  runs a real component and prints what comes out (needs a licence). Windows
-  (Direct3D 11) keeps the OpenGL path with read-back pictures (`rhi_preview` checks
-  it with a stand-in component). Not yet: 3D scenes.
+  runs a real component and prints what comes out (needs a licence). On Windows,
+  `ToxD3D11` does the same through QRhi's Direct3D 11 device: inputs copied into
+  pooled textures wrapped by `TED3D11TextureCreate` (the SDK's D3D11 context
+  synchronises them), outputs opened with `TED3D11ContextGetTexture`, held
+  through their DXGI keyed mutex (acquired at the value the instance gives,
+  released to 0 or to the next value when it asks for it) and wrapped as QRhi
+  textures. Written from the SDK's own example without a Windows machine here:
+  built by the Windows CI, never run. Where the device is not Metal or Direct3D 11
+  the OpenGL path with read-back pictures remains (`rhi_preview` checks it with a
+  stand-in component). Not yet: 3D scenes.
 - **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
   the engine's QRhi, made by the render thread; its viewport's picture is drawn
   into it as it is, the right way up (the textures' flip, reversed). The window's

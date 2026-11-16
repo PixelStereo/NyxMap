@@ -48,7 +48,9 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
       IMPORTED_IMPLIB "${nyxmap_touchengine_SOURCE_DIR}/lib/TouchEngine.lib"
       IMPORTED_LOCATION "${NYXMAP_TOUCHENGINE_DLL}"
       INTERFACE_INCLUDE_DIRECTORIES "${nyxmap_touchengine_SOURCE_DIR}/include")
-    target_link_libraries(nyxmap_engine PRIVATE opengl32)
+    target_link_libraries(nyxmap_engine PRIVATE opengl32 d3d11 dxgi)
+    # Through QRhi's Direct3D 11 device (no OpenGL): ToxD3D11
+    target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxD3D11.cpp)
     # Also used by the tests; multi-config executables are in their configuration directory.
     file(COPY "${NYXMAP_TOUCHENGINE_DLL}" DESTINATION "${CMAKE_BINARY_DIR}")
     foreach(_te_config Debug Release RelWithDebInfo MinSizeRel)
