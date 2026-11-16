@@ -832,6 +832,10 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_rhi_composition_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME rhi_composition COMMAND nyxmap_rhi_composition_test --seconds 0.5)
   set_tests_properties(rhi_composition PROPERTIES SKIP_RETURN_CODE 77)
+  # These tests each create their own native GPU device/context (D3D11 on Windows, Metal on macOS,
+  # Vulkan elsewhere). Running several at once can exhaust software/CI adapters and crash drivers;
+  # serialize GPU integration tests while keeping the CPU-only suite parallel.
+  set_tests_properties(isf_rhi isf_render rhi_engine rhi_video rhi_composition PROPERTIES RUN_SERIAL TRUE)
   add_executable(nyxmap_naming_test test/naming.cpp)
   target_include_directories(nyxmap_naming_test PRIVATE src/engine)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
