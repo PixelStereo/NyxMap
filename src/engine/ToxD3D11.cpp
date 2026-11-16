@@ -1,14 +1,20 @@
 #include "ToxD3D11.h"
 
-#include <TouchEngine/TED3D11.h>
-#include <TouchEngine/TEObject.h>
-#include <TouchEngine/TETexture.h>
-
+// The SDK's Direct3D headers want windows.h (HANDLE) and the DXGI types before them
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dxgiformat.h>
+
+#include <TouchEngine/TED3D11.h>
+#include <TouchEngine/TEObject.h>
+#include <TouchEngine/TETexture.h>
 
 #include <array>
 #include <atomic>
