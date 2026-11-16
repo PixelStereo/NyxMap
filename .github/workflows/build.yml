@@ -627,6 +627,8 @@ jobs:
           # copies it with the input context plugins, take it out before the dependencies are resolved
           rm -rf "$APP"/Contents/Frameworks/QtVirtualKeyboard*.framework "$APP/Contents/PlugIns/virtualkeyboard" \
             "$APP"/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin*.dylib
+          # The NMEA position plugin reads a serial GPS and needs QtSerialPort, which NyxMap does not ship
+          rm -f "$APP"/Contents/PlugIns/position/libqtposition_nmea*.dylib
 
           # Open Media Transport (MIT, built from source, universal): in Frameworks, where NyxMap looks for it first
           python3 scripts/build_omt.py "$RUNNER_TEMP/omt"
