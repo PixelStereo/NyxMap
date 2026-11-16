@@ -6,6 +6,8 @@
 // scene's camera (Scene tab) and an object's values (3D tab), each edit one undo step.
 #include "Engine.h"
 #include <QRhiWidget>
+#include "RhiDevice.h"
+#include <memory>
 #include "fx3d_test.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
@@ -1005,7 +1007,8 @@ int runScene3dUiTests(Engine &engine)
             const QImage after = preview ? preview->grab().toImage() : QImage();
             check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
             // The engine's shaders are baked without GLSL: a window left on OpenGL (a CI without Vulkan) cannot draw them
-            const bool drawable = preview && preview->api() != QRhiWidget::Api::OpenGL;
+            const std::unique_ptr<QRhi> probe = rhidevice::create();
+            const bool drawable = preview && preview->api() != QRhiWidget::Api::OpenGL && probe && !rhidevice::isVirtualDevice(probe.get());
             if (drawable)
                 check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
             if (const QString file = qEnvironmentVariable("NYXMAP_MATERIAL_CAPTURE"); !file.isEmpty()) materials.grab().save(file);

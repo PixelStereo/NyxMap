@@ -4,6 +4,7 @@
 //
 // nyxmap_rhi_output_test [--dump DIR]   Exit 77 (skipped) without a QRhi backend or when the window is not exposed.
 #include "Engine.h"
+#include "RhiDevice.h"
 #include "Layer.h"
 
 #include <QDir>
@@ -33,6 +34,13 @@ int main(int argc, char **argv)
     }
     const QString root = QStringLiteral(TEST_DIR);
 
+    {
+        const std::unique_ptr<QRhi> probe = rhidevice::create();
+        if (probe && rhidevice::isVirtualDevice(probe.get())) {
+            std::printf("SKIP: %s is a virtual GPU, its pictures are not OpenGL's to the pixel\n", probe->driverInfo().deviceName.constData());
+            return 77;
+        }
+    }
     Engine e;
     e.setRhiRendering(true);
     QString err;
