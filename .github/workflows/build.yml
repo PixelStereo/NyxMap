@@ -14,6 +14,11 @@ on:
   schedule:
     - cron: '17 2 * * *'
 
+env:
+  # One Qt on macOS and Windows (.github/actions/qt; build.ps1 reads it here): the QRhi renderer has no compatibility
+  # guarantee across Qt versions. Linux builds with its distribution's (Ubuntu 26.04: 6.10) for now
+  QT_VERSION: '6.12.0'
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
@@ -531,13 +536,14 @@ jobs:
           name: test-media
           path: test/media
       - name: Dependencies
-        # Homebrew's qt includes Qt WebEngine (the Web Page generator) on macOS 14 or later. The runner image's
-        # Homebrew as it is: no update of every formula first, no cleanup or dependents check after
+        # Qt from .github/actions/qt (pinned), the rest from the runner image's Homebrew as it is: no update of every
+        # formula first, no cleanup or dependents check after
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-        run: brew install qt ffmpeg pkg-config ccache
+        run: brew install ffmpeg pkg-config ccache
+      - uses: ./.github/actions/qt
       - name: Compiler cache
         uses: ./.github/actions/ccache
         with:
@@ -549,7 +555,7 @@ jobs:
         run: |
           # Keep packaging independent of any stale build artifacts.
           rm -rf build
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)" -DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DNYXMAP_ACCEPT_TOUCHENGINE_LICENSE=ON
           cmake --build build -j4
           cmake --build build --target nyxmap_tests -j4
           ccache --show-stats
@@ -587,7 +593,7 @@ jobs:
       - name: Dependency versions
         if: needs.scope.outputs.package == 'true'
         run: |
-          { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; brew list --versions qt ffmpeg; } \
+          { echo "Built on macOS $(sw_vers -productVersion) $(uname -m), commit $GITHUB_SHA"; echo "Qt $QT_VERSION (aqtinstall)"; brew list --versions ffmpeg; } \
             | tee deps-macos.txt
           echo "TouchEngine macOS SDK c3ceb1ab540db44dbfed4fb1bdb7bbfbb0305962 (Shared Use License; licenses/touchengine.txt)" >> deps-macos.txt
       - name: Homebrew FFmpeg version
@@ -618,7 +624,7 @@ jobs:
           APP_NAME="$(python3 -c 'import json; print(json.load(open("build/application.json"))["name"])')"
           APP="build/$APP_NAME.app"
           EXE="$APP/Contents/MacOS/$APP_NAME"
-          QT_PREFIX="$(brew --prefix qt)"
+          QT_PREFIX="$QT_ROOT_DIR"
 
           test -d "$APP"
           test -f "$EXE"
@@ -759,7 +765,6 @@ jobs:
     runs-on: windows-latest
     needs: [scope, media]
     env:
-      QT_VERSION: '6.12.0' # the QRhi renderer: the same Qt as macOS (QRhi has no compatibility guarantee across versions)
       QT_ARCH: 'win64_msvc2022_64'
       # Avoid the daily deletion/re-upload window of BtbN's mutable "latest" assets. Pin a month-end autobuild:
       # BtbN prunes its daily releases after about two weeks but keeps the last one of each month much longer.
@@ -774,13 +779,9 @@ jobs:
       - uses: actions/setup-dotnet@v4 # OMT: libomt is built with .NET Native AOT
         with:
           dotnet-version: '8.0.x'
-      - uses: jurplel/install-qt-action@v4
+      - uses: ./.github/actions/qt
         with:
-          version: ${{ env.QT_VERSION }}
           arch: ${{ env.QT_ARCH }}
-          # Qt WebEngine (the Web Page generator) and the modules aqt needs installed with it
-          modules: 'qtmultimedia qtshadertools qtwebengine qtwebchannel qtpositioning'
-          cache: true
       - name: FFmpeg
         shell: pwsh
         run: |
