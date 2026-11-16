@@ -88,7 +88,11 @@ struct IsfInstance::RhiState {
 
 void IsfInstance::RhiStateDeleter::operator()(RhiState *s) const { delete s; }
 
-void IsfInstance::releaseRhi() { m_rhi.reset(); }
+void IsfInstance::releaseRhi()
+{
+    if (m_rhi && m_rhi->rhi && !m_rhi->rhi->isDeviceLost()) m_rhi->rhi->finish();
+    m_rhi.reset();
+}
 
 bool IsfInstance::isValidRhi() const { return m_rhi && m_rhi->valid; }
 

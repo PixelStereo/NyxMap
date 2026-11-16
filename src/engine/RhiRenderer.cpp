@@ -1072,11 +1072,13 @@ RhiRenderer::~RhiRenderer()
 {
     if (!d->rhi) return;
     if (d->pending) d->pending->release();
+    if (!d->rhi->isDeviceLost()) d->rhi->finish();
     d->outputs.clear(); // swapchains before the QRhi
+    d->pipelines.clear();
+    RhiResources::of(d->rhi.get()).resetPipelines();
     d->layers.clear();
     d->outgoing.clear();
     d->compositionOut.release();
-    d->pipelines.clear();
     d->ubufs.clear();
     d->flip.reset();
     d->gridIndices.reset();
@@ -1231,6 +1233,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     }
     if (!retired.empty()) {
         // These pipelines can retain bindings to the retired layer's textures.
+        if (!d->rhi->isDeviceLost()) d->rhi->finish();
         d->pipelines.clear();
         RhiResources::of(d->rhi.get()).resetPipelines();
         retired.clear();
