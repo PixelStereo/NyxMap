@@ -2,13 +2,13 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include "RhiVideoSurface.h"
-
-#include <rhi/qrhi.h>
-
-#include <d3d10_1.h> // must precede d3d10.h (also pulled in by the D3D11 headers)
+// QRhi's Windows headers may include d3d10.h; the 10.1 header must be seen first.
+#include <d3d10_1.h>
 #include <d3d10.h>
 #include <d3d11.h>
+
+#include "RhiVideoSurface.h"
+#include <rhi/qrhi.h>
 
 extern "C" {
 #include <libavutil/frame.h>
