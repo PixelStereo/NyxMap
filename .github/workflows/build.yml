@@ -555,10 +555,6 @@ jobs:
         with:
           python-version: '3.11'
       - name: Engine tests
-        env:
-          # The runner's paravirtual GPU does not run the QRhi renderer's pictures (a dozen engine tests draw wrong or crash
-          # there); these tests run on OpenGL here, QRhi's on Metal are run on a Mac with a real GPU (rhi_* tests)
-          NYXMAP_RENDERER: gl
         run: |
           ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           python3 scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
