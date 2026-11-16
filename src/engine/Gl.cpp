@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <atomic>
 #include "Gl.h"
+#include "VideoBudget.h"
 #include <QByteArray>
 #include <QDebug>
 #include <QHash>
@@ -123,6 +125,7 @@ bool RenderTarget::ensure(int nw, int nh, bool flt)
     h = nh;
     isFloat = flt;
     bits = wantBits;
+    videoBudget::addGpu(videoBudget::Gpu::Targets, bytes());
     clear();
     return true; // a new, complete target
 }
@@ -143,8 +146,11 @@ void RenderTarget::clear(float r, float g, float b, float a) const
     f->glClear(GL_COLOR_BUFFER_BIT);
 }
 
+size_t RenderTarget::bytes() const { return tex ? size_t(w) * size_t(h) * (isFloat ? 16 : bits > 8 ? 8 : 4) : 0; }
+
 void RenderTarget::destroy()
 {
+    videoBudget::removeGpu(videoBudget::Gpu::Targets, bytes());
     auto f = gl();
     if (fbo) f->glDeleteFramebuffers(1, &fbo);
     if (tex) f->glDeleteTextures(1, &tex);
@@ -181,6 +187,7 @@ void MsaaBuffer::ensure(int nw, int nh, int s)
     h = nh;
     samples = s;
     bits = wantBits;
+    videoBudget::addGpu(videoBudget::Gpu::Targets, bytes());
 }
 
 void MsaaBuffer::resolveInto(const RenderTarget &target) const
@@ -193,8 +200,14 @@ void MsaaBuffer::resolveInto(const RenderTarget &target) const
     f->glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
 }
 
+size_t MsaaBuffer::bytes() const
+{
+    return rbo ? size_t(w) * size_t(h) * size_t(std::max(1, samples)) * (bits > 8 ? 8 : 4) : 0;
+}
+
 void MsaaBuffer::destroy()
 {
+    videoBudget::removeGpu(videoBudget::Gpu::Targets, bytes());
     auto f = gl();
     if (fbo) f->glDeleteFramebuffers(1, &fbo);
     if (rbo) f->glDeleteRenderbuffers(1, &rbo);
@@ -232,9 +245,11 @@ void Texture2D::uploadPixels(const void *rgba, int nw, int nh, GLenum format, GL
     f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     f->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     if (nw != w || nh != h || storageFormat != format) {
+        videoBudget::removeGpu(videoBudget::Gpu::Images, bytes());
         w = nw; h = nh;
         storageFormat = format;
         f->glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, GL_RGBA, type, rgba);
+        videoBudget::addGpu(videoBudget::Gpu::Images, bytes());
     } else {
         f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, type, rgba);
     }
@@ -245,8 +260,15 @@ void Texture2D::uploadFloat(const float *rgba, int nw, int nh)
     uploadPixels(rgba, nw, nh, GL_RGBA32F, GL_FLOAT);
 }
 
+size_t Texture2D::bytes() const
+{
+    const size_t texel = storageFormat == GL_RGBA32F ? 16 : storageFormat == GL_RGBA16 ? 8 : 4;
+    return tex && storageFormat ? size_t(w) * size_t(h) * texel : 0;
+}
+
 void Texture2D::destroy()
 {
+    videoBudget::removeGpu(videoBudget::Gpu::Images, bytes());
     if (tex) gl()->glDeleteTextures(1, &tex);
     tex = 0;
     w = h = 0;

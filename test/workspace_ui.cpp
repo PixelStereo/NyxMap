@@ -34,6 +34,8 @@
 #include <QUndoStack>
 #include <QListWidget>
 #include <QLabel>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolButton>
@@ -536,6 +538,31 @@ int main(int argc, char **argv)
             QEvent leave(QEvent::Leave);
             QApplication::sendEvent(usageStatus, &leave);
             check(contextHelp->text().isEmpty(), "context help clears on leave");
+
+            // NyxMap's memory beside the system's: GPU allocated, video frames against their budget, the detail hovered
+            auto *memory = window.findChild<QLabel *>("showMemoryStatus");
+            check(memory && memory->text().contains("GPU mem ") && memory->text().contains("Video ") && memory->text().contains(" / "),
+                  "the status bar shows NyxMap's GPU and video memory");
+            if (memory) {
+                const QPoint at = memory->rect().center();
+                QHelpEvent hover(QEvent::ToolTip, at, memory->mapToGlobal(at));
+                QApplication::sendEvent(memory, &hover);
+                check(contextHelp->text().startsWith("NyxMap's memory. GPU") && contextHelp->text().contains("render targets")
+                          && contextHelp->text().contains("Decode threads"),
+                      "hovered, the memory readout explains itself in the help line");
+                QEvent out(QEvent::Leave);
+                QApplication::sendEvent(memory, &out);
+            }
+            QJsonObject over{{"graphics_memory_allocated_mb", 1536.0}, {"video_memory_mb", 300.0}, {"video_memory_budget_mb", 2560.0},
+                             {"upload_buffer_layers", 2}, {"warnings", QJsonArray{"decoded_frames", "graphics_memory"}}};
+            check(MainWindow::showMemoryText(over) == QString::fromUtf8("⚠ GPU mem 1.5 GB  ·  Video 300 MB / 2.5 GB"),
+                  "a budget exceeded is flagged, sizes read as MB and GB");
+            const QString overHelp = MainWindow::showMemoryHelp(over);
+            check(overHelp.contains("for 2 layers") && overHelp.contains("Over budget: decoded frames (videos keep fewer frames ahead), "
+                                                                        "graphics card nearly full."),
+                  "the help says which budget is exceeded and what it does");
+            over.remove("warnings");
+            check(!MainWindow::showMemoryText(over).startsWith(QString::fromUtf8("⚠")), "no flag within budget");
 
             QTableWidget actions(1, 1, &window);
             actions.setItem(0, 0, new QTableWidgetItem("Action"));

@@ -4,6 +4,7 @@
 #include "EngineInternal.h"
 #include "Midi.h"
 #include "ProcessMemory.h"
+#include "VideoBudget.h"
 #include "VideoDecoder.h"
 #include "VideoTexture.h"
 #include "VisionRuntime.h"
@@ -1096,7 +1097,7 @@ void Engine::sampleResources()
     if (freeKb >= 0 && ((totalKb > 0 && freeKb * 10 < totalKb) || (totalKb <= 0 && freeKb < 256 * 1024))) over |= 8;
     const quint32 before = m_overBudget.exchange(over);
     static const char *const what[] = {"decoded frames over their memory budget (each stream keeps 2 ahead)",
-                                       "upload buffers over their budget (shared among the layers)",
+                                       "upload buffers over their budget (its limit was lowered: the extra ones go as they come back)",
                                        "software decoders' threads over the budget (new ones share it)",
                                        "graphics memory nearly full"};
     for (int k = 0; k < 4; ++k)
@@ -1112,12 +1113,20 @@ QJsonObject Engine::resourcesJson() const
     o["upload_buffers_mb"] = mb(VideoTexture::pboBytesInUse());
     o["upload_buffers_budget_mb"] = mb(VideoTexture::pboBudgetBytes());
     o["upload_buffer_layers"] = VideoTexture::pboStreams();
+    o["video_memory_mb"] = mb(videoBudget::memoryInUse());
+    o["video_memory_budget_mb"] = mb(videoBudget::memoryLimit());
     o["software_decoders"] = VideoDecoder::softwareDecodersOpen();
     o["software_decode_threads"] = VideoDecoder::softwareThreadsInUse();
     o["software_decode_thread_budget"] = VideoDecoder::softwareThreadBudgetNow();
     o["hap_workers"] = workers::threadCount();
     o["ffmpeg_errors_total"] = double(VideoDecoder::ffmpegErrorsTotal());
     o["empty_video_loops_stopped_total"] = double(VideoDecoder::emptyLoopStopsTotal());
+    // What NyxMap allocated on the GPU (estimated from sizes and formats; the driver's own figures below)
+    o["graphics_memory_allocated_mb"] = mb(videoBudget::gpuInUse());
+    o["graphics_memory_render_targets_mb"] = mb(videoBudget::gpuInUse(videoBudget::Gpu::Targets));
+    o["graphics_memory_images_mb"] = mb(videoBudget::gpuInUse(videoBudget::Gpu::Images));
+    o["graphics_memory_video_planes_mb"] = mb(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes));
+    o["graphics_memory_video_surfaces_mb"] = mb(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces));
     if (m_vramFreeKb.load() >= 0) o["graphics_memory_free_mb"] = double(m_vramFreeKb.load()) / 1024.0;
     if (m_vramTotalKb.load() > 0) o["graphics_memory_total_mb"] = double(m_vramTotalKb.load()) / 1024.0;
     if (const uint64_t rss = processMemory::residentBytes()) o["process_resident_mb"] = mb(size_t(rss)); // all of it

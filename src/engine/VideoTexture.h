@@ -44,7 +44,7 @@ private:
 class VideoTexture
 {
 public:
-    // Upload buffers of every video layer (any thread): bytes allocated, the budget they share, layers having some
+    // Upload buffers of every video layer (any thread): bytes allocated, the budget they share, layers wanting some
     static size_t pboBytesInUse();
     static size_t pboBudgetBytes();
     static int pboStreams();
@@ -79,6 +79,8 @@ private:
     };
     void createPbo(VideoDecoder &dec);
     void destroyPbo(int id);
+    void wantUpload(bool on);
+    void releaseHeld();
     void ensurePlanes(const VideoLayout &L);
     void uploadPlane(int p, const VideoLayout::Plane &pl, const void *data, int rowPixels);
     void uploadFrom(const AVFrame *av, const VideoLayout &L); // planes read in place, rows repacked if need be
@@ -89,6 +91,8 @@ private:
     GLuint m_planes[4] = {0, 0, 0, 0};
     GLuint m_rect[4] = {0, 0, 0, 0}; // planes of a hardware surface (rectangle textures)
     AVFrame *m_held = nullptr;       // the frame whose surface is bound: kept until the next one
+    size_t m_heldBytes = 0;          // its surface, in the graphics memory report
+    size_t m_planeBytes[4] = {0, 0, 0, 0}; // storage of each plane texture, in the graphics memory report
     VideoLayout::Plane m_planeShape[4]; // what each texture holds
     bool m_allocated[4] = {false, false, false, false};
     RenderTarget m_out;
@@ -96,6 +100,7 @@ private:
     size_t m_pboSize = 0;
     int m_live = 0;
     int m_pboAllowed = 0; // its share of the upload buffers of every layer
+    bool m_wantsUpload = false; // counted among the layers sharing them
     uint64_t m_uploads = 0, m_staged = 0, m_surfaced = 0, m_serial = 0;
     void shown(); // a new picture: counted, and a new serial
     std::vector<uint8_t> m_repack; // rows of a plane the GPU cannot read in place

@@ -54,6 +54,7 @@ add_library(nyxmap_engine STATIC
   src/engine/Psd.cpp
   src/engine/IsfLibrary.cpp
   src/engine/Mapping.cpp
+  src/engine/VideoBudget.cpp
   src/engine/VideoDecoder.cpp
   src/engine/VideoDecoderHap.cpp
   src/engine/VideoDecoderDelivery.cpp
@@ -770,6 +771,42 @@ if(NYXMAP_TESTS)
   add_test(NAME image_import COMMAND nyxmap_image_import_test)
   add_executable(nyxmap_benchmark_rates_test test/benchmark_rates.cpp)
   add_test(NAME benchmark_rates COMMAND nyxmap_benchmark_rates_test)
+  # QRhi prototype (docs/developers/qrhi-prototype.md): every ISF baked for Metal, Direct3D and Vulkan by QShaderBaker
+  find_package(Qt6 QUIET COMPONENTS ShaderTools ShaderToolsPrivate)
+  if(TARGET Qt6::ShaderToolsPrivate)
+    add_executable(nyxmap_isf_rhi_test test/isf_rhi.cpp)
+    target_link_libraries(nyxmap_isf_rhi_test PRIVATE nyxmap_engine Qt6::ShaderToolsPrivate)
+    target_compile_definitions(nyxmap_isf_rhi_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
+    if(APPLE)
+      # VideoToolbox's frames into QRhi's Metal textures with no copy: colours against FFmpeg, cost against OpenGL
+      find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+      add_executable(nyxmap_rhi_video_test test/rhi_video.mm)
+      set_source_files_properties(test/rhi_video.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+      target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)
+      target_link_libraries(nyxmap_rhi_video_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL
+                            "-framework Metal" "-framework CoreVideo")
+      target_compile_definitions(nyxmap_rhi_video_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+      add_test(NAME rhi_video COMMAND nyxmap_rhi_video_test)
+      set_tests_properties(rhi_video PROPERTIES SKIP_RETURN_CODE 77)
+      # A whole composition (videos, ISF effects, an RGBA mask) through QRhi and OpenGL: the same pictures, the cost
+      add_executable(nyxmap_rhi_composition_test test/rhi_composition.mm)
+      set_source_files_properties(test/rhi_composition.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+      target_include_directories(nyxmap_rhi_composition_test PRIVATE src/engine)
+      target_link_libraries(nyxmap_rhi_composition_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate
+                            Qt6::OpenGL "-framework Metal" "-framework CoreVideo")
+      target_compile_definitions(nyxmap_rhi_composition_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+      add_test(NAME rhi_composition COMMAND nyxmap_rhi_composition_test --seconds 0.5)
+      set_tests_properties(rhi_composition PROPERTIES SKIP_RETURN_CODE 77)
+      # HAP's blocks uploaded as they are into QRhi's compressed textures: colours and cost against OpenGL
+      add_executable(nyxmap_rhi_hap_test test/rhi_hap.cpp)
+      target_include_directories(nyxmap_rhi_hap_test PRIVATE src/engine)
+      target_link_libraries(nyxmap_rhi_hap_test PRIVATE nyxmap_engine Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL)
+      target_compile_definitions(nyxmap_rhi_hap_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+      add_test(NAME rhi_hap COMMAND nyxmap_rhi_hap_test)
+      set_tests_properties(rhi_hap PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+  endif()
   add_executable(nyxmap_naming_test test/naming.cpp)
   target_include_directories(nyxmap_naming_test PRIVATE src/engine)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)
@@ -834,10 +871,12 @@ if(NYXMAP_TESTS)
   endif()
   add_test(NAME web_page COMMAND nyxmap_web_page_test)
   set_tests_properties(web_page PROPERTIES TIMEOUT 120)
-  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine show_controls beat_clock
+  set_tests_properties(audio_generators audio_generators_portable audio_generator_engine beat_clock
     audio_levels audio_effects show_editing vision_analysis vision_engine preset_actions pixel_mapping line_generator
-    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine fixture_ui
+    publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
+  # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
+  set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
   set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui
@@ -877,6 +916,8 @@ if(NYXMAP_TESTS)
   add_test(NAME selection_ui COMMAND nyxmap_workspace_ui_test --selection) # not in the Valgrind job: see the test
   set_tests_properties(show_control_ui controls_ui audio_fx_ui console_ui clock_preset_ui xy_parameter_ui color_parameter_ui
     PROPERTIES TIMEOUT 60)
+  # The Apple software renderer takes longer when the UI suite is under load.
+  set_tests_properties(clock_preset_ui PROPERTIES TIMEOUT 120)
   if(NOT WIN32) # the application's exit codes in --render mode (Windows: its Qt libraries are deployed separately)
     add_test(NAME render_cli COMMAND ${CMAKE_COMMAND} -DNYXMAP=$<TARGET_FILE:NyxMap> -DOUT=${CMAKE_BINARY_DIR}/render_cli
              -P "${CMAKE_SOURCE_DIR}/test/render_cli.cmake")

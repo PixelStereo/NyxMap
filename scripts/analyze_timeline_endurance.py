@@ -166,6 +166,7 @@ def summarize(path, fps, check=False):
     for key, label in (("process_resident_mb", "Peak process resident MB"),
                        ("decoded_frames_mb", "Peak decoded frames MB"),
                        ("upload_buffers_mb", "Peak upload buffers MB"),
+                       ("graphics_memory_allocated_mb", "Peak graphics memory allocated MB"),
                        ("audio_callback_p99_ms_lifetime", "Worst lifetime callback p99 ms"),
                        ("render_lock_wait_p99_ms_lifetime", "Worst lifetime lock-wait p99 ms"),
                        ("render_lock_hold_p99_ms_lifetime", "Worst lifetime lock-hold p99 ms")):

@@ -43,6 +43,7 @@ nav = [
     { "Build from source" = "developers/build.md" },
     { "Linux packaging" = "developers/linux-packaging.md" },
     { "Video pipeline" = "developers/video-pipeline.md" },
+    { "QRhi prototype" = "developers/qrhi-prototype.md" },
     { "Audio engine selection" = "developers/audio-engine.md" },
   ] },
   { "Project" = [

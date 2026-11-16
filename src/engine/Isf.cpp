@@ -1,4 +1,5 @@
 #include "Isf.h"
+#include <QHash>
 #include "ImageFile.h"
 #include "LineGenerator.h"
 #include "Osc.h"
@@ -763,6 +764,172 @@ static bool loadImageTexture(const QString &path, Texture2D &tex, QString *err)
     return true;
 }
 
+// The .fs file parsed (its inputs, passes, targets, imports) and its bodies cleaned, with its vertex shader if any
+// (.vs, .vert): what compile() builds its programs from. No GL.
+bool IsfInstance::readSources(const QString &path, QString *fragment, QString *vertex)
+{
+    m_path = QFileInfo(path).absoluteFilePath();
+    m_name = QFileInfo(path).completeBaseName();
+    QString src;
+    if (!readText(m_path, &src)) {
+        m_error = QStringLiteral("File not found: ") + path;
+        return false;
+    }
+    QString body;
+    if (!parse(src, &body)) return false;
+    vertex->clear();
+    QFileInfo fi(m_path);
+    for (const QString &ext : {QStringLiteral("vs"), QStringLiteral("vert")}) {
+        QString vsPath = fi.absolutePath() + "/" + fi.completeBaseName() + "." + ext;
+        if (QFile::exists(vsPath) && readText(vsPath, vertex)) {
+            *vertex = cleanBody(*vertex);
+            break;
+        }
+    }
+    *fragment = cleanBody(body);
+    return true;
+}
+
+// The varyings a body declares itself (varying / in / out at the start of a line, ended by ';') put at explicit
+// locations: the same name, the same location in both stages; 0 and 1 are the host's (isf_FragNormCoord,
+// isf_PointCoord). Fragment outputs are left alone.
+static QString locateVaryings(const QString &body, bool vertex, QHash<QString, int> &locations)
+{
+    static const QRegularExpression decl(QStringLiteral(
+        R"(^([ \t]*)(varying|in|out)\s+((?:(?:flat|smooth|noperspective|highp|mediump|lowp)\s+)*)(\w+)\s+(\w+)(\s*\[[^\]]*\])?\s*;)"),
+        QRegularExpression::MultilineOption);
+    QString out;
+    qsizetype last = 0;
+    for (auto it = decl.globalMatch(body); it.hasNext();) {
+        const auto m = it.next();
+        const QString qualifier = m.captured(2);
+        if (!vertex && qualifier == QLatin1String("out")) continue; // a fragment output
+        if (vertex && qualifier == QLatin1String("in")) continue;   // a vertex attribute
+        const QString name = m.captured(5);
+        if (!locations.contains(name)) locations.insert(name, 2 + int(locations.size()));
+        const QString stage = qualifier == QLatin1String("varying") ? (vertex ? QStringLiteral("out") : QStringLiteral("in")) : qualifier;
+        out += body.mid(last, m.capturedStart() - last);
+        out += QStringLiteral("%1layout(location = %2) %3 %4%5 %6%7;")
+                   .arg(m.captured(1)).arg(locations.value(name)).arg(stage, m.captured(3), m.captured(4), name, m.captured(6));
+        last = m.capturedEnd();
+    }
+    out += body.mid(last);
+    return out;
+}
+
+IsfInstance::RhiSources IsfInstance::rhiSources(const QString &path)
+{
+    RhiSources r;
+    IsfInstance isf;
+    QString fsBody, vsBody;
+    if (!isf.readSources(path, &fsBody, &vsBody)) {
+        r.error = isf.m_error;
+        return r;
+    }
+    QString block = QStringLiteral("layout(std140, binding = 0) uniform IsfUniforms {\n");
+    using U = RhiSources::Uniform;
+    auto member = [&](U::Kind kind, const QString &name, std::initializer_list<float> value = {}) {
+        static const char *const glsl[] = {"int", "float", "bool", "vec2", "vec4"};
+        const int align = kind == U::Vec4 ? 16 : kind == U::Vec2 ? 8 : 4, size = align; // std140
+        U u;
+        u.kind = kind;
+        u.name = name;
+        u.offset = (r.blockSize + align - 1) / align * align;
+        std::copy(value.begin(), value.end(), u.value);
+        r.blockSize = u.offset + size;
+        r.uniforms.push_back(u);
+        block += QStringLiteral("    %1 %2;\n").arg(QLatin1String(glsl[kind]), name);
+    };
+    member(U::Int, QStringLiteral("PASSINDEX"));
+    member(U::Vec2, QStringLiteral("RENDERSIZE"));
+    member(U::Float, QStringLiteral("TIME"));
+    member(U::Float, QStringLiteral("TIMEDELTA"));
+    member(U::Vec4, QStringLiteral("DATE"));
+    member(U::Int, QStringLiteral("FRAMEINDEX"));
+    // -1 where the framebuffer's first row is the top of NDC (Metal, Direct3D): drawn upside down, the first row
+    // holds the picture's bottom as with OpenGL, so the shaders sample their images as they do there
+    member(U::Float, QStringLiteral("isf_ndcFlip"), {1});
+    QString samplers;
+    auto sampler = [&](const QString &n) {
+        r.samplers << n;
+        samplers += QStringLiteral("layout(binding = %2) uniform sampler2D %1;\n").arg(n).arg(r.samplers.size());
+        member(U::Vec2, QStringLiteral("_%1_imgSize").arg(n));
+        member(U::Vec4, QStringLiteral("_%1_imgRect").arg(n));
+        member(U::Bool, QStringLiteral("_%1_flip").arg(n));
+    };
+    for (const IsfInput &in : isf.m_inputs) {
+        switch (in.type) {
+        case IsfInput::Event: member(U::Bool, in.name); break;
+        case IsfInput::Bool: member(U::Bool, in.name, {in.bDefault ? 1.0f : 0.0f}); break;
+        case IsfInput::Long: member(U::Int, in.name, {float(in.lDefault)}); break;
+        case IsfInput::Float: member(U::Float, in.name, {float(in.fDefault)}); break;
+        case IsfInput::Point2D: member(U::Vec2, in.name, {float(in.pDefault.x()), float(in.pDefault.y())}); break;
+        case IsfInput::Color: member(U::Vec4, in.name, {in.cDefault[0], in.cDefault[1], in.cDefault[2], in.cDefault[3]}); break;
+        case IsfInput::Image:
+        case IsfInput::Audio:
+        case IsfInput::AudioFFT:
+            if (in.isInputImage) r.inputImage = in.name;
+            sampler(in.name);
+            break;
+        default: break;
+        }
+    }
+    for (const IsfTarget &t : isf.m_targets) sampler(t.name);
+    for (const IsfImported &im : isf.m_imported) sampler(im.name);
+    r.blockSize = (r.blockSize + 15) / 16 * 16;
+    block += QStringLiteral("};\n");
+    const QString uniforms = block + samplers;
+
+    QHash<QString, int> locations;
+    const QString vertexBody = locateVaryings(vsBody, true, locations);
+    const QString fragmentBody = locateVaryings(fsBody, false, locations);
+    // A built-in function the shader defines again (float round(float x) { ... }): OpenGL takes it as an overload,
+    // Vulkan's compiler refuses its precision. Renamed, the shader's own is the one it calls.
+    static const QRegularExpression redefined(QStringLiteral(
+        R"(\b(?:float|vec[234]|int)\s+(round|trunc|roundEven|fract|sign|mod|mix|clamp|step|smoothstep|saturate)\s*\()"));
+    QStringList renamed;
+    for (auto it = redefined.globalMatch(fsBody); it.hasNext();) {
+        const QString name = it.next().captured(1);
+        if (!renamed.contains(name)) renamed << name;
+    }
+    QString renames;
+    for (const QString &name : renamed) renames += QStringLiteral("#define %1 isf_%1\n").arg(name);
+
+    r.fragment = QStringLiteral("#version 440\n"
+                                "layout(location = 0) in vec2 isf_FragNormCoord;\n"
+                                "layout(location = 1) in vec2 isf_PointCoord;\n"
+                                "layout(location = 0) out vec4 isf_FragColor;\n"
+                                "#define gl_FragColor isf_FragColor\n"
+                                "#define texture2D texture\n"
+                                "#define texture2DRect texture\n"
+                                "#define vv_FragNormCoord isf_FragNormCoord\n"
+                                "#define gl_PointCoord isf_PointCoord\n")
+                 + uniforms + renames + QStringLiteral("#line 1\n") + fragmentBody;
+    r.vertex = QStringLiteral("#version 440\n"
+                              "layout(location = 0) in vec2 isf_position;\n"
+                              "layout(location = 0) out vec2 isf_FragNormCoord;\n"
+                              "layout(location = 1) out vec2 isf_PointCoord;\n"
+                              "#define gl_VertexID gl_VertexIndex\n")
+               + uniforms
+               + QStringLiteral("int isf_PointIndex() { return gl_VertexID / 6; }\n"
+                                "vec4 isf_PointSprite(vec4 centre, float size) {\n"
+                                "    const vec2 corners[6] = vec2[6](vec2(-1, -1), vec2(1, -1), vec2(-1, 1), vec2(-1, 1), vec2(1, -1), vec2(1, 1));\n"
+                                "    vec2 k = corners[gl_VertexID % 6];\n"
+                                "    isf_PointCoord = k * 0.5 + 0.5;\n"
+                                "    return centre + vec4(k * size / RENDERSIZE * centre.w, 0.0, 0.0);\n"
+                                "}\n"
+                                "void isf_vertShaderInit() {\n"
+                                "    gl_Position = vec4(isf_position.x, isf_position.y * isf_ndcFlip, 0.0, 1.0);\n"
+                                "    isf_FragNormCoord = isf_position * 0.5 + 0.5;\n"
+                                "}\n"
+                                "#define vv_vertShaderInit isf_vertShaderInit\n"
+                                "#define vv_FragNormCoord isf_FragNormCoord\n"
+                                "#define texture2D texture\n")
+               + (vertexBody.isEmpty() ? QStringLiteral("void main() { isf_vertShaderInit(); }\n")
+                                       : QStringLiteral("#line 1\n") + vertexBody);
+    return r;
+}
+
 bool IsfInstance::load(const QString &path)
 {
     releaseGl();
@@ -775,27 +942,8 @@ bool IsfInstance::load(const QString &path)
     m_canSkipDraw = false;
     m_time = 0;
     m_frameIndex = 0;
-    m_path = QFileInfo(path).absoluteFilePath();
-    m_name = QFileInfo(path).completeBaseName();
-
-    QString src;
-    if (!readText(m_path, &src)) {
-        m_error = QStringLiteral("File not found: ") + path;
-        return false;
-    }
-    QString body;
-    if (!parse(src, &body)) return false;
-
-    QString vsBody;
-    QFileInfo fi(m_path);
-    for (const QString &ext : {QStringLiteral("vs"), QStringLiteral("vert")}) {
-        QString vsPath = fi.absolutePath() + "/" + fi.completeBaseName() + "." + ext;
-        if (QFile::exists(vsPath) && readText(vsPath, &vsBody)) {
-            vsBody = cleanBody(vsBody);
-            break;
-        }
-    }
-    const QString fragment = cleanBody(body);
+    QString fragment, vsBody;
+    if (!readSources(path, &fragment, &vsBody)) return false;
     if (!compile(fragment, vsBody)) return false;
     // A fullscreen pass with no intermediate buffers or discard cannot read
     // or retain pixels from the previous frame. Custom vertex shaders can.

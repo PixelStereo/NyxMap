@@ -55,6 +55,9 @@ public:
     void setAutosaveEnabled(bool on) { m_autosaveEnabled = on; }
     void setQuiet(bool on) { m_quiet = on; } // tests: warnings in the status bar, no dialog
 
+    // The status bar's NyxMap memory (Engine::resourcesJson): its text, and the detail shown when hovered
+    static QString showMemoryText(const QJsonObject &resources);
+    static QString showMemoryHelp(const QJsonObject &resources);
 protected:
     void showEvent(QShowEvent *e) override;
     void closeEvent(QCloseEvent *e) override;

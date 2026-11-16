@@ -5,7 +5,9 @@
 #include "Gl.h"
 #include "Hap.h"
 #include "Snappy.h"
+#include "VideoBudget.h"
 #include "VideoDecoderInternal.h"
+#include "ffmpeg_reference.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -23,12 +25,15 @@ extern "C" {
 #include <QImage>
 #include <QImageReader>
 #include <QThread>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <atomic>
 #include <memory>
+#include <thread>
 
 static int g_failures = 0;
 #define VCHECK(cond)                                                                                    \
@@ -43,61 +48,6 @@ static int g_failures = 0;
 // ---------------------------------------------------------------------------
 // References
 // ---------------------------------------------------------------------------
-
-// The first frame as FFmpeg decodes it, converted by swscale with the matrix and range the GPU path takes,
-// chroma interpolated. Top row first, RGBA.
-static QImage ffmpegReference(const QString &path)
-{
-    AVFormatContext *fmt = nullptr;
-    QImage out;
-    if (avformat_open_input(&fmt, path.toUtf8().constData(), nullptr, nullptr) < 0) return out;
-    avformat_find_stream_info(fmt, nullptr);
-    const AVCodec *dec = nullptr;
-    const int s = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &dec, 0);
-    if (s < 0 || !dec) {
-        avformat_close_input(&fmt);
-        return out;
-    }
-    AVCodecContext *c = avcodec_alloc_context3(dec);
-    avcodec_parameters_to_context(c, fmt->streams[s]->codecpar);
-    avcodec_open2(c, dec, nullptr);
-    AVFrame *fr = av_frame_alloc();
-    AVPacket *pkt = av_packet_alloc();
-    bool got = false;
-    while (!got && av_read_frame(fmt, pkt) >= 0) {
-        if (pkt->stream_index == s && avcodec_send_packet(c, pkt) >= 0) got = avcodec_receive_frame(c, fr) == 0;
-        av_packet_unref(pkt);
-    }
-    if (!got) {
-        avcodec_send_packet(c, nullptr);
-        got = avcodec_receive_frame(c, fr) == 0;
-    }
-    if (got) {
-        const int w = fr->width, h = fr->height;
-        SwsContext *sws = sws_getContext(w, h, AVPixelFormat(fr->format), w, h, AV_PIX_FMT_RGBA,
-                                         SWS_BILINEAR | SWS_ACCURATE_RND | SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP, nullptr,
-                                         nullptr, nullptr);
-        int cs = SWS_CS_ITU601;
-        if (fr->colorspace == AVCOL_SPC_BT709 || (fr->colorspace == AVCOL_SPC_UNSPECIFIED && h >= 720)) cs = SWS_CS_ITU709;
-        if (fr->colorspace == AVCOL_SPC_BT2020_NCL) cs = SWS_CS_BT2020;
-        const AVPixelFormat pf = AVPixelFormat(fr->format);
-        const bool full = fr->color_range == AVCOL_RANGE_JPEG || pf == AV_PIX_FMT_YUVJ420P || pf == AV_PIX_FMT_YUVJ422P
-                          || pf == AV_PIX_FMT_YUVJ444P;
-        int *inv, *tbl, srcRange, dstRange, bri, con, sat;
-        sws_getColorspaceDetails(sws, &inv, &srcRange, &tbl, &dstRange, &bri, &con, &sat);
-        sws_setColorspaceDetails(sws, sws_getCoefficients(cs), full ? 1 : srcRange, tbl, 1, bri, con, sat);
-        out = QImage(w, h, QImage::Format_RGBA8888);
-        uint8_t *dst[4] = {out.bits(), nullptr, nullptr, nullptr};
-        int stride[4] = {int(out.bytesPerLine()), 0, 0, 0};
-        sws_scale(sws, fr->data, fr->linesize, 0, h, dst, stride);
-        sws_freeContext(sws);
-    }
-    av_packet_free(&pkt);
-    av_frame_free(&fr);
-    avcodec_free_context(&c);
-    avformat_close_input(&fmt);
-    return out;
-}
 
 // The first frame as the decoder's CPU conversion makes it (the same blocks decoded by bcdec). Top row first.
 static QImage cpuReference(const QString &path)
@@ -862,11 +812,11 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
     // nothing is left counted
     e.newProject();
     {
-        VCHECK(decodedBudget::used() == 0); // the layers' videos closed: none left counted
+        VCHECK(videoBudget::decodedInUse() == 0); // the layers' videos closed: none left counted
         const bool hardware = VideoDecoder::hardwareDecoding();
         // Zero-copy hardware frames are deliberately excluded from this CPU payload budget.
         VideoDecoder::setHardwareDecoding(false);
-        decodedBudget::setLimit(1);
+        videoBudget::setDecodedLimit(1);
         std::vector<std::unique_ptr<VideoDecoder>> decs;
         for (int k = 0; k < 3; ++k) {
             auto d = std::make_unique<VideoDecoder>();
@@ -888,15 +838,15 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             for (int &g : got) ++g;
         }
         VCHECK(got[0] >= 12 && got[1] >= 12 && got[2] >= 12);
-        VCHECK(decodedBudget::used() > 0);
+        VCHECK(videoBudget::decodedInUse() > 0);
         for (const auto &d : decs) {
             const VideoDecoder::Metrics m = d->metrics();
             VCHECK(m.budgetHolds > 0 && m.queueHighWatermark <= 2 && m.fetchedFrames >= 12);
         }
         for (VideoFrame &f : out) f = VideoFrame();
         decs.clear();
-        VCHECK(decodedBudget::used() == 0);
-        decodedBudget::setLimit(size_t(512) << 20);
+        VCHECK(videoBudget::decodedInUse() == 0);
+        videoBudget::setDecodedLimit(0);
         VideoDecoder::setHardwareDecoding(hardware);
     }
     // Corrupt every HAP frame payload while keeping a valid MOV container. In
@@ -1031,7 +981,9 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         {
             const QJsonObject r = e.resourcesJson();
             VCHECK(r.value("software_decoders").toInt() == open0 + 4 && r.value("software_decode_threads").toInt() == inUse0 + sum &&
-                   r.contains("decoded_frames_mb") && r.contains("upload_buffers_budget_mb") && r.value("warnings").isArray());
+                   r.contains("decoded_frames_mb") && r.contains("upload_buffers_budget_mb") && r.value("warnings").isArray()
+                   && r.value("video_memory_budget_mb").toDouble() == std::round(double(videoBudget::memoryLimit()) / 104857.6) / 10.0
+                   && r.contains("video_memory_mb"));
         }
         decs.clear();
         VCHECK(VideoDecoder::softwareThreadsInUse() == inUse0 && VideoDecoder::softwareDecodersOpen() == open0);
@@ -1065,6 +1017,123 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         VideoDecoder::setSoftwareThreadBudget(0);
         VideoDecoder::setHardwareDecoding(hw);
     }
+    // The video memory envelope: a quarter of the RAM up to 2.5 GiB, a fifth of it for the decoded frames, the rest
+    // for the upload buffers (a hard limit, shared evenly by the layers wanting some)
+    {
+        const size_t ram = videoBudget::physicalMemory();
+        VCHECK(videoBudget::memoryLimit() <= (size_t(2560) << 20) && videoBudget::memoryLimit() >= (size_t(256) << 20));
+        if (ram && !qEnvironmentVariableIsSet("NYXMAP_VIDEO_MEMORY_MB"))
+            VCHECK(videoBudget::memoryLimit() == std::clamp(ram / 4, size_t(256) << 20, size_t(2560) << 20));
+        VCHECK(videoBudget::decodedLimit() + videoBudget::uploadLimit() == videoBudget::memoryLimit());
+        videoBudget::setMemoryLimit(size_t(10) << 20); // 2 MiB of decoded frames, 8 MiB of upload buffers
+        const size_t used0 = videoBudget::uploadInUse(), mb3 = size_t(3) << 20;
+        VCHECK(used0 == 0);
+        VCHECK(videoBudget::reserveUpload(mb3) && videoBudget::reserveUpload(mb3));
+        VCHECK(!videoBudget::reserveUpload(mb3) && videoBudget::uploadInUse() == 2 * mb3); // refused, nothing counted
+        VCHECK(!videoBudget::reserveUpload(0));
+        videoBudget::releaseUpload(mb3);
+        VCHECK(videoBudget::reserveUpload(mb3));
+        videoBudget::releaseUpload(2 * mb3);
+        VCHECK(videoBudget::uploadInUse() == 0);
+        videoBudget::addUploadStream();
+        videoBudget::addUploadStream();
+        VCHECK(videoBudget::uploadShare() == videoBudget::uploadLimit() / 2);
+        videoBudget::removeUploadStream();
+        videoBudget::removeUploadStream();
+        videoBudget::setMemoryLimit(0);
+    }
+    // Threads reserved under one lock: decoders opening together never see the same room (one alone at most gets
+    // its full count once the limit holds just one)
+    {
+        e.newProject(); // no decoder open: the first one alone fits the limit
+        const int inUse0 = videoBudget::threadsInUse(), open0 = videoBudget::decodersOpen();
+        VCHECK(inUse0 == 0 && open0 == 0);
+        videoBudget::setThreadLimit(4);
+        std::vector<std::thread> threads;
+        std::vector<int> got(16, 0);
+        for (int k = 0; k < 16; ++k) threads.emplace_back([&got, k] { got[size_t(k)] = videoBudget::reserveThreads(4); });
+        for (auto &t : threads) t.join();
+        int full = 0, sum = 0;
+        for (int n : got) {
+            VCHECK(n >= 2 && n <= 4);
+            full += n == 4;
+            sum += n;
+        }
+        VCHECK(full == 1 && videoBudget::threadsInUse() == inUse0 + sum && videoBudget::decodersOpen() == open0 + 16);
+        for (int n : got) videoBudget::releaseThreads(n);
+        VCHECK(videoBudget::threadsInUse() == inUse0 && videoBudget::decodersOpen() == open0);
+        videoBudget::setThreadLimit(0);
+    }
+    // Upload buffers under a small envelope: four layers share it, never over it, and every one keeps playing (the
+    // frames without a buffer go through the decoders' memory); once closed, nothing is left counted
+    {
+        const bool hw = VideoDecoder::hardwareDecoding();
+        VideoDecoder::setHardwareDecoding(false); // frames through upload buffers, not hardware surfaces
+        e.newProject();
+        e.setCompositionSize(QSize(640, 360));
+        videoBudget::setMemoryLimit(size_t(2) << 20); // 1.6 MiB of upload buffers: about one 640×360 frame each
+        int layers[4];
+        for (int &i : layers) {
+            i = e.addLayer(QStringLiteral("v"));
+            QString err;
+            VCHECK(e.setLayerVideo(i, root + "/media/av.mp4", &err));
+        }
+        size_t peak = 0;
+        bool shown = false;
+        QElapsedTimer tm;
+        tm.start();
+        while (!shown && tm.elapsed() < 60000) { // a software renderer (CI) takes seconds a frame
+            e.renderFrame();
+            peak = std::max(peak, videoBudget::uploadInUse());
+            shown = true;
+            for (int i : layers) shown = shown && e.videoFramesShown(i) >= 2;
+            QThread::msleep(10);
+        }
+        std::printf("    upload buffers: %.2f MiB at most for 4 layers (limit %.2f MiB)\n", double(peak) / 1048576.0,
+                    double(videoBudget::uploadLimit()) / 1048576.0);
+        VCHECK(shown && peak > 0 && peak <= videoBudget::uploadLimit() && videoBudget::uploadStreams() == 4);
+        // Their textures in the graphics memory report: four 640×360 YUV 4:2:0 frames' planes, at least
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) >= 4 * size_t(640 * 360 * 3 / 2));
+        VCHECK(e.resourcesJson().value("graphics_memory_video_planes_mb").toDouble() > 0);
+        e.newProject();
+        e.renderFrame();
+        VCHECK(videoBudget::uploadInUse() == 0 && videoBudget::uploadStreams() == 0);
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
+        videoBudget::setMemoryLimit(0);
+        VideoDecoder::setHardwareDecoding(hw);
+    }
+    // Graphics memory report: a render target counts its texture while it holds one
+    {
+        const size_t before = videoBudget::gpuInUse(videoBudget::Gpu::Targets);
+        RenderTarget t;
+        VCHECK(t.ensure(64, 32));
+        VCHECK(t.bytes() == size_t(64 * 32) * (t.bits > 8 ? 8 : 4));
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
+        VCHECK(t.ensure(128, 32)); // another size: the old one no longer counted
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before + t.bytes());
+        t.destroy();
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Targets) == before && t.bytes() == 0);
+        Texture2D img;
+        const std::vector<uint8_t> px(size_t(16 * 8 * 4), 255);
+        const size_t images = videoBudget::gpuInUse(videoBudget::Gpu::Images);
+        img.upload(px.data(), 16, 8);
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images + 16 * 8 * 4);
+        img.destroy();
+        VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Images) == images);
+    }
+    // Hardware surfaces held (queued, shown, bound) are counted while held, none once the video is closed
+    if (VideoDecoder::hardwareDecoding()) {
+        quint64 staged = 0;
+        playAndGrab(root + "/media/av.mp4", nullptr, &staged);
+        Engine::Lock lk(&e.mutex());
+        const Layer *l = e.layer(0);
+        if (l && l->videoTex && l->videoTex->surfaceUploads() > 0)
+            VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) > 0);
+        else
+            std::printf("    hardware surfaces: none sampled in place here (not checked)\n");
+    }
     e.newProject();
+    e.renderFrame();
+    VCHECK(videoBudget::gpuInUse(videoBudget::Gpu::Surfaces) == 0 && videoBudget::gpuInUse(videoBudget::Gpu::VideoPlanes) == 0);
     return g_failures;
 }

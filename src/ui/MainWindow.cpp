@@ -58,6 +58,8 @@
 #include <QFileOpenEvent>
 #include <QGuiApplication>
 #include <QHostAddress>
+#include <QFrame>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -522,25 +524,46 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
                                           "QToolButton:hover { background:#9b2727; } QToolButton:pressed { background:#c33; }"));
     connect(stopAll, &QToolButton::clicked, this, &MainWindow::emergencyStop);
     statusBar()->addPermanentWidget(stopAll);
+    // The machine: CPU, GPU, RAM and dedicated video memory as the system reports them (VRAM left out where it does
+    // not: Apple Silicon shares the RAM)
     auto *usageLabel = new QLabel(statusBar());
     usageLabel->setObjectName(QStringLiteral("systemUsageStatus"));
     usageLabel->setToolTip(tr("System CPU and RAM usage, GPU activity and dedicated video memory when the driver reports them. "
                               "A dash means the measurement is unavailable. With several GPUs, system readings show the highest usage."));
     statusBar()->addPermanentWidget(usageLabel);
+    // NyxMap's own: the graphics memory it allocated and the video frames waiting to be shown against their budget,
+    // amber when a budget is exceeded; hovered, the detail in the help line, kept current
+    auto *memoryRule = new QFrame(statusBar()); // set apart from the machine's readings
+    memoryRule->setFixedSize(1, 14);
+    memoryRule->setStyleSheet(QStringLiteral("background:#6a6a72;"));
+    statusBar()->addPermanentWidget(memoryRule);
+    auto *memoryLabel = new QLabel(statusBar());
+    memoryLabel->setObjectName(QStringLiteral("showMemoryStatus"));
+    memoryLabel->setMinimumWidth(1); // its whole text when there is room, never a wider window
+    statusBar()->addPermanentWidget(memoryLabel);
     auto *usageTimer = new QTimer(usageLabel);
-    auto refreshUsage = [this, usageLabel, sampler = processMemory::SystemUsageSampler{}]() mutable {
+    auto refreshUsage = [this, usageLabel, memoryLabel, sampler = processMemory::SystemUsageSampler{}]() mutable {
         auto usage = sampler.sample();
+        const QJsonObject r = m_engine->resourcesJson();
+        auto num = [&r](const char *key) { return r.value(QLatin1String(key)).toDouble(); };
         if (usage.vram < 0) {
-            const auto resources = m_engine->resourcesJson();
-            const double total = resources.value(QStringLiteral("graphics_memory_total_mb")).toDouble();
-            const double free = resources.value(QStringLiteral("graphics_memory_free_mb")).toDouble(-1);
+            const double total = num("graphics_memory_total_mb");
+            const double free = r.value(QStringLiteral("graphics_memory_free_mb")).toDouble(-1);
             if (total > 0 && free >= 0) usage.vram = 100.0 * (1.0 - std::min(free, total) / total);
         }
         const auto percent = [](double value) {
             return value < 0 ? QStringLiteral("—") : QString::number(qRound(std::min(100.0, value))) + QLatin1Char('%');
         };
-        usageLabel->setText(QStringLiteral("CPU %1  ·  GPU %2  ·  RAM %3  ·  VRAM %4")
-                                .arg(percent(usage.cpu), percent(usage.gpu), percent(usage.ram), percent(usage.vram)));
+        QString system = QStringLiteral("CPU %1  ·  GPU %2  ·  RAM %3").arg(percent(usage.cpu), percent(usage.gpu), percent(usage.ram));
+        if (usage.vram >= 0) system += QStringLiteral("  ·  VRAM %1").arg(percent(usage.vram));
+        usageLabel->setText(system);
+
+        memoryLabel->setText(showMemoryText(r));
+        const bool over = !r.value(QStringLiteral("warnings")).toArray().isEmpty();
+        memoryLabel->setStyleSheet(over ? QStringLiteral("color:#f2b84b; padding-right:6px;") : QStringLiteral("padding-right:6px;"));
+        const QString help = showMemoryHelp(r);
+        memoryLabel->setToolTip(help);
+        if (m_helpWidget == memoryLabel) showContextHelp(memoryLabel, help); // hovered: the detail stays current
     };
     refreshUsage();
     connect(usageTimer, &QTimer::timeout, usageLabel, refreshUsage);
@@ -988,6 +1011,51 @@ static QString helpAt(QWidget *widget, const QPoint &global)
         if (!tip.isEmpty()) return tip;
     }
     return {};
+}
+
+// Megabytes as people read them: "820 MB", "1.4 GB"
+static QString memorySize(double mb)
+{
+    if (mb < 1024) return QStringLiteral("%1 MB").arg(qRound(mb));
+    return QStringLiteral("%1 GB").arg(mb / 1024.0, 0, 'f', 1);
+}
+
+// The status bar's NyxMap memory: the graphics memory it allocated, the video frames waiting against their budget
+QString MainWindow::showMemoryText(const QJsonObject &r)
+{
+    auto num = [&r](const char *key) { return r.value(QLatin1String(key)).toDouble(); };
+    const bool over = !r.value(QStringLiteral("warnings")).toArray().isEmpty();
+    return QStringLiteral("%1GPU mem %2  ·  Video %3 / %4")
+        .arg(over ? QStringLiteral("⚠ ") : QString(), memorySize(num("graphics_memory_allocated_mb")),
+             memorySize(num("video_memory_mb")), memorySize(num("video_memory_budget_mb")));
+}
+
+QString MainWindow::showMemoryHelp(const QJsonObject &r)
+{
+    auto num = [&r](const char *key) { return r.value(QLatin1String(key)).toDouble(); };
+    auto mb = [&](const char *key) { return memorySize(num(key)); };
+    QString help = tr("NyxMap's memory. GPU %1, what it allocated (estimated): render targets %2, images %3, video planes %4, "
+                      "hardware video surfaces %5.")
+                       .arg(mb("graphics_memory_allocated_mb"), mb("graphics_memory_render_targets_mb"), mb("graphics_memory_images_mb"),
+                            mb("graphics_memory_video_planes_mb"), mb("graphics_memory_video_surfaces_mb"));
+    if (r.contains(QStringLiteral("graphics_memory_free_mb")))
+        help += tr(" Graphics card: %1 free.").arg(mb("graphics_memory_free_mb"));
+    const int layers = int(num("upload_buffer_layers"));
+    help += tr(" Video %1 of %2, the frames waiting to be shown: decoded %3 of %4, upload buffers %5 of %6 for %7.")
+                .arg(mb("video_memory_mb"), mb("video_memory_budget_mb"), mb("decoded_frames_mb"), mb("decoded_frames_budget_mb"),
+                     mb("upload_buffers_mb"), mb("upload_buffers_budget_mb"),
+                     layers == 1 ? tr("1 layer") : tr("%1 layers").arg(layers));
+    help += tr(" Decode threads %1 of %2.").arg(int(num("software_decode_threads"))).arg(int(num("software_decode_thread_budget")));
+    QStringList over;
+    for (const QJsonValue &w : r.value(QStringLiteral("warnings")).toArray()) {
+        const QString k = w.toString();
+        if (k == QLatin1String("decoded_frames")) over << tr("decoded frames (videos keep fewer frames ahead)");
+        else if (k == QLatin1String("upload_buffers")) over << tr("upload buffers (the extra ones go as they come back)");
+        else if (k == QLatin1String("decode_threads")) over << tr("decode threads (new videos share them)");
+        else if (k == QLatin1String("graphics_memory")) over << tr("graphics card nearly full");
+    }
+    if (!over.isEmpty()) help += tr(" Over budget: %1.").arg(over.join(QStringLiteral(", ")));
+    return help;
 }
 
 void MainWindow::showContextHelp(QWidget *widget, QString text)
