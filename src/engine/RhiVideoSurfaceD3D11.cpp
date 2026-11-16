@@ -6,6 +6,7 @@
 
 #include <rhi/qrhi.h>
 
+#include <d3d10_1.h> // must precede d3d10.h (also pulled in by the D3D11 headers)
 #include <d3d10.h>
 #include <d3d11.h>
 
