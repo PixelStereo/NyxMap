@@ -569,6 +569,10 @@ void Engine::renderLoop()
 
 void Engine::releaseAll()
 {
+    // QRhi and every resource it owns are thread-affine. The renderer is created and used by the
+    // render thread in threaded mode, so destroy it here, before that thread exits (not later in
+    // Engine's member destruction on the UI/owner thread).
+    m_rhi.reset();
     m_dstCopy.destroy();
     for (auto &[size, ms] : m_msaa) ms.destroy();
     m_msaa.clear();
