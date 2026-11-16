@@ -1579,7 +1579,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     }
 }
 
-static QImage readBack(QRhi *rhi, QRhiTexture *tex)
+static QImage readBack(QRhi *rhi, QRhiTexture *tex, bool deep = false)
 {
     if (!rhi || !tex) return {};
     QRhiCommandBuffer *cb = nullptr;
@@ -1595,22 +1595,23 @@ static QImage readBack(QRhi *rhi, QRhiTexture *tex)
     const uchar *data = reinterpret_cast<const uchar *>(result.data.constData());
     if (result.format == QRhiTexture::RGBA16F) { // the 10-bit pictures: half floats, to 8 bits
         const QImage half(data, w, h, w * 8, QImage::Format_RGBA16FPx4);
-        img = half.convertToFormat(QImage::Format_RGBA8888);
+        img = half.convertToFormat(deep ? QImage::Format_RGBA64 : QImage::Format_RGBA8888);
     } else if (result.format == QRhiTexture::RGBA32F) {
         const QImage full(data, w, h, w * 16, QImage::Format_RGBA32FPx4);
-        img = full.convertToFormat(QImage::Format_RGBA8888);
+        img = full.convertToFormat(deep ? QImage::Format_RGBA64 : QImage::Format_RGBA8888);
     } else if (result.format == QRhiTexture::BGRA8) {
         img = QImage(data, w, h, w * 4, QImage::Format_ARGB32).convertToFormat(QImage::Format_RGBA8888);
     } else {
         img = QImage(data, w, h, w * 4, QImage::Format_RGBA8888).copy();
+        if (deep) img = img.convertToFormat(QImage::Format_RGBA64);
     }
     return img.mirrored(false, true); // stored bottom row first
 }
 
-QImage RhiRenderer::grabViewport(quint64 viewport)
+QImage RhiRenderer::grabViewport(quint64 viewport, bool deep)
 {
     const auto found = d->layers.find(viewport);
-    return found == d->layers.end() ? QImage() : readBack(d->rhi.get(), found->second.out.texture());
+    return found == d->layers.end() ? QImage() : readBack(d->rhi.get(), found->second.out.texture(), deep);
 }
 
 const void *RhiRenderer::picture(quint64 layer, int which, QSize *size) const
@@ -1634,11 +1635,11 @@ quint64 RhiRenderer::videoFramesShown(quint64 layer) const
     return found == d->layers.end() ? 0 : found->second.videoSerial;
 }
 
-QImage RhiRenderer::grabSource(quint64 layer)
+QImage RhiRenderer::grabSource(quint64 layer, bool deep)
 {
     const auto found = d->layers.find(layer);
     QRhiTexture *raw = found == d->layers.end() ? nullptr : found->second.raw;
-    return raw ? readBack(d->rhi.get(), raw) : QImage();
+    return raw ? readBack(d->rhi.get(), raw, deep) : QImage();
 }
 
 bool RhiRenderer::present(quint64 viewport, QWindow *window, bool waitForDisplay)

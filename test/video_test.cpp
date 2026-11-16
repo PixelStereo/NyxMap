@@ -445,6 +445,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
             {"pal8", false},      {"y210le", false},     {"monob", false},      {"yuv420p10be", false},
         };
         {
+            RhiTarget::setWorkingFormat(QRhiTexture::RGBA8); // the pictures read back here are 8 bits
             std::unique_ptr<QRhi> rhi = rhidevice::create();
             if (!rhi) std::printf("      no QRhi backend here: the GPU conversions are not run\n");
             std::printf("      Hardware surfaces sampled in place: %s\n", rhi && rhi->backend() == QRhi::Metal ? "yes" : "no");
@@ -1068,6 +1069,7 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         VideoDecoder::setHardwareDecoding(hw);
     }
     // Graphics memory report: a render target counts its texture while it holds one
+    RhiTarget::setWorkingFormat(QRhiTexture::RGBA8);
     if (std::unique_ptr<QRhi> rhi = rhidevice::create()) {
         const size_t before = videoBudget::gpuInUse(videoBudget::Gpu::Targets);
         RhiTarget t;

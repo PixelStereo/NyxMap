@@ -1127,11 +1127,11 @@ void Engine::resetFrameTiming()
 }
 
 // Last finished picture of one viewport (what its window and its publishers get)
-QImage Engine::grabViewport(quint64 viewport)
+QImage Engine::grabViewport(quint64 viewport, bool deep)
 {
     QImage img;
-    runGl([this, viewport, &img] {
-        if (m_rhi) img = m_rhi->grabViewport(viewport);
+    runGl([this, viewport, deep, &img] {
+        if (m_rhi) img = m_rhi->grabViewport(viewport, deep);
     });
     return img;
 }
@@ -1145,7 +1145,7 @@ QImage Engine::grabOutput()
     return img;
 }
 
-QImage Engine::grabLayerSource(int index)
+QImage Engine::grabLayerSource(int index, bool deep)
 {
     QImage img;
     quint64 id = 0;
@@ -1153,8 +1153,8 @@ QImage Engine::grabLayerSource(int index)
         Lock lk(&m_mutex);
         if (const Layer *l = layer(index)) id = l->id;
     }
-    runGl([this, id, &img] {
-        if (m_rhi) img = m_rhi->grabSource(id);
+    runGl([this, id, deep, &img] {
+        if (m_rhi) img = m_rhi->grabSource(id, deep);
     });
     return img;
 }

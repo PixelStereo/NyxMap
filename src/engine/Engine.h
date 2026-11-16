@@ -920,13 +920,13 @@ public:
     bool gpuShareOneFrameLate() const { return m_shareOneFrameLate.load(); }
     quint64 mipmapsMade() const { return m_mipmapsMade.load(); } // layers' mipmaps generated since the start
     QImage grabOutput();                 // the whole composition (interface preview)
-    QImage grabViewport(quint64 viewport);
+    QImage grabViewport(quint64 viewport, bool deep = false); // deep: RGBA64, the 10-bit pictures at their precision
     // The pictures of a layer at the last frame, by an opaque handle (equal handles: the same picture) and their size
     // (tests, tools). Final: after its effects; PreFx: before them; Source: its source before its ROI. nullptr: none
     enum class LayerPicture { Final, PreFx, Source };
     const void *layerPicture(quint64 id, LayerPicture which, QSize *size = nullptr);
     QSize videoPictureSize(int index); // its video's picture, as drawn
-    QImage grabLayerSource(int index); // a layer's source picture, full size, before its ROI (tests, tools)
+    QImage grabLayerSource(int index, bool deep = false); // a layer's source picture, full size, before its ROI (tests, tools)
     quint64 frameCount() const { return m_frameCount.load(); }
     // Video frames a layer has shown so far (uploaded to the GPU): its playback rate, measured
     quint64 videoFramesShown(int index) const;

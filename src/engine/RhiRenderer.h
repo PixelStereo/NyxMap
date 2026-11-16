@@ -92,14 +92,14 @@ public:
     void setCapturePresented(bool on);
     QImage lastPresented(quint64 viewport) const;
     // The last pictures, top row first (render thread)
-    QImage grabViewport(quint64 viewport);
+    QImage grabViewport(quint64 viewport, bool deep = false); // deep: 16 bits per channel (RGBA64) from the 10-bit pictures
     QImage grabOutput();
     quint64 videoFramesShown(quint64 layer) const; // the pictures of a video layer uploaded so far
     // A layer's pictures at the last frame, by an opaque handle (the texture: equal handles are the same picture) and their
     // size; which: 0 final, 1 before its effects, 2 its source before its ROI; nullptr: it has none
     const void *picture(quint64 layer, int which, QSize *size = nullptr) const;
     QSize videoSize(quint64 layer) const; // its video's picture
-    QImage grabSource(quint64 layer); // a layer's source picture as drawn at the last frame (RGBA8 ones)
+    QImage grabSource(quint64 layer, bool deep = false); // a layer's source picture as drawn at the last frame (RGBA8 ones)
 
 private:
     struct Impl;
