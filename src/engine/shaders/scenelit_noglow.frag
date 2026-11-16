@@ -53,6 +53,8 @@ layout(std140, binding = 1) uniform Scene {
     ivec4 u_reflectCfg; // x: steps along a reflected ray; y: a last picture to reflect
     vec4 u_range;      // x: the near plane; y: the far plane; z: the exposure the last picture was made with
     mat4 u_viewProj;
+    vec4 u_envInfo;    // x: its intensity; y: its rotation; z: its blurriest level; w: its values are linear light
+    ivec4 u_envFlags;  // x: an environment
 };
 // The lights, as many as the scene has: seven vec4 each. color (xyz: times its power; w: its kind, 0 directional, 1 point,
 // 2 spot, 3 area), position, direction, right and up (an area's sides), half its size (xy), cone (x: a spot's angle, y:
@@ -66,13 +68,19 @@ layout(binding = 12) uniform sampler2DArray u_shadowMaps; // each light's view o
 layout(binding = 13) uniform sampler2DArray u_pointMaps;
 layout(binding = 14) uniform sampler2D u_aoTex;  // the occlusion between surfaces, from what is seen
 layout(binding = 15) uniform sampler2D u_seen;   // the depth of what is seen
-layout(binding = 16) uniform sampler2D u_last;   // the last picture: what a reflection shows  // a point light's: the distance / its far plane, six faces each
+layout(binding = 16) uniform sampler2D u_last;   // the last picture: what a reflection shows
+layout(binding = 17) uniform sampler2D u_env;    // the environment: its picture in half floats, with its blurred levels  // a point light's: the distance / its far plane, six faces each
 #define u_eye u_eye4.xyz
 #define u_ambient u_ambient4.xyz
 #define u_exposure u_misc.x
 #define u_studio u_misc.y
 #define u_count u_counts.x
 #define u_penumbra u_shadowCfg.x
+#define u_envIntensity u_envInfo.x
+#define u_envRot u_envInfo.y
+#define u_envMaxLod u_envInfo.z
+#define u_envLinear int(u_envInfo.w)
+#define u_hasEnv u_envFlags.x
 #define u_screen u_screenInfo.xy
 #define u_aoAmount u_screenInfo.z
 #define u_reflections u_screenInfo.w
@@ -248,6 +256,13 @@ vec4 reflected(vec3 R, float rough) {
     return vec4(0.0);
 }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+vec3 env(vec3 d, float lod) {
+    float c = cos(u_envRot), s = sin(u_envRot);
+    d = vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+    vec2 uv = vec2(0.5 + atan(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
+    vec3 e = textureLod(u_env, vec2(uv.x, 1.0 - uv.y), lod).rgb; // bottom up, as a layer's picture
+    return (u_envLinear != 0 ? e : pow(e, vec3(2.2))) * u_envIntensity; // an HDR file: linear already
+}
 vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' approximation of the BRDF table)
     vec4 k = r * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
     float a004 = min(k.x * k.x, exp2(-9.28 * NdV)) * k.x + k.y;
@@ -304,7 +319,14 @@ void main() {
     vec3 F0 = mix(vec3(u_dielectric), base.rgb, metal);
     float NdV = max(dot(N, V), 1e-4);
     vec3 c = u_ambient * base.rgb * (1.0 - 0.7 * metal) * ao;
-    if (u_studio > 0.0)    if (u_studio > 0.0) { // no environment: the studio's light
+    if (u_hasEnv != 0) { // the environment: diffuse from its most blurred level, reflections as rough as the surface
+        vec2 ab = envBrdf(NdV, r);
+        vec3 R = reflect(-V, N);
+        vec4 near = reflected(R, r);
+        vec3 spec = mix(env(R, r * (u_envMaxLod - 2.0)), near.rgb, near.a) * (F0 * ab.x + ab.y);
+        vec3 diff = env(N, u_envMaxLod - 1.5) * base.rgb * (1.0 - metal);
+        c += (diff + spec) * ao;
+    } else if (u_studio > 0.0) { // no environment: the studio's light
         vec2 ab = envBrdf(NdV, r);
         vec3 R = reflect(-V, N);
         vec4 near = reflected(R, r);

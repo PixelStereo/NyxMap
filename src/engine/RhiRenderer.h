@@ -51,6 +51,8 @@ public:
 
     // An image layer's picture, as updateSource takes it (render thread, under the lock)
     void imageArrived(quint64 layer, const QImage &image);
+    // An HDR file's unclipped pixels (RGBA floats, the bottom row first), as the environment of a scene takes them
+    void hdrArrived(quint64 layer, const std::vector<float> &pixels, QSize size);
     // The frame: every layer's picture, the viewports' and the composition's (render thread, under the lock)
     void render(const IsfRenderContext &rc);
     // The interface's previews while it still shows them through OpenGL: reduced copies of pictures, read back during the

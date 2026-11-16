@@ -421,6 +421,154 @@ int main(int argc, char **argv)
             q.save(dump + "/glow_rhi.png");
         }
     }
+    // An environment (a gradient with a sun), seen behind a metal ball and reflected in it
+    {
+        QImage envImage(512, 256, QImage::Format_RGBA8888);
+        for (int y = 0; y < 256; ++y)
+            for (int x = 0; x < 512; ++x) {
+                const float t = y / 255.0f;
+                int r = int(30 + 200 * t), g = int(60 + 100 * t), b = int(200 - 120 * t);
+                if (std::hypot(x - 380.0, y - 60.0) < 14.0) r = g = b = 255;
+                envImage.setPixelColor(x, y, QColor(r, g, b));
+            }
+        SceneSettings lit = view;
+        lit.ao = 0;
+        lit.reflections = 0;
+        lit.glow = 0;
+        lit.fogDensity = 0;
+        lit.envShow = true;
+        lit.envIntensity = 1.0f;
+        lit.envRotation = 20.0f;
+        lit.envBlur = 0.3f;
+        Scene3DQuality q3;
+        q3.antialiasing = q3.shadows = q3.contact = q3.reflections = q3.glow = q3.atmosphere = 0;
+        auto ball = std::make_shared<Model3D>();
+        QString err;
+        ball->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        Scene3D::Item b;
+        b.model = ball;
+        b.placement.color = {0.8f, 0.8f, 0.8f};
+        b.placement.metal = 0.9f;
+        b.placement.rough = 0.25f;
+        const std::vector<Scene3D::Item> items{b};
+        auto fn = gl();
+        GLuint envTex = 0;
+        fn->glGenTextures(1, &envTex);
+        fn->glBindTexture(GL_TEXTURE_2D, envTex);
+        fn->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, envImage.width(), envImage.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, envImage.constBits());
+        fn->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        fn->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        Scene3D viaGl;
+        const GLuint tex = viaGl.draw(lit, items, {}, size.width(), size.height(), envTex, false, q3);
+        GLuint fbo = 0;
+        fn->glGenFramebuffers(1, &fbo);
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        fn->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        QImage g(size, QImage::Format_RGBA8888);
+        fn->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        fn->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, g.bits());
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        fn->glDeleteFramebuffers(1, &fbo);
+        viaGl.releaseGl();
+        fn->glDeleteTextures(1, &envTex);
+        RhiScene scene(rhi.get());
+        QRhiCommandBuffer *cb = nullptr;
+        QImage q;
+        if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+            RhiResources::of(rhi.get()).frameStarted();
+            std::unique_ptr<QRhiTexture> envRhi(rhi->newTexture(QRhiTexture::RGBA8, envImage.size()));
+            envRhi->create();
+            QRhiResourceUpdateBatch *uploads = rhi->nextResourceUpdateBatch();
+            uploads->uploadTexture(envRhi.get(), envImage);
+            cb->resourceUpdate(uploads); // the picture is there before the scene copies it
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            QRhiTexture *out = scene.draw(cb, u, lit, items, {}, size.width(), size.height(), q3, envRhi.get(), false);
+            QRhiReadbackResult rb;
+            if (out) {
+                QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                r->readBackTexture({out}, &rb);
+                cb->resourceUpdate(r);
+            }
+            rhi->endOffscreenFrame();
+            if (out) q = QImage(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888).copy();
+        }
+        int worst = 0;
+        double over = 0;
+        const double mean = meanDifference(q, g, &worst, &over);
+        check(!q.isNull() && mean < 2.0, qPrintable(QStringLiteral("environment: QRhi against OpenGL, mean %1, %2% over 8").arg(mean, 0, 'f', 3).arg(over * 100, 0, 'f', 2)));
+        if (!dump.isEmpty()) {
+            g.save(dump + "/env_gl.png");
+            q.save(dump + "/env_rhi.png");
+        }
+    }
+    // The air: a spot's beam through fog, stopped by a ball
+    {
+        SceneSettings lit = view;
+        lit.ao = 0;
+        lit.reflections = 0;
+        lit.glow = 0;
+        lit.ambientIntensity = 0.05f;
+        lit.fogDensity = 0.25f;
+        lit.fogReach = 12;
+        lit.distance = 5;
+        Scene3DQuality q3;
+        q3.antialiasing = q3.contact = q3.reflections = q3.glow = 0;
+        q3.shadows = 2;
+        q3.atmosphere = 2;
+        auto ball = std::make_shared<Model3D>();
+        QString err;
+        ball->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        Scene3D::Item b;
+        b.model = ball;
+        b.placement.color = {0.7f, 0.7f, 0.7f};
+        const std::vector<Scene3D::Item> items{b};
+        Scene3D::Lamp lamp;
+        lamp.light.type = 2;
+        lamp.light.shadow = true;
+        lamp.light.intensity = 60;
+        lamp.light.position = {2.5f, 3.0f, 1.5f};
+        lamp.light.yaw = 125;
+        lamp.light.pitch = -50;
+        lamp.light.angle = 30;
+        lamp.light.rays = 1;
+        Scene3D viaGl;
+        const GLuint tex = viaGl.draw(lit, items, {lamp}, size.width(), size.height(), 0, false, q3);
+        auto fn = gl();
+        GLuint fbo = 0;
+        fn->glGenFramebuffers(1, &fbo);
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        fn->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        QImage g(size, QImage::Format_RGBA8888);
+        fn->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        fn->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, g.bits());
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        fn->glDeleteFramebuffers(1, &fbo);
+        viaGl.releaseGl();
+        RhiScene scene(rhi.get());
+        QRhiCommandBuffer *cb = nullptr;
+        QImage q;
+        if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+            RhiResources::of(rhi.get()).frameStarted();
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            QRhiTexture *out = scene.draw(cb, u, lit, items, {lamp}, size.width(), size.height(), q3);
+            QRhiReadbackResult rb;
+            if (out) {
+                QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                r->readBackTexture({out}, &rb);
+                cb->resourceUpdate(r);
+            }
+            rhi->endOffscreenFrame();
+            if (out) q = QImage(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888).copy();
+        }
+        int worst = 0;
+        double over = 0;
+        const double mean = meanDifference(q, g, &worst, &over);
+        check(!q.isNull() && mean < 2.0, qPrintable(QStringLiteral("fog: QRhi against OpenGL, mean %1, %2% over 8").arg(mean, 0, 'f', 3).arg(over * 100, 0, 'f', 2)));
+        if (!dump.isEmpty()) {
+            g.save(dump + "/fog_gl.png");
+            q.save(dump + "/fog_rhi.png");
+        }
+    }
     // No limit to the lights (OpenGL took eight): twelve give more light than eight
     {
         auto model = std::make_shared<Model3D>();

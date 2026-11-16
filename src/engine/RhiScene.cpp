@@ -42,9 +42,23 @@ struct SceneBlock {
     qint32 reflect[4];   // steps, a last picture to reflect
     float range[4];      // the near and far planes, the last picture's exposure
     float viewProj[16];
+    float envInfo[4];    // intensity, rotation, blurriest level, linear
+    qint32 envFlags[4];  // an environment
 };
-static_assert(sizeof(SceneBlock) == 80 + 48 + 64, "the scene shaders' Scene block");
-constexpr quint32 kSceneBytes = 192;
+static_assert(sizeof(SceneBlock) == 80 + 48 + 64 + 32, "the scene shaders' Scene block");
+constexpr quint32 kSceneBytes = 224;
+
+struct FogBlock {
+    float inv[16];
+    float eye[4], color[4], a[4], b[4];
+    qint32 ints[4]; // steps, lights
+};
+
+struct SkyBlock {
+    float inv[16];
+    float eye[4], params[4], more[4];
+};
+constexpr int kEnvW = 1024, kEnvH = 512;
 
 struct AoBlock {
     float invProj[16], proj[16];
@@ -74,11 +88,15 @@ struct RhiScene::Impl {
         QSize size;
         int samples = 1;
     };
-    Surface view{1}, lit{2}, graded{3}, seen{4}, ao{5}, aoBlurred{6}, litGlow{7};
+    Surface view{1}, lit{2}, graded{3}, seen{4}, ao{5}, aoBlurred{6}, litGlow{7}, fogA{30}, fogB{31};
+    std::unique_ptr<QRhiBuffer> fogUbuf, fogBlurUbuf;
     std::vector<Surface> glowLevels; // the glow, halved again and again (ids from 20)
     std::unique_ptr<QRhiBuffer> glowUbuf[16];
     std::unique_ptr<QRhiTexture> brightPlain; // when the glow is off the post pass still wants a texture
-    std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf, backgroundUbuf;
+    std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf, backgroundUbuf, skyUbuf;
+    RhiTarget env;                 // the environment's copy in half floats, with its blurred levels
+    QRhiTexture *envSource = nullptr;
+    std::unique_ptr<QRhiSampler> envSampler;
     // A shared material's maps as textures, by their image, kept while they are used
     struct MaterialMap {
         std::unique_ptr<QRhiTexture> texture;
@@ -292,6 +310,8 @@ RhiScene::RhiScene(QRhi *rhi) : d(std::make_unique<Impl>(rhi))
     d->sceneUbuf->create();
     d->postUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
     d->postUbuf->create();
+    d->envSampler.reset(rhi->newSampler(QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::Repeat, QRhiSampler::ClampToEdge)); // around: no seam
+    d->envSampler->create();
     d->nearest.reset(rhi->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge));
     d->nearest->create();
 }
@@ -534,7 +554,8 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
 }
 
 QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &sourceItems,
-                            const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality)
+                            const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality, QRhiTexture *environment,
+                            bool environmentLinear)
 {
     if (w <= 0 || h <= 0) return nullptr;
     const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
@@ -599,7 +620,8 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     const int contactLevel = std::clamp(quality.contact, 0, 3), reflectLevel = std::clamp(quality.reflections, 0, 3);
     const bool wantsAo = contactLevel > 0 && s.ao > 0;
     const float reflections = reflectLevel ? s.reflections : 0.0f;
-    const bool wantsSeen = wantsAo || reflections > 0;
+    const bool wantsFog = quality.atmosphere > 0 && s.fogDensity > 0;
+    const bool wantsSeen = wantsAo || reflections > 0 || wantsFog;
     sb.screen[0] = float(w), sb.screen[1] = float(h);
     sb.screen[2] = wantsAo ? s.ao : 0.0f;
     sb.screen[3] = reflections;
@@ -610,6 +632,44 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         const QMatrix4x4 viewProj = cam.proj * cam.view; // OpenGL's: the shader works in its clip space
         std::memcpy(sb.viewProj, viewProj.constData(), sizeof sb.viewProj);
     }
+    // The environment: a copy in half floats, then its levels (the rougher a surface, the blurrier its reflection). An HDR
+    // file's picture does not change: copied once
+    bool hasEnv = false;
+    if (environment) {
+        d->env.ensureMipped(rhi, QSize(kEnvW, kEnvH), QRhiTexture::RGBA16F);
+        hasEnv = d->env.readyMipped(QSize(kEnvW, kEnvH), QRhiTexture::RGBA16F);
+        if (hasEnv && !(environmentLinear && environment == d->envSource)) {
+            hasEnv = res.blit(cb, environment, d->env);
+            if (hasEnv) {
+                QRhiResourceUpdateBatch *levels = rhi->nextResourceUpdateBatch();
+                levels->generateMips(d->env.texture());
+                cb->resourceUpdate(levels);
+                d->envSource = environmentLinear ? environment : nullptr;
+            }
+        }
+    }
+    if (hasEnv && s.envShow) {
+        if (!d->skyUbuf) {
+            d->skyUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(SkyBlock)));
+            d->skyUbuf->create();
+        }
+        SkyBlock sk = {};
+        const QMatrix4x4 inv = (cam.proj * cam.view).inverted();
+        std::memcpy(sk.inv, inv.constData(), sizeof sk.inv);
+        sk.eye[0] = cam.eye.x(), sk.eye[1] = cam.eye.y(), sk.eye[2] = cam.eye.z();
+        sk.params[0] = s.envIntensity;
+        sk.params[1] = qDegreesToRadians(s.envRotation);
+        sk.params[2] = std::clamp(s.envBlur, 0.0f, 1.0f) * (std::log2(float(kEnvW)) - 2);
+        sk.params[3] = s.exposure;
+        sk.more[0] = environmentLinear ? 1.0f : 0.0f;
+        sk.more[1] = s.glowThreshold;
+        u->updateDynamicBuffer(d->skyUbuf.get(), 0, sizeof sk, &sk);
+    }
+    sb.envFlags[0] = hasEnv ? 1 : 0;
+    sb.envInfo[0] = s.envIntensity;
+    sb.envInfo[1] = qDegreesToRadians(s.envRotation);
+    sb.envInfo[2] = std::log2(float(kEnvW));
+    sb.envInfo[3] = environmentLinear ? 1.0f : 0.0f;
     struct SpotShadow {
         QMatrix4x4 matrix; // the light's view and projection (OpenGL's clip space)
         QVector3D planes;
@@ -677,7 +737,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             {dir.x(), dir.y(), dir.z(), spotSlot},
             {right.x(), right.y(), right.z(), 0},
             {upward.x(), upward.y(), upward.z(), 0},
-            {std::max(0.001f, l.width) * 0.5f, std::max(0.001f, l.height) * 0.5f, 0, 0},
+            {std::max(0.001f, l.width) * 0.5f, std::max(0.001f, l.height) * 0.5f, std::max(0.0f, l.rays), 0}, // z: how much it shows in the fog
             {cone, coneIn, 0, 0}};
         light.insert(light.end(), &entry[0][0], &entry[0][0] + 28);
         ++sb.counts[0];
@@ -715,6 +775,9 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
                         !d->ensure(d->aoBlurred, std::max(1, w / 2), std::max(1, h / 2), 1, false)))
             return nullptr;
         if (reflections > 0) d->last.ensure(rhi, QSize(w, h));
+        if (wantsFog && (!d->ensure(d->fogA, std::max(1, w / 2), std::max(1, h / 2), 1, false, QRhiTexture::RGBA16F) ||
+                         !d->ensure(d->fogB, std::max(1, w / 2), std::max(1, h / 2), 1, false, QRhiTexture::RGBA16F)))
+            return nullptr;
     }
     // The flip of the fullscreen passes' triangle
     PostBlock pb = {};
@@ -800,6 +863,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         bindings.push_back({14, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsAo ? d->aoBlurred.color.get() : black, res.linear()});
         bindings.push_back({15, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsSeen ? d->seen.color.get() : black, d->nearest.get()});
         bindings.push_back({16, QRhiShaderResourceBinding::FragmentStage, nullptr, d->lastValid && reflections > 0 && d->last.ready() ? d->last.texture() : black, res.linear()});
+        bindings.push_back({17, QRhiShaderResourceBinding::FragmentStage, nullptr, hasEnv ? d->env.texture() : black, d->envSampler.get()});
         return res.bindings(bindings);
     };
     std::vector<Command> commands;
@@ -969,6 +1033,29 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             cb->draw(3);
         }
     }
+    if (hasEnv && s.envShow) { // the environment behind the models: a triangle at the far plane, no depth
+        const auto vs = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+        QRhiShaderResourceBindings *skySrb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                           {1, QRhiShaderResourceBinding::FragmentStage, d->skyUbuf.get()},
+                                                           {2, QRhiShaderResourceBinding::FragmentStage, nullptr, d->env.texture(), d->envSampler.get()}});
+        std::unique_ptr<QRhiGraphicsPipeline> &sky = d->fullscreen[main.id * 100 + 71];
+        if (!sky && skySrb) {
+            sky.reset(rhi->newGraphicsPipeline());
+            sky->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenesky.vert"))},
+                                  {QRhiShaderStage::Fragment, RhiResources::shader(QString::fromLatin1(main.withBright ? "scenesky.frag" : "scenesky_noglow.frag"))}});
+            sky->setVertexInputLayout({});
+            sky->setSampleCount(main.samples);
+            if (main.withBright) sky->setTargetBlends({QRhiGraphicsPipeline::TargetBlend(), QRhiGraphicsPipeline::TargetBlend()});
+            sky->setShaderResourceBindings(skySrb);
+            sky->setRenderPassDescriptor(main.pass.get());
+            if (!sky->create()) sky.reset();
+        }
+        if (sky && skySrb) {
+            cb->setGraphicsPipeline(sky.get());
+            cb->setShaderResources(skySrb);
+            cb->draw(3);
+        }
+    }
     for (const Command &c : commands) {
         QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(main, c.kind, c.srb) : nullptr;
         if (!ps) continue;
@@ -1058,17 +1145,82 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         if (glowBatch) glowBatch->release();
     }
 
+    // The air: walked from the camera at half the size, then without its noise
+    if (wantsFog) {
+        if (!d->fogUbuf) {
+            d->fogUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(FogBlock)));
+            d->fogUbuf->create();
+            d->fogBlurUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+            d->fogBlurUbuf->create();
+        }
+        FogBlock fb = {};
+        const QMatrix4x4 invViewProj = (cam.proj * cam.view).inverted();
+        std::memcpy(fb.inv, invViewProj.constData(), sizeof fb.inv);
+        fb.eye[0] = cam.eye.x(), fb.eye[1] = cam.eye.y(), fb.eye[2] = cam.eye.z();
+        fb.color[0] = s.fogColor[0], fb.color[1] = s.fogColor[1], fb.color[2] = s.fogColor[2];
+        fb.a[0] = s.fogDensity;
+        fb.a[1] = s.fogBase;
+        fb.a[2] = std::max(0.0f, s.fogFalloff);
+        fb.a[3] = std::max(0.01f, s.fogReach);
+        fb.b[0] = s.exposure;
+        fb.ints[0] = quality.atmosphere == 1 ? 8 : quality.atmosphere == 3 ? 32 : 16;
+        fb.ints[1] = sb.counts[0];
+        const float texel[4] = {1.0f / float(d->fogA.size.width()), 1.0f / float(d->fogA.size.height()), 0, 0};
+        QRhiResourceUpdateBatch *fogBatch = rhi->nextResourceUpdateBatch();
+        fogBatch->updateDynamicBuffer(d->fogUbuf.get(), 0, sizeof fb, &fb);
+        fogBatch->updateDynamicBuffer(d->fogBlurUbuf.get(), 0, sizeof texel, texel);
+        const auto vs = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+        const auto fs = QRhiShaderResourceBinding::FragmentStage;
+        QRhiShaderResourceBindings *fogSrb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                           {1, fs, d->fogUbuf.get()},
+                                                           {2, fs, nullptr, d->seen.color.get(), d->nearest.get()},
+                                                           {9, fs, d->lights.get(), nullptr, nullptr, true},
+                                                           {10, fs, d->shadowData.get(), nullptr, nullptr, true},
+                                                           {11, fs, d->pointData.get(), nullptr, nullptr, true},
+                                                           {12, fs, nullptr, d->spotMaps.texture.get(), d->nearest.get()},
+                                                           {13, fs, nullptr, d->pointMaps.texture.get(), d->nearest.get()}});
+        QRhiShaderResourceBindings *blurSrb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                            {1, fs, d->fogBlurUbuf.get()},
+                                                            {2, fs, nullptr, d->seen.color.get(), d->nearest.get()},
+                                                            {3, fs, nullptr, d->fogA.color.get(), res.linear()}});
+        const auto run = [&](Impl::Surface &target, const char *fragment, QRhiShaderResourceBindings *srb, int key) {
+            std::unique_ptr<QRhiGraphicsPipeline> &ps = d->fullscreen[target.id * 100 + key];
+            if (!ps && srb) {
+                ps.reset(rhi->newGraphicsPipeline());
+                ps->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},
+                                     {QRhiShaderStage::Fragment, RhiResources::shader(QString::fromLatin1(fragment))}});
+                ps->setVertexInputLayout({});
+                ps->setShaderResourceBindings(srb);
+                ps->setRenderPassDescriptor(target.pass.get());
+                if (!ps->create()) ps.reset();
+            }
+            if (!ps || !srb) return;
+            cb->beginPass(target.target.get(), Qt::black, {1.0f, 0}, fogBatch);
+            fogBatch = nullptr;
+            cb->setGraphicsPipeline(ps.get());
+            cb->setViewport({0, 0, float(target.size.width()), float(target.size.height())});
+            cb->setShaderResources(srb);
+            cb->draw(3);
+            cb->endPass();
+        };
+        run(d->fogA, "scenefog.frag", fogSrb, 80);
+        run(d->fogB, "scenefogblur.frag", blurSrb, 81);
+        if (fogBatch) fogBatch->release();
+    }
+
     // All over the picture, as a camera does: the glow, the colours, the darker edges
     const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
-    if (!graded && !wantsGlow) return main.color.get();
+    if (!graded && !wantsGlow && !wantsFog) return main.color.get();
     if (!d->ensure(d->graded, w, h, 1, false)) return main.color.get();
     QRhiResourceUpdateBatch *post = rhi->nextResourceUpdateBatch();
     pb.more[0] = wantsGlow ? 1.0f : 0.0f;
     pb.more[1] = s.glow;
+    pb.more[2] = wantsFog ? 1.0f : 0.0f;
     post->updateDynamicBuffer(d->postUbuf.get(), 0, sizeof pb, &pb);
     QRhiShaderResourceBindings *srb = res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->postUbuf.get()},
                                                     {1, QRhiShaderResourceBinding::FragmentStage, nullptr, main.color.get(), res.linear()},
-                                                    {2, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsGlow ? d->glowLevels[0].color.get() : res.black(), res.linear()}});
+                                                    {2, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsGlow ? d->glowLevels[0].color.get() : res.black(), res.linear()},
+                                                    {3, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsFog ? d->fogB.color.get() : res.black(), res.linear()}});
     if (!d->postPipeline && srb) {
         d->postPipeline.reset(rhi->newGraphicsPipeline());
         d->postPipeline->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},

@@ -102,6 +102,7 @@ struct RhiRenderer::Impl {
         std::unique_ptr<RhiVideoTexture> video;
         std::unique_ptr<QRhiTexture> image;
         QSize imageSize;
+        std::unique_ptr<QRhiTexture> hdr; // an HDR file's pixels, in floats
         std::unique_ptr<IsfInstance> generator;
         QString generatorPath;
         RhiTarget liveTarget; // a live input's texture of another API, turned the right way up
@@ -1022,7 +1023,7 @@ struct RhiRenderer::Impl {
         const Layer *l = e.layer(e.indexOfId(id));
         if (stage == 0 && r.preFx) return r.preFx;
         if (stage > 0 && l && size_t(stage) < r.stage.size() && l->stagesWanted.count(stage) && r.stage[size_t(stage)]) return r.stage[size_t(stage)];
-        if (stage == Engine::kStageHdrFile) return nullptr; // an HDR file: not yet
+        if (stage == Engine::kStageHdrFile) return r.hdr ? r.hdr.get() : r.final; // the HDR file as read
         return r.final;
     }
     // The pictures that models carry (laid on them, or pushing their points) as textures of this QRhi
@@ -1043,7 +1044,10 @@ struct RhiRenderer::Impl {
         std::vector<Scene3D::Lamp> lamps;
         e.collectScene(members, items, lamps);
         resolveScenePictures(items);
-        QRhiTexture *picture = r.scene->draw(cb, take(), e.placedCamera(g), items, lamps, e.m_compSize.width(), e.m_compSize.height(), e.m_quality3d);
+        const Layer *environment = g.sceneEnvironment ? e.layer(e.indexOfId(g.sceneEnvironment)) : nullptr;
+        QRhiTexture *envTexture = environment ? stageTexture(environment->id, g.sceneEnvironmentStage) : nullptr;
+        const bool linear = environment && g.sceneEnvironmentStage == Engine::kStageHdrFile && layers.count(environment->id) && layers[environment->id].hdr;
+        QRhiTexture *picture = r.scene->draw(cb, take(), e.placedCamera(g), items, lamps, e.m_compSize.width(), e.m_compSize.height(), e.m_quality3d, envTexture, linear);
         if (picture) processLayer(g, r, picture, picture->pixelSize(), true, rc);
     }
 
@@ -1295,6 +1299,22 @@ bool RhiRenderer::init(QString *err)
 
 void RhiRenderer::setSceneViews(std::vector<SceneViewRequest> views) { d->sceneViews = std::move(views); }
 
+void RhiRenderer::hdrArrived(quint64 layer, const std::vector<float> &pixels, QSize size)
+{
+    if (!d->rhi || size.isEmpty() || pixels.size() < size_t(size.width()) * size_t(size.height()) * 4) return;
+    Impl::RLayer &r = d->layers[layer];
+    if (!r.hdr || r.hdr->pixelSize() != size) {
+        r.hdr.reset(d->rhi->newTexture(QRhiTexture::RGBA32F, size));
+        if (!r.hdr->create()) {
+            r.hdr.reset();
+            return;
+        }
+    }
+    QRhiTextureSubresourceUploadDescription sub(pixels.data(), quint32(size.width()) * size.height() * 4 * sizeof(float));
+    sub.setSourceSize(size);
+    d->batch()->uploadTexture(r.hdr.get(), QRhiTextureUploadDescription({0, 0, sub}));
+}
+
 void RhiRenderer::imageArrived(quint64 layer, const QImage &image)
 {
     if (!d->rhi || image.isNull()) return;
@@ -1378,7 +1398,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     std::vector<Impl::RLayer> retired;
     for (auto it = d->layers.begin(); it != d->layers.end();) {
         Impl::RLayer &r = it->second;
-        if (r.used || r.image) {
+        if (r.used || r.image || r.hdr) {
             r.unusedFrames = 0;
             ++it;
         } else if (++r.unusedFrames > framesInFlightSafety) {

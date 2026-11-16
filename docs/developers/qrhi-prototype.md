@@ -125,9 +125,12 @@ it and the parts ported so far.
   renderer's views come back the same way, as pixels. Occlusion
   between surfaces (from the depth of what is seen, at half size, blurred), reflections
   of the last picture and the glow (a second, float attachment spread over six
-  halvings) match OpenGL too (`rhi_scene`). Not yet, in lit scenes: an environment
-  (and its sky), fog, the supersampled quality level; pictures laid on models by a layer, displacement pictures and
-  the textures of shared materials; shared materials' maps and height maps and the layers' pictures on models are taken (`rhi_preview`).
+  halvings) match OpenGL too (`rhi_scene`). The
+  environment (a layer's picture or an HDR file, copied in half floats with its blurred
+  levels, lighting the models and shown behind them) and the fog (the air walked from
+  the camera at half the size, lit by the lights through their shadows) match
+  OpenGL too. Shared materials' maps and height maps and the layers' pictures on models
+  are taken (`rhi_preview`). Not yet, in lit scenes: the supersampled quality level.
   `MaterialSphere`, the material preview, is a `QRhiWidget` drawing the scene on its own device: no
   `QOpenGLWidget` is left in the interface, and its views use the window's own API (Metal here).
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`

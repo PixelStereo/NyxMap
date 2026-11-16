@@ -312,6 +312,7 @@ void Engine::updateSource(Layer &l, double dt)
             l.pendingAutoImage = QImage();
         }
         if (!l.pendingHdr.empty()) { // an HDR file's unclipped pixels
+            if (m_rhi) m_rhi->hdrArrived(l.id, l.pendingHdr, l.pendingHdrSize);
             l.hdrTex.uploadFloat(l.pendingHdr.data(), l.pendingHdrSize.width(), l.pendingHdrSize.height());
             l.pendingHdr.clear();
             l.pendingHdr.shrink_to_fit();

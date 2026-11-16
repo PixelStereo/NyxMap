@@ -29,10 +29,12 @@ public:
                           const std::vector<Scene3D::Item> &items, int w, int h, Scene3D::ViewLook look);
     // A lit scene (Scene3D::draw's port, the first step): its models under its lights (directional, point, spot, area) and
     // the studio's light, physically based, antialiased as `quality` asks, then graded (colours, vignette). Same picture
-    // conventions as drawView. Not yet: shadows, an environment, screen-space occlusion and reflections, glow and fog.
+    // conventions as drawView. environment: a layer's picture (equirectangular, its first row at the bottom), copied with its
+    // blurred levels; linear: its values are linear light (an HDR file as read), else display encoded. Not yet: fog.
     // Pictures laid on models by a layer and displacement pictures are not taken yet
     QRhiTexture *draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &items,
-                      const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality = {});
+                      const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality = {},
+                      QRhiTexture *environment = nullptr, bool environmentLinear = false);
     QRhi *rhiOwner() const; // the QRhi it draws with
     // Triangles it drew in its last frame
     int triangles() const { return m_triangles; }
