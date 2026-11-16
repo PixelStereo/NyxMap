@@ -16,6 +16,16 @@ it and the parts ported so far.
   Planes of three channels and of four 16-bit channels, which no QRhi format
   holds, go as one channel three or four times as wide. `rhi_video` checks every
   test file against `VideoTexture`: at most 1 level apart (rounding).
+- **ISF** (`IsfInstance::renderRhi`, `IsfRhi.cpp`, on the instance's own state):
+  passes, persistent and float targets, imported images, POINTS passes with
+  their blending, generators. `isf_render` draws every shipped shader through
+  both renderers, three frames in a row from the same picture: 305 of 311 as
+  OpenGL draws them, the other 6 differing only by GPU noise (hashes of
+  `sin()`/`fract()` of large values, a thin line a sub-pixel apart: their 8 × 8
+  averages agree).
+- Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
+  (samplers, a black picture, a quad, a copy between formats, shader resource
+  bindings kept per combination of resources).
 - The engine's shaders are baked at build time (`qt_add_shaders`, no GLSL
   target); ISF shaders at run time (`QShaderBaker`). Qt Shader Tools is now a
   build and runtime dependency.

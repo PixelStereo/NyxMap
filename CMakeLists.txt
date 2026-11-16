@@ -158,14 +158,26 @@ target_include_directories(nyxmap_engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/ge
 
 # QRhi (Metal, Direct3D, Vulkan) and its shaders, baked at run time (ISF)
 set(QT_NO_PRIVATE_MODULE_WARNING ON) # QRhi is semi-public: Qt pinned, the renderer isolated behind it
-find_package(Qt6 REQUIRED COMPONENTS GuiPrivate ShaderTools ShaderToolsPrivate)
-target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp)
+# Up to Qt 6.8 the private modules come with their public ones; from 6.9 they are packages of their own (on Linux
+# distributions: qt6-base-private-dev)
+find_package(Qt6 REQUIRED COMPONENTS ShaderTools)
+foreach(private GuiPrivate ShaderToolsPrivate)
+  if(NOT TARGET Qt6::${private})
+    find_package(Qt6 QUIET COMPONENTS ${private})
+  endif()
+  if(NOT TARGET Qt6::${private})
+    message(FATAL_ERROR "Qt6::${private} not found: QRhi needs Qt's private headers (qt6-base-private-dev on Debian and Ubuntu)")
+  endif()
+endforeach()
+target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp src/engine/RhiTarget.cpp
+  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp)
 # The engine's own shaders, baked at build time for every backend (SPIR-V, MSL, HLSL)
 qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   PREFIX "/shaders"
   NOGLSL # no OpenGL: SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
   BASE src/engine/shaders
-  FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag)
+  FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
+        src/engine/shaders/blit.vert src/engine/shaders/blit.frag)
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)
@@ -790,6 +802,13 @@ if(NYXMAP_TESTS)
   target_link_libraries(nyxmap_isf_rhi_test PRIVATE nyxmap_engine)
   target_compile_definitions(nyxmap_isf_rhi_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME isf_rhi COMMAND nyxmap_isf_rhi_test)
+  # Every ISF drawn by the QRhi renderer and by the OpenGL one: the same pictures
+  add_executable(nyxmap_isf_render_test test/isf_render.cpp)
+  target_include_directories(nyxmap_isf_render_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_isf_render_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  target_compile_definitions(nyxmap_isf_render_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME isf_render COMMAND nyxmap_isf_render_test)
+  set_tests_properties(isf_render PROPERTIES SKIP_RETURN_CODE 77)
   # The QRhi renderer's video pictures against the OpenGL renderer's, every layout: the same pictures, the cost
   add_executable(nyxmap_rhi_video_test test/rhi_video.cpp)
   target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)

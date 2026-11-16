@@ -121,7 +121,7 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev qt6-webengine-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
@@ -227,7 +227,7 @@ jobs:
           # neither linked nor shipped: the package's LGPL FFmpeg, Qt and the other libraries are recorded by the packaging
           {
             echo "Built on $(lsb_release -ds) $(uname -m), commit $GITHUB_SHA"
-            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
+            dpkg-query -W -f='${Package} ${Version}\n' qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev libasound2-dev cmake gcc
           } | tee deps-linux.txt
       - name: Package autonomous Linux distributions
         if: needs.scope.outputs.package == 'true'
@@ -285,7 +285,7 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
@@ -329,7 +329,7 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind ccache
       - name: Compiler cache
@@ -381,7 +381,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -449,7 +449,7 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
             libgl1-mesa-dev libgl1-mesa-dri libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
@@ -496,7 +496,7 @@ jobs:
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
           sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |

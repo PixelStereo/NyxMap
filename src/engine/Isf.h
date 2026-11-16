@@ -13,6 +13,7 @@
 #include <QVector>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <vector>
 
 // Value of a parameter (any numeric type), for undo.
@@ -29,6 +30,11 @@ struct IsfValue {
     }
     bool operator!=(const IsfValue &o) const { return !(*this == o); }
 };
+
+class QRhi;
+class QRhiCommandBuffer;
+class QRhiTexture;
+class RhiTarget;
 
 struct IsfInput {
     enum Type { Event, Bool, Long, Float, Point2D, Color, Image, Audio, AudioFFT, Unknown };
@@ -56,6 +62,7 @@ struct IsfInput {
     // A picture of the engine for this input instead (transitions: startImage, endImage); 0: none
     GLuint extTex = 0;
     int extW = 0, extH = 0;
+    QRhiTexture *rhiExt = nullptr; // the same for the QRhi renderer (its size: extW × extH)
 
     // An "audio" or "audioFFT" input: the sound it shows (saved), and its MAX (the columns wanted; 0: the native
     // width). The engine binds the shared analysis texture before each render.
@@ -205,6 +212,7 @@ public:
     // could not be read.
     struct RhiSources {
         QString vertex, fragment, error;
+        QString vertexPoints; // the vertex shader of a POINTS pass: no vertex attribute (isf_position is 0)
         // The block's members as std140 lays them out (offset in bytes), with the input's default
         struct Uniform {
             enum Kind { Int, Float, Bool, Vec2, Vec4 } kind = Float;
@@ -220,6 +228,16 @@ public:
     };
     static RhiSources rhiSources(const QString &path);
 
+    // The QRhi renderer (IsfRhi.cpp), on the same state as the OpenGL one (inputs, time, passes): one instance is
+    // drawn by one of them. loadRhi: read and baked for `rhi`, no GL needed (false: error()). renderRhi: as render()
+    // does, into `out` (made outSize; RGBA16F when it already is, else RGBA8), recorded in `cb` outside any pass;
+    // `input` the filter's picture (nullptr: none). Render thread of `rhi`.
+    bool loadRhi(const QString &path, QRhi *rhi);
+    void renderRhi(QRhiCommandBuffer *cb, const IsfRenderContext &rc, QRhiTexture *input, RhiTarget &out, QSize outSize,
+                   bool repeatFrame = false);
+    void releaseRhi();
+    bool isValidRhi() const;
+
     // Lightweight header parsing (for the library, no GL).
     struct Header {
         QString name, description;
@@ -233,6 +251,12 @@ public:
 
 private:
     bool readSources(const QString &path, QString *fragment, QString *vertex);
+    RhiSources rhiSourcesOf(const QString &fsBody, const QString &vsBody) const; // from what parse() read
+    struct RhiState;
+    struct RhiStateDeleter {
+        void operator()(RhiState *s) const;
+    };
+    std::unique_ptr<RhiState, RhiStateDeleter> m_rhi;
     bool parse(const QString &src, QString *body);
     bool compile(const QString &fsBody, const QString &vsBody);
     QString uniformBlock() const;

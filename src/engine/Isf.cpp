@@ -819,13 +819,20 @@ static QString locateVaryings(const QString &body, bool vertex, QHash<QString, i
 
 IsfInstance::RhiSources IsfInstance::rhiSources(const QString &path)
 {
-    RhiSources r;
     IsfInstance isf;
     QString fsBody, vsBody;
     if (!isf.readSources(path, &fsBody, &vsBody)) {
+        RhiSources r;
         r.error = isf.m_error;
         return r;
     }
+    return isf.rhiSourcesOf(fsBody, vsBody);
+}
+
+IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const QString &vsBody) const
+{
+    RhiSources r;
+    const IsfInstance &isf = *this;
     QString block = QStringLiteral("layout(std140, binding = 0) uniform IsfUniforms {\n");
     using U = RhiSources::Uniform;
     auto member = [&](U::Kind kind, const QString &name, std::initializer_list<float> value = {}) {
@@ -927,6 +934,9 @@ IsfInstance::RhiSources IsfInstance::rhiSources(const QString &path)
                                 "#define texture2D texture\n")
                + (vertexBody.isEmpty() ? QStringLiteral("void main() { isf_vertShaderInit(); }\n")
                                        : QStringLiteral("#line 1\n") + vertexBody);
+    r.vertexPoints = r.vertex;
+    r.vertexPoints.replace(QStringLiteral("layout(location = 0) in vec2 isf_position;\n"),
+                           QStringLiteral("const vec2 isf_position = vec2(0.0);\n"));
     return r;
 }
 
