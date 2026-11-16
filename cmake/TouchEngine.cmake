@@ -39,6 +39,9 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
     # Qt hides deprecated OpenGL SDK declarations; TouchEngine's headers use CGL.
     target_compile_definitions(nyxmap_engine PRIVATE GL_SILENCE_DEPRECATION)
     target_link_libraries(nyxmap_engine PRIVATE "-framework OpenGL")
+    # Through QRhi's Metal device (no OpenGL): ToxMetal
+    target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm)
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   else()
     set(NYXMAP_TOUCHENGINE_DLL "${nyxmap_touchengine_SOURCE_DIR}/bin/TouchEngine.dll")
     set_target_properties(nyxmap_touchengine_sdk PROPERTIES

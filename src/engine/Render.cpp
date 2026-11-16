@@ -2022,7 +2022,7 @@ void Engine::frame(double dt)
         // TouchEngine layers read their input TOPs as OpenGL textures: the pictures of the layers they take, read back
         std::vector<quint64> toxSources;
         for (const auto &layer : m_layers)
-            if (layer->toxPlayer)
+            if (layer->toxPlayer && !layer->toxPlayer->usesRhi(m_rhi->rhi()))
                 for (const auto &[top, source] : layer->tox.inputs.asKeyValueRange())
                     if (source && std::find(toxSources.begin(), toxSources.end(), source) == toxSources.end()) toxSources.push_back(source);
         for (size_t i = 0; i < toxSources.size(); ++i) asked.push_back({toxInputSlot + int(i), toxSources[i], 2048});

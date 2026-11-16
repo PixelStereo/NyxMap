@@ -45,6 +45,11 @@ public:
     // Render thread, before update(): borrowed until update returns. The backend
     // copies to an owned GPU buffer before handing it to an asynchronous cook.
     virtual void setInputTexture(const QString &identifier, GLuint texture, int width, int height) = 0;
+    // Through a QRhi (Metal, macOS): the player works with Metal textures of that QRhi, without OpenGL. True when it can
+    // (takeTexture() then gives its picture, setInputRhiTexture() the pictures of its inputs: the QRhi textures of the
+    // layers they take, valid for the call)
+    virtual bool usesRhi(QRhi *) const { return false; }
+    virtual void setInputRhiTexture(const QString &, QRhiTexture *) {}
     virtual quint64 revision() const = 0; // schema changed: rebuild parameter declarations and the inspector
     virtual QString error() const = 0; // fatal runtime error; loading/paused are status, not errors
 };

@@ -1,5 +1,6 @@
 // TouchEngine SDK integration. SDK copyright and terms: licenses/touchengine.txt.
 #include "Tox.h"
+#include <rhi/qrhi.h>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QSet>
@@ -18,6 +19,9 @@
 #endif
 #include <TouchEngine/TEOpenGL.h>
 #include <TouchEngine/TEObject.h>
+#ifdef Q_OS_MACOS
+#include "ToxMetal.h"
+#endif
 
 namespace {
 template<class T> struct Ref {
@@ -112,6 +116,28 @@ class NativeTox final : public ToxPlayer {
     // readback or glFinish in the render loop; the next update polls this fence.
     TEOpenGLTexture *m_output = nullptr;
     GLsync m_fence = nullptr;
+#ifdef Q_OS_MACOS
+    // Through QRhi's Metal device (no OpenGL): chosen by the first takeTexture()
+    std::unique_ptr<ToxMetal> m_metal;
+    QRhi *m_rhi = nullptr;
+    QMap<QString, QRhiTexture *> m_rhiImages;
+    QRhiTexture *m_picture = nullptr;
+    QSize m_pictureSize;
+    bool m_pictureFlipped = false;
+#endif
+    bool metalMode() const {
+#ifdef Q_OS_MACOS
+        return m_rhi != nullptr;
+#else
+        return false;
+#endif
+    }
+    bool contextReady() const {
+#ifdef Q_OS_MACOS
+        if (m_rhi) return m_metal != nullptr;
+#endif
+        return m_context != nullptr;
+    }
 
     void message(const QString &s, bool fatal = false) {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -156,8 +182,15 @@ class NativeTox final : public ToxPlayer {
     }
     void close() {
         releaseOutput(true);
+#ifdef Q_OS_MACOS
+        if (m_metal) m_metal->releaseOutput(m_instance);
+        m_picture = nullptr;
+#endif
         if (m_instance && m_cooking) TEInstanceCancelFrame(m_instance);
         TERelease(&m_instance); // joins callbacks before their owner/pool is destroyed
+#ifdef Q_OS_MACOS
+        m_metal.reset(); // its textures went with the instance's last use
+#endif
         for (auto &pool : m_pool) for (auto &slot : pool) if (slot) { TERelease(&slot->handle); m_retired.push_back(slot); }
         m_pool.clear();
         for (auto &slot : m_retired) slot->image.destroy();
@@ -173,12 +206,22 @@ class NativeTox final : public ToxPlayer {
         if (!check(TEInstanceCreate(event, link, this, &m_instance))) return false;
         const QByteArray enginePath = qgetenv("TOUCHENGINE_APP_PATH");
         if (!enginePath.isEmpty() && !check(TEInstanceSetPreferredEnginePath(m_instance, enginePath.constData()))) return false;
+#ifdef Q_OS_MACOS
+        if (m_rhi) { // Metal, on QRhi's device
+            QString why;
+            m_metal = ToxMetal::create(m_rhi, &why);
+            if (!m_metal) { message(why.isEmpty() ? QStringLiteral("TouchEngine cannot use QRhi's Metal device") : why, true); return false; }
+            if (!check(TEInstanceAssociateGraphicsContext(m_instance, m_metal->context()))) return false;
+        } else
+#endif
+        {
 #ifdef Q_OS_WIN
         if (!check(TEOpenGLContextCreate(wglGetCurrentDC(), wglGetCurrentContext(), &m_context))) return false;
 #else
         if (!check(TEOpenGLContextCreate(CGLGetCurrentContext(), &m_context))) return false;
 #endif
         if (!check(TEInstanceAssociateGraphicsContext(m_instance, reinterpret_cast<TEGraphicsContext *>(m_context)))) return false;
+        }
         if (!check(TEInstanceSetOutputTextureOrigin(m_instance, TETextureOriginBottomLeft))) return false;
         const QByteArray path = m_path.toUtf8();
         if (!check(TEInstanceConfigure(m_instance, path.constData(), TETimeExternal))) return false;
@@ -298,6 +341,17 @@ class NativeTox final : public ToxPlayer {
         return true;
     }
     void sendInputs(const ToxSettings &s) {
+#ifdef Q_OS_MACOS
+        if (m_metal) {
+            for (const auto &top : inputs()) {
+                const QByteArray id = top.first.toUtf8();
+                QRhiTexture *source = s.inputs.value(top.first) ? m_rhiImages.value(top.first) : nullptr;
+                QString why;
+                if (!m_metal->setInput(m_instance, id.constData(), source, &why)) message(why, true);
+            }
+            return;
+        }
+#endif
         for (const auto &top : inputs()) {
             const QByteArray id = top.first.toUtf8();
             const Image img = m_images.value(top.first);
@@ -327,6 +381,32 @@ class NativeTox final : public ToxPlayer {
             }
         }
     }
+#ifdef Q_OS_MACOS
+    // The output TOP's newest picture as a QRhi texture (Metal)
+    bool receiveRhi(const ToxSettings &s) {
+        const auto tops = outputs();
+        QString selected = s.output;
+        if (selected.isEmpty() && !tops.empty()) selected = tops.front().first;
+        if (selected.isEmpty()) { message(QStringLiteral("The component exposes no output TOP"), true); return false; }
+        if (std::none_of(tops.begin(), tops.end(), [&](const auto &p) { return p.first == selected; })) {
+            message(QStringLiteral("Output TOP is no longer available: ") + selected, true); return false;
+        }
+        QString why;
+        bool flipped = false;
+        QSize size;
+        QRhiTexture *picture = m_metal->receive(m_instance, selected.toUtf8().constData(), &size, &flipped, &why);
+        if (!picture) {
+            if (!why.isEmpty()) message(why, true);
+            return false;
+        }
+        m_picture = picture;
+        m_pictureSize = size;
+        m_pictureFlipped = flipped;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_error.clear();
+        return true;
+    }
+#endif
     bool receive(Texture2D &dest, const ToxSettings &s) {
         const auto tops = outputs();
         QString selected = s.output;
@@ -365,6 +445,7 @@ public:
     NativeTox(QString path, ToxSettings settings) : m_path(std::move(path)), m_settings(std::move(settings)) {}
     ~NativeTox() override {
         // Engine explicitly destroys the player on its render thread, with GL current.
+        if (metalMode()) { close(); return; } // no OpenGL to restore
         if (!QOpenGLContext::currentContext()) return; // never started (e.g. a project closed before its first render)
         GlState state;
         close();
@@ -384,32 +465,67 @@ public:
     QString error() const override { std::lock_guard<std::mutex> lock(m_mutex); return m_error; }
     QString status() const override { std::lock_guard<std::mutex> lock(m_mutex); return m_status; }
     void setInputTexture(const QString &id, GLuint t, int w, int h) override { m_images[id] = {t, w, h}; }
-    bool update(Texture2D &dest) override {
-        GlState state;
+    bool update(Texture2D &dest) override { return run(&dest); }
+    // Through QRhi's Metal device: the newest picture (the last one while there is no new)
+    QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override {
+#ifdef Q_OS_MACOS
+        if (!usesRhi(rhi)) return nullptr;
+        m_rhi = rhi;
+        run(nullptr);
+        *size = m_pictureSize;
+        *flipped = m_pictureFlipped;
+        return m_picture;
+#else
+        (void)rhi; (void)size; (void)flipped;
+        return nullptr;
+#endif
+    }
+    bool usesRhi(QRhi *rhi) const override {
+#ifdef Q_OS_MACOS
+        return rhi && rhi->backend() == QRhi::Metal;
+#else
+        (void)rhi;
+        return false;
+#endif
+    }
+    void setInputRhiTexture(const QString &id, QRhiTexture *t) override {
+#ifdef Q_OS_MACOS
+        m_rhiImages[id] = t;
+#else
+        (void)id; (void)t;
+#endif
+    }
+    bool run(Texture2D *dest) {
+        std::unique_ptr<GlState> state;
+        if (!metalMode()) state = std::make_unique<GlState>(); // OpenGL's state restored after the SDK's
         if (m_reload.exchange(false)) {
             close();
             std::lock_guard<std::mutex> lock(m_mutex);
             m_error.clear(); m_status = QStringLiteral("Loading TouchEngine…");
         }
-        releaseOutput(false);
+        if (!metalMode()) releaseOutput(false);
         m_retired.erase(std::remove_if(m_retired.begin(), m_retired.end(), [](auto &slot) {
             if (!slot->released) return false;
             slot->image.destroy(); return true;
         }), m_retired.end());
         if (!m_started && !open()) return false;
-        if (!m_loaded || !m_instance || !m_context) return false;
+        if (!m_loaded || !m_instance || !contextReady()) return false;
         if (!m_cooking && m_schema.exchange(false)) discover();
         ToxSettings s;
         { std::lock_guard<std::mutex> lock(m_mutex); s = m_settings; }
         bool copied = false;
         if (m_finished.load() && !m_output) {
             m_finished = false; m_cooking = false;
-            copied = receive(dest, s);
+#ifdef Q_OS_MACOS
+            if (m_metal) copied = receiveRhi(s);
+            else
+#endif
+            copied = receive(*dest, s);
         }
         if (!s.playing) { m_lastCook = -1; if (error().isEmpty()) message(QStringLiteral("TouchEngine paused")); return copied; }
         if (m_cooking || m_output) return copied;
         if (!m_resumed) {
-            if (!TEOpenGLContextSupportsTexturesForInstance(m_context, m_instance)) {
+            if (!metalMode() && !TEOpenGLContextSupportsTexturesForInstance(m_context, m_instance)) {
                 message(QStringLiteral("TouchEngine texture sharing is unavailable on this GPU"), true); return copied;
             }
             if (!check(TEInstanceResume(m_instance))) return copied;

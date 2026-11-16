@@ -416,8 +416,39 @@ struct RhiRenderer::Impl {
             size = r.imageSize;
             break;
         }
-        case SourceType::Tox: // TouchEngine through its OpenGL path for now: the inputs are the last frame's pictures read
-                              // back into OpenGL textures (Engine::m_rhiReaders), the output is read back from its texture
+        case SourceType::Tox:
+            if (l.toxPlayer && l.toxPlayer->usesRhi(rhi.get())) {
+                // Through Metal, on this QRhi's device: the inputs are the source layers' textures, the output a texture
+                for (const auto &top : l.toxPlayer->inputs()) {
+                    const auto found = layers.find(l.tox.inputs.value(top.first));
+                    l.toxPlayer->setInputRhiTexture(top.first, found != layers.end() ? found->second.final : nullptr);
+                }
+                bool upsideDown = false;
+                QSize shared;
+                if (QRhiTexture *t = l.toxPlayer->takeTexture(rhi.get(), &shared, &upsideDown)) {
+                    if (shared != r.liveSize) {
+                        r.liveSize = shared;
+                        l.srcWidth = shared.width();
+                        l.srcHeight = shared.height();
+                        if (l.mapping.isIdentity() && l.srcHeight > 0)
+                            l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
+                    }
+                    if (!upsideDown) {
+                        tex = t;
+                        size = shared;
+                    } else {
+                        if (!r.liveTarget.ready() || r.liveTarget.size() != shared) r.liveTarget.ensure(rhi.get(), shared);
+                        if (r.liveTarget.ready() && res().blit(cb, t, r.liveTarget, nullptr, true)) {
+                            tex = r.liveTarget.texture();
+                            size = shared;
+                        }
+                    }
+                }
+                l.error = l.toxPlayer->error();
+                break;
+            }
+            // Through its OpenGL path for now: the inputs are the last frame's pictures read back into OpenGL textures
+            // (Engine::m_rhiReaders), the output is read back from its texture
             if (l.toxPlayer) {
                 for (const auto &top : l.toxPlayer->inputs()) {
                     const auto found = e.m_rhiReaders.find({l.tox.inputs.value(top.first), 2});

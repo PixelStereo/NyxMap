@@ -828,6 +828,12 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
   set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
+  # A real TouchDesigner component (NYXMAP_TOX): skipped without one
+  add_executable(nyxmap_tox_real_test test/tox_real.cpp)
+  target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_tox_real_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  add_test(NAME tox_real COMMAND nyxmap_tox_real_test)
+  set_tests_properties(tox_real PROPERTIES SKIP_RETURN_CODE 77)
   # The QRhi renderer's video pictures against the OpenGL renderer's, every layout: the same pictures, the cost
   add_executable(nyxmap_rhi_video_test test/rhi_video.cpp)
   target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)

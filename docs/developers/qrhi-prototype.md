@@ -52,11 +52,18 @@ it and the parts ported so far.
   publishing to a QRhi one through Syphon. A Spout sender's frames are copied by
   SpoutDX on QRhi's own Direct3D 11 device into a texture of ours that QRhi samples
   (`SpoutReceiveRhi`; written without a Windows machine here, built by the Windows CI,
-  not run against a real sender). TouchEngine keeps its OpenGL path for now: its
-  inputs are the source layers' pictures of the previous frame, read back into
-  OpenGL textures, and its output is read back from its texture (`rhi_preview`
-  checks it with a stand-in component; a real TouchDesigner component is not
-  covered). Not yet: 3D scenes.
+  not run against a real sender). TouchEngine, on macOS, works through QRhi's own
+  Metal device (`ToxMetal`): the source layers' QRhi textures are copied on the GPU
+  into pooled Metal textures it reads, its output (a Metal or IOSurface texture) is
+  wrapped as a QRhi texture after the wait on the shared event it asks for, with the
+  component map's swizzle and the texture origin handled. No OpenGL there. Written
+  and built against the SDK here, but the machine has no TouchDesigner key
+  ("No TouchDesigner or TouchPlayer key was found"), so a cook was never run: the
+  instance is created, the Metal context associated and the component loaded up
+  to the licence check. `NYXMAP_TOX=<component> NYXMAP_RENDERER=rhi nyxmap_tox_real_test`
+  runs a real component and prints what comes out (needs a licence). Windows
+  (Direct3D 11) keeps the OpenGL path with read-back pictures (`rhi_preview` checks
+  it with a stand-in component). Not yet: 3D scenes.
 - **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
   the engine's QRhi, made by the render thread; its viewport's picture is drawn
   into it as it is, the right way up (the textures' flip, reversed). The window's
