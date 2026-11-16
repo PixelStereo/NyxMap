@@ -70,4 +70,11 @@ std::unique_ptr<QRhi> create(QRhi::Flags flags, QString *name)
 
 float ndcFlip(const QRhi *rhi) { return rhi->isYUpInNDC() != rhi->isYUpInFramebuffer() ? -1.0f : 1.0f; }
 
+bool isVirtualDevice(const QRhi *rhi)
+{
+    const QByteArray name = rhi->driverInfo().deviceName.toLower();
+    for (const char *w : {"paravirtual", "warp", "basic render", "llvmpipe", "software", "swiftshader", "lavapipe"})
+        if (name.contains(w)) return true;
+    return false;
+}
 } // namespace rhidevice

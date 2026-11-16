@@ -113,6 +113,10 @@ int main(int argc, char **argv)
         std::printf("SKIP: no QRhi backend here\n");
         return 77;
     }
+    if (rhidevice::isVirtualDevice(rhi.get())) {
+        std::printf("SKIP: %s is a virtual GPU, its pictures are not OpenGL's to the pixel\n", rhi->driverInfo().deviceName.constData());
+        return 77;
+    }
     QSurfaceFormat fmt;
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
