@@ -9,16 +9,11 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <cstdio>
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
     QGuiApplication app(argc, argv);
     const QString path = qEnvironmentVariable("NYXMAP_TOX");
     if (path.isEmpty() || !touchEngineCompiledIn()) {

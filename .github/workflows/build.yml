@@ -788,7 +788,7 @@ jobs:
         with:
           name: test-media
           path: test/media
-      # No GPU on the runner: Mesa's software OpenGL (llvmpipe, OpenGL 4.5)
+      # No GPU on the runner: Direct3D 11's software adapter (WARP) and Mesa's software OpenGL for Qt WebEngine
       - uses: ssciwr/setup-mesa-dist-win@v2
       - uses: actions/setup-python@v5
         with:
@@ -961,30 +961,6 @@ jobs:
           $tagSuffix = ""
           if ($env:GITHUB_REF_TYPE -eq "tag") { $tagSuffix = "-$env:GITHUB_REF_NAME" }
           Compress-Archive -Path dist\* -DestinationPath "NyxMap-windows$tagSuffix.zip" -Force
-      - name: QRhi bench package (Windows test machine)
-        if: needs.scope.outputs.package == 'true'
-        shell: pwsh
-        run: |
-          # The QRhi renderer's benches with what they need, and a script that makes test videos and writes a report
-          # (packaging/windows/rhi_bench.ps1): run on a Windows machine with a real GPU
-          $ErrorActionPreference = "Stop"
-          $bench = "rhi-bench"
-          New-Item -ItemType Directory -Force $bench | Out-Null
-          foreach ($exe in "nyxmap_rhi_video_test.exe", "nyxmap_rhi_composition_test.exe", "nyxmap_isf_rhi_test.exe") {
-            Copy-Item "build\$exe" "$bench\$exe" -Force
-            windeployqt --release --no-compiler-runtime --no-ffmpeg "$bench\$exe"
-            if ($LASTEXITCODE -ne 0) { throw "windeployqt failed for $exe" }
-          }
-          Copy-Item "C:\ffmpeg\$env:FFMPEG_ZIP\bin\*" $bench -Force # its DLLs, and ffmpeg.exe to make the test videos
-          Copy-Item -Recurse -Force build\isf "$bench\isf"
-          Copy-Item dist\vc_redist.x64.exe, packaging\windows\rhi_bench.ps1, packaging\windows\RunBench.cmd $bench -Force
-          "Built on Windows (MSVC 2022), commit $env:GITHUB_SHA, Qt $env:QT_VERSION" | Set-Content -Encoding utf8 "$bench\BUILD.txt"
-          Compress-Archive -Path "$bench\*" -DestinationPath "NyxMap-rhi-bench-windows.zip" -Force
-      - uses: actions/upload-artifact@v4
-        if: needs.scope.outputs.package == 'true'
-        with:
-          name: NyxMap-rhi-bench-windows
-          path: NyxMap-rhi-bench-windows.zip
       - name: Smoke test of the extracted archive
         if: needs.scope.outputs.package == 'true'
         shell: pwsh
@@ -994,7 +970,7 @@ jobs:
           $clean = Join-Path $env:RUNNER_TEMP "clean"
           Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
-          # OpenGL comes from Mesa installed on the runner; without it the program still has to start (exit code 1)
+          # The graphics API is the runner's software one; without any, the program still has to start (exit code 1)
           python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4

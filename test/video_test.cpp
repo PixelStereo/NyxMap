@@ -991,29 +991,15 @@ int runVideoTests(Engine &e, const QString &root, const QString &tmp)
         VideoDecoder::setSoftwareThreadBudget(0);
         VideoDecoder::setHardwareDecoding(hw);
     }
-    // The video memory envelope: a quarter of the RAM up to 2.5 GiB, a fifth of it for the decoded frames, the rest
-    // for the upload buffers (a hard limit, shared evenly by the layers wanting some)
+    // The video memory envelope: a quarter of the RAM up to 2.5 GiB, a fifth of it for the decoded frames
     {
         const size_t ram = videoBudget::physicalMemory();
         VCHECK(videoBudget::memoryLimit() <= (size_t(2560) << 20) && videoBudget::memoryLimit() >= (size_t(256) << 20));
         if (ram && !qEnvironmentVariableIsSet("NYXMAP_VIDEO_MEMORY_MB"))
             VCHECK(videoBudget::memoryLimit() == std::clamp(ram / 4, size_t(256) << 20, size_t(2560) << 20));
-        VCHECK(videoBudget::decodedLimit() + videoBudget::uploadLimit() == videoBudget::memoryLimit());
-        videoBudget::setMemoryLimit(size_t(10) << 20); // 2 MiB of decoded frames, 8 MiB of upload buffers
-        const size_t used0 = videoBudget::uploadInUse(), mb3 = size_t(3) << 20;
-        VCHECK(used0 == 0);
-        VCHECK(videoBudget::reserveUpload(mb3) && videoBudget::reserveUpload(mb3));
-        VCHECK(!videoBudget::reserveUpload(mb3) && videoBudget::uploadInUse() == 2 * mb3); // refused, nothing counted
-        VCHECK(!videoBudget::reserveUpload(0));
-        videoBudget::releaseUpload(mb3);
-        VCHECK(videoBudget::reserveUpload(mb3));
-        videoBudget::releaseUpload(2 * mb3);
-        VCHECK(videoBudget::uploadInUse() == 0);
-        videoBudget::addUploadStream();
-        videoBudget::addUploadStream();
-        VCHECK(videoBudget::uploadShare() == videoBudget::uploadLimit() / 2);
-        videoBudget::removeUploadStream();
-        videoBudget::removeUploadStream();
+        VCHECK(videoBudget::decodedLimit() == videoBudget::memoryLimit() / 5);
+        videoBudget::setMemoryLimit(size_t(10) << 20);
+        VCHECK(videoBudget::decodedLimit() == size_t(2) << 20);
         videoBudget::setMemoryLimit(0);
     }
     // Threads reserved under one lock: decoders opening together never see the same room (one alone at most gets

@@ -3,7 +3,6 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <array>
 #include <cmath>
@@ -44,10 +43,6 @@ static double mix(Engine &engine, int layer)
 }
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
     Engine engine;
     QString error;

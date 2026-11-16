@@ -7,7 +7,6 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QSet>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cstdio>
 
@@ -67,11 +66,6 @@ static void modelTests()
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QGuiApplication app(argc, argv);
 
     modelTests();

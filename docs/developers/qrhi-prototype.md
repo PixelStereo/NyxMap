@@ -139,15 +139,6 @@ ported, as they were at the time.
   target); ISF shaders at run time (`QShaderBaker`). Qt Shader Tools is now a
   build and runtime dependency.
 
-## Windows bench
-
-The Windows CI job packages the benches as `NyxMap-rhi-bench-windows` (a run of
-the Build workflow, `workflow_dispatch`, on the branch). On a Windows machine with
-a real GPU: extract it, run `RunBench.cmd`, send back `report.txt`. It makes 4K
-test videos with the bundled ffmpeg (H.264, HEVC 10-bit and HAP, as its encoders
-allow), plays any video put in `media\yours`, and runs `isf_rhi`, `rhi_video` and
-`rhi_composition` (4, 9 and 16 layers at 4K) through Direct3D 11 and OpenGL.
-
 The prototype answers three questions, in this order:
 
 1. **Shaders.** Can every ISF shader run on Metal, Direct3D and Vulkan?

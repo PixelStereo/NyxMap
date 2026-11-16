@@ -5,7 +5,6 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QScreen>
-#include <QSurfaceFormat>
 
 #ifdef Q_OS_MACOS
 #include "MacPresentation.h"
@@ -13,10 +12,9 @@
 
 OutputWindow::OutputWindow(Engine *engine, quint64 viewport) : m_engine(engine), m_viewport(viewport)
 {
-    // macOS: shown through Metal by the render thread; elsewhere through OpenGL (the QRhi renderer: its API's surface)
+    // Shown by the render thread through its API's surface (Metal, Direct3D, Vulkan)
     setSurfaceType(m_engine->outputSurfaceType());
-    if (surfaceType() == QSurface::OpenGLSurface) setFormat(QSurfaceFormat::defaultFormat());
-    if (m_engine->rhiRendering()) rhidevice::prepareWindow(this); // Vulkan: the window's instance
+    rhidevice::prepareWindow(this); // Vulkan: the window's instance
     setTitle(QStringLiteral("NyxMap — Output"));
     create();
     m_engine->setViewportWindow(m_viewport, this);

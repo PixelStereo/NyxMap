@@ -9,7 +9,6 @@
 #include <QContextMenuEvent>
 #include <QMenu>
 #include <QPushButton>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QUndoStack>
 #include <cmath>
@@ -23,10 +22,6 @@ static void check(bool value, const char *why)
 static bool near(double a, double b) { return std::abs(a - b) < 1e-5; }
 int main(int argc, char **argv)
 {
-    QSurfaceFormat f;
-    f.setVersion(3, 3);
-    f.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(f);
     QApplication app(argc, argv);
     Engine e;
     QString error;

@@ -5,7 +5,6 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QMenu>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QTimer>
@@ -13,11 +12,6 @@
 #include <functional>
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication app(argc, argv);
     app.setApplicationName("NyxMapPreviewTest");
     Engine engine;

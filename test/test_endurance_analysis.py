@@ -17,14 +17,14 @@ spec.loader.exec_module(analysis)
 
 
 class EnduranceAnalysisTest(unittest.TestCase):
-    def report(self, events, schema=2, loss=0):
+    def report(self, events, schema=3, loss=0):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.csv"
             path.write_text(
                 '# NYXMAP endurance metrics\n# ' + json.dumps({"schema": schema}) + '\n'
-                'utc,frames,missed,interval_p99_ms,interval_max_ms,outputs_dropped_total,shares_skipped_total,late_events_lost,journal_lost\n'
-                f'2026-10-19T12:00:00Z,60,0,17,18,2,4,0,{loss}\n'
-                '2026-10-19T12:00:01Z,58,2,35,40,5,11,0,0\n', encoding="utf-8")
+                'utc,frames,missed,interval_p99_ms,interval_max_ms,outputs_dropped_total,late_events_lost,journal_lost\n'
+                f'2026-10-19T12:00:00Z,60,0,17,18,2,0,{loss}\n'
+                '2026-10-19T12:00:01Z,58,2,35,40,5,0,0\n', encoding="utf-8")
             Path(str(path) + ".events.jsonl").write_text(
                 '\n'.join(json.dumps(event) for event in events) + '\ninvalid JSON\nnull\n', encoding="utf-8")
             output = io.StringIO()
@@ -40,7 +40,6 @@ class EnduranceAnalysisTest(unittest.TestCase):
         self.assertIn("within 250 ms of a cue/timeline: 1", result)
         self.assertIn("Missed deadlines (sum): 2", result)
         self.assertIn("Dropped output counter increase: 3", result)
-        self.assertIn("GPU sharing skip counter increase: 7", result)
         self.assertNotIn("Warning:", result)
 
     def test_correlation_boundaries_unsorted_events_and_timezones(self):
@@ -59,7 +58,7 @@ class EnduranceAnalysisTest(unittest.TestCase):
         self.assertIn("9 telemetry events lost", result)
         self.assertIn("correlation is incomplete", result)
 
-    def test_only_schema_2_is_read(self):
+    def test_only_schema_3_is_read(self):
         with self.assertRaises(ValueError):
             self.report([], schema=1)
 
@@ -100,7 +99,7 @@ class RealtimeAcceptanceTest(unittest.TestCase):
             path = Path(directory) / "session.csv"
             def write(rows):
                 with path.open("w", newline="", encoding="utf-8") as stream:
-                    stream.write('# {"schema":2}\n')
+                    stream.write('# {"schema":3}\n')
                     writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
                     writer.writeheader()
                     writer.writerows(rows)

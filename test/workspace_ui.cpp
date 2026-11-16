@@ -53,7 +53,6 @@
 #include <QSplitter>
 #include <QScrollBar>
 #include <QStackedWidget>
-#include <QSurfaceFormat>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <algorithm>
@@ -277,9 +276,6 @@ static void systemIsfVisibilityTests(Engine &engine, const std::function<void(bo
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication app(argc, argv);
     QTemporaryDir settings;
     QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -554,11 +550,11 @@ int main(int argc, char **argv)
                 QApplication::sendEvent(memory, &out);
             }
             QJsonObject over{{"graphics_memory_allocated_mb", 1536.0}, {"video_memory_mb", 300.0}, {"video_memory_budget_mb", 2560.0},
-                             {"upload_buffer_layers", 2}, {"warnings", QJsonArray{"decoded_frames", "graphics_memory"}}};
+                             {"warnings", QJsonArray{"decoded_frames", "graphics_memory"}}};
             check(MainWindow::showMemoryText(over) == QString::fromUtf8("⚠ GPU mem 1.5 GB  ·  Video 300 MB / 2.5 GB"),
                   "a budget exceeded is flagged, sizes read as MB and GB");
             const QString overHelp = MainWindow::showMemoryHelp(over);
-            check(overHelp.contains("for 2 layers") && overHelp.contains("Over budget: decoded frames (videos keep fewer frames ahead), "
+            check(overHelp.contains("Over budget: decoded frames (videos keep fewer frames ahead), "
                                                                         "graphics card nearly full."),
                   "the help says which budget is exceeded and what it does");
             over.remove("warnings");

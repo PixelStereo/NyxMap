@@ -6,7 +6,6 @@
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QOpenGLContext>
 #include <QLocale>
 #include <QPainter>
 #include "PaintOverlay.h"

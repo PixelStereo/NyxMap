@@ -484,20 +484,9 @@ struct Layer {
     // ISF effect chain
     std::vector<std::unique_ptr<IsfInstance>> effects;
 
-    // The published frame must remain intact while a delayed Syphon/Spout share copies
-    // the previous frame: use a third render target only for delayed sharing.
-    // Render thread. A plain viewport (no ROI, color, effect, mask, matte or output color of its own, at full opacity,
-    // its picture used by nothing else) is composited straight into its output: vpDirect, set by the frame that drew it
-    // so. vpPictureUsed: another layer, a shader, a model or the inspector's preview shows its picture this frame
-    bool vpDirect = false, vpPictureUsed = false;
-    int vpBack = 1;
-    std::atomic<int> vpPublished{0};
-    static int nextViewportBack(int oldFront, int newFront, bool delayed)
-    {
-        // In deferred mode all three indices must differ: the previous frame is
-        // published at the same tick, so it cannot be the next render target.
-        return delayed ? 3 - oldFront - newFront : oldFront;
-    }
+    // Render thread. vpPictureUsed: another layer, a shader, a model or the inspector's preview shows the viewport's picture
+    // this frame
+    bool vpPictureUsed = false;
     // Its masks (Masks.h): edited by the interface, drawn by the render thread when their revision changes
     std::vector<Mask> masks;
     LayerMatte matte; // another layer's picture as its matte (none: layer 0)

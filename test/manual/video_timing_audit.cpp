@@ -2,7 +2,6 @@
 #include "Sequencer.h"
 #include <QApplication>
 #include <QCoreApplication>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QElapsedTimer>
@@ -15,7 +14,7 @@ static void reset(Engine &e) { e.stop(); e.shutdown(); QString initError; e.init
 static quint64 addAnim(Engine &e,double duration=1) { Animation a;a.duration=duration;a.loop=AnimLoop::Once;int i=e.addAnimation(a);return e.animation(i).id; }
 static void waitFrames(Engine &e,int n) { auto target=e.frameCount()+n; QElapsedTimer t;t.start();while(e.frameCount()<target&&t.elapsed()<7000) QThread::msleep(1); }
 int main(int argc,char **argv) {
- setvbuf(stdout,nullptr,_IONBF,0); QSurfaceFormat f;f.setVersion(3,3);f.setProfile(QSurfaceFormat::CoreProfile);QSurfaceFormat::setDefaultFormat(f);QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);QApplication app(argc,argv);Engine e;QString error;if(!e.initialize(&error))return 2;
+ setvbuf(stdout,nullptr,_IONBF,0); QApplication app(argc,argv);Engine e;QString error;if(!e.initialize(&error))return 2;
  reset(e);auto id=addAnim(e);Sequencer::Step st;st.timeline=id;Sequencer::Sequence s;s.steps={st,st};int qi=e.sequencer().add(s);
  std::thread go([&]{e.sequencer().goSequence(qi);});go.join();e.stopShowPlayback();QCoreApplication::processEvents();std::printf("PROBE queued_GO_after_Escape: animation_playing=%d sequence_position=%d (expected stopped/-1)\n",e.animation(0).state==AnimState::Playing,e.sequencer().positionOf(qi));
  reset(e);id=addAnim(e);st.timeline=id;s.steps={st,st};qi=e.sequencer().add(s);std::thread gos([&]{e.sequencer().goSequence(qi);e.sequencer().goSequence(qi);});gos.join();QCoreApplication::processEvents();std::printf("PROBE queued_two_GO: sequence_position=%d (expected 1) runs=%zu\n",e.sequencer().positionOf(qi),e.sequencer().runs().size());

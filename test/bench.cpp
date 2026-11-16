@@ -14,7 +14,6 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <algorithm>
 #include <cmath>
@@ -67,11 +66,6 @@ static int decodeOnly(const QStringList &files, double seconds)
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QGuiApplication app(argc, argv);
 
     double seconds = 10, fps = 60;

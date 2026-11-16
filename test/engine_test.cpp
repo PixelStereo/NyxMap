@@ -38,7 +38,6 @@
 #include <QWindow>
 #include <QJsonDocument>
 #include <QLineF>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <QTime>
 #include <cmath>
@@ -110,11 +109,6 @@ int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // every line out before a crash (CI)
     testClock(); // its clock starts here
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QGuiApplication app(argc, argv);
     const QString root = QString(TEST_DIR);
     const QString isf = root + "/../isf";
@@ -4458,21 +4452,6 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
               std::abs(e.parameterValue(id, "roi/point/4/x").toDouble() - .20) < 1e-6);
         e.newProject();
     }
-    // A delayed GPU share reads the old front at the end of this tick.
-    // The renderer must not write into that buffer on the next tick.
-    {
-        int oldFront = 0, back = 1;
-        for (int k = 0; k < 12; ++k) {
-            const int next = Layer::nextViewportBack(oldFront, back, true);
-            CHECK(next >= 0 && next < 3 && next != oldFront && next != back);
-            oldFront = back;
-            back = next;
-        }
-        CHECK(Layer::nextViewportBack(0, 1, false) == 0);
-        CHECK(Layer::nextViewportBack(1, 2, false) == 1);
-        // Toggling modes after a triple-buffer tick must never select the front.
-        CHECK(Layer::nextViewportBack(2, 0, false) == 2);
-    }
     // Test card: a viewport shows it instead of its picture: the corners 1 red, 2 green, 3 blue, 4 yellow clockwise from
     // the top left, a dark plate in the middle, and motion
     {
@@ -4999,7 +4978,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 if (v.toObject().value("shown").toBool()) mine = v.toObject();
             std::printf("       output: %s\n", QJsonDocument(mine).toJson(QJsonDocument::Compact).constData());
             CHECK(!mine.isEmpty() && mine.value("screen_hz").toDouble() == 50.0 && mine.value("presented").toDouble() >= 1 &&
-                  mine.contains("no_drawable") && mine.contains("not_render_thread"));
+                  mine.contains("no_picture"));
             CHECK(t.value("pace_hz").toDouble() == 50.0 && t.value("main_screen_hz").toDouble() > 0);
         }
         e.setViewportWindow(vp, nullptr);

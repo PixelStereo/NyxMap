@@ -6,16 +6,11 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cstdio>
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
     QGuiApplication app(argc, argv);
     Engine e;
     QString err;

@@ -33,7 +33,7 @@ size_t physicalMemory()
 #endif
 }
 
-static constexpr size_t kMaxEnvelope = size_t(2560) << 20; // 2.5 GiB: 512 MiB of decoded frames, 2 GiB of uploads
+static constexpr size_t kMaxEnvelope = size_t(2560) << 20; // 2.5 GiB: 512 MiB of them for the decoded frames
 static constexpr size_t kMinEnvelope = size_t(256) << 20;
 static constexpr size_t kPooledLimit = size_t(64) << 20;
 
@@ -47,12 +47,11 @@ static size_t defaultEnvelope()
 
 static std::atomic<size_t> s_envelope{defaultEnvelope()};
 static std::atomic<size_t> s_decodedOverride{0};
-static std::atomic<size_t> s_decoded{0}, s_pooled{0}, s_upload{0};
-static std::atomic<int> s_uploadStreams{0};
+static std::atomic<size_t> s_decoded{0}, s_pooled{0};
 
 size_t memoryLimit() { return s_envelope.load(std::memory_order_relaxed); }
 void setMemoryLimit(size_t bytes) { s_envelope = bytes ? bytes : defaultEnvelope(); }
-size_t memoryInUse() { return s_decoded.load(std::memory_order_relaxed) + s_upload.load(std::memory_order_relaxed); }
+size_t memoryInUse() { return s_decoded.load(std::memory_order_relaxed); }
 
 // Decoded frames ------------------------------------------------------------
 void addDecoded(size_t bytes)
@@ -86,19 +85,6 @@ void releasePooled(size_t bytes)
 {
     if (bytes) s_pooled.fetch_sub(bytes, std::memory_order_relaxed);
 }
-
-// Upload buffers ------------------------------------------------------------
-size_t uploadLimit() { return memoryLimit() - memoryLimit() / 5; }
-bool reserveUpload(size_t bytes) { return bytes && reserveUnder(s_upload, bytes, uploadLimit()); }
-void releaseUpload(size_t bytes)
-{
-    if (bytes) s_upload.fetch_sub(bytes, std::memory_order_relaxed);
-}
-size_t uploadInUse() { return s_upload.load(std::memory_order_relaxed); }
-void addUploadStream() { ++s_uploadStreams; }
-void removeUploadStream() { --s_uploadStreams; }
-int uploadStreams() { return s_uploadStreams.load(std::memory_order_relaxed); }
-size_t uploadShare() { return uploadLimit() / size_t(std::max(1, uploadStreams())); }
 
 // Graphics memory ------------------------------------------------------------
 static std::atomic<size_t> s_gpu[int(Gpu::Count)];

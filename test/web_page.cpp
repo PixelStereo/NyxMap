@@ -12,7 +12,6 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QThread>
 #include <atomic>
@@ -73,11 +72,6 @@ int main(int argc, char **argv)
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu");
     qputenv("QTWEBENGINE_DISABLE_SANDBOX", "1");
 #endif
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QApplication app(argc, argv);
     Engine e;
     QString err;

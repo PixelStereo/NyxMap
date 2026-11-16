@@ -4,7 +4,6 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QPushButton>
-#include <QSurfaceFormat>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QUndoStack>
@@ -12,8 +11,6 @@
 #include <cstdio>
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
     QApplication app(argc, argv); app.setApplicationName("NyxMapRecallDelayUITest");
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;

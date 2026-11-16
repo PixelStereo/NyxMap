@@ -107,8 +107,8 @@ def summarize(path, fps, check=False):
         rows = list(csv.DictReader(metrics()))
     if not rows:
         raise ValueError("No 1Hz metrics rows found")
-    if metadata.get("schema") != 2:
-        raise ValueError("CSV schema 2 required")
+    if metadata.get("schema") != 3:
+        raise ValueError("CSV schema 3 required")
     budget_ms = 1000.0 / fps
     worst = max(rows, key=lambda r: number(r, "interval_max_ms"))
     slow = [r for r in rows if number(r, "interval_max_ms") > 1.5 * budget_ms]
@@ -154,7 +154,6 @@ def summarize(path, fps, check=False):
     print(f"Seconds containing a >1.5x-budget frame: {len(slow)}/{len(rows)}")
     print(f"Missed deadlines (sum): {int(misses)}")
     print(f"Dropped output counter increase: {int(increase('outputs_dropped_total'))}")
-    print(f"GPU sharing skip counter increase: {int(increase('shares_skipped_total'))}")
     print(f">2x-budget events: {late_count}, within 250 ms of a cue/timeline: {near}")
     if events_path.is_file():
         print(f"Correlated event log: {events_path}")
@@ -165,7 +164,6 @@ def summarize(path, fps, check=False):
         print(f"Warning: {int(lost)} telemetry events lost; action correlation is incomplete.")
     for key, label in (("process_resident_mb", "Peak process resident MB"),
                        ("decoded_frames_mb", "Peak decoded frames MB"),
-                       ("upload_buffers_mb", "Peak upload buffers MB"),
                        ("graphics_memory_allocated_mb", "Peak graphics memory allocated MB"),
                        ("audio_callback_p99_ms_lifetime", "Worst lifetime callback p99 ms"),
                        ("render_lock_wait_p99_ms_lifetime", "Worst lifetime lock-wait p99 ms"),

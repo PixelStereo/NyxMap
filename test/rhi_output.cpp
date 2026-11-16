@@ -11,7 +11,6 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <QWindow>
 
@@ -21,10 +20,6 @@
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
     QGuiApplication app(argc, argv);
     QString dump;
     const QStringList args = app.arguments().mid(1);

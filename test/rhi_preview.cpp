@@ -16,7 +16,6 @@
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
-#include <QSurfaceFormat>
 #include <QThread>
 
 #include <atomic>
@@ -75,10 +74,6 @@ struct FakeTox final : ToxPlayer {
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
     QGuiApplication app(argc, argv);
     Engine e;
     QString err;

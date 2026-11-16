@@ -2,7 +2,6 @@
 #include "Engine.h"
 #include "Osc.h"
 #include <QGuiApplication>
-#include <QSurfaceFormat>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <cmath>
@@ -17,10 +16,6 @@ static bool near(double a, double b, double tol = 1e-6) { return std::abs(a - b)
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
     try {
         Engine engine;

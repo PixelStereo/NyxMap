@@ -14,16 +14,10 @@
 #include <QJsonArray>
 #include <QImage>
 #include <QOffscreenSurface>
-#include <QOpenGLContext>
 #include <QThread>
 #include <QWindow>
 #include <cmath>
 
-#ifdef Q_OS_MACOS
-#include <OpenGL/OpenGL.h> // GL_SILENCE_DEPRECATION: set by CMake
-#elif defined(Q_OS_WIN)
-#include <windows.h>
-#endif
 
 // ---------------------------------------------------------------------------
 // Render thread, OpenGL context, start and stop
@@ -561,11 +555,7 @@ void Engine::sampleResources()
             st.exposed = o.exposed;
             st.hz = o.hz;
             st.presented = o.presented;
-            st.noDrawable = o.noDrawable;
-            st.surfacesBusy = o.surfacesBusy;
-            st.failed = o.failed;
             st.noPicture = o.noPicture;
-            st.notRenderThread = o.notRenderThread;
             outs.push_back(st);
         }
         std::lock_guard<std::mutex> g(m_outputStatsMutex);
@@ -573,15 +563,14 @@ void Engine::sampleResources()
     }
     quint32 over = 0;
     if (VideoDecoder::decodedBytesInUse() > VideoDecoder::decodedBytesLimit()) over |= 1;
-    if (VideoDecoder::softwareThreadsInUse() > VideoDecoder::softwareThreadBudgetNow()) over |= 4;
+    if (VideoDecoder::softwareThreadsInUse() > VideoDecoder::softwareThreadBudgetNow()) over |= 2;
     const qint64 freeKb = m_vramFreeKb.load(), totalKb = m_vramTotalKb.load();
-    if (freeKb >= 0 && ((totalKb > 0 && freeKb * 10 < totalKb) || (totalKb <= 0 && freeKb < 256 * 1024))) over |= 8;
+    if (freeKb >= 0 && ((totalKb > 0 && freeKb * 10 < totalKb) || (totalKb <= 0 && freeKb < 256 * 1024))) over |= 4;
     const quint32 before = m_overBudget.exchange(over);
     static const char *const what[] = {"decoded frames over their memory budget (each stream keeps 2 ahead)",
-                                       "upload buffers over their budget (its limit was lowered: the extra ones go as they come back)",
                                        "software decoders' threads over the budget (new ones share it)",
                                        "graphics memory nearly full"};
-    for (int k = 0; k < 4; ++k)
+    for (int k = 0; k < 3; ++k)
         if ((over & ~before) >> k & 1u) qWarning("Resources: %s", what[k]);
 }
 
@@ -609,9 +598,9 @@ QJsonObject Engine::resourcesJson() const
     if (m_vramTotalKb.load() > 0) o["graphics_memory_total_mb"] = double(m_vramTotalKb.load()) / 1024.0;
     if (const uint64_t rss = processMemory::residentBytes()) o["process_resident_mb"] = mb(size_t(rss)); // all of it
     QJsonArray warnings;
-    static const char *const keys[] = {"decoded_frames", "upload_buffers", "decode_threads", "graphics_memory"};
+    static const char *const keys[] = {"decoded_frames", "decode_threads", "graphics_memory"};
     const quint32 over = m_overBudget.load();
-    for (int k = 0; k < 4; ++k)
+    for (int k = 0; k < 3; ++k)
         if (over >> k & 1u) warnings.append(QString::fromLatin1(keys[k]));
     o["warnings"] = warnings;
     return o;
