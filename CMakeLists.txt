@@ -828,6 +828,10 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
   set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
+  # What the interface's pictures cost a frame: cmake --build build --target nyxmap_preview_cost
+  add_executable(nyxmap_preview_cost EXCLUDE_FROM_ALL test/preview_cost.cpp)
+  target_include_directories(nyxmap_preview_cost PRIVATE src/engine)
+  target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine Qt6::OpenGL)
   # A real TouchDesigner component (NYXMAP_TOX): skipped without one
   add_executable(nyxmap_tox_real_test test/tox_real.cpp)
   target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)

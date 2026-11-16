@@ -121,21 +121,76 @@ QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, 
     return flippedVertically(img.convertToFormat(QImage::Format_RGBA8888));
 }
 
-// A render target's pixels, the bottom row first (the interface's views through QRhi take them as pixels)
-static QImage readTargetImage(const RenderTarget &t)
+void AsyncImageRead::release()
 {
-    if (!t.fbo || t.w <= 0 || t.h <= 0) return QImage();
+    if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
-    GLint previous = 0;
-    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
-    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo);
-    QImage img(t.w, t.h, QImage::Format_RGBA8888);
-    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
-    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
-    return img;
+    for (int k = 0; k < 2; ++k) {
+        if (fence[k]) f->glDeleteSync(fence[k]);
+        fence[k] = nullptr;
+    }
+    if (pbo[0] || pbo[1]) f->glDeleteBuffers(2, pbo);
+    pbo[0] = pbo[1] = 0;
+    capacity[0] = capacity[1] = 0;
 }
 
+// The newest read the GPU has finished (the buffers it was read into become free again)
+static bool pollImageRead(AsyncImageRead &r, QImage *out)
+{
+    auto f = gl();
+    bool got = false;
+    quint64 newest = 0;
+    for (int k = 0; k < 2; ++k) {
+        if (!r.fence[k]) continue;
+        const GLenum status = f->glClientWaitSync(r.fence[k], 0, 0);
+        if (status == GL_TIMEOUT_EXPIRED) continue;
+        f->glDeleteSync(r.fence[k]);
+        r.fence[k] = nullptr;
+        if (status == GL_WAIT_FAILED || r.serial[k] < newest) continue;
+        const size_t bytes = size_t(r.w[k]) * size_t(r.h[k]) * 4;
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, r.pbo[k]);
+        if (const void *p = f->glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(bytes), GL_MAP_READ_BIT)) {
+            QImage img(r.w[k], r.h[k], QImage::Format_RGBA8888);
+            memcpy(img.bits(), p, bytes);
+            f->glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            *out = std::move(img);
+            newest = r.serial[k];
+            got = true;
+        }
+        f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    return got;
+}
+
+// A read may begin: a buffer is free, and the last one began at least a sixtieth of a second ago
+static bool imageReadDue(const AsyncImageRead &r, qint64 now) { return (!r.fence[0] || !r.fence[1]) && now - r.last >= 16'000'000; }
+
+// Begins reading `t` (bottom row first) without waiting: the pixels come back through pollImageRead
+static void startImageRead(AsyncImageRead &r, const RenderTarget &t, qint64 now)
+{
+    if (!t.fbo || t.w <= 0 || t.h <= 0 || !imageReadDue(r, now)) return;
+    auto f = gl();
+    const int k = !r.fence[0] ? 0 : 1;
+    const size_t bytes = size_t(t.w) * size_t(t.h) * 4;
+    if (!r.pbo[k]) f->glGenBuffers(1, &r.pbo[k]);
+    GLint previous = 0;
+    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, r.pbo[k]);
+    if (r.capacity[k] < bytes) {
+        f->glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(bytes), nullptr, GL_STREAM_READ);
+        r.capacity[k] = bytes;
+    }
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo);
+    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
+    r.fence[k] = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    r.w[k] = t.w;
+    r.h[k] = t.h;
+    r.serial[k] = ++r.started;
+    r.last = now;
+}
 
 void Engine::drawQuad()
 {
@@ -2349,29 +2404,59 @@ void Engine::frame(double dt)
         blit(texture, target);
         slot.renderedId[m_back] = slot.id;
     }
-    { // the interface's views draw through QRhi: the pictures as pixels
-        std::array<QImage, 4> images;
-        std::array<quint64, 4> ids{};
+    { // the interface's views draw through QRhi: the pictures as pixels, read back without waiting (a sixtieth of a second apart)
+        const qint64 now = qint64(RealtimeTiming::nowNs());
+        std::array<QImage, 5> fresh;
+        std::array<bool, 5> got{}, drop{};
         for (size_t i = 0; i < m_previewSlots.size(); ++i) {
             const PreviewSlot &slot = m_previewSlots[i];
-            if (!slot.asked || slot.sceneView || slot.renderedId[m_back] != slot.id) continue;
-            images[i] = readTargetImage(slot.id ? slot.target[m_back] : m_output[m_back]);
-            ids[i] = slot.id;
-        }
-        QImage composition;
-        if (qint64(RealtimeTiming::nowNs()) < m_compositionWantedUntilNs.load() && m_output[m_back].w > 0) {
-            QSize size(m_output[m_back].w, m_output[m_back].h);
-            if (size.width() > 1600 || size.height() > 1600) size.scale(1600, 1600, Qt::KeepAspectRatio);
-            m_compositionTarget.ensure(std::max(1, size.width()), std::max(1, size.height()));
-            if (m_compositionTarget.fbo) {
-                blit(m_output[m_back].tex, m_compositionTarget);
-                composition = readTargetImage(m_compositionTarget);
+            if (!slot.asked || slot.sceneView || slot.renderedId[m_back] != slot.id) {
+                drop[i] = true;
+                continue;
+            }
+            got[i] = pollImageRead(m_imageReads[i], &fresh[i]);
+            if (!imageReadDue(m_imageReads[i], now)) continue;
+            if (slot.id) {
+                startImageRead(m_imageReads[i], slot.target[m_back], now); // already reduced to 1024 px
+            } else { // the composition, reduced first
+                QSize size(m_output[m_back].w, m_output[m_back].h);
+                if (size.isEmpty()) continue;
+                size.scale(1024, 1024, Qt::KeepAspectRatio);
+                if (size.width() > m_output[m_back].w || size.height() > m_output[m_back].h) size = QSize(m_output[m_back].w, m_output[m_back].h);
+                m_imageTargets[i].ensure(std::max(1, size.width()), std::max(1, size.height()));
+                if (!m_imageTargets[i].fbo) continue;
+                blit(m_output[m_back].tex, m_imageTargets[i]);
+                startImageRead(m_imageReads[i], m_imageTargets[i], now);
             }
         }
+        if (now < m_compositionWantedUntilNs.load() && m_output[m_back].w > 0) { // the mapping view's
+            got[4] = pollImageRead(m_imageReads[4], &fresh[4]);
+            if (imageReadDue(m_imageReads[4], now)) {
+                QSize size(m_output[m_back].w, m_output[m_back].h);
+                size.scale(1600, 1600, Qt::KeepAspectRatio);
+                if (size.width() > m_output[m_back].w || size.height() > m_output[m_back].h) size = QSize(m_output[m_back].w, m_output[m_back].h);
+                m_imageTargets[4].ensure(std::max(1, size.width()), std::max(1, size.height()));
+                if (m_imageTargets[4].fbo) {
+                    blit(m_output[m_back].tex, m_imageTargets[4]);
+                    startImageRead(m_imageReads[4], m_imageTargets[4], now);
+                }
+            }
+        } else {
+            drop[4] = true;
+        }
+        for (size_t i = 0; i < m_imageReads.size(); ++i)
+            if (drop[i] && (m_imageReads[i].fence[0] || m_imageReads[i].fence[1])) { // no longer asked: what is in flight goes
+                QImage unused;
+                pollImageRead(m_imageReads[i], &unused);
+            }
         std::lock_guard<std::mutex> lk(m_previewMutex);
-        m_previewImages = std::move(images);
-        m_previewImageIds = ids;
-        m_compositionImage = std::move(composition);
+        for (size_t i = 0; i < 4; ++i) {
+            if (got[i]) m_previewImages[i] = std::move(fresh[i]);
+            else if (drop[i]) m_previewImages[i] = QImage();
+            m_previewImageIds[i] = m_previewSlots[i].id;
+        }
+        if (got[4]) m_compositionImage = std::move(fresh[4]);
+        else if (drop[4]) m_compositionImage = QImage();
     }
     readSourcePreview();
     // Publishing follows the viewports, however they changed (added, removed, undone, loaded, edited)

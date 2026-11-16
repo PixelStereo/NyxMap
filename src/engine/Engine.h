@@ -70,6 +70,19 @@ class Input;
 }
 
 
+// A picture read back from the GPU without waiting: two pixel buffers in turn, each with the fence that says when the GPU is
+// done (render thread). The interface's views get their pictures this way (the OpenGL renderer)
+struct AsyncImageRead {
+    GLuint pbo[2] = {0, 0};
+    GLsync fence[2] = {nullptr, nullptr};
+    int w[2] = {0, 0}, h[2] = {0, 0};
+    size_t capacity[2] = {0, 0};
+    quint64 serial[2] = {0, 0};
+    quint64 started = 0;
+    qint64 last = 0; // when the last read began (ns)
+    void release();
+};
+
 class Engine : public QObject
 {
     Q_OBJECT
@@ -1285,7 +1298,8 @@ private:
     std::array<quint64, 4> m_previewImageIds{}; // the source each one shows
     QImage m_compositionImage;
     std::atomic<qint64> m_compositionWantedUntilNs{0};
-    RenderTarget m_compositionTarget; // the OpenGL renderer: the composition reduced, to read
+    std::array<AsyncImageRead, 5> m_imageReads;  // the OpenGL renderer: the preview slots' pictures, then the composition's
+    RenderTarget m_imageTargets[5];              // those that are reduced first (a viewport's size, the composition's)
     QImage m_previewImage;
     quint64 m_previewImageId = 0;
 

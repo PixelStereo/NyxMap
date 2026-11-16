@@ -601,7 +601,8 @@ void Engine::releaseAll()
     for (auto &[key, entry] : m_isfAudioTextures) entry.texture.destroy();
     m_isfAudioTextures.clear();
     m_previewTarget.destroy();
-    m_compositionTarget.destroy();
+    for (auto &target : m_imageTargets) target.destroy();
+    for (auto &read : m_imageReads) read.release();
     for (auto &[key, target] : m_rhiReaders) target.destroy();
     m_rhiReaders.clear();
     for (auto &slot : m_previewSlots) {

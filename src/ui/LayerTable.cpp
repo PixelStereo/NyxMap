@@ -44,6 +44,22 @@ static constexpr int kIndent = 26;     // px: members of a group
 
 namespace {
 // The name cell: the layer's small picture (or its kind's tag), its name in bold and, under it, what it is and how it plays
+// The S of the solo column keeps its own colour in a selected row (dim: off, yellow: soloed); the selection's white would
+// look lit
+class SoloDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+protected:
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        const QBrush own = index.data(Qt::ForegroundRole).value<QBrush>();
+        if (own.style() != Qt::NoBrush) option->palette.setBrush(QPalette::HighlightedText, own);
+    }
+};
+
 class NameDelegate : public QStyledItemDelegate
 {
 public:
@@ -652,6 +668,7 @@ LayerTable::LayerTable(QWidget *parent) : QWidget(parent)
     m_table->verticalHeader()->setVisible(false);
     m_table->verticalHeader()->setDefaultSectionSize(44);
     m_table->setItemDelegateForColumn(ColName, new NameDelegate(m_table));
+    m_table->setItemDelegateForColumn(ColSolo, new SoloDelegate(m_table));
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setFocusPolicy(Qt::StrongFocus);

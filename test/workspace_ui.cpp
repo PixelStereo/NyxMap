@@ -1023,6 +1023,7 @@ int main(int argc, char **argv)
         if (const QString captures = qEnvironmentVariable("NYXMAP_UI_CAPTURE_DIR"); !captures.isEmpty() && table) {
             theme::applyToApplication(app); // as the application looks
             table->setCurrentCell(0, 4);
+            table->selectRow(0); // a selected row: its S keeps its own colour
             app.processEvents();
             window.findChild<LayerTable *>()->grab().save(captures + "/layer-list.png");
         }
