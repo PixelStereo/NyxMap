@@ -1013,6 +1013,27 @@ struct RhiRenderer::Impl {
         processLayer(g, r, r.group.texture(), r.group.size(), true, rc);
     }
 
+    // A layer's picture at a stage, as the masks take it: -1 final, 0 its source, k after its FX k (when it is kept)
+    QRhiTexture *stageTexture(quint64 id, int stage)
+    {
+        const auto found = id ? layers.find(id) : layers.end();
+        if (found == layers.end()) return nullptr;
+        const RLayer &r = found->second;
+        const Layer *l = e.layer(e.indexOfId(id));
+        if (stage == 0 && r.preFx) return r.preFx;
+        if (stage > 0 && l && size_t(stage) < r.stage.size() && l->stagesWanted.count(stage) && r.stage[size_t(stage)]) return r.stage[size_t(stage)];
+        if (stage == Engine::kStageHdrFile) return nullptr; // an HDR file: not yet
+        return r.final;
+    }
+    // The pictures that models carry (laid on them, or pushing their points) as textures of this QRhi
+    void resolveScenePictures(std::vector<Scene3D::Item> &items)
+    {
+        for (Scene3D::Item &item : items) {
+            item.pictureRhi = stageTexture(item.pictureLayer, item.pictureStage);
+            item.displaceRhi = stageTexture(item.displaceLayer, item.displaceStage);
+        }
+    }
+
     // A 3D scene's picture (Render.cpp's renderScene), the size of the composition, then its layer's own processing
     void renderScene(Layer &g, RLayer &r, const std::vector<Layer *> &members, const IsfRenderContext &rc)
     {
@@ -1021,6 +1042,7 @@ struct RhiRenderer::Impl {
         std::vector<Scene3D::Item> items;
         std::vector<Scene3D::Lamp> lamps;
         e.collectScene(members, items, lamps);
+        resolveScenePictures(items);
         QRhiTexture *picture = r.scene->draw(cb, take(), e.placedCamera(g), items, lamps, e.m_compSize.width(), e.m_compSize.height(), e.m_quality3d);
         if (picture) processLayer(g, r, picture, picture->pixelSize(), true, rc);
     }
@@ -1329,6 +1351,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     }
     // The 3D views: each drawn into a picture of its own, read back whole
     for (SceneViewRequest &q : d->sceneViews) {
+        d->resolveScenePictures(q.items);
         std::unique_ptr<RhiScene> &scene = d->scenes[q.slot];
         if (!scene) scene = std::make_unique<RhiScene>(d->rhi.get());
         QRhiTexture *tex = scene->drawView(d->cb, d->take(), q.view, q.items, q.size.width(), q.size.height(), q.look);

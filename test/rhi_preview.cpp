@@ -336,6 +336,25 @@ int main(int argc, char **argv)
         check(!view.isNull() && view.size() == QSize(160, 120), "3D view: its picture comes back, at the size asked");
         const QColor middle = view.isNull() ? QColor() : QColor(view.pixel(80, 60));
         check(view.isNull() ? false : (middle.red() > 120 || middle.green() > 120 || middle.blue() > 120), "3D view: the model is in it");
+        // A layer's picture laid on the model (red on the left half of the picture, blue on the right)
+        const int pictureAt = e.addLayer(QStringLiteral("Picture"));
+        const quint64 pictureId = e.layerId(pictureAt);
+        e.setLayerImage(pictureAt, halvesPath, &err);
+        check(e.setModelPicture(e.indexOfId(modelId), pictureId, &err), "3D view: a picture is laid on the model");
+        QImage laid;
+        for (int k = 0; k < 20; ++k) {
+            e.renderFrame();
+            QThread::msleep(10);
+            laid = e.previewImage(0);
+        }
+        bool reds = false, blues = false;
+        for (int y = 40; y < 80 && !laid.isNull(); y += 4)
+            for (int x = 50; x < 110; x += 4) {
+                const QColor c(laid.pixel(x, y));
+                reds |= c.red() > 150 && c.blue() < 90;
+                blues |= c.blue() > 150 && c.red() < 90;
+            }
+        check(reds && blues, "3D view: the picture's red and blue are on the model");
         // The scene itself, in the composition: lit by a light
         const int lampAt = e.addLayer(QStringLiteral("Key"), e.indexOfId(modelId) + 1);
         const quint64 lampId = e.layerId(lampAt);

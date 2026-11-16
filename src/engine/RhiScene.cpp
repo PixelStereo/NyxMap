@@ -344,7 +344,11 @@ Place place(const Scene3D::Item &item, const QMatrix4x4 &model, const Camera3D &
         for (int r = 0; r < 3; ++r) p.normal[c * 4 + r] = n(r, c); // columns
     p.tiling[0] = item.placement.uvTiling[0];
     p.tiling[1] = item.placement.uvTiling[1];
+    p.tiling[2] = item.displaceAmount;
+    p.tiling[3] = item.displaceMid;
+    p.ints[0] = item.displaceRhi ? 1 : 0; // a layer's picture pushing the points (a shared material's height map: not yet)
     p.ints[1] = item.placement.shading;
+    p.ints[2] = item.model->displacementUvTopology();
     const int count = int(std::min<size_t>(item.shape.size(), 8));
     p.ints[3] = count;
     for (int i = 0; i < count; ++i) {
@@ -360,12 +364,13 @@ Place place(const Scene3D::Item &item, const QMatrix4x4 &model, const Camera3D &
     return p;
 }
 
-void material(Place &p, const Model3D::RhiDraw &draw, bool unlit)
+void material(Place &p, const Model3D::RhiDraw &draw, bool unlit, bool picture)
 {
     std::memcpy(p.base, draw.baseColor.data(), sizeof p.base);
     std::memcpy(p.emissive, draw.emissive.data(), sizeof(float) * 3);
     p.emissive[3] = draw.alphaCutoff;
     p.flags[0] = draw.baseTexture ? 1 : 0;
+    p.flags[1] = picture ? 1 : 0; // a layer's picture: its first row is the bottom
     p.flags[2] = draw.alphaMode;
     p.flags[3] = unlit ? 1 : 0;
     p.mat0[0] = draw.metallic;
@@ -399,12 +404,12 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
         u->updateDynamicBuffer(b, 0, sizeof p, &p);
         return b;
     };
-    const auto bind = [&](QRhiBuffer *b, QRhiTexture *base) {
+    const auto bind = [&](QRhiBuffer *b, QRhiTexture *base, QRhiTexture *displace) {
         QRhiTexture *black = res.black();
         std::vector<RhiResources::Bind> bindings{
             {0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
             {1, QRhiShaderResourceBinding::FragmentStage, d->sceneUbuf.get()},
-            {2, QRhiShaderResourceBinding::VertexStage, nullptr, black, res.linear()},
+            {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : black, res.linear()},
             {3, QRhiShaderResourceBinding::FragmentStage, nullptr, base ? base : black, d->repeat.get()}};
         for (int k = 0; k < 5; ++k) bindings.push_back({4 + k, QRhiShaderResourceBinding::FragmentStage, nullptr, black, res.linear()});
         return res.bindings(bindings);
@@ -418,14 +423,16 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
         for (int pass = 0; pass < 2; ++pass)
             for (const Placed &pl : placed) {
                 const Scene3D::Item &item = *pl.item;
-                if (pass == 1 && !item.model->hasBlended()) continue;
-                const std::vector<Model3D::RhiDraw> draws = item.model->rhiDraws(rhi, u, &item.placement, false, false);
-                for (const Model3D::RhiDraw &draw : draws) {
-                    if ((draw.alphaMode == 2) != (pass == 1)) continue;
+                const bool pictured = item.pictureRhi != nullptr;
+                if (pass == 1 && (pictured || !item.model->hasBlended())) continue;
+                std::vector<Model3D::RhiDraw> draws = item.model->rhiDraws(rhi, u, &item.placement, pictured, false);
+                for (Model3D::RhiDraw &draw : draws) {
+                    if (draw.blended != (pass == 1)) continue;
+                    if (pictured) draw.baseTexture = item.pictureRhi;
                     Place p = place(item, pl.model, cam, proj);
-                    material(p, draw, false);
+                    material(p, draw, false, pictured);
                     QRhiBuffer *b = fill(p);
-                    commands.push_back({pass == 1 ? Kind::Blended : Kind::Opaque, b, bind(b, draw.baseTexture), draw.vertices, draw.indices, draw.indexCount});
+                    commands.push_back({pass == 1 ? Kind::Blended : Kind::Opaque, b, bind(b, draw.baseTexture, item.displaceRhi), draw.vertices, draw.indices, draw.indexCount});
                     if (pass == 0) triangles += draw.indexCount / 3;
                 }
             }
@@ -440,7 +447,7 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
                 Place p = place(item, pl.model, cam, proj);
                 std::memcpy(p.ink, face, sizeof face);
                 QRhiBuffer *b = fill(p);
-                commands.push_back({Kind::Faces, b, bind(b, nullptr), draw.vertices, draw.indices, draw.indexCount});
+                commands.push_back({Kind::Faces, b, bind(b, nullptr, item.displaceRhi), draw.vertices, draw.indices, draw.indexCount});
                 triangles += draw.indexCount / 3;
             }
             for (const Model3D::RhiDraw &draw : draws) {
@@ -448,7 +455,7 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
                 Place p = place(item, pl.model, cam, proj);
                 std::memcpy(p.ink, edge, sizeof edge);
                 QRhiBuffer *b = fill(p);
-                commands.push_back({Kind::Edges, b, bind(b, nullptr), draw.vertices, draw.edges, draw.edgeCount});
+                commands.push_back({Kind::Edges, b, bind(b, nullptr, item.displaceRhi), draw.vertices, draw.edges, draw.edgeCount});
             }
         }
     }
@@ -686,23 +693,23 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         QSize size;
     };
     std::vector<ShadowDraw> shadowDraws;
-    const auto shadowBind = [&](QRhiBuffer *b) {
+    const auto shadowBind = [&](QRhiBuffer *b, QRhiTexture *displace) {
         return res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
-                             {2, QRhiShaderResourceBinding::VertexStage, nullptr, res.black(), res.linear()}});
+                             {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : res.black(), res.linear()}});
     };
     const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
         for (const Placed &p : all) {
             if (!casts(p) || !inView(lightSees, p)) continue; // a screen gives light, a floor or a wall only receives
-            const std::vector<Model3D::RhiDraw> draws = p.item->model->rhiDraws(rhi, u, &p.item->placement, false, false);
+            const std::vector<Model3D::RhiDraw> draws = p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false);
             for (const Model3D::RhiDraw &mesh : draws) {
-                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
+                if (mesh.blended) continue; // its blended surfaces hide nothing
                 Place pl = place(*p.item, p.model, cam, fixed);
                 const QMatrix4x4 identity;
                 std::memcpy(pl.view, identity.constData(), sizeof pl.view);
                 pl.ink[0] = ink.x(), pl.ink[1] = ink.y(), pl.ink[2] = ink.z(), pl.ink[3] = ink.w();
                 QRhiBuffer *b = d->ubuf();
                 u->updateDynamicBuffer(b, 0, sizeof pl, &pl);
-                draw.commands.push_back({draw.kind, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
+                draw.commands.push_back({draw.kind, b, shadowBind(b, p.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount});
             }
         }
     };
@@ -726,12 +733,12 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             }
     }
 
-    const auto bind = [&](QRhiBuffer *b, const Model3D::RhiDraw &draw) {
+    const auto bind = [&](QRhiBuffer *b, const Model3D::RhiDraw &draw, QRhiTexture *displace) {
         QRhiTexture *black = res.black();
         std::vector<RhiResources::Bind> bindings{
             {0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
             {1, QRhiShaderResourceBinding::FragmentStage, d->sceneUbuf.get()},
-            {2, QRhiShaderResourceBinding::VertexStage, nullptr, black, res.linear()},
+            {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : black, res.linear()},
             {3, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.baseTexture ? draw.baseTexture : black, d->repeat.get()}};
         for (int k = 0; k < 5; ++k)
             bindings.push_back({4 + k, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.maps[size_t(k)] ? draw.maps[size_t(k)] : black, d->repeat.get()});
@@ -751,15 +758,17 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         for (size_t order = 0; order < placed.size(); ++order) {
             const Placed &pl = placed[pass == 0 ? order : placed.size() - 1 - order];
             const Scene3D::Item &item = *pl.item;
-            if (pass == 1 && !item.model->hasBlended()) continue;
-            const std::vector<Model3D::RhiDraw> draws = item.model->rhiDraws(rhi, u, &item.placement, false, false);
-            for (const Model3D::RhiDraw &draw : draws) {
-                if ((draw.alphaMode == 2) != (pass == 1)) continue;
+            const bool pictured = item.pictureRhi != nullptr;
+            if (pass == 1 && (pictured || !item.model->hasBlended())) continue;
+            std::vector<Model3D::RhiDraw> draws = item.model->rhiDraws(rhi, u, &item.placement, pictured, false);
+            for (Model3D::RhiDraw &draw : draws) {
+                if (draw.blended != (pass == 1)) continue;
+                if (pictured) draw.baseTexture = item.pictureRhi;
                 Place p = place(item, pl.model, cam, proj);
-                material(p, draw, item.placement.unlit);
+                material(p, draw, item.placement.unlit, pictured);
                 QRhiBuffer *b = d->ubuf();
                 u->updateDynamicBuffer(b, 0, sizeof p, &p);
-                commands.push_back({pass == 1 ? Kind::LitBlended : Kind::Lit, b, bind(b, draw), draw.vertices, draw.indices, draw.indexCount});
+                commands.push_back({pass == 1 ? Kind::LitBlended : Kind::Lit, b, bind(b, draw, item.displaceRhi), draw.vertices, draw.indices, draw.indexCount});
                 if (pass == 0) triangles += draw.indexCount / 3;
             }
         }
@@ -776,13 +785,13 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     std::vector<Command> seen;
     if (wantsSeen) {
         for (const Placed &pl : placed) {
-            const std::vector<Model3D::RhiDraw> draws = pl.item->model->rhiDraws(rhi, u, &pl.item->placement, false, false);
+            const std::vector<Model3D::RhiDraw> draws = pl.item->model->rhiDraws(rhi, u, &pl.item->placement, pl.item->pictureRhi != nullptr, false);
             for (const Model3D::RhiDraw &mesh : draws) {
-                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
+                if (mesh.blended) continue; // its blended surfaces hide nothing
                 Place pp = place(*pl.item, pl.model, cam, proj);
                 QRhiBuffer *b = d->ubuf();
                 u->updateDynamicBuffer(b, 0, sizeof pp, &pp);
-                seen.push_back({Kind::Depth, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
+                seen.push_back({Kind::Depth, b, shadowBind(b, pl.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount});
             }
         }
     }

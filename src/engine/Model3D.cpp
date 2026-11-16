@@ -3178,6 +3178,7 @@ std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBat
         d.emissive = mat.emissive;
         d.alphaCutoff = mat.alphaCutoff;
         d.alphaMode = picture ? 2 : mat.alphaMode; // a picture keeps its alpha
+        d.blended = !picture && mat.alphaMode == 2;
         d.baseTexture = look && look->sharedMaterial ? nullptr : image(mat.texture);
         if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
             mat.metallic = look->metal;
