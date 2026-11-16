@@ -88,7 +88,7 @@ Page generator), shared FFmpeg (an LGPL build), CMake, and for OMT git, LLVM's
 clang and the .NET SDK. From an MSVC developer shell:
 
 ```powershell
-cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg" `
+cmake -S . -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.2/msvc2022_64" -DFFMPEG_ROOT="C:/ffmpeg" `
   -DNYXMAP_ACCEPT_NDI_SDK_LICENSE=ON  # NDI included: you accept the NDI SDK licence (see below)
 cmake --build build --config Release
 ```
