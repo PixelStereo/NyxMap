@@ -13,6 +13,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QSurfaceFormat>
+#include <QTemporaryDir>
 #include <QThread>
 
 #include <algorithm>
@@ -117,6 +118,19 @@ static std::vector<quint64> build(Engine &e, const QString &root)
             }
         }
     }
+    { // Text: a heading with an outline and a shadow
+        const int i = e.addLayer(QStringLiteral("Heading"));
+        e.setLayerText(i);
+        e.setLayerTextContent(i, QStringLiteral("QRhi draws\nthe text"));
+        Engine::Lock lk(&e.mutex());
+        Layer &l = *e.layer(i);
+        l.text.size = 64;
+        l.text.outline = 3;
+        l.text.outlineColor = QColor(20, 40, 160);
+        l.text.shadow = true;
+        l.mapping.size = QSizeF(0.5, 0.4);
+        l.mapping.position = QPointF(0.3, 0.3);
+    }
     { // Difference over what is below, matted in Composition space by the Checker, and in Picture space by the Grid
         const int i = e.addLayer(QStringLiteral("Diff"));
         check(e.setLayerImage(i, root + "/media/bars.png", &err), "bars.png (Difference)");
@@ -166,6 +180,43 @@ static std::vector<quint64> build(Engine &e, const QString &root)
     for (int i = 0; i < e.layerCount(); ++i)
         if (e.layer(i)->isViewport) viewports.push_back(e.layer(i)->id);
     return viewports;
+}
+
+// A source transition caught half way, from one picture to another: a crossfade, or a transition shader
+static QImage transitionFrame(Engine &e, const QString &shader, const QString &dir)
+{
+    e.newProject();
+    e.setFadesManual(true); // its time moves by advanceFades only: the same progress in either engine
+    e.setCompositionSize(QSize(320, 180));
+    e.setDefaultTransition(shader);
+    QImage from(160, 90, QImage::Format_RGBA8888), to(160, 90, QImage::Format_RGBA8888);
+    for (int y = 0; y < 90; ++y)
+        for (int x = 0; x < 160; ++x) {
+            from.setPixelColor(x, y, QColor(220, 30 + y, 40));
+            to.setPixelColor(x, y, QColor(20, 40 + x, 200 - y));
+        }
+    const QString a = dir + "/from.png", b = dir + "/to.png";
+    QString err;
+    const int i = e.addLayer(QStringLiteral("T"));
+    if (!from.save(a) || !to.save(b) || !e.setLayerImage(i, b, &err)) {
+        std::printf("FAIL building the transition: %s\n", qPrintable(err));
+        ++g_failures;
+        return {};
+    }
+    Engine::Snapshot snap;
+    snap.name = "To";
+    snap.fade = 2;
+    snap.layers = e.captureLayers();
+    const int index = e.addSnapshot(snap);
+    e.setLayerImage(i, a, &err);
+    for (int k = 0; k < 5; ++k) {
+        e.renderFrame();
+        QThread::msleep(10);
+    }
+    e.recallSnapshot(index);
+    e.advanceFades(0.8);
+    for (int k = 0; k < 3; ++k) e.renderFrame();
+    return e.grabOutput();
 }
 
 struct Diff {
@@ -247,6 +298,20 @@ int main(int argc, char **argv)
         if (!dump.isEmpty()) {
             p.rhi.save(dump + "/" + p.name + ".rhi.png");
             p.gl.save(dump + "/" + p.name + ".gl.png");
+        }
+    }
+    QTemporaryDir files;
+    for (const QString &shader : {QString(), root + "/../isf/transitions/Angular.fs"}) {
+        const QImage gl = transitionFrame(viaGl, shader, files.path()), rhi = transitionFrame(viaRhi, shader, files.path());
+        const Diff d = compare(rhi, gl);
+        const bool same = d.mean <= 0.5 && d.over8 <= 0.005 && !gl.isNull();
+        std::printf("  %-12s %dx%d  QRhi against OpenGL: max %3d mean %.3f, %.2f%% over 8%s\n",
+                    shader.isEmpty() ? "crossfade" : "transition", gl.width(), gl.height(), d.max, d.mean, d.over8 * 100,
+                    same ? "" : "  DIFFERENT");
+        if (!same) ++g_failures;
+        if (!dump.isEmpty()) {
+            rhi.save(dump + (shader.isEmpty() ? "/crossfade.rhi.png" : "/transition.rhi.png"));
+            gl.save(dump + (shader.isEmpty() ? "/crossfade.gl.png" : "/transition.gl.png"));
         }
     }
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);

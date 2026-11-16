@@ -7,9 +7,10 @@
 // triangle, quad) and color, the effect chain (masks from a stage of the layer or another layer, mix, channels,
 // mask-only effects), groups, viewports (plain or with their own picture, output color, opacity), the composition
 // picture, composition opacity and blackout, blend modes (Difference reads a copy of what is drawn), surface and
-// composition masks, mattes (Picture and Composition space), mapped meshes.
-// Not yet: text, live inputs, TouchEngine, web pages, 3D scenes, source transitions, antialiasing, mipmaps (each said
-// once in the log; the layer is drawn without it, or not at all).
+// composition masks, mattes (Picture and Composition space), text, source transitions (a shader's, or a crossfade),
+// mapped meshes.
+// Not yet: live inputs, TouchEngine, web pages, 3D scenes, antialiasing, mipmaps (each said once in the log; the
+// layer is drawn without it, or not at all).
 
 #include "RhiTarget.h"
 

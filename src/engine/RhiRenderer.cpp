@@ -11,8 +11,12 @@
 #include "RhiResources.h"
 #include "RhiVideoTexture.h"
 #include "SourceColor.h"
+#include "TextWriting.h"
+#include "TimecodeClock.h"
 
 #include <QColor>
+#include <QFont>
+#include <QFontMetrics>
 #include <QRectF>
 #include <QSet>
 #include <rhi/qrhi.h>
@@ -25,7 +29,7 @@
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
-enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte };
+enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade };
 
 // The blending of a layer composited (Render.cpp's compositeLayers), premultiplied
 QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
@@ -83,6 +87,11 @@ struct RhiRenderer::Impl {
         std::unique_ptr<QRhiTexture> surfaceMask, compositionMask; // their alpha, top row first
         unsigned surfaceMaskRev = 0, compositionMaskRev = 0;
         QSize surfaceMaskSize, compositionMaskSize;
+        std::unique_ptr<QRhiTexture> text; // a Text layer's picture, top row first as the images are
+        QString textKey;
+        std::unique_ptr<IsfInstance> transition; // a source transition's shader (none: a crossfade)
+        QString transitionPath;
+        RhiTarget transitionTarget;
         std::map<int, RhiTarget> stageTargets;
         std::vector<Effect> effects;
         QRhiTexture *final = nullptr, *raw = nullptr, *preFx = nullptr;
@@ -93,6 +102,7 @@ struct RhiRenderer::Impl {
         bool used = false;
     };
     std::map<quint64, RLayer> layers;
+    std::map<const Layer *, RLayer> outgoing; // the sources a transition is leaving, by the layer that held them
     RhiTarget compositionOut;
     std::map<std::tuple<int, int, int>, RhiTarget> dstCopies; // what a Difference layer reads: the target so far, by size and format
     std::vector<int> marks;
@@ -152,11 +162,13 @@ struct RhiRenderer::Impl {
         case Draw::OutputColor:
         case Draw::ShapeMask:
         case Draw::PictureMatte:
+        case Draw::Fade:
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")},
                                  {QRhiShaderStage::Fragment, shader(draw == Draw::Prep ? "prep.frag"
                                                                     : draw == Draw::EffectMask ? "effectmask.frag"
                                                                     : draw == Draw::ShapeMask ? "shapemask.frag"
-                                                                    : draw == Draw::PictureMatte ? "matte.frag" : "outputcolor.frag")}});
+                                                                    : draw == Draw::PictureMatte ? "matte.frag"
+                                                                    : draw == Draw::Fade ? "fade.frag" : "outputcolor.frag")}});
             break;
         case Draw::Dim: { // the target times a constant (composition opacity, blackout)
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
@@ -299,7 +311,10 @@ struct RhiRenderer::Impl {
                 if (r.generatorTarget.ready()) tex = r.generatorTarget.texture(), size = r.generatorTarget.size();
             }
             break;
-        case SourceType::Text: warnOnce(QStringLiteral("text layers")); break;
+        case SourceType::Text:
+            tex = textPicture(l, r);
+            if (tex) size = tex->pixelSize();
+            break;
         case SourceType::Input: warnOnce(QStringLiteral("live inputs")); break;
         case SourceType::Tox: warnOnce(QStringLiteral("TouchEngine layers")); break;
         case SourceType::Web: warnOnce(QStringLiteral("web pages")); break;
@@ -454,6 +469,106 @@ struct RhiRenderer::Impl {
         tex = applySurfaceMasks(l, r, tex);
         if (tex) tex = applyPictureMatte(l, r, tex);
         r.final = tex; // none: a mask or a matte that could not be drawn never lets the picture through
+    }
+
+    // A Text layer's picture: redrawn only when what is shown changes (typed characters, edits, style), as OpenGL does
+    QRhiTexture *textPicture(Layer &l, RLayer &r)
+    {
+        // A Timecode generator: its clock; a Countdown, Stopwatch or Clock: its time (an overtime in a color of its own)
+        const QString shown = l.tcClock ? l.tcClock->display() : l.clockGen ? l.clockGen->display() : l.text.shown();
+        const QColor fill = l.clockGen ? l.clockGen->color(l.text.color) : l.text.color;
+        const QString key = QStringLiteral("%1\n%2|%3|%4|%5|%6|%7|%8x%9|%10").arg(shown, l.text.font).arg(l.text.size)
+                                .arg(fill.name(QColor::HexArgb)).arg(int(l.text.align))
+                                .arg(l.text.lineHeight).arg(l.text.letterSpacing).arg(l.text.width).arg(l.text.height)
+                                .arg(QStringLiteral("%1%2%3%4|%5%6|%7%8|%9").arg(l.text.bold).arg(l.text.italic).arg(l.text.underline)
+                                         .arg(l.text.strike).arg(l.text.outline).arg(l.text.outlineColor.name(QColor::HexArgb))
+                                         .arg(l.text.shadow).arg(l.text.shadowColor.name(QColor::HexArgb))
+                                         .arg(QStringLiteral("%1,%2").arg(l.text.shadowX).arg(l.text.shadowY)));
+        const float written = l.tcClock || l.clockGen ? 1.0f : l.text.writeProgress;
+        QImage img;
+        if (written < 1.0f || l.text.writePlaying) { // being written: the picture revealed along the way of the pen
+            if (!l.textWriting || key != l.textWritingKey) {
+                QFont font(l.text.font);
+                font.setPixelSize(std::max(1, l.text.size));
+                l.textWriting = TextWriting::build(renderTextLayer(l, shown, fill, true), renderTextLayer(l, shown, fill), true,
+                                                   QFontMetricsF(font).lineSpacing() * std::max(0.1f, l.text.lineHeight));
+                l.textWritingKey = key;
+            }
+            l.textWriting->setProgress(written);
+            img = l.textWriting->image();
+            r.textKey.clear(); // written: the whole picture again
+        } else if (!r.text || key != r.textKey) {
+            l.textWriting.reset();
+            img = renderTextLayer(l, shown, fill);
+            r.textKey = key;
+        }
+        if (!img.isNull()) {
+            const QImage rgba = img.convertToFormat(QImage::Format_RGBA8888); // first row: the bottom
+            if (!r.text || r.text->pixelSize() != rgba.size()) {
+                r.text.reset(rhi->newTexture(QRhiTexture::RGBA8, rgba.size()));
+                if (!r.text->create()) r.text.reset();
+            }
+            if (r.text) batch()->uploadTexture(r.text.get(), rgba);
+        }
+        return r.text.get();
+    }
+
+    // The layer a transition begins on keeps its place and id, and its old source goes on as the transition's `from`:
+    // what this renderer kept for the layer (its decoder's texture, its image, its effects) goes with it
+    void adoptOutgoing(quint64 id)
+    {
+        const auto t = e.m_transitions.find(id);
+        if (t == e.m_transitions.end()) return;
+        const Layer *from = t->second->from.get();
+        if (outgoing.count(from)) return;
+        const auto mine = layers.find(id);
+        RLayer &o = outgoing[from];
+        if (mine == layers.end()) return;
+        o = std::move(mine->second);
+        layers.erase(mine);
+        o.used = true;
+    }
+
+    // The outgoing source's picture (its ROI, color and effects) and the incoming one, mixed by the transition into the
+    // layer's picture; the layer's mapping, opacity and blend then apply to the mix (Render.cpp's renderTransition)
+    void renderTransition(Layer &l, RLayer &r, Engine::SourceTransition &t, const IsfRenderContext &rc)
+    {
+        RLayer &o = outgoing[t.from.get()];
+        o.used = true;
+        renderLayer(*t.from, o, rc);
+        QRhiTexture *a = o.final, *b = r.final;
+        const QSize size = b ? b->pixelSize() : a ? a->pixelSize() : QSize();
+        if (size.isEmpty()) return;
+        if (!r.transition || r.transitionPath != t.shaderPath) {
+            r.transition.reset();
+            r.transitionPath = t.shaderPath;
+            if (!t.shaderPath.isEmpty()) {
+                auto s = std::make_unique<IsfInstance>();
+                if (s->loadRhi(t.shaderPath, rhi.get()) && s->input(QStringLiteral("startImage")) && s->input(QStringLiteral("endImage")))
+                    r.transition = std::move(s);
+                else qWarning("QRhi renderer: transition %s: %s", qPrintable(t.shaderPath), qPrintable(s->error().left(200)));
+            }
+        }
+        const double p = std::clamp(t.elapsed / t.duration, 0.0, 1.0);
+        const double eased = p * p * (3 - 2 * p);
+        r.transitionTarget.ensure(rhi.get(), size);
+        if (!r.transitionTarget.ready()) return; // keep the last valid incoming layer output
+        if (r.transition) {
+            auto image = [&](const char *name, QRhiTexture *tex) {
+                IsfInput *in = r.transition->input(QString::fromLatin1(name));
+                in->rhiExt = tex;
+                in->extW = tex ? tex->pixelSize().width() : 0;
+                in->extH = tex ? tex->pixelSize().height() : 0;
+            };
+            image("startImage", a);
+            image("endImage", b);
+            if (IsfInput *in = r.transition->input(QStringLiteral("progress"))) in->fValue = eased;
+            r.transition->renderRhi(cb, rc, nullptr, r.transitionTarget, size);
+        } else { // a crossfade
+            const float u[4] = {float(eased), 0, 0, 0};
+            if (!fullscreen(Draw::Fade, r.transitionTarget, u, sizeof u, {a, b})) return;
+        }
+        r.final = r.transitionTarget.texture();
     }
 
     // A mask's alpha as a texture of its own, drawn again when the layer's masks or the frame's size change
@@ -758,10 +873,13 @@ struct RhiRenderer::Impl {
             if (marks[i] != Todo) return;
             marks[i] = Doing;
             Layer &l = *all[i];
+            if (!l.isGroup && !l.isViewport) adoptOutgoing(l.id);
             RLayer &r = layers[l.id];
             r.used = true;
             const auto dependency = [&](size_t row, int) { render(row); };
             if (l.needed && (!l.isViewport || (l.enabled && !l.testCard))) e.forEachRenderDependency(l, dependency);
+            if (const auto t = l.isGroup || l.isViewport ? e.m_transitions.end() : e.m_transitions.find(l.id); t != e.m_transitions.end())
+                e.forEachRenderDependency(*t->second->from, dependency);
             if (l.isViewport) {
                 std::vector<Layer *> shown;
                 for (size_t k = 0; k < n; ++k) {
@@ -785,7 +903,7 @@ struct RhiRenderer::Impl {
                 } else renderGroup(l, r, members, rc);
             } else {
                 renderLayer(l, r, rc);
-                if (e.m_transitions.count(l.id)) warnOnce(QStringLiteral("source transitions"));
+                if (const auto t = e.m_transitions.find(l.id); t != e.m_transitions.end()) renderTransition(l, r, *t->second, rc);
             }
             if (!l.isViewport) prepareMatte(l, r); // before it is composited (a viewport or a group draws it later)
             marks[i] = Done;
@@ -801,6 +919,7 @@ RhiRenderer::~RhiRenderer()
     if (!d->rhi) return;
     if (d->pending) d->pending->release();
     d->layers.clear();
+    d->outgoing.clear();
     d->compositionOut.release();
     d->pipelines.clear();
     d->ubufs.clear();
@@ -855,6 +974,7 @@ bool RhiRenderer::init(QString *err)
 void RhiRenderer::imageArrived(quint64 layer, const QImage &image)
 {
     if (!d->rhi || image.isNull()) return;
+    d->adoptOutgoing(layer); // a transition just begun: the picture shown so far goes with the outgoing source
     Impl::RLayer &r = d->layers[layer];
     const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
     if (!r.image || r.imageSize != rgba.size()) {
@@ -875,6 +995,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     if (d->dstCopies.size() > 8) d->dstCopies.clear();
     d->res().frameStarted();
     for (auto &[id, r] : d->layers) r.used = false;
+    for (auto &[from, r] : d->outgoing) r.used = false;
     const double level = d->e.m_compositionOpacity.load() * d->e.m_blackLevel.load();
     d->renderPass(rc, level);
     // The whole composition (the interface's preview)
@@ -887,6 +1008,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     d->rhi->endOffscreenFrame();
     // Layers gone: their pictures go
     for (auto it = d->layers.begin(); it != d->layers.end();) it = it->second.used || it->second.image ? std::next(it) : d->layers.erase(it);
+    for (auto it = d->outgoing.begin(); it != d->outgoing.end();) it = it->second.used ? std::next(it) : d->outgoing.erase(it);
 }
 
 static QImage readBack(QRhi *rhi, QRhiTexture *tex)

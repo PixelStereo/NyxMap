@@ -40,7 +40,7 @@
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
 // Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
 // stored bottom-up).
-static QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly = false)
+QImage renderTextLayer(const Layer &l, const QString &text, const QColor &fill, bool inkOnly)
 {
     const int w = std::max(1, l.text.width), h = std::max(1, l.text.height);
     QImage img(w, h, QImage::Format_RGBA8888_Premultiplied);

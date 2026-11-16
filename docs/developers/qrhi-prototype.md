@@ -32,11 +32,14 @@ it and the parts ported so far.
   with their own picture, output color, exposure, opacity), the composition,
   composition opacity and blackout, the blend modes (Difference reads a copy of
   what is drawn before it, in a pass of its own), surface and composition
-  masks, mattes in Picture and Composition space, mapped meshes. `rhi_engine` runs two engines on one scene, OpenGL and QRhi: their
-  viewports and composition match (at most 2 levels apart). Not yet: text, live
-  inputs, TouchEngine, web pages, 3D scenes, transitions, antialiasing,
-  mipmaps; outputs,
-  previews and publishing still read OpenGL's pictures.
+  masks, mattes in Picture and Composition space, text layers (the clocks and
+  the typewriter too), source transitions (a transition shader, or a crossfade;
+  the outgoing source's QRhi state moves to the transition when it begins),
+  mapped meshes. `rhi_engine` runs two engines on one scene, OpenGL and QRhi:
+  their viewports and composition match (at most 2 levels apart), and so does a
+  transition caught half way. Not yet: live inputs, TouchEngine, web pages, 3D
+  scenes, antialiasing, mipmaps; outputs, previews and publishing still read
+  OpenGL's pictures.
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).
