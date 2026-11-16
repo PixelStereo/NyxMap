@@ -23,11 +23,13 @@ def classify(paths, event="pull_request", ref_type="branch", full=False):
         "valgrind": force or any(p in ("test/valgrind.supp", "test/workspace_ui.cpp") for p in paths),
     }
     # Ordinary PRs validate source builds and tests on every platform. Distribution
-    # builds remain mandatory on main, on releases, and for PRs that can change them.
-    package_inputs = infrastructure or any(
+    # builds remain mandatory on main, on releases, and for PRs that change what they package or how
+    # (the CI's other steps, the build rules and the code do not: they are built and tested above).
+    package_inputs = any(
         p.startswith(("packaging/", "licenses/", "third_party/", "assets/")) or
         p in (".gitmodules", "THIRD-PARTY-NOTICES.md") or
-        p.startswith(("scripts/package_", "scripts/smoke_", "scripts/build_ffmpeg", "scripts/build_tiff", "scripts/linux_"))
+        p.startswith(("scripts/package_", "scripts/smoke_", "scripts/build_ffmpeg", "scripts/build_omt", "scripts/fetch_ndi",
+                      "scripts/build_tiff", "scripts/linux_", "scripts/macos_"))
         for p in paths
     )
     result["package"] = result["build"] and (event != "pull_request" or force or package_inputs)

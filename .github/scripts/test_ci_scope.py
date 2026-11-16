@@ -17,8 +17,12 @@ class ScopeTest(unittest.TestCase):
         self.assertTrue(classify(["src/engine/Hap.cpp"])["fuzz"])
     def test_build_rules_validate_everything_except_redundant_valgrind(self):
         scope = classify(["CMakeLists.txt"])
-        self.assertTrue(all(v for k,v in scope.items() if k != "valgrind"))
+        self.assertTrue(all(v for k,v in scope.items() if k not in ("valgrind", "package")))
         self.assertFalse(scope["valgrind"])
+        self.assertFalse(scope["package"]) # building and testing everywhere does not repackage
+    def test_workflow_changes_do_not_repackage_unless_they_touch_the_packaging(self):
+        self.assertFalse(classify([".github/workflows/build.yml"])["package"])
+        self.assertTrue(classify(["scripts/macos_notices.py"])["package"])
     def test_nightly_keeps_safety_without_repackaging_three_platforms(self):
         scope = classify([], "schedule")
         self.assertFalse(scope["build"])

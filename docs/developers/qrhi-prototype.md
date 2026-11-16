@@ -1,10 +1,9 @@
 # QRhi prototype
 
-NyxMap's renderer moves from OpenGL to Qt's QRhi, which drives Metal, Direct3D
-11/12 and Vulkan from one API and keeps the application in C++ and Qt. OpenGL
-goes once every part has been ported, each checked picture by picture against
-the OpenGL renderer it replaces. This page records the measurements that led to
-it and the parts ported so far.
+NyxMap's renderer is Qt's QRhi, which drives Metal, Direct3D 11 and Vulkan from one API
+and keeps the application in C++ and Qt. OpenGL is gone: every part was ported and checked picture by picture against
+the OpenGL renderer it replaced, which no longer exists. This page records the measurements that led to it and the parts
+ported, as they were at the time.
 
 ## Ported
 
