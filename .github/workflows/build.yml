@@ -147,7 +147,7 @@ jobs:
         timeout-minutes: 15
         run: |
           # Network setup has its own budget, separate from package execution.
-          for ubuntu_version in 24.04 26.04; do
+          for ubuntu_version in 26.04; do
             timeout 420 docker build --progress=plain -t "nyxmap-clean-runtime:$ubuntu_version" \
               --secret id=ubuntu-ca,src=/etc/ssl/certs/ca-certificates.crt \
               --build-arg "UBUNTU_VERSION=$ubuntu_version" \
@@ -238,9 +238,9 @@ jobs:
         if: needs.scope.outputs.package == 'true'
         timeout-minutes: 45
         run: |
-          # latest remains the test host. Release libraries target the oldest
-          # supported glibc; newer distro libraries cannot run on Ubuntu 24.04.
-          docker build --progress=plain -t nyxmap-build:24.04 \
+          # latest remains the test host. Release libraries target the oldest supported glibc: Ubuntu 26.04's (the
+          # first Ubuntu whose Qt is recent enough for the QRhi renderer); newer distro libraries cannot run there.
+          docker build --progress=plain -t nyxmap-build:26.04 \
             --secret id=ubuntu-ca,src=/etc/ssl/certs/ca-certificates.crt \
             --build-arg "BUILDER_UID=$(id -u)" --build-arg "BUILDER_GID=$(id -g)" \
             -f packaging/linux/build.Dockerfile packaging/linux
@@ -251,7 +251,7 @@ jobs:
             -e GITHUB_REF_TYPE -e GITHUB_REF_NAME \
             -v "$PWD:/workspace" -v "$RUNNER_TEMP/linux-baseline:/work" \
             -v "$DOTNET_ROOT:/dotnet:ro" \
-            nyxmap-build:24.04 sh scripts/package_linux_baseline.sh
+            nyxmap-build:26.04 sh scripts/package_linux_baseline.sh
       - name: Clean Ubuntu runtime smoke test (no Qt, FFmpeg, .NET or FUSE)
         if: needs.scope.outputs.package == 'true'
         timeout-minutes: 15
@@ -260,7 +260,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/linux-smoke-scripts"
           cp dist/NyxMap-linux-x86_64*.AppImage dist/NyxMap-linux-x86_64*.tar.gz "$RUNNER_TEMP/linux-packages/"
           cp scripts/smoke_package.py scripts/smoke_linux_package.py scripts/linux_qt_plugins.py "$RUNNER_TEMP/linux-smoke-scripts/"
-          for ubuntu_version in 24.04 26.04; do
+          for ubuntu_version in 26.04; do
             docker run --rm --init --network none \
               -v "$RUNNER_TEMP/linux-packages:/packages:ro" \
               -v "$RUNNER_TEMP/linux-smoke-scripts:/scripts:ro" \

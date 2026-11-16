@@ -32,7 +32,7 @@ HOST_LIB = re.compile(r"^(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|anl)\.
                       r"vulkan[^.]*|nvidia[^.]*)\.so.*)$")
 FFMPEG_LIB = re.compile(r"^lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.so\.")
 GST_DIR = Path("/usr/lib/x86_64-linux-gnu/gstreamer-1.0")
-# The GStreamer plugins Qt Multimedia's GStreamer backend (Qt 6.4 on Ubuntu 24.04) needs for camera capture into a
+# The GStreamer plugins Qt Multimedia's GStreamer backend (when Ubuntu's Qt has it) needs for camera capture into a
 # QVideoSink, and nothing else: every other plugin's dependencies would come along too (aasink/cacasink pull GPL-only
 # libgpm and libslang, others hundreds of unneeded libraries). NyxMap plays sound with miniaudio and decodes media with
 # its own FFmpeg, so no audio or playback plugin. A missing plugin fails packaging.
@@ -375,7 +375,7 @@ def package(build, ffmpeg, omt, ndi, output):
         "| File | Component / binary and source package versions | Licences |\n|---|---|---|\n"
         + "\n".join(notices) + "\n")
     (app / "README-Linux.txt").write_text(
-        "NyxMap — Ubuntu 24.04 or newer, x86_64\n\n"
+        "NyxMap — Ubuntu 26.04 or newer, x86_64\n\n"
         "Portable archive: extract the whole folder, then run ./AppRun. No installation or FUSE needed.\n"
         "AppImage: chmod +x NyxMap-linux-x86_64*.AppImage, then run it.\n"
         "If FUSE is unavailable: ./NyxMap-linux-x86_64*.AppImage --appimage-extract-and-run\n"

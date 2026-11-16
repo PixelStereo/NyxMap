@@ -1,5 +1,5 @@
 #!/bin/sh
-# Executed inside the Ubuntu 24.04 builder, never against the host's libraries.
+# Executed inside the Ubuntu 26.04 builder, never against the host's libraries.
 set -eu
 TASK_WORK=/work
 export RUNNER_TEMP="$TASK_WORK"

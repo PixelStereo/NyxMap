@@ -1,5 +1,5 @@
-# Release ABI baseline. The GitHub host and separate latest-Qt tests stay latest.
-FROM ubuntu:24.04
+# Release ABI baseline: Ubuntu 26.04 (its Qt 6.10 is the first Ubuntu Qt recent enough for the QRhi renderer).
+FROM ubuntu:26.04
 RUN --mount=type=secret,id=ubuntu-ca,required=true,mode=0444 \
     printf 'Acquire::Retries "2";\nAcquire::https::Timeout "30";\nAcquire::https::No-Cache "true";\nAcquire::https::CaInfo "/run/secrets/ubuntu-ca";\n' > /etc/apt/apt.conf.d/80nyxmap-ci-build \
     && sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources \

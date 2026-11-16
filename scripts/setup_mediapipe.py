@@ -97,7 +97,7 @@ def bundle_python(folder):
                         "--link-mode", "copy", "--only-binary", ":all:", *options, *dependencies], check=True)
     if sys.platform.startswith("linux"):
         # Matplotlib uses Agg. The optional Tk module links to Tcl/Tk 9, absent
-        # from the Ubuntu 24.04 release baseline.
+        # from the Ubuntu 26.04 release baseline.
         for extension in (runtime / "lib" / "python3.11" / "lib-dynload").glob("_tkinter*.so"):
             extension.unlink()
     return python

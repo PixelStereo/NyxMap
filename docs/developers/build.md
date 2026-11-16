@@ -65,7 +65,7 @@ before keeps its options: run the `cmake -S …` line again to change them.
 </details>
 
 <details>
-<summary><strong>Linux — Ubuntu 24.04 or newer</strong></summary>
+<summary><strong>Linux — Ubuntu 26.04 or newer</strong></summary>
 
 ```bash
 sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \

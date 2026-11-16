@@ -1,4 +1,4 @@
-ARG UBUNTU_VERSION=24.04
+ARG UBUNTU_VERSION=26.04
 FROM ubuntu:${UBUNTU_VERSION}
 # Only a test harness and the host graphics/display stack. No application libraries.
 # The minimal base has no CA package yet. Use the runner's public CA bundle
