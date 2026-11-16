@@ -36,11 +36,9 @@ constexpr quint32 kPlaceBytes = 1024;
 struct SceneBlock {
     float eye[4], ambient[4], misc[4];
     qint32 counts[4];
-    qint32 types[2][4];
-    float color[8][4], lpos[8][4], ldir[8][4], lright[8][4], lup[8][4], lhalf[8][4], cone[8][4];
 };
-static_assert(sizeof(SceneBlock) == 16 * 4 + 32 + 7 * 128, "the scene shaders' Scene block");
-constexpr quint32 kSceneBytes = 1024;
+static_assert(sizeof(SceneBlock) == 64, "the scene shaders' Scene block");
+constexpr quint32 kSceneBytes = 64;
 
 struct PostBlock {
     float flip[4], grade[4], more[4];
@@ -66,6 +64,8 @@ struct RhiScene::Impl {
     std::vector<std::unique_ptr<QRhiBuffer>> ubufs;
     size_t nextUbuf = 0;
     std::unique_ptr<QRhiBuffer> sceneUbuf, postUbuf;
+    std::unique_ptr<QRhiBuffer> lights; // the lights, seven vec4 each, as many as the scene has (a storage buffer)
+    quint32 lightCapacity = 0;
     std::unique_ptr<QRhiSampler> repeat; // the models' maps: repeated, mipmapped
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> pipelines;
     std::unique_ptr<QRhiGraphicsPipeline> postPipeline;
@@ -376,36 +376,41 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
     const QMatrix4x4 proj = backendProjection(rhi, cam.proj);
 
-    // The scene's lights
+    // The scene's lights: no limit but the memory
     SceneBlock sb = {};
     sb.eye[0] = cam.eye.x(), sb.eye[1] = cam.eye.y(), sb.eye[2] = cam.eye.z();
     for (int c = 0; c < 3; ++c) sb.ambient[c] = s.ambient[size_t(c)] * s.ambientIntensity;
     sb.misc[0] = s.exposure;
     sb.misc[1] = std::max(0.0f, s.studio);
-    int count = 0;
+    std::vector<float> light; // seven vec4 each
     for (const Scene3D::Lamp &lamp : lamps) {
         const LightSettings &l = lamp.light;
         const float power = l.intensity * lamp.gain;
-        if (power <= 0 || count >= Scene3D::kMaxLights) continue;
-        const int k = count++;
-        sb.types[k / 4][k % 4] = std::clamp(l.type, 0, 3);
+        if (power <= 0) continue;
         const QVector3D dir = Camera3D::aim(l.yaw, l.pitch);
         const QVector3D right = QVector3D::crossProduct(dir, std::abs(dir.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0)).normalized(),
                         upward = QVector3D::crossProduct(right, dir);
-        sb.lhalf[k][0] = std::max(0.001f, l.width) * 0.5f;
-        sb.lhalf[k][1] = std::max(0.001f, l.height) * 0.5f;
-        for (int c = 0; c < 3; ++c) {
-            sb.color[k][c] = l.color[size_t(c)] * power;
-            sb.lpos[k][c] = l.position[size_t(c)];
-            sb.ldir[k][c] = dir[c];
-            sb.lright[k][c] = right[c];
-            sb.lup[k][c] = upward[c];
-        }
-        const float spread = std::clamp(l.angle, 1.0f, 89.0f);
-        sb.cone[k][0] = qDegreesToRadians(spread); // angles, in radians
-        sb.cone[k][1] = std::min(sb.cone[k][0] - 1e-3f, qDegreesToRadians(spread * (1 - std::clamp(l.falloff, 0.0f, 1.0f))));
+        const float spread = std::clamp(l.angle, 1.0f, 89.0f), cone = qDegreesToRadians(spread); // angles, in radians
+        const float coneIn = std::min(cone - 1e-3f, qDegreesToRadians(spread * (1 - std::clamp(l.falloff, 0.0f, 1.0f))));
+        const float entry[7][4] = {
+            {l.color[0] * power, l.color[1] * power, l.color[2] * power, float(std::clamp(l.type, 0, 3))},
+            {l.position[0], l.position[1], l.position[2], 0},
+            {dir.x(), dir.y(), dir.z(), 0},
+            {right.x(), right.y(), right.z(), 0},
+            {upward.x(), upward.y(), upward.z(), 0},
+            {std::max(0.001f, l.width) * 0.5f, std::max(0.001f, l.height) * 0.5f, 0, 0},
+            {cone, coneIn, 0, 0}};
+        light.insert(light.end(), &entry[0][0], &entry[0][0] + 28);
+        ++sb.counts[0];
     }
-    sb.counts[0] = count;
+    if (light.empty()) light.assign(28, 0.0f); // a buffer is never empty
+    const quint32 lightBytes = quint32(light.size() * sizeof(float));
+    if (!d->lights || d->lightCapacity < lightBytes) {
+        d->lightCapacity = std::max<quint32>(lightBytes, 28 * sizeof(float) * 16) * 2;
+        d->lights.reset(rhi->newBuffer(QRhiBuffer::Static, QRhiBuffer::StorageBuffer, d->lightCapacity));
+        d->lights->create();
+    }
+    u->uploadStaticBuffer(d->lights.get(), 0, lightBytes, light.data());
     u->updateDynamicBuffer(d->sceneUbuf.get(), 0, sizeof sb, &sb);
 
     const auto bind = [&](QRhiBuffer *b, const Model3D::RhiDraw &draw) {
@@ -417,6 +422,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             {3, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.baseTexture ? draw.baseTexture : black, d->repeat.get()}};
         for (int k = 0; k < 5; ++k)
             bindings.push_back({4 + k, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.maps[size_t(k)] ? draw.maps[size_t(k)] : black, d->repeat.get()});
+        bindings.push_back({9, QRhiShaderResourceBinding::FragmentStage, d->lights.get(), nullptr, nullptr, true});
         return res.bindings(bindings);
     };
     // What the camera sees, the nearest first (the blended ones over them, the farthest first)

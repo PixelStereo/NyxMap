@@ -110,7 +110,8 @@ it and the parts ported so far.
   are drawn through QRhi from the view's camera, with the shape FX of the models
   (bend, twist, taper, wave, noise) in the vertex shader. 3D scenes (the layers)
   are drawn lit: up to eight lights (directional, point, spot, area), the
-  studio's light, physically based materials with their maps (base colour,
+  studio's light (no limit to their number: OpenGL took eight; they sit in a storage
+  buffer), physically based materials with their maps (base colour,
   roughness, metal, normals, occlusion, emission), tone mapping, multisampled as
   the project's quality asks, then the camera's grade (colours, vignette).
   `rhi_scene` compares both with OpenGL, picture by picture: the views pixel for

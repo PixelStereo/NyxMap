@@ -216,6 +216,57 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    // No limit to the lights (OpenGL took eight): twelve give more light than eight
+    {
+        auto model = std::make_shared<Model3D>();
+        QString err;
+        model->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        Scene3D::Item item;
+        item.model = model;
+        item.placement.color = {0.8f, 0.8f, 0.8f};
+        SceneSettings lit = view;
+        lit.ambientIntensity = 0;
+        lit.studio = 0;
+        Scene3DQuality off;
+        off.antialiasing = off.shadows = off.contact = off.reflections = off.glow = off.atmosphere = 0;
+        const auto brightness = [&](int count) {
+            std::vector<Scene3D::Lamp> lamps;
+            for (int k = 0; k < count; ++k) {
+                Scene3D::Lamp lamp;
+                lamp.light.type = 1;
+                lamp.light.shadow = false;
+                lamp.light.intensity = 4;
+                lamp.light.position = {1.5f * std::cos(k * 0.5f), 2.0f, 1.5f * std::sin(k * 0.5f) + 2};
+                lamps.push_back(lamp);
+            }
+            RhiScene scene(rhi.get());
+            QRhiCommandBuffer *cb = nullptr;
+            double sum = -1;
+            if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+                RhiResources::of(rhi.get()).frameStarted();
+                QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+                QRhiTexture *out = scene.draw(cb, u, lit, {item}, lamps, size.width(), size.height(), off);
+                QRhiReadbackResult rb;
+                if (out) {
+                    QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                    r->readBackTexture({out}, &rb);
+                    cb->resourceUpdate(r);
+                }
+                rhi->endOffscreenFrame();
+                if (out) {
+                    const QImage img(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888);
+                    sum = 0;
+                    for (int y = 0; y < img.height(); ++y)
+                        for (int x = 0; x < img.width(); ++x) sum += QColor(img.pixel(x, y)).lightnessF();
+                }
+            }
+            return sum;
+        };
+        const double eight = brightness(8), twelve = brightness(12), thirty = brightness(30);
+        std::printf("  lights: 8 -> %.1f, 12 -> %.1f, 30 -> %.1f\n", eight, twelve, thirty);
+        check(eight > 0 && twelve > eight * 1.01 && thirty > twelve * 1.01, "lights: no limit (twelve and thirty light more than eight)");
+    }
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
     return g_failures ? 1 : 0;
 }

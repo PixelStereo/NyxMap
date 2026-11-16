@@ -2,7 +2,7 @@
 // The lit scenes (the port of Model3D.cpp's kFragment, step by step): physically based (GGX, Smith, Schlick), in linear
 // light: its base colour (times its texture's), metal and roughness (factors, times their textures'), normals (its normal
 // map, from the screen-space frame), occlusion, emission; under the ambient light, up to eight lights (directional, point,
-// spot, area) and the studio's light; exposure, ACES tone mapping, sRGB out. Not yet here: shadows, the environment,
+// spot, area, as many as the scene has) and the studio's light; exposure, ACES tone mapping, sRGB out. Not yet here: shadows, the environment,
 // screen-space occlusion and reflections, the glow.
 layout(location = 0) in vec3 v_pos;
 layout(location = 1) in vec3 v_n;
@@ -48,21 +48,16 @@ layout(std140, binding = 1) uniform Scene {
     vec4 u_ambient4;   // xyz: the ambient light, times its intensity
     vec4 u_misc;       // x: exposure; y: the studio's strength
     ivec4 u_counts;    // x: how many lights
-    ivec4 u_types[2];  // each light's kind: 0 directional, 1 point, 2 spot, 3 area
-    vec4 u_color4[8];  // its colour times its power
-    vec4 u_lpos4[8];
-    vec4 u_ldir4[8];
-    vec4 u_lright4[8]; // an area's sides
-    vec4 u_lup4[8];
-    vec4 u_lhalf4[8];  // xy: half its size
-    vec4 u_cone4[8];   // x: a spot's angle, y: where its falloff begins (radians)
 };
+// The lights, as many as the scene has: seven vec4 each. color (xyz: times its power; w: its kind, 0 directional, 1 point,
+// 2 spot, 3 area), position, direction, right and up (an area's sides), half its size (xy), cone (x: a spot's angle, y:
+// where its falloff begins, in radians)
+layout(std430, binding = 9) readonly buffer Lights { vec4 lights[]; };
 #define u_eye u_eye4.xyz
 #define u_ambient u_ambient4.xyz
 #define u_exposure u_misc.x
 #define u_studio u_misc.y
 #define u_count u_counts.x
-#define U_TYPE(i) u_types[(i) >> 2][(i) & 3]
 layout(binding = 3) uniform sampler2D u_tex;
 layout(binding = 4) uniform sampler2D u_roughTex;
 layout(binding = 5) uniform sampler2D u_metalTex;
@@ -166,14 +161,13 @@ void main() {
         vec4 near = reflected(reflect(-V, N), r);
         c += near.rgb * near.a * (F0 * ab.x + ab.y) * ao;
     }
-    for (int i = 0; i < 8; ++i) {
-        if (i >= u_count) break;
+    for (int i = 0; i < u_count; ++i) {
         vec3 L, Lspec; float att = 1.0, aSpec = a;
-        if (U_TYPE(i) == 0) L = normalize(-u_ldir4[i].xyz);
-        else if (U_TYPE(i) == 3) { // an area: diffuse from its nearest point, reflections from where the mirror direction meets it
-            vec3 n = normalize(u_ldir4[i].xyz), toP = v_pos - u_lpos4[i].xyz;
-            vec2 q = clamp(vec2(dot(toP, u_lright4[i].xyz), dot(toP, u_lup4[i].xyz)), -u_lhalf4[i].xy, u_lhalf4[i].xy);
-            vec3 d = u_lpos4[i].xyz + u_lright4[i].xyz * q.x + u_lup4[i].xyz * q.y - v_pos;
+        if (int(lights[i * 7].w) == 0) L = normalize(-lights[i * 7 + 2].xyz);
+        else if (int(lights[i * 7].w) == 3) { // an area: diffuse from its nearest point, reflections from where the mirror direction meets it
+            vec3 n = normalize(lights[i * 7 + 2].xyz), toP = v_pos - lights[i * 7 + 1].xyz;
+            vec2 q = clamp(vec2(dot(toP, lights[i * 7 + 3].xyz), dot(toP, lights[i * 7 + 4].xyz)), -lights[i * 7 + 5].xy, lights[i * 7 + 5].xy);
+            vec3 d = lights[i * 7 + 1].xyz + lights[i * 7 + 3].xyz * q.x + lights[i * 7 + 4].xyz * q.y - v_pos;
             float dist2 = max(dot(d, d), 1e-4);
             L = d * inversesqrt(dist2);
             att = max(dot(-L, n), 0.0) / dist2;
@@ -181,22 +175,22 @@ void main() {
             float along = dot(R, n);
             Lspec = L;
             if (along < -1e-3) {
-                vec3 hit = v_pos + R * (dot(u_lpos4[i].xyz - v_pos, n) / along) - u_lpos4[i].xyz;
-                vec2 h = clamp(vec2(dot(hit, u_lright4[i].xyz), dot(hit, u_lup4[i].xyz)), -u_lhalf4[i].xy, u_lhalf4[i].xy);
-                Lspec = normalize(u_lpos4[i].xyz + u_lright4[i].xyz * h.x + u_lup4[i].xyz * h.y - v_pos);
+                vec3 hit = v_pos + R * (dot(lights[i * 7 + 1].xyz - v_pos, n) / along) - lights[i * 7 + 1].xyz;
+                vec2 h = clamp(vec2(dot(hit, lights[i * 7 + 3].xyz), dot(hit, lights[i * 7 + 4].xyz)), -lights[i * 7 + 5].xy, lights[i * 7 + 5].xy);
+                Lspec = normalize(lights[i * 7 + 1].xyz + lights[i * 7 + 3].xyz * h.x + lights[i * 7 + 4].xyz * h.y - v_pos);
             }
-            aSpec = min(a + length(u_lhalf4[i].xy) * inversesqrt(dist2) * 0.5, 1.0);
+            aSpec = min(a + length(lights[i * 7 + 5].xy) * inversesqrt(dist2) * 0.5, 1.0);
         } else {
-            vec3 d = u_lpos4[i].xyz - v_pos;
+            vec3 d = lights[i * 7 + 1].xyz - v_pos;
             float dist2 = max(dot(d, d), 1e-4);
             L = d * inversesqrt(dist2);
             att = 1.0 / dist2;
-            if (U_TYPE(i) == 2) att *= 1.0 - smoothstep(u_cone4[i].y, u_cone4[i].x, acos(clamp(dot(-L, normalize(u_ldir4[i].xyz)), -1.0, 1.0))); // by its angle: an even gradient
+            if (int(lights[i * 7].w) == 2) att *= 1.0 - smoothstep(lights[i * 7 + 6].y, lights[i * 7 + 6].x, acos(clamp(dot(-L, normalize(lights[i * 7 + 2].xyz)), -1.0, 1.0))); // by its angle: an even gradient
         }
         float NdL = max(dot(N, L), 0.0);
         if (NdL <= 0.0 || att <= 0.0) continue; // nothing comes here: no need to know what stops it
-        if (U_TYPE(i) != 3) Lspec = L;
-        float NdS = U_TYPE(i) == 3 ? max(dot(N, Lspec), 1e-3) : NdL;
+        if (int(lights[i * 7].w) != 3) Lspec = L;
+        float NdS = int(lights[i * 7].w) == 3 ? max(dot(N, Lspec), 1e-3) : NdL;
         vec3 H = normalize(Lspec + V);
         float NdH = max(dot(N, H), 0.0), VdH = max(dot(V, H), 0.0);
         float dd = NdH * NdH * (aSpec * aSpec - 1.0) + 1.0;
@@ -206,7 +200,7 @@ void main() {
         vec3 F = F0 + (1.0 - F0) * pow(1.0 - VdH, 5.0);
         vec3 spec = D * G * F / (4.0 * NdV * NdS + 1e-4);
         vec3 kd = (1.0 - F) * (1.0 - metal);
-        c += (kd * base.rgb * NdL + spec * NdS) * u_color4[i].xyz * att * lit(i, N) * mix(1.0, contact, 0.5);
+        c += (kd * base.rgb * NdL + spec * NdS) * lights[i * 7 + 0].xyz * att * lit(i, N) * mix(1.0, contact, 0.5);
     }
     vec3 em = u_emissive * (u_hasEm != 0 ? pow(texture(u_emTex, v_uv).rgb, vec3(2.2)) : vec3(1.0));
     vec3 shining = (c + em) * u_exposure;

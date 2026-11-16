@@ -107,7 +107,7 @@ QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list
     for (const Bind &b : list) {
         key.push_back(quint64(b.binding));
         key.push_back(quint64(b.stages.toInt()));
-        key.push_back(b.ubuf ? b.ubuf->globalResourceId() : 0);
+        key.push_back(b.ubuf ? b.ubuf->globalResourceId() * 2 + (b.storage ? 1 : 0) : 0);
         key.push_back(b.tex ? b.tex->globalResourceId() : 0);
         key.push_back(b.sampler ? b.sampler->globalResourceId() : 0);
     }
@@ -116,7 +116,8 @@ QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list
     if (!kept.srb) {
         std::vector<QRhiShaderResourceBinding> rb;
         for (const Bind &b : list)
-            rb.push_back(b.ubuf ? QRhiShaderResourceBinding::uniformBuffer(b.binding, b.stages, b.ubuf)
+            rb.push_back(b.ubuf ? (b.storage ? QRhiShaderResourceBinding::bufferLoad(b.binding, b.stages, b.ubuf)
+                                             : QRhiShaderResourceBinding::uniformBuffer(b.binding, b.stages, b.ubuf))
                                 : QRhiShaderResourceBinding::sampledTexture(b.binding, b.stages, b.tex, b.sampler));
         kept.srb.reset(m_rhi->newShaderResourceBindings());
         kept.srb->setBindings(rb.cbegin(), rb.cend());

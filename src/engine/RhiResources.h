@@ -41,9 +41,10 @@ public:
     struct Bind {
         int binding = 0;
         QRhiShaderResourceBinding::StageFlags stages;
-        QRhiBuffer *ubuf = nullptr;    // a uniform buffer, or
+        QRhiBuffer *ubuf = nullptr;    // a uniform buffer (or a storage buffer, `storage`), or
         QRhiTexture *tex = nullptr;    // a texture sampled through
         QRhiSampler *sampler = nullptr;
+        bool storage = false;          // the buffer is a storage buffer, read
     };
     QRhiShaderResourceBindings *bindings(const std::vector<Bind> &b);
     // Called once before recording a frame; ages bindings not used in recent frames.
