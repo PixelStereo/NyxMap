@@ -45,9 +45,9 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
     const bool blackOk = m_black->create();
     m_quad.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, 12 * sizeof(float)));
     const bool quadOk = m_quad->create();
-    m_blitUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    m_blitUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
     const bool blitOk = m_blitUbuf->create();
-    m_blitFlippedUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    m_blitFlippedUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
     const bool flippedOk = m_blitFlippedUbuf->create();
     if (!blackOk || !quadOk || !blitOk || !flippedOk)
         qWarning("RhiResources: shared resources not created (black %d, quad %d, blit %d, flipped %d) on %s", blackOk, quadOk, blitOk,
@@ -59,9 +59,9 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
     static const float quad[12] = {-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1};
     if (quadOk) m_uploads->uploadStaticBuffer(m_quad.get(), quad);
     const float flip[4] = {m_flip, 0, 0, 0};
-    if (blitOk) m_uploads->uploadStaticBuffer(m_blitUbuf.get(), flip);
+    if (blitOk) m_uploads->updateDynamicBuffer(m_blitUbuf.get(), 0, 16, flip);
     const float flipped[4] = {-m_flip, 0, 0, 0};
-    if (flippedOk) m_uploads->uploadStaticBuffer(m_blitFlippedUbuf.get(), flipped);
+    if (flippedOk) m_uploads->updateDynamicBuffer(m_blitFlippedUbuf.get(), 0, 16, flipped);
 }
 
 RhiResources::~RhiResources()

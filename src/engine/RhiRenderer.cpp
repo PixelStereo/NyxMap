@@ -1266,10 +1266,10 @@ bool RhiRenderer::init(QString *err)
     qInfo().noquote() << "QRhi renderer:" << backend << d->rhi->driverInfo().deviceName;
     QRhi *rhi = d->rhi.get();
     QRhiResourceUpdateBatch *u = d->batch();
-    d->flip.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    d->flip.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
     d->flip->create();
     const float flip[4] = {rhidevice::ndcFlip(rhi), 0, 0, 0};
-    u->uploadStaticBuffer(d->flip.get(), flip);
+    u->updateDynamicBuffer(d->flip.get(), 0, 16, flip);
     // The mesh's indices: a grid of kMeshSubdiv × kMeshSubdiv cells, or one cell (Engine::initialize's)
     auto indices = [&](int n, std::unique_ptr<QRhiBuffer> &buffer) {
         std::vector<quint32> idx;
@@ -1285,10 +1285,10 @@ bool RhiRenderer::init(QString *err)
     };
     d->gridIndexCount = indices(kMeshSubdiv, d->gridIndices);
     indices(1, d->quadIndices);
-    d->presentFlip.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    d->presentFlip.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
     d->presentFlip->create();
     const float reversed[4] = {-rhidevice::ndcFlip(rhi), 0, 0, 0};
-    u->uploadStaticBuffer(d->presentFlip.get(), reversed);
+    u->updateDynamicBuffer(d->presentFlip.get(), 0, 16, reversed);
     std::vector<float> full;
     Mapping().buildVertices(1, full);
     d->fullMesh.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, quint32(full.size() * sizeof(float))));
