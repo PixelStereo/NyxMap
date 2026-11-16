@@ -179,7 +179,8 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
         src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
         src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
-        src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag)
+        src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag
+        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag)
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)

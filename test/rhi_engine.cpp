@@ -91,6 +91,64 @@ static std::vector<quint64> build(Engine &e, const QString &root)
         l.mapping.size = QSizeF(0.5, 0.5);
         l.mapping.position = QPointF(0.7, 0.3);
     }
+    quint64 checker = 0, grid = 0;
+    {
+        Engine::Lock lk(&e.mutex());
+        for (int i = 0; i < e.layerCount(); ++i) {
+            if (e.layer(i)->name == QLatin1String("Checker")) checker = e.layer(i)->id;
+            if (e.layer(i)->name == QLatin1String("Grid")) grid = e.layer(i)->id;
+        }
+    }
+    { // masks: a soft ellipse on the picture, a rectangle where it lands in the composition
+        Engine::Lock lk(&e.mutex());
+        for (int i = 0; i < e.layerCount(); ++i) {
+            Layer &l = *e.layer(i);
+            if (l.name == QLatin1String("Checker")) {
+                Mask m = Mask::ellipse(QRectF(0.15, 0.1, 0.7, 0.8));
+                m.feather = 0.15;
+                l.masks.push_back(m);
+                ++l.masksRevision;
+            } else if (l.name == QLatin1String("Corners")) {
+                Mask m = Mask::rectangle(QRectF(0.05, 0.2, 0.6, 0.6));
+                m.attach = Mask::Attach::Composition;
+                m.feather = 0.05;
+                l.masks.push_back(m);
+                ++l.masksRevision;
+            }
+        }
+    }
+    { // Difference over what is below, matted in Composition space by the Checker, and in Picture space by the Grid
+        const int i = e.addLayer(QStringLiteral("Diff"));
+        check(e.setLayerImage(i, root + "/media/bars.png", &err), "bars.png (Difference)");
+        Engine::Lock lk(&e.mutex());
+        Layer &l = *e.layer(i);
+        l.blend = BlendMode::Difference;
+        l.opacity = 0.8f;
+        l.mapping.size = QSizeF(0.7, 0.6);
+        l.mapping.position = QPointF(0.4, 0.55);
+    }
+    {
+        const int i = e.addLayer(QStringLiteral("Matted"));
+        check(e.setLayerImage(i, root + "/media/bars.png", &err), "bars.png (matted)");
+        Engine::Lock lk(&e.mutex());
+        Layer &l = *e.layer(i);
+        l.mapping.size = QSizeF(0.5, 0.5);
+        l.mapping.position = QPointF(0.3, 0.7);
+        l.matte.layer = checker;
+        l.matte.space = LayerMatte::Space::Composition;
+        l.matte.invert = true;
+    }
+    {
+        const int i = e.addLayer(QStringLiteral("Picture matted"));
+        check(e.setLayerImage(i, root + "/media/bars.png", &err), "bars.png (picture matte)");
+        Engine::Lock lk(&e.mutex());
+        Layer &l = *e.layer(i);
+        l.mapping.size = QSizeF(0.4, 0.4);
+        l.mapping.position = QPointF(0.75, 0.75);
+        l.matte.layer = grid;
+        l.matte.space = LayerMatte::Space::Picture;
+        l.matte.channel = LayerMatte::Channel::Alpha;
+    }
     {
         const int v = e.addViewport(QStringLiteral("Turned"), QSize(320, 240));
         Engine::Lock lk(&e.mutex());

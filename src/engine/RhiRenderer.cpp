@@ -21,10 +21,11 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <tuple>
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
-enum class Draw { Composite, Prep, EffectMask, OutputColor, Dim };
+enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte };
 
 // The blending of a layer composited (Render.cpp's compositeLayers), premultiplied
 QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
@@ -43,6 +44,15 @@ QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
     default: b.srcColor = b.srcAlpha = F::One, b.dstColor = b.dstAlpha = F::OneMinusSrcAlpha; break;
     }
     return b;
+}
+
+// Masks are drawn at most 2048 pixels on their long side (their soft edges and the GPU's filtering hide it)
+QSize maskRasterSize(QSize s)
+{
+    const int longSide = std::max(s.width(), s.height());
+    if (longSide <= 2048) return QSize(std::max(1, s.width()), std::max(1, s.height()));
+    const double k = 2048.0 / longSide;
+    return QSize(std::max(1, int(std::lround(s.width() * k))), std::max(1, int(std::lround(s.height() * k))));
 }
 } // namespace
 
@@ -69,6 +79,10 @@ struct RhiRenderer::Impl {
         std::unique_ptr<IsfInstance> generator;
         QString generatorPath;
         RhiTarget generatorTarget, sourceColor, prep, fx[2], mixed[2], group, out;
+        RhiTarget shapeMasked, mattePicture, matteTarget; // through its surface masks, through a Picture matte, its matte in Composition space
+        std::unique_ptr<QRhiTexture> surfaceMask, compositionMask; // their alpha, top row first
+        unsigned surfaceMaskRev = 0, compositionMaskRev = 0;
+        QSize surfaceMaskSize, compositionMaskSize;
         std::map<int, RhiTarget> stageTargets;
         std::vector<Effect> effects;
         QRhiTexture *final = nullptr, *raw = nullptr, *preFx = nullptr;
@@ -80,6 +94,7 @@ struct RhiRenderer::Impl {
     };
     std::map<quint64, RLayer> layers;
     RhiTarget compositionOut;
+    std::map<std::tuple<int, int, int>, RhiTarget> dstCopies; // what a Difference layer reads: the target so far, by size and format
     std::vector<int> marks;
 
     explicit Impl(Engine &engine) : e(engine) {}
@@ -121,21 +136,27 @@ struct RhiRenderer::Impl {
         ps.reset(rhi->newGraphicsPipeline());
         auto shader = [](const char *name) { return RhiResources::shader(QString::fromLatin1(name)); };
         switch (draw) {
-        case Draw::Composite: {
-            ps->setShaderStages({{QRhiShaderStage::Vertex, shader("composite.vert")}, {QRhiShaderStage::Fragment, shader("composite.frag")}});
+        case Draw::Composite:
+        case Draw::CompositeDiff: {
+            ps->setShaderStages({{QRhiShaderStage::Vertex, shader("composite.vert")},
+                                 {QRhiShaderStage::Fragment, shader(draw == Draw::Composite ? "composite.frag" : "compositediff.frag")}});
             QRhiVertexInputLayout layout;
             layout.setBindings({{4 * sizeof(float)}});
             layout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float2, 0}, {0, 1, QRhiVertexInputAttribute::Float2, 2 * sizeof(float)}});
             ps->setVertexInputLayout(layout);
-            ps->setTargetBlends({blendOf(blend)});
+            if (draw == Draw::Composite) ps->setTargetBlends({blendOf(blend)}); // Difference writes its result as it is
             break;
         }
         case Draw::Prep:
         case Draw::EffectMask:
         case Draw::OutputColor:
+        case Draw::ShapeMask:
+        case Draw::PictureMatte:
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")},
                                  {QRhiShaderStage::Fragment, shader(draw == Draw::Prep ? "prep.frag"
-                                                                    : draw == Draw::EffectMask ? "effectmask.frag" : "outputcolor.frag")}});
+                                                                    : draw == Draw::EffectMask ? "effectmask.frag"
+                                                                    : draw == Draw::ShapeMask ? "shapemask.frag"
+                                                                    : draw == Draw::PictureMatte ? "matte.frag" : "outputcolor.frag")}});
             break;
         case Draw::Dim: { // the target times a constant (composition opacity, blackout)
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
@@ -430,9 +451,65 @@ struct RhiRenderer::Impl {
                 else ping = 1 - ping;
             }
         }
-        if (masks::any(l.masks, Mask::Attach::Surface)) warnOnce(QStringLiteral("surface masks"));
-        if (l.matte.layer && l.matte.space != LayerMatte::Space::Composition) warnOnce(QStringLiteral("mattes"));
-        r.final = tex;
+        tex = applySurfaceMasks(l, r, tex);
+        if (tex) tex = applyPictureMatte(l, r, tex);
+        r.final = tex; // none: a mask or a matte that could not be drawn never lets the picture through
+    }
+
+    // A mask's alpha as a texture of its own, drawn again when the layer's masks or the frame's size change
+    QRhiTexture *maskTexture(std::unique_ptr<QRhiTexture> &tex, unsigned &rev, QSize &made, const Layer &l, Mask::Attach attach, QSize size)
+    {
+        if (!tex || rev != l.masksRevision || made != size) {
+            const QImage img = masks::raster(l.masks, attach, size).convertToFormat(QImage::Format_RGBA8888);
+            if (img.isNull()) return nullptr;
+            if (!tex || tex->pixelSize() != img.size()) {
+                tex.reset(rhi->newTexture(QRhiTexture::RGBA8, img.size()));
+                if (!tex->create()) {
+                    tex.reset();
+                    return nullptr;
+                }
+            }
+            batch()->uploadTexture(tex.get(), img);
+            rev = l.masksRevision;
+            made = size;
+        }
+        return tex.get();
+    }
+
+    // Its surface masks: the picture through their alpha (a viewport's color too, as its screen shows it opaque)
+    QRhiTexture *applySurfaceMasks(Layer &l, RLayer &r, QRhiTexture *tex)
+    {
+        if (!tex || !masks::any(l.masks, Mask::Attach::Surface)) {
+            r.shapeMasked.release();
+            r.surfaceMask.reset();
+            return tex;
+        }
+        const QSize size = tex->pixelSize();
+        QRhiTexture *mask = maskTexture(r.surfaceMask, r.surfaceMaskRev, r.surfaceMaskSize, l, Mask::Attach::Surface, maskRasterSize(size));
+        r.shapeMasked.ensure(rhi.get(), size);
+        const float u[4] = {l.isViewport ? 1.f : 0.f, 0, 0, 0};
+        if (!mask || !r.shapeMasked.ready() || !fullscreen(Draw::ShapeMask, r.shapeMasked, u, sizeof u, {tex, mask})) return nullptr;
+        return r.shapeMasked.texture();
+    }
+
+    // A matte in Picture space: the matte layer's picture stretched over this one's (after its effects and its surface
+    // masks). A matte layer with no picture: nothing shows (or all, inverted).
+    QRhiTexture *applyPictureMatte(Layer &l, RLayer &r, QRhiTexture *tex)
+    {
+        if (!l.matte.layer || l.matte.space != LayerMatte::Space::Picture) {
+            r.mattePicture.release();
+            return tex;
+        }
+        const Layer *m = e.layer(e.indexOfId(l.matte.layer));
+        QRhiTexture *matte = nullptr;
+        if (m && m != &l) {
+            const auto found = layers.find(m->id);
+            if (found != layers.end()) matte = found->second.final;
+        }
+        r.mattePicture.ensure(rhi.get(), tex->pixelSize());
+        const float u[4] = {float(Engine::matteMode(l.matte)), 0, 0, 0};
+        if (!r.mattePicture.ready() || !fullscreen(Draw::PictureMatte, r.mattePicture, u, sizeof u, {tex, matte})) return nullptr;
+        return r.mattePicture.texture();
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -462,51 +539,66 @@ struct RhiRenderer::Impl {
         return true;
     }
 
-    // Draws the layers into the target; `view`: the part of the composition the target shows (normalized, origin top
-    // left). The first layer is on top. `level` < 1: the target dimmed after (composition opacity, blackout).
-    void composite(RhiTarget &target, const std::vector<Layer *> &list, const QRectF &view, QColor clear, quint64 viewport = 0,
-                   double angle = 0, double level = 1)
+    struct Item {
+        QRhiShaderResourceBindings *srb;
+        QRhiGraphicsPipeline *ps;
+        QRhiBuffer *mesh;
+        bool grid;
+    };
+
+    // The uniforms every layer of a composite shares: the part of the composition the target shows (`view`, normalized,
+    // origin top left) turned by `angle`
+    void viewUniforms(float u[16], const QRectF &view, double angle)
     {
-        if (!target.ready()) return;
-        struct Item {
-            QRhiShaderResourceBindings *srb;
-            QRhiGraphicsPipeline *ps;
-            QRhiBuffer *mesh;
-            bool grid;
-        };
-        std::vector<Item> items;
         const double rw = std::max(1e-6, view.width()), rh = std::max(1e-6, view.height());
         const double ang = angle * 3.14159265358979323846 / 180;
         const QSize comp = e.m_compSize;
         const float asp = float(double(comp.width()) / std::max(1, comp.height()));
-        for (int i = int(list.size()) - 1; i >= 0; --i) {
-            Layer &l = *list[size_t(i)];
-            const float opacity = viewport ? l.opacity * l.opacityIn(viewport) : l.opacity;
-            auto found = layers.find(l.id);
-            if (l.isMappingZone || !l.enabled || l.soloHidden || opacity <= 0.0f || found == layers.end() || !found->second.final) continue;
-            RLayer &r = found->second;
-            BlendMode blend = l.blend;
-            if (blend == BlendMode::Difference) {
-                warnOnce(QStringLiteral("the Difference blend mode"));
-                blend = BlendMode::Normal;
-            }
-            if (masks::any(l.masks, Mask::Attach::Composition)) warnOnce(QStringLiteral("composition masks"));
-            if (l.matte.layer && l.matte.space == LayerMatte::Space::Composition) warnOnce(QStringLiteral("mattes"));
-            if (!mesh(l, r)) continue;
-            const float u[16] = {float(1.0 / rw), float(1.0 / rh), float((1.0 - 2.0 * view.left()) / rw - 1.0),
-                                 float(1.0 - (1.0 - 2.0 * view.top()) / rh), float(std::cos(ang)), float(std::sin(ang)),
-                                 float(view.center().x() * 2.0 - 1.0), float(1.0 - view.center().y() * 2.0), asp,
-                                 res().ndcFlip(), opacity, 0, 0, 0, 0, 0};
-            const auto all = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
-            const auto fs = QRhiShaderResourceBinding::FragmentStage;
-            QRhiShaderResourceBindings *srb = res().bindings({{0, all, ubuf(u, sizeof u)},
-                                                              {1, fs, nullptr, r.final, res().linear()},
-                                                              {2, fs, nullptr, res().black(), res().linear()},
-                                                              {3, fs, nullptr, res().black(), res().linear()}});
-            QRhiGraphicsPipeline *ps = srb ? pipeline(Draw::Composite, blend, target, srb) : nullptr;
-            if (ps) items.push_back({srb, ps, r.mesh.get(), r.meshGrid});
+        const float v[16] = {float(1.0 / rw), float(1.0 / rh), float((1.0 - 2.0 * view.left()) / rw - 1.0),
+                             float(1.0 - (1.0 - 2.0 * view.top()) / rh), float(std::cos(ang)), float(std::sin(ang)),
+                             float(view.center().x() * 2.0 - 1.0), float(1.0 - view.center().y() * 2.0), asp,
+                             res().ndcFlip(), 1, 0, 0, 0, 0, 0};
+        std::copy(v, v + 16, u);
+    }
+
+    // One layer's draw: its picture at `opacity` through its composition masks and, when `withMatte`, its matte in
+    // Composition space (prepareMatte's). `dst`: what a Difference reads. False: it cannot be drawn.
+    bool makeItem(Layer &l, RLayer &r, const float *shared, float opacity, BlendMode blend, bool withMatte, const RhiTarget &target,
+                  QRhiTexture *dst, Item &out)
+    {
+        if (!mesh(l, r)) return false;
+        float u[16];
+        std::copy(shared, shared + 16, u);
+        u[10] = opacity;
+        QRhiTexture *mask = nullptr;
+        if (!l.isViewport && masks::any(l.masks, Mask::Attach::Composition)) {
+            mask = maskTexture(r.compositionMask, r.compositionMaskRev, r.compositionMaskSize, l, Mask::Attach::Composition,
+                               maskRasterSize(e.m_compSize));
+            if (!mask) return false; // a mask that cannot be drawn never lets the picture through
+            u[11] = 1;
         }
-        cb->beginPass(target.cleared(), clear, {1.0f, 0}, take());
+        QRhiTexture *matte = nullptr;
+        if (withMatte && l.matte.layer && l.matte.space == LayerMatte::Space::Composition && r.matteTarget.ready()) {
+            matte = r.matteTarget.texture();
+            u[12] = float(Engine::matteMode(l.matte));
+        }
+        const auto all = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+        const auto fs = QRhiShaderResourceBinding::FragmentStage;
+        std::vector<RhiResources::Bind> b{{0, all, ubuf(u, sizeof u)},
+                                          {1, fs, nullptr, r.final, res().linear()},
+                                          {2, fs, nullptr, mask ? mask : res().black(), res().linear()},
+                                          {3, fs, nullptr, matte ? matte : res().black(), res().linear()}};
+        if (dst) b.push_back({4, fs, nullptr, dst, res().nearest()});
+        QRhiShaderResourceBindings *srb = res().bindings(b);
+        QRhiGraphicsPipeline *ps = srb ? pipeline(dst ? Draw::CompositeDiff : Draw::Composite, blend, target, srb) : nullptr;
+        if (!ps) return false;
+        out = {srb, ps, r.mesh.get(), r.meshGrid};
+        return true;
+    }
+
+    // The items drawn in order, inside a pass
+    void drawItems(const std::vector<Item> &items, const RhiTarget &target)
+    {
         cb->setViewport({0, 0, float(target.width()), float(target.height())});
         for (const Item &it : items) {
             cb->setGraphicsPipeline(it.ps);
@@ -515,8 +607,75 @@ struct RhiRenderer::Impl {
             cb->setVertexInput(0, 1, &vin, it.grid ? gridIndices.get() : quadIndices.get(), 0, QRhiCommandBuffer::IndexUInt32);
             cb->drawIndexed(quint32(it.grid ? gridIndexCount : 6));
         }
-        cb->endPass();
+    }
+
+    // Draws the layers into the target; `view`: the part of the composition the target shows (normalized, origin top
+    // left). The first layer is on top. `level` < 1: the target dimmed after (composition opacity, blackout).
+    // A layer by Difference reads a copy of what is drawn before it: the passes before it end, the copy is made, and
+    // the layer is drawn in a pass of its own.
+    void composite(RhiTarget &target, const std::vector<Layer *> &list, const QRectF &view, QColor clear, quint64 viewport = 0,
+                   double angle = 0, double level = 1)
+    {
+        if (!target.ready()) return;
+        float shared[16];
+        viewUniforms(shared, view, angle);
+        std::vector<Item> run;
+        bool begun = false;
+        auto flush = [&] {
+            if (begun && run.empty()) return;
+            cb->beginPass(begun ? target.kept() : target.cleared(), clear, {1.0f, 0}, take());
+            drawItems(run, target);
+            cb->endPass();
+            run.clear();
+            begun = true;
+        };
+        for (int i = int(list.size()) - 1; i >= 0; --i) {
+            Layer &l = *list[size_t(i)];
+            const float opacity = viewport ? l.opacity * l.opacityIn(viewport) : l.opacity;
+            auto found = layers.find(l.id);
+            if (l.isMappingZone || !l.enabled || l.soloHidden || opacity <= 0.0f || found == layers.end() || !found->second.final) continue;
+            RLayer &r = found->second;
+            BlendMode blend = l.blend;
+            QRhiTexture *dst = nullptr;
+            if (blend == BlendMode::Difference) {
+                flush(); // what is drawn so far, copied
+                RhiTarget &copy = dstCopies[{target.width(), target.height(), int(target.format())}];
+                copy.ensure(rhi.get(), target.size(), target.format());
+                if (copy.ready() && res().blit(cb, target.texture(), copy)) dst = copy.texture();
+                else blend = BlendMode::Normal; // degraded but safe: ordinary source-over blending
+            }
+            Item it;
+            if (makeItem(l, r, shared, opacity, blend, true, target, dst, it)) run.push_back(it);
+            if (dst) flush();
+        }
+        flush();
         dim(target, level);
+    }
+
+    // A matte in Composition space: the matte layer drawn alone, where it is in the composition (its mapping, its
+    // opacity, its own composition masks), on a transparent canvas the size of the composition. Drawn even when that
+    // layer is switched off (a matte is usually hidden). A matte layer with no picture: nothing shows (or all, inverted).
+    void prepareMatte(Layer &l, RLayer &r)
+    {
+        if (!l.matte.layer || l.matte.space != LayerMatte::Space::Composition) {
+            r.matteTarget.release();
+            return;
+        }
+        if (!l.needed || !r.final || l.opacity <= 0.0f) return; // only used to composite a visible picture
+        r.matteTarget.ensure(rhi.get(), e.m_compSize);
+        if (!r.matteTarget.ready()) return; // drawn without it rather than from a stale one
+        std::vector<Item> run;
+        Layer *m = e.layer(e.indexOfId(l.matte.layer));
+        const auto found = m ? layers.find(m->id) : layers.end();
+        if (found != layers.end() && found->second.final) {
+            float shared[16];
+            viewUniforms(shared, QRectF(0, 0, 1, 1), 0);
+            Item it;
+            if (makeItem(*m, found->second, shared, m->opacity, BlendMode::Normal, false, r.matteTarget, nullptr, it)) run.push_back(it);
+        }
+        cb->beginPass(r.matteTarget.cleared(), Qt::transparent, {1.0f, 0}, take());
+        drawItems(run, r.matteTarget);
+        cb->endPass();
     }
 
     void renderGroup(Layer &g, RLayer &r, const std::vector<Layer *> &members, const IsfRenderContext &rc)
@@ -628,6 +787,7 @@ struct RhiRenderer::Impl {
                 renderLayer(l, r, rc);
                 if (e.m_transitions.count(l.id)) warnOnce(QStringLiteral("source transitions"));
             }
+            if (!l.isViewport) prepareMatte(l, r); // before it is composited (a viewport or a group draws it later)
             marks[i] = Done;
         };
         for (size_t i = 0; i < n; ++i) render(i);
@@ -712,6 +872,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
 {
     if (!d->rhi || d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return;
     d->nextUbuf = 0;
+    if (d->dstCopies.size() > 8) d->dstCopies.clear();
     d->res().frameStarted();
     for (auto &[id, r] : d->layers) r.used = false;
     const double level = d->e.m_compositionOpacity.load() * d->e.m_blackLevel.load();
