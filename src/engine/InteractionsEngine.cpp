@@ -1230,7 +1230,7 @@ void Engine::makeInteractionParams()
         choice(
             QStringLiteral("source/kind"), QStringLiteral("Source"),
             {QStringLiteral("keyboard"), QStringLiteral("midi"), QStringLiteral("osc"), QStringLiteral("internal"),
-             QStringLiteral("audio"), QStringLiteral("pixels"), QStringLiteral("hands")},
+             QStringLiteral("audio")},
             [](const Interaction &x) { return int(x.source); },
             [](Interaction &x, int k) { x.source = InteractionSource(k); });
         text(QStringLiteral("source/key"), QStringLiteral("Key"), [](const Interaction &x) { return x.key; },
