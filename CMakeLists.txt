@@ -384,20 +384,19 @@ if(NYXMAP_DECKLINK)
 endif()
 
 if(WIN32 AND NYXMAP_SPOUT)
-  nyxmap_submodule(spout2 SPOUTSDK/SpoutGL/Spout.cpp)
+  nyxmap_submodule(spout2 SPOUTSDK/SpoutGL/SpoutCopy.cpp)
   set(SPOUT_DIR "${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutGL")
+  # SpoutDX only (Direct3D 11, on QRhi's device): the SDK's OpenGL interop is not built
   add_library(spout_gl STATIC
-    ${SPOUT_DIR}/Spout.cpp ${SPOUT_DIR}/SpoutCopy.cpp ${SPOUT_DIR}/SpoutDirectX.cpp
-    ${SPOUT_DIR}/SpoutFrameCount.cpp ${SPOUT_DIR}/SpoutGL.cpp ${SPOUT_DIR}/SpoutGLextensions.cpp
-    ${SPOUT_DIR}/SpoutReceiver.cpp ${SPOUT_DIR}/SpoutSender.cpp ${SPOUT_DIR}/SpoutSenderNames.cpp
-    ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX/SpoutDX.cpp) # SpoutDX: the QRhi receiver
+    ${SPOUT_DIR}/SpoutCopy.cpp ${SPOUT_DIR}/SpoutDirectX.cpp ${SPOUT_DIR}/SpoutFrameCount.cpp
+    ${SPOUT_DIR}/SpoutSenderNames.cpp ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX/SpoutDX.cpp)
   target_include_directories(spout_gl PUBLIC ${SPOUT_DIR} ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX)
   target_compile_definitions(spout_gl PUBLIC SPOUT_BUILD_STATIC)
   if(MSVC)
     target_compile_options(spout_gl PRIVATE /W0)
   endif()
-  target_link_libraries(spout_gl PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
+  target_link_libraries(spout_gl PUBLIC d3d9 d3d11 dxgi version winmm shlwapi)
   target_sources(nyxmap_engine PRIVATE src/engine/PublishSpout.cpp src/engine/LiveInputSpout.cpp)
   target_link_libraries(nyxmap_engine PRIVATE spout_gl)
   target_compile_definitions(nyxmap_engine PRIVATE NYXMAP_HAS_SPOUT)

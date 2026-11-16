@@ -397,22 +397,12 @@ private:
 };
 
 #ifdef NYXMAP_HAS_SPOUT
-// --- Spout: the sender's texture copied on the GPU into the layer's, in the render thread
+// --- Spout: the sender's texture copied on the GPU, on QRhi's Direct3D 11 device, into a texture QRhi samples
 class SpoutInput : public LiveInput
 {
 public:
-    explicit SpoutInput(const QString &name) : m_name(name), m_rx(createSpoutReceive(name)) {}
-    bool update(Texture2D &tex) override
-    {
-        SpoutReceive::Result r = m_rx->receive(tex.tex, tex.w, tex.h);
-        if (r == SpoutReceive::Resize) { // a new sender, or another size: the texture made at its size, then the frame
-            if (!tex.tex || tex.w != m_rx->width() || tex.h != m_rx->height()) tex.upload(nullptr, m_rx->width(), m_rx->height());
-            r = m_rx->receive(tex.tex, tex.w, tex.h);
-        }
-        m_found = r != SpoutReceive::Gone;
-        if (r == SpoutReceive::Received) m_seen = true;
-        return r == SpoutReceive::Received;
-    }
+    explicit SpoutInput(const QString &name) : m_name(name) {}
+    bool update(Texture2D &) override { return false; } // the picture comes with takeTexture()
     QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override // QRhi (Direct3D 11)
     {
         if (!m_rhiReceive) m_rhiReceive = createSpoutReceiveRhi(m_name);
@@ -429,7 +419,6 @@ public:
 
 private:
     QString m_name;
-    std::unique_ptr<SpoutReceive> m_rx;
     std::unique_ptr<SpoutReceiveRhi> m_rhiReceive;
     std::atomic<bool> m_found{false}, m_seen{false};
 };
