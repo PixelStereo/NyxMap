@@ -14,10 +14,16 @@ layout(std140, binding = 0) uniform Place {
     vec4 u_fxB[8];
     vec4 u_fxCenter4;  // of its bounds: what Twist, Taper, Wave and Noise measure against
     vec4 u_fxSize4;
-    vec4 u_base;       // the material, for the flat colour and the unlit look
+    vec4 u_base;       // the material
     vec4 u_emissive4;  // xyz: emission; w: the alpha cut-off
-    ivec4 u_flags;     // x: hasTex; y: layerTex; z: alphaMode
+    ivec4 u_flags;     // x: hasTex; y: layerTex; z: alphaMode; w: unlit
     vec4 u_ink;        // the plain look's colour
+    vec4 u_mat0;       // metal, rough, dielectric (reflectance at 0), normalScale
+    vec4 u_mat1;       // aoStrength
+    ivec4 u_has;       // roughness, metal, normal, occlusion maps
+    ivec4 u_has2;      // emission map
+    vec4 u_roughCh;    // the channel of the roughness map, metal map
+    vec4 u_metalCh;
 };
 #define u_uvTiling u_tiling.xy
 #define u_dispAmount u_tiling.z
@@ -28,7 +34,7 @@ layout(std140, binding = 0) uniform Place {
 #define u_fxCount u_ints.w
 #define u_fxCenter u_fxCenter4.xyz
 #define u_fxSize u_fxSize4.xyz
-layout(binding = 2) uniform sampler2D u_tex;
+layout(binding = 3) uniform sampler2D u_tex;
 #define u_hasTex u_flags.x
 #define u_layerTex u_flags.y
 #define u_alphaMode u_flags.z

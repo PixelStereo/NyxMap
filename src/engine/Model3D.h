@@ -316,6 +316,10 @@ public:
         float alphaCutoff = 0.5f;
         int alphaMode = 0; // 0 opaque, 1 cut out, 2 blended
         QRhiTexture *baseTexture = nullptr;
+        // The rest of its material (the lit look): its maps' textures are roughness, metal, normals, occlusion, emission
+        float metallic = 0, roughness = 0.6f, dielectric = 0.04f, normalScale = 1, aoStrength = 1;
+        std::array<float, 4> roughChannel{{0, 1, 0, 0}}, metalChannel{{0, 0, 1, 0}};
+        std::array<QRhiTexture *, 5> maps{};
     };
     std::vector<RhiDraw> rhiDraws(QRhi *rhi, QRhiResourceUpdateBatch *u, const ModelPlacement *look, bool picture, bool edges);
     void releaseRhi();

@@ -3179,6 +3179,26 @@ std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBat
         d.alphaCutoff = mat.alphaCutoff;
         d.alphaMode = picture ? 2 : mat.alphaMode; // a picture keeps its alpha
         d.baseTexture = look && look->sharedMaterial ? nullptr : image(mat.texture);
+        if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
+            mat.metallic = look->metal;
+            mat.roughness = look->rough;
+            mat.normalScale = look->normalStrength;
+            mat.aoStrength = look->occlusionStrength;
+            mat.roughChannel = mat.metalChannel = 0;
+        }
+        d.metallic = mat.metallic;
+        d.roughness = mat.roughness;
+        const float ior = look ? look->ior : 1.5f, reflectance = (ior - 1) / (ior + 1);
+        d.dielectric = reflectance * reflectance * (look ? look->specular : 1.f);
+        d.normalScale = mat.normalScale;
+        d.aoStrength = mat.aoStrength;
+        const auto channel = [](int c) { return std::array<float, 4>{{float(c == 0), float(c == 1), float(c == 2), float(c == 3)}}; };
+        d.roughChannel = channel(mat.roughChannel);
+        d.metalChannel = channel(mat.metalChannel);
+        if (!(look && look->sharedMaterial)) {
+            const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
+            for (int k = 0; k < 5; ++k) d.maps[size_t(k)] = image(indices[k]);
+        }
         if (edges) {
             if (!b.edgesMade) {
                 b.edgesMade = true;
