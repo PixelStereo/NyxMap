@@ -40,6 +40,7 @@ static const QColor kGuide(255, 70, 200, 230);
 
 MappingView::MappingView(Engine *engine, QWidget *parent) : QRhiWidget(parent), m_engine(engine)
 {
+    setApi(QRhiWidget::Api::OpenGL); // as the window the 3D views (QOpenGLWidget) share: one API per window
     m_overlay = new PaintOverlay(this, [this](QPainter &p) { paintOverlay(p); }); // under the bars
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(false);

@@ -191,10 +191,10 @@ MediaBin::MediaBin(Engine *engine, QWidget *parent) : QWidget(parent), m_engine(
     // add up; All selects them all, or takes them all away when they are all shown
     {
         struct Pill { const char *name; const char *colour; const char *tip; };
-        static const Pill pills[4] = {{"All", "#9fb0d0", "Show all media"},
-                                      {"Video", "#b08cff", "Show videos, images, video generators and live inputs"},
-                                      {"Audio", "#3fbf6f", "Show sounds, instruments and audio inputs"},
-                                      {"3D", "#5ad1e0", "Show 3D models and primitives"}};
+        static const Pill pills[4] = {{"All", "#a3afc6", "Show all media"},
+                                      {"Video", "#a598cf", "Show videos, images, video generators and live inputs"},
+                                      {"Audio", "#62ad80", "Show sounds, instruments and audio inputs"},
+                                      {"3D", "#6fb9c4", "Show 3D models and primitives"}};
         auto *row = new QHBoxLayout;
         row->setSpacing(6);
         auto *group = new QButtonGroup(this);
