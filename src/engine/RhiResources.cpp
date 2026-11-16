@@ -84,8 +84,15 @@ QRhiResourceUpdateBatch *RhiResources::takeUploads()
 
 void RhiResources::frameStarted()
 {
-    // QRhi pipelines keep a non-owning pointer to their shader resource bindings. Keep every created
-    // binding alive until RhiResources is released, after all pipelines using it have been destroyed.
+    ++m_frame;
+    // Retired RLayer objects are held for 16 frames, so every SRB referencing them has aged out first.
+    for (auto it = m_bindings.begin(); it != m_bindings.end();)
+        it = m_frame - it->second.used > 8 ? m_bindings.erase(it) : std::next(it);
+}
+
+void RhiResources::resetPipelines()
+{
+    for (auto &pipeline : m_blitPs) pipeline.reset();
 }
 
 QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list)
@@ -99,20 +106,21 @@ QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list
         key.push_back(b.tex ? b.tex->globalResourceId() : 0);
         key.push_back(b.sampler ? b.sampler->globalResourceId() : 0);
     }
-    std::unique_ptr<QRhiShaderResourceBindings> &srb = m_bindings[key];
-    if (!srb) {
+    Kept &kept = m_bindings[key];
+    kept.used = m_frame;
+    if (!kept.srb) {
         std::vector<QRhiShaderResourceBinding> rb;
         for (const Bind &b : list)
             rb.push_back(b.ubuf ? QRhiShaderResourceBinding::uniformBuffer(b.binding, b.stages, b.ubuf)
                                 : QRhiShaderResourceBinding::sampledTexture(b.binding, b.stages, b.tex, b.sampler));
-        srb.reset(m_rhi->newShaderResourceBindings());
-        srb->setBindings(rb.cbegin(), rb.cend());
-        if (!srb->create()) {
+        kept.srb.reset(m_rhi->newShaderResourceBindings());
+        kept.srb->setBindings(rb.cbegin(), rb.cend());
+        if (!kept.srb->create()) {
             m_bindings.erase(key);
             return nullptr;
         }
     }
-    return srb.get();
+    return kept.srb.get();
 }
 
 bool RhiResources::blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads)

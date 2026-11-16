@@ -35,9 +35,8 @@ public:
     // `dst` emptied (transparent black), outside any pass
     void clear(QRhiCommandBuffer *cb, RhiTarget &dst, QRhiResourceUpdateBatch *uploads = nullptr);
 
-    // Shader resource bindings for these bindings, made once and kept until this QRhi is released: graphics pipelines
-    // retain a non-owning pointer to the bindings used when they are created. Each combination of resources has its
-    // own set (resources are told apart by their global id, never reused).
+    // Shader resource bindings are cached by the complete set of resources. An unused binding stays alive for a few
+    // frames so commands already submitted to the GPU can finish before the binding and its resources are released.
     struct Bind {
         int binding = 0;
         QRhiShaderResourceBinding::StageFlags stages;
@@ -46,8 +45,10 @@ public:
         QRhiSampler *sampler = nullptr;
     };
     QRhiShaderResourceBindings *bindings(const std::vector<Bind> &b);
-    // Kept as a no-op for callers that mark frame starts; bindings outlive every pipeline that references them.
+    // Called once before recording a frame; ages bindings not used in recent frames.
     void frameStarted();
+    // Drop copy pipelines before retiring their source textures.
+    void resetPipelines();
 
     ~RhiResources();
 
@@ -60,5 +61,10 @@ private:
     std::unique_ptr<QRhiBuffer> m_quad, m_blitUbuf;
     std::unique_ptr<QRhiGraphicsPipeline> m_blitPs[3]; // by target format: RGBA8, RGBA16F, RGBA32F
     QRhiResourceUpdateBatch *m_uploads = nullptr;
-    std::map<std::vector<quint64>, std::unique_ptr<QRhiShaderResourceBindings>> m_bindings;
+    struct Kept {
+        std::unique_ptr<QRhiShaderResourceBindings> srb;
+        quint64 used = 0;
+    };
+    std::map<std::vector<quint64>, Kept> m_bindings;
+    quint64 m_frame = 0;
 };

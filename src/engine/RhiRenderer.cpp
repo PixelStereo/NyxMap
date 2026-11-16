@@ -27,6 +27,7 @@
 #include <cstring>
 #include <functional>
 #include <tuple>
+#include <utility>
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
@@ -105,6 +106,7 @@ struct RhiRenderer::Impl {
         Mapping meshShape;
         bool meshMade = false, meshGrid = false;
         bool used = false;
+        int unusedFrames = 0;
     };
     std::map<quint64, RLayer> layers;
     // The output windows: a swapchain each, the viewport's picture drawn into it (present())
@@ -1201,9 +1203,39 @@ void RhiRenderer::render(const IsfRenderContext &rc)
         if (read->result.data.size() >= qsizetype(read->size.width()) * read->size.height() * 4)
             d->previewPictures.push_back({read->request.slot, read->request.id, read->size, read->result.data});
     d->previewRequests.clear();
-    // Layers gone: their pictures go
-    for (auto it = d->layers.begin(); it != d->layers.end();) it = it->second.used || it->second.image ? std::next(it) : d->layers.erase(it);
-    for (auto it = d->outgoing.begin(); it != d->outgoing.end();) it = it->second.used ? std::next(it) : d->outgoing.erase(it);
+    // Keep retired pictures around while frames already submitted to the GPU can still reference them.
+    constexpr int framesInFlightSafety = 16;
+    std::vector<Impl::RLayer> retired;
+    for (auto it = d->layers.begin(); it != d->layers.end();) {
+        Impl::RLayer &r = it->second;
+        if (r.used || r.image) {
+            r.unusedFrames = 0;
+            ++it;
+        } else if (++r.unusedFrames > framesInFlightSafety) {
+            retired.push_back(std::move(r));
+            it = d->layers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = d->outgoing.begin(); it != d->outgoing.end();) {
+        Impl::RLayer &r = it->second;
+        if (r.used) {
+            r.unusedFrames = 0;
+            ++it;
+        } else if (++r.unusedFrames > framesInFlightSafety) {
+            retired.push_back(std::move(r));
+            it = d->outgoing.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!retired.empty()) {
+        // These pipelines can retain bindings to the retired layer's textures.
+        d->pipelines.clear();
+        RhiResources::of(d->rhi.get()).resetPipelines();
+        retired.clear();
+    }
 }
 
 static QImage readBack(QRhi *rhi, QRhiTexture *tex)
