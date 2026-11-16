@@ -11,6 +11,11 @@
 // lights, their shadows, and its environment or a studio's light.
 
 #include "Gl.h"
+
+class QRhi;
+class QRhiBuffer;
+class QRhiResourceUpdateBatch;
+class QRhiTexture;
 #include <QJsonObject>
 #include <QDir>
 #include <QFileInfo>
@@ -299,7 +304,25 @@ public:
     float radius() const { return m_radius; }     // half its bounds' diagonal, as read
     void releaseGl();
 
+    // QRhi (render thread): its meshes' buffers and its maps' textures, made the first time (and again after setSmooth or
+    // setDetail); `u` carries the uploads. What to draw with: one entry per mesh, its material as the renderer takes it
+    // (the primitive's or shared material's parameters when `look` is given; a layer's picture instead when `picture`).
+    // The textures of a shared material and a layer's picture are not taken yet
+    struct RhiDraw {
+        QRhiBuffer *vertices = nullptr, *indices = nullptr, *edges = nullptr;
+        int indexCount = 0, edgeCount = 0;
+        std::array<float, 4> baseColor{{0.8f, 0.8f, 0.8f, 1}};
+        std::array<float, 3> emissive{{0, 0, 0}};
+        float alphaCutoff = 0.5f;
+        int alphaMode = 0; // 0 opaque, 1 cut out, 2 blended
+        QRhiTexture *baseTexture = nullptr;
+    };
+    std::vector<RhiDraw> rhiDraws(QRhi *rhi, QRhiResourceUpdateBatch *u, const ModelPlacement *look, bool picture, bool edges);
+    void releaseRhi();
+
 private:
+    struct RhiData;
+    std::unique_ptr<RhiData> m_rhi;
     struct Vertex {
         float p[3], n[3], uv[2];
     };
@@ -325,6 +348,7 @@ private:
         GLuint edgeVao = 0, edgeIbo = 0;
         GLsizei edgeCount = 0;
     };
+    std::vector<quint32> edgeIndices(const Mesh &m) const;
     bool loadPrimitive(const QString &name, QString *err);
     bool loadGltf(const QString &path, QString *err);
     bool loadUfbx(const QString &path, QString *err);

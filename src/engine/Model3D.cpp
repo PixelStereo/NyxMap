@@ -14,6 +14,7 @@
 #include <QHash>
 #include <QMatrix4x4>
 #include <QtMath>
+#include <rhi/qrhi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1509,21 +1510,9 @@ void Model3D::drawDepth(bool picture)
     f->glBindVertexArray(0);
 }
 
-// Its edges: not those between two faces of one flat surface (a cube has twelve, no diagonals). Above this many triangles,
-// only its sharp ones; far above, none
-void Model3D::makeEdges(Mesh &m)
+// The index pairs of a mesh's edges (shared by the OpenGL and the QRhi renderers)
+std::vector<quint32> Model3D::edgeIndices(const Mesh &m) const
 {
-    auto f = gl();
-    if (m.edgeVao) return;
-    f->glGenVertexArrays(1, &m.edgeVao);
-    f->glBindVertexArray(m.edgeVao);
-    f->glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
-    f->glEnableVertexAttribArray(0);
-    f->glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, p)));
-    f->glEnableVertexAttribArray(1);
-    f->glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, n)));
-    f->glEnableVertexAttribArray(2);
-    f->glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, uv)));
     std::vector<quint32> edges;
     const size_t triangles = m.indices.size() / 3;
     if (triangles <= 200000) {
@@ -1558,6 +1547,25 @@ void Model3D::makeEdges(Mesh &m)
                 edges.push_back(ends.second);
             }
     }
+    return edges;
+}
+
+// Its edges: not those between two faces of one flat surface (a cube has twelve, no diagonals). Above this many triangles,
+// only its sharp ones; far above, none
+void Model3D::makeEdges(Mesh &m)
+{
+    auto f = gl();
+    if (m.edgeVao) return;
+    f->glGenVertexArrays(1, &m.edgeVao);
+    f->glBindVertexArray(m.edgeVao);
+    f->glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+    f->glEnableVertexAttribArray(0);
+    f->glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, p)));
+    f->glEnableVertexAttribArray(1);
+    f->glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, n)));
+    f->glEnableVertexAttribArray(2);
+    f->glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void *>(offsetof(Vertex, uv)));
+    const std::vector<quint32> edges = edgeIndices(m);
     m.edgeCount = GLsizei(edges.size());
     f->glGenBuffers(1, &m.edgeIbo);
     f->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.edgeIbo);
@@ -1653,6 +1661,7 @@ void Model3D::setSmooth(bool on)
 {
     if (on == m_smooth) return;
     m_smooth = on;
+    releaseRhi();
     releaseMeshes(); // sent again with its normals, when next drawn
     m_uploaded = false;
 }
@@ -1671,6 +1680,7 @@ void Model3D::setDetail(int detail)
 
 void Model3D::releaseMeshes()
 {
+    releaseRhi();
     if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
     for (Mesh &m : m_meshes) {
@@ -1689,6 +1699,7 @@ void Model3D::releaseMeshes()
 
 void Model3D::releaseGl()
 {
+    releaseRhi();
     if (!QOpenGLContext::currentContext()) return;
     auto f = gl();
     for (Mesh &m : m_meshes) {
@@ -3081,4 +3092,108 @@ void Scene3D::releaseGl()
     m_hasPicture = false;
     m_compiled = false;
     m_w = m_h = 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// QRhi
+// ---------------------------------------------------------------------------------------------------------------------
+struct Model3D::RhiData {
+    QRhi *rhi = nullptr;
+    struct MeshBuffers {
+        std::unique_ptr<QRhiBuffer> vertices, indices, edges;
+        int edgeCount = 0;
+        bool edgesMade = false;
+    };
+    std::vector<MeshBuffers> meshes;
+    std::vector<std::unique_ptr<QRhiTexture>> textures;
+};
+
+void Model3D::releaseRhi() { m_rhi.reset(); }
+
+std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBatch *u, const ModelPlacement *look, bool picture, bool edges)
+{
+    std::vector<RhiDraw> out;
+    if (!rhi) return out;
+    if (m_rhi && m_rhi->rhi != rhi) m_rhi.reset();
+    if (!m_rhi) {
+        m_rhi = std::make_unique<RhiData>();
+        m_rhi->rhi = rhi;
+        for (Mesh &m : m_meshes) {
+            RhiData::MeshBuffers b;
+            std::vector<std::array<float, 8>> smooth;
+            const void *vertices = m.vertices.data();
+            if (m_smooth) { // a copy: its own normals come back when it is asked
+                smooth.resize(m.vertices.size());
+                std::memcpy(smooth.data(), m.vertices.data(), smooth.size() * sizeof(smooth[0]));
+                averageNormals(smooth, m.indices, m_radius);
+                vertices = smooth.data();
+            }
+            const quint32 vbytes = quint32(m.vertices.size() * sizeof(Vertex)), ibytes = quint32(m.indices.size() * sizeof(quint32));
+            if (vbytes && ibytes) {
+                b.vertices.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, vbytes));
+                b.indices.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::IndexBuffer, ibytes));
+                if (b.vertices->create() && b.indices->create()) {
+                    u->uploadStaticBuffer(b.vertices.get(), vertices);
+                    u->uploadStaticBuffer(b.indices.get(), m.indices.data());
+                } else {
+                    b.vertices.reset();
+                    b.indices.reset();
+                }
+            }
+            m_rhi->meshes.push_back(std::move(b));
+        }
+        for (const QImage &image : m_images) {
+            const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+            std::unique_ptr<QRhiTexture> t(rhi->newTexture(QRhiTexture::RGBA8, rgba.size(), 1, QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips));
+            if (t->create()) {
+                u->uploadTexture(t.get(), rgba);
+                u->generateMips(t.get());
+            } else {
+                t.reset();
+            }
+            m_rhi->textures.push_back(std::move(t));
+        }
+    }
+    auto image = [&](int index) -> QRhiTexture * { return index >= 0 && size_t(index) < m_rhi->textures.size() ? m_rhi->textures[size_t(index)].get() : nullptr; };
+    for (size_t k = 0; k < m_meshes.size() && k < m_rhi->meshes.size(); ++k) {
+        const Mesh &m = m_meshes[k];
+        RhiData::MeshBuffers &b = m_rhi->meshes[k];
+        if (!b.vertices) continue;
+        Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
+        if (look && look->sharedMaterial) mat = Material(); // its textures are not taken yet: its parameters
+        if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
+            mat.baseColor = {{std::pow(look->color[0], 2.2f), std::pow(look->color[1], 2.2f), std::pow(look->color[2], 2.2f), 1}};
+            mat.emissive = look->emission;
+        }
+        if (picture) { // a layer's picture instead of its colours (a white material under it)
+            mat.baseColor = {{1, 1, 1, 1}};
+            mat.emissive = {{0, 0, 0}};
+            mat.alphaMode = 0;
+        }
+        RhiDraw d;
+        d.vertices = b.vertices.get();
+        d.indices = b.indices.get();
+        d.indexCount = int(m.indices.size());
+        d.baseColor = mat.baseColor;
+        d.emissive = mat.emissive;
+        d.alphaCutoff = mat.alphaCutoff;
+        d.alphaMode = picture ? 2 : mat.alphaMode; // a picture keeps its alpha
+        d.baseTexture = look && look->sharedMaterial ? nullptr : image(mat.texture);
+        if (edges) {
+            if (!b.edgesMade) {
+                b.edgesMade = true;
+                const std::vector<quint32> e = edgeIndices(m);
+                b.edgeCount = int(e.size());
+                if (!e.empty()) {
+                    b.edges.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::IndexBuffer, quint32(e.size() * sizeof(quint32))));
+                    if (b.edges->create()) u->uploadStaticBuffer(b.edges.get(), e.data());
+                    else b.edges.reset();
+                }
+            }
+            d.edges = b.edges.get();
+            d.edgeCount = b.edgeCount;
+        }
+        out.push_back(d);
+    }
+    return out;
 }

@@ -160,7 +160,7 @@ foreach(private GuiPrivate ShaderToolsPrivate)
   endif()
 endforeach()
 target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp src/engine/RhiTarget.cpp
-  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp src/engine/RhiRenderer.cpp)
+  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp src/engine/RhiRenderer.cpp src/engine/RhiScene.cpp)
 # The engine's own shaders, baked at build time for every backend (SPIR-V, MSL, HLSL)
 qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   PREFIX "/shaders"
@@ -170,7 +170,8 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
         src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
         src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag
-        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag)
+        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag
+        src/engine/shaders/sceneview.vert src/engine/shaders/sceneplain.frag src/engine/shaders/sceneunlit.frag)
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)
@@ -832,6 +833,12 @@ if(NYXMAP_TESTS)
   add_executable(nyxmap_preview_cost EXCLUDE_FROM_ALL test/preview_cost.cpp)
   target_include_directories(nyxmap_preview_cost PRIVATE src/engine)
   target_link_libraries(nyxmap_preview_cost PRIVATE nyxmap_engine Qt6::OpenGL)
+  # The 3D views through QRhi against OpenGL
+  add_executable(nyxmap_rhi_scene_test test/rhi_scene.cpp)
+  target_include_directories(nyxmap_rhi_scene_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_scene_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  add_test(NAME rhi_scene COMMAND nyxmap_rhi_scene_test)
+  set_tests_properties(rhi_scene PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
   # A real TouchDesigner component (NYXMAP_TOX): skipped without one
   add_executable(nyxmap_tox_real_test test/tox_real.cpp)
   target_include_directories(nyxmap_tox_real_test PRIVATE src/engine)
