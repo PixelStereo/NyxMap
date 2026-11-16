@@ -274,22 +274,84 @@ static int standardRate(double fps)
     return best;
 }
 
+void Publishing::updateReceivers(Publication &pub, quint64 frame)
+{
+    if ((frame % 30) != 0) return;
+    std::lock_guard<std::mutex> lk(m_stateMutex);
+    for (int ki = 0; ki < kPublishKindCount; ++ki) {
+        if (pub.cpu[ki] && pub.cpu[ki]->liveState(&pub.states[ki])) continue; // it tells how it goes
+        if (pub.states[ki].level != PublishState::Ok) continue;
+        if (pub.cpu[ki]) pub.states[ki].receivers = pub.cpu[ki]->receivers();
+        else if (pub.gpu[ki]) pub.states[ki].receivers = pub.gpu[ki]->receivers();
+    }
+}
+
+int Publishing::announcedRate(Publication &pub, double fps)
+{
+    const int rate = standardRate(fps);
+    const double nowS = m_clock.nsecsElapsed() / 1e9;
+    if (pub.announcedRate == 0) pub.announcedRate = rate;
+    if (rate == pub.announcedRate) pub.rateSince = nowS;
+    else if (nowS - pub.rateSince > 2.0) pub.announcedRate = rate;
+    return pub.announcedRate;
+}
+
+bool Publishing::wantsPixels(quint64 viewport) const
+{
+    const auto it = m_pubs.find(viewport);
+    return it != m_pubs.end() && it->second->sender && it->second->sender->hasPublishers();
+}
+
+bool Publishing::wantsShare(quint64 viewport) const
+{
+    const auto it = m_pubs.find(viewport);
+    if (it == m_pubs.end()) return false;
+    for (int ki : {int(PublishKind::Syphon), int(PublishKind::Spout)})
+        if (it->second->gpu[ki]) return true;
+    return false;
+}
+
+void Publishing::submitPixels(quint64 viewport, const unsigned char *rgba, int width, int height, double fps, quint64 frame,
+                              const std::optional<Timecode> &tc)
+{
+    const auto found = m_pubs.find(viewport);
+    if (found == m_pubs.end()) return;
+    Publication &pub = *found->second;
+    updateReceivers(pub, frame);
+    if (!pub.sender || !pub.sender->hasPublishers() || !rgba || width < 1 || height < 1) return;
+    CpuFrame *out = pub.sender->acquire();
+    if (!out) {
+        ++m_readbacksSkipped;
+        return;
+    }
+    out->width = width;
+    out->height = height;
+    out->stride = width * 4;
+    out->bgra.resize(size_t(width) * height * 4);
+    for (int y = 0; y < height; ++y) { // rows top to bottom, RGBA to BGRA, alpha opaque (as the OpenGL path's flip draws it)
+        const unsigned char *src = rgba + size_t(height - 1 - y) * width * 4;
+        unsigned char *dst = out->bgra.data() + size_t(y) * width * 4;
+        for (int x = 0; x < width; ++x, src += 4, dst += 4) {
+            dst[0] = src[2];
+            dst[1] = src[1];
+            dst[2] = src[0];
+            dst[3] = 255;
+        }
+    }
+    out->timestamp100ns = qint64(m_clock.nsecsElapsed() / 100);
+    out->fpsN = announcedRate(pub, fps);
+    out->fpsD = 1;
+    out->timecode = tc;
+    pub.sender->submit(out);
+}
+
 void Publishing::readback(quint64 viewport, const RenderTarget &out, double fps, quint64 frame,
                           const std::optional<Timecode> &tc)
 {
     const auto found = m_pubs.find(viewport);
     if (found == m_pubs.end()) return;
     Publication &pub = *found->second;
-    // Receiver count, about twice per second
-    if ((frame % 30) == 0) {
-        std::lock_guard<std::mutex> lk(m_stateMutex);
-        for (int ki = 0; ki < kPublishKindCount; ++ki) {
-            if (pub.cpu[ki] && pub.cpu[ki]->liveState(&pub.states[ki])) continue; // it tells how it goes
-            if (pub.states[ki].level != PublishState::Ok) continue;
-            if (pub.cpu[ki]) pub.states[ki].receivers = pub.cpu[ki]->receivers();
-            else if (pub.gpu[ki]) pub.states[ki].receivers = pub.gpu[ki]->receivers();
-        }
-    }
+    updateReceivers(pub, frame);
 
     using PboState = Publication::PboState;
     auto f = gl();
@@ -378,13 +440,8 @@ void Publishing::readback(quint64 viewport, const RenderTarget &out, double fps,
                 lent.stride = w * 4;
                 lent.timestamp100ns = qint64(pub.pboTime[k]);
                 lent.timecode = pub.pboTc[k];
-                // Announced frame rate: only changes if the new value holds for 2 s
-                const int rate = standardRate(fps);
-                const double nowS = m_clock.nsecsElapsed() / 1e9;
-                if (pub.announcedRate == 0) pub.announcedRate = rate;
-                if (rate == pub.announcedRate) pub.rateSince = nowS;
-                else if (nowS - pub.rateSince > 2.0) pub.announcedRate = rate;
-                lent.fpsN = pub.announcedRate;
+                const int rate = announcedRate(pub, fps);
+                lent.fpsN = rate;
                 lent.fpsD = 1;
                 pub.pboState[k] = PboState::Lent;
                 pub.sender->lend(lent);

@@ -1962,7 +1962,7 @@ void Engine::frame(double dt)
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
     releaseRetired(false); // transitions over whose decoders are closed by now
 
-    if (m_rhi) { // the frame through QRhi: nothing of OpenGL's (previews: read back below; publishing: not yet)
+    if (m_rhi) { // the frame through QRhi: nothing of OpenGL's (previews and publishing: read back below)
         for (auto &l : m_layers) l->renderPaused = false;
         // The interface still shows its previews through OpenGL: the pictures it asked for come back as pixels
         std::vector<RhiRenderer::PreviewRequest> asked;
@@ -1971,7 +1971,7 @@ void Engine::frame(double dt)
             if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
         }
         // The pixel readers' pictures, read back too (the offscreen frame completes at once, so they are this frame's)
-        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000;
+        constexpr int sonificationSlot = 1000, pixelMappingSlot = 2000, sourcePreviewSlot = 4000, publishSlot = 5000;
         std::vector<quint64> listened; // the viewports (0: the composition) sonifications listen to, by slot
         {
             std::set<quint64> seen;
@@ -2002,9 +2002,24 @@ void Engine::frame(double dt)
             q.tap = RhiRenderer::PreviewRequest::Raw;
             asked.push_back(q);
         }
+        // The viewports being published (NDI, OMT, DeckLink: pixels; Syphon, Spout: an OpenGL texture of the picture)
+        std::vector<std::pair<quint64, PublishSettings>> publish;
+        std::vector<quint64> published; // by slot
+        std::vector<std::optional<Timecode>> atc;
+        for (const auto &l : m_layers)
+            if (l->isViewport) {
+                publish.push_back({l->id, l->vpPublish});
+                if (m_publishing.wantsPixels(l->id) || m_publishing.wantsShare(l->id)) {
+                    asked.push_back({publishSlot + int(published.size()), l->id, 1 << 20});
+                    published.push_back(l->id);
+                    const auto tc = m_atc.find(l->id);
+                    atc.push_back(tc != m_atc.end() ? tc->second->now() : std::nullopt);
+                }
+            }
         m_rhi->setPreviewRequests(std::move(asked));
         m_rhi->render(rc);
         std::map<int, std::array<float, 3>> listenedColors;
+        bool shared = false;
         bool sourcePreviewGiven = false;
         {
             auto f = gl();
@@ -2017,6 +2032,22 @@ void Engine::frame(double dt)
                 slot.renderedId[m_back] = 0;
             }
             for (const auto &p : m_rhi->takePreviews()) {
+                if (p.slot >= publishSlot) {
+                    const size_t k = size_t(p.slot - publishSlot);
+                    if (k >= published.size()) continue;
+                    const auto *px = reinterpret_cast<const unsigned char *>(p.pixels.constData());
+                    m_publishing.submitPixels(published[k], px, p.size.width(), p.size.height(), m_fps.load(), m_frameCount.load(), atc[k]);
+                    if (m_publishing.wantsShare(published[k])) {
+                        RenderTarget &target = m_rhiReaders[{published[k], 1}];
+                        target.ensure(p.size.width(), p.size.height());
+                        if (!target.tex) continue;
+                        f->glBindTexture(GL_TEXTURE_2D, target.tex);
+                        f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, px);
+                        shared = true;
+                    }
+                    continue;
+                }
                 if (p.slot >= sourcePreviewSlot) {
                     QImage img(reinterpret_cast<const uchar *>(p.pixels.constData()), p.size.width(), p.size.height(), QImage::Format_RGBA8888);
                     std::lock_guard<std::mutex> lk(m_previewMutex);
@@ -2079,13 +2110,21 @@ void Engine::frame(double dt)
                 if (m_frameFence) f->glDeleteSync(m_frameFence);
                 m_frameFence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
             }
-            f->glFlush();
+            if (shared) { // Syphon, Spout: their contexts copy the picture, finished
+                f->glFinish();
+                for (quint64 id : published)
+                    if (m_publishing.wantsShare(id))
+                        if (const auto target = m_rhiReaders.find({id, 1}); target != m_rhiReaders.end()) m_publishing.share(id, target->second);
+            } else {
+                f->glFlush();
+            }
             m_published = m_back;
             m_back = 1 - m_back;
         }
         m_renderLayerIndexActive = false;
         m_mutex.unlock();
         m_renderLockHold.record(RealtimeTiming::nowNs() - lockAcquired);
+        m_publishing.follow(publish); // the settings take effect at the next frame
         ++m_frameCount;
         return;
     }

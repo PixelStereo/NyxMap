@@ -33,6 +33,13 @@ public:
                   const std::optional<Timecode> &tc = std::nullopt);
     // Syphon, Spout: their contexts copy the finished picture (after the frame's end)
     void share(quint64 viewport, const RenderTarget &picture);
+    // Through QRhi: the pictures come as pixels (RGBA, the picture's bottom row first, as a texture holds them), read
+    // back by the renderer. wantsPixels(): a NDI, OMT, DeckLink publisher or the tap is on (submitPixels); wantsShare():
+    // a Syphon or Spout publisher is on (the engine puts the picture into an OpenGL texture and share()s it)
+    bool wantsPixels(quint64 viewport) const;
+    bool wantsShare(quint64 viewport) const;
+    void submitPixels(quint64 viewport, const unsigned char *rgba, int width, int height, double fps, quint64 frame,
+                      const std::optional<Timecode> &tc = std::nullopt);
     bool sharing() const; // a Syphon or Spout publisher is on: the frame must be finished before share()
     quint64 readbacksSkipped() const { return m_readbacksSkipped.load(); } // NDI / OMT frames not sent: GPU late
     void release();       // every publisher stopped, the OpenGL objects deleted
@@ -50,6 +57,8 @@ private:
     void apply(Publication &pub, const PublishSettings &s);
     void releasePublication(Publication &pub);
     void setState(Publication &pub, PublishKind k, PublishState st);
+    void updateReceivers(Publication &pub, quint64 frame);   // about twice per second
+    int announcedRate(Publication &pub, double fps);          // changes only if the new value holds for 2 s
 
     std::function<void()> m_drawQuad;
     GLuint m_flipProgram = 0;

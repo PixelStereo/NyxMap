@@ -56,8 +56,15 @@ it and the parts ported so far.
   preview slots ask for (the composition, a layer, a viewport) are reduced to at
   most 1024 px, read back during the frame and uploaded into the slots' OpenGL
   textures, which the interface reads as before (`rhi_preview`). This bridge goes
-  with the interface's own views. Not yet: 3D views, publishing (Syphon, Spout,
-  NDI, OMT).
+  with the interface's own views. Not yet: 3D views.
+- **Publishing**, through the same bridge: the pictures of the viewports that are
+  published are read back whole during the frame. NDI, OMT, DeckLink and the tests'
+  tap get them as BGRA, top row first (`Publishing::submitPixels`, flipped and
+  swizzled on the CPU, sent by the publisher's own thread); Syphon and Spout get
+  an OpenGL texture of the picture (`share`). The settings take effect one frame
+  late. `rhi_preview` checks the tap's pixels and a Syphon-like publisher. Not
+  covered: real NDI, OMT, Syphon and Spout receivers. A Syphon Metal server and a
+  Spout D3D11 sender would drop the OpenGL texture.
 - **Pixel readers**, through the same bridge: the pictures they need are read back
   from QRhi during the frame and, where an OpenGL reader still takes a texture,
   uploaded into one. The inspector's source preview (a layer's picture before

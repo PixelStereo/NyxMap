@@ -4,14 +4,18 @@
 // nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
 #include "Engine.h"
 #include "Layer.h"
+#include "Publish.h"
 
 #include <QGuiApplication>
+#include <QColor>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QSurfaceFormat>
 #include <QThread>
 
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <cstdio>
 
 static int g_failures = 0;
@@ -153,6 +157,56 @@ int main(int argc, char **argv)
     auto at = [&](int address) { return u.size() == 512 ? int(quint8(u.at(address - 1))) : -1; };
     check(at(100) == 255 && at(101) == 0 && at(102) == 0, "pixel mapping: the left pixel is red");
     check(at(103) == 0 && at(104) == 0 && at(105) == 255, "pixel mapping: the right pixel is blue");
+
+    // Publishing: the viewport's picture goes to NDI-like (CPU) publishers as BGRA, top row first, and to Syphon-like (GPU)
+    // publishers as an OpenGL texture
+    e.addViewport(QStringLiteral("Out"), QSize(64, 32));
+    struct Tap {
+        std::mutex m;
+        CpuFrame last;
+        int frames = 0;
+    };
+    auto tap = std::make_shared<Tap>();
+    e.setTestTap([tap](const CpuFrame &f) {
+        std::lock_guard<std::mutex> lk(tap->m);
+        tap->last = f;
+        ++tap->frames;
+    });
+    struct Gpu : GpuPublisher {
+        std::atomic<int> *count;
+        std::atomic<int> *side;
+        explicit Gpu(std::atomic<int> *c, std::atomic<int> *w) : count(c), side(w) {}
+        bool start(const QString &, QString *) override { return true; }
+        void publish(unsigned int texture, int width, int) override
+        {
+            if (texture) {
+                ++*count;
+                *side = width;
+            }
+        }
+    };
+    std::atomic<int> shares{0}, shareWidth{0};
+    e.setGpuPublisherFactoryForTests([&](PublishKind) { return std::unique_ptr<GpuPublisher>(new Gpu(&shares, &shareWidth)); });
+    PublishSettings ps;
+    ps[PublishKind::Syphon].enabled = true;
+    e.setPublishSettings(e.mainViewportId(), ps);
+    for (int k = 0; k < 60; ++k) {
+        e.renderFrame();
+        QThread::msleep(10);
+        std::lock_guard<std::mutex> lk(tap->m);
+        if (tap->frames >= 5 && shares >= 3) break;
+    }
+    {
+        std::lock_guard<std::mutex> lk(tap->m);
+        const CpuFrame &f = tap->last;
+        check(tap->frames >= 5 && f.width > 0 && f.height > 0 && f.stride == f.width * 4, "publishing: the tap receives the viewport's pictures");
+        if (f.width > 0 && f.height > 0) {
+            auto px = [&](int x, int y) { return QColor(f.bgra[size_t(y) * f.stride + x * 4 + 2], f.bgra[size_t(y) * f.stride + x * 4 + 1], f.bgra[size_t(y) * f.stride + x * 4]); };
+            check(px(f.width / 6, f.height / 3) == QColor(255, 0, 0) && px(f.width * 5 / 6, f.height / 3) == QColor(0, 0, 255), "publishing: BGRA, the left half red, the right blue");
+        }
+    }
+    check(shares >= 3 && shareWidth > 0, "publishing: a Syphon-like publisher gets the picture as a texture");
+    e.setTestTap(nullptr);
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
     return g_failures ? 1 : 0;
