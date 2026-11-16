@@ -70,10 +70,10 @@ private:
     QLabel *m_summary;
     QLineEdit *m_search = nullptr;
     // The media, as coloured buttons at the top (one at a time): All, Video, Audio, 3D
-    std::array<class QToolButton *, 4> m_typePills{};
-    int typeMask() const; // the kinds shown: video 1, audio 2, 3D 4 (cumulative)
+    std::array<class QToolButton *, 5> m_typePills{};
+    int typeMask() const; // the kinds shown: video 1, audio 2, 3D 4, ISF 8 (cumulative)
     void setTypeIndex(int index); // all kinds shown (the reset)
-    void setPillChecked(int index, bool on); // 0 All, 1 Video, 2 Audio, 3 3D
+    void setPillChecked(int index, bool on); // 0 All, 1 Video, 2 Audio, 3 3D, 4 ISF
     void updateTypeCounts(); // how many items each button shows
     QComboBox *m_kind = nullptr;  // What of it: All, Files, Generators, Inputs, ISF
     QComboBox *m_usage = nullptr; // All, Used (by a layer), Unused
