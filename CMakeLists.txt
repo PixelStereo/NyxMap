@@ -876,7 +876,7 @@ if(NYXMAP_TESTS)
     publishing_concurrency cue_dispatch vision_interaction_ui animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
   # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
-  set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
+  set_tests_properties(show_controls fixture_ui clock_preset_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
   set_tests_properties(vision_hand_inference PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui
