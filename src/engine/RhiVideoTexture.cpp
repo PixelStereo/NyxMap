@@ -1,4 +1,5 @@
 #include "RhiVideoTexture.h"
+#include "VideoBudget.h"
 #include "RhiDevice.h"
 #include "RhiVideoSurface.h"
 
@@ -88,18 +89,35 @@ struct RhiVideoTexture::Impl {
         return rt->create();
     }
 
+    size_t planeBytes[4] = {0, 0, 0, 0};
+    void releasePlane(int p)
+    {
+        if (planeBytes[p]) videoBudget::removeGpu(videoBudget::Gpu::VideoPlanes, planeBytes[p]);
+        planeBytes[p] = 0;
+        planes[p].reset();
+    }
+    ~Impl()
+    {
+        for (int p = 0; p < 4; ++p) releasePlane(p);
+    }
+
     bool ensurePlane(int p, const VideoLayout::Plane &shape)
     {
         QRhiTexture::Format f;
         QSize size;
         if (!planeFormat(shape, &f, &size) || !rhi->isTextureFormatSupported(f)) return false;
         if (planes[p] && planes[p]->format() == f && planes[p]->pixelSize() == size) return true;
+        releasePlane(p);
         planes[p].reset(rhi->newTexture(f, size));
         planeShape[p] = shape;
         if (!planes[p]->create()) {
             planes[p].reset();
             return false;
         }
+        // Counted in the graphics memory report: the texels' bytes (compressed: the blocks')
+        planeBytes[p] = shape.size ? shape.size : size_t(shape.width) * size_t(shape.height) * size_t(shape.channels) *
+                                                      (shape.texels == VideoLayout::Texels::U16 ? 2 : 1);
+        videoBudget::addGpu(videoBudget::Gpu::VideoPlanes, planeBytes[p]);
         return true;
     }
 

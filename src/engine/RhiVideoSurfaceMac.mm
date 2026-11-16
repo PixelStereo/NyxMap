@@ -1,5 +1,6 @@
 // VideoToolbox's frames as QRhi textures with no copy (RhiVideoSurface.h), macOS
 #include "RhiVideoSurface.h"
+#include "VideoBudget.h"
 
 #include <rhi/qrhi.h>
 
@@ -21,8 +22,11 @@ struct RhiVideoSurface::Impl {
     struct Held {
         AVFrame *frame = nullptr;
         CVMetalTextureRef tex[4] = {nullptr, nullptr, nullptr, nullptr};
+        size_t bytes = 0; // counted in the graphics memory report (VideoBudget.h)
         void release()
         {
+            if (bytes) videoBudget::removeGpu(videoBudget::Gpu::Surfaces, bytes);
+            bytes = 0;
             for (CVMetalTextureRef &t : tex)
                 if (t) {
                     CFRelease(t);
@@ -87,6 +91,11 @@ bool RhiVideoSurface::take(QRhiCommandBuffer *, const VideoFrame &frame)
     }
     for (int p = L.planeCount; p < 4; ++p) d->planes[p].reset();
     slot.frame = av_frame_clone(frame.av); // its IOSurface stays the decoder's until released
+    for (int p = 0; p < L.planeCount; ++p) {
+        const VideoLayout::Plane &pl = L.plane[p];
+        slot.bytes += size_t(pl.width) * size_t(pl.height) * size_t(pl.channels) * (pl.texels == VideoLayout::Texels::U16 ? 2 : 1);
+    }
+    videoBudget::addGpu(videoBudget::Gpu::Surfaces, slot.bytes);
     return true;
 }
 
