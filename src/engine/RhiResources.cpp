@@ -56,7 +56,20 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
 
 RhiResources::~RhiResources()
 {
-    if (m_uploads) m_uploads->release();
+    if (m_uploads) {
+        m_uploads->release();
+        m_uploads = nullptr;
+    }
+
+    // Pipelines keep a non-owning pointer to their shader resource bindings. Release them first,
+    // then the bindings, and only then the buffers, textures, and samplers they reference.
+    for (auto &pipeline : m_blitPs) pipeline.reset();
+    m_bindings.clear();
+    m_blitUbuf.reset();
+    m_quad.reset();
+    m_black.reset();
+    m_nearest.reset();
+    m_linear.reset();
 }
 
 QRhiResourceUpdateBatch *RhiResources::takeUploads()
