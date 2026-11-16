@@ -170,9 +170,15 @@ struct RhiRenderer::Impl {
     // A still image's or a live input's picture into the layer's texture
     void uploadPicture(RLayer &r, const QImage &image)
     {
-        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
-        if (!r.image || r.imageSize != rgba.size()) {
-            r.image.reset(rhi->newTexture(QRhiTexture::RGBA8, rgba.size()));
+        // A picture of more than 8 bits (a 16-bit file) keeps them: half floats
+        const QPixelFormat pf = image.pixelFormat();
+        const bool deep = pf.typeInterpretation() == QPixelFormat::FloatingPoint ||
+                          std::max({pf.redSize(), pf.greenSize(), pf.blueSize()}) > 8;
+        const bool half = deep && RhiTarget::workingFormat() == QRhiTexture::RGBA16F;
+        const QImage rgba = image.convertToFormat(half ? QImage::Format_RGBA16FPx4 : QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
+        const QRhiTexture::Format textureFormat = half ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8;
+        if (!r.image || r.imageSize != rgba.size() || r.image->format() != textureFormat) {
+            r.image.reset(rhi->newTexture(textureFormat, rgba.size()));
             if (!r.image->create()) {
                 r.image.reset();
                 return;
@@ -1503,7 +1509,7 @@ void RhiRenderer::render(const IsfRenderContext &rc)
         if (!q.exact.isEmpty()) size = q.exact;
         else if (size.width() > q.maxSide || size.height() > q.maxSide) size.scale(q.maxSide, q.maxSide, Qt::KeepAspectRatio);
         RhiTarget &small = d->previewTargets[q.slot];
-        small.ensure(d->rhi.get(), size);
+        small.ensure(d->rhi.get(), size, QRhiTexture::RGBA8); // read back as 8-bit pixels
         if (!small.ready() || !d->res().blit(d->cb, tex, small, d->take())) continue;
         auto read = std::make_unique<Read>();
         read->request = q;
@@ -1583,8 +1589,21 @@ static QImage readBack(QRhi *rhi, QRhiTexture *tex)
     u->readBackTexture({tex}, &result);
     cb->resourceUpdate(u);
     rhi->endOffscreenFrame();
-    QImage img(reinterpret_cast<const uchar *>(result.data.constData()), result.pixelSize.width(), result.pixelSize.height(),
-               QImage::Format_RGBA8888);
+    const int w = result.pixelSize.width(), h = result.pixelSize.height();
+    if (w <= 0 || h <= 0) return {};
+    QImage img(w, h, QImage::Format_RGBA8888);
+    const uchar *data = reinterpret_cast<const uchar *>(result.data.constData());
+    if (result.format == QRhiTexture::RGBA16F) { // the 10-bit pictures: half floats, to 8 bits
+        const QImage half(data, w, h, w * 8, QImage::Format_RGBA16FPx4);
+        img = half.convertToFormat(QImage::Format_RGBA8888);
+    } else if (result.format == QRhiTexture::RGBA32F) {
+        const QImage full(data, w, h, w * 16, QImage::Format_RGBA32FPx4);
+        img = full.convertToFormat(QImage::Format_RGBA8888);
+    } else if (result.format == QRhiTexture::BGRA8) {
+        img = QImage(data, w, h, w * 4, QImage::Format_ARGB32).convertToFormat(QImage::Format_RGBA8888);
+    } else {
+        img = QImage(data, w, h, w * 4, QImage::Format_RGBA8888).copy();
+    }
     return img.mirrored(false, true); // stored bottom row first
 }
 
@@ -1619,7 +1638,7 @@ QImage RhiRenderer::grabSource(quint64 layer)
 {
     const auto found = d->layers.find(layer);
     QRhiTexture *raw = found == d->layers.end() ? nullptr : found->second.raw;
-    return raw && raw->format() == QRhiTexture::RGBA8 ? readBack(d->rhi.get(), raw) : QImage();
+    return raw ? readBack(d->rhi.get(), raw) : QImage();
 }
 
 bool RhiRenderer::present(quint64 viewport, QWindow *window, bool waitForDisplay)

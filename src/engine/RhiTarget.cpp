@@ -1,4 +1,6 @@
 #include "RhiTarget.h"
+
+#include <atomic>
 #include "VideoBudget.h"
 
 RhiTarget::RhiTarget(RhiTarget &&o) noexcept { *this = std::move(o); }
@@ -48,8 +50,18 @@ void RhiTarget::release()
     m_size = QSize();
 }
 
-bool RhiTarget::ensure(QRhi *rhi, QSize size, QRhiTexture::Format format) { return make(rhi, size, format, false); }
-bool RhiTarget::ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format) { return make(rhi, size, format, true); }
+static std::atomic<int> s_working{int(QRhiTexture::RGBA8)};
+void RhiTarget::setWorkingFormat(QRhiTexture::Format format) { s_working = int(format); }
+QRhiTexture::Format RhiTarget::workingFormat() { return QRhiTexture::Format(s_working.load()); }
+
+bool RhiTarget::ensure(QRhi *rhi, QSize size, QRhiTexture::Format format)
+{
+    return make(rhi, size, format == QRhiTexture::UnknownFormat ? workingFormat() : format, false);
+}
+bool RhiTarget::ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format)
+{
+    return make(rhi, size, format == QRhiTexture::UnknownFormat ? workingFormat() : format, true);
+}
 
 bool RhiTarget::make(QRhi *rhi, QSize size, QRhiTexture::Format format, bool mipped)
 {

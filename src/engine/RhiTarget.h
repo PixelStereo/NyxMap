@@ -20,9 +20,13 @@ public:
 
     // (Re)made when the size or format changes. Returns true when made now: its contents are undefined until a
     // pass clears it. False with ready() false: it could not be made (the previous one is gone).
-    bool ensure(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::RGBA8);
+    // UnknownFormat: the working format (setWorkingFormat), the pictures the layers, groups, viewports and the composition
+    // are drawn in: RGBA8, or RGBA16F for the 10-bit precision
+    static void setWorkingFormat(QRhiTexture::Format format);
+    static QRhiTexture::Format workingFormat();
+    bool ensure(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::UnknownFormat);
     // The same with a full chain of mip levels, made on demand (generateMips) for a picture drawn smaller than it is
-    bool ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::RGBA8);
+    bool ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::UnknownFormat);
     // A multisampled buffer to draw into, resolved into texture() at the end of each pass (antialiasing). `samples` is
     // clamped to what the QRhi supports; returns the count used (1: none, draw into texture() directly). Needs ready().
     int ensureMsaa(int samples);

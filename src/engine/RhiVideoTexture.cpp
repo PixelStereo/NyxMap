@@ -1,4 +1,5 @@
 #include "RhiVideoTexture.h"
+#include "RhiTarget.h"
 #include "VideoBudget.h"
 #include "RhiDevice.h"
 #include "RhiVideoSurface.h"
@@ -73,12 +74,13 @@ struct RhiVideoTexture::Impl {
 
     bool ensureTarget(int w, int h)
     {
-        if (out && out->pixelSize() == QSize(w, h)) return true;
+        const QRhiTexture::Format format = RhiTarget::workingFormat(); // the pictures' precision (8, or 10 bits as half floats)
+        if (out && out->pixelSize() == QSize(w, h) && out->format() == format) return true;
         ps.reset();
         srb.reset();
         rp.reset();
         rt.reset();
-        out.reset(rhi->newTexture(QRhiTexture::RGBA8, QSize(w, h), 1, QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+        out.reset(rhi->newTexture(format, QSize(w, h), 1, QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
         if (!out->create()) {
             out.reset();
             return false;

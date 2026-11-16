@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include "EngineInternal.h"
 #include "RhiRenderer.h"
+#include "RhiTarget.h"
 #include "TimecodeClock.h"
 #include "ColorInfo.h"
 #include "SourceColor.h"
@@ -873,6 +874,7 @@ void Engine::frame(double dt)
             m_rhiFailed = true;
         }
     }
+    RhiTarget::setWorkingFormat(effectiveRender().depth >= 10 ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8); // the 10-bit precision
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
