@@ -5,7 +5,7 @@ description: >
   (Qt6_DIR, QT_ROOT_DIR). Linux builds with its distribution's Qt for now.
 inputs:
   arch:
-    description: aqt's architecture (empty: the platform's default)
+    description: "aqt's architecture (empty: the platform's default)"
     required: false
     default: ''
 runs:
