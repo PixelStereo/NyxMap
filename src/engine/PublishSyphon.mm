@@ -1,12 +1,13 @@
-// Syphon publishing (macOS): shares the output texture with other applications, with no CPU copy.
-// Compiled only on macOS (NYXMAP_HAS_SYPHON), with the Syphon framework (BSD license).
+// Syphon publishing (macOS): the picture the QRhi renderer read back is written into the server's IOSurface (BGRA, its first
+// row the picture's bottom, as Syphon's OpenGL server left it) that other applications map. Compiled only on macOS
+// (NYXMAP_HAS_SYPHON), with the Syphon framework (BSD license); the base server only: no OpenGL context and no Metal shaders.
 
 #include "Publish.h"
 
 #import <Foundation/Foundation.h>
-#import <Syphon/SyphonOpenGLServer.h>
-#include <OpenGL/OpenGL.h>
-#include <OpenGL/gl3.h>
+#import <IOSurface/IOSurface.h>
+#import <Syphon/SyphonServerBase.h>
+#import <Syphon/SyphonSubclassing.h>
 
 class SyphonPublisher : public GpuPublisher
 {
@@ -22,13 +23,8 @@ public:
     bool start(const QString &name, QString *err) override
     {
         @autoreleasepool {
-            CGLContextObj ctx = CGLGetCurrentContext();
-            if (!ctx) {
-                if (err) *err = QStringLiteral("No active OpenGL context for Syphon.");
-                return false;
-            }
             NSString *n = [NSString stringWithUTF8String:name.toUtf8().constData()];
-            m_server = [[SyphonOpenGLServer alloc] initWithName:n context:ctx options:nil];
+            m_server = [[SyphonServerBase alloc] initWithName:n options:nil];
             if (!m_server) {
                 if (err) *err = QStringLiteral("The Syphon server failed to start.");
                 return false;
@@ -37,16 +33,29 @@ public:
         return true;
     }
 
-    void publish(unsigned int texture, int width, int height) override
+    void publish(const unsigned char *rgba, int width, int height) override
     {
-        if (!m_server) return;
+        if (!m_server || !rgba || width <= 0 || height <= 0) return;
         @autoreleasepool {
-            // Standard OpenGL texture (bottom-left origin): no flip.
-            [m_server publishFrameTexture:texture
-                            textureTarget:GL_TEXTURE_2D
-                              imageRegion:NSMakeRect(0, 0, width, height)
-                        textureDimensions:NSMakeSize(width, height)
-                                  flipped:NO];
+            IOSurfaceRef surface = [m_server newSurfaceForWidth:size_t(width) height:size_t(height) options:nil];
+            if (!surface) return;
+            if (IOSurfaceLock(surface, 0, nullptr) == kIOReturnSuccess) {
+                auto *base = static_cast<unsigned char *>(IOSurfaceGetBaseAddress(surface));
+                const size_t pitch = IOSurfaceGetBytesPerRow(surface);
+                for (int y = 0; y < height; ++y) { // as Syphon's OpenGL server leaves it: the picture's bottom row first
+                    const unsigned char *src = rgba + size_t(y) * size_t(width) * 4;
+                    unsigned char *dst = base + size_t(y) * pitch;
+                    for (int x = 0; x < width; ++x, src += 4, dst += 4) {
+                        dst[0] = src[2];
+                        dst[1] = src[1];
+                        dst[2] = src[0];
+                        dst[3] = src[3];
+                    }
+                }
+                IOSurfaceUnlock(surface, 0, nullptr);
+                [m_server publish];
+            }
+            CFRelease(surface);
             m_clients = m_server.hasClients ? 1 : 0;
         }
     }
@@ -54,7 +63,7 @@ public:
     int receivers() const override { return m_clients; }
 
 private:
-    SyphonOpenGLServer *m_server = nil;
+    SyphonServerBase *m_server = nil;
     int m_clients = 0;
 };
 

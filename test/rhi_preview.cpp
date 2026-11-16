@@ -189,9 +189,9 @@ int main(int argc, char **argv)
         std::atomic<int> *side;
         explicit Gpu(std::atomic<int> *c, std::atomic<int> *w) : count(c), side(w) {}
         bool start(const QString &, QString *) override { return true; }
-        void publish(unsigned int texture, int width, int) override
+        void publish(const unsigned char *pixels, int width, int) override
         {
-            if (texture) {
+            if (pixels) {
                 ++*count;
                 *side = width;
             }

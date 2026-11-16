@@ -2173,7 +2173,6 @@ void Engine::frame(double dt)
         }
         m_rhi->render(rc);
         std::map<int, std::array<float, 3>> listenedColors;
-        bool shared = false;
         bool sourcePreviewGiven = false;
         {
             auto f = gl();
@@ -2203,15 +2202,7 @@ void Engine::frame(double dt)
                     if (k >= published.size()) continue;
                     const auto *px = reinterpret_cast<const unsigned char *>(p.pixels.constData());
                     m_publishing.submitPixels(published[k], px, p.size.width(), p.size.height(), m_fps.load(), m_frameCount.load(), atc[k]);
-                    if (m_publishing.wantsShare(published[k])) {
-                        RenderTarget &target = m_rhiReaders[{published[k], 1}];
-                        target.ensure(p.size.width(), p.size.height());
-                        if (!target.tex) continue;
-                        f->glBindTexture(GL_TEXTURE_2D, target.tex);
-                        f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-                        f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, px);
-                        shared = true;
-                    }
+                    if (m_publishing.wantsShare(published[k])) m_publishing.share(published[k], px, p.size.width(), p.size.height());
                     continue;
                 }
                 if (p.slot >= sourcePreviewSlot) {
@@ -2277,14 +2268,7 @@ void Engine::frame(double dt)
                 if (m_frameFence) f->glDeleteSync(m_frameFence);
                 m_frameFence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
             }
-            if (shared) { // Syphon, Spout: their contexts copy the picture, finished
-                f->glFinish();
-                for (quint64 id : published)
-                    if (m_publishing.wantsShare(id))
-                        if (const auto target = m_rhiReaders.find({id, 1}); target != m_rhiReaders.end()) m_publishing.share(id, target->second);
-            } else {
-                f->glFlush();
-            }
+            f->glFlush();
             m_published = m_back;
             m_back = 1 - m_back;
         }
@@ -2535,38 +2519,13 @@ void Engine::frame(double dt)
     f->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     // Other contexts read these pictures: the output windows and the interface wait for this fence on the GPU
     // (waitForFrame), the CPU goes on. A texture drawn in one context is only seen whole by another once the commands
-    // that drew it are complete (OpenGL spec). Delayed sharing (the default) publishes
-    // the previous completed picture via the SDK. The triple viewport rotation keeps
-    // that picture out of the immediately following render target. The SDK's copy-on-
-    // return contract must also be validated with real Syphon and Spout receivers.
-    // Immediate sharing remains available, but glFinish can stall the render thread.
-    const bool shared = m_publishing.sharing();
-    const bool late = shared && m_shareOneFrameLate.load(std::memory_order_relaxed);
-    GLsync last = nullptr;
+    // that drew it are complete (OpenGL spec).
     {
         std::lock_guard<std::mutex> lk(m_fenceMutex);
-        if (late) last = m_frameFence; // kept for the share below (no other context holds it: they wait under the lock)
-        else if (m_frameFence) f->glDeleteSync(m_frameFence);
+        if (m_frameFence) f->glDeleteSync(m_frameFence);
         m_frameFence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
-    if (shared && !late) f->glFinish();
-    else f->glFlush(); // the fence reaches the GPU before another context waits for it
-    if (late) {
-        bool ready = last != nullptr;
-        if (last) {
-            const GLenum r = f->glClientWaitSync(last, GL_SYNC_FLUSH_COMMANDS_BIT, 4000000);
-            ready = r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED;
-            f->glDeleteSync(last);
-        }
-        if (ready) {
-            for (auto &[id, out] : previous)
-                if (out->tex) m_publishing.share(id, *out);
-        } else {
-            ++m_sharesSkipped;
-        }
-    } else {
-        for (auto &[id, out] : outs) m_publishing.share(id, *out);
-    }
+    f->glFlush(); // the fence reaches the GPU before another context waits for it
     m_published = m_back;
     m_back = 1 - m_back;
     {
@@ -2576,7 +2535,7 @@ void Engine::frame(double dt)
                 const int oldFront = l->vpPublished.load();
                 const int newFront = l->vpBack;
                 l->vpPublished = newFront;
-                l->vpBack = Layer::nextViewportBack(oldFront, newFront, late);
+                l->vpBack = Layer::nextViewportBack(oldFront, newFront, false);
             }
     }
     ++m_frameCount;

@@ -32,7 +32,7 @@ public:
     void readback(quint64 viewport, const RenderTarget &picture, double fps, quint64 frame,
                   const std::optional<Timecode> &tc = std::nullopt);
     // Syphon, Spout: their contexts copy the finished picture (after the frame's end)
-    void share(quint64 viewport, const RenderTarget &picture);
+    void share(quint64 viewport, const unsigned char *rgba, int width, int height);
     // Through QRhi: the pictures come as pixels (RGBA, the picture's bottom row first, as a texture holds them), read
     // back by the renderer. wantsPixels(): a NDI, OMT, DeckLink publisher or the tap is on (submitPixels); wantsShare():
     // a Syphon or Spout publisher is on (the engine puts the picture into an OpenGL texture and share()s it)

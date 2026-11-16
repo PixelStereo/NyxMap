@@ -250,12 +250,12 @@ bool Publishing::sharing() const
     return false;
 }
 
-void Publishing::share(quint64 viewport, const RenderTarget &picture)
+void Publishing::share(quint64 viewport, const unsigned char *rgba, int width, int height)
 {
     const auto it = m_pubs.find(viewport);
     if (it == m_pubs.end()) return;
     for (int ki : {int(PublishKind::Syphon), int(PublishKind::Spout)})
-        if (it->second->gpu[ki]) it->second->gpu[ki]->publish(picture.tex, picture.w, picture.h);
+        if (it->second->gpu[ki]) it->second->gpu[ki]->publish(rgba, width, height);
 }
 
 static int standardRate(double fps)
