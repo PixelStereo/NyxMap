@@ -759,7 +759,7 @@ jobs:
     runs-on: windows-latest
     needs: [scope, media]
     env:
-      QT_VERSION: '6.8.3'
+      QT_VERSION: '6.12.0' # the QRhi renderer: the same Qt as macOS (QRhi has no compatibility guarantee across versions)
       QT_ARCH: 'win64_msvc2022_64'
       # Avoid the daily deletion/re-upload window of BtbN's mutable "latest" assets. Pin a month-end autobuild:
       # BtbN prunes its daily releases after about two weeks but keeps the last one of each month much longer.
