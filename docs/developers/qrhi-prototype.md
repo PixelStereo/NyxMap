@@ -23,6 +23,19 @@ it and the parts ported so far.
   OpenGL draws them, the other 6 differing only by GPU noise (hashes of
   `sin()`/`fract()` of large values, a thin line a sub-pixel apart: their 8 × 8
   averages agree).
+- **The frame** (`RhiRenderer`, the port of Render.cpp's render pass and
+  compositing): an engine set to it (`Engine::setRhiRendering`, or
+  `NYXMAP_RENDERER=rhi`) keeps its decoders, animations and sequences and draws
+  each frame through QRhi. Ported: video, image and ISF generator sources, a
+  source's color space, ROI (rectangle, triangle, quad) and color, the effect
+  chain (masks, mix, channels, mask-only effects), groups, viewports (plain or
+  with their own picture, output color, exposure, opacity), the composition,
+  composition opacity and blackout, the blend modes but Difference, mapped
+  meshes. `rhi_engine` runs two engines on one scene, OpenGL and QRhi: their
+  viewports and composition match (at most 2 levels apart). Not yet: text, live
+  inputs, TouchEngine, web pages, 3D scenes, transitions, surface and
+  composition masks, mattes, Difference, antialiasing, mipmaps; outputs,
+  previews and publishing still read OpenGL's pictures.
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

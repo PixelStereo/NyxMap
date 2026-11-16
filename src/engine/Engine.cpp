@@ -2,6 +2,7 @@
 // the output window, the composition size, and the composition opacity / blackout fades.
 // The rest of its methods live in Layers.cpp, Render.cpp, Project.cpp, Media.cpp and Snapshots.cpp.
 #include "EngineInternal.h"
+#include "RhiRenderer.h"
 #include "Midi.h"
 #include "ProcessMemory.h"
 #include "VideoBudget.h"
@@ -85,6 +86,7 @@ void Engine::doneCurrent()
 
 bool Engine::initialize(QString *err)
 {
+    if (qgetenv("NYXMAP_RENDERER") == "rhi") m_wantRhi = true;
     m_ownerThread = QThread::currentThread();
     // No parent: the context is moved to the render thread.
     m_context = new QOpenGLContext;

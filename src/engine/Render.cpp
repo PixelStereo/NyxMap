@@ -3,6 +3,7 @@
 // composition is assembled, then read back for the interface preview and for publishing.
 #include <QJsonArray>
 #include "EngineInternal.h"
+#include "RhiRenderer.h"
 #include "TimecodeClock.h"
 #include "ColorInfo.h"
 #include "SourceColor.h"
@@ -213,6 +214,7 @@ void Engine::updateSource(Layer &l, double dt)
 {
     // An image has no time: uploaded paused or not (its previous texture is already gone)
     if (!l.pendingImage.isNull()) {
+        if (m_rhi) m_rhi->imageArrived(l.id, l.pendingImage); // the QRhi renderer's own picture of it
         l.sourceTex.uploadImage(l.pendingImage);
         l.pendingImage = QImage();
         l.renderPaused = true; // seen at once, even while paused
@@ -261,13 +263,14 @@ void Engine::updateSource(Layer &l, double dt)
             }
         }
     }
-    if (l.needed) {
+    // The QRhi renderer takes the frames from the decoder's memory (no OpenGL upload buffers) and uploads them itself
+    if (l.needed && !m_rhi) {
         if (!l.videoTex) l.videoTex = std::make_unique<VideoTexture>();
         l.videoTex->feed(*l.video); // upload buffers the decoder writes its next frames into
     }
     if (l.video->fetch(l.clock, l.frame)) l.frameUploaded = false;
     // Only a picture that is drawn goes to the GPU; a hidden layer's last frame waits to be shown
-    if (!l.frameUploaded && l.needed) {
+    if (!l.frameUploaded && l.needed && !m_rhi) {
         l.videoTex->upload(l.frame, *l.video, m_videoConv);
         l.frameUploaded = true;
     }
@@ -1969,11 +1972,29 @@ void Engine::frame(double dt)
         std::sort(m_renderLayerIndices.begin(), m_renderLayerIndices.end());
     }
     m_renderLayerIndexActive = true;
+    if (m_wantRhi && !m_rhi) { // the QRhi renderer: made by this thread, used by it from then on
+        m_rhi = std::make_unique<RhiRenderer>(*this);
+        QString err;
+        if (!m_rhi->init(&err)) {
+            qWarning("QRhi renderer: %s (OpenGL draws)", qPrintable(err));
+            m_rhi.reset();
+            m_wantRhi = false;
+        }
+    }
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
     releaseRetired(false); // transitions over whose decoders are closed by now
 
+    if (m_rhi) { // the frame through QRhi: nothing of OpenGL's (outputs, previews and publishing: not yet)
+        for (auto &l : m_layers) l->renderPaused = false;
+        m_rhi->render(rc);
+        m_renderLayerIndexActive = false;
+        m_mutex.unlock();
+        m_renderLockHold.record(RealtimeTiming::nowNs() - lockAcquired);
+        ++m_frameCount;
+        return;
+    }
     // Retain the last source/effect outputs, including persistent ISF buffers and
     // live input textures. dt=0 alone would still execute feedback and FRAMEINDEX.
     m_compositionReuseTexture = 0;
@@ -2396,6 +2417,10 @@ void Engine::resetFrameTiming()
 QImage Engine::grabViewport(quint64 viewport)
 {
     QImage img;
+    if (m_rhi) {
+        runGl([this, viewport, &img] { img = m_rhi->grabViewport(viewport); });
+        return img;
+    }
     runGl([this, viewport, &img] {
         Lock lk(&m_mutex);
         for (auto &l : m_layers) {
@@ -2416,6 +2441,10 @@ QImage Engine::grabViewport(quint64 viewport)
 QImage Engine::grabOutput()
 {
     QImage img;
+    if (m_rhi) {
+        runGl([this, &img] { img = m_rhi->grabOutput(); });
+        return img;
+    }
     runGl([this, &img] {
         const RenderTarget &o = m_output[m_published];
         if (!o.fbo) return;

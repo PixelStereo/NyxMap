@@ -57,6 +57,7 @@
 #include <mutex>
 
 class QOpenGLContext;
+class RhiRenderer;
 class QOffscreenSurface;
 class QSurface;
 class QThread;
@@ -81,6 +82,10 @@ public:
     Mutex &mutex() { return m_mutex; }
 
     bool initialize(QString *err);
+    // The frame drawn through QRhi (RhiRenderer.h) instead of OpenGL: set before initialize(), or NYXMAP_RENDERER=rhi.
+    // A transition: outputs, previews and publishing still read OpenGL's pictures, none here yet
+    void setRhiRendering(bool on) { m_wantRhi = on; }
+    bool rhiRendering() const { return m_wantRhi; }
     bool start();          // starts the render thread (returns false if the platform does not support it)
     void stop();
     // Emergency stop: cancel every sequence/WAIT, fade, running animation and media transport;
@@ -1009,6 +1014,7 @@ private:
     void applyParams(Layer &l, const QJsonObject &params, const QJsonObject &timing, const QJsonObject &easing, double fade,
                      FadeJob &job, bool showing, bool hiding, bool chain, const QJsonObject &delays = {});
     friend class RenderThread;
+    friend class RhiRenderer;
     friend class Sequencer;
     friend struct ScopedCurrent;
 
@@ -1105,6 +1111,8 @@ private:
     mutable Mutex m_mutex;
 
     QOpenGLContext *m_context = nullptr;
+    bool m_wantRhi = false;
+    std::unique_ptr<RhiRenderer> m_rhi; // made by the render thread at its first frame
     QOffscreenSurface *m_surface = nullptr;
     QSurface *m_currentSurface = nullptr;
     QThread *m_thread = nullptr;

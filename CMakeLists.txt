@@ -170,14 +170,16 @@ foreach(private GuiPrivate ShaderToolsPrivate)
   endif()
 endforeach()
 target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp src/engine/RhiTarget.cpp
-  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp)
+  src/engine/RhiResources.cpp src/engine/IsfRhi.cpp src/engine/RhiRenderer.cpp)
 # The engine's own shaders, baked at build time for every backend (SPIR-V, MSL, HLSL)
 qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   PREFIX "/shaders"
   NOGLSL # no OpenGL: SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
   BASE src/engine/shaders
   FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
-        src/engine/shaders/blit.vert src/engine/shaders/blit.frag)
+        src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
+        src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
+        src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag)
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)
@@ -809,6 +811,13 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_isf_render_test PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME isf_render COMMAND nyxmap_isf_render_test)
   set_tests_properties(isf_render PROPERTIES SKIP_RETURN_CODE 77)
+  # The engine's frame through QRhi against the same through OpenGL: two engines, one scene
+  add_executable(nyxmap_rhi_engine_test test/rhi_engine.cpp)
+  target_include_directories(nyxmap_rhi_engine_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_engine_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_rhi_engine_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME rhi_engine COMMAND nyxmap_rhi_engine_test)
+  set_tests_properties(rhi_engine PROPERTIES SKIP_RETURN_CODE 77)
   # The QRhi renderer's video pictures against the OpenGL renderer's, every layout: the same pictures, the cost
   add_executable(nyxmap_rhi_video_test test/rhi_video.cpp)
   target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)
