@@ -66,14 +66,19 @@ struct RhiScene::Impl {
     struct Surface {
         int id = 0;
         std::unique_ptr<QRhiTexture> color;
-        std::unique_ptr<QRhiRenderBuffer> ms, depth;
+        std::unique_ptr<QRhiRenderBuffer> ms, depth, msBright;
+        std::unique_ptr<QRhiTexture> bright; // what shines, beside the picture (the glow): a second attachment, when asked
+        bool withBright = false;
         std::unique_ptr<QRhiTextureRenderTarget> target;
         std::unique_ptr<QRhiRenderPassDescriptor> pass;
         QSize size;
         int samples = 1;
     };
-    Surface view{1}, lit{2}, graded{3}, seen{4}, ao{5}, aoBlurred{6};
-    std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf;
+    Surface view{1}, lit{2}, graded{3}, seen{4}, ao{5}, aoBlurred{6}, litGlow{7};
+    std::vector<Surface> glowLevels; // the glow, halved again and again (ids from 20)
+    std::unique_ptr<QRhiBuffer> glowUbuf[16];
+    std::unique_ptr<QRhiTexture> brightPlain; // when the glow is off the post pass still wants a texture
+    std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf, backgroundUbuf;
     RhiTarget last; // the last picture, for the reflections
     bool lastValid = false;
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> fullscreen; // by surface and fragment shader
@@ -145,9 +150,13 @@ struct RhiScene::Impl {
         return ubufs[nextUbuf++].get();
     }
 
-    bool ensure(Surface &s, int w, int h, int samples, bool withDepth, QRhiTexture::Format format = QRhiTexture::RGBA8)
+    bool ensure(Surface &s, int w, int h, int samples, bool withDepth, QRhiTexture::Format format = QRhiTexture::RGBA8, bool withBright = false,
+                bool preserve = false)
     {
         if (s.target && s.size == QSize(w, h) && s.samples == samples) return true;
+        s.bright.reset();
+        s.msBright.reset();
+        s.withBright = withBright;
         s.target.reset();
         s.pass.reset();
         s.depth.reset();
@@ -162,12 +171,24 @@ struct RhiScene::Impl {
             attachment.setResolveTexture(s.color.get());
         }
         QRhiTextureRenderTargetDescription desc{attachment};
+        if (withBright) { // a second attachment, in float (what shines more than a screen can show)
+            s.bright.reset(rhi->newTexture(QRhiTexture::RGBA16F, QSize(w, h), 1, QRhiTexture::RenderTarget));
+            if (!s.bright->create()) return false;
+            QRhiColorAttachment second(s.bright.get());
+            if (samples > 1) {
+                s.msBright.reset(rhi->newRenderBuffer(QRhiRenderBuffer::Color, QSize(w, h), samples, {}, QRhiTexture::RGBA16F));
+                if (!s.msBright->create()) return false;
+                second = QRhiColorAttachment(s.msBright.get());
+                second.setResolveTexture(s.bright.get());
+            }
+            desc.setColorAttachments({attachment, second});
+        }
         if (withDepth) {
             s.depth.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, QSize(w, h), samples));
             if (!s.depth->create()) return false;
             desc.setDepthStencilBuffer(s.depth.get());
         }
-        s.target.reset(rhi->newTextureRenderTarget(desc));
+        s.target.reset(rhi->newTextureRenderTarget(desc, preserve ? QRhiTextureRenderTarget::PreserveColorContents : QRhiTextureRenderTarget::Flags()));
         s.pass.reset(s.target->newCompatibleRenderPassDescriptor());
         s.target->setRenderPassDescriptor(s.pass.get());
         if (!s.target->create()) return false;
@@ -216,7 +237,7 @@ struct RhiScene::Impl {
         ps.reset(rhi->newGraphicsPipeline());
         const auto shader = [](const char *name) { return RhiResources::shader(QString::fromLatin1(name)); };
         const char *fragment = kind == Kind::Opaque || kind == Kind::Blended ? "sceneunlit.frag"
-                               : kind == Kind::Lit || kind == Kind::LitBlended ? "scenelit.frag"
+                               : kind == Kind::Lit || kind == Kind::LitBlended ? (surface.withBright ? "scenelit.frag" : "scenelit_noglow.frag")
                                : kind == Kind::Depth ? "scenedepth.frag" : "sceneplain.frag";
         ps->setShaderStages({{QRhiShaderStage::Vertex, shader("sceneview.vert")}, {QRhiShaderStage::Fragment, shader(fragment)}});
         QRhiVertexInputLayout layout;
@@ -240,7 +261,10 @@ struct RhiScene::Impl {
             b.enable = true;
             b.srcColor = b.srcAlpha = QRhiGraphicsPipeline::One; // premultiplied
             b.dstColor = b.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
-            ps->setTargetBlends({b});
+            if (surface.withBright) ps->setTargetBlends({b, b});
+            else ps->setTargetBlends({b});
+        } else if (surface.withBright) {
+            ps->setTargetBlends({QRhiGraphicsPipeline::TargetBlend(), QRhiGraphicsPipeline::TargetBlend()});
         }
         ps->setSampleCount(surface.samples);
         ps->setShaderResourceBindings(srb);
@@ -465,7 +489,9 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             samples = wanted;
             break;
         }
-    if (!d->ensure(d->lit, w, h, samples, true)) return nullptr;
+    const bool wantsGlow = quality.glow > 0 && s.glow > 0;
+    Impl::Surface &main = wantsGlow ? d->litGlow : d->lit;
+    if (!d->ensure(main, w, h, samples, true, QRhiTexture::RGBA8, wantsGlow)) return nullptr;
     d->nextUbuf = 0;
     RhiResources &res = RhiResources::of(rhi);
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
@@ -522,7 +548,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     sb.screen[3] = reflections;
     sb.reflect[0] = reflectLevel == 1 ? 20 : reflectLevel == 3 ? 80 : 40;
     sb.reflect[1] = d->lastValid && reflections > 0 ? 1 : 0;
-    sb.range[0] = cam.nearPlane, sb.range[1] = cam.farPlane, sb.range[2] = s.exposure;
+    sb.range[0] = cam.nearPlane, sb.range[1] = cam.farPlane, sb.range[2] = s.exposure, sb.range[3] = s.glowThreshold;
     {
         const QMatrix4x4 viewProj = cam.proj * cam.view; // OpenGL's: the shader works in its clip space
         std::memcpy(sb.viewProj, viewProj.constData(), sizeof sb.viewProj);
@@ -849,10 +875,40 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     }
     const float a = s.background[3];
     const QColor clear = QColor::fromRgbF(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
-    cb->beginPass(d->lit.target.get(), clear, {1.0f, 0}, u);
+    if (wantsGlow) { // the second attachment starts empty: the background goes into the first one alone
+        if (!d->backgroundUbuf) {
+            d->backgroundUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+            d->backgroundUbuf->create();
+        }
+        const float color[4] = {float(clear.redF()), float(clear.greenF()), float(clear.blueF()), float(clear.alphaF())};
+        if (!u) u = rhi->nextResourceUpdateBatch();
+        u->updateDynamicBuffer(d->backgroundUbuf.get(), 0, sizeof color, color);
+    }
+    cb->beginPass(main.target.get(), wantsGlow ? QColor(Qt::transparent) : clear, {1.0f, 0}, u);
     cb->setViewport({0, 0, float(w), float(h)});
+    if (wantsGlow) {
+        const auto vs = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+        QRhiShaderResourceBindings *bgSrb = res.bindings({{0, vs, d->postUbuf.get()}, {1, QRhiShaderResourceBinding::FragmentStage, d->backgroundUbuf.get()}});
+        std::unique_ptr<QRhiGraphicsPipeline> &bg = d->fullscreen[main.id * 100 + 70];
+        if (!bg && bgSrb) {
+            bg.reset(rhi->newGraphicsPipeline());
+            bg->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},
+                                 {QRhiShaderStage::Fragment, RhiResources::shader(QStringLiteral("scenebackground.frag"))}});
+            bg->setVertexInputLayout({});
+            bg->setSampleCount(main.samples);
+            bg->setTargetBlends({QRhiGraphicsPipeline::TargetBlend(), QRhiGraphicsPipeline::TargetBlend()});
+            bg->setShaderResourceBindings(bgSrb);
+            bg->setRenderPassDescriptor(main.pass.get());
+            if (!bg->create()) bg.reset();
+        }
+        if (bg && bgSrb) {
+            cb->setGraphicsPipeline(bg.get());
+            cb->setShaderResources(bgSrb);
+            cb->draw(3);
+        }
+    }
     for (const Command &c : commands) {
-        QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(d->lit, c.kind, c.srb) : nullptr;
+        QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(main, c.kind, c.srb) : nullptr;
         if (!ps) continue;
         cb->setGraphicsPipeline(ps);
         cb->setShaderResources(c.srb);
@@ -862,19 +918,95 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     }
     cb->endPass();
     if (reflections > 0 && d->last.ready()) { // what a reflection shows next time
-        d->lastValid = res.blit(cb, d->lit.color.get(), d->last);
+        d->lastValid = res.blit(cb, main.color.get(), d->last);
     } else {
         d->lastValid = false;
     }
 
-    // All over the picture, as a camera does: the colours, the darker edges
+    // Its glow: what shines, halved and spread again, each step wider, then added back up
+    if (wantsGlow) {
+        const int levels = std::clamp(quality.glow == 1 ? 3 : quality.glow == 3 ? 6 : 5, 1, 6);
+        if (d->glowLevels.size() < 6) {
+            d->glowLevels.clear();
+            for (int k = 0; k < 6; ++k) d->glowLevels.emplace_back();
+            for (int k = 0; k < 6; ++k) d->glowLevels[size_t(k)].id = 20 + k;
+        }
+        for (int k = 0; k < levels; ++k)
+            if (!d->ensure(d->glowLevels[size_t(k)], std::max(1, w >> (k + 1)), std::max(1, h >> (k + 1)), 1, false, QRhiTexture::RGBA16F, false, true))
+                return main.color.get();
+        QRhiResourceUpdateBatch *glowBatch = rhi->nextResourceUpdateBatch();
+        struct GlowPass {
+            Impl::Surface *target;
+            const char *fragment;
+            bool additive;
+            QRhiTexture *from;
+            QSize fromSize;
+            float weight;
+            int slot;
+        };
+        std::vector<GlowPass> passes;
+        for (int k = 0; k < levels; ++k) {
+            QRhiTexture *from = k == 0 ? main.bright.get() : d->glowLevels[size_t(k - 1)].color.get();
+            const QSize fromSize = k == 0 ? QSize(w, h) : d->glowLevels[size_t(k - 1)].size;
+            passes.push_back({&d->glowLevels[size_t(k)], "sceneglowdown.frag", false, from, fromSize, 0, k});
+        }
+        for (int k = levels - 1; k > 0; --k) // the wider a level, the more of it as its size asks
+            passes.push_back({&d->glowLevels[size_t(k - 1)], "sceneglowup.frag", true, d->glowLevels[size_t(k)].color.get(),
+                              d->glowLevels[size_t(k)].size, std::clamp(s.glowSize, 0.0f, 1.0f), levels + k});
+        // Every pass's numbers go in the batch the first pass carries
+        for (const GlowPass &gp : passes) {
+            if (!d->glowUbuf[gp.slot]) {
+                d->glowUbuf[gp.slot].reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 32));
+                d->glowUbuf[gp.slot]->create();
+            }
+            const float data[8] = {1.0f / float(gp.fromSize.width()), 1.0f / float(gp.fromSize.height()), 0, 0, gp.weight, 0, 0, 0};
+            glowBatch->updateDynamicBuffer(d->glowUbuf[gp.slot].get(), 0, sizeof data, data);
+        }
+        for (const GlowPass &gp : passes) {
+            const auto vs = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+            QRhiShaderResourceBindings *srb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                            {1, QRhiShaderResourceBinding::FragmentStage, d->glowUbuf[gp.slot].get()},
+                                                            {2, QRhiShaderResourceBinding::FragmentStage, nullptr, gp.from, res.linear()}});
+            const int key = gp.target->id * 100 + 60 + (gp.additive ? 1 : 0);
+            std::unique_ptr<QRhiGraphicsPipeline> &ps = d->fullscreen[key];
+            if (!ps && srb) {
+                ps.reset(rhi->newGraphicsPipeline());
+                ps->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},
+                                     {QRhiShaderStage::Fragment, RhiResources::shader(QString::fromLatin1(gp.fragment))}});
+                ps->setVertexInputLayout({});
+                if (gp.additive) {
+                    QRhiGraphicsPipeline::TargetBlend b;
+                    b.enable = true;
+                    b.srcColor = b.srcAlpha = b.dstColor = b.dstAlpha = QRhiGraphicsPipeline::One;
+                    ps->setTargetBlends({b});
+                }
+                ps->setShaderResourceBindings(srb);
+                ps->setRenderPassDescriptor(gp.target->pass.get());
+                if (!ps->create()) ps.reset();
+            }
+            if (!ps || !srb) continue;
+            cb->beginPass(gp.target->target.get(), Qt::black, {1.0f, 0}, glowBatch);
+            glowBatch = nullptr;
+            cb->setGraphicsPipeline(ps.get());
+            cb->setViewport({0, 0, float(gp.target->size.width()), float(gp.target->size.height())});
+            cb->setShaderResources(srb);
+            cb->draw(3);
+            cb->endPass();
+        }
+        if (glowBatch) glowBatch->release();
+    }
+
+    // All over the picture, as a camera does: the glow, the colours, the darker edges
     const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
-    if (!graded) return d->lit.color.get();
-    if (!d->ensure(d->graded, w, h, 1, false)) return d->lit.color.get();
+    if (!graded && !wantsGlow) return main.color.get();
+    if (!d->ensure(d->graded, w, h, 1, false)) return main.color.get();
     QRhiResourceUpdateBatch *post = rhi->nextResourceUpdateBatch();
+    pb.more[0] = wantsGlow ? 1.0f : 0.0f;
+    pb.more[1] = s.glow;
     post->updateDynamicBuffer(d->postUbuf.get(), 0, sizeof pb, &pb);
     QRhiShaderResourceBindings *srb = res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->postUbuf.get()},
-                                                    {1, QRhiShaderResourceBinding::FragmentStage, nullptr, d->lit.color.get(), res.linear()}});
+                                                    {1, QRhiShaderResourceBinding::FragmentStage, nullptr, main.color.get(), res.linear()},
+                                                    {2, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsGlow ? d->glowLevels[0].color.get() : res.black(), res.linear()}});
     if (!d->postPipeline && srb) {
         d->postPipeline.reset(rhi->newGraphicsPipeline());
         d->postPipeline->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},
@@ -884,7 +1016,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         d->postPipeline->setRenderPassDescriptor(d->graded.pass.get());
         if (!d->postPipeline->create()) d->postPipeline.reset();
     }
-    if (!d->postPipeline || !srb) return d->lit.color.get();
+    if (!d->postPipeline || !srb) return main.color.get();
     cb->beginPass(d->graded.target.get(), Qt::transparent, {1.0f, 0}, post);
     cb->setGraphicsPipeline(d->postPipeline.get());
     cb->setViewport({0, 0, float(w), float(h)});

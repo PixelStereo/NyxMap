@@ -360,6 +360,67 @@ int main(int argc, char **argv)
             q.save(dump + "/ao_rhi.png");
         }
     }
+    // Glow: a ball that shines more than the screen can show, with antialiasing and the colours graded
+    {
+        SceneSettings lit = view;
+        lit.ao = 0;
+        lit.reflections = 0;
+        lit.glow = 1.0f;
+        lit.glowThreshold = 1.0f;
+        lit.glowSize = 0.6f;
+        lit.fogDensity = 0;
+        lit.ambientIntensity = 0.1f;
+        lit.contrast = 1.1f;
+        lit.vignette = 0.3f;
+        Scene3DQuality q3;
+        q3.antialiasing = q3.shadows = q3.contact = q3.reflections = q3.atmosphere = 0;
+        q3.glow = 2;
+        auto ball = std::make_shared<Model3D>();
+        QString err;
+        ball->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        Scene3D::Item b;
+        b.model = ball;
+        b.placement.color = {0.5f, 0.5f, 0.5f};
+        b.placement.emission = {4.0f, 2.0f, 1.0f};
+        const std::vector<Scene3D::Item> items{b};
+        Scene3D viaGl;
+        const GLuint tex = viaGl.draw(lit, items, {}, size.width(), size.height(), 0, false, q3);
+        auto fn = gl();
+        GLuint fbo = 0;
+        fn->glGenFramebuffers(1, &fbo);
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        fn->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        QImage g(size, QImage::Format_RGBA8888);
+        fn->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        fn->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, g.bits());
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        fn->glDeleteFramebuffers(1, &fbo);
+        viaGl.releaseGl();
+        RhiScene scene(rhi.get());
+        QRhiCommandBuffer *cb = nullptr;
+        QImage q;
+        if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+            RhiResources::of(rhi.get()).frameStarted();
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            QRhiTexture *out = scene.draw(cb, u, lit, items, {}, size.width(), size.height(), q3);
+            QRhiReadbackResult rb;
+            if (out) {
+                QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                r->readBackTexture({out}, &rb);
+                cb->resourceUpdate(r);
+            }
+            rhi->endOffscreenFrame();
+            if (out) q = QImage(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888).copy();
+        }
+        int worst = 0;
+        double over = 0;
+        const double mean = meanDifference(q, g, &worst, &over);
+        check(!q.isNull() && mean < 1.5, qPrintable(QStringLiteral("glow and grade: QRhi against OpenGL, mean %1, %2% over 8").arg(mean, 0, 'f', 3).arg(over * 100, 0, 'f', 2)));
+        if (!dump.isEmpty()) {
+            g.save(dump + "/glow_gl.png");
+            q.save(dump + "/glow_rhi.png");
+        }
+    }
     // No limit to the lights (OpenGL took eight): twelve give more light than eight
     {
         auto model = std::make_shared<Model3D>();

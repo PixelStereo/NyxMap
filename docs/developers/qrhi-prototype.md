@@ -122,9 +122,11 @@ it and the parts ported so far.
   silhouettes' pixels differ without antialiasing). The cells' 3D views,
   `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under them
   through `RhiDraw`, the handles over them through the overlay); the OpenGL
-  renderer's views come back the same way, as pixels. Not yet, in lit scenes:
-  an environment (and its sky), screen-space occlusion and reflections, glow, fog, the supersampled
-  quality level; pictures laid on models by a layer, displacement pictures and
+  renderer's views come back the same way, as pixels. Occlusion
+  between surfaces (from the depth of what is seen, at half size, blurred), reflections
+  of the last picture and the glow (a second, float attachment spread over six
+  halvings) match OpenGL too (`rhi_scene`). Not yet, in lit scenes: an environment
+  (and its sky), fog, the supersampled quality level; pictures laid on models by a layer, displacement pictures and
   the textures of shared materials; `MaterialSphere` (the material preview, still an
   OpenGL widget: it keeps the other views on the OpenGL API).
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`

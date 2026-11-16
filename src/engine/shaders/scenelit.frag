@@ -11,6 +11,7 @@ layout(location = 3) in vec3 v_basePos;
 layout(location = 4) in float v_heightScale;
 layout(location = 5) in vec2 v_heightSlope;
 layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 o_bright; // what shines more than a screen can show: its glow (linear light)
 layout(std140, binding = 0) uniform Place {
     mat4 u_model;
     mat4 u_view;
@@ -80,6 +81,7 @@ layout(binding = 16) uniform sampler2D u_last;   // the last picture: what a ref
 #define u_hasLast u_reflectCfg.y
 #define u_depthRange u_range.xy
 #define u_lastExposure u_range.z
+#define u_glowLimit u_range.w
 #define u_taps u_shadowCfg.y
 layout(binding = 3) uniform sampler2D u_tex;
 layout(binding = 4) uniform sampler2D u_roughTex;
@@ -104,6 +106,11 @@ layout(binding = 8) uniform sampler2D u_emTex;
 #define u_hasAo u_has.w
 #define u_hasEm u_has2.x
 const float PI = 3.14159265;
+// What shines more than the threshold, to spread around it
+vec4 bright(vec3 c, float a) {
+    float l = max(c.r, max(c.g, c.b));
+    return vec4(min(c * max(l - u_glowLimit, 0.0) / max(l, 1e-4), vec3(64.0)) * a, a);
+}
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
 // One look at a map: the share of the 4 texels around a point where the light gets through, interpolated as a hardware
 // comparison would (the maps are floats)
@@ -269,11 +276,13 @@ void main() {
         vec4 t = texture(u_tex, u_layerTex != 0 ? vec2(v_uv.x / u_uvTiling.x, 1.0 - v_uv.y / u_uvTiling.y) : v_uv); // a layer's picture: bottom up
         if (u_unlit != 0) { // as it is: a screen
             o = vec4(t.rgb * u_base.rgb * t.a * u_base.a, t.a * u_base.a);
+            o_bright = bright(pow(t.rgb * u_base.rgb, vec3(2.2)), t.a * u_base.a);
             return;
         }
         base *= vec4(pow(t.rgb, vec3(2.2)), t.a);
     } else if (u_unlit != 0) {
         o = vec4(u_base.rgb * u_base.a, u_base.a);
+        o_bright = bright(pow(u_base.rgb, vec3(2.2)), u_base.a);
         return;
     }
     if (u_alphaMode == 1 && base.a < u_alphaCutoff) discard;
@@ -357,6 +366,7 @@ void main() {
     }
     vec3 em = u_emissive * (u_hasEm != 0 ? pow(texture(u_emTex, v_uv).rgb, vec3(2.2)) : vec3(1.0));
     vec3 shining = (c + em) * u_exposure;
+    o_bright = bright(shining, base.a);
     c = aces(shining);
     // Dithered: no bands in the gradients of a spot on a floor. Premultiplied, as a group's picture
     o = vec4(clamp(pow(c, vec3(1.0 / 2.2)) + (noise() - 0.5) / 255.0, 0.0, 1.0) * base.a, base.a);
