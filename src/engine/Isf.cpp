@@ -671,7 +671,6 @@ bool IsfInstance::compile(const QString &fsBody, const QString &vsBody)
         "in vec2 isf_FragNormCoord;\n"
         "out vec4 isf_FragColor;\n"
         "#define gl_FragColor isf_FragColor\n"
-                                // `signed` is a legal GLSL identifier but a reserved MSL keyword (SPIRV-Cross).\n                                "#define signed isf_signed\n"
         "#define texture2D texture\n"
         "#define texture2DRect texture\n"
         "#define varying in\n"
@@ -908,6 +907,8 @@ IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const Q
                                 "layout(location = 1) in vec2 isf_PointCoord;\n"
                                 "layout(location = 0) out vec4 isf_FragColor;\n"
                                 "#define gl_FragColor isf_FragColor\n"
+                                // `signed` is legal GLSL but reserved in Metal Shading Language.
+                                "#define signed isf_signed\n"
                                 "#define texture2D texture\n"
                                 "#define texture2DRect texture\n"
                                 "#define vv_FragNormCoord isf_FragNormCoord\n"
