@@ -217,6 +217,83 @@ int main(int argc, char **argv)
         }
     }
 
+    // Shadows: a ball over a floor, lit by one light that casts. OpenGL and QRhi bias and soften them a little differently
+    {
+        SceneSettings lit = view;
+        lit.ao = 0;
+        lit.reflections = 0;
+        lit.glow = 0;
+        lit.fogDensity = 0;
+        lit.ambientIntensity = 0.05f;
+        lit.pitch = 35;
+        lit.distance = 5;
+        Scene3DQuality shadows;
+        shadows.antialiasing = shadows.contact = shadows.reflections = shadows.glow = shadows.atmosphere = 0;
+        shadows.shadows = 2;
+        for (int type : {2, 0, 1}) {
+            auto ball = std::make_shared<Model3D>(), floor = std::make_shared<Model3D>();
+            QString err;
+            ball->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+            floor->load(Model3D::primitivePath(QStringLiteral("Plane")), &err);
+            Scene3D::Item b, f;
+            b.model = ball;
+            b.placement.color = {0.8f, 0.3f, 0.2f};
+            b.placement.position = {0, 0.6f, 0};
+            f.model = floor;
+            f.placement.color = {0.7f, 0.7f, 0.7f};
+            f.placement.scale = 4;
+            f.placement.fit = true;
+            f.placement.rotation = {-90, 0, 0};
+            Scene3D::Lamp lamp;
+            lamp.light.type = type;
+            lamp.light.shadow = true;
+            lamp.light.intensity = type == 0 ? 3.0f : 40.0f;
+            lamp.light.position = {1.5f, 3.0f, 1.5f};
+            lamp.light.yaw = 215;
+            lamp.light.pitch = -55;
+            lamp.light.angle = 40;
+            const std::vector<Scene3D::Item> items{f, b};
+            Scene3D viaGl;
+            const GLuint tex = viaGl.draw(lit, items, {lamp}, size.width(), size.height(), 0, false, shadows);
+            auto fn = gl();
+            GLuint fbo = 0;
+            fn->glGenFramebuffers(1, &fbo);
+            fn->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            fn->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+            QImage g(size, QImage::Format_RGBA8888);
+            fn->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            fn->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, g.bits());
+            fn->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            fn->glDeleteFramebuffers(1, &fbo);
+            viaGl.releaseGl();
+            RhiScene scene(rhi.get());
+            QRhiCommandBuffer *cb = nullptr;
+            QImage q;
+            if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+                RhiResources::of(rhi.get()).frameStarted();
+                QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+                QRhiTexture *out = scene.draw(cb, u, lit, items, {lamp}, size.width(), size.height(), shadows);
+                QRhiReadbackResult rb;
+                if (out) {
+                    QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                    r->readBackTexture({out}, &rb);
+                    cb->resourceUpdate(r);
+                }
+                rhi->endOffscreenFrame();
+                if (out) q = QImage(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888).copy();
+            }
+            int worst = 0;
+            double over = 0;
+            const double mean = meanDifference(q, g, &worst, &over);
+            const char *names[] = {"directional", "point", "spot"};
+            const QString what = QStringLiteral("shadows, %1: QRhi against OpenGL, mean %2, %3% over 8").arg(QLatin1String(names[type == 2 ? 2 : type]), QString::number(mean, 'f', 3), QString::number(over * 100, 'f', 2));
+            check(!q.isNull() && mean < 2.0, qPrintable(what));
+            if (!dump.isEmpty()) {
+                g.save(dump + "/shadow_" + QString::number(type) + "_gl.png");
+                q.save(dump + "/shadow_" + QString::number(type) + "_rhi.png");
+            }
+        }
+    }
     // No limit to the lights (OpenGL took eight): twelve give more light than eight
     {
         auto model = std::make_shared<Model3D>();

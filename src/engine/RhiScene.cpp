@@ -36,15 +36,16 @@ constexpr quint32 kPlaceBytes = 1024;
 struct SceneBlock {
     float eye[4], ambient[4], misc[4];
     qint32 counts[4];
+    qint32 shadowCfg[4]; // soft edges, taps per shadow
 };
-static_assert(sizeof(SceneBlock) == 64, "the scene shaders' Scene block");
-constexpr quint32 kSceneBytes = 64;
+static_assert(sizeof(SceneBlock) == 80, "the scene shaders' Scene block");
+constexpr quint32 kSceneBytes = 80;
 
 struct PostBlock {
     float flip[4], grade[4], more[4];
 };
 
-enum class Kind { Faces, Edges, Opaque, Blended, Lit, LitBlended };
+enum class Kind { Faces, Edges, Opaque, Blended, Lit, LitBlended, ShadowSpot, ShadowPoint };
 
 } // namespace
 
@@ -66,6 +67,54 @@ struct RhiScene::Impl {
     std::unique_ptr<QRhiBuffer> sceneUbuf, postUbuf;
     std::unique_ptr<QRhiBuffer> lights; // the lights, seven vec4 each, as many as the scene has (a storage buffer)
     quint32 lightCapacity = 0;
+    // The shadows: each light's view of the models in a float array (a layer each; a point light's: six), and what the
+    // shader reads about them
+    struct Maps {
+        std::unique_ptr<QRhiTexture> texture;
+        std::unique_ptr<QRhiRenderBuffer> depth;
+        struct Layer {
+            std::unique_ptr<QRhiTextureRenderTarget> target;
+            std::unique_ptr<QRhiRenderPassDescriptor> pass;
+        };
+        std::vector<Layer> layers;
+        int size = 0, count = 0;
+    } spotMaps, pointMaps;
+    std::unique_ptr<QRhiBuffer> shadowData, pointData;
+    quint32 shadowCapacity = 0, pointCapacity = 0;
+    std::unique_ptr<QRhiSampler> nearest;
+    int shadowPassId = 0; // the shadow passes' pipelines are keyed apart from the surfaces'
+
+    // `count` layers of size × size, made again when it grows or its size changes
+    bool ensureMaps(Maps &m, int size, int count)
+    {
+        if (m.texture && m.size == size && m.count >= count) return true;
+        m.layers.clear();
+        m.depth.reset();
+        m.texture.reset(rhi->newTextureArray(QRhiTexture::R32F, count, QSize(size, size), 1, QRhiTexture::RenderTarget));
+        if (!m.texture->create()) {
+            m.texture.reset();
+            return false;
+        }
+        m.depth.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, QSize(size, size)));
+        if (!m.depth->create()) return false;
+        m.size = size;
+        m.count = count;
+        m.layers.resize(size_t(count));
+        for (int k = 0; k < count; ++k) {
+            QRhiColorAttachment attachment(m.texture.get());
+            attachment.setLayer(k);
+            QRhiTextureRenderTargetDescription desc{attachment};
+            desc.setDepthStencilBuffer(m.depth.get());
+            m.layers[size_t(k)].target.reset(rhi->newTextureRenderTarget(desc));
+            m.layers[size_t(k)].pass.reset(m.layers[size_t(k)].target->newCompatibleRenderPassDescriptor());
+            m.layers[size_t(k)].target->setRenderPassDescriptor(m.layers[size_t(k)].pass.get());
+            if (!m.layers[size_t(k)].target->create()) return false;
+        }
+        for (auto it = pipelines.begin(); it != pipelines.end();)
+            if (it->first / 100 == 9) it = pipelines.erase(it);
+            else ++it;
+        return true;
+    }
     std::unique_ptr<QRhiSampler> repeat; // the models' maps: repeated, mipmapped
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> pipelines;
     std::unique_ptr<QRhiGraphicsPipeline> postPipeline;
@@ -115,6 +164,34 @@ struct RhiScene::Impl {
             else ++it;
         if (s.id == 3) postPipeline.reset();
         return true;
+    }
+
+    // The pipelines that draw into a light's map (its render pass descriptor: any layer's)
+    QRhiGraphicsPipeline *shadowPipeline(Maps &maps, Kind kind, QRhiShaderResourceBindings *srb)
+    {
+        std::unique_ptr<QRhiGraphicsPipeline> &ps = pipelines[900 + int(kind)];
+        if (ps) return ps.get();
+        ps.reset(rhi->newGraphicsPipeline());
+        const auto shader = [](const char *name) { return RhiResources::shader(QString::fromLatin1(name)); };
+        ps->setShaderStages({{QRhiShaderStage::Vertex, shader("sceneview.vert")},
+                             {QRhiShaderStage::Fragment, shader(kind == Kind::ShadowPoint ? "scenepoint.frag" : "sceneshadow.frag")}});
+        QRhiVertexInputLayout layout;
+        layout.setBindings({{8 * sizeof(float)}});
+        layout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0},
+                              {0, 1, QRhiVertexInputAttribute::Float3, 3 * sizeof(float)},
+                              {0, 2, QRhiVertexInputAttribute::Float2, 6 * sizeof(float)}});
+        ps->setVertexInputLayout(layout);
+        ps->setCullMode(QRhiGraphicsPipeline::None);
+        ps->setDepthTest(true);
+        ps->setDepthWrite(true);
+        ps->setDepthOp(QRhiGraphicsPipeline::Less);
+        ps->setShaderResourceBindings(srb);
+        ps->setRenderPassDescriptor(maps.layers.front().pass.get());
+        if (!ps->create()) {
+            ps.reset();
+            return nullptr;
+        }
+        return ps.get();
     }
 
     QRhiGraphicsPipeline *pipeline(Surface &surface, Kind kind, QRhiShaderResourceBindings *srb)
@@ -168,6 +245,8 @@ RhiScene::RhiScene(QRhi *rhi) : d(std::make_unique<Impl>(rhi))
     d->sceneUbuf->create();
     d->postUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
     d->postUbuf->create();
+    d->nearest.reset(rhi->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge));
+    d->nearest->create();
 }
 
 RhiScene::~RhiScene() = default;
@@ -376,26 +455,113 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
     const QMatrix4x4 proj = backendProjection(rhi, cam.proj);
 
-    // The scene's lights: no limit but the memory
+    // All the models, placed
+    std::vector<Placed> all;
+    for (const Scene3D::Item &item : items) {
+        if (!item.model) continue;
+        Placed p{&item, item.parent * item.model->matrix(item.placement), {}, 0};
+        p.center = p.model.map(item.model->center());
+        p.radius = item.model->radius() * std::max({p.model.column(0).toVector3D().length(), p.model.column(1).toVector3D().length(), p.model.column(2).toVector3D().length()});
+        all.push_back(p);
+    }
+
+    // The shadows' share of the work, as the quality asks
+    const int shadowLevel = std::clamp(quality.shadows, 0, 3);
+    const int shadowSize = shadowLevel ? 512 << shadowLevel : 0, pointSize = shadowSize / 2;
+    // The models that cast: all but screens (unlit) and what is far larger than the others (a floor, a wall only receive)
+    QVector3D center;
+    float reach = 0;
+    std::vector<float> sizes;
+    for (const Placed &p : all)
+        if (!p.item->placement.unlit) sizes.push_back(p.radius);
+    std::sort(sizes.begin(), sizes.end());
+    const float largest = sizes.empty() ? 0.0f : sizes[sizes.size() / 2] * 4;
+    const auto casts = [&](const Placed &p) { return !p.item->placement.unlit && p.radius <= largest; };
+    {
+        float weight = 0;
+        for (const Placed &p : all)
+            if (casts(p)) {
+                center += p.center;
+                weight += 1;
+            }
+        if (weight > 0) center /= weight;
+        for (const Placed &p : all)
+            if (casts(p)) reach = std::max(reach, (p.center - center).length() + p.radius);
+    }
+
+    // The scene's lights and their shadows: no limit to either but the memory
     SceneBlock sb = {};
     sb.eye[0] = cam.eye.x(), sb.eye[1] = cam.eye.y(), sb.eye[2] = cam.eye.z();
     for (int c = 0; c < 3; ++c) sb.ambient[c] = s.ambient[size_t(c)] * s.ambientIntensity;
     sb.misc[0] = s.exposure;
     sb.misc[1] = std::max(0.0f, s.studio);
+    sb.shadowCfg[0] = shadowLevel >= 2 ? 1 : 0;
+    sb.shadowCfg[1] = shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12;
+    struct SpotShadow {
+        QMatrix4x4 matrix; // the light's view and projection (OpenGL's clip space)
+        QVector3D planes;
+        float radius, bias;
+    };
+    struct PointShadow {
+        QVector3D at;
+        float far, soft;
+    };
+    std::vector<SpotShadow> spots;
+    std::vector<PointShadow> points;
     std::vector<float> light; // seven vec4 each
     for (const Scene3D::Lamp &lamp : lamps) {
         const LightSettings &l = lamp.light;
         const float power = l.intensity * lamp.gain;
         if (power <= 0) continue;
-        const QVector3D dir = Camera3D::aim(l.yaw, l.pitch);
+        const QVector3D at(l.position[0], l.position[1], l.position[2]), dir = Camera3D::aim(l.yaw, l.pitch);
         const QVector3D right = QVector3D::crossProduct(dir, std::abs(dir.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0)).normalized(),
                         upward = QVector3D::crossProduct(right, dir);
         const float spread = std::clamp(l.angle, 1.0f, 89.0f), cone = qDegreesToRadians(spread); // angles, in radians
         const float coneIn = std::min(cone - 1e-3f, qDegreesToRadians(spread * (1 - std::clamp(l.falloff, 0.0f, 1.0f))));
+        float spotSlot = -1, pointSlot = -1;
+        if (shadowLevel && l.shadow && reach > 0) {
+            if (l.type == 1) { // a point: the distances all around it
+                pointSlot = float(points.size());
+                points.push_back({at, std::max((center - at).length() + reach * 3, 1.0f), std::max(0.0f, l.softness)});
+            } else {
+                QMatrix4x4 lightView, lightProj;
+                float across; // the width its map covers where the models are
+                QVector3D planes;
+                if (l.type == 0) {
+                    const QVector3D up = std::abs(dir.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
+                    lightView.lookAt(center - dir * reach * 2.5f, center, up);
+                    lightProj.ortho(-reach, reach, -reach, reach, reach * 0.1f, reach * 5);
+                    across = reach * 2;
+                    planes = QVector3D(reach * 0.1f, reach * 5, 1);
+                } else {
+                    const float away = (center - at).length();
+                    const QVector3D aim = l.type == 3 && away > reach ? (center - at).normalized() : dir;
+                    // An area shines all around what it faces: its map as tight around the models as can be
+                    const float half = l.type == 3 ? std::clamp(qRadiansToDegrees(std::atan2(reach * 1.2f, std::max(away, 0.1f))), 5.0f, 80.0f)
+                                                   : std::clamp(l.angle + 2.0f, 2.0f, 80.0f);
+                    const QVector3D up = std::abs(aim.y()) > 0.95f ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
+                    lightView.lookAt(at, at + aim, up);
+                    const float farPlane = std::max(away + reach * 1.5f, 1.0f);
+                    lightProj.perspective(half * 2, 1, std::max(0.05f, farPlane * 0.002f), farPlane);
+                    planes = QVector3D(std::max(0.05f, farPlane * 0.002f), farPlane, 0);
+                    across = 2 * std::max(away, 0.1f) * std::tan(qDegreesToRadians(half));
+                }
+                SpotShadow sh;
+                sh.matrix = lightProj * lightView;
+                sh.planes = planes;
+                const float texel = across / float(shadowSize);
+                sh.radius = std::max(0.0f, l.softness) * 2.0f / float(shadowSize);
+                if (l.type == 3) sh.radius += std::max(l.width, l.height) / across * 0.07f; // as wide as it is
+                sh.bias = texel * 1.5f + across * 0.0008f * std::max(0.0f, l.softness);
+                if (l.type == 3) sh.bias += std::max(l.width, l.height) * 0.08f; // its wide edge reaches round a curved surface
+                spotSlot = float(spots.size());
+                spots.push_back(sh);
+            }
+        }
         const float entry[7][4] = {
             {l.color[0] * power, l.color[1] * power, l.color[2] * power, float(std::clamp(l.type, 0, 3))},
-            {l.position[0], l.position[1], l.position[2], 0},
-            {dir.x(), dir.y(), dir.z(), 0},
+            {l.position[0], l.position[1], l.position[2], pointSlot},
+            {dir.x(), dir.y(), dir.z(), spotSlot},
             {right.x(), right.y(), right.z(), 0},
             {upward.x(), upward.y(), upward.z(), 0},
             {std::max(0.001f, l.width) * 0.5f, std::max(0.001f, l.height) * 0.5f, 0, 0},
@@ -404,14 +570,90 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         ++sb.counts[0];
     }
     if (light.empty()) light.assign(28, 0.0f); // a buffer is never empty
-    const quint32 lightBytes = quint32(light.size() * sizeof(float));
-    if (!d->lights || d->lightCapacity < lightBytes) {
-        d->lightCapacity = std::max<quint32>(lightBytes, 28 * sizeof(float) * 16) * 2;
-        d->lights.reset(rhi->newBuffer(QRhiBuffer::Static, QRhiBuffer::StorageBuffer, d->lightCapacity));
-        d->lights->create();
+    const auto upload = [&](std::unique_ptr<QRhiBuffer> &buffer, quint32 &capacity, const std::vector<float> &data) {
+        const quint32 bytes = quint32(std::max<size_t>(data.size(), 4) * sizeof(float));
+        if (!buffer || capacity < bytes) {
+            capacity = std::max<quint32>(bytes, 1024) * 2;
+            buffer.reset(rhi->newBuffer(QRhiBuffer::Static, QRhiBuffer::StorageBuffer, capacity));
+            buffer->create();
+        }
+        std::vector<float> padded = data;
+        padded.resize(std::max<size_t>(data.size(), 4), 0.0f);
+        u->uploadStaticBuffer(buffer.get(), 0, bytes, padded.data());
+    };
+    upload(d->lights, d->lightCapacity, light);
+    std::vector<float> spotData, pointData;
+    for (const SpotShadow &sh : spots) {
+        spotData.insert(spotData.end(), sh.matrix.constData(), sh.matrix.constData() + 16);
+        spotData.insert(spotData.end(), {sh.planes.x(), sh.planes.y(), sh.planes.z(), 0.f, sh.radius, sh.bias, 0.f, 0.f});
     }
-    u->uploadStaticBuffer(d->lights.get(), 0, lightBytes, light.data());
+    for (const PointShadow &sh : points) pointData.insert(pointData.end(), {sh.at.x(), sh.at.y(), sh.at.z(), sh.far, sh.soft, 0.f, 0.f, 0.f});
+    upload(d->shadowData, d->shadowCapacity, spotData);
+    upload(d->pointData, d->pointCapacity, pointData);
     u->updateDynamicBuffer(d->sceneUbuf.get(), 0, sizeof sb, &sb);
+    // The maps: one layer for each spot or directional light, six for each point light (at least one, never empty)
+    const int mapSize = std::max(shadowSize, 4);
+    if (!d->ensureMaps(d->spotMaps, mapSize, std::max<int>(1, int(spots.size()))) ||
+        !d->ensureMaps(d->pointMaps, std::max(pointSize, 4), std::max<int>(6, int(points.size()) * 6)))
+        return nullptr;
+
+    // What the camera sees, the nearest first (the blended ones over them, the farthest first)
+    std::vector<Placed> placed;
+    const QMatrix4x4 sees = cam.proj * cam.view;
+    for (const Placed &p : all)
+        if (inView(sees, p)) placed.push_back(p);
+    std::stable_sort(placed.begin(), placed.end(), [&](const Placed &a, const Placed &b) {
+        return (a.center - cam.eye).lengthSquared() < (b.center - cam.eye).lengthSquared();
+    });
+
+    // The lights' views of the models that cast
+    struct ShadowDraw {
+        Kind kind;
+        Impl::Maps *maps;
+        int layer;
+        std::vector<Command> commands;
+        QSize size;
+    };
+    std::vector<ShadowDraw> shadowDraws;
+    const auto shadowBind = [&](QRhiBuffer *b) {
+        return res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
+                             {2, QRhiShaderResourceBinding::VertexStage, nullptr, res.black(), res.linear()}});
+    };
+    const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
+        for (const Placed &p : all) {
+            if (!casts(p) || !inView(lightSees, p)) continue; // a screen gives light, a floor or a wall only receives
+            const std::vector<Model3D::RhiDraw> draws = p.item->model->rhiDraws(rhi, u, &p.item->placement, false, false);
+            for (const Model3D::RhiDraw &mesh : draws) {
+                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
+                Place pl = place(*p.item, p.model, cam, fixed);
+                const QMatrix4x4 identity;
+                std::memcpy(pl.view, identity.constData(), sizeof pl.view);
+                pl.ink[0] = ink.x(), pl.ink[1] = ink.y(), pl.ink[2] = ink.z(), pl.ink[3] = ink.w();
+                QRhiBuffer *b = d->ubuf();
+                u->updateDynamicBuffer(b, 0, sizeof pl, &pl);
+                draw.commands.push_back({draw.kind, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
+            }
+        }
+    };
+    if (reach > 0) {
+        for (size_t k = 0; k < spots.size(); ++k) {
+            ShadowDraw draw{Kind::ShadowSpot, &d->spotMaps, int(k), {}, QSize(mapSize, mapSize)};
+            casters(draw, spots[k].matrix, backendProjection(rhi, spots[k].matrix), {});
+            shadowDraws.push_back(std::move(draw));
+        }
+        static const QVector3D kLook[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        static const QVector3D kUp[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+        for (size_t k = 0; k < points.size(); ++k)
+            for (int face = 0; face < 6; ++face) {
+                ShadowDraw draw{Kind::ShadowPoint, &d->pointMaps, int(k) * 6 + face, {}, QSize(d->pointMaps.size, d->pointMaps.size)};
+                QMatrix4x4 faceView, faceProj;
+                faceView.lookAt(points[k].at, points[k].at + kLook[face], kUp[face]);
+                faceProj.perspective(90, 1, 0.02f, points[k].far);
+                // The camera's view is the identity here: the view is in the matrix
+                casters(draw, faceProj * faceView, backendProjection(rhi, faceProj * faceView), QVector4D(points[k].at, points[k].far));
+                shadowDraws.push_back(std::move(draw));
+            }
+    }
 
     const auto bind = [&](QRhiBuffer *b, const Model3D::RhiDraw &draw) {
         QRhiTexture *black = res.black();
@@ -423,21 +665,12 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         for (int k = 0; k < 5; ++k)
             bindings.push_back({4 + k, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.maps[size_t(k)] ? draw.maps[size_t(k)] : black, d->repeat.get()});
         bindings.push_back({9, QRhiShaderResourceBinding::FragmentStage, d->lights.get(), nullptr, nullptr, true});
+        bindings.push_back({10, QRhiShaderResourceBinding::FragmentStage, d->shadowData.get(), nullptr, nullptr, true});
+        bindings.push_back({11, QRhiShaderResourceBinding::FragmentStage, d->pointData.get(), nullptr, nullptr, true});
+        bindings.push_back({12, QRhiShaderResourceBinding::FragmentStage, nullptr, d->spotMaps.texture.get(), d->nearest.get()});
+        bindings.push_back({13, QRhiShaderResourceBinding::FragmentStage, nullptr, d->pointMaps.texture.get(), d->nearest.get()});
         return res.bindings(bindings);
     };
-    // What the camera sees, the nearest first (the blended ones over them, the farthest first)
-    std::vector<Placed> placed;
-    const QMatrix4x4 sees = cam.proj * cam.view;
-    for (const Scene3D::Item &item : items) {
-        if (!item.model) continue;
-        Placed p{&item, item.parent * item.model->matrix(item.placement), {}, 0};
-        p.center = p.model.map(item.model->center());
-        p.radius = item.model->radius() * std::max({p.model.column(0).toVector3D().length(), p.model.column(1).toVector3D().length(), p.model.column(2).toVector3D().length()});
-        if (inView(sees, p)) placed.push_back(p);
-    }
-    std::stable_sort(placed.begin(), placed.end(), [&](const Placed &a, const Placed &b) {
-        return (a.center - cam.eye).lengthSquared() < (b.center - cam.eye).lengthSquared();
-    });
     std::vector<Command> commands;
     int triangles = 0;
     for (int pass = 0; pass < 2; ++pass)
@@ -458,14 +691,32 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         }
     m_triangles = triangles;
 
-    const float a = s.background[3];
-    const QColor clear = QColor::fromRgbF(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
     QRhiResourceUpdateBatch *first = res.takeUploads();
     if (first) {
         first->merge(u);
         u->release();
         u = first;
     }
+    // The shadows' passes first: each light's view, a distance or a depth, in its layer
+    for (ShadowDraw &draw : shadowDraws) {
+        Impl::Maps &maps = *draw.maps;
+        QRhiTextureRenderTarget *target = maps.layers[size_t(draw.layer)].target.get();
+        cb->beginPass(target, QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
+        u = nullptr;
+        cb->setViewport({0, 0, float(draw.size.width()), float(draw.size.height())});
+        for (const Command &c : draw.commands) {
+            QRhiGraphicsPipeline *ps = c.srb ? d->shadowPipeline(maps, c.kind, c.srb) : nullptr;
+            if (!ps) continue;
+            cb->setGraphicsPipeline(ps);
+            cb->setShaderResources(c.srb);
+            const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
+            cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
+            cb->drawIndexed(quint32(c.count));
+        }
+        cb->endPass();
+    }
+    const float a = s.background[3];
+    const QColor clear = QColor::fromRgbF(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
     cb->beginPass(d->lit.target.get(), clear, {1.0f, 0}, u);
     cb->setViewport({0, 0, float(w), float(h)});
     for (const Command &c : commands) {

@@ -2,7 +2,7 @@
 // The lit scenes (the port of Model3D.cpp's kFragment, step by step): physically based (GGX, Smith, Schlick), in linear
 // light: its base colour (times its texture's), metal and roughness (factors, times their textures'), normals (its normal
 // map, from the screen-space frame), occlusion, emission; under the ambient light, up to eight lights (directional, point,
-// spot, area, as many as the scene has) and the studio's light; exposure, ACES tone mapping, sRGB out. Not yet here: shadows, the environment,
+// spot, area, as many as the scene has), their shadows and the studio's light; exposure, ACES tone mapping, sRGB out. Not yet here: shadows, the environment,
 // screen-space occlusion and reflections, the glow.
 layout(location = 0) in vec3 v_pos;
 layout(location = 1) in vec3 v_n;
@@ -48,16 +48,25 @@ layout(std140, binding = 1) uniform Scene {
     vec4 u_ambient4;   // xyz: the ambient light, times its intensity
     vec4 u_misc;       // x: exposure; y: the studio's strength
     ivec4 u_counts;    // x: how many lights
+    ivec4 u_shadowCfg; // x: soft edges (penumbra); y: taps per shadow
 };
 // The lights, as many as the scene has: seven vec4 each. color (xyz: times its power; w: its kind, 0 directional, 1 point,
 // 2 spot, 3 area), position, direction, right and up (an area's sides), half its size (xy), cone (x: a spot's angle, y:
 // where its falloff begins, in radians)
 layout(std430, binding = 9) readonly buffer Lights { vec4 lights[]; };
+// The shadows: a spot's or a directional light's map: six vec4 (the matrix as four columns, the distance planes, then its
+// edge radius and bias); a point light's: two (position and far plane, then its softness)
+layout(std430, binding = 10) readonly buffer Shadows { vec4 shadowData[]; };
+layout(std430, binding = 11) readonly buffer PointShadows { vec4 pointData[]; };
+layout(binding = 12) uniform sampler2DArray u_shadowMaps; // each light's view of the models: the depth, in a float
+layout(binding = 13) uniform sampler2DArray u_pointMaps;  // a point light's: the distance / its far plane, six faces each
 #define u_eye u_eye4.xyz
 #define u_ambient u_ambient4.xyz
 #define u_exposure u_misc.x
 #define u_studio u_misc.y
 #define u_count u_counts.x
+#define u_penumbra u_shadowCfg.x
+#define u_taps u_shadowCfg.y
 layout(binding = 3) uniform sampler2D u_tex;
 layout(binding = 4) uniform sampler2D u_roughTex;
 layout(binding = 5) uniform sampler2D u_metalTex;
@@ -82,7 +91,92 @@ layout(binding = 8) uniform sampler2D u_emTex;
 #define u_hasEm u_has2.x
 const float PI = 3.14159265;
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }
-float lit(int i, vec3 N) { return 1.0; } // shadows: the next step
+// One look at a map: the share of the 4 texels around a point where the light gets through, interpolated as a hardware
+// comparison would (the maps are floats)
+float tap(sampler2DArray maps, vec2 uv, float layer, float ref) {
+    vec2 size = vec2(textureSize(maps, 0).xy);
+    vec2 p = uv * size - 0.5;
+    vec2 f = fract(p);
+    vec4 g = textureGather(maps, vec3((floor(p) + 1.0) / size, layer), 0); // (i0, j1), (i1, j1), (i1, j0), (i0, j0)
+    vec4 c = vec4(lessThanEqual(vec4(ref), g));
+    return mix(mix(c.w, c.z, f.x), mix(c.x, c.y, f.x), f.y);
+}
+// Distance from a light, from what its map holds
+float mapDistance(vec3 p, float z) {
+    return p.z > 0.0 ? p.x + z * (p.y - p.x) : p.x * p.y / (p.y - z * (p.y - p.x));
+}
+const vec3 kLook[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0), vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
+const vec3 kUp[6] = vec3[6](vec3(0, -1, 0), vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1), vec3(0, -1, 0), vec3(0, -1, 0));
+// A point light's map at a direction: the face it falls on, and where on it (the faces are 90° views)
+vec3 pointFace(vec3 q, int slot) {
+    vec3 a = abs(q);
+    int face = a.x >= a.y && a.x >= a.z ? (q.x > 0.0 ? 0 : 1) : (a.y >= a.z ? (q.y > 0.0 ? 2 : 3) : (q.z > 0.0 ? 4 : 5));
+    vec3 look = kLook[face], up = kUp[face], right = cross(look, up);
+    float d = dot(q, look);
+    return vec3(vec2(dot(q, right), dot(q, up)) / d * 0.5 + 0.5, float(slot * 6 + face));
+}
+float pointRaw(vec3 q, int slot) { vec3 f = pointFace(q, slot); return textureLod(u_pointMaps, f, 0.0).r; }
+float lit(int i, vec3 N) {
+    int s = int(lights[i * 7 + 2].w);
+    int p = int(lights[i * 7 + 1].w);
+    if (p >= 0) { // a point light: the distances all around it
+        vec3 at = lights[i * 7 + 1].xyz;
+        float far = pointData[p * 2].w, soft = pointData[p * 2 + 1].x;
+        vec3 d = v_pos + N * 0.012 * sqrt(max(length(v_pos - at), 0.1)) - at;
+        float ref = length(d) / far - 0.0006;
+        vec3 x = normalize(cross(d, abs(d.y) > 0.9 * length(d) ? vec3(1, 0, 0) : vec3(0, 1, 0))), y = normalize(cross(d, x));
+        float angle = noise() * 6.2831853, sum = 0.0, spread = soft * 0.0018 * length(d);
+        if (u_penumbra != 0 && spread > 0.0) { // sharp where what stops the light is near, soft where it is far
+            float found = 0.0, blockers = 0.0;
+            for (int k = 0; k < 8; ++k) {
+                float rr = sqrt((float(k) + 0.5) / 8.0), aa = float(k) * 2.39996323; // the same at each pixel: an even edge
+                vec3 q = normalize(d + (x * cos(aa) + y * sin(aa)) * rr * spread * 4.0);
+                float there = pointRaw(q, p);
+                if (there < ref) { found += there; blockers += 1.0; }
+            }
+            if (blockers == 0.0) return 1.0;
+            float near = found / blockers;
+            spread *= clamp((ref - near) / max(near, 1e-3) * 4.0 + 0.25, 0.25, 2.0);
+        }
+        for (int k = 0; k < u_taps; ++k) {
+            float rr = sqrt((float(k) + 0.5) / float(u_taps)), aa = angle + float(k) * 2.39996323;
+            vec3 q = d + (x * cos(aa) + y * sin(aa)) * rr * spread;
+            vec3 f = pointFace(q, p);
+            sum += tap(u_pointMaps, f.xy, f.z, ref);
+        }
+        return sum / float(u_taps);
+    }
+    if (s < 0) return 1.0;
+    mat4 shadowMat = mat4(shadowData[s * 6], shadowData[s * 6 + 1], shadowData[s * 6 + 2], shadowData[s * 6 + 3]);
+    vec3 planes = shadowData[s * 6 + 4].xyz;
+    float radius = shadowData[s * 6 + 5].x, bias = shadowData[s * 6 + 5].y;
+    vec4 q = shadowMat * vec4(v_pos + N * bias, 1.0);
+    vec3 t = q.xyz / q.w * 0.5 + 0.5;
+    if (q.w <= 0.0 || t.x <= 0.0 || t.x >= 1.0 || t.y <= 0.0 || t.y >= 1.0 || t.z >= 1.0) return 1.0;
+    float angle = noise() * 6.2831853, sum = 0.0;
+    float c = cos(angle), si = sin(angle);
+    // Sharp where what stops the light is near, soft where it is far. An area's is wide: as few looks as this would draw
+    // contours in it, all of it as soft
+    if (u_penumbra != 0 && radius > 0.0 && int(lights[i * 7].w) != 3) {
+        float found = 0.0, blockers = 0.0;
+        for (int k = 0; k < 8; ++k) {
+            float rr = sqrt((float(k) + 0.5) / 8.0), aa = float(k) * 2.39996323;
+            vec2 d = vec2(cos(aa), sin(aa)) * rr;
+            float there = textureLod(u_shadowMaps, vec3(t.xy + d * radius * 4.0, float(s)), 0.0).r; // the same at each pixel: an even edge
+            if (there < t.z) { found += mapDistance(planes, there); blockers += 1.0; }
+        }
+        if (blockers == 0.0) return 1.0;
+        float near = found / blockers;
+        radius *= clamp((mapDistance(planes, t.z) - near) / max(near, 1e-3) * 4.0 + 0.25, 0.25, 2.0);
+    }
+    int taps = int(lights[i * 7].w) == 3 ? u_taps * 2 : u_taps; // its edge is wide: more of them, or it shows grain
+    for (int k = 0; k < taps; ++k) {
+        float rr = sqrt((float(k) + 0.5) / float(taps)), aa = float(k) * 2.39996323;
+        vec2 d = vec2(cos(aa), sin(aa)) * rr;
+        sum += tap(u_shadowMaps, t.xy + vec2(c * d.x - si * d.y, si * d.x + c * d.y) * radius, float(s), t.z);
+    }
+    return sum / float(taps);
+}
 float panel(vec3 d, vec3 at, float size, float blur) { return smoothstep(size - blur, size + blur * 0.4, dot(d, normalize(at))); }
 // A photo studio: a large panel above, a smaller one behind on each side, a dark room; blurred as the surface is rough
 vec3 studio(vec3 d, float r) {

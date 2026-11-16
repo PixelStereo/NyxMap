@@ -113,15 +113,17 @@ it and the parts ported so far.
   studio's light (no limit to their number: OpenGL took eight; they sit in a storage
   buffer), physically based materials with their maps (base colour,
   roughness, metal, normals, occlusion, emission), tone mapping, multisampled as
-  the project's quality asks, then the camera's grade (colours, vignette).
+  the project's quality asks, their shadows (spot, directional and point lights,
+  no limit to their number either: each light's view of the models goes in a layer of
+  a float array, six for a point light, read with a gathered comparison), then the
+  camera's grade (colours, vignette).
   `rhi_scene` compares both with OpenGL, picture by picture: the views pixel for
   pixel on Metal, the lit scenes 0.01 to 0.2 levels apart on average (the
   silhouettes' pixels differ without antialiasing). The cells' 3D views,
   `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under them
   through `RhiDraw`, the handles over them through the overlay); the OpenGL
   renderer's views come back the same way, as pixels. Not yet, in lit scenes:
-  shadows (spot and directional maps, point cubes), an environment (and its
-  sky), screen-space occlusion and reflections, glow, fog, the supersampled
+  an environment (and its sky), screen-space occlusion and reflections, glow, fog, the supersampled
   quality level; pictures laid on models by a layer, displacement pictures and
   the textures of shared materials; `MaterialSphere` (the material preview, still an
   OpenGL widget: it keeps the other views on the OpenGL API).
