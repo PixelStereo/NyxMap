@@ -31,7 +31,8 @@ public:
     static QShader shader(const QString &name);
 
     // `src` drawn over the whole of `dst` (outside any pass); `uploads`, if any, go with the pass
-    bool blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads = nullptr);
+    // flipped: upside down (a picture whose first row is its top, as another API's textures hold it)
+    bool blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads = nullptr, bool flipped = false);
     // `dst` emptied (transparent black), outside any pass
     void clear(QRhiCommandBuffer *cb, RhiTarget &dst, QRhiResourceUpdateBatch *uploads = nullptr);
 
@@ -58,7 +59,7 @@ private:
     float m_flip = 1;
     std::unique_ptr<QRhiSampler> m_linear, m_nearest, m_trilinear;
     std::unique_ptr<QRhiTexture> m_black;
-    std::unique_ptr<QRhiBuffer> m_quad, m_blitUbuf;
+    std::unique_ptr<QRhiBuffer> m_quad, m_blitUbuf, m_blitFlippedUbuf;
     std::unique_ptr<QRhiGraphicsPipeline> m_blitPs[3]; // by target format: RGBA8, RGBA16F, RGBA32F
     QRhiResourceUpdateBatch *m_uploads = nullptr;
     struct Kept {

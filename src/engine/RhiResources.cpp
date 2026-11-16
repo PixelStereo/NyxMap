@@ -47,6 +47,8 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
     m_quad->create();
     m_blitUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
     m_blitUbuf->create();
+    m_blitFlippedUbuf.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    m_blitFlippedUbuf->create();
     m_uploads = rhi->nextResourceUpdateBatch();
     QImage black(1, 1, QImage::Format_RGBA8888);
     black.fill(Qt::transparent);
@@ -55,6 +57,8 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
     m_uploads->uploadStaticBuffer(m_quad.get(), quad);
     const float flip[4] = {m_flip, 0, 0, 0};
     m_uploads->uploadStaticBuffer(m_blitUbuf.get(), flip);
+    const float flipped[4] = {-m_flip, 0, 0, 0};
+    m_uploads->uploadStaticBuffer(m_blitFlippedUbuf.get(), flipped);
 }
 
 RhiResources::~RhiResources()
@@ -69,6 +73,7 @@ RhiResources::~RhiResources()
     for (auto &pipeline : m_blitPs) pipeline.reset();
     m_bindings.clear();
     m_blitUbuf.reset();
+    m_blitFlippedUbuf.reset();
     m_quad.reset();
     m_black.reset();
     m_nearest.reset();
@@ -123,10 +128,10 @@ QRhiShaderResourceBindings *RhiResources::bindings(const std::vector<Bind> &list
     return kept.srb.get();
 }
 
-bool RhiResources::blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads)
+bool RhiResources::blit(QRhiCommandBuffer *cb, QRhiTexture *src, RhiTarget &dst, QRhiResourceUpdateBatch *uploads, bool flipped)
 {
     if (!src || !dst.ready()) return false;
-    QRhiShaderResourceBindings *srb = bindings({{0, QRhiShaderResourceBinding::VertexStage, m_blitUbuf.get()},
+    QRhiShaderResourceBindings *srb = bindings({{0, QRhiShaderResourceBinding::VertexStage, flipped ? m_blitFlippedUbuf.get() : m_blitUbuf.get()},
                                                 {1, QRhiShaderResourceBinding::FragmentStage, nullptr, src, m_linear.get()}});
     const int slot = dst.format() == QRhiTexture::RGBA32F ? 2 : dst.format() == QRhiTexture::RGBA16F ? 1 : 0;
     std::unique_ptr<QRhiGraphicsPipeline> &ps = m_blitPs[slot];

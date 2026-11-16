@@ -320,14 +320,15 @@ if(APPLE AND NYXMAP_SYPHON)
   file(GLOB SYPHON_HEADERS "${syphon_SOURCE_DIR}/*.h")
   file(COPY ${SYPHON_HEADERS} DESTINATION "${CMAKE_BINARY_DIR}/syphon-include/Syphon")
   file(GLOB SYPHON_SOURCES "${syphon_SOURCE_DIR}/*.m" "${syphon_SOURCE_DIR}/*.c")
-  # OpenGL version only: the Metal server would require compiling .metal shaders
-  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "Metal")
+  # The OpenGL server and clients, and the Metal client (an IOSurface as a texture); the Metal server would require
+  # compiling .metal shaders
+  list(FILTER SYPHON_SOURCES EXCLUDE REGEX "SyphonMetalServer")
   add_library(syphon STATIC ${SYPHON_SOURCES})
   target_include_directories(syphon PUBLIC "${CMAKE_BINARY_DIR}/syphon-include" PRIVATE "${syphon_SOURCE_DIR}")
   target_compile_definitions(syphon PRIVATE SYPHON_CORE_SHARE GL_SILENCE_DEPRECATION)
   target_compile_options(syphon PRIVATE -w "SHELL:-include ${syphon_SOURCE_DIR}/Syphon_Prefix.pch"
     $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
-  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework OpenGL" "-framework IOSurface" "-framework Foundation")
+  target_link_libraries(syphon PUBLIC "-framework Cocoa" "-framework OpenGL" "-framework IOSurface" "-framework Foundation" "-framework Metal")
   target_sources(nyxmap_engine PRIVATE src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm)
   set_source_files_properties(src/engine/PublishSyphon.mm src/engine/LiveInputSyphon.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   target_link_libraries(nyxmap_engine PRIVATE syphon)

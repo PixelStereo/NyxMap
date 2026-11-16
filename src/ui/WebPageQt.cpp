@@ -199,6 +199,14 @@ public:
         tex.upload(frame.constBits(), frame.width(), frame.height());
         return true;
     }
+    bool takeFrame(QImage *out) override // QRhi
+    {
+        QMutexLocker lk(&m_shared->mutex);
+        if (!m_shared->fresh) return false;
+        m_shared->fresh = false;
+        *out = m_shared->frame; // shared, not copied
+        return true;
+    }
     QString status() const override
     {
         QMutexLocker lk(&m_shared->mutex);

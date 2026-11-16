@@ -84,6 +84,8 @@ struct RhiRenderer::Impl {
         QSize imageSize;
         std::unique_ptr<IsfInstance> generator;
         QString generatorPath;
+        RhiTarget liveTarget; // a live input's texture of another API, turned the right way up
+        QSize liveSize;
         RhiTarget generatorTarget, sourceColor, prep, fx[2], mixed[2], group, out;
         RhiTarget mip; // the picture with its mip levels, drawn smaller than it is
         QRhiTexture *mipSource = nullptr;
@@ -357,22 +359,45 @@ struct RhiRenderer::Impl {
             if (tex) size = tex->pixelSize();
             break;
         case SourceType::Input:
-            if (l.input) {
-                QImage frame;
-                if (l.input->takeFrame(&frame)) {
-                    const bool first = !l.srcWidth;
-                    l.srcWidth = frame.width();
-                    l.srcHeight = frame.height();
-                    if (first && l.mapping.isIdentity() && l.srcHeight > 0)
-                        l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
-                    uploadPicture(r, frame);
-                }
-                tex = r.image.get();
-                size = r.imageSize;
+        case SourceType::Web: { // a live input, or the pictures taken of a web page (pixels, or a texture of another API)
+            LiveInput *in = l.type == SourceType::Web ? static_cast<LiveInput *>(l.webPage.get()) : l.input.get();
+            if (!in) break;
+            auto fit = [&](QSize s) {
+                const bool first = !l.srcWidth;
+                l.srcWidth = s.width();
+                l.srcHeight = s.height();
+                if (first && l.type == SourceType::Input && l.mapping.isIdentity() && l.srcHeight > 0)
+                    l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
+            };
+            QImage frame;
+            if (in->takeFrame(&frame)) {
+                fit(frame.size());
+                uploadPicture(r, frame);
             }
+            QSize shared;
+            bool upsideDown = false;
+            if (QRhiTexture *t = r.image ? nullptr : in->takeTexture(rhi.get(), &shared, &upsideDown)) {
+                if (shared != r.liveSize) {
+                    r.liveSize = shared;
+                    fit(shared);
+                }
+                if (!upsideDown) { // as the pictures here are held: used as it is, no copy
+                    tex = t;
+                    size = shared;
+                    break;
+                }
+                if (!r.liveTarget.ready() || r.liveTarget.size() != shared) r.liveTarget.ensure(rhi.get(), shared);
+                if (r.liveTarget.ready() && res().blit(cb, t, r.liveTarget, nullptr, true)) {
+                    tex = r.liveTarget.texture();
+                    size = shared;
+                    break;
+                }
+            }
+            tex = r.image.get();
+            size = r.imageSize;
             break;
+        }
         case SourceType::Tox: warnOnce(QStringLiteral("TouchEngine layers")); break;
-        case SourceType::Web: warnOnce(QStringLiteral("web pages")); break;
         default: break;
         }
         if (!tex) return;

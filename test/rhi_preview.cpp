@@ -3,8 +3,10 @@
 // nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
 #include "Engine.h"
 #include "Layer.h"
+#include "LiveInput.h"
 #include "Publish.h"
 
+#include <QCoreApplication>
 #include <QGuiApplication>
 #include <QColor>
 #include <QImage>
@@ -203,6 +205,53 @@ int main(int argc, char **argv)
         if (!live.isNull() && QColor(live.pixel(32, 16)).green() > 150) break;
     }
     check(!live.isNull() && QColor(live.pixel(32, 16)) == QColor(0, 200, 0), "live input: its colour is in the composition");
+
+    // A Syphon server's picture (macOS: another engine publishes a green layer) reaches the QRhi frame as a texture
+    {
+        Engine server;
+        QString serr;
+        if (server.initialize(&serr)) {
+            server.newProject();
+            server.setCompositionSize(QSize(64, 32));
+            QImage stripes(64, 32, QImage::Format_RGB32); // red above, blue below
+            for (int y = 0; y < 32; ++y)
+                for (int x = 0; x < 64; ++x) stripes.setPixel(x, y, y < 16 ? qRgb(255, 0, 0) : qRgb(0, 0, 255));
+            stripes.save(tmp.path() + "/stripes.png");
+            server.setLayerImage(server.addLayer(QStringLiteral("Stripes")), tmp.path() + "/stripes.png", &serr);
+            server.addViewport(QStringLiteral("Out"), QSize(64, 32));
+            PublishSettings sp;
+            sp[PublishKind::Syphon].enabled = true;
+            sp[PublishKind::Syphon].name = QStringLiteral("NyxMapRhiTest");
+            server.setPublishSettings(server.mainViewportId(), sp);
+            QString uri;
+            for (int k = 0; k < 40 && uri.isEmpty(); ++k) {
+                server.renderFrame();
+                QThread::msleep(25);
+                QCoreApplication::processEvents(); // the directory hears the servers through notifications
+                for (const LiveInputInfo &i : listLiveInputs())
+                    if (i.kind == QLatin1String("Syphon") && i.name.endsWith(QLatin1String("NyxMapRhiTest"))) uri = i.uri;
+            }
+            if (uri.isEmpty()) {
+                std::printf("  (no Syphon here: not checked)\n");
+            } else {
+                e.newProject();
+                e.setCompositionSize(QSize(64, 32));
+                check(e.setLayerInput(e.addLayer(QStringLiteral("Syphon")), uri, &serr), "syphon input: the layer takes it");
+                QImage got;
+                for (int k = 0; k < 80; ++k) {
+                    server.renderFrame();
+                    e.renderFrame();
+                    QThread::msleep(15);
+                    QCoreApplication::processEvents();
+                    got = e.grabOutput();
+                    if (!got.isNull() && QColor(got.pixel(32, 4)).red() > 150) break;
+                }
+                check(!got.isNull() && QColor(got.pixel(32, 4)) == QColor(255, 0, 0) && QColor(got.pixel(32, 28)) == QColor(0, 0, 255),
+                      "syphon input: the server's picture is in the composition, the right way up");
+            }
+            server.shutdown();
+        }
+    }
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
     return g_failures ? 1 : 0;

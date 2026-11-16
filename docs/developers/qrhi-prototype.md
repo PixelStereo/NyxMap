@@ -44,7 +44,13 @@ it and the parts ported so far.
   contents between passes). A layer drawn under 90% of its size is sampled from
   mip levels of a copy of its picture, made again once per frame of a plain
   video and once per frame of the render otherwise, as many times as OpenGL
-  makes them. Not yet: live inputs, TouchEngine, web pages, 3D scenes.
+  makes them. Live inputs that arrive as pixels (cameras, screens and windows, NDI,
+  OMT, DeckLink; `LiveInput::takeFrame`) and web pages go into the layer's QRhi
+  texture. A Syphon server's IOSurface becomes a Metal texture of QRhi's device
+  through Syphon's Metal client and is sampled as it is, no copy
+  (`LiveInput::takeTexture`). `rhi_preview` checks a solid input, and a GL engine
+  publishing to a QRhi one through Syphon. Not yet: Spout inputs (a Direct3D 11
+  texture), TouchEngine, 3D scenes.
 - **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
   the engine's QRhi, made by the render thread; its viewport's picture is drawn
   into it as it is, the right way up (the textures' flip, reversed). The window's

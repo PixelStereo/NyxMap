@@ -2,11 +2,14 @@
 #include "LiveInput.h"
 
 #import <Foundation/Foundation.h>
+#import <Syphon/SyphonMetalClient.h>
 #import <Syphon/SyphonOpenGLClient.h>
 #import <Syphon/SyphonOpenGLImage.h>
 #import <Syphon/SyphonServerDirectory.h>
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl3.h>
+#import <Metal/Metal.h>
+#include <rhi/qrhi.h>
 
 static QString serverName(NSDictionary *d)
 {
@@ -37,6 +40,9 @@ public:
         @autoreleasepool {
             [m_client stop];
             m_client = nil;
+            [m_metal stop];
+            m_metal = nil;
+            m_image = nil;
         }
         if (m_fbo[0] && QOpenGLContext::currentContext()) gl()->glDeleteFramebuffers(2, m_fbo);
     }
@@ -63,6 +69,36 @@ public:
             return true;
         }
     }
+    // QRhi (Metal): the server's IOSurface as a texture of QRhi's device, no copy
+    QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override
+    {
+        @autoreleasepool {
+            if (!rhi || rhi->backend() != QRhi::Metal) return nullptr;
+            if (!m_metal) {
+                auto *handles = static_cast<const QRhiMetalNativeHandles *>(rhi->nativeHandles());
+                id<MTLDevice> device = (id<MTLDevice>)handles->dev;
+                for (NSDictionary *d in [[SyphonServerDirectory sharedDirectory] servers]) {
+                    if (serverName(d) != m_name) continue;
+                    m_metal = [[SyphonMetalClient alloc] initWithServerDescription:d device:device options:nil newFrameHandler:nil];
+                    break;
+                }
+            }
+            if (m_metal && [m_metal hasNewFrame]) {
+                id<MTLTexture> image = [m_metal newFrameImage];
+                if (image && image != m_image) {
+                    m_image = image;
+                    const QSize s(int(image.width), int(image.height));
+                    m_rhiTexture.reset(rhi->newTexture(QRhiTexture::BGRA8, s));
+                    if (!m_rhiTexture->createFrom({quint64(quintptr((__bridge void *)image)), 0})) m_rhiTexture.reset();
+                }
+            }
+            if (!m_rhiTexture) return nullptr;
+            m_seen = true;
+            *size = m_rhiTexture->pixelSize();
+            *flipped = false; // an IOSurface from a GL server: its first row is the picture's bottom, as ours
+            return m_rhiTexture.get();
+        }
+    }
     QString status() const override { return m_seen ? QString() : QStringLiteral("Waiting for the Syphon server \"%1\"").arg(m_name); }
 
 private:
@@ -78,6 +114,9 @@ private:
     }
     QString m_name;
     SyphonOpenGLClient *m_client = nil;
+    SyphonMetalClient *m_metal = nil;
+    id<MTLTexture> m_image = nil;
+    std::unique_ptr<QRhiTexture> m_rhiTexture;
     GLuint m_fbo[2] = {0, 0};
     bool m_seen = false;
 };
