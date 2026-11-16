@@ -1,6 +1,6 @@
 #pragma once
 // The interface's drawing through QRhi (the widgets' own QRhi, QRhiWidget): one picture, then lines and triangles in
-// normalized device coordinates (x right, y up, as OpenGL's), each batch in one color. Replaces GlDraw.
+// normalized device coordinates (x right, y up, as OpenGL's), each batch in one color.
 // Use from a QRhiWidget: initialize() with the widget's QRhi and render target, then per frame setPicture(),
 // drawPicture(), drawLines(), drawTriangles(), and render().
 

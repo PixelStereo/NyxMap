@@ -105,6 +105,18 @@ it and the parts ported so far.
   they do not trail the GPU by a frame (the offscreen frame completes at once),
   but they cost a whole picture's readback each frame; a GPU sampler would
   replace them. Sonification is not covered by a test yet.
+- **3D**, step by step (`RhiScene`, `Model3D::rhiDraws`): the interface's 3D views
+  (the flat look with edges and the unlit look, the models' colours as they are)
+  are drawn through QRhi from the view's camera, with the shape FX of the models
+  (bend, twist, taper, wave, noise) in the vertex shader. `rhi_scene` compares them
+  with the OpenGL views of four primitives: pixel for pixel on Metal. The cells'
+  3D views, `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under
+  them through `RhiDraw`, the handles over them through the overlay); the OpenGL
+  renderer's views come back the same way, as pixels. Not yet: lit scenes and 3D
+  layers (lights, shadows, environment, ambient occlusion, reflections, glow, fog:
+  Scene3D::draw, ten shaders), pictures laid on models by a layer, displacement
+  pictures and the textures of shared materials, `MaterialSphere` (the material
+  preview, still an OpenGL widget: it keeps the other views on the OpenGL API).
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

@@ -610,7 +610,7 @@ int runScene3dUiTests(Engine &engine)
                 engine.renderFrame();
                 pump();
             }
-            const QImage shot = view->grabFramebuffer();
+            const QImage shot = view->grab().toImage();
             const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
             check(middle.lightness() > 60, "the 3D view draws the scene's model");
             // Its button: simple or unlit, saved with the view
@@ -624,7 +624,7 @@ int runScene3dUiTests(Engine &engine)
                     engine.renderFrame();
                     pump();
                 }
-                const QImage unlit = view->grabFramebuffer();
+                const QImage unlit = view->grab().toImage();
                 check(view->look() == Scene3D::ViewLook::Unlit && lookButton->text() == "Unlit", "unlit, chosen");
                 check(unlit != shot, "it draws differently");
                 check(view->viewState().value("look").toString() == "unlit", "saved with the view");
@@ -781,7 +781,7 @@ int runScene3dUiTests(Engine &engine)
                         engine.renderFrame();
                         pump();
                     }
-                    return view->grabFramebuffer();
+                    return view->grab().toImage();
                 };
                 const QImage point = lit("point"), spot = lit("spot"), sun = lit("directional"), panel = lit("area");
                 const auto different = [](const QImage &x, const QImage &y) {
@@ -799,7 +799,7 @@ int runScene3dUiTests(Engine &engine)
                     engine.renderFrame();
                     pump();
                 }
-                const QImage sharp = view->grabFramebuffer();
+                const QImage sharp = view->grab().toImage();
                 check(different(sharp, spot) > 20, "its falloff is drawn inside its cone");
                 // Its path and what it looks at are drawn too, each on its own, from far enough to see them
                 {
@@ -814,7 +814,7 @@ int runScene3dUiTests(Engine &engine)
                             engine.renderFrame();
                             pump();
                         }
-                        return view->grabFramebuffer();
+                        return view->grab().toImage();
                     };
                     const QImage bare = shot();
                     engine.setParameter(drawn, "light/lookat", true);
@@ -872,7 +872,7 @@ int runScene3dUiTests(Engine &engine)
                             engine.renderFrame();
                             pump();
                         }
-                        view->grabFramebuffer().save(captures + "/merge3d-view.png");
+                        view->grab().toImage().save(captures + "/merge3d-view.png");
                         inspector.resize(420, 620);
                         inspector.grab().save(captures + "/merge3d-inspector.png");
                         if (auto *box = window.findChild<QWidget *>("quality3d")) box->grab().save(captures + "/quality3d.png");
@@ -907,7 +907,7 @@ int runScene3dUiTests(Engine &engine)
                     engine.renderFrame();
                     pump();
                 }
-                view->grabFramebuffer().save(captures + "/scene3d-view.png");
+                view->grab().toImage().save(captures + "/scene3d-view.png");
             }
         }
     }
@@ -997,11 +997,11 @@ int runScene3dUiTests(Engine &engine)
             auto *metal = materials.findChild<SliderField *>("materialMetal");
             auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
             auto *color = materials.findChild<ColorPicker *>("materialBaseColor");
-            const QImage before = preview ? preview->grabFramebuffer() : QImage();
+            const QImage before = preview ? preview->grab().toImage() : QImage();
             if (metal) emit metal->valueEdited(.9);
             if (color) emit color->colorEdited(QColor(Qt::red));
             pump();
-            const QImage after = preview ? preview->grabFramebuffer() : QImage();
+            const QImage after = preview ? preview->grab().toImage() : QImage();
             check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
             check(!before.isNull() && !after.isNull() && before != after, "sphere preview responds to material changes");
             if (const QString file = qEnvironmentVariable("NYXMAP_MATERIAL_CAPTURE"); !file.isEmpty()) materials.grab().save(file);

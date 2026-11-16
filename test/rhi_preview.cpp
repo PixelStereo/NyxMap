@@ -3,6 +3,8 @@
 // nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
 #include "Engine.h"
 #include "Layer.h"
+#include "LayerTree.h"
+#include "Model3D.h"
 #include "LiveInput.h"
 #include "Publish.h"
 #include "Tox.h"
@@ -308,6 +310,32 @@ int main(int argc, char **argv)
         check(!got.isNull() && QColor(got.pixel(32, 16)) == QColor(0, 200, 0), "tox: its picture is in the composition");
         check(FakeTox::inputTexture != 0 && FakeTox::inputWidth == 64, "tox: its input gets the source layer's picture");
         setToxFactoryForTests({});
+    }
+
+    // A 3D view of a scene (a cell showing a primitive from the view's own camera), through QRhi
+    {
+        e.newProject();
+        e.setCompositionSize(QSize(64, 32));
+        const int scene = e.addScene(QStringLiteral("Stage"));
+        const quint64 sceneId = e.layerId(scene);
+        const int model = e.addLayer(QStringLiteral("Ball"), scene + 1);
+        const quint64 modelId = e.layerId(model);
+        e.setLayerModel(model, Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        e.setStructure(tree::intoGroup(e.structure(), {modelId}, sceneId));
+        SceneSettings camera;
+        camera.distance = 3;
+        camera.background = {0.1f, 0.1f, 0.1f, 1};
+        e.setPreviewSource(0, sceneId);
+        e.setPreviewScene(0, true, camera, QSize(160, 120), Scene3D::ViewLook::Unlit);
+        QImage view;
+        for (int k = 0; k < 20 && view.isNull(); ++k) {
+            e.renderFrame();
+            QThread::msleep(10);
+            view = e.previewImage(0);
+        }
+        check(!view.isNull() && view.size() == QSize(160, 120), "3D view: its picture comes back, at the size asked");
+        const QColor middle = view.isNull() ? QColor() : QColor(view.pixel(80, 60));
+        check(view.isNull() ? false : (middle.red() > 120 || middle.green() > 120 || middle.blue() > 120), "3D view: the model is in it");
     }
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);

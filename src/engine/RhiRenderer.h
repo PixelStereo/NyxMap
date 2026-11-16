@@ -9,11 +9,12 @@
 // picture, composition opacity and blackout, blend modes (Difference reads a copy of what is drawn), surface and
 // composition masks, mattes (Picture and Composition space), text, source transitions (a shader's, or a crossfade),
 // mapped meshes, the project's antialiasing and mipmaps.
-// Not yet: 3D scenes (each said once in the log; the layer is drawn without
+// The 3D views of the interface (flat and unlit) are drawn. Not yet: lit 3D scenes and layers (each said once in the log; the layer is drawn without
 // it, or not at all).
 // Shown: output windows through a swapchain each (present); the interface's previews, the pixel readers and the
 // published viewports as pixels (setPreviewRequests).
 
+#include "Model3D.h"
 #include "RhiTarget.h"
 
 #include <QByteArray>
@@ -69,6 +70,17 @@ public:
         QByteArray pixels;
     };
     void setPreviewRequests(std::vector<PreviewRequest> requests);
+    // The interface's 3D views (a cell showing a scene): drawn from the view's camera, as pixels like the other previews
+    // (a PreviewPicture of that slot). Set before render()
+    struct SceneViewRequest {
+        int slot = 0;
+        quint64 id = 0;
+        SceneSettings view;
+        QSize size;
+        Scene3D::ViewLook look = Scene3D::ViewLook::Simple;
+        std::vector<Scene3D::Item> items;
+    };
+    void setSceneViews(std::vector<SceneViewRequest> views);
     std::vector<PreviewPicture> takePreviews();
     // The viewport's picture into the window, through a swapchain of its own (render thread): true once shown.
     // `waitForDisplay`: this window is the one the frame follows the screen's refresh by (the others do not wait)

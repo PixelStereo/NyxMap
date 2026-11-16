@@ -9,6 +9,7 @@
 #include <QOpenGLContext>
 #include <QLocale>
 #include <QPainter>
+#include "PaintOverlay.h"
 #include <functional>
 #include <QPainterPath>
 #include <QPaintEngine>
@@ -38,8 +39,10 @@ double toSegment(QPointF p, QPointF a, QPointF b)
 }
 } // namespace
 
-Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWidget(parent), m_engine(engine), m_slot(slot)
+Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QRhiWidget(parent), m_engine(engine), m_slot(slot)
 {
+    setApi(QRhiWidget::Api::OpenGL); // as the other views: one API for the window while the material sphere is OpenGL
+    m_overlay = new PaintOverlay(this, [this](QPainter &p) { paintOverlay(p); }); // under the buttons
     setObjectName(QStringLiteral("scene3dView%1").arg(slot));
     setMinimumSize(100, 70);
     setFocusPolicy(Qt::StrongFocus);
@@ -126,14 +129,7 @@ Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QOpenGLWid
                               "F: frame the selection · H: all of the scene"));
 }
 
-Scene3DView::~Scene3DView()
-{
-    if (context()) {
-        makeCurrent();
-        m_draw.destroy();
-        doneCurrent();
-    }
-}
+Scene3DView::~Scene3DView() = default;
 
 void Scene3DView::setScene(quint64 scene)
 {
@@ -506,54 +502,46 @@ void Scene3DView::commitEdit()
     if (m_undo) m_undo->push(new cmd::SetValues(m_engine, changes, text));
 }
 
-void Scene3DView::initializeGL() { m_draw.init(); }
+void Scene3DView::initialize(QRhiCommandBuffer *) { m_draw.initialize(rhi(), renderTarget()); }
+void Scene3DView::releaseResources() { m_draw.release(); }
 
 void Scene3DView::resizeEvent(QResizeEvent *e)
 {
-    QOpenGLWidget::resizeEvent(e);
+    QRhiWidget::resizeEvent(e);
+    m_overlay->follow();
     pushCamera();
 }
 
-void Scene3DView::paintGL()
+void Scene3DView::render(QRhiCommandBuffer *cb)
 {
-    QPainter p(this); // the ground, the engine's picture of the scene over it (native GL), then the rest
-    p.beginNativePainting();
-    auto *f = context()->extraFunctions();
-    const qreal dpr = devicePixelRatioF();
-    f->glViewport(0, 0, int(width() * dpr), int(height() * dpr));
-    f->glClearColor(0.11f, 0.11f, 0.12f, 1);
-    f->glClear(GL_COLOR_BUFFER_BIT);
-    p.endNativePainting();
-    paintGround(p);
-    p.beginNativePainting();
-    f->glViewport(0, 0, int(width() * dpr), int(height() * dpr));
-    {
-        Engine::Lock lock(&m_engine->mutex());
-        m_engine->waitForFrame(f);
-        QSize size;
-        int buffer = 0;
-        const GLuint texture = m_engine->previewTexture(m_slot, &size, &buffer);
-        if (texture && !size.isEmpty()) {
-            m_draw.drawTexture(texture, true);
-            m_engine->finishPreviewRead(m_slot, buffer, f);
+    m_draw.initialize(rhi(), renderTarget());
+    m_draw.begin(QColor::fromRgbF(0.11f, 0.11f, 0.12f));
+    paintGround();
+    const QImage image = m_engine->previewImage(m_slot); // the engine's picture of the scene, over the ground
+    if (!image.isNull()) {
+        if (image.cacheKey() != m_pictureKey) {
+            m_draw.setPicture(image);
+            m_pictureKey = image.cacheKey();
         }
+        m_draw.drawPicture(-1, -1, 1, 1, true);
     }
-    p.endNativePainting();
-    paintOverlay(p);
+    m_draw.render(cb, renderTarget());
+    m_overlay->update();
 }
 
 // The ground: a grid on X Z and its axes, under the scene
-void Scene3DView::paintGround(QPainter &p)
+void Scene3DView::paintGround()
 {
-    p.setRenderHint(QPainter::Antialiasing);
+    const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+    auto line = [&](QPointF a, QPointF b, const QColor &c) {
+        m_draw.drawLines({float(a.x() / w * 2 - 1), float(1 - a.y() / h * 2), float(b.x() / w * 2 - 1), float(1 - b.y() / h * 2)}, c);
+    };
     for (int k = -5; k <= 5; ++k) {
         bool f1, f2, f3, f4;
         const QPointF a = project({float(k), 0, -5}, &f1), b = project({float(k), 0, 5}, &f2);
         const QPointF c = project({-5, 0, float(k)}, &f3), d = project({5, 0, float(k)}, &f4);
-        p.setPen(QPen(k == 0 ? QColor(80, 140, 245, 140) : QColor(255, 255, 255, 30), 1));
-        if (f1 && f2) p.drawLine(a, b);
-        p.setPen(QPen(k == 0 ? QColor(235, 80, 80, 140) : QColor(255, 255, 255, 30), 1));
-        if (f3 && f4) p.drawLine(c, d);
+        if (f1 && f2) line(a, b, k == 0 ? QColor(80, 140, 245, 140) : QColor(255, 255, 255, 30));
+        if (f3 && f4) line(c, d, k == 0 ? QColor(235, 80, 80, 140) : QColor(255, 255, 255, 30));
     }
 }
 
@@ -999,7 +987,7 @@ void Scene3DView::keyPressEvent(QKeyEvent *e)
     case Qt::Key_R: setMode(Mode::Scale); break;
     case Qt::Key_F: frameSelection(); break;
     case Qt::Key_H: frameAll(); break;
-    default: QOpenGLWidget::keyPressEvent(e); return;
+    default: QRhiWidget::keyPressEvent(e); return;
     }
     e->accept();
 }

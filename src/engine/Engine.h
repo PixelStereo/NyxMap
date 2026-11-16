@@ -80,6 +80,7 @@ struct AsyncImageRead {
     quint64 serial[2] = {0, 0};
     quint64 started = 0;
     qint64 last = 0; // when the last read began (ns)
+    GLuint fbo = 0;  // to read a texture that is not a render target's
     void release();
 };
 
@@ -1224,6 +1225,7 @@ private:
     void collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
                       const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
+    void sceneViewOf(const PreviewSlot &slot, int index, std::vector<Scene3D::Item> &items, SceneSettings &view);
     RenderTarget m_output[2];
     GLuint m_compositionReuseTexture = 0; // raw, full-size viewport rendered during this frame
     RenderTarget m_audioVisual; // 16x16 live composition tap, render thread only

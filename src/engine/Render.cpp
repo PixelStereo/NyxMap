@@ -132,6 +132,8 @@ void AsyncImageRead::release()
     if (pbo[0] || pbo[1]) f->glDeleteBuffers(2, pbo);
     pbo[0] = pbo[1] = 0;
     capacity[0] = capacity[1] = 0;
+    if (fbo) f->glDeleteFramebuffers(1, &fbo);
+    fbo = 0;
 }
 
 // The newest read the GPU has finished (the buffers it was read into become free again)
@@ -166,12 +168,12 @@ static bool pollImageRead(AsyncImageRead &r, QImage *out)
 static bool imageReadDue(const AsyncImageRead &r, qint64 now) { return (!r.fence[0] || !r.fence[1]) && now - r.last >= 16'000'000; }
 
 // Begins reading `t` (bottom row first) without waiting: the pixels come back through pollImageRead
-static void startImageRead(AsyncImageRead &r, const RenderTarget &t, qint64 now)
+static void startImageRead(AsyncImageRead &r, GLuint source, int width, int height, qint64 now)
 {
-    if (!t.fbo || t.w <= 0 || t.h <= 0 || !imageReadDue(r, now)) return;
+    if (!source || width <= 0 || height <= 0 || !imageReadDue(r, now)) return;
     auto f = gl();
     const int k = !r.fence[0] ? 0 : 1;
-    const size_t bytes = size_t(t.w) * size_t(t.h) * 4;
+    const size_t bytes = size_t(width) * size_t(height) * 4;
     if (!r.pbo[k]) f->glGenBuffers(1, &r.pbo[k]);
     GLint previous = 0;
     f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
@@ -180,16 +182,32 @@ static void startImageRead(AsyncImageRead &r, const RenderTarget &t, qint64 now)
         f->glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(bytes), nullptr, GL_STREAM_READ);
         r.capacity[k] = bytes;
     }
-    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, t.fbo);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
     f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    f->glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     f->glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
     r.fence[k] = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    r.w[k] = t.w;
-    r.h[k] = t.h;
+    r.w[k] = width;
+    r.h[k] = height;
     r.serial[k] = ++r.started;
     r.last = now;
+}
+
+static void startImageRead(AsyncImageRead &r, const RenderTarget &t, qint64 now) { startImageRead(r, t.fbo, t.w, t.h, now); }
+
+// A texture (a 3D view's picture) read the same way, through a framebuffer of the read's own
+static void startImageRead(AsyncImageRead &r, GLuint texture, QSize size, qint64 now)
+{
+    if (!texture || !imageReadDue(r, now)) return;
+    auto f = gl();
+    GLint previous = 0;
+    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+    if (!r.fbo) f->glGenFramebuffers(1, &r.fbo);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, r.fbo);
+    f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    startImageRead(r, r.fbo, size.width(), size.height(), now);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
 }
 
 void Engine::drawQuad()
@@ -1483,6 +1501,40 @@ LightSettings Engine::placedLight(const Layer &m, const QMatrix4x4 &parent, QVec
     return light;
 }
 
+// What a 3D view of a slot shows: the objects of its scene (or Merge 3D) and the view's camera and background (render
+// thread, lock held)
+void Engine::sceneViewOf(const PreviewSlot &slot, int index, std::vector<Scene3D::Item> &items, SceneSettings &view)
+{
+    const Layer &layer = *m_layers[size_t(index)];
+    std::vector<Layer *> members;
+    QMatrix4x4 within; // a Merge 3D: where it is in its scene (what holds it)
+    const Layer *scene = &layer;
+    if (layer.merge3d) {
+        members.push_back(m_layers[size_t(index)].get()); // itself, with what it holds
+        within = mergesOf(layer);
+        for (quint64 up = layer.parent; up; ) {
+            const int aboveIndex = indexOfId(up);
+            const Layer *above = aboveIndex >= 0 ? m_layers[size_t(aboveIndex)].get() : nullptr;
+            if (!above) break;
+            scene = above;
+            if (above->scene3d) break;
+            up = above->parent;
+        }
+    } else {
+        for (auto &m : m_layers)
+            if (m->parent == layer.id) members.push_back(m.get());
+    }
+    std::vector<Scene3D::Lamp> lamps;
+    collectScene(members, items, lamps, within);
+    view = scene->scene; // the view's camera and background (a Merge 3D: its scene's)
+    for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
+    view.distance = slot.camera.distance;
+    view.yaw = slot.camera.yaw;
+    view.pitch = slot.camera.pitch;
+    view.fov = slot.camera.fov;
+    view.background = slot.camera.background;
+}
+
 void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene3D::Item> &items, std::vector<Scene3D::Lamp> &lamps,
                           const QMatrix4x4 &parent)
 {
@@ -2096,6 +2148,23 @@ void Engine::frame(double dt)
                 }
             }
         m_rhi->setPreviewRequests(std::move(asked));
+        { // the 3D views of the cells (the flat and the unlit looks), drawn through QRhi
+            std::vector<RhiRenderer::SceneViewRequest> views;
+            for (size_t i = 0; i < m_previewSlots.size(); ++i) {
+                const PreviewSlot &slot = m_previewSlots[i];
+                if (!slot.asked || !slot.sceneView || !slot.id) continue;
+                const int index = indexOfId(slot.id);
+                if (index < 0 || !(m_layers[size_t(index)]->scene3d || m_layers[size_t(index)]->merge3d)) continue;
+                RhiRenderer::SceneViewRequest q;
+                q.slot = int(i);
+                q.id = slot.id;
+                q.size = slot.sceneSize;
+                q.look = slot.sceneLook;
+                sceneViewOf(slot, index, q.items, q.view);
+                views.push_back(std::move(q));
+            }
+            m_rhi->setSceneViews(std::move(views));
+        }
         m_rhi->render(rc);
         std::map<int, std::array<float, 3>> listenedColors;
         bool shared = false;
@@ -2360,35 +2429,10 @@ void Engine::frame(double dt)
         if (index < 0) { slot.target[m_back].destroy(); continue; }
         const Layer &layer = *m_layers[size_t(index)];
         if (slot.sceneView && (layer.scene3d || layer.merge3d)) { // a 3D view: a scene, or a Merge 3D in its scene, from the view's own camera
-            std::vector<Layer *> members;
-            QMatrix4x4 within; // a Merge 3D: where it is in its scene (what holds it)
-            const Layer *scene = &layer;
-            if (layer.merge3d) {
-                members.push_back(m_layers[size_t(index)].get()); // itself, with what it holds
-                within = mergesOf(layer);
-                for (quint64 up = layer.parent; up; ) {
-                    const int aboveIndex = indexOfId(up);
-                    const Layer *above = aboveIndex >= 0 ? m_layers[size_t(aboveIndex)].get() : nullptr;
-                    if (!above) break;
-                    scene = above;
-                    if (above->scene3d) break;
-                    up = above->parent;
-                }
-            } else {
-                for (auto &m : m_layers)
-                    if (m->parent == layer.id) members.push_back(m.get());
-            }
             std::vector<Scene3D::Item> items;
-            std::vector<Scene3D::Lamp> lamps;
-            collectScene(members, items, lamps, within);
+            SceneSettings view;
+            sceneViewOf(slot, index, items, view);
             if (!slot.editor[m_back]) slot.editor[m_back] = std::make_shared<Scene3D>();
-            SceneSettings view = scene->scene; // the view's camera and background (a Merge 3D: its scene's)
-            for (int k = 0; k < 3; ++k) view.target[size_t(k)] = slot.camera.target[size_t(k)];
-            view.distance = slot.camera.distance;
-            view.yaw = slot.camera.yaw;
-            view.pitch = slot.camera.pitch;
-            view.fov = slot.camera.fov;
-            view.background = slot.camera.background;
             slot.editorTex[m_back] = slot.editor[m_back]->drawView(view, items, slot.sceneSize.width(), slot.sceneSize.height(), slot.sceneLook);
             if (slot.editorTex[m_back]) slot.renderedId[m_back] = slot.id;
             continue;
@@ -2410,11 +2454,15 @@ void Engine::frame(double dt)
         std::array<bool, 5> got{}, drop{};
         for (size_t i = 0; i < m_previewSlots.size(); ++i) {
             const PreviewSlot &slot = m_previewSlots[i];
-            if (!slot.asked || slot.sceneView || slot.renderedId[m_back] != slot.id) {
+            if (!slot.asked || slot.renderedId[m_back] != slot.id) {
                 drop[i] = true;
                 continue;
             }
             got[i] = pollImageRead(m_imageReads[i], &fresh[i]);
+            if (slot.sceneView) { // a 3D view's picture
+                startImageRead(m_imageReads[i], slot.editorTex[m_back], slot.sceneSize, now);
+                continue;
+            }
             if (!imageReadDue(m_imageReads[i], now)) continue;
             if (slot.id) {
                 startImageRead(m_imageReads[i], slot.target[m_back], now); // already reduced to 1024 px

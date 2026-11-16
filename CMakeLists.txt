@@ -425,7 +425,6 @@ set(UI_SOURCES
   src/ui/DmxOutputsPanel.cpp
   src/ui/MaskPanel.cpp
   src/ui/OutputWindow.cpp
-  src/ui/GlDraw.cpp
   src/ui/RhiDraw.cpp
   src/ui/Commands.cpp
   src/ui/LayerTable.cpp

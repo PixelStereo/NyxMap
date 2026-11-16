@@ -9,6 +9,7 @@
 #include "Masks.h"
 #include "RhiDevice.h"
 #include "RhiResources.h"
+#include "RhiScene.h"
 #include "RhiVideoTexture.h"
 #include "SourceColor.h"
 #include "TextWriting.h"
@@ -141,6 +142,8 @@ struct RhiRenderer::Impl {
     };
     std::map<quint64, Output> outputs;
     std::vector<PreviewRequest> previewRequests;
+    std::vector<SceneViewRequest> sceneViews;
+    std::map<int, std::unique_ptr<RhiScene>> scenes; // by preview slot
     std::vector<PreviewPicture> previewPictures;
     std::map<int, RhiTarget> previewTargets; // by slot
     std::unique_ptr<QRhiBuffer> presentFlip; // the framebuffer's first row is the top of the window: the textures' flip, reversed
@@ -1257,6 +1260,8 @@ bool RhiRenderer::init(QString *err)
     return true;
 }
 
+void RhiRenderer::setSceneViews(std::vector<SceneViewRequest> views) { d->sceneViews = std::move(views); }
+
 void RhiRenderer::imageArrived(quint64 layer, const QImage &image)
 {
     if (!d->rhi || image.isNull()) return;
@@ -1311,6 +1316,22 @@ void RhiRenderer::render(const IsfRenderContext &rc)
         d->cb->resourceUpdate(u);
         reads.push_back(std::move(read));
     }
+    // The 3D views: each drawn into a picture of its own, read back whole
+    for (SceneViewRequest &q : d->sceneViews) {
+        std::unique_ptr<RhiScene> &scene = d->scenes[q.slot];
+        if (!scene) scene = std::make_unique<RhiScene>(d->rhi.get());
+        QRhiTexture *tex = scene->drawView(d->cb, d->take(), q.view, q.items, q.size.width(), q.size.height(), q.look);
+        if (!tex) continue;
+        auto read = std::make_unique<Read>();
+        read->request.slot = q.slot;
+        read->request.id = q.id;
+        read->size = tex->pixelSize();
+        QRhiResourceUpdateBatch *u = d->rhi->nextResourceUpdateBatch();
+        u->readBackTexture({tex}, &read->result);
+        d->cb->resourceUpdate(u);
+        reads.push_back(std::move(read));
+    }
+    d->sceneViews.clear();
     if (d->pending) d->cb->resourceUpdate(d->take());
     d->rhi->endOffscreenFrame();
     d->previewPictures.clear();
