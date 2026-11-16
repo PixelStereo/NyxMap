@@ -771,6 +771,21 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         u->release();
         u = first;
     }
+    // What the camera sees, nearest first: the draws of its depth, for the occlusion and the reflections (their numbers go in
+    // the batch the first pass carries)
+    std::vector<Command> seen;
+    if (wantsSeen) {
+        for (const Placed &pl : placed) {
+            const std::vector<Model3D::RhiDraw> draws = pl.item->model->rhiDraws(rhi, u, &pl.item->placement, false, false);
+            for (const Model3D::RhiDraw &mesh : draws) {
+                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
+                Place pp = place(*pl.item, pl.model, cam, proj);
+                QRhiBuffer *b = d->ubuf();
+                u->updateDynamicBuffer(b, 0, sizeof pp, &pp);
+                seen.push_back({Kind::Depth, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
+            }
+        }
+    }
     // The shadows' passes first: each light's view, a distance or a depth, in its layer
     for (ShadowDraw &draw : shadowDraws) {
         Impl::Maps &maps = *draw.maps;
@@ -791,18 +806,6 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     }
     // What the camera sees, nearest first: its depth, for the occlusion and the reflections
     if (wantsSeen) {
-        std::vector<Command> seen;
-        for (const Placed &pl : placed) {
-            const std::vector<Model3D::RhiDraw> draws = pl.item->model->rhiDraws(rhi, u, &pl.item->placement, false, false);
-            for (const Model3D::RhiDraw &mesh : draws) {
-                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
-                Place pp = place(*pl.item, pl.model, cam, proj);
-                QRhiBuffer *b = d->ubuf();
-                u->updateDynamicBuffer(b, 0, sizeof pp, &pp);
-                seen.push_back({Kind::Depth, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
-            }
-        }
-        // (the buffers were written into the batch above: this pass carries them)
         cb->beginPass(d->seen.target.get(), QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
         u = nullptr;
         cb->setViewport({0, 0, float(w), float(h)});
