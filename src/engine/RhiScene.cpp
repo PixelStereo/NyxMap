@@ -2,6 +2,7 @@
 
 #include "RhiDevice.h"
 #include "RhiResources.h"
+#include "RhiTarget.h"
 
 #include <QMatrix4x4>
 #include <rhi/qrhi.h>
@@ -37,15 +38,25 @@ struct SceneBlock {
     float eye[4], ambient[4], misc[4];
     qint32 counts[4];
     qint32 shadowCfg[4]; // soft edges, taps per shadow
+    float screen[4];     // the picture's size, how much occlusion, how much reflection
+    qint32 reflect[4];   // steps, a last picture to reflect
+    float range[4];      // the near and far planes, the last picture's exposure
+    float viewProj[16];
 };
-static_assert(sizeof(SceneBlock) == 80, "the scene shaders' Scene block");
-constexpr quint32 kSceneBytes = 80;
+static_assert(sizeof(SceneBlock) == 80 + 48 + 64, "the scene shaders' Scene block");
+constexpr quint32 kSceneBytes = 192;
+
+struct AoBlock {
+    float invProj[16], proj[16];
+    float params[4]; // radius, amount
+    qint32 ints[4];  // samples
+};
 
 struct PostBlock {
     float flip[4], grade[4], more[4];
 };
 
-enum class Kind { Faces, Edges, Opaque, Blended, Lit, LitBlended, ShadowSpot, ShadowPoint };
+enum class Kind { Faces, Edges, Opaque, Blended, Lit, LitBlended, ShadowSpot, ShadowPoint, Depth };
 
 } // namespace
 
@@ -61,7 +72,11 @@ struct RhiScene::Impl {
         QSize size;
         int samples = 1;
     };
-    Surface view{1}, lit{2}, graded{3};
+    Surface view{1}, lit{2}, graded{3}, seen{4}, ao{5}, aoBlurred{6};
+    std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf;
+    RhiTarget last; // the last picture, for the reflections
+    bool lastValid = false;
+    std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> fullscreen; // by surface and fragment shader
     std::vector<std::unique_ptr<QRhiBuffer>> ubufs;
     size_t nextUbuf = 0;
     std::unique_ptr<QRhiBuffer> sceneUbuf, postUbuf;
@@ -130,14 +145,14 @@ struct RhiScene::Impl {
         return ubufs[nextUbuf++].get();
     }
 
-    bool ensure(Surface &s, int w, int h, int samples, bool withDepth)
+    bool ensure(Surface &s, int w, int h, int samples, bool withDepth, QRhiTexture::Format format = QRhiTexture::RGBA8)
     {
         if (s.target && s.size == QSize(w, h) && s.samples == samples) return true;
         s.target.reset();
         s.pass.reset();
         s.depth.reset();
         s.ms.reset();
-        s.color.reset(rhi->newTexture(QRhiTexture::RGBA8, QSize(w, h), 1, QRhiTexture::RenderTarget));
+        s.color.reset(rhi->newTexture(format, QSize(w, h), 1, QRhiTexture::RenderTarget));
         if (!s.color->create()) return false;
         QRhiColorAttachment attachment(s.color.get());
         if (samples > 1) {
@@ -201,7 +216,8 @@ struct RhiScene::Impl {
         ps.reset(rhi->newGraphicsPipeline());
         const auto shader = [](const char *name) { return RhiResources::shader(QString::fromLatin1(name)); };
         const char *fragment = kind == Kind::Opaque || kind == Kind::Blended ? "sceneunlit.frag"
-                               : kind == Kind::Lit || kind == Kind::LitBlended ? "scenelit.frag" : "sceneplain.frag";
+                               : kind == Kind::Lit || kind == Kind::LitBlended ? "scenelit.frag"
+                               : kind == Kind::Depth ? "scenedepth.frag" : "sceneplain.frag";
         ps->setShaderStages({{QRhiShaderStage::Vertex, shader("sceneview.vert")}, {QRhiShaderStage::Fragment, shader(fragment)}});
         QRhiVertexInputLayout layout;
         layout.setBindings({{8 * sizeof(float)}});
@@ -497,6 +513,20 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     sb.misc[1] = std::max(0.0f, s.studio);
     sb.shadowCfg[0] = shadowLevel >= 2 ? 1 : 0;
     sb.shadowCfg[1] = shadowLevel == 1 ? 4 : shadowLevel == 3 ? 24 : 12;
+    const int contactLevel = std::clamp(quality.contact, 0, 3), reflectLevel = std::clamp(quality.reflections, 0, 3);
+    const bool wantsAo = contactLevel > 0 && s.ao > 0;
+    const float reflections = reflectLevel ? s.reflections : 0.0f;
+    const bool wantsSeen = wantsAo || reflections > 0;
+    sb.screen[0] = float(w), sb.screen[1] = float(h);
+    sb.screen[2] = wantsAo ? s.ao : 0.0f;
+    sb.screen[3] = reflections;
+    sb.reflect[0] = reflectLevel == 1 ? 20 : reflectLevel == 3 ? 80 : 40;
+    sb.reflect[1] = d->lastValid && reflections > 0 ? 1 : 0;
+    sb.range[0] = cam.nearPlane, sb.range[1] = cam.farPlane, sb.range[2] = s.exposure;
+    {
+        const QMatrix4x4 viewProj = cam.proj * cam.view; // OpenGL's: the shader works in its clip space
+        std::memcpy(sb.viewProj, viewProj.constData(), sizeof sb.viewProj);
+    }
     struct SpotShadow {
         QMatrix4x4 matrix; // the light's view and projection (OpenGL's clip space)
         QVector3D planes;
@@ -596,6 +626,21 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     if (!d->ensureMaps(d->spotMaps, mapSize, std::max<int>(1, int(spots.size()))) ||
         !d->ensureMaps(d->pointMaps, std::max(pointSize, 4), std::max<int>(6, int(points.size()) * 6)))
         return nullptr;
+    if (wantsSeen) {
+        if (!d->ensure(d->seen, w, h, 1, true, QRhiTexture::R32F)) return nullptr;
+        if (wantsAo && (!d->ensure(d->ao, std::max(1, w / 2), std::max(1, h / 2), 1, false) ||
+                        !d->ensure(d->aoBlurred, std::max(1, w / 2), std::max(1, h / 2), 1, false)))
+            return nullptr;
+        if (reflections > 0) d->last.ensure(rhi, QSize(w, h));
+    }
+    // The flip of the fullscreen passes' triangle
+    PostBlock pb = {};
+    pb.flip[0] = rhidevice::ndcFlip(rhi);
+    pb.grade[0] = s.vignette;
+    pb.grade[1] = s.contrast;
+    pb.grade[2] = s.saturation;
+    pb.grade[3] = s.temperature;
+    u->updateDynamicBuffer(d->postUbuf.get(), 0, sizeof pb, &pb);
 
     // What the camera sees, the nearest first (the blended ones over them, the farthest first)
     std::vector<Placed> placed;
@@ -669,6 +714,9 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         bindings.push_back({11, QRhiShaderResourceBinding::FragmentStage, d->pointData.get(), nullptr, nullptr, true});
         bindings.push_back({12, QRhiShaderResourceBinding::FragmentStage, nullptr, d->spotMaps.texture.get(), d->nearest.get()});
         bindings.push_back({13, QRhiShaderResourceBinding::FragmentStage, nullptr, d->pointMaps.texture.get(), d->nearest.get()});
+        bindings.push_back({14, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsAo ? d->aoBlurred.color.get() : black, res.linear()});
+        bindings.push_back({15, QRhiShaderResourceBinding::FragmentStage, nullptr, wantsSeen ? d->seen.color.get() : black, d->nearest.get()});
+        bindings.push_back({16, QRhiShaderResourceBinding::FragmentStage, nullptr, d->lastValid && reflections > 0 && d->last.ready() ? d->last.texture() : black, res.linear()});
         return res.bindings(bindings);
     };
     std::vector<Command> commands;
@@ -715,6 +763,90 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         }
         cb->endPass();
     }
+    // What the camera sees, nearest first: its depth, for the occlusion and the reflections
+    if (wantsSeen) {
+        std::vector<Command> seen;
+        for (const Placed &pl : placed) {
+            const std::vector<Model3D::RhiDraw> draws = pl.item->model->rhiDraws(rhi, u, &pl.item->placement, false, false);
+            for (const Model3D::RhiDraw &mesh : draws) {
+                if (mesh.alphaMode == 2) continue; // its blended surfaces hide nothing
+                Place pp = place(*pl.item, pl.model, cam, proj);
+                QRhiBuffer *b = d->ubuf();
+                u->updateDynamicBuffer(b, 0, sizeof pp, &pp);
+                seen.push_back({Kind::Depth, b, shadowBind(b), mesh.vertices, mesh.indices, mesh.indexCount});
+            }
+        }
+        // (the buffers were written into the batch above: this pass carries them)
+        cb->beginPass(d->seen.target.get(), QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
+        u = nullptr;
+        cb->setViewport({0, 0, float(w), float(h)});
+        for (const Command &c : seen) {
+            QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(d->seen, c.kind, c.srb) : nullptr;
+            if (!ps) continue;
+            cb->setGraphicsPipeline(ps);
+            cb->setShaderResources(c.srb);
+            const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
+            cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
+            cb->drawIndexed(quint32(c.count));
+        }
+        cb->endPass();
+    }
+    if (wantsAo) {
+        // Where surfaces meet, at half the size, then without its noise
+        const auto fullscreenPass = [&](Impl::Surface &target, const char *fragment, QRhiShaderResourceBindings *srb) {
+            const int key = target.id * 100 + 50 + (fragment[8] == 'b' ? 1 : 0);
+            std::unique_ptr<QRhiGraphicsPipeline> &ps = d->fullscreen[key];
+            if (!ps && srb) {
+                ps.reset(rhi->newGraphicsPipeline());
+                ps->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("scenepost.vert"))},
+                                     {QRhiShaderStage::Fragment, RhiResources::shader(QString::fromLatin1(fragment))}});
+                ps->setVertexInputLayout({});
+                ps->setShaderResourceBindings(srb);
+                ps->setRenderPassDescriptor(target.pass.get());
+                if (!ps->create()) ps.reset();
+            }
+            if (!ps) return;
+            cb->beginPass(target.target.get(), Qt::white, {1.0f, 0}, u);
+            u = nullptr;
+            cb->setGraphicsPipeline(ps.get());
+            cb->setViewport({0, 0, float(target.size.width()), float(target.size.height())});
+            cb->setShaderResources(srb);
+            cb->draw(3);
+            cb->endPass();
+        };
+        if (!d->aoUbuf) {
+            d->aoUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(AoBlock)));
+            d->aoUbuf->create();
+            d->blurUbuf.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+            d->blurUbuf->create();
+        }
+        AoBlock ab = {};
+        const QMatrix4x4 invProj = cam.proj.inverted();
+        std::memcpy(ab.invProj, invProj.constData(), sizeof ab.invProj);
+        std::memcpy(ab.proj, cam.proj.constData(), sizeof ab.proj);
+        ab.params[0] = std::max(0.001f, s.aoRadius);
+        ab.params[1] = s.ao;
+        ab.ints[0] = contactLevel == 1 ? 8 : contactLevel == 2 ? 14 : 24;
+        const float texel[4] = {1.0f / float(d->ao.size.width()), 1.0f / float(d->ao.size.height()), 0, 0};
+        QRhiResourceUpdateBatch *aoBatch = rhi->nextResourceUpdateBatch();
+        aoBatch->updateDynamicBuffer(d->aoUbuf.get(), 0, sizeof ab, &ab);
+        aoBatch->updateDynamicBuffer(d->blurUbuf.get(), 0, sizeof texel, texel);
+        const auto vs = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+        QRhiShaderResourceBindings *aoSrb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                          {1, QRhiShaderResourceBinding::FragmentStage, d->aoUbuf.get()},
+                                                          {2, QRhiShaderResourceBinding::FragmentStage, nullptr, d->seen.color.get(), d->nearest.get()}});
+        QRhiShaderResourceBindings *blurSrb = res.bindings({{0, vs, d->postUbuf.get()},
+                                                            {1, QRhiShaderResourceBinding::FragmentStage, d->blurUbuf.get()},
+                                                            {2, QRhiShaderResourceBinding::FragmentStage, nullptr, d->seen.color.get(), d->nearest.get()},
+                                                            {3, QRhiShaderResourceBinding::FragmentStage, nullptr, d->ao.color.get(), res.linear()}});
+        if (u) {
+            aoBatch->merge(u);
+            u->release();
+        }
+        u = aoBatch;
+        if (aoSrb) fullscreenPass(d->ao, "sceneao.frag", aoSrb);
+        if (blurSrb) fullscreenPass(d->aoBlurred, "sceneaoblur.frag", blurSrb);
+    }
     const float a = s.background[3];
     const QColor clear = QColor::fromRgbF(s.background[0] * a, s.background[1] * a, s.background[2] * a, a); // premultiplied
     cb->beginPass(d->lit.target.get(), clear, {1.0f, 0}, u);
@@ -729,17 +861,16 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         cb->drawIndexed(quint32(c.count));
     }
     cb->endPass();
+    if (reflections > 0 && d->last.ready()) { // what a reflection shows next time
+        d->lastValid = res.blit(cb, d->lit.color.get(), d->last);
+    } else {
+        d->lastValid = false;
+    }
 
     // All over the picture, as a camera does: the colours, the darker edges
     const bool graded = s.vignette > 0 || s.contrast != 1 || s.saturation != 1 || s.temperature != 0;
     if (!graded) return d->lit.color.get();
     if (!d->ensure(d->graded, w, h, 1, false)) return d->lit.color.get();
-    PostBlock pb = {};
-    pb.flip[0] = rhidevice::ndcFlip(rhi);
-    pb.grade[0] = s.vignette;
-    pb.grade[1] = s.contrast;
-    pb.grade[2] = s.saturation;
-    pb.grade[3] = s.temperature;
     QRhiResourceUpdateBatch *post = rhi->nextResourceUpdateBatch();
     post->updateDynamicBuffer(d->postUbuf.get(), 0, sizeof pb, &pb);
     QRhiShaderResourceBindings *srb = res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->postUbuf.get()},

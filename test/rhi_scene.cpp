@@ -294,6 +294,72 @@ int main(int argc, char **argv)
             }
         }
     }
+    // Occlusion where surfaces meet (a ball on a floor), no shadows: the same in both
+    {
+        SceneSettings lit = view;
+        lit.reflections = 0;
+        lit.glow = 0;
+        lit.fogDensity = 0;
+        lit.ao = 1.5f;
+        lit.aoRadius = 0.5f;
+        lit.ambientIntensity = 0.6f;
+        lit.studio = 0;
+        lit.pitch = 35;
+        lit.distance = 5;
+        Scene3DQuality q3;
+        q3.antialiasing = q3.shadows = q3.reflections = q3.glow = q3.atmosphere = 0;
+        q3.contact = 2;
+        auto ball = std::make_shared<Model3D>(), floor = std::make_shared<Model3D>();
+        QString err;
+        ball->load(Model3D::primitivePath(QStringLiteral("Sphere")), &err);
+        floor->load(Model3D::primitivePath(QStringLiteral("Plane")), &err);
+        Scene3D::Item b, f;
+        b.model = ball;
+        b.placement.color = {0.8f, 0.3f, 0.2f};
+        b.placement.position = {0, 0.5f, 0};
+        f.model = floor;
+        f.placement.color = {0.7f, 0.7f, 0.7f};
+        f.placement.scale = 4;
+        f.placement.rotation = {-90, 0, 0};
+        const std::vector<Scene3D::Item> items{f, b};
+        Scene3D viaGl;
+        const GLuint tex = viaGl.draw(lit, items, {}, size.width(), size.height(), 0, false, q3);
+        auto fn = gl();
+        GLuint fbo = 0;
+        fn->glGenFramebuffers(1, &fbo);
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        fn->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        QImage g(size, QImage::Format_RGBA8888);
+        fn->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        fn->glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE, g.bits());
+        fn->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        fn->glDeleteFramebuffers(1, &fbo);
+        viaGl.releaseGl();
+        RhiScene scene(rhi.get());
+        QRhiCommandBuffer *cb = nullptr;
+        QImage q;
+        if (rhi->beginOffscreenFrame(&cb) == QRhi::FrameOpSuccess) {
+            RhiResources::of(rhi.get()).frameStarted();
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            QRhiTexture *out = scene.draw(cb, u, lit, items, {}, size.width(), size.height(), q3);
+            QRhiReadbackResult rb;
+            if (out) {
+                QRhiResourceUpdateBatch *r = rhi->nextResourceUpdateBatch();
+                r->readBackTexture({out}, &rb);
+                cb->resourceUpdate(r);
+            }
+            rhi->endOffscreenFrame();
+            if (out) q = QImage(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(), QImage::Format_RGBA8888).copy();
+        }
+        int worst = 0;
+        double over = 0;
+        const double mean = meanDifference(q, g, &worst, &over);
+        check(!q.isNull() && mean < 2.0, qPrintable(QStringLiteral("occlusion: QRhi against OpenGL, mean %1, %2% over 8").arg(mean, 0, 'f', 3).arg(over * 100, 0, 'f', 2)));
+        if (!dump.isEmpty()) {
+            g.save(dump + "/ao_gl.png");
+            q.save(dump + "/ao_rhi.png");
+        }
+    }
     // No limit to the lights (OpenGL took eight): twelve give more light than eight
     {
         auto model = std::make_shared<Model3D>();

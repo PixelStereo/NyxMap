@@ -173,7 +173,8 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag
         src/engine/shaders/sceneview.vert src/engine/shaders/sceneplain.frag src/engine/shaders/sceneunlit.frag
         src/engine/shaders/scenelit.frag src/engine/shaders/scenepost.vert src/engine/shaders/scenepost.frag
-        src/engine/shaders/sceneshadow.frag src/engine/shaders/scenepoint.frag)
+        src/engine/shaders/sceneshadow.frag src/engine/shaders/scenepoint.frag
+        src/engine/shaders/scenedepth.frag src/engine/shaders/sceneao.frag src/engine/shaders/sceneaoblur.frag)
 target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::OpenGL Qt6::Network ffmpeg)
 target_compile_definitions(nyxmap_engine PUBLIC GL_SILENCE_DEPRECATION)
 if(WIN32)

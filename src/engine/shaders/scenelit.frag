@@ -49,6 +49,10 @@ layout(std140, binding = 1) uniform Scene {
     vec4 u_misc;       // x: exposure; y: the studio's strength
     ivec4 u_counts;    // x: how many lights
     ivec4 u_shadowCfg; // x: soft edges (penumbra); y: taps per shadow
+    vec4 u_screenInfo; // xy: the picture's size; z: how much occlusion; w: how much reflection
+    ivec4 u_reflectCfg; // x: steps along a reflected ray; y: a last picture to reflect
+    vec4 u_range;      // x: the near plane; y: the far plane; z: the exposure the last picture was made with
+    mat4 u_viewProj;
 };
 // The lights, as many as the scene has: seven vec4 each. color (xyz: times its power; w: its kind, 0 directional, 1 point,
 // 2 spot, 3 area), position, direction, right and up (an area's sides), half its size (xy), cone (x: a spot's angle, y:
@@ -59,13 +63,23 @@ layout(std430, binding = 9) readonly buffer Lights { vec4 lights[]; };
 layout(std430, binding = 10) readonly buffer Shadows { vec4 shadowData[]; };
 layout(std430, binding = 11) readonly buffer PointShadows { vec4 pointData[]; };
 layout(binding = 12) uniform sampler2DArray u_shadowMaps; // each light's view of the models: the depth, in a float
-layout(binding = 13) uniform sampler2DArray u_pointMaps;  // a point light's: the distance / its far plane, six faces each
+layout(binding = 13) uniform sampler2DArray u_pointMaps;
+layout(binding = 14) uniform sampler2D u_aoTex;  // the occlusion between surfaces, from what is seen
+layout(binding = 15) uniform sampler2D u_seen;   // the depth of what is seen
+layout(binding = 16) uniform sampler2D u_last;   // the last picture: what a reflection shows  // a point light's: the distance / its far plane, six faces each
 #define u_eye u_eye4.xyz
 #define u_ambient u_ambient4.xyz
 #define u_exposure u_misc.x
 #define u_studio u_misc.y
 #define u_count u_counts.x
 #define u_penumbra u_shadowCfg.x
+#define u_screen u_screenInfo.xy
+#define u_aoAmount u_screenInfo.z
+#define u_reflections u_screenInfo.w
+#define u_steps u_reflectCfg.x
+#define u_hasLast u_reflectCfg.y
+#define u_depthRange u_range.xy
+#define u_lastExposure u_range.z
 #define u_taps u_shadowCfg.y
 layout(binding = 3) uniform sampler2D u_tex;
 layout(binding = 4) uniform sampler2D u_roughTex;
@@ -187,7 +201,52 @@ vec3 studio(vec3 d, float r) {
     c += vec3(1.0, 0.9, 0.82) * 0.8 * panel(d, vec3(0.9, 0.05, 0.3), 0.97, b);
     return c * u_studio;
 }
-vec4 reflected(vec3 R, float rough) { return vec4(0.0); } // reflections: a later step
+// The reverse of what makes a pixel: tone mapping and display encoding (a reflection reads the last frame's)
+vec3 unprocessed(vec3 c) {
+    c = pow(clamp(c, 0.0, 0.985), vec3(2.2));
+    vec3 a = 2.51 - 2.43 * c, b = 0.03 - 0.59 * c, d = -0.14 * c;
+    return (-b + sqrt(max(b * b - 4.0 * a * d, vec3(0.0)))) / (2.0 * a) / max(u_lastExposure, 1e-3);
+}
+float eyeDepth(float z) { return u_depthRange.x * u_depthRange.y / (u_depthRange.y - z * (u_depthRange.y - u_depthRange.x)); }
+// What the mirror direction meets on the screen; its weight in w (0: nothing)
+vec4 reflected(vec3 R, float rough) {
+    if (u_hasLast == 0 || u_reflections <= 0.0 || rough > 0.65) return vec4(0.0);
+    // Coming back towards the camera, it would look for what the screen does not show: the far side of things
+    float away = smoothstep(0.25, -0.1, dot(R, normalize(u_eye - v_pos)));
+    if (away <= 0.0) return vec4(0.0);
+    float span = length(u_eye - v_pos) * 0.05;
+    vec3 p = v_pos + R * span * 0.3;
+    float jitter = 0.9 + 0.2 * noise();
+    float grow = pow(1.07, 40.0 / float(u_steps)); // reaching as far, in fewer steps or more
+    span *= 40.0 / float(u_steps);
+    for (int k = 0; k < u_steps; ++k) {
+        p += R * span * jitter;
+        span *= grow;
+        vec4 q = u_viewProj * vec4(p, 1.0);
+        if (q.w <= 0.0) return vec4(0.0);
+        vec3 s = q.xyz / q.w * 0.5 + 0.5;
+        if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return vec4(0.0);
+        float seen = texture(u_seen, s.xy).r;
+        if (seen >= 1.0) continue; // the sky: nothing to meet
+        float behind = eyeDepth(s.z) - eyeDepth(seen);
+        if (behind > 0.0) {
+            if (behind > span * 1.2) continue; // behind a surface too far in front: passing under it
+            for (int b = 0; b < 5; ++b) { // where it crossed
+                span *= 0.5;
+                p -= R * span * 0.5 * (behind > 0.0 ? 1.0 : -1.0);
+                q = u_viewProj * vec4(p, 1.0);
+                s = q.xyz / q.w * 0.5 + 0.5;
+                behind = eyeDepth(s.z) - eyeDepth(texture(u_seen, s.xy).r);
+            }
+            vec4 c = texture(u_last, s.xy);
+            if (c.a <= 0.0) return vec4(0.0);
+            vec2 edge = smoothstep(vec2(0.0), vec2(0.08), s.xy) * smoothstep(vec2(0.0), vec2(0.08), 1.0 - s.xy);
+            float fade = away * edge.x * edge.y * (1.0 - float(k) / float(u_steps)) * smoothstep(0.65, 0.15, rough);
+            return vec4(unprocessed(c.rgb / c.a), fade * u_reflections);
+        }
+    }
+    return vec4(0.0);
+}
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec2 envBrdf(float NdV, float r) { // its response to an environment (Karis' approximation of the BRDF table)
     vec4 k = r * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
@@ -239,7 +298,7 @@ void main() {
     float rough = u_rough * (u_hasRough != 0 ? dot(texture(u_roughTex, v_uv), u_roughCh) : 1.0);
     float metal = u_metal * (u_hasMetal != 0 ? dot(texture(u_metalTex, v_uv), u_metalCh) : 1.0);
     float ao = u_hasAo != 0 ? mix(1.0, texture(u_aoTexMap, v_uv).r, u_aoStrength) : 1.0;
-    float contact = 1.0; // occlusion between surfaces: a later step
+    float contact = u_aoAmount > 0.0 ? texture(u_aoTex, gl_FragCoord.xy / u_screen).r : 1.0;
     ao *= contact;
     float r = clamp(rough, 0.04, 1.0), a = r * r;
     vec3 F0 = mix(vec3(u_dielectric), base.rgb, metal);
