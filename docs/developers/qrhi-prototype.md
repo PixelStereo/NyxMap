@@ -108,15 +108,22 @@ it and the parts ported so far.
 - **3D**, step by step (`RhiScene`, `Model3D::rhiDraws`): the interface's 3D views
   (the flat look with edges and the unlit look, the models' colours as they are)
   are drawn through QRhi from the view's camera, with the shape FX of the models
-  (bend, twist, taper, wave, noise) in the vertex shader. `rhi_scene` compares them
-  with the OpenGL views of four primitives: pixel for pixel on Metal. The cells'
-  3D views, `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under
-  them through `RhiDraw`, the handles over them through the overlay); the OpenGL
-  renderer's views come back the same way, as pixels. Not yet: lit scenes and 3D
-  layers (lights, shadows, environment, ambient occlusion, reflections, glow, fog:
-  Scene3D::draw, ten shaders), pictures laid on models by a layer, displacement
-  pictures and the textures of shared materials, `MaterialSphere` (the material
-  preview, still an OpenGL widget: it keeps the other views on the OpenGL API).
+  (bend, twist, taper, wave, noise) in the vertex shader. 3D scenes (the layers)
+  are drawn lit: up to eight lights (directional, point, spot, area), the
+  studio's light, physically based materials with their maps (base colour,
+  roughness, metal, normals, occlusion, emission), tone mapping, multisampled as
+  the project's quality asks, then the camera's grade (colours, vignette).
+  `rhi_scene` compares both with OpenGL, picture by picture: the views pixel for
+  pixel on Metal, the lit scenes 0.01 to 0.2 levels apart on average (the
+  silhouettes' pixels differ without antialiasing). The cells' 3D views,
+  `Scene3DView`, are `QRhiWidget`s showing those pictures (the grid under them
+  through `RhiDraw`, the handles over them through the overlay); the OpenGL
+  renderer's views come back the same way, as pixels. Not yet, in lit scenes:
+  shadows (spot and directional maps, point cubes), an environment (and its
+  sky), screen-space occlusion and reflections, glow, fog, the supersampled
+  quality level; pictures laid on models by a layer, displacement pictures and
+  the textures of shared materials; `MaterialSphere` (the material preview, still an
+  OpenGL widget: it keeps the other views on the OpenGL API).
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

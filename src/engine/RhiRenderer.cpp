@@ -120,6 +120,7 @@ struct RhiRenderer::Impl {
         std::unique_ptr<IsfInstance> transition; // a source transition's shader (none: a crossfade)
         QString transitionPath;
         RhiTarget transitionTarget;
+        std::unique_ptr<RhiScene> scene; // a 3D scene's renderer
         std::map<int, RhiTarget> stageTargets;
         std::vector<Effect> effects;
         QRhiTexture *final = nullptr, *raw = nullptr, *preFx = nullptr;
@@ -1012,6 +1013,18 @@ struct RhiRenderer::Impl {
         processLayer(g, r, r.group.texture(), r.group.size(), true, rc);
     }
 
+    // A 3D scene's picture (Render.cpp's renderScene), the size of the composition, then its layer's own processing
+    void renderScene(Layer &g, RLayer &r, const std::vector<Layer *> &members, const IsfRenderContext &rc)
+    {
+        r.final = r.raw = r.preFx = nullptr;
+        if (!r.scene) r.scene = std::make_unique<RhiScene>(rhi.get());
+        std::vector<Scene3D::Item> items;
+        std::vector<Scene3D::Lamp> lamps;
+        e.collectScene(members, items, lamps);
+        QRhiTexture *picture = r.scene->draw(cb, take(), e.placedCamera(g), items, lamps, e.m_compSize.width(), e.m_compSize.height(), e.m_quality3d);
+        if (picture) processLayer(g, r, picture, picture->pixelSize(), true, rc);
+    }
+
     // A viewport's output (Render.cpp's renderViewport, then its part of composite())
     void renderViewport(Layer &v, RLayer &r, const std::vector<Layer *> &shown, const IsfRenderContext &rc, double level)
     {
@@ -1178,10 +1191,8 @@ struct RhiRenderer::Impl {
                     if (draw) members.push_back(all[k].get());
                 }
                 if (!draw) r.final = r.raw = r.preFx = nullptr;
-                else if (l.scene3d) {
-                    warnOnce(QStringLiteral("3D scenes"));
-                    r.final = r.raw = r.preFx = nullptr;
-                } else renderGroup(l, r, members, rc);
+                else if (l.scene3d) renderScene(l, r, members, rc);
+                else renderGroup(l, r, members, rc);
             } else {
                 renderLayer(l, r, rc);
                 if (const auto t = e.m_transitions.find(l.id); t != e.m_transitions.end()) renderTransition(l, r, *t->second, rc);

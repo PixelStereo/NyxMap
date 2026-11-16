@@ -9,8 +9,8 @@
 // picture, composition opacity and blackout, blend modes (Difference reads a copy of what is drawn), surface and
 // composition masks, mattes (Picture and Composition space), text, source transitions (a shader's, or a crossfade),
 // mapped meshes, the project's antialiasing and mipmaps.
-// The 3D views of the interface (flat and unlit) are drawn. Not yet: lit 3D scenes and layers (each said once in the log; the layer is drawn without
-// it, or not at all).
+// 3D scenes, lit by their lights and the studio (no shadows, environment, occlusion, reflections, glow or fog yet), and the
+// interface's 3D views (flat and unlit). Not yet said once in the log: live pictures on models.
 // Shown: output windows through a swapchain each (present); the interface's previews, the pixel readers and the
 // published viewports as pixels (setPreviewRequests).
 

@@ -336,6 +336,18 @@ int main(int argc, char **argv)
         check(!view.isNull() && view.size() == QSize(160, 120), "3D view: its picture comes back, at the size asked");
         const QColor middle = view.isNull() ? QColor() : QColor(view.pixel(80, 60));
         check(view.isNull() ? false : (middle.red() > 120 || middle.green() > 120 || middle.blue() > 120), "3D view: the model is in it");
+        // The scene itself, in the composition: lit by a light
+        const int lampAt = e.addLayer(QStringLiteral("Key"), e.indexOfId(modelId) + 1);
+        const quint64 lampId = e.layerId(lampAt);
+        e.setLayerLight(lampAt);
+        e.setStructure(tree::intoGroup(e.structure(), {lampId}, sceneId));
+        QImage composed;
+        for (int k = 0; k < 10; ++k) {
+            e.renderFrame();
+            composed = e.grabOutput();
+        }
+        const QColor centre = composed.isNull() ? QColor() : QColor(composed.pixel(composed.width() / 2, composed.height() / 2));
+        check(!composed.isNull() && (centre.red() + centre.green() + centre.blue()) > 60, "3D scene: lit, it is in the composition");
     }
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
