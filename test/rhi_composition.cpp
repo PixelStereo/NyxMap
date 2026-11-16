@@ -1,7 +1,7 @@
-// QRhi prototype, a whole composition (docs/developers/qrhi-prototype.md), macOS: the same work through QRhi
-// (Metal) and through OpenGL, to compare the APIs and nothing else.
+// QRhi, a whole composition (docs/developers/qrhi-prototype.md): the same work through QRhi (Metal, Direct3D 11,
+// Vulkan) and through OpenGL, to compare the APIs and nothing else.
 //
-// Each layer: a video (hardware frames, no copy), converted to RGBA, an ISF effect, then drawn into its cell of a
+// Each layer: a video (RhiVideoTexture: hardware frames on the GPU where it can), converted to RGBA, an ISF effect, then drawn into its cell of a
 // grid over the output, multiplied by an RGBA mask, blended over the layers below. OpenGL runs the engine's own
 // code (VideoTexture, IsfInstance::render); QRhi runs IsfInstance::rhiSources's shaders and the same formulas.
 //  - pictures: the first frame of every video, through both: the outputs must match (ISF drawn on the GPU);
@@ -10,13 +10,17 @@
 //
 // nyxmap_rhi_composition_test [--layers N] [--seconds S] [--size WxH] [--effect file.fs] [--opengl-first] [video]
 //   (default: 4 layers of test/media/h264.mp4, 2 s, 1920×1080, Kaleidoscope). Exit 77 (skipped) without Metal,
-//   OpenGL or hardware frames.
+//   OpenGL or a QRhi backend.
 #include "Gl.h"
 #include "Isf.h"
+#include "RhiDevice.h"
+#include "RhiVideoSurface.h"
+#include "RhiVideoTexture.h"
 #include "VideoDecoder.h"
 #include "VideoTexture.h"
 
 extern "C" {
+#include <libavutil/buffer.h>
 #include <libavutil/frame.h>
 }
 
@@ -30,9 +34,6 @@ extern "C" {
 #include <QThread>
 #include <rhi/qrhi.h>
 #include <rhi/qshaderbaker.h>
-
-#import <CoreVideo/CoreVideo.h>
-#import <Metal/Metal.h>
 
 #include <algorithm>
 #include <cmath>
@@ -130,44 +131,13 @@ static bool fetch(std::vector<Layer> &layers, double clock, bool wait)
         }
         l.fresh = l.fresh || got;
         if (!l.frame.layout) return false;
-        if (!l.frame.layout->surface || !l.frame.av) return false; // not hardware frames in place
     }
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// QRhi (Metal)
+// QRhi (the platform's API)
 // ---------------------------------------------------------------------------
-static const char *kConvertVs = R"(#version 440
-layout(location = 0) out vec2 v_uv;
-layout(std140, binding = 0) uniform Conversion {
-    vec4 sel0, sel1, sel2, off01, off2, scale, m0, m1, m2, range, crop; // crop: xy, mode, NDC flip
-};
-void main() {
-    vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2) * 2.0 - 1.0;
-    v_uv = p * 0.5 + 0.5;
-    gl_Position = vec4(p.x, p.y * crop.w, 0.0, 1.0);
-}
-)";
-static const char *kConvertFs = R"(#version 440
-layout(location = 0) in vec2 v_uv;
-layout(location = 0) out vec4 o;
-layout(std140, binding = 0) uniform Conversion {
-    vec4 sel0, sel1, sel2, off01, off2, scale, m0, m1, m2, range, crop;
-};
-layout(binding = 1) uniform sampler2D c0;
-layout(binding = 2) uniform sampler2D c1;
-layout(binding = 3) uniform sampler2D c2;
-void main() {
-    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y) * crop.xy; // planes stored top row first
-    float a = dot(texture(c0, uv + off01.xy), sel0) * scale.x;
-    float b = dot(texture(c1, uv + off01.zw), sel1) * scale.y;
-    float c = dot(texture(c2, uv + off2.xy), sel2) * scale.z;
-    vec3 v = vec3((a - range.x) * range.y, (b - range.z) * range.w, (c - range.z) * range.w);
-    vec3 rgb = crop.z < 0.5 ? vec3(dot(m0.xyz, v), dot(m1.xyz, v), dot(m2.xyz, v)) : crop.z < 1.5 ? vec3(a, b, c) : vec3(a);
-    o = vec4(clamp(rgb, 0.0, 1.0), 1.0);
-}
-)";
 static const char *kCompositeVs = R"(#version 440
 layout(location = 0) out vec2 v_uv;
 layout(std140, binding = 0) uniform Cell { vec4 rect; vec4 flip; };
@@ -191,7 +161,9 @@ static QShader bake(const QByteArray &src, QShader::Stage stage)
 {
     QShaderBaker b;
     b.setSourceString(src, stage);
-    b.setGeneratedShaders({{QShader::MslShader, QShaderVersion(20)}});
+    b.setGeneratedShaders({{QShader::MslShader, QShaderVersion(20)},
+                           {QShader::HlslShader, QShaderVersion(50)},
+                           {QShader::SpirvShader, QShaderVersion(100)}});
     b.setGeneratedShaderVariants({QShader::StandardShader});
     const QShader s = b.bake();
     if (!s.isValid()) std::printf("shader: %s\n", qPrintable(b.errorMessage()));
@@ -201,25 +173,13 @@ static QShader bake(const QByteArray &src, QShader::Stage stage)
 class RhiComposition
 {
 public:
-    ~RhiComposition()
-    {
-        release();
-        if (m_cache) {
-            CVMetalTextureCacheFlush(m_cache, 0);
-            CFRelease(m_cache);
-        }
-    }
+    ~RhiComposition() { release(); }
+    QRhi *rhi() const { return m_rhi.get(); }
     bool init(int layers, QSize size, const QString &effect)
     {
-        QRhiMetalInitParams params;
-        m_rhi.reset(QRhi::create(QRhi::Metal, &params));
+        m_rhi = rhidevice::create({}, &m_backend);
         if (!m_rhi) return false;
-        auto *handles = static_cast<const QRhiMetalNativeHandles *>(m_rhi->nativeHandles());
-        id<MTLDevice> device = (id<MTLDevice>)handles->dev;
-        CVMetalTextureCacheRef cache = nullptr;
-        if (CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, device, nullptr, &cache) != kCVReturnSuccess) return false;
-        m_cache = cache;
-        m_flip = m_rhi->isYUpInNDC() ? -1.0f : 1.0f; // first row: the picture's bottom, as with OpenGL
+        m_flip = rhidevice::ndcFlip(m_rhi.get()); // first row: the picture's bottom, as with OpenGL
         m_size = size;
         m_isf = IsfInstance::rhiSources(effect);
         if (!m_isf.error.isEmpty() || m_isf.inputImage.isEmpty()) {
@@ -248,10 +208,10 @@ public:
         m_layers.resize(size_t(layers));
         for (size_t k = 0; k < m_layers.size(); ++k) {
             RLayer &l = m_layers[k];
-            l.convUbuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 11 * 16));
+            l.video = std::make_unique<RhiVideoTexture>(m_rhi.get());
             l.isfUbuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, std::max(16, m_isf.blockSize)));
             l.cellUbuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 32));
-            if (!l.convUbuf->create() || !l.isfUbuf->create() || !l.cellUbuf->create()) return false;
+            if (!l.isfUbuf->create() || !l.cellUbuf->create()) return false;
             float c[8] = {0, 0, 0, 0, m_flip, 0, 0, 0};
             cell(int(k), layers, c);
             u->updateDynamicBuffer(l.cellUbuf.get(), 0, sizeof c, c);
@@ -263,51 +223,45 @@ public:
     // row the picture's bottom (nullptr: not read). Waits for the GPU.
     bool render(std::vector<Layer> &layers, float time, QImage *readback)
     {
-        std::vector<CVMetalTextureRef> held;
         QRhiCommandBuffer *cb = nullptr;
         if (m_rhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess) return false;
         bool ok = true;
         for (size_t k = 0; k < layers.size() && ok; ++k) {
             RLayer &rl = m_layers[k];
             Layer &l = layers[k];
-            const VideoLayout &L = *l.frame.layout;
-            if (!ensureLayer(rl, L.width, L.height)) return false;
-            if (l.fresh) {
-                ok = convert(cb, rl, l.frame, held);
+            if (l.fresh) { // the frame becomes the layer's picture (outside any pass)
+                ok = rl.video->upload(cb, l.frame);
                 l.fresh = false;
             }
-            ok = ok && effect(cb, rl, time);
+            ok = ok && ensureLayer(rl) && effect(cb, rl, time);
         }
         ok = ok && composite(cb, readback);
         const bool done = m_rhi->endOffscreenFrame() == QRhi::FrameOpSuccess;
-        for (CVMetalTextureRef t : m_held) CFRelease(t);
-        m_held = std::move(held);
         if (done && readback && !m_readback.data.isEmpty())
             *readback = QImage(reinterpret_cast<const uchar *>(m_readback.data.constData()), m_readback.pixelSize.width(),
                                m_readback.pixelSize.height(), QImage::Format_RGBA8888)
                             .copy();
         return ok && done;
     }
+    QString backend() const { return m_backend; }
 
 private:
     struct RLayer {
-        std::unique_ptr<QRhiTexture> conv, fx;
-        std::unique_ptr<QRhiTextureRenderTarget> convRt, fxRt;
-        std::unique_ptr<QRhiRenderPassDescriptor> convRp, fxRp;
-        std::unique_ptr<QRhiBuffer> convUbuf, isfUbuf, cellUbuf;
-        std::unique_ptr<QRhiShaderResourceBindings> convSrb, fxSrb, compSrb;
-        std::vector<std::unique_ptr<QRhiTexture>> planes;
+        std::unique_ptr<RhiVideoTexture> video;
+        QRhiTexture *input = nullptr; // the video picture the effect's bindings read
+        std::unique_ptr<QRhiTexture> fx;
+        std::unique_ptr<QRhiTextureRenderTarget> fxRt;
+        std::unique_ptr<QRhiRenderPassDescriptor> fxRp;
+        std::unique_ptr<QRhiBuffer> isfUbuf, cellUbuf;
+        std::unique_ptr<QRhiShaderResourceBindings> fxSrb, compSrb;
         int frameIndex = 0;
     };
 
     void release()
     {
         m_layers.clear();
-        m_convPs.reset();
         m_fxPs.reset();
         m_compPs.reset();
-        for (CVMetalTextureRef t : m_held) CFRelease(t);
-        m_held.clear();
         m_outRt.reset();
         m_outRp.reset();
         m_out.reset();
@@ -317,26 +271,28 @@ private:
         m_rhi.reset();
     }
 
-    bool ensureLayer(RLayer &l, int w, int h)
+    bool ensureLayer(RLayer &l)
     {
-        if (l.conv && l.conv->pixelSize() == QSize(w, h)) return true;
-        auto target = [&](std::unique_ptr<QRhiTexture> &t, std::unique_ptr<QRhiTextureRenderTarget> &rt,
-                          std::unique_ptr<QRhiRenderPassDescriptor> &rp) {
-            t.reset(m_rhi->newTexture(QRhiTexture::RGBA8, QSize(w, h), 1, QRhiTexture::RenderTarget));
-            if (!t->create()) return false;
-            rt.reset(m_rhi->newTextureRenderTarget({t.get()}));
-            rp.reset(rt->newCompatibleRenderPassDescriptor());
-            rt->setRenderPassDescriptor(rp.get());
-            return rt->create();
-        };
-        if (!target(l.conv, l.convRt, l.convRp) || !target(l.fx, l.fxRt, l.fxRp)) return false;
+        QRhiTexture *picture = l.video->texture();
+        if (!picture) return false;
+        if (l.fx && l.input == picture) return true;
+        const int w = picture->pixelSize().width(), h = picture->pixelSize().height();
+        l.input = picture;
+        if (!l.fx || l.fx->pixelSize() != QSize(w, h)) {
+            l.fx.reset(m_rhi->newTexture(QRhiTexture::RGBA8, QSize(w, h), 1, QRhiTexture::RenderTarget));
+            if (!l.fx->create()) return false;
+            l.fxRt.reset(m_rhi->newTextureRenderTarget({l.fx.get()}));
+            l.fxRp.reset(l.fxRt->newCompatibleRenderPassDescriptor());
+            l.fxRt->setRenderPassDescriptor(l.fxRp.get());
+            if (!l.fxRt->create()) return false;
+        }
         // The effect reads the converted picture; the composite reads the effect's
         l.fxSrb.reset(m_rhi->newShaderResourceBindings());
         QVector<QRhiShaderResourceBinding> fx = {QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, l.isfUbuf.get())};
         for (int s = 0; s < m_isf.samplers.size(); ++s)
             fx << QRhiShaderResourceBinding::sampledTexture(s + 1, QRhiShaderResourceBinding::FragmentStage,
-                                                            m_isf.samplers[s] == m_isf.inputImage ? l.conv.get() : m_black.get(),
+                                                            m_isf.samplers[s] == m_isf.inputImage ? picture : m_black.get(),
                                                             m_sampler.get());
         l.fxSrb->setBindings(fx.cbegin(), fx.cend());
         l.compSrb.reset(m_rhi->newShaderResourceBindings());
@@ -374,76 +330,6 @@ private:
             m_compPs->setRenderPassDescriptor(m_outRp.get());
             if (!m_compPs->create()) return false;
         }
-        return true;
-    }
-
-    bool convert(QRhiCommandBuffer *cb, RLayer &rl, const VideoFrame &f, std::vector<CVMetalTextureRef> &held)
-    {
-        const VideoLayout &L = *f.layout;
-        auto pixels = reinterpret_cast<CVPixelBufferRef>(f.av->data[3]);
-        if (!pixels) return false;
-        std::vector<std::unique_ptr<QRhiTexture>> planes;
-        for (int p = 0; p < L.planeCount; ++p) {
-            const VideoLayout::Plane &pl = L.plane[p];
-            const bool wide = pl.texels == VideoLayout::Texels::U16;
-            if (pl.channels > 2 || (pl.texels != VideoLayout::Texels::U8 && !wide)) return false;
-            const MTLPixelFormat mf = pl.channels == 1 ? (wide ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm)
-                                                       : (wide ? MTLPixelFormatRG16Unorm : MTLPixelFormatRG8Unorm);
-            const QRhiTexture::Format qf = pl.channels == 1 ? (wide ? QRhiTexture::R16 : QRhiTexture::R8)
-                                                            : (wide ? QRhiTexture::RG16 : QRhiTexture::RG8);
-            CVMetalTextureRef tex = nullptr;
-            if (CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, m_cache, pixels, nullptr, mf, size_t(pl.width),
-                                                          size_t(pl.height), size_t(p), &tex) != kCVReturnSuccess)
-                return false;
-            held.push_back(tex);
-            id<MTLTexture> mt = CVMetalTextureGetTexture(tex);
-            std::unique_ptr<QRhiTexture> t(m_rhi->newTexture(qf, QSize(pl.width, pl.height)));
-            if (!mt || !t->createFrom({quint64(quintptr((__bridge void *)mt)), 0})) return false;
-            planes.push_back(std::move(t));
-        }
-        QRhiTexture *channel[3];
-        for (int c = 0; c < 3; ++c) channel[c] = planes[size_t(L.srcPlane[c] >= 0 ? L.srcPlane[c] : 0)].get();
-        if (!rl.convSrb) rl.convSrb.reset(m_rhi->newShaderResourceBindings());
-        const auto stages = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
-        rl.convSrb->setBindings({QRhiShaderResourceBinding::uniformBuffer(0, stages, rl.convUbuf.get()),
-                                 QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, channel[0], m_sampler.get()),
-                                 QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage, channel[1], m_sampler.get()),
-                                 QRhiShaderResourceBinding::sampledTexture(3, QRhiShaderResourceBinding::FragmentStage, channel[2], m_sampler.get())});
-        if (!rl.convSrb->create()) return false;
-        if (!m_convPs) {
-            m_convPs.reset(m_rhi->newGraphicsPipeline());
-            m_convPs->setShaderStages({{QRhiShaderStage::Vertex, bake(kConvertVs, QShader::VertexStage)},
-                                       {QRhiShaderStage::Fragment, bake(kConvertFs, QShader::FragmentStage)}});
-            m_convPs->setShaderResourceBindings(rl.convSrb.get());
-            m_convPs->setRenderPassDescriptor(rl.convRp.get());
-            if (!m_convPs->create()) return false;
-        }
-        float u[44] = {};
-        for (int c = 0; c < 3; ++c)
-            if (L.srcPlane[c] >= 0) u[c * 4 + std::clamp(L.srcChannel[c], 0, 3)] = 1;
-        for (int c = 1; c < 3; ++c)
-            if (L.mode == VideoLayout::Mode::Yuv && L.srcPlane[c] >= 0) {
-                const VideoLayout::Plane &pl = L.plane[L.srcPlane[c]];
-                float *off = c == 1 ? &u[14] : &u[16];
-                off[0] = L.chromaShift[0] / float(std::max(1, pl.width));
-                off[1] = L.chromaShift[1] / float(std::max(1, pl.height));
-            }
-        std::copy(L.scale, L.scale + 4, &u[20]);
-        for (int r = 0; r < 3; ++r) std::copy(L.matrix + r * 3, L.matrix + r * 3 + 3, &u[24 + r * 4]);
-        u[36] = L.yOffset, u[37] = L.yScale, u[38] = L.cOffset, u[39] = L.cScale;
-        u[40] = float(L.width) / float(std::max(1, L.plane[0].width));
-        u[41] = float(L.height) / float(std::max(1, L.plane[0].height));
-        u[42] = L.mode == VideoLayout::Mode::Yuv ? 0 : L.mode == VideoLayout::Mode::Rgb ? 1 : 2;
-        u[43] = m_flip;
-        QRhiResourceUpdateBatch *in = takePending();
-        in->updateDynamicBuffer(rl.convUbuf.get(), 0, sizeof u, u);
-        cb->beginPass(rl.convRt.get(), Qt::black, {1.0f, 0}, in);
-        cb->setGraphicsPipeline(m_convPs.get());
-        cb->setViewport({0, 0, float(L.width), float(L.height)});
-        cb->setShaderResources(rl.convSrb.get());
-        cb->draw(3);
-        cb->endPass();
-        rl.planes = std::move(planes);
         return true;
     }
 
@@ -515,7 +401,7 @@ private:
     }
 
     std::unique_ptr<QRhi> m_rhi;
-    CVMetalTextureCacheRef m_cache = nullptr;
+    QString m_backend;
     float m_flip = 1;
     QSize m_size;
     IsfInstance::RhiSources m_isf;
@@ -523,10 +409,9 @@ private:
     std::unique_ptr<QRhiTexture> m_out, m_mask, m_black;
     std::unique_ptr<QRhiTextureRenderTarget> m_outRt;
     std::unique_ptr<QRhiRenderPassDescriptor> m_outRp;
-    std::unique_ptr<QRhiGraphicsPipeline> m_convPs, m_fxPs, m_compPs;
+    std::unique_ptr<QRhiGraphicsPipeline> m_fxPs, m_compPs;
     std::unique_ptr<QRhiBuffer> m_quad;
     std::vector<RLayer> m_layers;
-    std::vector<CVMetalTextureRef> m_held;
     QRhiResourceUpdateBatch *m_pending = nullptr;
     QRhiReadbackResult m_readback;
 };
@@ -555,7 +440,6 @@ public:
             std::printf("FAIL OpenGL conversion: %s\n", qPrintable(err));
             return false;
         }
-        VideoDecoder::setZeroCopy(m_conv.surfaces());
         m_size = size;
         m_out.ensure(size.width(), size.height());
         m_mask.uploadImage(makeMask());
@@ -605,6 +489,9 @@ public:
         m_rc.blit = [](GLuint, const RenderTarget &) {};
         return true;
     }
+    bool surfaces() const { return m_conv.surfaces(); }
+    bool s3tc() const { return m_conv.s3tc(); }
+    bool bptc() const { return m_conv.bptc(); }
     void release()
     {
         for (auto &l : m_layers) {
@@ -776,22 +663,35 @@ int main(int argc, char **argv)
     RhiComposition rhi;
     if (!glc.init(n, size, effect)) return 1;
     if (!rhi.init(n, size, effect)) {
-        std::printf("SKIP: no Metal device for QRhi\n");
+        std::printf("SKIP: no QRhi backend here\n");
         return 77;
     }
-    std::printf("%d layers of %s, %s, output %d×%d\n", n, qPrintable(QFileInfo(video).fileName()),
-                qPrintable(QFileInfo(effect).completeBaseName()), size.width(), size.height());
+    std::printf("%d layers of %s, %s, output %d×%d, QRhi %s\n", n, qPrintable(QFileInfo(video).fileName()),
+                qPrintable(QFileInfo(effect).completeBaseName()), size.width(), size.height(), qPrintable(rhi.backend()));
+    // Each API's decoding: QRhi's on its device where it shares one (Windows), hardware frames taken on the GPU;
+    // OpenGL's as the OpenGL renderer sets it
+    auto forRhi = [&] {
+        AVBufferRef *device = RhiVideoSurface::decoderDevice(rhi.rhi());
+        VideoDecoder::setSharedHardwareDevice(device);
+        av_buffer_unref(&device);
+        VideoDecoder::setZeroCopy(RhiVideoSurface::available(rhi.rhi()));
+        VideoDecoder::setGpuFormats(rhi.rhi()->isTextureFormatSupported(QRhiTexture::BC1),
+                                    rhi.rhi()->isTextureFormatSupported(QRhiTexture::BC7));
+    };
+    auto forOpenGl = [&] {
+        VideoDecoder::setSharedHardwareDevice(nullptr);
+        VideoDecoder::setZeroCopy(glc.surfaces());
+        VideoDecoder::setGpuFormats(glc.s3tc(), glc.bptc());
+    };
 
-    // The same first frames through both: the pictures must match
+    // The same first frames through both, each from fresh decoders: the pictures must match
     std::vector<Layer> layers;
-    if (!openLayers(layers, n, video)) return 1;
-    if (!fetch(layers, 0.0005, true)) {
-        std::printf("SKIP: no hardware frames here\n");
-        return 77;
-    }
     QImage viaRhi, viaGl;
+    forRhi();
+    if (!openLayers(layers, n, video) || !fetch(layers, 0.0005, true)) return 1;
     CHECK(rhi.render(layers, 0, &viaRhi));
-    for (Layer &l : layers) l.fresh = true;
+    forOpenGl();
+    if (!openLayers(layers, n, video) || !fetch(layers, 0.0005, true)) return 1;
     CHECK(glc.render(layers, 0, &viaGl));
     const Diff d = compare(viaRhi, viaGl);
     std::printf("  first frame, QRhi against OpenGL: max %d mean %.3f, %.2f%% over 8\n", d.max, d.mean, d.over8 * 100);
@@ -806,14 +706,17 @@ int main(int argc, char **argv)
     const bool openGlFirst = openGlFirstArg; // the order's influence
     for (int turn = 0; turn < 2; ++turn) {
         const int api = openGlFirst ? 1 - turn : turn;
+        if (api == 0) forRhi();
+        else forOpenGl();
         if (!openLayers(layers, n, video) || !fetch(layers, 0.0005, true)) return 1;
         int converted = 0;
         const Stats st = api == 0 ? run(layers, seconds, [&](double) { return rhi.render(layers, 0, nullptr); }, &converted)
                                   : run(layers, seconds, [&](double dt) { return glc.render(layers, dt, nullptr); }, &converted);
-        std::printf("  %-12s %6.1f frames/s; frame (GPU done) median %.2f ms, P95 %.2f, P99 %.2f; %.1f video frames/s per layer\n",
-                    api == 0 ? "QRhi Metal" : "OpenGL", st.ms.size() / seconds, st.at(0.5), st.at(0.95), st.at(0.99),
-                    converted / seconds / n);
+        const QString label = api == 0 ? QStringLiteral("QRhi ") + rhi.backend() : QStringLiteral("OpenGL");
+        std::printf("  %-14s %6.1f frames/s; frame (GPU done) median %.2f ms, P95 %.2f, P99 %.2f; %.1f video frames/s per layer\n",
+                    qPrintable(label), st.ms.size() / seconds, st.at(0.5), st.at(0.95), st.at(0.99), converted / seconds / n);
     }
+    VideoDecoder::setSharedHardwareDevice(nullptr);
     layers.clear();
     glc.release();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);

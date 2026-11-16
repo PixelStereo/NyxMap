@@ -51,6 +51,25 @@ static std::atomic<bool> s_hardware{true}, s_s3tc{true}, s_bptc{false}, s_zeroCo
 void VideoDecoder::setHardwareDecoding(bool on) { s_hardware = on; }
 bool VideoDecoder::hardwareDecoding() { return s_hardware; }
 void VideoDecoder::setZeroCopy(bool on) { s_zeroCopy = on; }
+
+static std::mutex s_sharedDeviceMutex;
+static AVBufferRef *s_sharedDevice = nullptr;
+
+void VideoDecoder::setSharedHardwareDevice(AVBufferRef *device)
+{
+    std::lock_guard<std::mutex> lk(s_sharedDeviceMutex);
+    av_buffer_unref(&s_sharedDevice);
+    if (device) s_sharedDevice = av_buffer_ref(device);
+}
+
+// The shared device if it is of this type (a new reference), else nullptr
+static AVBufferRef *sharedDevice(AVHWDeviceType type)
+{
+    std::lock_guard<std::mutex> lk(s_sharedDeviceMutex);
+    if (!s_sharedDevice) return nullptr;
+    const auto *ctx = reinterpret_cast<const AVHWDeviceContext *>(s_sharedDevice->data);
+    return ctx->type == type ? av_buffer_ref(s_sharedDevice) : nullptr;
+}
 bool VideoDecoder::zeroCopy() { return s_zeroCopy; }
 
 // Surface formats the GPU refused to sample in place (copied instead)
@@ -181,8 +200,8 @@ bool VideoDecoder::setupHardware(const AVCodec *dec)
             const AVCodecHWConfig *cfg = avcodec_get_hw_config(dec, i);
             if (!cfg) break;
             if (!(cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) || cfg->device_type != type) continue;
-            AVBufferRef *dev = nullptr;
-            if (av_hwdevice_ctx_create(&dev, type, nullptr, nullptr, 0) < 0) {
+            AVBufferRef *dev = sharedDevice(type);
+            if (!dev && av_hwdevice_ctx_create(&dev, type, nullptr, nullptr, 0) < 0) {
                 std::lock_guard<std::mutex> lk(failedMutex);
                 failed.insert(int(type));
                 break;
@@ -740,12 +759,23 @@ bool VideoDecoder::takeStaging(size_t size, int *id, uint8_t **ptr)
 // ---------------------------------------------------------------------------
 // Layouts: how the GPU reads a frame
 // ---------------------------------------------------------------------------
-// A VideoToolbox frame sampled in place: its planes as the copy path describes them (from the surface's format),
+// A hardware frame taken on the GPU (VideoToolbox: sampled in place; D3D11 on the renderer's device: copied there on
+// the GPU): its planes as the copy path describes them (from the surface's format),
 // when each is one or two channels of 8 or 16 bits (NV12, P010, P210, P410, P216, P416…). Others are copied.
 std::shared_ptr<const VideoLayout> VideoDecoder::surfaceLayout(const AVFrame *hw)
 {
+#if defined(__APPLE__) || defined(_WIN32)
 #if defined(__APPLE__)
     if (!s_zeroCopy || !hw->hw_frames_ctx || hw->format != AV_PIX_FMT_VIDEOTOOLBOX) return nullptr;
+#else
+    // D3D11 frames stay on the GPU only when they were decoded on the renderer's device (copied there on the GPU)
+    if (!s_zeroCopy || !hw->hw_frames_ctx || hw->format != AV_PIX_FMT_D3D11) return nullptr;
+    {
+        const auto *frames = reinterpret_cast<const AVHWFramesContext *>(hw->hw_frames_ctx->data);
+        std::lock_guard<std::mutex> lk(s_sharedDeviceMutex);
+        if (!s_sharedDevice || frames->device_ref->data != s_sharedDevice->data) return nullptr;
+    }
+#endif
     {
         std::lock_guard<std::mutex> lk(s_refusedMutex);
         if (s_refusedSurfaces.count(surfaceFormat(hw))) return nullptr;

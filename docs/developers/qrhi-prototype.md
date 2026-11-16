@@ -1,9 +1,33 @@
 # QRhi prototype
 
-The renderer is OpenGL. OpenGL is deprecated on macOS, so NyxMap studies a move to
-Qt's QRhi, which drives Metal, Direct3D 11/12 and Vulkan from one API and keeps
-the application in C++ and Qt. Nothing changes in the production renderer until
-a measured prototype shows a gain without losing a feature.
+NyxMap's renderer moves from OpenGL to Qt's QRhi, which drives Metal, Direct3D
+11/12 and Vulkan from one API and keeps the application in C++ and Qt. OpenGL
+goes once every part has been ported, each checked picture by picture against
+the OpenGL renderer it replaces. This page records the measurements that led to
+it and the parts ported so far.
+
+## Ported
+
+- **Video** (`RhiVideoTexture`, the port of `VideoTexture`): every pixel layout,
+  HAP's compressed blocks, and hardware frames kept on the GPU
+  (`RhiVideoSurface`: VideoToolbox adopted with no copy on macOS; on Windows the
+  decoders decode on QRhi's Direct3D 11 device and each frame is copied once on
+  the GPU, instead of the trip through the CPU the OpenGL renderer makes there).
+  Planes of three channels and of four 16-bit channels, which no QRhi format
+  holds, go as one channel three or four times as wide. `rhi_video` checks every
+  test file against `VideoTexture`: at most 1 level apart (rounding).
+- The engine's shaders are baked at build time (`qt_add_shaders`, no GLSL
+  target); ISF shaders at run time (`QShaderBaker`). Qt Shader Tools is now a
+  build and runtime dependency.
+
+## Windows bench
+
+The Windows CI job packages the benches as `NyxMap-rhi-bench-windows` (a run of
+the Build workflow, `workflow_dispatch`, on the branch). On a Windows machine with
+a real GPU: extract it, run `RunBench.cmd`, send back `report.txt`. It makes 4K
+test videos with the bundled ffmpeg (H.264, HEVC 10-bit and HAP, as its encoders
+allow), plays any video put in `media\yours`, and runs `isf_rhi`, `rhi_video` and
+`rhi_composition` (4, 9 and 16 layers at 4K) through Direct3D 11 and OpenGL.
 
 The prototype answers three questions, in this order:
 
@@ -60,7 +84,7 @@ The pictures are the OpenGL path's, and as close to FFmpeg's own decoding. The
 cost is the same order: neither API is the bottleneck for one stream. The
 `rhi_video` test checks the colours (skipped without Metal or hardware frames).
 
-HAP: `test/rhi_hap.cpp` uploads HAP's compressed blocks as they are into QRhi's
+HAP (measured with the probe that `rhi_video` replaced) uploads HAP's compressed blocks as they are into QRhi's
 block-compressed textures (BC1, BC3, BC4, BC7), decompressed by the GPU as it
 samples, and converts them with the OpenGL path's formula (RGB(A), scaled
 YCoCg, alpha). Per frame, upload and conversion, GPU done:
@@ -73,7 +97,7 @@ YCoCg, alpha). Per frame, upload and conversion, GPU done:
 
 The same pictures, the same cost. One gain: on Apple Silicon OpenGL offers no
 BPTC, so Hap R (BC7) and Hap HDR (BC6H) are decoded on the CPU there, while
-QRhi's Metal backend samples BC7 as it is. The `rhi_hap` test checks the
+QRhi's Metal backend samples BC7 as it is. `rhi_video` checks the
 colours. HAP Q Alpha is left out of this probe (FFmpeg does not encode it); its
 two textures are a BC3 and a BC4, both covered here.
 
