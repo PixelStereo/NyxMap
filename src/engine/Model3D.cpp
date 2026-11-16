@@ -659,17 +659,7 @@ bool Model3D::loadUfbx(const QString &path, QString *err)
 
 void MaterialTextureCache::apply(const Material3D &material, ModelPlacement &placement)
 {
-    placement.sharedMaterial = true;
-    placement.color = material.color;
-    placement.metal = material.metal;
-    placement.rough = material.rough;
-    placement.uvTiling = material.uvTiling;
-    placement.normalStrength = material.normalStrength;
-    placement.occlusionStrength = material.occlusionStrength;
-    placement.ior = material.ior;
-    placement.specular = material.specular;
-    for (int channel = 0; channel < 3; ++channel)
-        placement.emission[channel] = std::pow(material.emissionColor[channel], 2.2f) * material.emission;
+    applyParameters(material, placement);
     auto f = gl();
     for (int slot = 0; slot < MaterialMapCount; ++slot) {
         const auto &image = material.images[slot];
@@ -688,6 +678,21 @@ void MaterialTextureCache::apply(const Material3D &material, ModelPlacement &pla
         entry->second.used = m_frame;
         placement.materialTextures[slot] = entry->second.texture.tex;
     }
+}
+
+void MaterialTextureCache::applyParameters(const Material3D &material, ModelPlacement &placement)
+{
+    placement.sharedMaterial = true;
+    placement.color = material.color;
+    placement.metal = material.metal;
+    placement.rough = material.rough;
+    placement.uvTiling = material.uvTiling;
+    placement.normalStrength = material.normalStrength;
+    placement.occlusionStrength = material.occlusionStrength;
+    placement.ior = material.ior;
+    placement.specular = material.specular;
+    for (int channel = 0; channel < 3; ++channel)
+        placement.emission[channel] = std::pow(material.emissionColor[channel], 2.2f) * material.emission;
 }
 
 void MaterialTextureCache::advance()
@@ -3160,7 +3165,7 @@ std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBat
         RhiData::MeshBuffers &b = m_rhi->meshes[k];
         if (!b.vertices) continue;
         Material mat = m_materials.empty() ? Material() : m_materials[size_t(std::clamp(m.material, 0, int(m_materials.size()) - 1))];
-        if (look && look->sharedMaterial) mat = Material(); // its textures are not taken yet: its parameters
+        if (look && look->sharedMaterial) mat = Material(); // the project's material replaces the file's: its maps are below
         if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
             mat.baseColor = {{std::pow(look->color[0], 2.2f), std::pow(look->color[1], 2.2f), std::pow(look->color[2], 2.2f), 1}};
             mat.emissive = look->emission;
@@ -3179,7 +3184,7 @@ std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBat
         d.alphaCutoff = mat.alphaCutoff;
         d.alphaMode = picture ? 2 : mat.alphaMode; // a picture keeps its alpha
         d.blended = !picture && mat.alphaMode == 2;
-        d.baseTexture = look && look->sharedMaterial ? nullptr : image(mat.texture);
+        d.baseTexture = look && look->sharedMaterial ? look->materialRhi[BaseColorMap] : image(mat.texture);
         if (look && (m_primitive || look->sharedMaterial)) { // a primitive: the material its parameters give it
             mat.metallic = look->metal;
             mat.roughness = look->rough;
@@ -3196,10 +3201,8 @@ std::vector<Model3D::RhiDraw> Model3D::rhiDraws(QRhi *rhi, QRhiResourceUpdateBat
         const auto channel = [](int c) { return std::array<float, 4>{{float(c == 0), float(c == 1), float(c == 2), float(c == 3)}}; };
         d.roughChannel = channel(mat.roughChannel);
         d.metalChannel = channel(mat.metalChannel);
-        if (!(look && look->sharedMaterial)) {
-            const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
-            for (int k = 0; k < 5; ++k) d.maps[size_t(k)] = image(indices[k]);
-        }
+        const int indices[5] = {mat.roughTex, mat.metalTex, mat.normalTex, mat.aoTex, mat.emTex};
+        for (int k = 0; k < 5; ++k) d.maps[size_t(k)] = look && look->sharedMaterial ? look->materialRhi[size_t(RoughnessMap + k)] : image(indices[k]);
         if (edges) {
             if (!b.edgesMade) {
                 b.edgesMade = true;

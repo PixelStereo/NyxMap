@@ -29,6 +29,8 @@ public:
     bool ready() const { return m_rhi != nullptr; }
 
     void setPicture(const QImage &image); // RGBA8888, the bottom row first (as the engine gives them); kept until the next one
+    // The picture is this texture of the same QRhi (a 3D scene's, not ours): used until the next setPicture
+    void setPictureTexture(QRhiTexture *texture);
     bool hasPicture() const { return m_pictureSize.isValid(); }
     QSize pictureSize() const { return m_pictureSize; }
 
@@ -55,6 +57,8 @@ private:
     std::unique_ptr<QRhiSampler> m_sampler;
     std::unique_ptr<QRhiTexture> m_texture;
     QSize m_pictureSize;
+    QRhiTexture *m_external = nullptr;
+    void bindPicture(QRhiTexture *texture);
     QImage m_pending; // to upload at the next render
     std::unique_ptr<QRhiShaderResourceBindings> m_pictureBindings, m_colorBindings;
     std::unique_ptr<QRhiGraphicsPipeline> m_picture, m_pictureOver, m_lines, m_triangles;

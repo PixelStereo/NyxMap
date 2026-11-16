@@ -127,8 +127,9 @@ it and the parts ported so far.
   of the last picture and the glow (a second, float attachment spread over six
   halvings) match OpenGL too (`rhi_scene`). Not yet, in lit scenes: an environment
   (and its sky), fog, the supersampled quality level; pictures laid on models by a layer, displacement pictures and
-  the textures of shared materials; `MaterialSphere` (the material preview, still an
-  OpenGL widget: it keeps the other views on the OpenGL API).
+  the textures of shared materials; shared materials' maps and height maps and the layers' pictures on models are taken (`rhi_preview`).
+  `MaterialSphere`, the material preview, is a `QRhiWidget` drawing the scene on its own device: no
+  `QOpenGLWidget` is left in the interface, and its views use the window's own API (Metal here).
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

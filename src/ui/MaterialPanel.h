@@ -9,7 +9,10 @@
 #include <QMessageBox>
 #include <QToolButton>
 #include "ColorPicker.h"
-#include <QOpenGLWidget>
+#include "RhiDraw.h"
+#include "RhiScene.h"
+#include <QRhiWidget>
+#include <rhi/qrhi.h>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -23,27 +26,35 @@
 #include <QTimer>
 #include <optional>
 
-// A separate, on-demand studio scene: never adds a layer or changes the show's camera.
-class MaterialSphere : public QOpenGLWidget {
+// A separate, on-demand studio scene: never adds a layer or changes the show's camera. Drawn through QRhi, on the widget's own
+// device (the scene's picture, then over the widget)
+class MaterialSphere : public QRhiWidget {
 public:
-    explicit MaterialSphere(QWidget *parent = nullptr) : QOpenGLWidget(parent) {
+    explicit MaterialSphere(QWidget *parent = nullptr) : QRhiWidget(parent) {
         setObjectName("materialSphere");
         setMinimumSize(160, 160);
         setMaximumHeight(320);
         sphere = std::make_shared<Model3D>();
         sphere->load(Model3D::primitivePath("Sphere"), nullptr);
     }
-    ~MaterialSphere() override { if (context()) disconnect(context(), nullptr, this, nullptr); cleanup(); }
     void setMaterial(const Material3D &m) {
         if (material.toJson() == m.toJson()) return;
         material = m; update();
     }
 protected:
-    void initializeGL() override {
-        connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, [this] { cleanup(); }, Qt::DirectConnection);
-        gl()->glGenFramebuffers(1, &readFbo);
+    void initialize(QRhiCommandBuffer *) override {
+        if (scene && scene->rhiOwner() != rhi()) scene.reset(); // another device: made again
+        if (!scene) scene = std::make_unique<RhiScene>(rhi());
+        draw.initialize(rhi(), renderTarget());
     }
-    void paintGL() override {
+    void releaseResources() override {
+        draw.release();
+        scene.reset();
+        sphere->releaseRhi();
+    }
+    void render(QRhiCommandBuffer *cb) override {
+        draw.initialize(rhi(), renderTarget());
+        draw.begin(QColor::fromRgbF(0.035f, 0.035f, 0.045f));
         const int w = std::max(1, int(width() * devicePixelRatioF()));
         const int h = std::max(1, int(height() * devicePixelRatioF()));
         // Fixed maximum render size, no timer: repaint only when material or widget changes.
@@ -55,41 +66,25 @@ protected:
         settings.ao = settings.reflections = settings.glow = 0;
         Scene3D::Item item;
         item.model = sphere;
-        textures.advance();
-        textures.apply(material, item.placement);
-        if (item.placement.materialTextures[HeightMap]) {
-            item.displace = item.placement.materialTextures[HeightMap];
-            item.displaceAmount = material.height;
-            item.placement.materialHeight = true;
-        }
-        sphere->setDetail(item.displace ? 6 : 3);
+        MaterialTextureCache::applyParameters(material, item.placement);
+        item.material = std::make_shared<Material3D>(material); // its maps: the scene makes textures of them
+        sphere->setDetail(material.images[HeightMap].isNull() || material.height == 0 ? 3 : 6);
         LightSettings light;
         light.shadow = false;
         Scene3DQuality quality;
         quality.antialiasing = quality.shadows = quality.contact = quality.reflections = quality.glow = quality.atmosphere = 0;
-        const GLuint texture = scene.draw(settings, {item}, {{light, 1}}, sw, sh, 0, false, quality);
-        gl()->glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
-        gl()->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-        gl()->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFramebufferObject());
-        gl()->glBlitFramebuffer(0, 0, sw, sh, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-        gl()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+        QRhiTexture *picture = scene ? scene->draw(cb, rhi()->nextResourceUpdateBatch(), settings, {item}, {{light, 1}}, sw, sh, quality) : nullptr;
+        if (picture) {
+            draw.setPictureTexture(picture);
+            draw.drawPicture(-1, -1, 1, 1);
+        }
+        draw.render(cb, renderTarget());
     }
 private:
-    void cleanup() {
-        if (!context() || !readFbo) return;
-        makeCurrent();
-        scene.releaseGl();
-        textures.release();
-        sphere->releaseGl();
-        gl()->glDeleteFramebuffers(1, &readFbo);
-        readFbo = 0;
-        doneCurrent();
-    }
-    Scene3D scene;
-    MaterialTextureCache textures;
+    std::unique_ptr<RhiScene> scene;
+    RhiDraw draw;
     std::shared_ptr<Model3D> sphere;
     Material3D material;
-    GLuint readFbo = 0;
 };
 
 class MaterialPanel : public QWidget {

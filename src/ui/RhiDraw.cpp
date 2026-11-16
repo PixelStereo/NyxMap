@@ -32,6 +32,7 @@ void RhiDraw::release()
     m_vertexCapacity = 0;
     m_pictureSize = QSize();
     m_pending = QImage();
+    m_external = nullptr;
     m_passKey = nullptr;
     m_rhi = nullptr;
     m_target = nullptr;
@@ -100,18 +101,35 @@ void RhiDraw::initialize(QRhi *rhi, QRhiRenderTarget *target)
     m_triangles = make(fsColor, QRhiGraphicsPipeline::Triangles, true, false, m_colorBindings.get());
 }
 
+void RhiDraw::bindPicture(QRhiTexture *texture)
+{
+    m_pictureBindings->setBindings(
+        {QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage, m_uniforms.get()),
+         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, texture, m_sampler.get())});
+    m_pictureBindings->create();
+}
+
+void RhiDraw::setPictureTexture(QRhiTexture *texture)
+{
+    if (!m_rhi || !texture) return;
+    if (m_external != texture) bindPicture(texture);
+    m_external = texture;
+    m_pictureSize = texture->pixelSize();
+    m_pending = QImage();
+}
+
 void RhiDraw::setPicture(const QImage &image) // RGBA8888, the bottom row first
 {
     if (!m_rhi || image.isNull()) return;
     m_pending = image.format() == QImage::Format_RGBA8888 ? image : image.convertToFormat(QImage::Format_RGBA8888);
-    if (m_pending.size() != m_pictureSize) { // another size: a texture of its own, the bindings made again
-        m_texture.reset(m_rhi->newTexture(QRhiTexture::RGBA8, m_pending.size()));
-        m_texture->create();
+    if (m_external || m_pending.size() != m_pictureSize) { // another size, or no longer another's: a texture of its own, the bindings made again
+        if (!m_texture || m_pending.size() != m_texture->pixelSize()) {
+            m_texture.reset(m_rhi->newTexture(QRhiTexture::RGBA8, m_pending.size()));
+            m_texture->create();
+        }
         m_pictureSize = m_pending.size();
-        m_pictureBindings->setBindings(
-            {QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage, m_uniforms.get()),
-             QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_texture.get(), m_sampler.get())});
-        m_pictureBindings->create();
+        m_external = nullptr;
+        bindPicture(m_texture.get());
     }
 }
 

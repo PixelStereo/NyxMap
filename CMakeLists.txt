@@ -455,7 +455,7 @@ if(APPLE)
 endif()
 add_library(nyxmap_ui STATIC ${UI_SOURCES})
 # The interface's shaders (RhiDraw), baked for every backend
-# (with GLSL: the views are composed through OpenGL while a 3D view, a QOpenGLWidget, shares their window)
+# (with GLSL: the views use OpenGL where the window does, Linux without Vulkan)
 qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
   PREFIX "/shaders"
   BASE src/ui/shaders

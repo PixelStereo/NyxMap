@@ -41,7 +41,6 @@ double toSegment(QPointF p, QPointF a, QPointF b)
 
 Scene3DView::Scene3DView(Engine *engine, int slot, QWidget *parent) : QRhiWidget(parent), m_engine(engine), m_slot(slot)
 {
-    setApi(QRhiWidget::Api::OpenGL); // as the other views: one API for the window while the material sphere is OpenGL
     m_overlay = new PaintOverlay(this, [this](QPainter &p) { paintOverlay(p); }); // under the buttons
     setObjectName(QStringLiteral("scene3dView%1").arg(slot));
     setMinimumSize(100, 70);

@@ -5,6 +5,7 @@
 // scene; the list refuses a move that takes a 3D object out of its scene or a 2D layer into one; the inspector shows the
 // scene's camera (Scene tab) and an object's values (3D tab), each edit one undo step.
 #include "Engine.h"
+#include <QRhiWidget>
 #include "fx3d_test.h"
 #include "LayerInspector.h"
 #include "LayerTable.h"
@@ -995,7 +996,7 @@ int runScene3dUiTests(Engine &engine)
             check(int(engine.materials().size()) == count + 1, "material browser creates project material");
             const quint64 id = items->currentItem()->data(Qt::UserRole).toULongLong();
             auto *metal = materials.findChild<SliderField *>("materialMetal");
-            auto *preview = materials.findChild<QOpenGLWidget *>("materialSphere");
+            auto *preview = materials.findChild<QRhiWidget *>("materialSphere");
             auto *color = materials.findChild<ColorPicker *>("materialBaseColor");
             const QImage before = preview ? preview->grab().toImage() : QImage();
             if (metal) emit metal->valueEdited(.9);

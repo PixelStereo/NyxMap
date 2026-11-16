@@ -33,10 +33,12 @@ public:
     // Pictures laid on models by a layer and displacement pictures are not taken yet
     QRhiTexture *draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &items,
                       const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality = {});
+    QRhi *rhiOwner() const; // the QRhi it draws with
     // Triangles it drew in its last frame
     int triangles() const { return m_triangles; }
 
 private:
+    std::vector<Scene3D::Item> withMaterials(QRhiResourceUpdateBatch *u, const std::vector<Scene3D::Item> &items);
     struct Impl;
     std::unique_ptr<Impl> d;
     int m_triangles = 0;

@@ -36,7 +36,6 @@ public:
     PreviewPicture(Engine *engine, int slot) : m_engine(engine), m_slot(slot)
     {
         setMinimumSize(100, 70);
-        setApi(QRhiWidget::Api::OpenGL); // as the window the 3D views (QOpenGLWidget) share: one API per window
         m_overlay = new PaintOverlay(this, [this](QPainter &p) { if (fixturesShown()) paintFixtures(p); }); // under the bar
         m_bar = new ZoomBar(this, QStringLiteral("Whole picture in view\n"
                                                  "Pan: middle button, Alt/⌥ + drag, or two fingers on a trackpad"));

@@ -79,6 +79,13 @@ struct RhiScene::Impl {
     std::unique_ptr<QRhiBuffer> glowUbuf[16];
     std::unique_ptr<QRhiTexture> brightPlain; // when the glow is off the post pass still wants a texture
     std::unique_ptr<QRhiBuffer> aoUbuf, blurUbuf, backgroundUbuf;
+    // A shared material's maps as textures, by their image, kept while they are used
+    struct MaterialMap {
+        std::unique_ptr<QRhiTexture> texture;
+        quint64 used = 0;
+    };
+    std::map<qint64, MaterialMap> materialMaps;
+    quint64 materialFrame = 0;
     RhiTarget last; // the last picture, for the reflections
     bool lastValid = false;
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> fullscreen; // by surface and fragment shader
@@ -291,6 +298,47 @@ RhiScene::RhiScene(QRhi *rhi) : d(std::make_unique<Impl>(rhi))
 
 RhiScene::~RhiScene() = default;
 
+QRhi *RhiScene::rhiOwner() const { return d->rhi; }
+
+// The items with their shared materials' maps as textures of this QRhi (a height map pushes the points as a displacement)
+std::vector<Scene3D::Item> RhiScene::withMaterials(QRhiResourceUpdateBatch *u, const std::vector<Scene3D::Item> &items)
+{
+    std::vector<Scene3D::Item> out = items;
+    ++d->materialFrame;
+    for (Scene3D::Item &item : out) {
+        if (!item.material || !item.placement.sharedMaterial) continue;
+        const Material3D &material = *item.material;
+        for (int slot = 0; slot < MaterialMapCount; ++slot) {
+            const QImage &image = material.images[size_t(slot)];
+            if (image.isNull() || (slot == HeightMap && material.height == 0)) continue;
+            Impl::MaterialMap &entry = d->materialMaps[image.cacheKey()];
+            if (!entry.texture) {
+                const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+                entry.texture.reset(d->rhi->newTexture(QRhiTexture::RGBA8, rgba.size(), 1, QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips));
+                if (entry.texture->create()) {
+                    u->uploadTexture(entry.texture.get(), rgba);
+                    u->generateMips(entry.texture.get());
+                } else {
+                    entry.texture.reset();
+                }
+            }
+            entry.used = d->materialFrame;
+            item.placement.materialRhi[size_t(slot)] = entry.texture.get();
+        }
+        if (!item.displaceRhi && item.placement.materialRhi[HeightMap]) {
+            item.displaceRhi = item.placement.materialRhi[HeightMap];
+            item.placement.materialHeight = true;
+            item.displaceAmount = material.height;
+            item.displaceMid = 0;
+        }
+    }
+    for (auto it = d->materialMaps.begin(); it != d->materialMaps.end();) {
+        if (d->materialFrame - it->second.used > 240) it = d->materialMaps.erase(it);
+        else ++it;
+    }
+    return out;
+}
+
 namespace {
 
 // The camera's matrices as this backend takes them: depth from 0 to 1 where it is, and the first row of the picture at its
@@ -346,7 +394,7 @@ Place place(const Scene3D::Item &item, const QMatrix4x4 &model, const Camera3D &
     p.tiling[1] = item.placement.uvTiling[1];
     p.tiling[2] = item.displaceAmount;
     p.tiling[3] = item.displaceMid;
-    p.ints[0] = item.displaceRhi ? 1 : 0; // a layer's picture pushing the points (a shared material's height map: not yet)
+    p.ints[0] = item.displaceRhi ? (item.placement.materialHeight ? 2 : 1) : 0; // a layer's picture pushing the points, or a material's height map
     p.ints[1] = item.placement.shading;
     p.ints[2] = item.model->displacementUvTopology();
     const int count = int(std::min<size_t>(item.shape.size(), 8));
@@ -387,9 +435,10 @@ void material(Place &p, const Model3D::RhiDraw &draw, bool unlit, bool picture)
 } // namespace
 
 QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s,
-                                const std::vector<Scene3D::Item> &items, int w, int h, Scene3D::ViewLook look)
+                                const std::vector<Scene3D::Item> &sourceItems, int w, int h, Scene3D::ViewLook look)
 {
     if (w <= 0 || h <= 0 || !d->ensure(d->view, w, h, 1, true)) return nullptr;
+    const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
     QRhi *rhi = d->rhi;
     d->nextUbuf = 0;
     RhiResources &res = RhiResources::of(rhi);
@@ -484,10 +533,11 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
     return d->view.color.get();
 }
 
-QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &items,
+QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &sourceItems,
                             const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality)
 {
     if (w <= 0 || h <= 0) return nullptr;
+    const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
     QRhi *rhi = d->rhi;
     const int aaLevel = std::clamp(quality.antialiasing, 0, 2); // the supersampled level comes with the effects' passes
     int samples = 1;

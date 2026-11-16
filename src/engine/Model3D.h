@@ -58,6 +58,7 @@ struct ModelPlacement {
     QMatrix4x4 transform() const;
     bool sharedMaterial = false;
     std::array<GLuint, MaterialMapCount> materialTextures{};
+    std::array<QRhiTexture *, MaterialMapCount> materialRhi{}; // the same maps as textures of a QRhi (its renderer makes them)
     std::array<float, 3> emission{};
     std::array<float, 2> uvTiling{{1, 1}};
     float normalStrength = 1, occlusionStrength = 1, ior = 1.5f, specular = 1;
@@ -185,6 +186,8 @@ std::vector<Material3D> importGltfMaterials(const QString &path, QString *error 
 class MaterialTextureCache {
 public:
     void apply(const Material3D &material, ModelPlacement &placement);
+    // Its parameters on a placement, no textures (a QRhi renderer makes its own)
+    static void applyParameters(const Material3D &material, ModelPlacement &placement);
     void advance();
     void release();
 private:
@@ -414,6 +417,7 @@ public:
         std::vector<ShapeOp> shape;
         // QRhi: the same pictures as textures of that QRhi (set by its renderer from the layers below), and which layers they are
         QRhiTexture *pictureRhi = nullptr, *displaceRhi = nullptr;
+        std::shared_ptr<const Material3D> material; // the shared material it takes its maps from (QRhi makes its textures)
         quint64 pictureLayer = 0, displaceLayer = 0;
         int pictureStage = -1, displaceStage = -1;
     };

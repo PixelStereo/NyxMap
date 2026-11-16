@@ -1625,6 +1625,7 @@ void Engine::collectScene(const std::vector<Layer *> &members, std::vector<Scene
             for (const QMatrix4x4 &frame : placementFrames(*m, parent, true)) {
                 Scene3D::Item item{model, placement, picture, displacement, amount, mid, frame};
                 item.shape = shape;
+                if (placement.sharedMaterial && look->material) item.material = look->material;
                 item.pictureLayer = pic ? pic->id : 0;
                 item.pictureStage = look->modelPictureStage;
                 item.displaceLayer = disp ? disp->id : 0;
