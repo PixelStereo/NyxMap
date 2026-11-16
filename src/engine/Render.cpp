@@ -1986,9 +1986,45 @@ void Engine::frame(double dt)
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
     releaseRetired(false); // transitions over whose decoders are closed by now
 
-    if (m_rhi) { // the frame through QRhi: nothing of OpenGL's (outputs, previews and publishing: not yet)
+    if (m_rhi) { // the frame through QRhi: nothing of OpenGL's (previews: read back below; publishing: not yet)
         for (auto &l : m_layers) l->renderPaused = false;
+        // The interface still shows its previews through OpenGL: the pictures it asked for come back as pixels
+        std::vector<RhiRenderer::PreviewRequest> asked;
+        for (size_t i = 0; i < m_previewSlots.size(); ++i) {
+            const PreviewSlot &slot = m_previewSlots[i];
+            if (slot.asked && !slot.sceneView && (!slot.id || indexOfId(slot.id) >= 0)) asked.push_back({int(i), slot.id, 1024});
+        }
+        m_rhi->setPreviewRequests(std::move(asked));
         m_rhi->render(rc);
+        {
+            auto f = gl();
+            for (auto &slot : m_previewSlots) { // the interface may still sample this buffer on the GPU: wait there
+                if (slot.reader[m_back]) {
+                    f->glWaitSync(slot.reader[m_back], 0, GL_TIMEOUT_IGNORED);
+                    f->glDeleteSync(slot.reader[m_back]);
+                    slot.reader[m_back] = nullptr;
+                }
+                slot.renderedId[m_back] = 0;
+            }
+            for (const auto &p : m_rhi->takePreviews()) {
+                PreviewSlot &slot = m_previewSlots[size_t(p.slot)];
+                RenderTarget &target = p.id ? slot.target[m_back] : m_output[m_back];
+                target.ensure(p.size.width(), p.size.height());
+                if (!target.tex) continue;
+                f->glBindTexture(GL_TEXTURE_2D, target.tex);
+                f->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                f->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.size.width(), p.size.height(), GL_RGBA, GL_UNSIGNED_BYTE, p.pixels.constData());
+                slot.renderedId[m_back] = p.id;
+            }
+            { // the others' GPUs wait for these uploads (waitForFrame)
+                std::lock_guard<std::mutex> lk(m_fenceMutex);
+                if (m_frameFence) f->glDeleteSync(m_frameFence);
+                m_frameFence = f->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            }
+            f->glFlush();
+            m_published = m_back;
+            m_back = 1 - m_back;
+        }
         m_renderLayerIndexActive = false;
         m_mutex.unlock();
         m_renderLockHold.record(RealtimeTiming::nowNs() - lockAcquired);

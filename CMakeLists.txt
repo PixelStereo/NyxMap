@@ -819,6 +819,20 @@ if(NYXMAP_TESTS)
   target_compile_definitions(nyxmap_rhi_engine_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
   add_test(NAME rhi_engine COMMAND nyxmap_rhi_engine_test)
   set_tests_properties(rhi_engine PROPERTIES SKIP_RETURN_CODE 77)
+  # An output window shown through the QRhi renderer's swapchain: what it presents is the viewport's picture
+  add_executable(nyxmap_rhi_output_test test/rhi_output.cpp)
+  target_include_directories(nyxmap_rhi_output_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_output_test PRIVATE nyxmap_engine)
+  target_compile_definitions(nyxmap_rhi_output_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME rhi_output COMMAND nyxmap_rhi_output_test)
+  set_tests_properties(rhi_output PROPERTIES SKIP_RETURN_CODE 77)
+  # The interface's previews with the QRhi renderer: OpenGL slots filled from its pictures
+  add_executable(nyxmap_rhi_preview_test test/rhi_preview.cpp)
+  target_include_directories(nyxmap_rhi_preview_test PRIVATE src/engine)
+  target_link_libraries(nyxmap_rhi_preview_test PRIVATE nyxmap_engine Qt6::OpenGL)
+  target_compile_definitions(nyxmap_rhi_preview_test PRIVATE TEST_DIR="${CMAKE_SOURCE_DIR}/test")
+  add_test(NAME rhi_preview COMMAND nyxmap_rhi_preview_test)
+  set_tests_properties(rhi_preview PROPERTIES SKIP_RETURN_CODE 77)
   # The QRhi renderer's video pictures against the OpenGL renderer's, every layout: the same pictures, the cost
   add_executable(nyxmap_rhi_video_test test/rhi_video.cpp)
   target_include_directories(nyxmap_rhi_video_test PRIVATE src/engine)
@@ -836,7 +850,7 @@ if(NYXMAP_TESTS)
   # These tests each create their own native GPU device/context (D3D11 on Windows, Metal on macOS,
   # Vulkan elsewhere). Running several at once can exhaust software/CI adapters and crash drivers;
   # serialize GPU integration tests while keeping the CPU-only suite parallel.
-  set_tests_properties(isf_rhi isf_render rhi_engine rhi_video rhi_composition PROPERTIES RUN_SERIAL TRUE)
+  set_tests_properties(isf_rhi isf_render rhi_engine rhi_output rhi_preview rhi_video rhi_composition PROPERTIES RUN_SERIAL TRUE)
   add_executable(nyxmap_naming_test test/naming.cpp)
   target_include_directories(nyxmap_naming_test PRIVATE src/engine)
   target_link_libraries(nyxmap_naming_test PRIVATE Qt6::Core)

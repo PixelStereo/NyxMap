@@ -11,9 +11,11 @@
 // mapped meshes, the project's antialiasing and mipmaps.
 // Not yet: live inputs, TouchEngine, web pages, 3D scenes (each said once in the log; the layer is drawn without
 // it, or not at all).
+// Shown: output windows through a swapchain each (present); the interface's previews as pixels (setPreviewRequests).
 
 #include "RhiTarget.h"
 
+#include <QByteArray>
 #include <QImage>
 #include <QSize>
 #include <map>
@@ -25,6 +27,7 @@ class Engine;
 struct Layer;
 struct IsfRenderContext;
 class QRhi;
+class QWindow;
 class QRhiBuffer;
 class QRhiCommandBuffer;
 class QRhiGraphicsPipeline;
@@ -48,6 +51,29 @@ public:
     void imageArrived(quint64 layer, const QImage &image);
     // The frame: every layer's picture, the viewports' and the composition's (render thread, under the lock)
     void render(const IsfRenderContext &rc);
+    // The interface's previews while it still shows them through OpenGL: reduced copies of pictures, read back during the
+    // frame (render thread). Set before render(); taken after it. `slot`: the engine's preview slot; `id`: a layer, a
+    // viewport, or 0 for the composition. Pixels: RGBA8, the picture's bottom row first (as an OpenGL texture holds them)
+    struct PreviewRequest {
+        int slot = 0;
+        quint64 id = 0;
+        int maxSide = 1024;
+    };
+    struct PreviewPicture {
+        int slot = 0;
+        quint64 id = 0;
+        QSize size;
+        QByteArray pixels;
+    };
+    void setPreviewRequests(std::vector<PreviewRequest> requests);
+    std::vector<PreviewPicture> takePreviews();
+    // The viewport's picture into the window, through a swapchain of its own (render thread): true once shown.
+    // `waitForDisplay`: this window is the one the frame follows the screen's refresh by (the others do not wait)
+    bool present(quint64 viewport, QWindow *window, bool waitForDisplay);
+    void releaseOutputs(QWindow *window); // before the window goes (any, or all: nullptr)
+    // Tests: what the last present drew, top row first (needs setCapturePresented, set before the window's first frame)
+    void setCapturePresented(bool on);
+    QImage lastPresented(quint64 viewport) const;
     // The last pictures, top row first (render thread)
     QImage grabViewport(quint64 viewport);
     QImage grabOutput();

@@ -44,8 +44,21 @@ it and the parts ported so far.
   contents between passes). A layer drawn under 90% of its size is sampled from
   mip levels of a copy of its picture, made again once per frame of a plain
   video and once per frame of the render otherwise, as many times as OpenGL
-  makes them. Not yet: live inputs, TouchEngine, web pages, 3D scenes; outputs,
-  previews and publishing still read OpenGL's pictures.
+  makes them. Not yet: live inputs, TouchEngine, web pages, 3D scenes.
+- **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
+  the engine's QRhi, made by the render thread; its viewport's picture is drawn
+  into it as it is, the right way up (the textures' flip, reversed). The window's
+  surface type is the backend's (`Engine::outputSurfaceType`: Metal, Direct3D,
+  Vulkan). The window the frame follows the screen by waits for its vsync, the
+  others do not. `rhi_output` presents into a real window and reads the
+  swapchain back: the viewport's picture, scaled to the window, mean 0.002 apart.
+- **Previews**, while the interface still draws through OpenGL: the pictures its
+  preview slots ask for (the composition, a layer, a viewport) are reduced to at
+  most 1024 px, read back during the frame and uploaded into the slots' OpenGL
+  textures, which the interface reads as before (`rhi_preview`). This bridge goes
+  with the interface's own views. Not yet: 3D views, the inspector's source
+  preview, publishing (Syphon, Spout, NDI, OMT), and what reads the composition's
+  pixels (sonification, vision, pixel mapping): they read OpenGL's pictures.
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

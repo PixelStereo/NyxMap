@@ -2,6 +2,7 @@
 // the output window, the composition size, and the composition opacity / blackout fades.
 // The rest of its methods live in Layers.cpp, Render.cpp, Project.cpp, Media.cpp and Snapshots.cpp.
 #include "EngineInternal.h"
+#include "RhiDevice.h"
 #include "RhiRenderer.h"
 #include "Midi.h"
 #include "ProcessMemory.h"
@@ -639,8 +640,8 @@ void Engine::releaseAll()
 // ---------------------------------------------------------------------------
 void Engine::setViewportWindow(quint64 viewport, QWindow *w)
 {
-    // Its Metal layer is taken here, on the main thread (AppKit)
-    std::shared_ptr<MetalOutput> metal = MetalOutput::forWindow(w);
+    // Its Metal layer is taken here, on the main thread (AppKit) (the QRhi renderer takes it itself)
+    std::shared_ptr<MetalOutput> metal = m_wantRhi ? nullptr : MetalOutput::forWindow(w);
     runGl([this, viewport, w, metal] {
         auto it = m_outWindows.find(viewport);
         if (it != m_outWindows.end() && it->second.window != w) {
@@ -670,6 +671,7 @@ void Engine::setViewportExposed(quint64 viewport, bool exposed, QSize pixelSize,
 // The window's context goes; its vertex array goes with it
 void Engine::releaseOutputSurface(OutputSurface &o)
 {
+    if (m_rhi && o.window) m_rhi->releaseOutputs(o.window); // its swapchain, before the window goes
     if (o.metal) { // its shared surfaces, with the engine's context current
         m_context->makeCurrent(m_surface);
         m_currentSurface = m_surface;
@@ -741,6 +743,29 @@ static void setSwapInterval(QOpenGLContext *ctx, int n)
 
 // Each window on screen is drawn with its own context and swapped; the engine's context then becomes current
 // again. Each window's context waits on the GPU for the frame's fence (waitForFrame) before drawing it.
+QSurface::SurfaceType Engine::outputSurfaceType() const
+{
+    if (m_wantRhi) return rhidevice::surfaceType();
+    return metalOutput() ? QSurface::MetalSurface : QSurface::OpenGLSurface;
+}
+
+void Engine::setCapturePresentedForTests(bool on)
+{
+    runGl([this, on] {
+        m_capturePresented = on;
+        if (m_rhi) m_rhi->setCapturePresented(on);
+    });
+}
+
+QImage Engine::presentedForTests(quint64 viewport)
+{
+    QImage img;
+    runGl([this, viewport, &img] {
+        if (m_rhi) img = m_rhi->lastPresented(viewport);
+    });
+    return img;
+}
+
 bool Engine::presentViewports(bool syncToDisplay)
 {
     std::vector<std::pair<const Layer *, OutputSurface *>> shown;
@@ -755,6 +780,19 @@ bool Engine::presentViewports(bool syncToDisplay)
     bool any = false, glUsed = false;
     // The pace of the window that waits for its screen (the last one): the render follows it while it is shown
     m_presentHz = shown.empty() ? 0 : shown.back().second->hz;
+    if (m_wantRhi) { // the QRhi renderer: a swapchain per window (none before its first frame)
+        if (!m_rhi) return false;
+        for (size_t k = 0; k < shown.size(); ++k) {
+            OutputSurface &out = *shown[k].second;
+            if (m_rhi->present(shown[k].first->id, out.window, syncToDisplay && k + 1 == shown.size())) {
+                any = true;
+                ++out.presented;
+            } else {
+                ++out.noPicture;
+            }
+        }
+        return any;
+    }
     for (size_t k = 0; k < shown.size(); ++k) {
         const Layer *vp = shown[k].first;
         OutputSurface &out = *shown[k].second;
@@ -826,7 +864,10 @@ quint64 Engine::windowFrames(quint64 viewport)
 void Engine::setPreviewSource(int slot, quint64 id)
 {
     Lock lk(&m_mutex);
-    if (slot >= 0 && slot < int(m_previewSlots.size())) m_previewSlots[size_t(slot)].id = id;
+    if (slot >= 0 && slot < int(m_previewSlots.size())) {
+        m_previewSlots[size_t(slot)].id = id;
+        m_previewSlots[size_t(slot)].asked = true;
+    }
 }
 
 void Engine::setPreviewScene(int slot, bool on, const SceneSettings &camera, QSize size, Scene3D::ViewLook look)

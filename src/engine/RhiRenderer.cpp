@@ -18,6 +18,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QRectF>
+#include <QWindow>
 #include <QSet>
 #include <rhi/qrhi.h>
 
@@ -106,6 +107,21 @@ struct RhiRenderer::Impl {
         bool used = false;
     };
     std::map<quint64, RLayer> layers;
+    // The output windows: a swapchain each, the viewport's picture drawn into it (present())
+    struct Output {
+        std::unique_ptr<QRhiSwapChain> sc;
+        std::unique_ptr<QRhiRenderPassDescriptor> rp;
+        std::unique_ptr<QRhiGraphicsPipeline> ps;
+        QWindow *window = nullptr;
+        bool resize = true;
+        QImage last; // tests: what was drawn, top row first
+    };
+    std::map<quint64, Output> outputs;
+    std::vector<PreviewRequest> previewRequests;
+    std::vector<PreviewPicture> previewPictures;
+    std::map<int, RhiTarget> previewTargets; // by slot
+    std::unique_ptr<QRhiBuffer> presentFlip; // the framebuffer's first row is the top of the window: the textures' flip, reversed
+    bool capturePresented = false;
     std::map<const Layer *, RLayer> outgoing; // the sources a transition is leaving, by the layer that held them
     RhiTarget compositionOut;
     std::map<std::tuple<int, int, int>, RhiTarget> dstCopies; // what a Difference layer reads: the target so far, by size and format
@@ -928,6 +944,77 @@ struct RhiRenderer::Impl {
         dim(r.out, level);
     }
 
+    // The viewport's picture into its window: a triangle over the swapchain's backbuffer, the picture sampled as it is
+    bool present(quint64 viewport, QWindow *window, bool waitForDisplay)
+    {
+        const auto found = layers.find(viewport);
+        if (!window || found == layers.end() || !found->second.final || !presentFlip) return false;
+        QRhiTexture *picture = found->second.final;
+        Output &o = outputs[viewport];
+        if (o.window != window || !o.sc) {
+            o = Output();
+            o.window = window;
+            o.sc.reset(rhi->newSwapChain());
+            o.sc->setWindow(window);
+            o.rp.reset(o.sc->newCompatibleRenderPassDescriptor());
+            o.sc->setRenderPassDescriptor(o.rp.get());
+        }
+        QRhiSwapChain::Flags flags;
+        if (!waitForDisplay) flags |= QRhiSwapChain::NoVSync;
+        if (capturePresented) flags |= QRhiSwapChain::UsedAsTransferSource;
+        if (o.sc->flags() != flags) {
+            o.sc->setFlags(flags);
+            o.resize = true;
+        }
+        if (o.resize || o.sc->currentPixelSize() != o.sc->surfacePixelSize()) {
+            if (!o.sc->createOrResize()) return false;
+            o.resize = false;
+        }
+        QRhi::FrameOpResult status = rhi->beginFrame(o.sc.get());
+        if (status == QRhi::FrameOpSwapChainOutOfDate) {
+            if (!o.sc->createOrResize()) return false;
+            status = rhi->beginFrame(o.sc.get());
+        }
+        if (status != QRhi::FrameOpSuccess) return false;
+        QRhiCommandBuffer *pcb = o.sc->currentFrameCommandBuffer();
+        QRhiShaderResourceBindings *srb = res().bindings({{15, QRhiShaderResourceBinding::VertexStage, presentFlip.get()},
+                                                          {1, QRhiShaderResourceBinding::FragmentStage, nullptr, picture, res().linear()}});
+        if (!o.ps && srb) {
+            o.ps.reset(rhi->newGraphicsPipeline());
+            o.ps->setShaderStages({{QRhiShaderStage::Vertex, RhiResources::shader(QStringLiteral("fullscreen.vert"))},
+                                   {QRhiShaderStage::Fragment, RhiResources::shader(QStringLiteral("blit.frag"))}});
+            o.ps->setShaderResourceBindings(srb);
+            o.ps->setRenderPassDescriptor(o.rp.get());
+            if (!o.ps->create()) o.ps.reset();
+        }
+        pcb->beginPass(o.sc->currentFrameRenderTarget(), QColor(0, 0, 0, 255), {1.0f, 0});
+        if (o.ps && srb) {
+            pcb->setGraphicsPipeline(o.ps.get());
+            const QSize px = o.sc->currentPixelSize();
+            pcb->setViewport({0, 0, float(px.width()), float(px.height())});
+            pcb->setShaderResources(srb);
+            pcb->draw(3);
+        }
+        pcb->endPass();
+        if (capturePresented) {
+            auto *result = new QRhiReadbackResult;
+            result->completed = [this, viewport, result] {
+                const auto it = outputs.find(viewport);
+                if (it != outputs.end()) {
+                    const QImage::Format format = result->format == QRhiTexture::BGRA8 ? QImage::Format_ARGB32 : QImage::Format_RGBA8888;
+                    it->second.last = QImage(reinterpret_cast<const uchar *>(result->data.constData()), result->pixelSize.width(),
+                                             result->pixelSize.height(), format).convertToFormat(QImage::Format_RGBA8888);
+                }
+                delete result;
+            };
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            u->readBackTexture(QRhiReadbackDescription(), result);
+            pcb->resourceUpdate(u);
+        }
+        rhi->endFrame(o.sc.get());
+        return !o.ps ? false : true;
+    }
+
     // Every layer in dependency order (Render.cpp's renderPass)
     void renderPass(const IsfRenderContext &rc, double level)
     {
@@ -984,6 +1071,7 @@ RhiRenderer::~RhiRenderer()
 {
     if (!d->rhi) return;
     if (d->pending) d->pending->release();
+    d->outputs.clear(); // swapchains before the QRhi
     d->layers.clear();
     d->outgoing.clear();
     d->compositionOut.release();
@@ -993,6 +1081,7 @@ RhiRenderer::~RhiRenderer()
     d->gridIndices.reset();
     d->quadIndices.reset();
     d->fullMesh.reset();
+    d->presentFlip.reset();
     RhiResources::release(d->rhi.get());
     d->rhi.reset();
 }
@@ -1029,6 +1118,10 @@ bool RhiRenderer::init(QString *err)
     };
     d->gridIndexCount = indices(kMeshSubdiv, d->gridIndices);
     indices(1, d->quadIndices);
+    d->presentFlip.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::UniformBuffer, 16));
+    d->presentFlip->create();
+    const float reversed[4] = {-rhidevice::ndcFlip(rhi), 0, 0, 0};
+    u->uploadStaticBuffer(d->presentFlip.get(), reversed);
     std::vector<float> full;
     Mapping().buildVertices(1, full);
     d->fullMesh.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, quint32(full.size() * sizeof(float))));
@@ -1070,8 +1163,41 @@ void RhiRenderer::render(const IsfRenderContext &rc)
         if (!l->parent && !l->isViewport) top.push_back(l.get());
     d->compositionOut.ensure(d->rhi.get(), d->e.m_compSize);
     d->composite(d->compositionOut, top, QRectF(0, 0, 1, 1), QColor(0, 0, 0, 255), 0, 0, level);
+    // The previews the interface asked for: reduced, read back (the offscreen frame is done once it ends)
+    struct Read {
+        PreviewRequest request;
+        QSize size;
+        QRhiReadbackResult result;
+    };
+    std::vector<std::unique_ptr<Read>> reads;
+    for (const PreviewRequest &q : d->previewRequests) {
+        QRhiTexture *tex = nullptr;
+        if (!q.id) tex = d->compositionOut.texture();
+        else if (const auto found = d->layers.find(q.id); found != d->layers.end()) {
+            const Layer *l = d->e.layer(d->e.indexOfId(q.id));
+            tex = l && l->isViewport ? found->second.out.texture() : found->second.final;
+        }
+        if (!tex) continue;
+        QSize size = tex->pixelSize();
+        if (size.width() > q.maxSide || size.height() > q.maxSide) size.scale(q.maxSide, q.maxSide, Qt::KeepAspectRatio);
+        RhiTarget &small = d->previewTargets[q.slot];
+        small.ensure(d->rhi.get(), size);
+        if (!small.ready() || !d->res().blit(d->cb, tex, small, d->take())) continue;
+        auto read = std::make_unique<Read>();
+        read->request = q;
+        read->size = small.size();
+        QRhiResourceUpdateBatch *u = d->rhi->nextResourceUpdateBatch();
+        u->readBackTexture({small.texture()}, &read->result);
+        d->cb->resourceUpdate(u);
+        reads.push_back(std::move(read));
+    }
     if (d->pending) d->cb->resourceUpdate(d->take());
     d->rhi->endOffscreenFrame();
+    d->previewPictures.clear();
+    for (const auto &read : reads)
+        if (read->result.data.size() >= qsizetype(read->size.width()) * read->size.height() * 4)
+            d->previewPictures.push_back({read->request.slot, read->request.id, read->size, read->result.data});
+    d->previewRequests.clear();
     // Layers gone: their pictures go
     for (auto it = d->layers.begin(); it != d->layers.end();) it = it->second.used || it->second.image ? std::next(it) : d->layers.erase(it);
     for (auto it = d->outgoing.begin(); it != d->outgoing.end();) it = it->second.used ? std::next(it) : d->outgoing.erase(it);
@@ -1096,6 +1222,29 @@ QImage RhiRenderer::grabViewport(quint64 viewport)
 {
     const auto found = d->layers.find(viewport);
     return found == d->layers.end() ? QImage() : readBack(d->rhi.get(), found->second.out.texture());
+}
+
+bool RhiRenderer::present(quint64 viewport, QWindow *window, bool waitForDisplay)
+{
+    return d->rhi && d->present(viewport, window, waitForDisplay);
+}
+
+void RhiRenderer::releaseOutputs(QWindow *window)
+{
+    for (auto it = d->outputs.begin(); it != d->outputs.end();)
+        it = !window || it->second.window == window ? d->outputs.erase(it) : std::next(it);
+}
+
+void RhiRenderer::setPreviewRequests(std::vector<PreviewRequest> requests) { d->previewRequests = std::move(requests); }
+
+std::vector<RhiRenderer::PreviewPicture> RhiRenderer::takePreviews() { return std::exchange(d->previewPictures, {}); }
+
+void RhiRenderer::setCapturePresented(bool on) { d->capturePresented = on; }
+
+QImage RhiRenderer::lastPresented(quint64 viewport) const
+{
+    const auto it = d->outputs.find(viewport);
+    return it == d->outputs.end() ? QImage() : it->second.last;
 }
 
 QImage RhiRenderer::grabOutput() { return readBack(d->rhi.get(), d->compositionOut.texture()); }

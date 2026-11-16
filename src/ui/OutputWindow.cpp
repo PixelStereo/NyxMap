@@ -1,5 +1,6 @@
 #include "OutputWindow.h"
 #include "Engine.h"
+#include "RhiDevice.h"
 
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -12,9 +13,10 @@
 
 OutputWindow::OutputWindow(Engine *engine, quint64 viewport) : m_engine(engine), m_viewport(viewport)
 {
-    // macOS: shown through Metal by the render thread; elsewhere through OpenGL
-    setSurfaceType(Engine::metalOutput() ? QSurface::MetalSurface : QSurface::OpenGLSurface);
+    // macOS: shown through Metal by the render thread; elsewhere through OpenGL (the QRhi renderer: its API's surface)
+    setSurfaceType(m_engine->outputSurfaceType());
     if (surfaceType() == QSurface::OpenGLSurface) setFormat(QSurfaceFormat::defaultFormat());
+    if (m_engine->rhiRendering()) rhidevice::prepareWindow(this); // Vulkan: the window's instance
     setTitle(QStringLiteral("NyxMap — Output"));
     create();
     m_engine->setViewportWindow(m_viewport, this);

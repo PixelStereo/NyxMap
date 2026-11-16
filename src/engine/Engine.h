@@ -1,4 +1,5 @@
 #pragma once
+#include <QSurface>
 #include "RealtimeTiming.h"
 // Render engine: depends only on QtCore/QtGui/OpenGL, no dependency on widgets.
 //
@@ -881,6 +882,12 @@ public:
     // macOS: the output windows are shown through Metal (their surface type must then be Metal), the engine rendering
     // on its own thread; elsewhere (or without Metal) through OpenGL
     static bool metalOutput() { return MetalOutput::available(); }
+    // With the QRhi renderer (setRhiRendering) the output windows are shown by it, through a swapchain of the platform's
+    // QRhi (RhiDevice.h): their surface type is that API's (Metal, Direct3D, Vulkan), the engine on its own thread
+    QSurface::SurfaceType outputSurfaceType() const;
+    // Tests: the pictures the QRhi renderer presented are kept (render thread; before the window's first frame), and read
+    void setCapturePresentedForTests(bool on);
+    QImage presentedForTests(quint64 viewport);
     QString glRenderer() const { return m_glRenderer; } // the OpenGL renderer's name
     QString glVersion() const { return m_glVersion; }
     QString glVendor() const { return m_glVendor; }
@@ -1159,6 +1166,7 @@ private:
     mutable std::mutex m_outputStatsMutex;
     std::vector<OutputStats> m_outputStats;
     std::function<void(quint64, QSize)> m_windowDrawProbe;
+    bool m_capturePresented = false; // tests: the QRhi renderer keeps what it presents
     double m_presentHz = 0; // render thread: the refresh rate of the window that waits for its screen (0: none)
     qint64 m_paceNext = -1; // render thread: when the next frame is due (steady clock ns; -1: from now)
     void releaseOutputSurface(OutputSurface &o);
@@ -1188,6 +1196,7 @@ private:
     TestCard m_testCard;        // the viewports' test cards (render thread)
     struct PreviewSlot {
         quint64 id = 0;
+        bool asked = false; // the interface set a source: with the QRhi renderer, its picture is read back for it
         quint64 renderedId[2] = {0, 0};
         RenderTarget target[2];
         GLsync reader[2] = {nullptr, nullptr};
