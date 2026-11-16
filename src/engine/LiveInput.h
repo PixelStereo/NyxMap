@@ -9,6 +9,7 @@
 
 #include "Gl.h"
 
+#include <QImage>
 #include <QSize>
 #include <QString>
 #include <memory>
@@ -38,6 +39,9 @@ public:
     virtual ~LiveInput() = default;
     // Render thread, context current: the newest picture into `tex` (RGBA); true when a new one came
     virtual bool update(Texture2D &tex) = 0;
+    // QRhi: the newest picture as RGBA, the first row the bottom, when a new one came. The inputs that arrive as pixels give
+    // it; Syphon and Spout (a GPU texture of another API) do not yet
+    virtual bool takeFrame(QImage *) { return false; }
     virtual QString status() const { return {}; } // why there is no picture (empty: fine)
 };
 

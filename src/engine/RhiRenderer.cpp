@@ -146,6 +146,20 @@ struct RhiRenderer::Impl {
         batch()->updateDynamicBuffer(b, 0, quint32(std::min(bytes, 256)), data);
         return b;
     }
+    // A still image's or a live input's picture into the layer's texture
+    void uploadPicture(RLayer &r, const QImage &image)
+    {
+        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
+        if (!r.image || r.imageSize != rgba.size()) {
+            r.image.reset(rhi->newTexture(QRhiTexture::RGBA8, rgba.size()));
+            if (!r.image->create()) {
+                r.image.reset();
+                return;
+            }
+            r.imageSize = rgba.size();
+        }
+        batch()->uploadTexture(r.image.get(), rgba);
+    }
     QRhiResourceUpdateBatch *batch()
     {
         if (!pending) pending = rhi->nextResourceUpdateBatch();
@@ -342,7 +356,21 @@ struct RhiRenderer::Impl {
             tex = textPicture(l, r);
             if (tex) size = tex->pixelSize();
             break;
-        case SourceType::Input: warnOnce(QStringLiteral("live inputs")); break;
+        case SourceType::Input:
+            if (l.input) {
+                QImage frame;
+                if (l.input->takeFrame(&frame)) {
+                    const bool first = !l.srcWidth;
+                    l.srcWidth = frame.width();
+                    l.srcHeight = frame.height();
+                    if (first && l.mapping.isIdentity() && l.srcHeight > 0)
+                        l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
+                    uploadPicture(r, frame);
+                }
+                tex = r.image.get();
+                size = r.imageSize;
+            }
+            break;
         case SourceType::Tox: warnOnce(QStringLiteral("TouchEngine layers")); break;
         case SourceType::Web: warnOnce(QStringLiteral("web pages")); break;
         default: break;
@@ -1137,17 +1165,7 @@ void RhiRenderer::imageArrived(quint64 layer, const QImage &image)
 {
     if (!d->rhi || image.isNull()) return;
     d->adoptOutgoing(layer); // a transition just begun: the picture shown so far goes with the outgoing source
-    Impl::RLayer &r = d->layers[layer];
-    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
-    if (!r.image || r.imageSize != rgba.size()) {
-        r.image.reset(d->rhi->newTexture(QRhiTexture::RGBA8, rgba.size()));
-        if (!r.image->create()) {
-            r.image.reset();
-            return;
-        }
-        r.imageSize = rgba.size();
-    }
-    d->batch()->uploadTexture(r.image.get(), rgba);
+    d->uploadPicture(d->layers[layer], image);
 }
 
 void RhiRenderer::render(const IsfRenderContext &rc)

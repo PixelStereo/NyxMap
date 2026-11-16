@@ -207,6 +207,20 @@ int main(int argc, char **argv)
     }
     check(shares >= 3 && shareWidth > 0, "publishing: a Syphon-like publisher gets the picture as a texture");
     e.setTestTap(nullptr);
+
+    // A live input (a solid colour here): its pictures reach the QRhi frame
+    e.newProject();
+    e.setCompositionSize(QSize(64, 32));
+    const int input = e.addLayer(QStringLiteral("Live"));
+    check(e.setLayerInput(input, QStringLiteral("input:test:0,200,0"), &err), "live input: the layer takes it");
+    QImage live;
+    for (int k = 0; k < 60; ++k) {
+        e.renderFrame();
+        QThread::msleep(10);
+        live = e.grabOutput();
+        if (!live.isNull() && QColor(live.pixel(32, 16)).green() > 150) break;
+    }
+    check(!live.isNull() && QColor(live.pixel(32, 16)) == QColor(0, 200, 0), "live input: its colour is in the composition");
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);
     return g_failures ? 1 : 0;

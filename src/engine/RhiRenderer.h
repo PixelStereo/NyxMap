@@ -9,7 +9,7 @@
 // picture, composition opacity and blackout, blend modes (Difference reads a copy of what is drawn), surface and
 // composition masks, mattes (Picture and Composition space), text, source transitions (a shader's, or a crossfade),
 // mapped meshes, the project's antialiasing and mipmaps.
-// Not yet: live inputs, TouchEngine, web pages, 3D scenes (each said once in the log; the layer is drawn without
+// Not yet: Syphon and Spout inputs, TouchEngine, web pages, 3D scenes (each said once in the log; the layer is drawn without
 // it, or not at all).
 // Shown: output windows through a swapchain each (present); the interface's previews, the pixel readers and the
 // published viewports as pixels (setPreviewRequests).
