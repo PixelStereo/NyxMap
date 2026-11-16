@@ -5,10 +5,12 @@
 #include "Layer.h"
 #include "LiveInput.h"
 #include "Publish.h"
+#include "Tox.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QColor>
+#include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QSurfaceFormat>
@@ -40,6 +42,30 @@ static double meanDifference(const QImage &a, const QImage &b)
     }
     return sum / (double(x.width()) * x.height() * 4);
 }
+
+namespace {
+// A component that gives a green picture and records the texture it is given for its input
+struct FakeTox final : ToxPlayer {
+    static inline GLuint inputTexture = 0;
+    static inline int inputWidth = 0;
+    void configure(const ToxSettings &) override {}
+    void reload() override {}
+    void pulse(const QString &) override {}
+    std::vector<ToxControl> controls() const override { return {}; }
+    std::vector<std::pair<QString, QString>> inputs() const override { return {{"in1", "Image"}}; }
+    std::vector<std::pair<QString, QString>> outputs() const override { return {{"out1", "Result"}}; }
+    quint64 revision() const override { return 1; }
+    QString error() const override { return {}; }
+    void setInputTexture(const QString &, GLuint texture, int width, int) override { inputTexture = texture, inputWidth = width; }
+    bool update(Texture2D &target) override
+    {
+        QImage image(16, 16, QImage::Format_RGBA8888);
+        image.fill(QColor(0, 200, 0));
+        target.upload(image.constBits(), 16, 16);
+        return true;
+    }
+};
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -251,6 +277,37 @@ int main(int argc, char **argv)
             }
             server.shutdown();
         }
+    }
+
+    // A TouchEngine layer (a component that gives green): its picture reaches the frame, and its input gets a layer's
+    {
+        setToxFactoryForTests([](const QString &, const ToxSettings &) { return std::make_unique<FakeTox>(); });
+        e.newProject();
+        e.setCompositionSize(QSize(64, 32));
+        const int source = e.addLayer(QStringLiteral("Source"));
+        e.setLayerImage(source, halvesPath, &err);
+        const quint64 sourceId = e.layerId(source);
+        QFile component(tmp.path() + "/sample.tox");
+        component.open(QIODevice::WriteOnly);
+        component.write("tox");
+        component.close();
+        const int toxAt = e.addLayer(QStringLiteral("Tox"));
+        const quint64 toxId = e.layerId(toxAt);
+        const int tox = e.indexOfId(toxId); // adding a layer moves the others
+        ToxSettings ts;
+        ts.output = "out1";
+        check(e.setLayerTox(tox, component.fileName(), ts, &err), "tox: the layer takes the component");
+        check(e.setLayerToxInput(e.indexOfId(toxId), QStringLiteral("in1"), sourceId, &err), "tox: its input takes the source layer");
+        QImage got;
+        for (int k = 0; k < 40; ++k) {
+            e.renderFrame();
+            QThread::msleep(10);
+            got = e.grabOutput();
+            if (!got.isNull() && QColor(got.pixel(32, 16)).green() > 150 && FakeTox::inputTexture) break;
+        }
+        check(!got.isNull() && QColor(got.pixel(32, 16)) == QColor(0, 200, 0), "tox: its picture is in the composition");
+        check(FakeTox::inputTexture != 0 && FakeTox::inputWidth == 64, "tox: its input gets the source layer's picture");
+        setToxFactoryForTests({});
     }
     e.shutdown();
     std::printf(g_failures ? "%d failure(s)\n" : "ok\n", g_failures);

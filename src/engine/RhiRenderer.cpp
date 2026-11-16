@@ -62,6 +62,25 @@ QSize maskRasterSize(QSize s)
 }
 } // namespace
 
+// An OpenGL texture's pixels, the bottom row first (TouchEngine's output, until it has a path of its own)
+static QImage readGlTexture(const Texture2D &t)
+{
+    if (!t.tex || t.w <= 0 || t.h <= 0) return QImage();
+    auto f = gl();
+    GLint previous = 0;
+    f->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+    GLuint fbo = 0;
+    f->glGenFramebuffers(1, &fbo);
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    f->glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.tex, 0);
+    QImage img(t.w, t.h, QImage::Format_RGBA8888);
+    f->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    f->glReadPixels(0, 0, t.w, t.h, GL_RGBA, GL_UNSIGNED_BYTE, img.bits());
+    f->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(previous));
+    f->glDeleteFramebuffers(1, &fbo);
+    return img;
+}
+
 struct RhiRenderer::Impl {
     Engine &e;
     std::unique_ptr<QRhi> rhi;
@@ -397,7 +416,28 @@ struct RhiRenderer::Impl {
             size = r.imageSize;
             break;
         }
-        case SourceType::Tox: warnOnce(QStringLiteral("TouchEngine layers")); break;
+        case SourceType::Tox: // TouchEngine through its OpenGL path for now: the inputs are the last frame's pictures read
+                              // back into OpenGL textures (Engine::m_rhiReaders), the output is read back from its texture
+            if (l.toxPlayer) {
+                for (const auto &top : l.toxPlayer->inputs()) {
+                    const auto found = e.m_rhiReaders.find({l.tox.inputs.value(top.first), 2});
+                    const bool have = found != e.m_rhiReaders.end() && found->second.tex;
+                    l.toxPlayer->setInputTexture(top.first, have ? found->second.tex : 0, have ? found->second.w : 0, have ? found->second.h : 0);
+                }
+                if (l.toxPlayer->update(l.sourceTex)) {
+                    const bool first = !l.srcWidth;
+                    l.srcWidth = l.sourceTex.w;
+                    l.srcHeight = l.sourceTex.h;
+                    if (first && l.mapping.isIdentity() && l.srcHeight > 0)
+                        l.mapping.fitAspect(double(l.srcWidth) / l.srcHeight, double(e.m_compSize.width()) / e.m_compSize.height());
+                    const QImage picture = readGlTexture(l.sourceTex);
+                    if (!picture.isNull()) uploadPicture(r, picture);
+                }
+                l.error = l.toxPlayer->error();
+                tex = r.image.get();
+                size = r.imageSize;
+            }
+            break;
         default: break;
         }
         if (!tex) return;

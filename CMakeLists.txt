@@ -383,8 +383,9 @@ if(WIN32 AND NYXMAP_SPOUT)
     ${SPOUT_DIR}/Spout.cpp ${SPOUT_DIR}/SpoutCopy.cpp ${SPOUT_DIR}/SpoutDirectX.cpp
     ${SPOUT_DIR}/SpoutFrameCount.cpp ${SPOUT_DIR}/SpoutGL.cpp ${SPOUT_DIR}/SpoutGLextensions.cpp
     ${SPOUT_DIR}/SpoutReceiver.cpp ${SPOUT_DIR}/SpoutSender.cpp ${SPOUT_DIR}/SpoutSenderNames.cpp
-    ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp)
-  target_include_directories(spout_gl PUBLIC ${SPOUT_DIR})
+    ${SPOUT_DIR}/SpoutSharedMemory.cpp ${SPOUT_DIR}/SpoutUtils.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX/SpoutDX.cpp) # SpoutDX: the QRhi receiver
+  target_include_directories(spout_gl PUBLIC ${SPOUT_DIR} ${CMAKE_SOURCE_DIR}/third_party/spout2/SPOUTSDK/SpoutDirectX/SpoutDX)
   target_compile_definitions(spout_gl PUBLIC SPOUT_BUILD_STATIC)
   if(MSVC)
     target_compile_options(spout_gl PRIVATE /W0)

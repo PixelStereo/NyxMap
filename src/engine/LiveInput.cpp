@@ -413,6 +413,14 @@ public:
         if (r == SpoutReceive::Received) m_seen = true;
         return r == SpoutReceive::Received;
     }
+    QRhiTexture *takeTexture(QRhi *rhi, QSize *size, bool *flipped) override // QRhi (Direct3D 11)
+    {
+        if (!m_rhiReceive) m_rhiReceive = createSpoutReceiveRhi(m_name);
+        QRhiTexture *t = m_rhiReceive->receive(rhi, size);
+        if (t) m_seen = m_found = true;
+        *flipped = true; // Direct3D's first row is the picture's top
+        return t;
+    }
     QString status() const override
     {
         if (!m_seen) return QStringLiteral("Waiting for the Spout sender \"%1\"").arg(m_name);
@@ -422,6 +430,7 @@ public:
 private:
     QString m_name;
     std::unique_ptr<SpoutReceive> m_rx;
+    std::unique_ptr<SpoutReceiveRhi> m_rhiReceive;
     std::atomic<bool> m_found{false}, m_seen{false};
 };
 #endif

@@ -49,8 +49,14 @@ it and the parts ported so far.
   texture. A Syphon server's IOSurface becomes a Metal texture of QRhi's device
   through Syphon's Metal client and is sampled as it is, no copy
   (`LiveInput::takeTexture`). `rhi_preview` checks a solid input, and a GL engine
-  publishing to a QRhi one through Syphon. Not yet: Spout inputs (a Direct3D 11
-  texture), TouchEngine, 3D scenes.
+  publishing to a QRhi one through Syphon. A Spout sender's frames are copied by
+  SpoutDX on QRhi's own Direct3D 11 device into a texture of ours that QRhi samples
+  (`SpoutReceiveRhi`; written without a Windows machine here, built by the Windows CI,
+  not run against a real sender). TouchEngine keeps its OpenGL path for now: its
+  inputs are the source layers' pictures of the previous frame, read back into
+  OpenGL textures, and its output is read back from its texture (`rhi_preview`
+  checks it with a stand-in component; a real TouchDesigner component is not
+  covered). Not yet: 3D scenes.
 - **Outputs** (`RhiRenderer::present`): each output window has a swapchain of
   the engine's QRhi, made by the render thread; its viewport's picture is drawn
   into it as it is, the right way up (the textures' flip, reversed). The window's
