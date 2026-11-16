@@ -10,6 +10,11 @@ RhiTarget &RhiTarget::operator=(RhiTarget &&o) noexcept
         m_rhi = o.m_rhi;
         m_size = o.m_size;
         m_format = o.m_format;
+        m_mipped = o.m_mipped;
+        m_samples = o.m_samples;
+        m_msRb = std::move(o.m_msRb);
+        m_msRt = std::move(o.m_msRt);
+        m_msRp = std::move(o.m_msRp);
         m_tex = std::move(o.m_tex);
         m_rt = std::move(o.m_rt);
         m_keep = std::move(o.m_keep);
@@ -30,6 +35,11 @@ size_t RhiTarget::bytes() const
 void RhiTarget::release()
 {
     videoBudget::removeGpu(videoBudget::Gpu::Targets, bytes());
+    m_msRt.reset();
+    m_msRp.reset();
+    m_msRb.reset();
+    m_samples = 1;
+    m_mipped = false;
     m_keep.reset();
     m_keepRp.reset();
     m_rt.reset();
@@ -38,13 +48,18 @@ void RhiTarget::release()
     m_size = QSize();
 }
 
-bool RhiTarget::ensure(QRhi *rhi, QSize size, QRhiTexture::Format format)
+bool RhiTarget::ensure(QRhi *rhi, QSize size, QRhiTexture::Format format) { return make(rhi, size, format, false); }
+bool RhiTarget::ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format) { return make(rhi, size, format, true); }
+
+bool RhiTarget::make(QRhi *rhi, QSize size, QRhiTexture::Format format, bool mipped)
 {
     size = size.expandedTo(QSize(1, 1));
-    if (m_rhi == rhi && ready(size, format)) return false;
+    if (m_rhi == rhi && (mipped ? readyMipped(size, format) : ready(size, format))) return false;
     release();
     m_rhi = rhi;
-    m_tex.reset(rhi->newTexture(format, size, 1, QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+    QRhiTexture::Flags flags = QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource;
+    if (mipped) flags |= QRhiTexture::MipMapped | QRhiTexture::UsedWithGenerateMips;
+    m_tex.reset(rhi->newTexture(format, size, 1, flags));
     if (!m_tex->create()) {
         m_tex.reset();
         return false;
@@ -58,6 +73,7 @@ bool RhiTarget::ensure(QRhi *rhi, QSize size, QRhiTexture::Format format)
     }
     m_size = size;
     m_format = format;
+    m_mipped = mipped;
     videoBudget::addGpu(videoBudget::Gpu::Targets, bytes());
     return true;
 }
@@ -75,4 +91,36 @@ QRhiTextureRenderTarget *RhiTarget::kept()
         }
     }
     return m_keep.get();
+}
+
+int RhiTarget::ensureMsaa(int samples)
+{
+    if (!m_tex || !m_rhi) return 1;
+    int use = 1;
+    for (const int s : m_rhi->supportedSampleCounts()) // the largest supported count not above the one asked
+        if (s <= samples && s > use) use = s;
+    if (use == m_samples && (use == 1 || m_msRt)) return use;
+    m_msRt.reset();
+    m_msRp.reset();
+    m_msRb.reset();
+    m_samples = 1;
+    if (use <= 1) return 1;
+    m_msRb.reset(m_rhi->newRenderBuffer(QRhiRenderBuffer::Color, m_size, use, {}, m_format));
+    if (!m_msRb->create()) {
+        m_msRb.reset();
+        return 1;
+    }
+    QRhiColorAttachment att(m_msRb.get());
+    att.setResolveTexture(m_tex.get());
+    m_msRt.reset(m_rhi->newTextureRenderTarget({att}));
+    m_msRp.reset(m_msRt->newCompatibleRenderPassDescriptor());
+    m_msRt->setRenderPassDescriptor(m_msRp.get());
+    if (!m_msRt->create()) {
+        m_msRt.reset();
+        m_msRp.reset();
+        m_msRb.reset();
+        return 1;
+    }
+    m_samples = use;
+    return use;
 }

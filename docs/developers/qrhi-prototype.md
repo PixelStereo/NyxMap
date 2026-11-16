@@ -37,9 +37,15 @@ it and the parts ported so far.
   the outgoing source's QRhi state moves to the transition when it begins),
   mapped meshes. `rhi_engine` runs two engines on one scene, OpenGL and QRhi:
   their viewports and composition match (at most 2 levels apart), and so does a
-  transition caught half way. Not yet: live inputs, TouchEngine, web pages, 3D
-  scenes, antialiasing, mipmaps; outputs, previews and publishing still read
-  OpenGL's pictures.
+  transition caught half way, with the project's antialiasing (4 samples) and
+  mipmaps on. Antialiasing draws a composite into a multisampled buffer resolved
+  into the target at each pass's end (a later pass, after a Difference layer,
+  starts by drawing what the earlier ones resolved: QRhi keeps no multisampled
+  contents between passes). A layer drawn under 90% of its size is sampled from
+  mip levels of a copy of its picture, made again once per frame of a plain
+  video and once per frame of the render otherwise, as many times as OpenGL
+  makes them. Not yet: live inputs, TouchEngine, web pages, 3D scenes; outputs,
+  previews and publishing still read OpenGL's pictures.
 - Shared pieces: `RhiTarget` (the port of `RenderTarget`), `RhiResources`
   (samplers, a black picture, a quad, a copy between formats, shader resource
   bindings kept per combination of resources).

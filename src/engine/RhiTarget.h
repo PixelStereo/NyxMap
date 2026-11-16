@@ -21,7 +21,16 @@ public:
     // (Re)made when the size or format changes. Returns true when made now: its contents are undefined until a
     // pass clears it. False with ready() false: it could not be made (the previous one is gone).
     bool ensure(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::RGBA8);
-    bool ready(QSize size, QRhiTexture::Format format) const { return m_tex && m_size == size && m_format == format; }
+    // The same with a full chain of mip levels, made on demand (generateMips) for a picture drawn smaller than it is
+    bool ensureMipped(QRhi *rhi, QSize size, QRhiTexture::Format format = QRhiTexture::RGBA8);
+    // A multisampled buffer to draw into, resolved into texture() at the end of each pass (antialiasing). `samples` is
+    // clamped to what the QRhi supports; returns the count used (1: none, draw into texture() directly). Needs ready().
+    int ensureMsaa(int samples);
+    int samples() const { return m_samples; }
+    QRhiTextureRenderTarget *msCleared() const { return m_msRt.get(); } // a pass on it begins cleared
+    QRhiRenderPassDescriptor *msPassDescriptor() const { return m_msRp.get(); }
+    bool ready(QSize size, QRhiTexture::Format format) const { return m_tex && m_size == size && m_format == format && !m_mipped; }
+    bool readyMipped(QSize size, QRhiTexture::Format format) const { return m_tex && m_size == size && m_format == format && m_mipped; }
     bool ready() const { return bool(m_tex); }
     void release();
 
@@ -36,9 +45,15 @@ public:
     size_t bytes() const;
 
 private:
+    bool make(QRhi *rhi, QSize size, QRhiTexture::Format format, bool mipped);
     QRhi *m_rhi = nullptr;
     QSize m_size;
     QRhiTexture::Format m_format = QRhiTexture::RGBA8;
+    bool m_mipped = false;
+    int m_samples = 1;
+    std::unique_ptr<QRhiRenderBuffer> m_msRb;
+    std::unique_ptr<QRhiTextureRenderTarget> m_msRt;
+    std::unique_ptr<QRhiRenderPassDescriptor> m_msRp;
     std::unique_ptr<QRhiTexture> m_tex;
     std::unique_ptr<QRhiTextureRenderTarget> m_rt, m_keep;
     std::unique_ptr<QRhiRenderPassDescriptor> m_rp, m_keepRp;

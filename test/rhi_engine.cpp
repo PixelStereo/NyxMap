@@ -27,6 +27,10 @@ static std::vector<quint64> build(Engine &e, const QString &root)
 {
     e.newProject();
     e.setCompositionSize(QSize(640, 360));
+    Engine::RenderSettings quality; // the mapped edges antialiased, the pictures drawn smaller than they are smoothed
+    quality.samples = 4;
+    quality.mipmaps = 1;
+    e.setRenderSettings(quality);
     QString err;
     auto check = [&](bool ok, const char *what) {
         if (!ok) {
@@ -298,6 +302,25 @@ int main(int argc, char **argv)
         if (!dump.isEmpty()) {
             p.rhi.save(dump + "/" + p.name + ".rhi.png");
             p.gl.save(dump + "/" + p.name + ".gl.png");
+        }
+    }
+    // Antialiasing and mipmaps did their work: smoothed pictures made, and the edges differ from an unsmoothed frame's
+    {
+        std::printf("  mipmaps made: QRhi %llu, OpenGL %llu\n", (unsigned long long)viaRhi.mipmapsMade(), (unsigned long long)viaGl.mipmapsMade());
+        if (!viaRhi.mipmapsMade()) {
+            std::printf("FAIL: the QRhi renderer made no mipmaps\n");
+            ++g_failures;
+        }
+        Engine::RenderSettings plain;
+        plain.samples = 0;
+        plain.mipmaps = 0;
+        viaRhi.setRenderSettings(plain);
+        for (int k = 0; k < 3; ++k) viaRhi.renderFrame();
+        const Diff d = compare(viaRhi.grabOutput(), pictures.front().rhi);
+        std::printf("  without antialiasing or mipmaps: max %3d mean %.3f\n", d.max, d.mean);
+        if (d.max <= 8) {
+            std::printf("FAIL: antialiasing and mipmaps changed nothing\n");
+            ++g_failures;
         }
     }
     QTemporaryDir files;

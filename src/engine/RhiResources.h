@@ -20,6 +20,7 @@ public:
     QRhi *rhi() const { return m_rhi; }
     QRhiSampler *linear() const { return m_linear.get(); }  // clamped to the edge
     QRhiSampler *nearest() const { return m_nearest.get(); }
+    QRhiSampler *trilinear() const { return m_trilinear.get(); } // across the mip levels too, clamped to the edge
     QRhiTexture *black() const { return m_black.get(); }   // 1 × 1, transparent black
     QRhiBuffer *quad() const { return m_quad.get(); }      // two triangles over -1..1 (vec2 each), 6 vertices
     // The uploads the first pass of the frame must carry (the black picture, the quad), nullptr once done
@@ -54,7 +55,7 @@ private:
     explicit RhiResources(QRhi *rhi);
     QRhi *m_rhi = nullptr;
     float m_flip = 1;
-    std::unique_ptr<QRhiSampler> m_linear, m_nearest;
+    std::unique_ptr<QRhiSampler> m_linear, m_nearest, m_trilinear;
     std::unique_ptr<QRhiTexture> m_black;
     std::unique_ptr<QRhiBuffer> m_quad, m_blitUbuf;
     std::unique_ptr<QRhiGraphicsPipeline> m_blitPs[3]; // by target format: RGBA8, RGBA16F, RGBA32F

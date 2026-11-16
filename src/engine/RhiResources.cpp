@@ -36,8 +36,11 @@ RhiResources::RhiResources(QRhi *rhi) : m_rhi(rhi), m_flip(rhidevice::ndcFlip(rh
                                    QRhiSampler::ClampToEdge));
     m_nearest.reset(rhi->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge,
                                     QRhiSampler::ClampToEdge));
+    m_trilinear.reset(rhi->newSampler(QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::ClampToEdge,
+                                      QRhiSampler::ClampToEdge));
     m_linear->create();
     m_nearest->create();
+    m_trilinear->create();
     m_black.reset(rhi->newTexture(QRhiTexture::RGBA8, QSize(1, 1)));
     m_black->create();
     m_quad.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, 12 * sizeof(float)));

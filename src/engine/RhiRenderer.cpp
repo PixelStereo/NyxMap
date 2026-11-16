@@ -29,7 +29,7 @@
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
-enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade };
+enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade, Restore };
 
 // The blending of a layer composited (Render.cpp's compositeLayers), premultiplied
 QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
@@ -83,6 +83,10 @@ struct RhiRenderer::Impl {
         std::unique_ptr<IsfInstance> generator;
         QString generatorPath;
         RhiTarget generatorTarget, sourceColor, prep, fx[2], mixed[2], group, out;
+        RhiTarget mip; // the picture with its mip levels, drawn smaller than it is
+        QRhiTexture *mipSource = nullptr;
+        quint64 mipSerial = 0, videoSerial = 0;
+        int mipKind = 0;
         RhiTarget shapeMasked, mattePicture, matteTarget; // through its surface masks, through a Picture matte, its matte in Composition space
         std::unique_ptr<QRhiTexture> surfaceMask, compositionMask; // their alpha, top row first
         unsigned surfaceMaskRev = 0, compositionMaskRev = 0;
@@ -138,9 +142,10 @@ struct RhiRenderer::Impl {
     }
     RhiResources &res() { return RhiResources::of(rhi.get()); }
 
-    QRhiGraphicsPipeline *pipeline(Draw draw, BlendMode blend, const RhiTarget &target, QRhiShaderResourceBindings *srb)
+    // `ms`: for a pass on the target's multisampled buffer (antialiasing)
+    QRhiGraphicsPipeline *pipeline(Draw draw, BlendMode blend, const RhiTarget &target, QRhiShaderResourceBindings *srb, bool ms = false)
     {
-        const int key = int(draw) * 4096 + int(blend) * 128 + int(target.format());
+        const int key = int(draw) * 4096 + int(blend) * 128 + int(target.format()) + (ms ? target.samples() << 20 : 0);
         std::unique_ptr<QRhiGraphicsPipeline> &ps = pipelines[key];
         if (ps) return ps.get();
         ps.reset(rhi->newGraphicsPipeline());
@@ -170,6 +175,9 @@ struct RhiRenderer::Impl {
                                                                     : draw == Draw::PictureMatte ? "matte.frag"
                                                                     : draw == Draw::Fade ? "fade.frag" : "outputcolor.frag")}});
             break;
+        case Draw::Restore: // a picture copied over the whole target (no blending)
+            ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
+            break;
         case Draw::Dim: { // the target times a constant (composition opacity, blackout)
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
             QRhiGraphicsPipeline::TargetBlend b;
@@ -181,7 +189,8 @@ struct RhiRenderer::Impl {
         }
         }
         ps->setShaderResourceBindings(srb);
-        ps->setRenderPassDescriptor(target.passDescriptor());
+        if (ms) ps->setSampleCount(target.samples());
+        ps->setRenderPassDescriptor(ms ? target.msPassDescriptor() : target.passDescriptor());
         if (!ps->create()) {
             ps.reset();
             return nullptr;
@@ -294,6 +303,7 @@ struct RhiRenderer::Impl {
                 if (!l.frameUploaded && l.frame.layout) {
                     // Its uploads go first in the frame (a pass of their own)
                     r.video->upload(cb, l.frame);
+                    ++r.videoSerial;
                     l.frameUploaded = true;
                 }
                 tex = r.video->texture();
@@ -679,7 +689,7 @@ struct RhiRenderer::Impl {
     // One layer's draw: its picture at `opacity` through its composition masks and, when `withMatte`, its matte in
     // Composition space (prepareMatte's). `dst`: what a Difference reads. False: it cannot be drawn.
     bool makeItem(Layer &l, RLayer &r, const float *shared, float opacity, BlendMode blend, bool withMatte, const RhiTarget &target,
-                  QRhiTexture *dst, Item &out)
+                  QRhiTexture *dst, Item &out, bool ms = false, QRhiTexture *picture = nullptr, QRhiSampler *sampler = nullptr)
     {
         if (!mesh(l, r)) return false;
         float u[16];
@@ -700,12 +710,12 @@ struct RhiRenderer::Impl {
         const auto all = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
         const auto fs = QRhiShaderResourceBinding::FragmentStage;
         std::vector<RhiResources::Bind> b{{0, all, ubuf(u, sizeof u)},
-                                          {1, fs, nullptr, r.final, res().linear()},
+                                          {1, fs, nullptr, picture ? picture : r.final, sampler ? sampler : res().linear()},
                                           {2, fs, nullptr, mask ? mask : res().black(), res().linear()},
                                           {3, fs, nullptr, matte ? matte : res().black(), res().linear()}};
         if (dst) b.push_back({4, fs, nullptr, dst, res().nearest()});
         QRhiShaderResourceBindings *srb = res().bindings(b);
-        QRhiGraphicsPipeline *ps = srb ? pipeline(dst ? Draw::CompositeDiff : Draw::Composite, blend, target, srb) : nullptr;
+        QRhiGraphicsPipeline *ps = srb ? pipeline(dst ? Draw::CompositeDiff : Draw::Composite, blend, target, srb, ms) : nullptr;
         if (!ps) return false;
         out = {srb, ps, r.mesh.get(), r.meshGrid};
         return true;
@@ -724,21 +734,70 @@ struct RhiRenderer::Impl {
         }
     }
 
+    // A layer's picture with its mip levels, made again when the picture can have changed (once per frame of a plain
+    // video, once per frame of the render for any other): sampled from them, a picture drawn smaller than it is neither
+    // shimmers nor moirés. Nothing: drawn plainly.
+    QRhiTexture *mipPicture(Layer &l, RLayer &r)
+    {
+        QRhiTexture *src = r.final;
+        if (!src) return nullptr;
+        const bool plainVideo = l.type == SourceType::Video && r.video && src == r.video->texture();
+        const quint64 serial = plainVideo ? r.videoSerial : e.m_frameCount.load(std::memory_order_relaxed);
+        const int kind = plainVideo ? 1 : 2;
+        if (r.mip.ensureMipped(rhi.get(), src->pixelSize(), src->format())) r.mipSource = nullptr;
+        if (!r.mip.readyMipped(src->pixelSize(), src->format())) return nullptr;
+        if (r.mipSource != src || r.mipSerial != serial || r.mipKind != kind) {
+            if (!res().blit(cb, src, r.mip)) return nullptr;
+            QRhiResourceUpdateBatch *u = rhi->nextResourceUpdateBatch();
+            u->generateMips(r.mip.texture());
+            cb->resourceUpdate(u);
+            ++e.m_mipmapsMade;
+            r.mipSource = src;
+            r.mipSerial = serial;
+            r.mipKind = kind;
+        }
+        return r.mip.texture();
+    }
+
     // Draws the layers into the target; `view`: the part of the composition the target shows (normalized, origin top
     // left). The first layer is on top. `level` < 1: the target dimmed after (composition opacity, blackout).
     // A layer by Difference reads a copy of what is drawn before it: the passes before it end, the copy is made, and
-    // the layer is drawn in a pass of its own.
+    // the layer is drawn in a pass of its own. Antialiasing: drawn into a multisampled buffer, resolved at each pass's end.
     void composite(RhiTarget &target, const std::vector<Layer *> &list, const QRectF &view, QColor clear, quint64 viewport = 0,
                    double angle = 0, double level = 1)
     {
         if (!target.ready()) return;
+        const Engine::RenderSettings rs = e.effectiveRender();
+        const bool ms = target.ensureMsaa(rs.samples) > 1;
         float shared[16];
         viewUniforms(shared, view, angle);
         std::vector<Item> run;
         bool begun = false;
-        auto flush = [&] {
+        // A copy of the target (what is drawn so far, resolved), for a Difference layer to read and for a multisampled
+        // pass to start from
+        auto copyOfTarget = [&]() -> QRhiTexture * {
+            RhiTarget &copy = dstCopies[{target.width(), target.height(), int(target.format())}];
+            copy.ensure(rhi.get(), target.size(), target.format());
+            return copy.ready() && res().blit(cb, target.texture(), copy) ? copy.texture() : nullptr;
+        };
+        // The pass for what is in `run`. A multisampled buffer is not kept from one pass to the next, so a later pass
+        // starts by drawing what the earlier ones resolved (`before`: a copy of it, if one is made)
+        auto flush = [&](QRhiTexture *before = nullptr) {
             if (begun && run.empty()) return;
-            cb->beginPass(begun ? target.kept() : target.cleared(), clear, {1.0f, 0}, take());
+            if (ms && begun && !before) before = copyOfTarget();
+            cb->beginPass(ms ? target.msCleared() : begun ? target.kept() : target.cleared(), clear, {1.0f, 0}, take());
+            if (ms && begun && before) {
+                std::vector<RhiResources::Bind> b{{15, QRhiShaderResourceBinding::VertexStage, flip.get()},
+                                                  {1, QRhiShaderResourceBinding::FragmentStage, nullptr, before, res().linear()}};
+                QRhiShaderResourceBindings *srb = res().bindings(b);
+                QRhiGraphicsPipeline *ps = srb ? pipeline(Draw::Restore, BlendMode::Normal, target, srb, true) : nullptr;
+                if (ps) {
+                    cb->setGraphicsPipeline(ps);
+                    cb->setViewport({0, 0, float(target.width()), float(target.height())});
+                    cb->setShaderResources(srb);
+                    cb->draw(3);
+                }
+            }
             drawItems(run, target);
             cb->endPass();
             run.clear();
@@ -754,14 +813,21 @@ struct RhiRenderer::Impl {
             QRhiTexture *dst = nullptr;
             if (blend == BlendMode::Difference) {
                 flush(); // what is drawn so far, copied
-                RhiTarget &copy = dstCopies[{target.width(), target.height(), int(target.format())}];
-                copy.ensure(rhi.get(), target.size(), target.format());
-                if (copy.ready() && res().blit(cb, target.texture(), copy)) dst = copy.texture();
-                else blend = BlendMode::Normal; // degraded but safe: ordinary source-over blending
+                dst = copyOfTarget();
+                if (!dst) blend = BlendMode::Normal; // degraded but safe: ordinary source-over blending
+            }
+            // Drawn smaller than it is: sampled from its mip levels
+            QRhiTexture *picture = nullptr;
+            if (rs.mipmaps > 0) {
+                const QSize pixels = r.final->pixelSize();
+                const QRectF b = e.effectiveMapping(l).bounds();
+                const double drawnW = b.width() / std::max(1e-6, view.width()) * target.width();
+                const double drawnH = b.height() / std::max(1e-6, view.height()) * target.height();
+                if (drawnW < pixels.width() * 0.9 || drawnH < pixels.height() * 0.9) picture = mipPicture(l, r);
             }
             Item it;
-            if (makeItem(l, r, shared, opacity, blend, true, target, dst, it)) run.push_back(it);
-            if (dst) flush();
+            if (makeItem(l, r, shared, opacity, blend, true, target, dst, it, ms, picture, picture ? res().trilinear() : nullptr)) run.push_back(it);
+            if (dst) flush(dst); // alone: it starts from the copy it read
         }
         flush();
         dim(target, level);
