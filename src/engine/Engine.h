@@ -1131,7 +1131,7 @@ private:
     mutable Mutex m_mutex;
 
     QOpenGLContext *m_context = nullptr;
-    bool m_wantRhi = false;
+    bool m_wantRhi = true;
     std::unique_ptr<RhiRenderer> m_rhi; // made by the render thread at its first frame
     QOffscreenSurface *m_surface = nullptr;
     QSurface *m_currentSurface = nullptr;

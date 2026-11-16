@@ -163,6 +163,7 @@ public:
     // A texture of the engine bound at the next renders to a sampler the shader declares itself (not one of its
     // inputs: the Line generator's segments); 0 unbinds it
     void setExtraTexture(const QByteArray &uniform, GLuint tex);
+    void setExtraRhiTexture(const QString &name, QRhiTexture *tex); // the same through QRhi (renderRhi)
 
     // In a file: the shader (path), its mask, its image inputs' files ("images": input → path) and, unless its
     // values are kept elsewhere (a layer keeps its shaders' values in its own parameters), its parameters' values
@@ -172,6 +173,10 @@ public:
     void resetParams();
     // Restart: TIME and FRAMEINDEX back to 0, its persistent buffers emptied, at its next render (a preset can hold it)
     void requestRestart() { m_restartPending = true; }
+    // The QRhi renderer draws with an instance of its own (RhiRenderer follows this one): it takes the Restart asked of this
+    // one, and gives its clock back to it
+    bool takeRestart() { const bool asked = m_restartPending; m_restartPending = false; return asked; }
+    void adoptClock(const IsfInstance &o) { m_time = o.m_time; m_frameIndex = o.m_frameIndex; }
     double time() const { return m_time; }
 
     QString path() const { return m_path; }

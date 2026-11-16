@@ -551,7 +551,8 @@ static void gpuTests(Engine &e, const QString &tmp)
     f.size = {1.0, 0.5}; // the pixels at a quarter and three quarters of the width
     p.fixtures.push_back(f);
     e.setFixturePatch(p);
-    QByteArray u = sampled(e, 1, 5);
+    // The first samples are of the frames before the picture's: read until it shows
+    QByteArray u = settle(e, 1, 5, [](const QByteArray &q) { return at(q, 100) != 0 || at(q, 105) != 0; });
     check(u.size() == 512, "the composition is sampled into the universe");
     if (u.size() == 512)
         check(at(u, 100) == 255 && at(u, 101) == 0 && at(u, 102) == 0 && at(u, 103) == 0 && at(u, 104) == 0 &&

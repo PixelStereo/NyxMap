@@ -883,13 +883,20 @@ IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const Q
     }
     for (const IsfTarget &t : isf.m_targets) sampler(t.name);
     for (const IsfImported &im : isf.m_imported) sampler(im.name);
+    // A sampler the shader declares itself, fed by the engine (the Line generator's segments): declared here, with a binding
+    static const QRegularExpression ownSampler(QStringLiteral(R"(\buniform\s+sampler2D\s+nyxmapSegments\s*;)"));
+    QString fsText = fsBody;
+    if (fsText.contains(ownSampler)) {
+        fsText.replace(ownSampler, QString());
+        sampler(QStringLiteral("nyxmapSegments"));
+    }
     r.blockSize = (r.blockSize + 15) / 16 * 16;
     block += QStringLiteral("};\n");
     const QString uniforms = block + samplers;
 
     QHash<QString, int> locations;
     const QString vertexBody = locateVaryings(vsBody, true, locations);
-    const QString fragmentBody = locateVaryings(fsBody, false, locations);
+    const QString fragmentBody = locateVaryings(fsText, false, locations);
     // A built-in function the shader defines again (float round(float x) { ... }): OpenGL takes it as an overload,
     // Vulkan's compiler refuses its precision. Renamed, the shader's own is the one it calls.
     static const QRegularExpression redefined(QStringLiteral(

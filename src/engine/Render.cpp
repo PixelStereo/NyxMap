@@ -2796,6 +2796,15 @@ QImage Engine::grabOutput()
 QImage Engine::grabLayerSource(int index)
 {
     QImage img;
+    if (m_rhi) {
+        quint64 id = 0;
+        {
+            Lock lk(&m_mutex);
+            if (const Layer *l = layer(index)) id = l->id;
+        }
+        runGl([this, id, &img] { img = m_rhi->grabSource(id); });
+        return img;
+    }
     runGl([this, index, &img] {
         Lock lk(&m_mutex);
         const Layer *l = layer(index);

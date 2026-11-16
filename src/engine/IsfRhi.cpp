@@ -61,12 +61,13 @@ struct IsfInstance::RhiState {
     };
     std::vector<Member> members;
     // The samplers in binding order and what each shows
-    enum class Kind { InputImage, Input, Target, Imported };
+    enum class Kind { InputImage, Input, Target, Imported, Extra };
     struct Sampler {
         Kind kind = Kind::Input;
         int index = -1; // the input, target or imported image
     };
     std::vector<Sampler> samplers;
+    std::map<QString, QRhiTexture *> extras; // pictures of the engine for samplers the shader declares itself
     // Images of the inputs (loaded from their file) and imported images
     struct Image {
         QString path;
@@ -92,6 +93,11 @@ void IsfInstance::releaseRhi()
 {
     if (m_rhi && m_rhi->rhi && !m_rhi->rhi->isDeviceLost()) m_rhi->rhi->finish();
     m_rhi.reset();
+}
+
+void IsfInstance::setExtraRhiTexture(const QString &name, QRhiTexture *tex)
+{
+    if (m_rhi) m_rhi->extras[name] = tex;
 }
 
 bool IsfInstance::isValidRhi() const { return m_rhi && m_rhi->valid; }
@@ -131,6 +137,7 @@ bool IsfInstance::loadRhi(const QString &path, QRhi *rhi)
             if (m_targets[size_t(i)].name == name) smp = {RhiState::Kind::Target, i};
         for (int i = 0; i < int(m_imported.size()); ++i)
             if (m_imported[size_t(i)].name == name) smp = {RhiState::Kind::Imported, i};
+        if (name == QLatin1String("nyxmapSegments")) smp = {RhiState::Kind::Extra, -1};
         r.samplers.push_back(smp);
     }
     for (const RhiSources::Uniform &u : r.src.uniforms) {
@@ -242,6 +249,10 @@ void IsfInstance::renderRhi(QRhiCommandBuffer *cb, const IsfRenderContext &rc, Q
             if (ft.ready()) t = ft.texture(), sz = ft.size();
             break;
         }
+        case RhiState::Kind::Extra:
+            if (auto it = r.extras.find(r.src.samplers[size_t(s)]); it != r.extras.end() && it->second)
+                t = it->second, sz = t->pixelSize();
+            break;
         case RhiState::Kind::Imported:
             if (smp.index >= 0 && r.imported[size_t(smp.index)].tex)
                 t = r.imported[size_t(smp.index)].tex.get(), sz = r.imported[size_t(smp.index)].size;

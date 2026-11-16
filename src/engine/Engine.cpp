@@ -86,7 +86,7 @@ void Engine::doneCurrent()
 
 bool Engine::initialize(QString *err)
 {
-    if (qgetenv("NYXMAP_RENDERER") == "rhi") m_wantRhi = true;
+    if (qgetenv("NYXMAP_RENDERER") == "gl") m_wantRhi = false;
     m_ownerThread = QThread::currentThread();
     // No parent: the context is moved to the render thread.
     m_context = new QOpenGLContext;

@@ -5,6 +5,7 @@
 #include "EngineInternal.h"
 #include "Isf.h"
 #include "Layer.h"
+#include "LineGenerator.h"
 #include "Mapping.h"
 #include "Masks.h"
 #include "RhiDevice.h"
@@ -103,6 +104,9 @@ struct RhiRenderer::Impl {
         std::unique_ptr<QRhiTexture> image;
         QSize imageSize;
         std::unique_ptr<QRhiTexture> hdr; // an HDR file's pixels, in floats
+        std::unique_ptr<QRhiTexture> segments; // a Line generator's lines (LineGenerator.h), two rows of floats
+        unsigned segmentsRev = 0;
+        QSize segmentsSize;
         std::unique_ptr<IsfInstance> generator;
         QString generatorPath;
         RhiTarget liveTarget; // a live input's texture of another API, turned the right way up
@@ -302,7 +306,7 @@ struct RhiRenderer::Impl {
     // ---------------------------------------------------------------------------------------------------------------
     // An ISF instance of this renderer following the engine's one (its values, images, speed); loaded again when the
     // engine's changes file
-    void follow(std::unique_ptr<IsfInstance> &mine, QString &path, const IsfInstance &theirs)
+    void follow(std::unique_ptr<IsfInstance> &mine, QString &path, IsfInstance &theirs)
     {
         if (!mine || path != theirs.path()) {
             path = theirs.path();
@@ -310,6 +314,7 @@ struct RhiRenderer::Impl {
             if (!mine->loadRhi(path, rhi.get())) qWarning("QRhi renderer: %s: %s", qPrintable(path), qPrintable(mine->error().left(200)));
         }
         mine->speed = theirs.speed;
+        if (theirs.takeRestart()) mine->requestRestart();
         auto &dst = mine->inputs();
         const auto &src = theirs.inputs();
         if (dst.size() != src.size()) return;
@@ -374,7 +379,26 @@ struct RhiRenderer::Impl {
         case SourceType::Isf:
             if (l.generator) {
                 follow(r.generator, r.generatorPath, *l.generator);
+                if (isLineGeneratorPath(l.sourcePath)) { // its lines as segments, uploaded again when they change
+                    if (!r.segments || r.segmentsRev != l.linesRevision || r.segmentsSize != QSize(l.genWidth, l.genHeight)) {
+                        int count = 0;
+                        const std::vector<float> data = lineSegmentData(l.lines, l.genWidth, l.genHeight, &count);
+                        if (!r.segments || r.segments->pixelSize() != QSize(count, 2)) {
+                            r.segments.reset(rhi->newTexture(QRhiTexture::RGBA32F, QSize(count, 2)));
+                            if (!r.segments->create()) r.segments.reset();
+                        }
+                        if (r.segments) {
+                            QRhiTextureSubresourceUploadDescription sub(data.data(), quint32(data.size() * sizeof(float)));
+                            sub.setSourceSize(QSize(count, 2));
+                            batch()->uploadTexture(r.segments.get(), QRhiTextureUploadDescription({0, 0, sub}));
+                        }
+                        r.segmentsRev = l.linesRevision;
+                        r.segmentsSize = QSize(l.genWidth, l.genHeight);
+                    }
+                    r.generator->setExtraRhiTexture(QStringLiteral("nyxmapSegments"), r.segments.get());
+                }
                 r.generator->renderRhi(cb, rc, nullptr, r.generatorTarget, QSize(l.genWidth, l.genHeight));
+                l.generator->adoptClock(*r.generator);
                 if (r.generatorTarget.ready()) tex = r.generatorTarget.texture(), size = r.generatorTarget.size();
             }
             break;
@@ -573,6 +597,7 @@ struct RhiRenderer::Impl {
                 QRhiTexture *input = tex;
                 RhiTarget &dst = r.fx[ping];
                 mine.isf->renderRhi(cb, rc, tex, dst, cur);
+                theirs.adoptClock(*mine.isf);
                 if (!dst.ready()) {
                     r.final = nullptr;
                     return;
@@ -1448,6 +1473,13 @@ QImage RhiRenderer::grabViewport(quint64 viewport)
 {
     const auto found = d->layers.find(viewport);
     return found == d->layers.end() ? QImage() : readBack(d->rhi.get(), found->second.out.texture());
+}
+
+QImage RhiRenderer::grabSource(quint64 layer)
+{
+    const auto found = d->layers.find(layer);
+    QRhiTexture *raw = found == d->layers.end() ? nullptr : found->second.raw;
+    return raw && raw->format() == QRhiTexture::RGBA8 ? readBack(d->rhi.get(), raw) : QImage();
 }
 
 bool RhiRenderer::present(quint64 viewport, QWindow *window, bool waitForDisplay)

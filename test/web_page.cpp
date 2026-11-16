@@ -49,6 +49,14 @@ public:
         tex.upload(img.constBits(), img.width(), img.height());
         return true;
     }
+    bool takeFrame(QImage *out) override // the QRhi renderer's
+    {
+        if (m_sentFrame) return false;
+        m_sentFrame = true;
+        *out = QImage(m_settings.width, m_settings.height, QImage::Format_RGBA8888);
+        out->fill(QColor(0, 0, 255));
+        return true;
+    }
     void configure(const WebSource &s) override
     {
         m_settings = s;
@@ -59,7 +67,7 @@ public:
 
 private:
     WebSource m_settings;
-    bool m_sent = false;
+    bool m_sent = false, m_sentFrame = false;
 };
 
 QColor centre(const QImage &img) { return img.isNull() ? QColor() : img.pixelColor(img.width() / 2, img.height() / 2); }

@@ -94,6 +94,7 @@ public:
     // The last pictures, top row first (render thread)
     QImage grabViewport(quint64 viewport);
     QImage grabOutput();
+    QImage grabSource(quint64 layer); // a layer's source picture as drawn at the last frame (RGBA8 ones)
 
 private:
     struct Impl;
