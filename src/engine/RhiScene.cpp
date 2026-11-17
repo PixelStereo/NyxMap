@@ -4,6 +4,7 @@
 #include "RhiResources.h"
 #include "RhiTarget.h"
 
+#include <QByteArray>
 #include <QMatrix4x4>
 #include <rhi/qrhi.h>
 
@@ -165,6 +166,9 @@ struct RhiScene::Impl {
     std::unique_ptr<QRhiGraphicsPipeline> postPipeline;
 
     explicit Impl(QRhi *r) : rhi(r) {}
+    QByteArray frameKey;          // what the last picture was made of
+    int stillFrames = 0;          // frames in a row with that same key
+    QRhiTexture *keptPicture = nullptr; // the last picture
 
     QRhiBuffer *ubuf()
     {
@@ -559,6 +563,75 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
                             bool environmentLinear)
 {
     if (w <= 0 || h <= 0) return nullptr;
+    // Nothing changed for a few frames (a reflection reads the frame before, so it takes a few to settle): the picture is kept
+    QByteArray key;
+    bool could = !environment || environmentLinear; // an HDR file's picture does not change
+    {
+        const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
+        const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
+        add(&environment, sizeof environment);
+        add(&w, sizeof w);
+        add(&h, sizeof h);
+        for (float v : {s.distance, s.yaw, s.pitch, s.fov, s.ambientIntensity, s.exposure, s.envIntensity, s.envRotation, s.envBlur, s.studio,
+                        s.ao, s.aoRadius, s.reflections, s.glow, s.glowThreshold, s.glowSize, s.vignette, s.contrast, s.saturation,
+                        s.temperature, s.fogDensity, s.fogBase, s.fogFalloff, s.fogReach})
+            add(&v, sizeof v);
+        add(s.fogColor.data(), sizeof(float) * 3);
+        add(s.target.data(), sizeof(float) * 3);
+        add(s.ambient.data(), sizeof(float) * 3);
+        add(s.background.data(), sizeof(float) * 4);
+        add(&s.envShow, sizeof(bool));
+        for (int v : {quality.antialiasing, quality.shadows, quality.contact, quality.reflections, quality.glow, quality.atmosphere}) add(&v, sizeof v);
+        for (const Scene3D::Item &item : items) {
+            if (!item.model) continue;
+            could = could && !item.pictureRhi && (!item.displaceRhi || item.placement.materialHeight);
+            const Model3D *which = item.model.get();
+            add(&which, sizeof which);
+            const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
+            add(model.constData(), sizeof(float) * 16);
+            const ModelPlacement &p = item.placement;
+            add(p.color.data(), sizeof(float) * 3);
+            add(p.uvTiling.data(), sizeof(float) * 2);
+            add(p.emission.data(), sizeof(float) * 3);
+            add(&item.displaceAmount, sizeof(float));
+            add(&item.displaceMid, sizeof(float));
+            for (float v : {p.metal, p.rough, p.normalStrength, p.occlusionStrength, p.ior, p.specular}) add(&v, sizeof v);
+            for (const Scene3D::Item::ShapeOp &op : item.shape) { // its shape FX, in order
+                add(&op.kind, sizeof op.kind);
+                add(op.a.data(), sizeof(float) * 4);
+                add(op.b.data(), sizeof(float) * 4);
+            }
+            for (int v : {p.detail, p.shading, int(p.unlit), int(p.sharedMaterial)}) add(&v, sizeof v);
+            for (QRhiTexture *t : p.materialRhi) add(&t, sizeof t); // its shared material's maps (another picture: another texture)
+            if (item.material) add(&item.material->height, sizeof item.material->height);
+        }
+        for (const Scene3D::Lamp &lamp : lamps) {
+            const LightSettings &l = lamp.light;
+            add(&l.type, sizeof l.type);
+            add(l.color.data(), sizeof(float) * 3);
+            add(l.position.data(), sizeof(float) * 3);
+            for (float v : {l.intensity, l.yaw, l.pitch, l.angle, l.falloff, l.softness, l.width, l.height, l.rays, lamp.gain}) add(&v, sizeof v);
+            add(&l.shadow, sizeof(bool));
+        }
+    }
+    if (could && d->keptPicture && key == d->frameKey) {
+        if (++d->stillFrames >= 3) {
+            m_triangles = 0;
+            cb->resourceUpdate(u); // what was given to upload still goes (and the batch is not left to the pool)
+            return d->keptPicture;
+        }
+    } else {
+        d->stillFrames = 0;
+    }
+    d->frameKey = key;
+    d->keptPicture = drawNow(cb, u, s, sourceItems, lamps, w, h, quality, environment, environmentLinear);
+    return d->keptPicture;
+}
+
+QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &sourceItems,
+                               const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality, QRhiTexture *environment,
+                               bool environmentLinear)
+{
     const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
     QRhi *rhi = d->rhi;
     const bool lite = Scene3D::lite(rhi->driverInfo().deviceName); // on the processor: no antialiasing, shadows, contact shadows, reflections, glow or fog

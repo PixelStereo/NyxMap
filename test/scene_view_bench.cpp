@@ -28,7 +28,33 @@ int main(int argc, char **argv)
         if (e.layer(i)->scene3d) scene = e.layer(i)->id;
     }
     std::printf("renderer %s, scene layer %llu, view %dx%d\n", qPrintable(e.gpuRenderer()), (unsigned long long)scene, size.width(), size.height());
+    {   // manual mode, as the GL measurement: frames in a row, then one picture
+        for (int k = 0; k < 30; ++k) e.renderFrame();
+        e.grabOutput();
+        QElapsedTimer t;
+        t.start();
+        const int n = 400;
+        for (int k = 0; k < n; ++k) { e.renderFrame(); e.grabOutput(); }
+        const QImage last = e.grabOutput();
+        std::printf("MANUAL %d frames: %.2f ms each (picture %dx%d, centre %06x)\n", n, t.elapsed() / double(n), last.width(), last.height(),
+                    last.pixel(last.width() / 2, last.height() / 2) & 0xffffff);
+    }
     e.start();
+    // How fast the engine itself goes, uncapped, with 10-bit (RGBA16F) and 8-bit pictures
+    for (const int depth : {10, 8}) {
+        Engine::RenderSettings r;
+        r.frameRate = Engine::RenderSettings::UncappedFrameRate;
+        r.depth = depth;
+        e.setRenderSettings(r);
+        QThread::msleep(1500);
+        const auto before = e.frameTiming();
+        QThread::msleep(int(seconds * 1000));
+        const auto after = e.frameTiming();
+        std::printf("uncapped, %2d-bit        engine %.1f fps (frame compute mean %.1f ms)\n", depth,
+                    double(after.frames - before.frames) / seconds, after.compute.mean());
+    }
+    Engine::RenderSettings normal;
+    e.setRenderSettings(normal);
     auto run = [&](const char *what, bool view, Scene3D::ViewLook look) {
         if (view) {
             SceneSettings cam;
