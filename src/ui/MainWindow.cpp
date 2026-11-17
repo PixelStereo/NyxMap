@@ -759,9 +759,20 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
         (viewportMode() ? m_viewportInspector : m_inspector)->selectMask(index);
     });
     connect(m_view, &MappingView::masksEdited, m_viewportInspector, &LayerInspector::refreshMasks);
+    // The masks edited in the views of a layer or a viewport: the inspectors follow
+    connect(m_previews, &PreviewWorkspace::masksEdited, this, [this] {
+        m_inspector->refreshMasks();
+        m_viewportInspector->refreshMasks();
+        markDirty();
+    });
+    connect(m_previews, &PreviewWorkspace::maskPicked, this, [this](int index) {
+        (viewportMode() ? m_viewportInspector : m_inspector)->selectMask(index);
+    });
     connect(m_viewportInspector, &LayerInspector::maskSelected, this, [this](int index) {
         if (viewportMode()) m_view->setMaskIndex(index);
+        m_previews->selectMask(index);
     });
+    connect(m_inspector, &LayerInspector::maskSelected, this, [this](int index) { m_previews->selectMask(index); });
     connect(m_viewportInspector, &LayerInspector::maskDrawRequested, this, [this] {
         showInspectorPage(1);
         m_view->startMaskDrawing();
@@ -1440,6 +1451,10 @@ void MainWindow::buildMenus()
     m_blackoutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
     m_blackoutAction->setShortcutContext(Qt::ApplicationShortcut);
     connect(m_blackoutAction, &QAction::toggled, this, &MainWindow::setBlackout);
+
+    // Help is the last menu, after Output (it is made first: its About actions keep their macOS roles)
+    menuBar()->removeAction(help->menuAction());
+    menuBar()->addAction(help->menuAction());
 
     // The ISF library's settings are in Settings › ISF; its rescan keeps its shortcut
     auto *rescanIsf = new QAction(QStringLiteral("Rescan ISF Library"), this);

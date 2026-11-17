@@ -25,6 +25,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -41,7 +42,9 @@ public:
         setMouseTracking(true);
         m_overlay = new PaintOverlay(this, [this](QPainter &p) {
             if (!m_source) paintViewportFrames(p); // the composition: where each viewport looks
-            else {
+            else if (m_maskMode) {
+                paintMasks(p); // the masks of what is shown
+            } else {
                 paintWarpHandles(p); // a viewport: the points of its warp, then the ramps of its soft edge, to drag
                 paintEdgeHandles(p);
             }
@@ -64,6 +67,14 @@ public:
             update();
         });
         connect(engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
+        // The same two tools as the composition's view: Layer (the view only shows) and Mask (the masks of what is shown are
+        // edited here: drag a point or a handle, a shape whole; a click on an empty place draws a new one)
+        m_maskButton = m_bar->addButton(QStringLiteral("Layer"), QStringLiteral("Layer mode: the view only shows. Press to switch to Mask mode.\n"
+                                                                            "In Mask mode: drag a point, a handle or a shape; click an empty place to draw a new mask "
+                                                                            "(click the first point, double-click or Enter to close it; Esc cancels); Delete removes a point."));
+        m_maskButton->setObjectName(QStringLiteral("previewSelectionMode"));
+        m_maskButton->setCheckable(true);
+        connect(m_maskButton, &QToolButton::toggled, this, [this](bool on) { setMaskMode(on); });
         m_channelButton = m_bar->addChannelButton([this](int channel) {
             m_channel = channel;
             update();
@@ -75,6 +86,11 @@ public:
         clearProbe();
         m_source = id;
         m_fixturesButton->setVisible(showsComposition());
+        m_maskButton->setVisible(id != 0);
+        if (!id) setMaskMode(false);
+        m_maskSel = m_nodeSel = -1;
+        m_drawing = false;
+        m_drawNodes.clear();
         update();
     }
     bool fixturesShown() const { return m_fixturesButton->isChecked() && showsComposition(); }
@@ -90,6 +106,15 @@ public:
     // A viewport's soft edge is dragged here: its change is one step of the undo stack, and the inspector is told
     void setUndoStack(QUndoStack *undo) { m_undo = undo; }
     std::function<void()> onEdited;
+    std::function<void()> onMasksEdited;
+    std::function<void(int)> onMaskPicked;
+    // The mask picked elsewhere (the inspector's list) is the one drawn selected here
+    void selectMask(int index)
+    {
+        m_maskSel = index;
+        m_nodeSel = -1;
+        m_overlay->update();
+    }
     // The cross on the output of the viewport shown, where the pointer is (the workspace's switch)
     void setCross(bool on)
     {
@@ -151,6 +176,208 @@ protected:
         }
         m_draw.render(cb, renderTarget());
         m_overlay->update();
+    }
+    // ---- Masks (Masks.h): those of the layer or viewport shown, in the frame of its own picture -----------------------------
+    void setMaskMode(bool on)
+    {
+        if (m_maskMode == on) return;
+        m_maskMode = on;
+        m_maskDrag = Drag::None;
+        m_drawing = false;
+        m_drawNodes.clear();
+        m_maskSel = m_nodeSel = -1;
+        m_hover = m_warpHover = -1;
+        QSignalBlocker block(m_maskButton);
+        m_maskButton->setChecked(on);
+        m_maskButton->setText(on ? QStringLiteral("Mask") : QStringLiteral("Layer"));
+        setFocusPolicy(on ? Qt::StrongFocus : Qt::NoFocus);
+        setCursor(Qt::ArrowCursor);
+        m_overlay->update();
+        update();
+    }
+    QPointF maskToWidget(QPointF n) const
+    {
+        const QRectF r = viewRect();
+        return QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height());
+    }
+    QPointF widgetToMask(QPointF w) const
+    {
+        const QRectF r = viewRect();
+        return QPointF((w.x() - r.left()) / std::max(1.0, r.width()), (w.y() - r.top()) / std::max(1.0, r.height()));
+    }
+    // The shape of a mask on the widget, its curves flattened
+    QPolygonF maskPolygon(const Mask &k) const
+    {
+        QPolygonF out;
+        if (!k.valid()) return out;
+        const double scale = 1000;
+        for (const QPolygonF &poly : k.path(QSizeF(scale, scale)).toSubpathPolygons())
+            for (const QPointF &q : poly) out << maskToWidget(q / scale);
+        return out;
+    }
+    void paintMasks(QPainter &p)
+    {
+        if (!m_source) return;
+        const std::vector<Mask> list = m_engine->layerMasks(m_source);
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing);
+        for (int i = 0; i < int(list.size()); ++i) {
+            const Mask &k = list[size_t(i)];
+            if (k.attach != Mask::Attach::Surface || !k.valid()) continue;
+            const bool picked = i == m_maskSel;
+            p.setPen(QPen(picked ? QColor(255, 210, 60) : QColor(120, 190, 255, k.enabled ? 220 : 90), picked ? 2.0 : 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawPolyline(maskPolygon(k));
+            if (!picked) continue;
+            for (int j = 0; j < int(k.nodes.size()); ++j) {
+                const MaskNode &n = k.nodes[size_t(j)];
+                const QPointF c = maskToWidget(n.p);
+                if (j == m_nodeSel) { // its handles
+                    p.setPen(QPen(QColor(255, 210, 60), 1));
+                    for (const QPointF &h : {n.in, n.out})
+                        if (h != n.p) {
+                            p.drawLine(c, maskToWidget(h));
+                            p.setBrush(QColor(255, 210, 60));
+                            p.drawEllipse(maskToWidget(h), 3.5, 3.5);
+                        }
+                }
+                p.setPen(QPen(Qt::black, 1));
+                p.setBrush(j == m_nodeSel ? QColor(255, 255, 255) : QColor(255, 210, 60));
+                p.drawRect(QRectF(c.x() - 4, c.y() - 4, 8, 8));
+            }
+        }
+        if (m_drawing && !m_drawNodes.empty()) { // the mask being drawn
+            p.setPen(QPen(QColor(255, 255, 255), 1.2, Qt::DashLine));
+            QPolygonF line;
+            for (const MaskNode &n : m_drawNodes) line << maskToWidget(n.p);
+            line << m_drawCursor;
+            p.drawPolyline(line);
+            p.setPen(QPen(Qt::black, 1));
+            p.setBrush(QColor(255, 255, 255));
+            for (const MaskNode &n : m_drawNodes) p.drawRect(QRectF(maskToWidget(n.p).x() - 4, maskToWidget(n.p).y() - 4, 8, 8));
+        }
+        p.restore();
+    }
+    static bool nearPoint(QPointF a, QPointF b, double radius) { return QLineF(a, b).length() <= radius; }
+    // A mask edit is one undo step: the masks before, then after
+    void commitMasks(const std::vector<Mask> &after, const QString &text)
+    {
+        if (m_undo && after != m_maskBefore) m_undo->push(new cmd::SetMasks(m_engine, m_source, m_maskBefore, after, text));
+        else m_engine->setLayerMasks(m_source, after);
+        if (onMasksEdited) onMasksEdited();
+        m_overlay->update();
+    }
+    bool pressMask(QMouseEvent *e)
+    {
+        if (!m_source || m_engine->isLocked(m_engine->indexOfId(m_source))) return false;
+        const QPointF at = e->position();
+        m_maskBefore = m_engine->layerMasks(m_source);
+        if (m_drawing) {
+            if (m_drawNodes.size() >= 3 && nearPoint(maskToWidget(m_drawNodes.front().p), at, 8)) {
+                finishDrawing();
+                return true;
+            }
+            const QPointF q = widgetToMask(at);
+            m_drawNodes.push_back({q, q, q});
+            m_overlay->update();
+            return true;
+        }
+        // a handle or point of the mask picked, then another one's point, then the inside of a shape
+        if (m_maskSel >= 0 && m_maskSel < int(m_maskBefore.size())) {
+            const Mask &k = m_maskBefore[size_t(m_maskSel)];
+            if (m_nodeSel >= 0 && m_nodeSel < int(k.nodes.size())) {
+                const MaskNode &n = k.nodes[size_t(m_nodeSel)];
+                if (n.out != n.p && nearPoint(maskToWidget(n.out), at, 6)) return beginDrag(Drag::Out, at);
+                if (n.in != n.p && nearPoint(maskToWidget(n.in), at, 6)) return beginDrag(Drag::In, at);
+            }
+            for (int j = 0; j < int(k.nodes.size()); ++j)
+                if (nearPoint(maskToWidget(k.nodes[size_t(j)].p), at, 7)) {
+                    m_nodeSel = j;
+                    return beginDrag(Drag::Node, at);
+                }
+        }
+        for (int i = int(m_maskBefore.size()) - 1; i >= 0; --i) {
+            const Mask &k = m_maskBefore[size_t(i)];
+            if (k.attach != Mask::Attach::Surface || !k.valid()) continue;
+            for (int j = 0; j < int(k.nodes.size()); ++j)
+                if (nearPoint(maskToWidget(k.nodes[size_t(j)].p), at, 7)) {
+                    m_maskSel = i;
+                    m_nodeSel = j;
+                    if (onMaskPicked) onMaskPicked(i);
+                    return beginDrag(Drag::Node, at);
+                }
+            if (maskPolygon(k).containsPoint(at, Qt::OddEvenFill)) {
+                m_maskSel = i;
+                m_nodeSel = -1;
+                if (onMaskPicked) onMaskPicked(i);
+                return beginDrag(Drag::Whole, at);
+            }
+        }
+        // an empty place: a new mask begins
+        m_maskSel = m_nodeSel = -1;
+        const QPointF q = widgetToMask(at);
+        m_drawing = true;
+        m_drawNodes.assign(1, MaskNode{q, q, q});
+        m_drawCursor = at;
+        m_overlay->update();
+        return true;
+    }
+    bool beginDrag(int kind, QPointF at)
+    {
+        m_maskDrag = kind;
+        m_dragFrom = widgetToMask(at);
+        m_overlay->update();
+        return true;
+    }
+    void dragMask(QPointF at)
+    {
+        if (m_maskDrag == Drag::None || m_maskSel < 0 || m_maskSel >= int(m_maskBefore.size())) return;
+        std::vector<Mask> now = m_maskBefore;
+        Mask &k = now[size_t(m_maskSel)];
+        const QPointF q = widgetToMask(at), d = q - m_dragFrom;
+        if (m_maskDrag == Drag::Whole) {
+            k.translate(d);
+        } else if (m_nodeSel >= 0 && m_nodeSel < int(k.nodes.size())) {
+            MaskNode &n = k.nodes[size_t(m_nodeSel)];
+            if (m_maskDrag == Drag::Node) {
+                n.p += d;
+                n.in += d;
+                n.out += d;
+            } else if (m_maskDrag == Drag::Out) {
+                n.out = q;
+            } else {
+                n.in = q;
+            }
+        }
+        m_engine->setLayerMasks(m_source, now); // live; one undo step at the release
+        m_overlay->update();
+        if (onMasksEdited) onMasksEdited();
+    }
+    void finishDrawing()
+    {
+        if (m_drawNodes.size() >= 3) {
+            std::vector<Mask> after = m_engine->layerMasks(m_source);
+            m_maskBefore = after;
+            Mask k;
+            k.name = masks::uniqueName(after);
+            k.nodes = m_drawNodes;
+            after.push_back(k);
+            m_maskSel = int(after.size()) - 1;
+            m_nodeSel = -1;
+            commitMasks(after, QStringLiteral("Draw Mask"));
+            if (onMaskPicked) onMaskPicked(m_maskSel);
+        }
+        m_drawing = false;
+        m_drawNodes.clear();
+        m_overlay->update();
+    }
+    void releaseMask()
+    {
+        if (m_maskDrag == Drag::None) return;
+        m_maskDrag = Drag::None;
+        const std::vector<Mask> after = m_engine->layerMasks(m_source);
+        m_engine->setLayerMasks(m_source, m_maskBefore); // the masks as they were, then the change as one step
+        commitMasks(after, QStringLiteral("Edit Mask"));
     }
     // The composition: the frame of each viewport, with its name (the mapping view draws them too, to edit them)
     void paintViewportFrames(QPainter &p)
@@ -408,6 +635,15 @@ protected:
     }
     void mousePressEvent(QMouseEvent *e) override
     {
+        if (m_maskMode && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && pressMask(e)) {
+            setFocus();
+            e->accept();
+            return;
+        }
+        if (m_maskMode && e->button() != Qt::MiddleButton && !(e->modifiers() & Qt::AltModifier)) {
+            e->accept();
+            return;
+        }
         if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier)) {
             if (const int w = warpPointAt(e->position()); w >= 0) {
                 m_warpDrag = true;
@@ -437,6 +673,17 @@ protected:
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
+        if (m_maskMode) {
+            if (m_maskDrag != Drag::None) dragMask(e->position());
+            else if (m_drawing) {
+                m_drawCursor = e->position();
+                m_overlay->update();
+            }
+            if (!m_panning) {
+                e->accept();
+                return;
+            }
+        }
         if (m_warpDrag) {
             dragWarpPoint(e->position());
             e->accept();
@@ -465,6 +712,11 @@ protected:
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
+        if (m_maskDrag != Drag::None) {
+            releaseMask();
+            e->accept();
+            return;
+        }
         if (m_warpDrag) { // the point is where it was dropped: the move is one step
             m_warpDrag = false;
             const int index = m_engine->indexOfId(m_source);
@@ -490,7 +742,39 @@ protected:
         if (!m_panning) return QRhiWidget::mouseReleaseEvent(e);
         m_panning = false;
     }
-    void mouseDoubleClickEvent(QMouseEvent *) override { fit(); }
+    void mouseDoubleClickEvent(QMouseEvent *e) override
+    {
+        if (m_maskMode && m_drawing) {
+            if (!m_drawNodes.empty()) m_drawNodes.pop_back(); // the second click of the double-click added a point
+            finishDrawing();
+            e->accept();
+            return;
+        }
+        if (!m_maskMode) fit();
+    }
+    void keyPressEvent(QKeyEvent *e) override
+    {
+        if (!m_maskMode) return QRhiWidget::keyPressEvent(e);
+        if (e->key() == Qt::Key_Escape) {
+            m_drawing = false;
+            m_drawNodes.clear();
+            m_maskSel = m_nodeSel = -1;
+            m_overlay->update();
+        } else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && m_drawing) {
+            finishDrawing();
+        } else if ((e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) && m_maskSel >= 0 && m_nodeSel >= 0) {
+            std::vector<Mask> after = m_engine->layerMasks(m_source);
+            m_maskBefore = after;
+            if (m_maskSel < int(after.size()) && after[size_t(m_maskSel)].nodes.size() > 3) {
+                after[size_t(m_maskSel)].nodes.erase(after[size_t(m_maskSel)].nodes.begin() + m_nodeSel);
+                m_nodeSel = -1;
+                commitMasks(after, QStringLiteral("Delete Mask Point"));
+            }
+        } else {
+            return QRhiWidget::keyPressEvent(e);
+        }
+        e->accept();
+    }
     void leaveEvent(QEvent *e) override
     {
         clearProbe();
@@ -550,6 +834,13 @@ private:
     double m_dragWidth = 0, m_dragStart = 0;
     QUndoStack *m_undo = nullptr;
     bool m_cross = false;
+    struct Drag { enum { None, Node, In, Out, Whole }; };
+    bool m_maskMode = false, m_drawing = false;
+    int m_maskDrag = Drag::None, m_maskSel = -1, m_nodeSel = -1;
+    QPointF m_dragFrom, m_drawCursor;
+    std::vector<MaskNode> m_drawNodes;
+    std::vector<Mask> m_maskBefore;
+    QToolButton *m_maskButton = nullptr;
     bool m_warpDrag = false;
     int m_warpDragIndex = -1, m_warpHover = -1;
     Mapping m_warpBefore;
@@ -654,6 +945,8 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
         cell.pages = new QStackedWidget;
         cell.picture = new PreviewPicture(engine, slot);
         cell.picture->onEdited = [this] { emit softEdgeEdited(); };
+        cell.picture->onMasksEdited = [this] { emit masksEdited(); };
+        cell.picture->onMaskPicked = [this](int index) { emit maskPicked(index); };
         cell.pages->addWidget(cell.picture);
         cell.scene3d = new Scene3DView(engine, slot);
         cell.pages->addWidget(cell.scene3d);
@@ -728,6 +1021,11 @@ void PreviewWorkspace::setUndoStack(QUndoStack *undo)
         c.scene3d->setUndoStack(undo);
         c.picture->setUndoStack(undo);
     }
+}
+
+void PreviewWorkspace::selectMask(int index)
+{
+    for (Cell &c : m_cells) c.picture->selectMask(index);
 }
 
 void PreviewWorkspace::setCurrentLayer(quint64 id)

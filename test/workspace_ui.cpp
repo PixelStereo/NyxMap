@@ -6,6 +6,7 @@
 #include "SequencePanel.h"
 #include "SnapshotPanel.h"
 #include "TimelinePanel.h"
+#include "PreviewWorkspace.h"
 #include "LayerInspector.h"
 #include "PresetEditor.h"
 #include "SettingsPanel.h"
@@ -693,6 +694,53 @@ int main(int argc, char **argv)
             check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition" &&
                       mainTabs->count() == 4 && inspectorStack && inspectorStack->count() == 2,
                   "an Inspector tab (a layer, a group or a fixture), the Viewports tab (their list, + and −, their parameters), then Composition and Settings");
+            // The views of a viewport have the Layer / Mask tool: a mask drawn in one lands on that viewport, as one undo step
+            {
+                auto *previews = window.findChild<PreviewWorkspace *>();
+                const quint64 shown = engine.layerId(engine.viewports().front());
+                if (previews) previews->setState(QJsonObject{{"count", 1}, {"cells", QJsonArray{QJsonObject{{"source", QString::number(shown)}}}}});
+                app.processEvents();
+                auto *mode = window.findChild<QToolButton *>("previewSelectionMode");
+                check(mode && mode->isVisibleTo(&window) && mode->text() == "Layer", "a view of a viewport has the Layer / Mask button");
+                if (mode && mode->parentWidget() && mode->parentWidget()->parentWidget()) {
+                    QWidget *view = mode->parentWidget()->parentWidget(); // the bar's view
+                    mode->setChecked(true);
+                    app.processEvents();
+                    check(mode->text() == "Mask", "the button says Mask once pressed");
+                    const size_t before = engine.layerMasks(shown).size();
+                    const int w = view->width(), h = view->height();
+                    auto send = [&](QEvent::Type type, QPoint p) {
+                        QMouseEvent e(type, QPointF(p), view->mapToGlobal(QPointF(p)), Qt::LeftButton,
+                                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                        QApplication::sendEvent(view, &e);
+                        app.processEvents();
+                    };
+                    for (QPoint p : {QPoint(w / 3, h / 3), QPoint(2 * w / 3, h / 3), QPoint(w / 2, 2 * h / 3)}) {
+                        send(QEvent::MouseButtonPress, p);
+                        send(QEvent::MouseButtonRelease, p);
+                    }
+                    send(QEvent::MouseButtonPress, QPoint(w / 2, 2 * h / 3 - 1)); // the second click of a double-click
+                    send(QEvent::MouseButtonDblClick, QPoint(w / 2, 2 * h / 3 - 1));
+                    send(QEvent::MouseButtonRelease, QPoint(w / 2, 2 * h / 3 - 1));
+                    check(engine.layerMasks(shown).size() == before + 1, "clicking three points then double-clicking draws a mask on the viewport");
+                    if (engine.layerMasks(shown).size() == before + 1) {
+                        QUndoStack *undoStack = window.findChild<QUndoStack *>();
+                        if (undoStack) {
+                            undoStack->undo();
+                            check(engine.layerMasks(shown).size() == before, "the drawn mask is one undo step");
+                            undoStack->redo();
+                        }
+                    }
+                    mode->setChecked(false);
+                    app.processEvents();
+                }
+            }
+            {
+                QStringList titles;
+                for (QAction *a : window.menuBar()->actions()) titles << a->text().remove('&');
+                check(titles.size() >= 2 && titles.last() == "Help" && titles.at(titles.size() - 2) == "Output" && titles.first() == "File",
+                      "the menus run File … Output, then Help last");
+            }
             check(window.findChild<QPushButton *>("addViewport") && window.findChild<QPushButton *>("removeViewport") && viewportList &&
                       viewportList->parentWidget() && viewportList->parentWidget()->isAncestorOf(viewportInspector),
                   "the Viewports tab has its list and the + and − buttons");
