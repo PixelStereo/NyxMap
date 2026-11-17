@@ -18,6 +18,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Network)
+# Shared Pixel Stereo code (the OSC codec), pinned as a submodule
+set(PXS_BUILD_TESTS OFF)
+add_subdirectory(third_party/pxs EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
 # FFmpeg: pkg-config (macOS Homebrew, Linux) or FFMPEG_ROOT (Windows, "shared" build)
@@ -97,7 +100,6 @@ add_library(nyxmap_engine STATIC
   src/engine/ShowDesk.cpp
   src/engine/EventLog.cpp
   src/engine/FrameTiming.cpp
-  src/engine/OscCodec.cpp
   src/engine/SequenceFeedback.cpp
   src/engine/Zeroconf.cpp
   src/engine/StoredContent.cpp
@@ -190,7 +192,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/scenelit_noglow.frag src/engine/shaders/sceneglowdown.frag src/engine/shaders/sceneglowup.frag
         src/engine/shaders/scenebackground.frag src/engine/shaders/scenesky.vert src/engine/shaders/scenesky.frag
         src/engine/shaders/scenesky_noglow.frag src/engine/shaders/scenefog.frag src/engine/shaders/scenefogblur.frag)
-target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg)
+target_link_libraries(nyxmap_engine PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::ShaderToolsPrivate Qt6::Network ffmpeg pxs::osc)
 if(WIN32)
   target_link_libraries(nyxmap_engine PRIVATE psapi pdh) # resource usage (ProcessMemory.cpp)
 endif()
@@ -684,8 +686,9 @@ if(NYXMAP_FUZZ)
   target_link_libraries(fuzz_hap PRIVATE Qt6::Core)
   target_compile_options(fuzz_hap PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
   target_link_options(fuzz_hap PRIVATE -fsanitize=fuzzer,address,undefined)
-  add_executable(fuzz_osc EXCLUDE_FROM_ALL test/fuzz_osc.cpp src/engine/OscCodec.cpp)
-  target_include_directories(fuzz_osc PRIVATE src/engine)
+  # the codec is compiled here with the fuzzer's instrumentation, from the shared source
+  add_executable(fuzz_osc EXCLUDE_FROM_ALL test/fuzz_osc.cpp third_party/pxs/src/osc/OscCodec.cpp)
+  target_include_directories(fuzz_osc PRIVATE third_party/pxs/src/osc)
   target_link_libraries(fuzz_osc PRIVATE Qt6::Core)
   target_compile_options(fuzz_osc PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
   target_link_options(fuzz_osc PRIVATE -fsanitize=fuzzer,address,undefined)

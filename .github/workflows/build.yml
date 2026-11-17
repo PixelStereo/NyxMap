@@ -55,6 +55,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_platform_reuse.py'
       - name: Test Linux package policy
         run: python3 -m unittest discover -s scripts -p 'test_linux_*.py'
+      - name: Shared repository (the version module the tests use)
+        run: git submodule update --init third_party/pxs
       - name: Test release metadata and tag versions
         run: python3 -m unittest discover -s .github/scripts -p 'test_release_metadata.py'
       - name: Select validation
@@ -984,7 +986,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NSIS install failed" }
           $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
           $setup = Join-Path $PWD "NyxMap-windows$tagSuffix-Setup.exe"
-          & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" packaging\windows.nsi
+          & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" third_party\pxs\packaging\windows.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
       - name: Smoke test of the installed application
         if: needs.scope.outputs.package == 'true'
