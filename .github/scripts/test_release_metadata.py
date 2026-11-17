@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
-    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}.zip",
+    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}-Setup.exe",
              f"NyxMap-linux-x86_64-{tag}.AppImage", f"NyxMap-linux-x86_64-{tag}.tar.gz"]
     return {"tag_name": tag, "published_at": date, "draft": False, "prerelease": False, **flags,
             "assets": [{"name": name, "state": "uploaded", "size": 123,
@@ -21,6 +21,15 @@ def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
+    def test_release_before_the_windows_installer_keeps_its_zip(self):
+        old = release()
+        for asset in old["assets"]:
+            if asset["name"].endswith("-Setup.exe"):
+                asset["name"] = asset["name"].replace("-Setup.exe", ".zip")
+                asset["browser_download_url"] = asset["browser_download_url"].replace("-Setup.exe", ".zip")
+        chosen, urls = metadata.select_release([old], REPO)
+        self.assertTrue(urls["win"].endswith("-windows-v1.2.3.zip"))
+
     def test_actual_assets_and_idempotence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,11 +118,12 @@ class ReleaseMetadataTests(unittest.TestCase):
                 self.assertEqual((root / "README.md").read_text(), text)
                 self.assertFalse((root / "VERSION").exists())
 
-    def cmake_version(self, tag=None, override=None, git_repo=False, release=False, exact_tag=False):
+    def cmake_version(self, tag=None, override=None, git_repo=False, release=False, exact_tag=False, uncommitted=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "cmake").mkdir()
-            (root / "cmake/Version.cmake").write_text((ROOT / "cmake/Version.cmake").read_text())
+            for name in ("Version.cmake", "PixelStereoBuildId.cmake"):
+                (root / "cmake" / name).write_text((ROOT / "cmake" / name).read_text())
             (root / "VERSION").write_text("0.2.1\n")
             if git_repo:
                 subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -125,7 +135,10 @@ class ReleaseMetadataTests(unittest.TestCase):
                     (root / "change").write_text("new build")
                     subprocess.run(["git", "-C", str(root), "add", "change"], check=True)
                     subprocess.run(commit + ["Development"], check=True)
-                self.version_commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "--short=8", "HEAD"], text=True).strip()
+                # the test's own files are not "changes"
+                (root / ".git/info/exclude").write_text("check.cmake\nresult\n")
+                if uncommitted:
+                    (root / "scratch").write_text("not committed")
             script = root / "check.cmake"
             script.write_text('include("${CMAKE_CURRENT_LIST_DIR}/cmake/Version.cmake")\n'
                               'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/result" "${NYXMAP_VERSION}|${NYXMAP_VERSION_NUMERIC}")\n')
@@ -140,18 +153,18 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(self.cmake_version("v4.5.6"), "4.5.6|4.5.6")
         self.assertEqual(self.cmake_version("0.3"), "0.3|0.3.0")
         self.assertEqual(self.cmake_version("v1.2.3-rc.1"), "1.2.3-rc.1|1.2.3")
-        self.assertEqual(self.cmake_version(), "0.2.1_unknown|0.2.1")
-        self.assertEqual(self.cmake_version(override="v9.8.7"), "9.8.7_unknown|9.8.7")
+        self.assertEqual(self.cmake_version(), "0.2.1|0.2.1")  # no Git: nothing to count
+        self.assertEqual(self.cmake_version(override="v9.8.7"), "9.8.7|9.8.7")
         self.assertEqual(self.cmake_version(override="v9.8.7", release=True), "9.8.7|9.8.7")
         with self.assertRaises(ValueError):
             self.cmake_version("vnot-a-version")
 
-    def test_personal_build_uses_previous_tag_and_commit(self):
-        version = self.cmake_version(git_repo=True)
-        self.assertEqual(version, f"0.5.2_{self.version_commit}|0.5.2")
+    def test_personal_build_counts_commits_since_the_release(self):
+        self.assertEqual(self.cmake_version(git_repo=True), "0.5.2+1|0.5.2")
+        self.assertEqual(self.cmake_version(git_repo=True, uncommitted=True), "0.5.2+1+|0.5.2")
         self.assertEqual(self.cmake_version(tag="v0.7.1", git_repo=True), "0.7.1|0.7.1")
-        personal_tag = self.cmake_version(git_repo=True, exact_tag=True)
-        self.assertEqual(personal_tag, f"0.5.2_{self.version_commit}|0.5.2")
+        self.assertEqual(self.cmake_version(git_repo=True, exact_tag=True), "0.5.2|0.5.2")
+        self.assertEqual(self.cmake_version(git_repo=True, exact_tag=True, uncommitted=True), "0.5.2+0+|0.5.2")
 
 
 if __name__ == "__main__":

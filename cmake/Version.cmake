@@ -1,5 +1,5 @@
 # Published tag builds identify releases; local builds always carry a revision.
-# Ordinary builds identify the preceding release and the exact source commit.
+# Ordinary builds identify the preceding release, the commits since it ("+3") and uncommitted changes ("+3+").
 set(_nyxmap_root "${CMAKE_CURRENT_LIST_DIR}/..")
 set(_nyxmap_release FALSE)
 if("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag" OR NYXMAP_RELEASE_BUILD)
@@ -29,12 +29,10 @@ else()
 endif()
 set(NYXMAP_VERSION "${NYXMAP_BASE_VERSION}")
 if(NOT _nyxmap_release)
-  execute_process(COMMAND git rev-parse --short=8 HEAD WORKING_DIRECTORY "${_nyxmap_root}"
-    OUTPUT_VARIABLE _nyxmap_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  if(NOT _nyxmap_commit MATCHES "^[0-9a-f]+$")
-    set(_nyxmap_commit "unknown") # source archive without Git metadata
-  endif()
-  string(APPEND NYXMAP_VERSION "_${_nyxmap_commit}")
+  # NYXMAP_VERSION is "0.2.1+3" (3 commits after the release) or "0.2.1+3+" (with uncommitted changes)
+  include("${CMAKE_CURRENT_LIST_DIR}/PixelStereoBuildId.cmake")
+  pxs_build_suffix("${_nyxmap_root}" _nyxmap_suffix)
+  string(APPEND NYXMAP_VERSION "${_nyxmap_suffix}")
 endif()
 set(NYXMAP_APP_NAME "NyxMap ${NYXMAP_VERSION}")
 # Reconfigure incremental builds after a checkout or commit, including worktrees.

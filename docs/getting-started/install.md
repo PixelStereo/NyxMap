@@ -7,7 +7,7 @@ Download the latest build from the [releases page](https://github.com/PixelStere
 | Apple Silicon build; a `.app` in a ZIP | MSVC x64 build; Qt and FFmpeg DLLs included | Ubuntu 26.04+ x86_64; AppImage and autonomous portable archive |
 | Ad-hoc signed; **not notarized** | Includes Visual C++ runtime installer | Qt, LGPL FFmpeg, camera/audio plugins, NDI and OMT included |
 
-On macOS, extract the ZIP and open `NyxMap.app`. It is not Developer ID signed or notarized: macOS may require approval in **System Settings → Privacy & Security**. On Windows, extract the whole ZIP, run the included `vc_redist.x64.exe` if needed, then open `NyxMap.exe`.
+On macOS, extract the ZIP and open `NyxMap.app`. It is not Developer ID signed or notarized: macOS may require approval in **System Settings → Privacy & Security**. On Windows, run the `-Setup.exe` installer, choose all users (the default) or only you (no administrator rights needed), then open NyxMap from the Start menu. Nothing else has to be installed.
 
 For Linux, choose either package:
 

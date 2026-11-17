@@ -16,13 +16,17 @@ def release_assets(release, repository):
         return None
     names = {
         "mac": f"{product}-macos-{tag}.zip",
-        "win": f"{product}-windows-{tag}.zip",
+        "win": f"{product}-windows-{tag}-Setup.exe",
         "linux": f"{product}-linux-x86_64-{tag}.AppImage",
         "portable": f"{product}-linux-x86_64-{tag}.tar.gz",
     }
     assets = {a["name"]: a for a in release.get("assets", []) if a.get("state") == "uploaded" and a.get("size", 0) > 0}
+    # Releases published before the Windows installer carry a zip: they stay valid until a newer release exists
+    legacy = {"win": f"{product}-windows-{tag}.zip"}
     urls = {}
     for platform, name in names.items():
+        if platform in legacy and name not in assets:
+            name = legacy[platform]
         asset = assets.get(name)
         if not asset:
             return None
