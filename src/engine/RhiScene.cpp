@@ -176,6 +176,27 @@ struct RhiScene::Impl {
     int stillFrames = 0;          // frames in a row with that same key
     QRhiTexture *keptPicture = nullptr; // the last picture
 
+    // One uniform buffer for the blocks of every draw of a frame (each at its offset, one binding set for all the draws that
+    // share their textures): no buffer, no binding set and no new binding to make for each of the thousands of draws of
+    // the shadows' passes
+    std::unique_ptr<QRhiBuffer> ring;
+    quint32 ringStride = 0, ringSlots = 0, ringNext = 0;
+    bool ensureRing(quint32 needed)
+    {
+        ringStride = quint32((sizeof(Place) + rhi->ubufAlignment() - 1) / rhi->ubufAlignment() * rhi->ubufAlignment());
+        ringNext = 0;
+        if (ring && ringSlots >= needed) return true;
+        ringSlots = std::max<quint32>(needed, ringSlots * 2);
+        ring.reset(rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, ringStride * ringSlots));
+        if (!ring->create()) {
+            ring.reset();
+            ringSlots = 0;
+            return false;
+        }
+        return true;
+    }
+    quint32 ringTake() { return std::min(ringNext++, ringSlots - 1) * ringStride; }
+
     QRhiBuffer *ubuf()
     {
         if (nextUbuf == ubufs.size()) {
@@ -390,6 +411,7 @@ struct Command {
     QRhiShaderResourceBindings *srb;
     QRhiBuffer *vertices, *indices;
     int count;
+    quint32 offset = 0; // in the ring of blocks: where this draw's block is
 };
 
 struct Placed {
@@ -860,6 +882,12 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
     if (!d->ensureMaps(d->spotMaps, mapSize, std::max<int>(1, int(spots.size()))) ||
         !d->ensureMaps(d->pointMaps, std::max(pointSize, 4), std::max<int>(6, int(points.size()) * 6)))
         return nullptr;
+    { // The ring of the draws' blocks: a slot for each draw of every pass of the frame
+        size_t draws = 0;
+        for (const Placed &p : all) draws += p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false).size();
+        const size_t passes = spots.size() + points.size() * 6 + 3; // the lights' maps, the depth, the lit and the blended
+        if (!d->ensureRing(quint32(std::min<size_t>(draws * passes + 16, size_t(1) << 17)))) return nullptr;
+    }
     if (wantsSeen) {
         if (!d->ensure(d->seen, w, h, 1, true, QRhiTexture::R32F)) return nullptr;
         if (wantsAo && (!d->ensure(d->ao, std::max(1, w / 2), std::max(1, h / 2), 1, false) ||
@@ -899,8 +927,8 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         bool cached = false; // its map still holds what it would draw
     };
     std::vector<ShadowDraw> shadowDraws;
-    const auto shadowBind = [&](QRhiBuffer *b, QRhiTexture *displace) {
-        return res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
+    const auto shadowBind = [&](QRhiTexture *displace) {
+        return res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->ring.get(), nullptr, nullptr, false, sizeof(Place)},
                              {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : res.black(), res.linear()}});
     };
     const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
@@ -948,9 +976,9 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
                 const QMatrix4x4 identity;
                 std::memcpy(pl.view, identity.constData(), sizeof pl.view);
                 pl.ink[0] = ink.x(), pl.ink[1] = ink.y(), pl.ink[2] = ink.z(), pl.ink[3] = ink.w();
-                QRhiBuffer *b = d->ubuf();
-                u->updateDynamicBuffer(b, 0, sizeof pl, &pl);
-                draw.commands.push_back({draw.kind, b, shadowBind(b, p.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount});
+                const quint32 at = d->ringTake();
+                u->updateDynamicBuffer(d->ring.get(), at, sizeof pl, &pl);
+                draw.commands.push_back({draw.kind, d->ring.get(), shadowBind(p.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount, at});
             }
         }
     };
@@ -974,10 +1002,10 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
             }
     }
 
-    const auto bind = [&](QRhiBuffer *b, const Model3D::RhiDraw &draw, QRhiTexture *displace) {
+    const auto bind = [&](const Model3D::RhiDraw &draw, QRhiTexture *displace) {
         QRhiTexture *black = res.black();
         std::vector<RhiResources::Bind> bindings{
-            {0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, b},
+            {0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->ring.get(), nullptr, nullptr, false, sizeof(Place)},
             {1, QRhiShaderResourceBinding::FragmentStage, d->sceneUbuf.get()},
             {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : black, res.linear()},
             {3, QRhiShaderResourceBinding::FragmentStage, nullptr, draw.baseTexture ? draw.baseTexture : black, d->repeat.get()}};
@@ -1008,9 +1036,9 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
                 if (pictured) draw.baseTexture = item.pictureRhi;
                 Place p = place(item, pl.model, cam, proj);
                 material(p, draw, item.placement.unlit, pictured);
-                QRhiBuffer *b = d->ubuf();
-                u->updateDynamicBuffer(b, 0, sizeof p, &p);
-                commands.push_back({pass == 1 ? Kind::LitBlended : Kind::Lit, b, bind(b, draw, item.displaceRhi), draw.vertices, draw.indices, draw.indexCount});
+                const quint32 at = d->ringTake();
+                u->updateDynamicBuffer(d->ring.get(), at, sizeof p, &p);
+                commands.push_back({pass == 1 ? Kind::LitBlended : Kind::Lit, d->ring.get(), bind(draw, item.displaceRhi), draw.vertices, draw.indices, draw.indexCount, at});
                 if (pass == 0) triangles += draw.indexCount / 3;
             }
         }
@@ -1031,9 +1059,9 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
             for (const Model3D::RhiDraw &mesh : draws) {
                 if (mesh.blended) continue; // its blended surfaces hide nothing
                 Place pp = place(*pl.item, pl.model, cam, proj);
-                QRhiBuffer *b = d->ubuf();
-                u->updateDynamicBuffer(b, 0, sizeof pp, &pp);
-                seen.push_back({Kind::Depth, b, shadowBind(b, pl.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount});
+                const quint32 at = d->ringTake();
+                u->updateDynamicBuffer(d->ring.get(), at, sizeof pp, &pp);
+                seen.push_back({Kind::Depth, d->ring.get(), shadowBind(pl.item->displaceRhi), mesh.vertices, mesh.indices, mesh.indexCount, at});
             }
         }
     }
@@ -1047,12 +1075,17 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         cb->beginPass(target, QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
         u = nullptr;
         cb->setViewport({0, 0, float(draw.size.width()), float(draw.size.height())});
+        QRhiGraphicsPipeline *current = nullptr; // the pipeline is set when it changes, not for each draw
         for (const Command &c : draw.commands) {
             QRhiGraphicsPipeline *ps = c.srb ? d->shadowPipeline(maps, c.kind, c.srb) : nullptr;
             if (!ps) continue;
-            cb->setGraphicsPipeline(ps);
-            cb->setViewport({0, 0, float(draw.size.width()), float(draw.size.height())}); // after the pipeline: Vulkan then sets the scissor to it
-            cb->setShaderResources(c.srb);
+            if (ps != current) {
+                cb->setGraphicsPipeline(ps);
+                cb->setViewport({0, 0, float(draw.size.width()), float(draw.size.height())}); // after the pipeline: Vulkan then sets the scissor to it
+                current = ps;
+            }
+            const QRhiCommandBuffer::DynamicOffset dynamicOffset(0, c.offset);
+            cb->setShaderResources(c.srb, 1, &dynamicOffset);
             const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
             cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
             cb->drawIndexed(quint32(c.count));
@@ -1064,12 +1097,17 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         cb->beginPass(d->seen.target.get(), QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
         u = nullptr;
         cb->setViewport({0, 0, float(w), float(h)});
+        QRhiGraphicsPipeline *current = nullptr;
         for (const Command &c : seen) {
             QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(d->seen, c.kind, c.srb) : nullptr;
             if (!ps) continue;
-            cb->setGraphicsPipeline(ps);
-            cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
-            cb->setShaderResources(c.srb);
+            if (ps != current) {
+                cb->setGraphicsPipeline(ps);
+                cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
+                current = ps;
+            }
+            const QRhiCommandBuffer::DynamicOffset dynamicOffset(0, c.offset);
+            cb->setShaderResources(c.srb, 1, &dynamicOffset);
             const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
             cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
             cb->drawIndexed(quint32(c.count));
@@ -1191,12 +1229,17 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
             cb->draw(3);
         }
     }
+    QRhiGraphicsPipeline *current = nullptr;
     for (const Command &c : commands) {
         QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(main, c.kind, c.srb) : nullptr;
         if (!ps) continue;
-        cb->setGraphicsPipeline(ps);
-        cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
-        cb->setShaderResources(c.srb);
+        if (ps != current) {
+            cb->setGraphicsPipeline(ps);
+            cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
+            current = ps;
+        }
+        const QRhiCommandBuffer::DynamicOffset dynamicOffset(0, c.offset);
+            cb->setShaderResources(c.srb, 1, &dynamicOffset);
         const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
         cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
         cb->drawIndexed(quint32(c.count));

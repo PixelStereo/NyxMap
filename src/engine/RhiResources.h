@@ -45,6 +45,7 @@ public:
         QRhiTexture *tex = nullptr;    // a texture sampled through
         QRhiSampler *sampler = nullptr;
         bool storage = false;          // the buffer is a storage buffer, read
+        quint32 dynamicSize = 0;       // not 0: a uniform buffer of many blocks of this size, one at an offset given with the binding
     };
     QRhiShaderResourceBindings *bindings(const std::vector<Bind> &b);
     // Called once before recording a frame; ages bindings not used in recent frames.
