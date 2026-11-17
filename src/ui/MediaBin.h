@@ -1,6 +1,7 @@
 #pragma once
 #include <QHash>
 #include <QIcon>
+#include <QPixmap>
 #include <array>
 #include <QWidget>
 
@@ -66,7 +67,11 @@ private:
     QTreeWidgetItem *m_audioGenerators, *m_audioInputs;
     QTreeWidgetItem *m_cursive = nullptr;
     QTreeWidgetItem *m_clocks[3] = {}; // Countdown, Stopwatch, Clock (ClockKind)
-    QPushButton *m_relink, *m_remove, *m_reveal;
+    QPushButton *m_relink, *m_remove, *m_reveal, *m_previewButton = nullptr;
+    QLabel *m_preview = nullptr;       // the selected media, larger, under the list (the Preview button)
+    QHash<QString, QPixmap> m_previews; // path -> its picture at preview size
+    QString m_previewPath;             // what the preview was last asked for
+    void refreshPreview();             // the preview follows the selection
     QLabel *m_summary;
     QLineEdit *m_search = nullptr;
     // The media, as coloured buttons at the top (one at a time): All, Video, Audio, 3D

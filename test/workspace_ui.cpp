@@ -127,6 +127,22 @@ static void mediaBinColumnTests(Engine &engine, const std::function<void(bool, c
                       "asynchronous media-bin color metadata arrives");
                 check(tree->sortColumn() == 3 && group->child(0) == a && bin.selectedPath() == alpha,
                       "metadata updates preserve color sorting and selection");
+                // Preview: the button shows the selected media larger, under the list
+                auto *previewButton = bin.findChild<QPushButton *>("mediaPreviewButton");
+                auto *preview = bin.findChild<QLabel *>("mediaPreview");
+                check(previewButton && preview && !preview->isVisibleTo(&bin) , "the media bin has a Preview button, off at first");
+                if (previewButton && preview) {
+                    previewButton->setChecked(true);
+                    tree->setCurrentItem(b);
+                    QElapsedTimer waitPreview; waitPreview.start();
+                    while (waitPreview.elapsed() < 5000 && preview->pixmap().isNull()) {
+                        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+                        QThread::msleep(2);
+                    }
+                    check(preview->isVisibleTo(&bin) && !preview->pixmap().isNull(), "the preview shows the selected picture");
+                    previewButton->setChecked(false);
+                    check(!preview->isVisibleTo(&bin), "the button hides the preview again");
+                }
                 tree->sortItems(0, Qt::AscendingOrder);
                 check(orderIs(a, b, c), "File sorts media by name");
                 auto clickHeader = [tree](int column) {
