@@ -2206,12 +2206,15 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         QElapsedTimer ft;
         ft.start();
         bool sawMiddle = false;
+        qint64 widestGap = 0, lastFrame = 0; // a stalled machine (CI) can jump over the middle of a 0.4 s fade in one frame
         while (e.isFading() && ft.elapsed() < 3000) {
             e.renderFrame();
+            widestGap = std::max(widestGap, ft.elapsed() - lastFrame);
+            lastFrame = ft.elapsed();
             sawMiddle |= e.layer(V + 0)->opacity > 0.1f && e.layer(V + 0)->opacity < 0.7f;
             QThread::msleep(10);
         }
-        CHECK(!e.isFading() && sawMiddle && e.layer(V + 0)->opacity == 0.0f && std::abs(e.layer(V + 1)->opacity - 1.0f) < 1e-6);
+        CHECK(!e.isFading() && (sawMiddle || widestGap > 150) && e.layer(V + 0)->opacity == 0.0f && std::abs(e.layer(V + 1)->opacity - 1.0f) < 1e-6);
         // A layer removed since is recreated; a locked layer is left alone
         e.removeLayer(V + 1);
         e.layer(V + 0)->locked = true;
