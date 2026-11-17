@@ -91,6 +91,8 @@ struct RhiRenderer::Impl {
         std::unique_ptr<RhiVideoTexture> video;
         std::unique_ptr<QRhiTexture> image;
         QSize imageSize;
+        std::unique_ptr<QRhiTexture> autoImage; // a picture with an uncommon ICC profile, converted to sRGB (the "auto" source colour)
+        QSize autoSize;
         std::unique_ptr<QRhiTexture> hdr; // an HDR file's pixels, in floats
         QRhiTexture *incoming = nullptr; // what the layer shows once its source transition is over (the held frame, until it is drawn again)
         std::unique_ptr<QRhiTexture> card; // a viewport's test card, still (TestCard.h)
@@ -168,7 +170,8 @@ struct RhiRenderer::Impl {
         return b;
     }
     // A still image's or a live input's picture into the layer's texture
-    void uploadPicture(RLayer &r, const QImage &image)
+    void uploadPicture(RLayer &r, const QImage &image) { uploadPictureTo(r.image, r.imageSize, image); }
+    void uploadPictureTo(std::unique_ptr<QRhiTexture> &texture, QSize &textureSize, const QImage &image)
     {
         // A picture of more than 8 bits (a 16-bit file) keeps them: half floats
         const QPixelFormat pf = image.pixelFormat();
@@ -177,15 +180,15 @@ struct RhiRenderer::Impl {
         const bool half = deep && RhiTarget::workingFormat() == QRhiTexture::RGBA16F;
         const QImage rgba = image.convertToFormat(half ? QImage::Format_RGBA16FPx4 : QImage::Format_RGBA8888); // first row: the bottom (prepareImageUpload)
         const QRhiTexture::Format textureFormat = half ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8;
-        if (!r.image || r.imageSize != rgba.size() || r.image->format() != textureFormat) {
-            r.image.reset(rhi->newTexture(textureFormat, rgba.size()));
-            if (!r.image->create()) {
-                r.image.reset();
+        if (!texture || textureSize != rgba.size() || texture->format() != textureFormat) {
+            texture.reset(rhi->newTexture(textureFormat, rgba.size()));
+            if (!texture->create()) {
+                texture.reset();
                 return;
             }
-            r.imageSize = rgba.size();
+            textureSize = rgba.size();
         }
-        batch()->uploadTexture(r.image.get(), rgba);
+        batch()->uploadTexture(texture.get(), rgba);
     }
     QRhiResourceUpdateBatch *batch()
     {
@@ -435,7 +438,7 @@ struct RhiRenderer::Impl {
             }
             break;
         case SourceType::Image:
-            tex = r.image.get();
+            tex = l.sourceColorSpace == QLatin1String("auto") && r.autoImage ? r.autoImage.get() : r.image.get();
             size = r.imageSize;
             break;
         case SourceType::Isf:
@@ -1442,11 +1445,14 @@ void RhiRenderer::hdrArrived(quint64 layer, const std::vector<float> &pixels, QS
     d->batch()->uploadTexture(r.hdr.get(), QRhiTextureUploadDescription({0, 0, sub}));
 }
 
-void RhiRenderer::imageArrived(quint64 layer, const QImage &image)
+void RhiRenderer::imageArrived(quint64 layer, const QImage &image, const QImage &autoImage)
 {
     if (!d->rhi || image.isNull()) return;
     d->adoptOutgoing(layer); // a transition just begun: the picture shown so far goes with the outgoing source
-    d->uploadPicture(d->layers[layer], image);
+    Impl::RLayer &r = d->layers[layer];
+    d->uploadPicture(r, image);
+    if (autoImage.isNull()) r.autoImage.reset();
+    else d->uploadPictureTo(r.autoImage, r.autoSize, autoImage);
 }
 
 void RhiRenderer::render(const IsfRenderContext &rc)

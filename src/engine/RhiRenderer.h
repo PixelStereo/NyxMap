@@ -50,7 +50,7 @@ public:
     QRhi *rhi() const;
 
     // An image layer's picture, as updateSource takes it (render thread, under the lock)
-    void imageArrived(quint64 layer, const QImage &image);
+    void imageArrived(quint64 layer, const QImage &image, const QImage &autoImage = QImage()); // autoImage: the same converted to sRGB (an uncommon ICC profile)
     // An HDR file's unclipped pixels (RGBA floats, the bottom row first), as the environment of a scene takes them
     void hdrArrived(quint64 layer, const std::vector<float> &pixels, QSize size);
     // The frame: every layer's picture, the viewports' and the composition's (render thread, under the lock)
