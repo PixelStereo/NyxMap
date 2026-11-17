@@ -1183,6 +1183,7 @@ private:
     QElapsedTimer m_clock;
     qint64 m_lastNs = 0;
     double m_realDt = 0; // unclamped frame interval: playheads follow real time, as the sound does
+    int64_t m_clockFedNs = 0; // when the OSC feedback was last told the beat
     int64_t m_frameStampNs = 0; // steady_clock time the playheads of the current frame correspond to
 
     std::unique_ptr<AudioOutput> m_audio;

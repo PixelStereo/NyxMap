@@ -4,6 +4,7 @@
 // The calls come from any thread, often with the engine's lock held: they only note it and return.
 #include <QString>
 #include <atomic>
+#include <thread>
 
 class ChangeFeed
 {
@@ -26,21 +27,30 @@ public:
     {
         Observer *expected = o;
         s_observer.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+        while (s_calls.load(std::memory_order_acquire) > 0) std::this_thread::yield(); // a call that already took it is over
     }
     static bool listening() { return s_observer.load(std::memory_order_acquire) != nullptr; }
     static void parameter(quint64 holder, const QString &path)
     {
+        Call call;
         if (Observer *o = s_observer.load(std::memory_order_acquire)) o->parameterWritten(holder, path);
     }
     static void layer(quint64 id)
     {
+        Call call;
         if (Observer *o = s_observer.load(std::memory_order_acquire)) o->layerChanged(id);
     }
     static void address(const QString &address)
     {
+        Call call;
         if (Observer *o = s_observer.load(std::memory_order_acquire)) o->addressChanged(address);
     }
 
 private:
+    struct Call { // a notification on its way: the listener is not destroyed under it
+        Call() { s_calls.fetch_add(1, std::memory_order_acq_rel); }
+        ~Call() { s_calls.fetch_sub(1, std::memory_order_acq_rel); }
+    };
     static inline std::atomic<Observer *> s_observer{nullptr};
+    static inline std::atomic<int> s_calls{0};
 };

@@ -866,6 +866,10 @@ void Engine::frame(double dt)
     RhiTarget::setWorkingFormat(effectiveRender().depth >= 10 ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8); // the 10-bit precision
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
+    if (ChangeFeed::listening() && m_beatClock.running() && m_frameStampNs - m_clockFedNs >= 100'000'000) { // the beat goes on moving
+        m_clockFedNs = m_frameStampNs;
+        ChangeFeed::address(QStringLiteral("/clock"));
+    }
     if (ChangeFeed::listening()) { // a playhead goes on moving: its feedback is told ten times a second, only while it plays
         for (auto &l : m_layers)
             if (l->playing && l->hasTransport() && m_frameStampNs - l->timeFedNs >= 100'000'000) {

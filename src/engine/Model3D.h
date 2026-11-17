@@ -266,6 +266,7 @@ public:
     const auto &objects() const { return m_objects; }
     const QStringList &hiddenObjects() const { return m_hidden; } // reads the file: its meshes, materials and textures
     QString path() const { return m_path; }
+    quint64 revision() const { return m_revision; } // counts the times its geometry was made again (a cache of what it shows asks)
     int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;
 
@@ -341,6 +342,7 @@ private:
     std::vector<std::pair<QString, QString>> m_objects;
     std::vector<Mesh> m_meshes;
     int m_meshesRead = 0;
+    quint64 m_revision = 0;
     std::vector<Material> m_materials;
     std::vector<QImage> m_images;
     QVector3D m_center, m_size{1, 1, 1};

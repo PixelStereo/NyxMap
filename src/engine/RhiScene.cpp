@@ -594,8 +594,8 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     // Nothing changed for a few frames (a reflection reads the frame before, so it takes a few to settle): the picture is kept
     QByteArray key;
     bool could = !environment || environmentLinear; // an HDR file's picture does not change
+    const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems); // once for the key and the drawing
     {
-        const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
         const auto add = [&key](const void *data, size_t size) { key.append(static_cast<const char *>(data), qsizetype(size)); };
         add(&environment, sizeof environment);
         add(&w, sizeof w);
@@ -615,6 +615,8 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             could = could && !item.pictureRhi && (!item.displaceRhi || item.placement.materialHeight);
             const Model3D *which = item.model.get();
             add(&which, sizeof which);
+            const quint64 revision = which->revision();
+            add(&revision, sizeof revision);
             const QMatrix4x4 model = item.parent * item.model->matrix(item.placement);
             add(model.constData(), sizeof(float) * 16);
             const ModelPlacement &p = item.placement;
@@ -652,15 +654,14 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         d->stillFrames = 0;
     }
     d->frameKey = key;
-    d->keptPicture = drawNow(cb, u, s, sourceItems, lamps, w, h, quality, environment, environmentLinear);
+    d->keptPicture = drawNow(cb, u, s, items, lamps, w, h, quality, environment, environmentLinear);
     return d->keptPicture;
 }
 
-QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &sourceItems,
+QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &items,
                                const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality, QRhiTexture *environment,
                                bool environmentLinear)
 {
-    const std::vector<Scene3D::Item> items = withMaterials(u, sourceItems);
     QRhi *rhi = d->rhi;
     const bool lite = Scene3D::lite(rhi->driverInfo().deviceName); // on the processor: no antialiasing, shadows, contact shadows, reflections, glow or fog
     const int aaLevel = lite ? 0 : std::clamp(quality.antialiasing, 0, 2); // the supersampled level comes with the effects' passes
@@ -886,7 +887,12 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         size_t draws = 0;
         for (const Placed &p : all) draws += p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false).size();
         const size_t passes = spots.size() + points.size() * 6 + 3; // the lights' maps, the depth, the lit and the blended
-        if (!d->ensureRing(quint32(std::min<size_t>(draws * passes + 16, size_t(1) << 17)))) return nullptr;
+        const size_t needed = draws * passes + 16;
+        if (needed > (size_t(256) << 20) / sizeof(Place)) { // more than 256 MB of blocks: nothing is drawn rather than drawn wrong
+            qWarning("RhiScene: %zu draws need a ring too large for the scene; it is not drawn", needed);
+            return nullptr;
+        }
+        if (!d->ensureRing(quint32(needed))) return nullptr;
     }
     if (wantsSeen) {
         if (!d->ensure(d->seen, w, h, 1, true, QRhiTexture::R32F)) return nullptr;
@@ -931,33 +937,56 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         return res.bindings({{0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, d->ring.get(), nullptr, nullptr, false, sizeof(Place)},
                              {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : res.black(), res.linear()}});
     };
-    const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
-        { // What the map is made of: the light's matrix and every model in its view, as the pass would write them
+    // What each model that casts is made of, as a pass would write it (its place without the light's matrix), hashed once for
+    // all the passes; a pass then only combines the light's matrix with those of the models in its view
+    struct CasterKey {
+        quint64 hash = 0;
+        bool changesEveryFrame = false; // a layer's picture moves its points
+    };
+    std::vector<CasterKey> casterKeys(all.size());
+    if (reach > 0) {
+        for (size_t ci = 0; ci < all.size(); ++ci) {
+            const Placed &p = all[ci];
+            if (!casts(p)) continue;
             quint64 hash = 1469598103934665603ull;
             const auto mix = [&hash](const void *data, size_t bytes) {
-                const auto *w = static_cast<const unsigned char *>(data);
-                for (size_t k = 0; k < bytes; ++k) hash = (hash ^ w[k]) * 1099511628211ull;
+                const auto *w = static_cast<const quint64 *>(data); // words: every block here is a multiple of 8 bytes
+                for (size_t k = 0; k < bytes / 8; ++k) hash = (hash ^ w[k]) * 1099511628211ull;
             };
-            mix(fixed.constData(), sizeof(float) * 16);
-            mix(&ink, sizeof ink);
-            const int sizeWidth = draw.size.width();
+            Place pl = place(*p.item, p.model, cam, QMatrix4x4());
+            std::memset(pl.view, 0, sizeof pl.view); // the light's, not this model's
+            std::memset(pl.proj, 0, sizeof pl.proj);
+            mix(&pl, sizeof pl);
+            const Model3D *which = p.item->model.get();
+            const quint64 identity[2] = {quint64(reinterpret_cast<quintptr>(which)), which->revision()};
+            mix(identity, sizeof identity);
+            for (const Model3D::RhiDraw &mesh : p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false)) {
+                const quint64 parts[3] = {quint64(reinterpret_cast<quintptr>(mesh.vertices)), quint64(mesh.indexCount), quint64(mesh.blended)};
+                mix(parts, sizeof parts);
+            }
+            const quint64 displace = quint64(reinterpret_cast<quintptr>(p.item->displaceRhi));
+            mix(&displace, sizeof displace);
+            casterKeys[ci] = {hash, p.item->displaceRhi && !p.item->placement.materialHeight};
+        }
+    }
+    const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
+        { // What the map is made of: the light's matrix and every model in its view
+            quint64 hash = 1469598103934665603ull;
+            const auto mix = [&hash](const void *data, size_t bytes) {
+                const auto *w = static_cast<const quint64 *>(data);
+                for (size_t k = 0; k < bytes / 8; ++k) hash = (hash ^ w[k]) * 1099511628211ull;
+            };
+            float light[20];
+            std::memcpy(light, fixed.constData(), sizeof(float) * 16);
+            light[16] = ink.x(), light[17] = ink.y(), light[18] = ink.z(), light[19] = ink.w();
+            mix(light, sizeof light);
+            const quint64 sizeWidth = quint64(draw.size.width());
             mix(&sizeWidth, sizeof sizeWidth);
             bool volatileCaster = false;
-            for (const Placed &p : all) {
-                if (!casts(p) || !inView(lightSees, p)) continue;
-                Place pl = place(*p.item, p.model, cam, fixed);
-                const QMatrix4x4 identity;
-                std::memcpy(pl.view, identity.constData(), sizeof pl.view);
-                mix(&pl, sizeof pl);
-                const Model3D *which = p.item->model.get();
-                mix(&which, sizeof which);
-                for (const Model3D::RhiDraw &mesh : p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false)) {
-                    mix(&mesh.vertices, sizeof mesh.vertices);
-                    mix(&mesh.indexCount, sizeof mesh.indexCount);
-                    mix(&mesh.blended, sizeof mesh.blended);
-                }
-                mix(&p.item->displaceRhi, sizeof p.item->displaceRhi);
-                volatileCaster = volatileCaster || (p.item->displaceRhi && !p.item->placement.materialHeight); // a layer's picture moves the points
+            for (size_t ci = 0; ci < all.size(); ++ci) {
+                if (!casts(all[ci]) || !inView(lightSees, all[ci])) continue;
+                mix(&casterKeys[ci].hash, sizeof(quint64));
+                volatileCaster = volatileCaster || casterKeys[ci].changesEveryFrame;
             }
             if (volatileCaster) mix(&d->frameNumber, sizeof d->frameNumber);
             draw.key = hash;

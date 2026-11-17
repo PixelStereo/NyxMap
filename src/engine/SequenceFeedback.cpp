@@ -103,7 +103,8 @@ void SequenceFeedback::updateTimer()
 {
     const bool running = m_enabled && [&] {
         Engine::Lock lock(&m_e->mutex());
-        return m_e->sequencer().running();
+        // A step on its way, or one played: its time since GO goes on (the stopwatch of the sequence)
+        return m_e->sequencer().running() || m_e->sequencer().position() >= 0;
     }();
     if (running && !m_timer.isActive()) m_timer.start();
     else if (!running && m_timer.isActive()) m_timer.stop();
