@@ -209,6 +209,13 @@ jobs:
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
           xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
           python3 scripts/run_timing_tests.py xvfb-run -a ctest --test-dir build --output-on-failure --timeout 900 -L timing
+      - name: Test output with timestamps
+        if: always() && needs.scope.outputs.linux_engine == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-log
+          path: build/Testing/Temporary/LastTest*.log
+          retention-days: 7
       - name: Backtraces of the crashed tests
         if: failure()
         run: |
@@ -824,6 +831,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test output with timestamps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log
+          path: build/Testing/Temporary/LastTest*.log
+          retention-days: 7
       - name: Stacks of native Windows crashes
         if: failure() && runner.os == 'Windows'
         shell: pwsh
