@@ -76,7 +76,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("FAIL web_page: OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL web_page: renderer: %s\n", qPrintable(err));
         return 1;
     }
     QTemporaryDir tmp;

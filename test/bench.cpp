@@ -196,11 +196,8 @@ int main(int argc, char **argv)
             Engine::Lock lk(&e.mutex());
             const Layer *l = e.layer(i);
             if (l && l->video) m = l->video->metrics();
-            if (l && l->videoTex) {
-                uploads = l->videoTex->uploads();
-                fast = l->videoTex->stagedUploads() + l->videoTex->surfaceUploads();
-            }
         }
+        uploads = e.videoFramesShown(i); // the pictures the renderer took (taken outside the lock: the render thread answers)
         std::printf("  %-34s %-26s %6.1f frames/s; target %.2f (source %.2f)  %s  [%s]\n", qPrintable(QFileInfo(files[k]).fileName()),
                     qPrintable(codec), rate, rates.layerTarget, fileFps, good ? "ok" : "DROPS", qPrintable(format));
         std::printf("      decode p95/p99/max %.2f/%.2f/%.2f ms, over a frame %llu; late %llu; skipped %llu; fetch misses %llu; queue high %llu\n",

@@ -23,7 +23,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));
+        std::printf("SKIP: no graphics device: %s\n", qPrintable(err));
         return 77;
     }
     e.newProject();

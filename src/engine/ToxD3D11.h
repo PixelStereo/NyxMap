@@ -1,5 +1,5 @@
 #pragma once
-// TouchEngine through Direct3D 11 (Windows): the textures shared with QRhi's device, no OpenGL. The inputs are copied on
+// TouchEngine through Direct3D 11 (Windows): the textures shared with QRhi's device. The inputs are copied on
 // the GPU from the source layers' QRhi textures into pooled textures TouchEngine reads (its D3D11 context does the
 // synchronisation); an output is a shared texture opened on QRhi's device, held through its DXGI keyed mutex while the
 // frame reads it, and wrapped as a QRhi texture. Same interface as ToxMetal. Used by ToxTouchEngine.cpp.

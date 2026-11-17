@@ -65,7 +65,7 @@ public:
             if (!m_rhiTexture) return nullptr;
             m_seen = true;
             *size = m_rhiTexture->pixelSize();
-            *flipped = false; // an IOSurface from a GL server: its first row is the picture's bottom, as ours
+            *flipped = false; // an IOSurface from a Syphon server: its first row is the picture's bottom, as ours
             return m_rhiTexture.get();
         }
     }

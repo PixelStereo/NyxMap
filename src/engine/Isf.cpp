@@ -613,7 +613,7 @@ bool IsfInstance::parse(const QString &src, QString *body)
 }
 
 // The .fs file parsed (its inputs, passes, targets, imports) and its bodies cleaned, with its vertex shader if any
-// (.vs, .vert): what compile() builds its programs from. No GL.
+// (.vs, .vert): what compile() builds its programs from.
 bool IsfInstance::readSources(const QString &path, QString *fragment, QString *vertex)
 {
     m_path = QFileInfo(path).absoluteFilePath();
@@ -702,7 +702,7 @@ IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const Q
     member(U::Vec4, QStringLiteral("DATE"));
     member(U::Int, QStringLiteral("FRAMEINDEX"));
     // -1 where the framebuffer's first row is the top of NDC (Metal, Direct3D): drawn upside down, the first row
-    // holds the picture's bottom as with OpenGL, so the shaders sample their images as they do there
+    // holds the picture's bottom first, so the shaders sample their images as ISF defines it
     member(U::Float, QStringLiteral("isf_ndcFlip"), {1});
     QString samplers;
     auto sampler = [&](const QString &n) {
@@ -745,7 +745,7 @@ IsfInstance::RhiSources IsfInstance::rhiSourcesOf(const QString &fsBody, const Q
     QHash<QString, int> locations;
     const QString vertexBody = locateVaryings(vsBody, true, locations);
     const QString fragmentBody = locateVaryings(fsText, false, locations);
-    // A built-in function the shader defines again (float round(float x) { ... }): OpenGL takes it as an overload,
+    // A built-in function the shader defines again (float round(float x) { ... }): a GLSL compiler takes it as an overload,
     // Vulkan's compiler refuses its precision. Renamed, the shader's own is the one it calls.
     static const QRegularExpression redefined(QStringLiteral(
         R"(\b(?:float|vec[234]|int)\s+(round|trunc|roundEven|fract|sign|mod|mix|clamp|step|smoothstep|saturate)\s*\()"));

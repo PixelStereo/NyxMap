@@ -260,7 +260,7 @@ void IsfInstance::renderRhi(QRhiCommandBuffer *cb, const IsfRenderContext &rc, Q
     if (!repeatFrame) m_time += (rc.elapsed >= 0 ? rc.elapsed : rc.dt) * speed;
     const int frameIndex = repeatFrame ? std::max(0, m_frameIndex - 1) : m_frameIndex;
 
-    // A sampler's picture and size (GL: a missing picture is black, 1 × 1)
+    // A sampler's picture and size (a missing picture is black, 1 × 1)
     auto picture = [&](int s, QSize *size) -> QRhiTexture * {
         const RhiState::Sampler &smp = r.samplers[size_t(s)];
         QRhiTexture *t = nullptr;

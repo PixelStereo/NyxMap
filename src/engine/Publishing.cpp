@@ -276,7 +276,7 @@ void Publishing::submitPixels(quint64 viewport, const unsigned char *rgba, int w
     out->height = height;
     out->stride = width * 4;
     out->bgra.resize(size_t(width) * height * 4);
-    for (int y = 0; y < height; ++y) { // rows top to bottom, RGBA to BGRA, alpha opaque (as the OpenGL path's flip draws it)
+    for (int y = 0; y < height; ++y) { // rows top to bottom, RGBA to BGRA, alpha opaque (the flip a server does)
         const unsigned char *src = rgba + size_t(height - 1 - y) * width * 4;
         unsigned char *dst = out->bgra.data() + size_t(y) * width * 4;
         for (int x = 0; x < width; ++x, src += 4, dst += 4) {

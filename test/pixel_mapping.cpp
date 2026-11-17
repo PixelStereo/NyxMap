@@ -745,7 +745,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("FAIL OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL renderer: %s\n", qPrintable(err));
         return 1;
     }
     QTemporaryDir tmp;

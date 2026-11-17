@@ -178,7 +178,7 @@ bool RhiVideoTexture::upload(QRhiCommandBuffer *cb, const VideoFrame &f)
         }
         for (int p = 0; p < L.planeCount; ++p) planeTex[p] = d->surface.plane(p);
     } else {
-        if (f.staging >= 0) { // upload buffers are OpenGL's (the QRhi renderer hands none to the decoders)
+        if (f.staging >= 0) { // staging buffers from the decoders (the renderer hands none)
             u->release();
             return false;
         }

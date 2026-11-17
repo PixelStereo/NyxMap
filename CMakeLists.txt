@@ -176,7 +176,7 @@ endif()
 qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   PREFIX "/shaders"
   ${NYXMAP_PRECOMPILE}
-  NOGLSL # no OpenGL: SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
+  NOGLSL # SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
   BASE src/engine/shaders
   FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
         src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
@@ -314,7 +314,7 @@ target_include_directories(nyxmap_engine PRIVATE "${CMAKE_SOURCE_DIR}/third_part
 option(NYXMAP_SYPHON "Syphon publishing (macOS)" ON)
 option(NYXMAP_SPOUT "Spout publishing and inputs (Windows)" ON)
 
-# macOS: the output windows shown through Metal (OpenGL into a window only works on the main thread there)
+# macOS: the output windows shown through Metal
 if(APPLE)
   enable_language(OBJCXX)
   target_sources(nyxmap_engine PRIVATE src/engine/Permissions.mm
@@ -465,7 +465,7 @@ if(APPLE)
 endif()
 add_library(nyxmap_ui STATIC ${UI_SOURCES})
 # The interface's shaders (RhiDraw), baked for every backend
-# (with GLSL: the views use OpenGL where the window does, Linux without Vulkan)
+# (no GLSL: Metal, Direct3D and Vulkan)
 qt_add_shaders(nyxmap_ui "nyxmap_ui_shaders"
   PREFIX "/shaders"
   BASE src/ui/shaders
@@ -910,7 +910,7 @@ if(NYXMAP_TESTS)
     audio_levels audio_effects show_editing preset_actions pixel_mapping line_generator
     publishing_concurrency cue_dispatch animation_drivers interaction_graph_engine
     show_editing_ui audio_analysis_concurrency PROPERTIES TIMEOUT 60)
-  # Start late in a busy run on the Apple software renderer (GL setup alone takes long under load): not a hang
+  # Start late in a busy run on a virtual GPU (the device's setup alone takes long under load): not a hang
   set_tests_properties(show_controls fixture_ui PROPERTIES TIMEOUT 120)
   set_tests_properties(remote_server audio_hits PROPERTIES TIMEOUT 120)
   set_tests_properties(color_timeline_ui timeline_events_ui midi_virtual realtime_timing timeline_activity color_picker_ui

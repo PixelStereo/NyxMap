@@ -1,5 +1,5 @@
 #pragma once
-// TouchEngine through Metal (macOS): the textures shared with QRhi's device, no OpenGL. The inputs are copied on the
+// TouchEngine through Metal (macOS): the textures shared with QRhi's device. The inputs are copied on the
 // GPU from the source layers' QRhi textures into pooled Metal textures TouchEngine reads; an output is wrapped as a
 // QRhi texture, after the GPU wait TouchEngine asks for. Used by ToxTouchEngine.cpp (compiled with the SDK, on macOS).
 

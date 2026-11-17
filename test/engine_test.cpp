@@ -117,7 +117,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) { // nothing else can run
-        std::printf("FAIL OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL renderer: %s\n", qPrintable(err));
         return 1;
     }
     // Areas: each one starts from a new project and can run alone (nyxmap_tests --area <name>: CTest runs them so,
@@ -4939,11 +4939,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         while (e.frameCount() < target && t.elapsed() < 10000) QThread::msleep(5);
         return e.frameCount() >= target;
     };
-    // macOS: Qt renders OpenGL on the main thread only (AppKit), so the engine renders on the UI thread there and
-    // what needs the render thread is left to the other platforms
+    // The render thread's own cases
     {
     e.newProject();
-    // The render thread cannot make its OpenGL context current: what waits on it returns at once (nothing hangs), and
+    // The render thread cannot start its QRhi device: what waits on it returns at once (nothing hangs), and
     // a new start works
     {
         Engine::failNextRenderStartForTests();
@@ -5532,7 +5531,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
 
     if (area("sound")) {
     // --- Sound: audio layer, sound of a video layer, synchronized with the playhead. Not on the CI's macOS virtual
-    // machine (named "Apple Software Renderer" by OpenGL, "Apple Paravirtual device" by Metal): three shared cores, its
+    // machine (named "Apple Paravirtual device" by Metal, "Apple Software Renderer" by the old OpenGL renderer): three shared cores, its
     // timings mean nothing there. The test never ran on it: it was skipped under the old name.
     if (e.gpuRenderer().contains(QLatin1String("Apple Software Renderer")) || e.gpuRenderer().contains(QLatin1String("Paravirtual"), Qt::CaseInsensitive)) {
         std::printf("SKIP sound timings: %s\n", qPrintable(e.gpuRenderer()));

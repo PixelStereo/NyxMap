@@ -21,7 +21,7 @@
 #include <limits>
 
 Model3D::Model3D() = default;
-Model3D::~Model3D() = default; // its GL objects go with releaseGl, on the render thread
+Model3D::~Model3D() = default; // its GPU objects go with releaseRhi, on the render thread
 
 QStringList Model3D::extensions() { return {QStringLiteral("fbx"), QStringLiteral("gltf"), QStringLiteral("glb"), QStringLiteral("obj")}; }
 
@@ -724,7 +724,7 @@ QMatrix4x4 Model3D::matrix(const ModelPlacement &p) const
     return m;
 }
 
-// The index pairs of a mesh's edges (shared by the OpenGL and the QRhi renderers)
+// The index pairs of a mesh's edges (for the QRhi renderer)
 std::vector<quint32> Model3D::edgeIndices(const Mesh &m) const
 {
     std::vector<quint32> edges;

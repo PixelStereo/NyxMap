@@ -42,7 +42,7 @@ public:
     virtual std::vector<ToxControl> controls() const = 0;
     virtual std::vector<std::pair<QString, QString>> outputs() const = 0; // identifier, label
     virtual std::vector<std::pair<QString, QString>> inputs() const = 0;
-    // Through a QRhi (Metal, macOS): the player works with Metal textures of that QRhi, without OpenGL. True when it can
+    // Through a QRhi (Metal, macOS): the player works with Metal textures of that QRhi, True when it can
     // (takeTexture() then gives its picture, setInputRhiTexture() the pictures of its inputs: the QRhi textures of the
     // layers they take, valid for the call)
     virtual bool usesRhi(QRhi *) const { return false; }

@@ -132,9 +132,9 @@ int main(int argc, char **argv)
             require(file.open(QIODevice::WriteOnly), "write custom DSP");
             file.write("process = hslider(\"Level\",0.1,0,1,0.001);");
         }
-        require(engine.setLayerAudio(sound, program, &error), "load libfaust with OpenGL active");
+        require(engine.setLayerAudio(sound, program, &error), "load libfaust with the renderer active");
         engine.renderFrame();
-        require(mix(engine, sound) > 0, "custom DSP runs beside live OpenGL");
+        require(mix(engine, sound) > 0, "custom DSP runs beside the live renderer");
         require(engine.setParameter(engine.layerId(sound), "synth/level", .3), "custom widget parameter exposed");
 #endif
         require(engine.setAudioEffectsJson(sound,

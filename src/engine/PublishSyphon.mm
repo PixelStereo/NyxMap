@@ -1,6 +1,6 @@
 // Syphon publishing (macOS): the picture the QRhi renderer read back is written into the server's IOSurface (BGRA, its first
-// row the picture's bottom, as Syphon's OpenGL server left it) that other applications map. Compiled only on macOS
-// (NYXMAP_HAS_SYPHON), with the Syphon framework (BSD license); the base server only: no OpenGL context and no Metal shaders.
+// row the picture's bottom, as Syphon's servers leave it) that other applications map. Compiled only on macOS
+// (NYXMAP_HAS_SYPHON), with the Syphon framework (BSD license); the base server only: no GL context and no Metal shaders.
 
 #include "Publish.h"
 
@@ -42,7 +42,7 @@ public:
             if (IOSurfaceLock(surface, 0, nullptr) == kIOReturnSuccess) {
                 auto *base = static_cast<unsigned char *>(IOSurfaceGetBaseAddress(surface));
                 const size_t pitch = IOSurfaceGetBytesPerRow(surface);
-                for (int y = 0; y < height; ++y) { // as Syphon's OpenGL server leaves it: the picture's bottom row first
+                for (int y = 0; y < height; ++y) { // as Syphon's servers leave it: the picture's bottom row first
                     const unsigned char *src = rgba + size_t(y) * size_t(width) * 4;
                     unsigned char *dst = base + size_t(y) * pitch;
                     for (int x = 0; x < width; ++x, src += 4, dst += 4) {

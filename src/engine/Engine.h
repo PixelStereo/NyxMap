@@ -1,10 +1,10 @@
 #pragma once
 #include <QSurface>
 #include "RealtimeTiming.h"
-// Render engine: depends only on QtCore/QtGui/OpenGL, no dependency on widgets.
+// Render engine: depends only on QtCore/QtGui and QRhi, no dependency on widgets.
 //
 // Two modes:
-//  - dedicated thread (start()): a QThread owns the OpenGL context, renders the composition and presents
+//  - dedicated thread (start()): a QThread owns the QRhi device, renders the composition and presents
 //    it itself in the output window, locked to vertical sync. The UI may freeze
 //    (dialog, loading) without the output stopping;
 //  - manual (no start()): renderFrame() is called by the thread that owns the engine (tests, command-line rendering).
@@ -12,7 +12,7 @@
 // Concurrency:
 //  - composition data (layers, parameters, mapping, composition) is protected by mutex();
 //    the UI takes Engine::Lock before reading or writing a Layer directly;
-//  - anything touching OpenGL (shader compilation, texture release…) goes through runGl(),
+//  - anything touching the GPU (the QRhi device and its resources are the render thread's) goes through runGl(),
 //    which runs it on the render thread. These tasks never take the lock: it is safe to wait
 //    on a task while holding the lock, with no risk of deadlock.
 
@@ -890,7 +890,7 @@ public:
     void setPreviewScene(int slot, bool on, const SceneSettings &camera = {}, QSize size = {}, Scene3D::ViewLook look = Scene3D::ViewLook::Simple);
  // mutex held
     // The interface's views through QRhi (RhiDraw): the pictures as pixels, RGBA8888, the picture's bottom row first (as an
-    // OpenGL texture holds them), reduced to 1024 px at most (the composition: 1600). Null: nothing to show (no such
+    // OpenGL texture did: the pictures keep that origin), reduced to 1024 px at most (the composition: 1600). Null: nothing to show (no such
     // source). Any thread. The composition is made only while a view asks for it (wantCompositionImage, every paint)
     QImage previewImage(int slot) const;
     QImage compositionImage() const;
@@ -1053,7 +1053,7 @@ private:
     int viewportCountLocked() const;
     void forEachImageLayer(const Layer &l, const std::function<void(quint64)> &fn) const;
     void bindLayerImages(IsfInstance &inst); // its image inputs that show a layer: that layer's picture now
-    void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (GL context current)
+    void feedAudio(IsfInstance &inst);       // its audio and audioFFT inputs: the sound now (render thread)
     static int matteMode(const LayerMatte &m) { return 1 + int(m.channel) + (m.invert ? 2 : 0); }         // its mapped mesh (render thread, mesh vertex array bound)
  // any mesh vertex buffer
     QString resolvePath(const QJsonObject &o, const QString &projectDir) const;
@@ -1222,7 +1222,7 @@ private:
     // Over (at its time, or at once): the layer `l` (if still there) shows its incoming source alone (lock held)
     void endTransition(Layer *l, std::unique_ptr<SourceTransition> t);
     void retireTransition(std::unique_ptr<SourceTransition> t);           // sound now, decoders closed off the render thread
-    void releaseRetired(bool wait);                                       // render thread, lock held: their OpenGL
+    void releaseRetired(bool wait);                                       // render thread, lock held: their GPU
     double m_fadeElapsed = 0; // seconds since the last recall
     quint64 m_recalledSnapshot = 0;
     double m_mouseX = 0, m_mouseY = 0; // (m_mutex) the pointer, see setMousePosition

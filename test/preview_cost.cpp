@@ -1,4 +1,4 @@
-// What the interface's pictures cost a frame (the OpenGL renderer; NYXMAP_RENDERER=rhi for QRhi): a 4K composition, the
+// What the interface's pictures cost a frame (QRhi): a 4K composition, the
 // four preview cells and the mapping view's picture asked for or not. Prints the mean time of a frame.
 #include "Engine.h"
 #include "Layer.h"

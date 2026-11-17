@@ -795,7 +795,7 @@ double Engine::nextDt()
 void Engine::frame(double dt)
 {
     const uint64_t lockRequested = RealtimeTiming::nowNs();
-    // In threaded mode, keep serving OpenGL tasks while the UI holds the lock:
+    // In threaded mode, keep serving the render thread's tasks while the UI holds the lock:
     // it may wait on a task while holding it, without deadlock.
     if (m_threaded) {
         while (!m_mutex.tryLock(2)) {

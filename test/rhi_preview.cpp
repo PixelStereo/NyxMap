@@ -1,6 +1,6 @@
 // The interface's previews with the QRhi renderer: its slots give the QRhi pictures read back, as pixels. The composition's and a layer's previews are compared with the pictures the engine gives out.
 //
-// nyxmap_rhi_preview_test   Exit 77 (skipped) without OpenGL or a QRhi backend.
+// nyxmap_rhi_preview_test   Exit 77 (skipped) without a QRhi backend.
 #include "Engine.h"
 #include <rhi/qrhi.h>
 #include "Layer.h"
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));
+        std::printf("SKIP: no graphics device: %s\n", qPrintable(err));
         return 77;
     }
     e.newProject();
@@ -117,7 +117,7 @@ int main(int argc, char **argv)
     e.setPreviewSource(2, 987654321);
     for (int k = 0; k < 3; ++k) e.renderFrame();
     check(e.previewImage(2).isNull(), "a layer that is not there shows nothing");
-    // The inspector's source preview: the layer's picture before its ROI, as the OpenGL renderer gives it
+    // The inspector's source preview: the layer's picture before its ROI, as the renderer gives it
     e.requestSourcePreview(id, 200);
     QImage source;
     quint64 sourceId = 0;
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
     check(at(103) == 0 && at(104) == 0 && at(105) == 255, "pixel mapping: the right pixel is blue");
 
     // Publishing: the viewport's picture goes to NDI-like (CPU) publishers as BGRA, top row first, and to Syphon-like (GPU)
-    // publishers as an OpenGL texture
+    // publishers
     e.addViewport(QStringLiteral("Out"), QSize(64, 32));
     struct Tap {
         std::mutex m;

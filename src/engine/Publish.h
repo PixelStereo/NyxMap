@@ -8,7 +8,7 @@
 // NDI, OMT and the DeckLink driver are loaded at runtime: NyxMap builds and runs without them,
 // publishing becomes available as soon as the library is installed on the machine.
 //
-// This file depends on no OpenGL header (the Syphon / Spout implementations have their own).
+// This file depends on no graphics header (the Syphon / Spout implementations have their own).
 
 #include "Timecode.h"
 

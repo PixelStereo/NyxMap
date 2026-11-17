@@ -264,7 +264,7 @@ public:
 
     bool load(const QString &path, QString *err, const QStringList &hidden = {});
     const auto &objects() const { return m_objects; }
-    const QStringList &hiddenObjects() const { return m_hidden; } // reads the file (no GL): its meshes, materials and textures
+    const QStringList &hiddenObjects() const { return m_hidden; } // reads the file: its meshes, materials and textures
     QString path() const { return m_path; }
     int meshCount() const { return m_meshesRead; } // as read: drawn at one go by material
     int triangleCount() const;

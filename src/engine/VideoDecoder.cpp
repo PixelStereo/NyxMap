@@ -836,7 +836,7 @@ std::shared_ptr<const VideoLayout> VideoDecoder::hapLayout(int count, int f0, in
         case hap::Format::RgbDxt1: p.texels = VideoLayout::Texels::Dxt1, gpu = s_s3tc; break;
         case hap::Format::RgbaDxt5:
         case hap::Format::YCoCgDxt5: p.texels = VideoLayout::Texels::Dxt5, gpu = s_s3tc; break;
-        case hap::Format::AlphaRgtc1: p.texels = VideoLayout::Texels::Rgtc1; break; // OpenGL 3.0
+        case hap::Format::AlphaRgtc1: p.texels = VideoLayout::Texels::Rgtc1; break; // BC4
         case hap::Format::RgbaBc7: p.texels = VideoLayout::Texels::Bc7, gpu = s_bptc; break;
         case hap::Format::RgbBc6u: p.texels = VideoLayout::Texels::Bc6u, gpu = s_bptc; break;
         case hap::Format::RgbBc6s: p.texels = VideoLayout::Texels::Bc6s, gpu = false; break; // QRhi's BC6H is the unsigned one: decoded on the CPU
