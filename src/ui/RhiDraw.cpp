@@ -192,6 +192,7 @@ void RhiDraw::render(QRhiCommandBuffer *cb, QRhiRenderTarget *target)
                                   : c.kind == Kind::Lines       ? m_lines.get()
                                                                 : m_triangles.get();
         cb->setGraphicsPipeline(p);
+        cb->setViewport(QRhiViewport(0, 0, float(pixels.width()), float(pixels.height()))); // after the pipeline: Vulkan then sets the scissor to it
         cb->setShaderResources();
         const QRhiCommandBuffer::VertexInput input(m_vertices.get(), quint32(c.first) * 8 * sizeof(float));
         cb->setVertexInput(0, 1, &input);

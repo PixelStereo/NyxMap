@@ -957,6 +957,7 @@ struct RhiRenderer::Impl {
         cb->setViewport({0, 0, float(target.width()), float(target.height())});
         for (const Item &it : items) {
             cb->setGraphicsPipeline(it.ps);
+            cb->setViewport({0, 0, float(target.width()), float(target.height())}); // after the pipeline: Vulkan then sets the scissor to it
             cb->setShaderResources(it.srb);
             const QRhiCommandBuffer::VertexInput vin(it.mesh, 0);
             cb->setVertexInput(0, 1, &vin, it.grid ? gridIndices.get() : quadIndices.get(), 0, QRhiCommandBuffer::IndexUInt32);
