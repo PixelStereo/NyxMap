@@ -160,8 +160,22 @@ endforeach()
 target_sources(nyxmap_engine PRIVATE src/engine/RhiDevice.cpp src/engine/RhiVideoTexture.cpp src/engine/RhiTarget.cpp
   src/engine/RhiResources.cpp src/engine/IsfRhi.cpp src/engine/RhiRenderer.cpp src/engine/RhiScene.cpp)
 # The engine's own shaders, baked at build time for every backend (SPIR-V, MSL, HLSL)
+# Direct3D compiles HLSL at run time unless the bytecode is in the shader: the big lit 3D shaders took seconds each on the
+# CI runners (and every test makes its own device). With fxc at hand (the Windows SDK), they are compiled here, so
+# that an error in one fails the build instead of drawing nothing.
+set(NYXMAP_PRECOMPILE "")
+if(WIN32)
+  find_program(NYXMAP_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
+  if(NYXMAP_FXC)
+    set(NYXMAP_PRECOMPILE PRECOMPILE)
+    message(STATUS "Direct3D shaders precompiled with ${NYXMAP_FXC}")
+  else()
+    message(WARNING "fxc not found: the Direct3D shaders are compiled at run time")
+  endif()
+endif()
 qt_add_shaders(nyxmap_engine "nyxmap_shaders"
   PREFIX "/shaders"
+  ${NYXMAP_PRECOMPILE}
   NOGLSL # no OpenGL: SPIR-V (Vulkan), MSL (Metal), HLSL (Direct3D)
   BASE src/engine/shaders
   FILES src/engine/shaders/videoconvert.vert src/engine/shaders/videoconvert.frag
