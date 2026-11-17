@@ -5060,6 +5060,18 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         CHECK(ops >= 1); // a software GPU (CI) is slow: a round is enough to cross the render thread
         CHECK(waitFrames(5));
     }
+    // A layer made while the render thread is in a frame is found at once (the frame's layer index is not the interface's)
+    {
+        e.newProject();
+        bool found = true;
+        for (int k = 0; k < 300 && found; ++k) {
+            const quint64 id = e.layerId(e.addLayer("Meanwhile"));
+            found = e.indexOfId(id) >= 0;
+            e.removeLayer(e.indexOfId(id));
+            if (k % 7 == 0) QThread::msleep(1);
+        }
+        CHECK(found);
+    }
     // Video in threaded mode
     {
         e.newProject();

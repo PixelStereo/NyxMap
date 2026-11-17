@@ -950,6 +950,7 @@ void Engine::frame(double dt)
         if (m_threaded) {
             // The GPU's wait (nearly half of a frame on Metal) and the read-backs: not under the lock, the interface
             // reads and writes the engine meanwhile. The tasks asked for the render thread are served while it is taken back.
+            m_renderLayerIndexActive = false; // the frame's layer index is only for what the frame reads: a layer made meanwhile is found
             m_mutex.unlock();
             m_rhi->finishRender();
             while (!m_mutex.tryLock(2)) {
