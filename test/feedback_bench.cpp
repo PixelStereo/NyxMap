@@ -4,6 +4,7 @@
 #include "SequenceFeedback.h"
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QThread>
 #include <ctime>
 #include <cstdio>
@@ -43,5 +44,27 @@ int main(int argc, char **argv)
     }
     const double ms = t.nsecsElapsed() / 1e6;
     std::printf("%d changes of one parameter: %.3f ms each (the change, the read, the datagram), %d messages sent\n", changes, ms / changes, sent);
+    // A layer that plays: its playhead is told ten times a second, and not at all once it stops
+    const QString clip = QStringLiteral("test/media/av.mp4");
+    if (QFile::exists(clip)) {
+        const int at = e.addLayer("Playing");
+        QString perr;
+        if (e.setLayerVideo(at, clip, &perr)) {
+            fb.sendNow(false); // the layer is in the namespace: its values are the baseline
+            e.start();
+            e.setLayerPlaying(at, true);
+            sent = 0;
+            t.restart();
+            while (t.elapsed() < 2000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50), QThread::msleep(5);
+            std::printf("playing for 2 s: %d messages sent (the time at two addresses, ten times a second: about 40)\n", sent);
+            e.setLayerPlaying(at, false);
+            while (t.elapsed() < 2400) QCoreApplication::processEvents(QEventLoop::AllEvents, 50), QThread::msleep(5);
+            sent = 0;
+            t.restart();
+            while (t.elapsed() < 2000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50), QThread::msleep(5);
+            std::printf("paused for 2 s: %d messages sent\n", sent);
+            e.stop();
+        }
+    }
     return 0;
 }

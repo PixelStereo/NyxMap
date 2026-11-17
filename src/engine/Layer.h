@@ -343,6 +343,7 @@ struct Layer {
     bool videoDecodeIdle = false;
     // Mipmaps of its picture made for this frame of the video (a plain video: made again only for a new frame)
     bool playing = true;
+    int64_t timeFedNs = 0; // when the OSC feedback was last told its time (only while it plays: a playhead is read ten times a second)
     PlayMode mode = PlayMode::Loop;
     bool ended = false; // Stop mode: the end was reached, the layer shows nothing
     // Transport: the clock advances with |speed| from a reposition (load, seek, direction or mode change);

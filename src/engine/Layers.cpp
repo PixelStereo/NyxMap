@@ -2329,6 +2329,7 @@ void Engine::seekLayer(int i, double t)
     if (!l || !l->hasTransport()) return;
     journal(QStringLiteral("seek"), QStringLiteral("%1 @ %2 s").arg(l->name).arg(t, 0, 'f', 3));
     reposition(*l, t, l->dir);
+    ChangeFeed::parameter(l->id, QStringLiteral("time")); // its playhead moved
 }
 
 void Engine::setLayerVolume(int i, float volume)
