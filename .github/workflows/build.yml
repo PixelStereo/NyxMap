@@ -917,17 +917,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NDI fetch failed" }
           Copy-Item "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.x64.dll", "$env:RUNNER_TEMP\ndi\Processing.NDI.Lib.Licenses.txt", "$env:RUNNER_TEMP\ndi\NDI-NOTICE.txt" -Destination dist -Force
 
-          # Include Microsoft's official x64 Visual C++ Redistributable installer.
-          # aka.ms always serves the latest one, so no fixed checksum: its Authenticode signature must be valid and
-          # Microsoft's, and its version and SHA-256 are recorded in DEPENDENCIES.txt
-          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "dist\vc_redist.x64.exe"
-          $vcSignature = Get-AuthenticodeSignature "dist\vc_redist.x64.exe"
-          if ($vcSignature.Status -ne 'Valid' -or $vcSignature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
-            throw "vc_redist.x64.exe: signature $($vcSignature.Status), signer '$($vcSignature.SignerCertificate.Subject)'"
+          # Nothing to install for the user: the Visual C++ runtime DLLs (Microsoft's redistributable files, from the
+          # compiler installation of this runner) sit next to the executable. Their version is recorded in DEPENDENCIES.txt
+          $crt = Get-ChildItem (Join-Path $env:VCToolsRedistDir "x64") -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) { throw "Microsoft Visual C++ runtime DLLs are missing from the build environment" }
+          Copy-Item (Join-Path $crt.FullName "*.dll") -Destination dist -Force
+          foreach ($f in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
+            if (-not (Test-Path "dist\$f")) { throw "Missing Windows runtime: $f" }
           }
-          $vcVersion = (Get-Item "dist\vc_redist.x64.exe").VersionInfo.FileVersion
-          $vcSha = (Get-FileHash "dist\vc_redist.x64.exe" -Algorithm SHA256).Hash
-          "vc_redist.x64.exe $vcVersion, SHA-256 $vcSha, signed by $($vcSignature.SignerCertificate.Subject)"
+          $vcVersion = (Get-Item "dist\vcruntime140.dll").VersionInfo.FileVersion
+          Get-ChildItem dist -Recurse -Filter "vc_redist*.exe" | Remove-Item -Force
 
           # Basic packaging assertions.
           if (-not (Test-Path "dist\$appName.exe")) { throw "NyxMap.exe missing" }
@@ -949,10 +948,8 @@ jobs:
           @'
           NyxMap Windows x64 runtime notes
 
-          The installer puts the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
-          and Microsoft's official vc_redist.x64.exe installer in one folder (per user, no administrator rights).
-          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe from
-          %LOCALAPPDATA%\Programs\NyxMap\app, then start NyxMap again.
+          The installer puts the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders
+          and the Visual C++ runtime DLLs in one folder. Nothing else has to be installed.
 
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
@@ -973,8 +970,7 @@ jobs:
           @("Built on Windows (MSVC 2022), commit $env:GITHUB_SHA", "Qt $env:QT_VERSION ($env:QT_ARCH, Qt Multimedia, Qt WebEngine)",
             "FFmpeg: $env:FFMPEG_ZIP from BtbN/FFmpeg-Builds release '$env:FFMPEG_RELEASE'", "  $ffv", "  zip SHA-256 $sha",
             "  licence of the DLLs: $ffmpegLicence (no GPL or non-free parts)",
-            "Microsoft Visual C++ Redistributable: vc_redist.x64.exe $vcVersion", "  SHA-256 $vcSha",
-            "  signed by $($vcSignature.SignerCertificate.Subject)",
+            "Microsoft Visual C++ runtime DLLs (vcruntime140, msvcp140…): $vcVersion, bundled next to the executable",
             (Get-Content "$env:RUNNER_TEMP\ndi\NDI-SDK.txt")) |
             Set-Content -Encoding utf8 dist\DEPENDENCIES.txt
           Add-Content dist\DEPENDENCIES.txt "TouchEngine Windows SDK af3e4a393086c0377cd3634172a0ce18d1a654c8 (Shared Use License; licenses/touchengine.txt)"
