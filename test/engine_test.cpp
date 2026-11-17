@@ -6031,8 +6031,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             }));
             settle(100);
             {
+                const quint64 sid = e.layerId(s1);
+                const bool shown = e.layerPicture(sid, Engine::LayerPicture::Final) != nullptr; // the render thread needs the mutex
                 Engine::Lock lk(&e.mutex());
-                CHECK(!e.layer(s1)->playing && !e.layerPicture(e.layerId(s1), Engine::LayerPicture::Final));
+                CHECK(!e.layer(s1)->playing && !shown);
             }
             CHECK(silent());
             e.setLayerPlayMode(s1, PlayMode::OneShot);
@@ -6044,8 +6046,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             }));
             settle(100);
             {
+                const bool shown = e.layerPicture(e.layerId(s1), Engine::LayerPicture::Final) != nullptr;
                 Engine::Lock lk(&e.mutex());
-                CHECK(!e.layer(s1)->ended && e.layerPicture(e.layerId(s1), Engine::LayerPicture::Final));
+                CHECK(!e.layer(s1)->ended && shown);
             }
             CHECK(paramOf(e.layerJson(s1), "play_mode").toString() == "oneshot");
             // Default mode (preference) given to a newly loaded video

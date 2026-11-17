@@ -820,7 +820,9 @@ jobs:
         run: |
           $env:PATH = "C:\ffmpeg\$env:FFMPEG_ZIP\bin;$env:PATH"
           # Deterministic areas once; timing failures gate on their first attempt, with diagnostic rerun only
-          ctest --test-dir build --output-on-failure --timeout 900 -LE timing -j4
+          # The 3D renders (PBR example, scene3d and its UI) take over 15 minutes on the runner's WARP rasteriser:
+          # they run on macOS and Linux (Metal, Vulkan) and on a Windows machine with a GPU
+          ctest --test-dir build --output-on-failure --timeout 900 -LE timing -E '^(pbr_render|scene3d|scene3d_ui)$' -j4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/run_timing_tests.py ctest --test-dir build --output-on-failure --timeout 900 -L timing
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -849,10 +851,8 @@ jobs:
         with:
           name: nyxmap-windows-test-symbols
           path: |
-            build/nyxmap_rhi_engine_test.exe
-            build/nyxmap_rhi_engine_test.pdb
-            build/nyxmap_isf_render_test.exe
-            build/nyxmap_isf_render_test.pdb
+            build/nyxmap_tests.exe
+            build/nyxmap_tests.pdb
           if-no-files-found: error
       - name: Package with runtime dependencies
         if: needs.scope.outputs.package == 'true'
