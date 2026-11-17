@@ -5388,7 +5388,10 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             CHECK(QFile::copy(root + "/../isf/generators/SolidColor.fs", tmp + "/genB.fs"));
             const quint64 id1 = e.layer(e.addLayer("Solid 1"))->id, id2 = e.layer(e.addLayer("Solid 2"))->id;
             const int s1i = e.indexOfId(id1), s2 = e.indexOfId(id2);
-            CHECK(e.setLayerIsf(s1i, tmp + "/genA.fs", &err) && e.setLayerIsf(s2, tmp + "/genA.fs", &err));
+            const bool solidsLoaded = e.setLayerIsf(s1i, tmp + "/genA.fs", &err) && e.setLayerIsf(s2, tmp + "/genA.fs", &err);
+            if (!solidsLoaded) std::printf("      ISF load failed: \"%s\" (layers %d and %d, threaded %d)\n", qPrintable(err), s1i, s2, int(e.isThreaded()));
+            CHECK(solidsLoaded);
+            if (!solidsLoaded) return 1; // what follows reads these layers
             {
                 Engine::Lock lk(&e.mutex());
                 e.layer(s1i)->generator->inputs()[0].cValue[0] = 0.25f;
