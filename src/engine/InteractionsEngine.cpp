@@ -869,8 +869,12 @@ void Engine::stepInteractions(double dt)
             } else {
                 // A whole color followed (its address without /r /g /b, with an /a): as an OSC color, each channel goes through its
                 // own chain, one interaction for the three of them
+                if (run.colorPathsFor != it.sourceParam) { // the addresses of its channels, made once
+                    run.colorPathsFor = it.sourceParam;
+                    for (int c = 0; c < 4; ++c) run.colorPaths[size_t(c)] = it.sourceParam + QLatin1Char('/') + QChar("rgba"[c]);
+                }
                 std::array<const Parameter *, 4> channel{};
-                for (int c = 0; c < 4; ++c) channel[size_t(c)] = findParameter(it.sourceLayer, it.sourceParam + QLatin1Char('/') + QChar("rgba"[c]));
+                for (int c = 0; c < 4; ++c) channel[size_t(c)] = findParameter(it.sourceLayer, run.colorPaths[size_t(c)]);
                 bool whole = true;
                 for (int c = 0; c < 3; ++c)
                     whole &= channel[size_t(c)] && channel[size_t(c)]->isNumber() && (channel[size_t(c)]->info().access & ParamInfo::Read);

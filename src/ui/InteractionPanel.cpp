@@ -1470,17 +1470,19 @@ void InteractionPanel::rebuildSettings()
         source->setToolTip(QStringLiteral("The value of the show it follows"));
         auto *menu = new QMenu(source);
         source->setMenu(menu);
-        connect(menu, &QMenu::aboutToShow, this, [this, menu, edit] {
+        const bool action = it.isAction();
+        connect(menu, &QMenu::aboutToShow, this, [this, menu, edit, action] {
             clearInteractionMenu(menu);
-            auto fill = [this, edit](QMenu *into, const showmenu::Owner &owner) {
+            auto fill = [this, edit, action](QMenu *into, const showmenu::Owner &owner) {
                 const quint64 layer = owner.layer();
                 std::vector<ParamInfo> params;
                 for (const ParamInfo &p : showmenu::ofOwner(m_engine->parameters(layer), owner))
                     if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) &&
                         (p.isNumber() || p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice))
                         params.push_back(p);
-                // A whole color above its R G B (A): followed by one interaction, each channel through its own chain
-                {
+                // A whole color above its R G B (A): followed by one interaction, each channel through its own chain (a mapping:
+                // an action has one value to test)
+                if (!action) {
                     QSet<QString> readable;
                     for (const ParamInfo &p : params) readable.insert(p.path);
                     const std::vector<ParamInfo> channels = params;
