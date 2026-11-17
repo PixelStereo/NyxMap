@@ -5531,10 +5531,11 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
     } // media
 
     if (area("sound")) {
-    // --- Sound: audio layer, sound of a video layer, synchronized with the playhead. Not with Apple's software
-    // renderer (CI's macOS): one core for everything, its timings mean nothing there
-    if (e.gpuRenderer().contains(QLatin1String("Apple Software Renderer"))) {
-        std::printf("SKIP sound timings: Apple Software Renderer\n");
+    // --- Sound: audio layer, sound of a video layer, synchronized with the playhead. Not on the CI's macOS virtual
+    // machine (named "Apple Software Renderer" by OpenGL, "Apple Paravirtual device" by Metal): three shared cores, its
+    // timings mean nothing there. The test never ran on it: it was skipped under the old name.
+    if (e.gpuRenderer().contains(QLatin1String("Apple Software Renderer")) || e.gpuRenderer().contains(QLatin1String("Paravirtual"), Qt::CaseInsensitive)) {
+        std::printf("SKIP sound timings: %s\n", qPrintable(e.gpuRenderer()));
     } else {
         CHECK(e.startAudio(QString(), &err, true)); // null device: no sound card, but the callback runs in real time
         std::mutex capMutex;
