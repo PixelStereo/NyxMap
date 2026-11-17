@@ -179,6 +179,7 @@ void Engine::renderLoop()
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     QElapsedTimer pace;
+    qint64 lateNs = 0; // how late the sleeps wake up on this machine (smoothed)
     while (!m_quit) {
         pace.start();
         const qint64 loopStart = FrameTiming::nowNs();
@@ -217,8 +218,18 @@ void Engine::renderLoop()
         const qint64 sleepNs = heldBySync ? FramePacer::resync(m_paceNext, t2, periodNs)
                                           : FramePacer::next(m_paceNext, t0, FrameTiming::nowNs(), periodNs);
         if (sleepNs > 0) {
+            // A virtual machine's timers wake a sleep several times late (CI: 14 ms asked, 70 ms taken, the frames at 10 fps
+            // and the audio's clock with them). The late wake-up is measured: the sleep stops short of it and the rest is
+            // yielded until the deadline, so a machine with exact timers sleeps and one without waits.
             const qint64 slept = FrameTiming::nowNs();
-            QThread::usleep(static_cast<unsigned long>(sleepNs / 1000));
+            const qint64 deadline = slept + sleepNs;
+            const qint64 coarse = sleepNs - std::min(sleepNs, lateNs + 500000);
+            if (coarse > 1000000) {
+                QThread::usleep(static_cast<unsigned long>(coarse / 1000));
+                const qint64 late = std::max<qint64>(0, FrameTiming::nowNs() - slept - coarse);
+                lateNs = (lateNs * 7 + std::min<qint64>(late, 200000000)) / 8; // the lateness of the sleeps, smoothed
+            }
+            while (FrameTiming::nowNs() < deadline) QThread::yieldCurrentThread();
             m_loopSleepAskedNs += sleepNs;
             m_loopSleepTookNs += FrameTiming::nowNs() - slept;
         }
