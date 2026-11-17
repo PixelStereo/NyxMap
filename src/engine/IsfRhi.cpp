@@ -27,11 +27,11 @@ struct Baked {
     QShader shader;
     QString error;
 };
-QShader bake(const QString &src, QShader::Stage stage, QString *err)
+QShader bake(const QString &src, QShader::Stage stage, QString *err, bool spirvOnly = false)
 {
     static std::mutex mutex;
     static std::map<std::pair<QString, int>, Baked> cache;
-    const std::pair<QString, int> key{src, int(stage)};
+    const std::pair<QString, int> key{src, int(stage) + (spirvOnly ? 16 : 0)};
     {
         std::lock_guard<std::mutex> lk(mutex);
         if (const auto found = cache.find(key); found != cache.end()) {
@@ -41,9 +41,12 @@ QShader bake(const QString &src, QShader::Stage stage, QString *err)
     }
     QShaderBaker b;
     b.setSourceString(src.toUtf8(), stage);
-    b.setGeneratedShaders({{QShader::SpirvShader, QShaderVersion(100)},
-                           {QShader::MslShader, QShaderVersion(20)},
-                           {QShader::HlslShader, QShaderVersion(50)}});
+    if (spirvOnly) // a check at load: the compiler's errors are the same, the conversions to Metal and HLSL wait for the renderer
+        b.setGeneratedShaders({{QShader::SpirvShader, QShaderVersion(100)}});
+    else
+        b.setGeneratedShaders({{QShader::SpirvShader, QShaderVersion(100)},
+                               {QShader::MslShader, QShaderVersion(20)},
+                               {QShader::HlslShader, QShaderVersion(50)}});
     b.setGeneratedShaderVariants({QShader::StandardShader});
     const QShader s = b.bake();
     const QString error = s.isValid() ? QString() : b.errorMessage();
@@ -125,7 +128,7 @@ void IsfInstance::setExtraRhiTexture(const QString &name, QRhiTexture *tex)
 bool IsfInstance::checkShaders(const RhiSources &src, QString *err)
 {
     QString e;
-    const bool ok = bake(src.vertex, QShader::VertexStage, &e).isValid() && bake(src.fragment, QShader::FragmentStage, &e).isValid();
+    const bool ok = bake(src.vertex, QShader::VertexStage, &e, true).isValid() && bake(src.fragment, QShader::FragmentStage, &e, true).isValid();
     if (!ok && err) *err = QStringLiteral("Compilation error:\n") + e;
     return ok;
 }
