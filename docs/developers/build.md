@@ -2,7 +2,7 @@
 
 ## Architecture
 
-NYXMAP is written in **C++17 / Qt 6**, with **FFmpeg** for media decoding, **OpenGL 3.3** for rendering and **Metal-based output presentation on macOS**.
+NYXMAP is written in **C++17 / Qt 6**, with **FFmpeg** for media decoding and **QRhi** for rendering and output (Metal on macOS, Direct3D 11 on Windows, Vulkan on Linux).
 
 - **HAP-aware playback** — HAP textures are decompressed and kept GPU-compressed where supported, avoiding an unnecessary full RGBA conversion. HAP Q is the preferred fast path on macOS.
 - **Hardware-assisted decoding** — VideoToolbox on macOS, with D3D11VA / VAAPI paths on supported systems; CPU fallback when needed.
@@ -40,7 +40,7 @@ Run it again after `git pull` to rebuild. CI runs the scripts on fresh macOS, Ub
 
 ### Step by step
 
-**Requirements:** CMake 3.21+, Qt 6.7+ (QRhiWidget), FFmpeg 6.1+, C++17 and OpenGL 3.3 core. Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
+**Requirements:** CMake 3.21+, Qt 6.7+ (QRhiWidget), FFmpeg 6.1+, C++17 and a graphics API QRhi drives (Metal, Direct3D 11, or Vulkan 1.1: Mesa's lavapipe is enough for tests). Qt Multimedia (cameras) and Qt SVG (SVG images) are optional: without them, CMake says so and the feature is left out. Clone with submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/PixelStereo/NyxMap.git
@@ -68,7 +68,7 @@ before keeps its options: run the `cmake -S …` line again to change them.
 <summary><strong>Linux — Ubuntu 26.04 or newer</strong></summary>
 
 ```bash
-sudo apt install build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev \
+sudo apt install build-essential cmake pkg-config qt6-base-dev \
   qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev libgl1-mesa-dev libavformat-dev libavcodec-dev \
   libswscale-dev libswresample-dev libavutil-dev libasound2-dev \
   git clang dotnet-sdk-8.0  # OMT (see below)
@@ -159,3 +159,14 @@ After the tag workflow has validated and uploaded all four packages, it calls th
 Release tag builds produce names such as `NyxMap 0.5.2` (`NyxMap 0.5.2.app` on macOS, `NyxMap 0.5.2.exe` on Windows). Personal builds use the nearest preceding version tag plus the eight-character Git commit, for example `NyxMap 0.5.2_a1b2c3d4`. The name is also shown in the window and About dialog. Preferences retain the same application identity.
 
 Without Git metadata, the base version comes from `VERSION` and the revision is `unknown`. `-DNYXMAP_VERSION=0.5.2` overrides the base version; `-DNYXMAP_RELEASE_BUILD=ON` explicitly builds an unsuffixed release from a source archive. Normal release CI uses the tag automatically. `build/application.json` records the generated name and executable for build and packaging scripts.
+
+## Why the packages carry an LGPL FFmpeg, and build OMT
+
+NyxMap is AGPL v3 with an additional permission (`LICENSE-EXCEPTION.md`) that lets a package link the proprietary NDI runtime and
+the TouchEngine SDK. That permission covers NyxMap's own code only: it cannot cover someone else's GPL code. An FFmpeg built with
+`--enable-gpl` (Homebrew's has x264 and x265) could not be shipped in the same package as those two components. The packages
+therefore carry an FFmpeg built without GPL parts (LGPL v2.1 or later), and CI checks that none of the GPL-only libraries is in
+them. A build without NDI and TouchEngine may use any FFmpeg, GPL included: AGPL v3 and GPL v3 can be combined.
+
+OMT (Open Media Transport, MIT) is built from source because its project publishes no universal macOS or Linux library; the licence
+has nothing to do with it.

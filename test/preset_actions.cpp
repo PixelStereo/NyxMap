@@ -15,8 +15,6 @@ static void require(bool ok, const char *why)
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     try {
         Engine e;

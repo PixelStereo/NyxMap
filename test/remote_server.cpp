@@ -128,8 +128,6 @@ struct Client {
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     try {
         // A valid HTTP response may arrive in several packets, including a

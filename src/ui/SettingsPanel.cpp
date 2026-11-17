@@ -51,7 +51,6 @@ static const char *kRateKey = "render/frameRate";
 static const char *kSamplesKey = "render/antialiasing";
 static const char *kMipmapsKey = "render/mipmaps";
 static const char *kDepthKey = "render/depth";
-static const char *kShareLateKey = "render/gpuShareOneFrameLate";
 static const char *kStartupUseKey = "startup/useProject"; // false: an empty project at launch
 static const char *kStartupPathKey = "startup/project";
 
@@ -84,7 +83,6 @@ PlayMode SettingsPanel::defaultPlayMode()
 {
     return playModeFromKey(QSettings().value(kPlayModeKey).toString(), PlayMode::Loop);
 }
-bool SettingsPanel::gpuShareOneFrameLate() { return QSettings().value(kShareLateKey, true).toBool(); }
 bool SettingsPanel::hardwareDecoding() { return QSettings().value(kHardwareKey, true).toBool(); }
 bool SettingsPanel::showPreviewFps() { return QSettings().value(kPreviewFpsKey, false).toBool(); }
 static int s_followFades = -1; // read once, then kept up to date by the check box (asked 10 times a second)
@@ -249,16 +247,6 @@ SettingsPanel::SettingsPanel(Engine *engine, QWidget *parent) : QWidget(parent),
                                        "memory and bandwidth, for heavy 4K / 8K shows. Displays, media decoding and "
                                        "network outputs can still be 8-bit: no HDR or 10-bit output signal is implied.")));
         rf->addRow(m_mipmaps);
-        auto *shareLate = new FlagBox(QStringLiteral("Syphon / Spout one frame later, without waiting for the GPU"));
-        shareLate->setChecked(gpuShareOneFrameLate());
-        shareLate->setToolTip(QStringLiteral("On (default): publish the prior completed picture without glFinish "
-                                             "using a third viewport target. Off: wait for the current frame to "
-                                             "finish on the GPU before sharing it."));
-        rf->addRow(shareLate);
-        connect(shareLate, &QCheckBox::toggled, this, [this](bool on) {
-            QSettings().setValue(kShareLateKey, on);
-            emit renderDefaultsChanged();
-        });
         rf->addRow(note(QStringLiteral("For every project opened on this machine. Screen refresh: "
                                        "the outputs' vertical sync, or the main screen's rate. Antialiasing smooths the "
                                        "edges of the mapped layers; mipmaps the pictures drawn much smaller than they are.")));

@@ -1,10 +1,9 @@
 # QRhi prototype
 
-NyxMap's renderer moves from OpenGL to Qt's QRhi, which drives Metal, Direct3D
-11/12 and Vulkan from one API and keeps the application in C++ and Qt. OpenGL
-goes once every part has been ported, each checked picture by picture against
-the OpenGL renderer it replaces. This page records the measurements that led to
-it and the parts ported so far.
+NyxMap's renderer is Qt's QRhi, which drives Metal, Direct3D 11 and Vulkan from one API
+and keeps the application in C++ and Qt. OpenGL is gone: every part was ported and checked picture by picture against
+the OpenGL renderer it replaced, which no longer exists. This page records the measurements that led to it and the parts
+ported, as they were at the time.
 
 ## Ported
 
@@ -139,15 +138,6 @@ it and the parts ported so far.
 - The engine's shaders are baked at build time (`qt_add_shaders`, no GLSL
   target); ISF shaders at run time (`QShaderBaker`). Qt Shader Tools is now a
   build and runtime dependency.
-
-## Windows bench
-
-The Windows CI job packages the benches as `NyxMap-rhi-bench-windows` (a run of
-the Build workflow, `workflow_dispatch`, on the branch). On a Windows machine with
-a real GPU: extract it, run `RunBench.cmd`, send back `report.txt`. It makes 4K
-test videos with the bundled ffmpeg (H.264, HEVC 10-bit and HAP, as its encoders
-allow), plays any video put in `media\yours`, and runs `isf_rhi`, `rhi_video` and
-`rhi_composition` (4, 9 and 16 layers at 4K) through Direct3D 11 and OpenGL.
 
 The prototype answers three questions, in this order:
 

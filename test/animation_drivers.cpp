@@ -22,8 +22,6 @@ static void check(bool value, const char *why)
 static bool near(double a, double b) { return std::abs(a - b) < 1e-5; }
 int main(int argc, char **argv)
 {
-
-
     QApplication app(argc, argv);
     Engine e;
     QString error;

@@ -49,9 +49,6 @@ static void check(bool ok, const char *why)
 
 int main(int argc, char **argv)
 {
-
-
-
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     QApplication app(argc, argv);
     app.setApplicationName("NyxMapFixtureUITest");

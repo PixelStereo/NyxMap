@@ -877,11 +877,6 @@ public:
     QString gpuApi() const { return m_gpuApi; }
     QString gpuVendor() const { return m_gpuVendor; }
     quint64 windowFrames(quint64 viewport); // pictures the viewport's window was given (tests)
-    // Manual rendering tests only. The output context and its back buffer are current before swap.
-    void setWindowDrawProbeForTests(std::function<void(quint64, QSize)> probe) {
-        Q_ASSERT(!m_threaded);
-        m_windowDrawProbe = std::move(probe);
-    }
     void setViewportWindow(quint64 viewport, QWindow *w);
     // refreshHz: its screen's (0: not known). The render keeps that pace while the window is shown, and counts its
     // missed deadlines against it, not against the main screen's
@@ -915,14 +910,10 @@ public:
     void noteInput(FrameTiming::Input kind) { m_frameTiming.noteInput(kind); } // any thread
     // Any thread: what the show did (snapshot recalled, timeline driven, layer sought), for the endurance journal
     void journal(const QString &kind, const QString &detail) { m_frameTiming.noteEvent(kind, detail); }
-    // What the show holds against its budgets (any thread): decoded frames, upload buffers, decoders' threads,
+    // What the show holds against its budgets (any thread): decoded frames, decoders' threads,
     // graphics memory free (when the driver says: NVIDIA, AMD), and which budget is exceeded now ("warnings").
     // OSC /composition/budget. Sampled by the render thread once a second; a budget newly exceeded is logged.
     QJsonObject resourcesJson() const;
-    // Syphon/Spout: true (default) publishes the prior complete viewport picture using
-    // a protected third buffer; false waits for GPU completion with glFinish (the same frame, at a cost).
-    void setGpuShareOneFrameLate(bool on) { m_shareOneFrameLate = on; }
-    bool gpuShareOneFrameLate() const { return m_shareOneFrameLate.load(); }
     quint64 mipmapsMade() const { return m_mipmapsMade.load(); } // layers' mipmaps generated since the start
     QImage grabOutput();                 // the whole composition (interface preview)
     QImage grabViewport(quint64 viewport, bool deep = false); // deep: RGBA64, the 10-bit pictures at their precision
@@ -1108,21 +1099,18 @@ private:
         QSize pixels;
         quint64 presented = 0;              // pictures it was given
         double hz = 0;                      // its screen's refresh rate (0: not known)
-        // Pictures not shown, by cause: no surface from macOS, every shared surface still read, an error, no
-        // picture yet, not drawn by the render thread (macOS: the main thread's)
-        quint64 noDrawable = 0, surfacesBusy = 0, failed = 0, noPicture = 0, notRenderThread = 0;
+        quint64 noPicture = 0; // pictures not shown: the viewport had none yet
     };
     // What each output window did, as last sampled (render thread → any thread)
     struct OutputStats {
         quint64 viewport = 0;
         QString name;
-        bool metal = false, exposed = false;
+        bool exposed = false;
         double hz = 0;
-        quint64 presented = 0, noDrawable = 0, surfacesBusy = 0, failed = 0, noPicture = 0, notRenderThread = 0;
+        quint64 presented = 0, noPicture = 0;
     };
     mutable std::mutex m_outputStatsMutex;
     std::vector<OutputStats> m_outputStats;
-    std::function<void(quint64, QSize)> m_windowDrawProbe;
     bool m_capturePresented = false; // tests: the QRhi renderer keeps what it presents
     double m_presentHz = 0; // render thread: the refresh rate of the window that waits for its screen (0: none)
     qint64 m_paceNext = -1; // render thread: when the next frame is due (steady clock ns; -1: from now)
@@ -1150,8 +1138,6 @@ private:
                       const QMatrix4x4 &parent = QMatrix4x4());
     std::array<PreviewSlot, 4> m_previewSlots;
     void sceneViewOf(const PreviewSlot &slot, int index, std::vector<Scene3D::Item> &items, SceneSettings &view);
-    std::atomic<int> m_published{0};
-    int m_back = 1;
 
     QSize m_compSize{1920, 1080};
     Scene3DQuality m_quality3d;
@@ -1185,8 +1171,6 @@ private:
     quint64 m_previewId = 0;
     int m_previewSide = 360;
     int64_t m_previewNextNs = 0;
-    int m_previewPboW = 0, m_previewPboH = 0;
-    quint64 m_previewPboId = 0; // the layer the buffer holds (0: nothing pending)
     mutable std::mutex m_previewMutex;
     std::array<QImage, 4> m_previewImages;    // by preview slot (m_previewMutex)
     std::array<quint64, 4> m_previewImageIds{}; // the source each one shows
@@ -1304,14 +1288,12 @@ private:
     FrameTiming m_frameTiming;
     RealtimeTiming m_renderLockWait, m_renderLockHold;
     std::atomic<quint64> m_outputsDropped{0}; // frames an output window could not show (Metal: surfaces in use)
-    std::atomic<quint64> m_sharesSkipped{0};  // Syphon / Spout one frame later: the previous frame not finished
-    std::atomic<bool> m_shareOneFrameLate{true};
     std::atomic<quint64> m_mipmapsMade{0}; // glGenerateMipmap calls (tests: once per layer and frame at most)
     void sampleResources(); // render thread, context current: once a second
     qint64 m_resourcesSampledNs = 0;
     int m_vramQuery = -1; // -1 not looked at yet, 0 none, 1 NVX, 2 ATI
     std::atomic<qint64> m_vramFreeKb{-1}, m_vramTotalKb{-1};
-    std::atomic<quint32> m_overBudget{0}; // bits: 1 decoded frames, 2 upload buffers, 4 threads, 8 graphics memory
+    std::atomic<quint32> m_overBudget{0}; // bits: 1 decoded frames, 2 threads, 4 graphics memory
     std::atomic<quint64> m_frameCount{0};
     bool m_initialized = false;
 

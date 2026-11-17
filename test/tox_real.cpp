@@ -14,8 +14,6 @@
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     const QString path = qEnvironmentVariable("NYXMAP_TOX");
     if (path.isEmpty() || !touchEngineCompiledIn()) {

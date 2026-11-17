@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
                                                   "were found, then quit (exit code 5 if one does not load).");
     cli.addOption(libsOpt);
     cli.addPositionalArgument("project", ".nyxmap project to open");
-    // --render exit codes: 0 rendered, 1 no graphics device (Metal, Direct3D 11 or Vulkan), 2 output not written, 3 project not loaded,
+    // --render exit codes: 0 rendered, 1 no graphics API, 2 output not written, 3 project not loaded,
     // 4 a layer or an effect in error (--strict)
     cli.process(app);
     const QString project = cli.positionalArguments().value(0);
@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
             qCritical("%s", qPrintable(err));
             return 1;
         }
-        QMessageBox::critical(nullptr, "NyxMap", QStringLiteral("Could not initialize the renderer:\n") + err);
+        QMessageBox::critical(nullptr, "NyxMap", QStringLiteral("Could not initialize the engine:\n") + err);
         return 1;
     }
 

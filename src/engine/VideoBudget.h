@@ -3,11 +3,8 @@
 //
 // Memory: one envelope for the frames waiting to be shown in host memory, by default a quarter of the machine's RAM
 // up to 2.5 GiB (NYXMAP_VIDEO_MEMORY_MB overrides it). A fifth of it goes to the decoded frames kept in the
-// decoders' memory, the rest to the upload buffers the GPU copies from:
+// decoders' memory, from where the renderer uploads them:
 //  - decoded frames: a soft limit. Going over it never drops a frame, it makes every stream keep fewer ahead.
-//  - upload buffers: a hard limit. A buffer is reserved before it is allocated; refused, the stream's frames go
-//    through the decoders' memory (the slow path, counted with the decoded frames). The layers wanting buffers
-//    share the limit evenly: a newcomer's share is made as the others give back their extra buffers.
 //  - byte buffers kept for reuse by the decoders: a hard limit of their own, counted with the decoded frames.
 // Not counted: hardware surfaces (the decoder's pool, on the GPU), textures, FFmpeg's internal allocations.
 //
@@ -21,7 +18,7 @@ namespace videoBudget {
 // Envelope
 size_t memoryLimit();
 void setMemoryLimit(size_t bytes); // 0: the default (tests, measurements); the shares follow
-size_t memoryInUse();              // decoded frames + upload buffers
+size_t memoryInUse();              // the decoded frames
 
 // Decoded frames (and the decoders' pooled byte buffers)
 void addDecoded(size_t bytes);
@@ -33,16 +30,6 @@ void setDecodedLimit(size_t bytes); // 0: its share of the envelope (tests)
 
 bool reservePooled(size_t bytes); // false: over the pool's limit, the buffer is freed instead
 void releasePooled(size_t bytes);
-
-// Upload buffers
-bool reserveUpload(size_t bytes); // false: no room, the buffer is not made
-void releaseUpload(size_t bytes);
-size_t uploadInUse();
-size_t uploadLimit();
-void addUploadStream();    // a layer wanting upload buffers
-void removeUploadStream();
-int uploadStreams();
-size_t uploadShare(); // what each layer wanting buffers may hold
 
 // Software decoders' threads
 int reserveThreads(int alone); // the threads a new decoder gets (alone: what it would get alone), reserved

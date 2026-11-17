@@ -308,7 +308,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
             [] { VideoDecoder::setHardwareDecoding(SettingsPanel::hardwareDecoding()); });
     // Rendering: the machine's defaults, and the main screen's refresh rate (the pace without an output shown)
     m_engine->setRenderDefaults(SettingsPanel::renderDefaults());
-    m_engine->setGpuShareOneFrameLate(SettingsPanel::gpuShareOneFrameLate());
     auto screenRate = [this] {
         if (QScreen *sc = QGuiApplication::primaryScreen()) m_engine->setScreenRefreshRate(sc->refreshRate());
     };
@@ -693,7 +692,6 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_composition, &CompositionPanel::compositionEdited, this, &MainWindow::markDirty);
     connect(m_settings, &SettingsPanel::renderDefaultsChanged, this, [this] {
         m_engine->setRenderDefaults(SettingsPanel::renderDefaults());
-        m_engine->setGpuShareOneFrameLate(SettingsPanel::gpuShareOneFrameLate());
     });
     connect(m_composition, &CompositionPanel::audioEdited, this, &MainWindow::markDirty);
 
@@ -1040,17 +1038,13 @@ QString MainWindow::showMemoryHelp(const QJsonObject &r)
                             mb("graphics_memory_video_planes_mb"), mb("graphics_memory_video_surfaces_mb"));
     if (r.contains(QStringLiteral("graphics_memory_free_mb")))
         help += tr(" Graphics card: %1 free.").arg(mb("graphics_memory_free_mb"));
-    const int layers = int(num("upload_buffer_layers"));
-    help += tr(" Video %1 of %2, the frames waiting to be shown: decoded %3 of %4, upload buffers %5 of %6 for %7.")
-                .arg(mb("video_memory_mb"), mb("video_memory_budget_mb"), mb("decoded_frames_mb"), mb("decoded_frames_budget_mb"),
-                     mb("upload_buffers_mb"), mb("upload_buffers_budget_mb"),
-                     layers == 1 ? tr("1 layer") : tr("%1 layers").arg(layers));
+    help += tr(" Video %1 of %2, the frames waiting to be shown: decoded %3 of %4.")
+                .arg(mb("video_memory_mb"), mb("video_memory_budget_mb"), mb("decoded_frames_mb"), mb("decoded_frames_budget_mb"));
     help += tr(" Decode threads %1 of %2.").arg(int(num("software_decode_threads"))).arg(int(num("software_decode_thread_budget")));
     QStringList over;
     for (const QJsonValue &w : r.value(QStringLiteral("warnings")).toArray()) {
         const QString k = w.toString();
         if (k == QLatin1String("decoded_frames")) over << tr("decoded frames (videos keep fewer frames ahead)");
-        else if (k == QLatin1String("upload_buffers")) over << tr("upload buffers (the extra ones go as they come back)");
         else if (k == QLatin1String("decode_threads")) over << tr("decode threads (new videos share them)");
         else if (k == QLatin1String("graphics_memory")) over << tr("graphics card nearly full");
     }

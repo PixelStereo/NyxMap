@@ -94,7 +94,7 @@ private:
             return;
         }
         QString project = m_engine->projectPath();
-        const QJsonObject meta{{"schema", 2}, {"version", m_version}, {"git_sha", QStringLiteral(NYXMAP_BUILD_SHA)},
+        const QJsonObject meta{{"schema", 3}, {"version", m_version}, {"git_sha", QStringLiteral(NYXMAP_BUILD_SHA)},
                                {"utc_start", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
                                {"host_os", QSysInfo::prettyProductName()},
                                {"gpu_vendor", m_engine->gpuVendor()}, {"gpu_renderer", m_engine->gpuRenderer()},
@@ -104,7 +104,7 @@ private:
         csv.write("# NYXMAP endurance metrics v2\n# ");
         csv.write(QJsonDocument(meta).toJson(QJsonDocument::Compact));
         csv.write("\n");
-        csv.write("utc,frames,missed,interval_p99_ms,interval_max_ms,compute_p95_ms,compute_p99_ms,compute_max_ms,present_p99_ms,present_max_ms,osc_to_frame_p99_ms,cue_to_frame_p99_ms,osc_inputs,cue_inputs,outputs_dropped_total,shares_skipped_total,process_resident_mb,decoded_frames_mb,upload_buffers_mb,graphics_memory_free_mb,graphics_memory_total_mb,graphics_memory_allocated_mb,software_decode_threads,ffmpeg_errors_total,empty_video_loops_stopped_total,resource_warnings,late_events_lost,journal_lost,audio_callback_count_lifetime,audio_callback_p99_ms_lifetime,audio_callback_max_ms_lifetime,audio_callback_over_quarter_lifetime,audio_callback_over_budget_lifetime,render_lock_wait_p99_ms_lifetime,render_lock_wait_max_ms_lifetime,render_lock_hold_p99_ms_lifetime,interaction_events_dropped_lifetime\n");
+        csv.write("utc,frames,missed,interval_p99_ms,interval_max_ms,compute_p95_ms,compute_p99_ms,compute_max_ms,present_p99_ms,present_max_ms,osc_to_frame_p99_ms,cue_to_frame_p99_ms,osc_inputs,cue_inputs,outputs_dropped_total,process_resident_mb,decoded_frames_mb,graphics_memory_free_mb,graphics_memory_total_mb,graphics_memory_allocated_mb,software_decode_threads,ffmpeg_errors_total,empty_video_loops_stopped_total,resource_warnings,late_events_lost,journal_lost,audio_callback_count_lifetime,audio_callback_p99_ms_lifetime,audio_callback_max_ms_lifetime,audio_callback_over_quarter_lifetime,audio_callback_over_budget_lifetime,render_lock_wait_p99_ms_lifetime,render_lock_wait_max_ms_lifetime,render_lock_hold_p99_ms_lifetime,interaction_events_dropped_lifetime\n");
         jsonLine(events, QJsonObject{{"kind", "session"}, {"meta", meta}});
         csv.flush();
         events.flush();
@@ -131,9 +131,9 @@ private:
                 hist("present", "p99_ms"), hist("present", "max_ms"),
                 hist("osc_to_frame", "p99_ms"), hist("cue_to_frame", "p99_ms"),
                 QString::number(window.inputs[FrameTiming::Osc]), QString::number(window.inputs[FrameTiming::Cue]),
-                val(total, "outputs_dropped"), val(total, "gpu_shares_skipped"),
+                val(total, "outputs_dropped"),
                 val(budget, "process_resident_mb"),
-                val(budget, "decoded_frames_mb"), val(budget, "upload_buffers_mb"),
+                val(budget, "decoded_frames_mb"),
                 val(budget, "graphics_memory_free_mb"), val(budget, "graphics_memory_total_mb"),
                 val(budget, "graphics_memory_allocated_mb"),
                 val(budget, "software_decode_threads"),
