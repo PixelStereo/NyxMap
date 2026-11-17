@@ -142,6 +142,14 @@ struct RhiRenderer::Impl {
     std::map<quint64, Output> outputs;
     std::vector<PreviewRequest> previewRequests;
     std::vector<SceneViewRequest> sceneViews;
+    // The previews asked for, read back as the frame ends (render() leaves the frame open, finishRender() ends it)
+    struct PreviewRead {
+        PreviewRequest request;
+        QSize size;
+        QRhiReadbackResult result;
+    };
+    std::vector<std::unique_ptr<PreviewRead>> openReads;
+    bool frameOpen = false;
     std::map<int, std::unique_ptr<RhiScene>> scenes; // by preview slot
     std::vector<PreviewPicture> previewPictures;
     std::map<int, RhiTarget> previewTargets; // by slot
@@ -1455,7 +1463,7 @@ void RhiRenderer::imageArrived(quint64 layer, const QImage &image, const QImage 
     else d->uploadPictureTo(r.autoImage, r.autoSize, autoImage);
 }
 
-void RhiRenderer::render(const IsfRenderContext &rc)
+void RhiRenderer::render(const IsfRenderContext &rc, bool deferEnd)
 {
     if (!d->rhi || d->rhi->beginOffscreenFrame(&d->cb) != QRhi::FrameOpSuccess) return;
     d->nextUbuf = 0;
@@ -1496,12 +1504,9 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     d->compositionOut.ensure(d->rhi.get(), d->e.m_compSize);
     d->composite(d->compositionOut, top, QRectF(0, 0, 1, 1), QColor(0, 0, 0, 255), 0, 0, level);
     // The previews the interface asked for: reduced, read back (the offscreen frame is done once it ends)
-    struct Read {
-        PreviewRequest request;
-        QSize size;
-        QRhiReadbackResult result;
-    };
-    std::vector<std::unique_ptr<Read>> reads;
+    using Read = Impl::PreviewRead;
+    auto &reads = d->openReads;
+    reads.clear();
     for (const PreviewRequest &q : d->previewRequests) {
         QRhiTexture *tex = nullptr;
         if (!q.id) tex = d->compositionOut.texture();
@@ -1544,11 +1549,21 @@ void RhiRenderer::render(const IsfRenderContext &rc)
     }
     d->sceneViews.clear();
     if (d->pending) d->cb->resourceUpdate(d->take());
-    d->rhi->endOffscreenFrame();
+    d->frameOpen = true;
+    if (!deferEnd) finishRender();
+}
+
+void RhiRenderer::finishRender()
+{
+    if (!d->frameOpen) return;
+    d->frameOpen = false;
+    d->rhi->endOffscreenFrame(); // waits for the GPU: the engine's lock is not held meanwhile
+    auto &reads = d->openReads;
     d->previewPictures.clear();
     for (const auto &read : reads)
         if (read->result.data.size() >= qsizetype(read->size.width()) * read->size.height() * 4)
             d->previewPictures.push_back({read->request.slot, read->request.id, read->size, read->result.data});
+    reads.clear();
     d->previewRequests.clear();
     // Keep retired pictures around while frames already submitted to the GPU can still reference them.
     constexpr int framesInFlightSafety = 16;
