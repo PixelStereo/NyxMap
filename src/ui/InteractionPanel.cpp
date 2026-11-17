@@ -1479,6 +1479,23 @@ void InteractionPanel::rebuildSettings()
                     if (!p.path.startsWith(QStringLiteral("audio/")) && (p.access & ParamInfo::Read) &&
                         (p.isNumber() || p.type == ParamInfo::Type::Bool || p.type == ParamInfo::Type::Choice))
                         params.push_back(p);
+                // A whole color above its R G B (A): followed by one interaction, each channel through its own chain
+                {
+                    QSet<QString> readable;
+                    for (const ParamInfo &p : params) readable.insert(p.path);
+                    const std::vector<ParamInfo> channels = params;
+                    for (const ParamInfo &p : channels) {
+                        if (!p.path.endsWith(QStringLiteral("/r"))) continue;
+                        const QString base = p.path.chopped(2);
+                        if (!readable.contains(base + QStringLiteral("/g")) || !readable.contains(base + QStringLiteral("/b")) ||
+                            readable.contains(base)) continue;
+                        ParamInfo color = p;
+                        color.path = base;
+                        if (color.label.endsWith(QStringLiteral(" R"))) color.label.chop(2);
+                        color.animatable = false;
+                        params.push_back(color);
+                    }
+                }
                 addParamMenu(into, params, [this, edit, layer](QMenu *m, const ParamInfo &p, const QString &text) {
                     m->addAction(text, this, [this, edit, layer, p] {
                         edit(QStringLiteral("Change Interaction Source"), [layer, p](Interaction &x) {

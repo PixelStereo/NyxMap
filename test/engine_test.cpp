@@ -7091,6 +7091,28 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
         e.renderFrame();
         CHECK(std::abs(opacity(b) - 0.1) < 1e-6);
 
+        // Internal color: one interaction takes a whole color (a layer's Add) to another (the ISF's color), per channel
+        {
+            const std::vector<Interaction> before = e.interactions(); // what the next checks expect
+            Interaction link2 = Interaction::made(InteractionSource::Internal);
+            link2.sourceLayer = a;
+            link2.sourceParam = "add"; // the three of add/r, add/g, add/b
+            link2.layer = colorLayer;
+            link2.param = "param/color";
+            InteractionStage inverted2 = InteractionStage::made(InteractionFilter::Curve);
+            inverted2.curve.keys[0].v = 1; // inverted: 0 → 1, 1 → 0
+            inverted2.curve.keys[1].v = 0;
+            link2.filters = {inverted2};
+            CHECK(e.addInteraction(link2) != 0);
+            CHECK(e.setParameter(a, "add/r", 0.2) && e.setParameter(a, "add/g", 0.5) && e.setParameter(a, "add/b", 1.0));
+            e.renderFrame();
+            CHECK(std::abs(component("r") - 0.8) < 1e-3 && std::abs(component("g") - 0.5) < 1e-3 && std::abs(component("b") - 0.0) < 1e-3);
+            CHECK(e.setParameter(a, "add/g", 0.25));
+            e.renderFrame();
+            CHECK(std::abs(component("g") - 0.75) < 1e-3 && std::abs(component("r") - 0.8) < 1e-3); // the one that moved, and the others kept
+            e.setInteractions(before);
+        }
+
         // Learn: the distinct sources heard, once settled (a key: when pressed); of one kind when asked
         e.setInteractionLearn(true);
         press("F5", 0);
