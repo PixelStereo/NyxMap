@@ -5105,6 +5105,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                     static_cast<unsigned long long>(uploads), videoSize.width(), videoSize.height(),
                     static_cast<long long>(videoWait.elapsed()));
         std::printf("      frame timing: %s\n", QJsonDocument(e.frameTiming().json()).toJson(QJsonDocument::Compact).constData());
+        std::printf("      render loop: %s\n", qPrintable(e.renderLoopSummary()));
         CHECK(uploads >= 2);
         CHECK(videoSize == QSize(1280, 720));
     }
@@ -6085,6 +6086,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.removeLayer(s1);
         }
         std::printf("      frame timing: %s\n", QJsonDocument(e.frameTiming().json()).toJson(QJsonDocument::Compact).constData());
+        std::printf("      render loop: %s\n", qPrintable(e.renderLoopSummary()));
         e.setLayerMuted(v, false);
 
         e.removeLayer(e.layerCount() > v ? v : 0);
