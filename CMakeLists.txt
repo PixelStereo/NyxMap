@@ -973,6 +973,9 @@ if(NYXMAP_TESTS)
   set_tests_properties(isf_safe scene3d instance3d PROPERTIES COST 90)
   set_tests_properties(project output_color video masks PROPERTIES COST 40)
   # Several videos played together: cmake --build build --target nyxmap_bench
+  # What the interface's 3D view costs: cmake --build build --target nyxmap_scene_view_bench
+  add_executable(nyxmap_scene_view_bench EXCLUDE_FROM_ALL test/scene_view_bench.cpp)
+  target_link_libraries(nyxmap_scene_view_bench PRIVATE nyxmap_engine Qt6::Widgets)
   add_executable(nyxmap_bench EXCLUDE_FROM_ALL test/bench.cpp)
   target_link_libraries(nyxmap_bench PRIVATE nyxmap_engine)
 endif()

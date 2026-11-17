@@ -54,7 +54,9 @@ public:
     // An HDR file's unclipped pixels (RGBA floats, the bottom row first), as the environment of a scene takes them
     void hdrArrived(quint64 layer, const std::vector<float> &pixels, QSize size);
     // The frame: every layer's picture, the viewports' and the composition's (render thread, under the lock)
-    void render(const IsfRenderContext &rc);
+    // deferEnd: the frame is left open, its GPU wait and read-backs done by finishRender() (the engine unlocks meanwhile)
+    void render(const IsfRenderContext &rc, bool deferEnd = false);
+    void finishRender();
     // The interface's previews: reduced copies of pictures, read back during the
     // frame (render thread). Set before render(); taken after it. `slot`: the engine's preview slot; `id`: a layer, a
     // viewport, or 0 for the composition. Pixels: RGBA8, the picture's bottom row first (the origin of the pictures)

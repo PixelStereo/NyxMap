@@ -945,7 +945,17 @@ void Engine::frame(double dt)
             }
             m_rhi->setSceneViews(std::move(views));
         }
-        m_rhi->render(rc);
+        m_rhi->render(rc, m_threaded);
+        if (m_threaded) {
+            // The GPU's wait (nearly half of a frame on Metal) and the read-backs: not under the lock, the interface
+            // reads and writes the engine meanwhile. The tasks asked for the render thread are served while it is taken back.
+            m_mutex.unlock();
+            m_rhi->finishRender();
+            while (!m_mutex.tryLock(2)) {
+                runPendingTasks();
+                if (m_quit) return;
+            }
+        }
         std::map<int, std::array<float, 3>> listenedColors;
         bool sourcePreviewGiven = false;
         {
