@@ -818,10 +818,7 @@ Camera3D Camera3D::of(const SceneSettings &s, float aspect)
 
 bool Scene3D::lite(const QString &renderer)
 {
-    // A device that rasterises on the processor: the macOS runners' paravirtual GPU, WARP, llvmpipe, lavapipe, SwiftShader
-    for (const char *name : {"paravirtual", "warp", "basic render", "llvmpipe", "software", "swiftshader", "lavapipe"})
-        if (renderer.contains(QLatin1String(name), Qt::CaseInsensitive)) return true;
-    return qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
+    return renderer.contains(QLatin1String("Apple Software Renderer")) || qEnvironmentVariableIsSet("NYXMAP_3D_LITE");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

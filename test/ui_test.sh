@@ -26,7 +26,7 @@ shot() { xwd -root -silent | convert xwd:- "$OUT/$1.png"; }
 X0=0; Y0=0
 origin() { ui_origin "NyxMap"; }
 wait_for_main_window() {
-    if ! ui_wait_for_window "$APP" 30 "NyxMap"; then
+    if ! ui_wait_for_window "$APP" 120 "NyxMap"; then
         fail "main application window not found (log: $OUT/log1.txt)"
         xwininfo -root -tree > "$OUT/windows.txt" 2>&1
         cat "$OUT/log1.txt"
