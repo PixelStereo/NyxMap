@@ -141,7 +141,7 @@ void Engine::updateSource(Layer &l, double dt)
 {
     // An image has no time: uploaded paused or not (its previous texture is already gone)
     if (!l.pendingImage.isNull()) {
-        if (m_rhi) m_rhi->imageArrived(l.id, l.pendingImage); // the QRhi renderer's own picture of it
+        if (m_rhi) m_rhi->imageArrived(l.id, l.pendingImage, l.pendingAutoImage); // the QRhi renderer's own picture of it
         l.pendingImage = QImage();
         l.renderPaused = true; // seen at once, even while paused
         l.pendingAutoImage = QImage();
