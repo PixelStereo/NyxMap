@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstring>
 
+
 // The Text generator's picture: the text shown now (typed so far, during a typewriter), wrapped to the layer's
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
 // Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
@@ -1036,8 +1037,6 @@ void Engine::frame(double dt)
                             layer->audio->generator()->setColor(c->second[0], c->second[1], c->second[2]);
             }
             stepPixelMapping(); // the fixtures read the composition as it goes out
-            m_published = m_back;
-            m_back = 1 - m_back;
         }
         m_renderLayerIndexActive = false;
         m_mutex.unlock();
@@ -1096,22 +1095,16 @@ QJsonObject Engine::frameTimingJson() const
         std::lock_guard<std::mutex> g(m_outputStatsMutex);
         for (const OutputStats &s : m_outputStats) {
             outs.append(QJsonObject{{"name", s.name},
-                                    {"metal", s.metal},
                                     {"shown", s.exposed},
                                     {"screen_hz", s.hz},
                                     {"presented", double(s.presented)},
-                                    {"no_drawable", double(s.noDrawable)},
-                                    {"surfaces_busy", double(s.surfacesBusy)},
-                                    {"failed", double(s.failed)},
-                                    {"no_picture", double(s.noPicture)},
-                                    {"not_render_thread", double(s.notRenderThread)}});
+                                    {"no_picture", double(s.noPicture)}});
             if (rate == 0 && s.exposed && s.hz > 1) paceHz = s.hz; // the last one shown sets the pace
         }
     }
     o["outputs"] = outs;
     o["pace_hz"] = rate == RenderSettings::UncappedFrameRate ? 0 : (paceHz > 0 ? paceHz : screenRefreshRate());
     o["outputs_dropped"] = double(m_outputsDropped.load());
-    o["gpu_shares_skipped"] = double(m_sharesSkipped.load());          // Syphon / Spout, one frame later: not ready
     o["readbacks_skipped"] = double(m_publishing.readbacksSkipped()); // NDI / OMT: the GPU not done in time
     return o;
 }
@@ -1121,7 +1114,6 @@ void Engine::resetFrameTiming()
     m_frameTiming.reset();
     m_sequencer->resetCueTiming(); // the OSC timing reset must reset every reported cue histogram too
     m_outputsDropped = 0;
-    m_sharesSkipped = 0;
 }
 
 // Last finished picture of one viewport (what its window and its publishers get)

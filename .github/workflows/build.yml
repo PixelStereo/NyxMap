@@ -803,6 +803,8 @@ jobs:
         with:
           name: test-media
           path: test/media
+      # No GPU on the runner: Direct3D 11's software adapter (WARP) and Mesa's software OpenGL for Qt WebEngine
+      - uses: ssciwr/setup-mesa-dist-win@v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -990,8 +992,8 @@ jobs:
           $clean = Join-Path $env:RUNNER_TEMP "clean"
           Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
-          # No GPU on the runner: Direct3D 11 runs on WARP, Windows' software device
-          python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke"
+          # The graphics API is the runner's software one; without any, the program still has to start (exit code 1)
+          python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: needs.scope.outputs.package == 'true'

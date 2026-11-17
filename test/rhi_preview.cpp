@@ -74,8 +74,6 @@ struct FakeTox final : ToxPlayer {
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     Engine e;
     QString err;

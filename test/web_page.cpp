@@ -72,9 +72,6 @@ int main(int argc, char **argv)
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu");
     qputenv("QTWEBENGINE_DISABLE_SANDBOX", "1");
 #endif
-
-
-
     QApplication app(argc, argv);
     Engine e;
     QString err;

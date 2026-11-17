@@ -13,8 +13,6 @@
 #include <cstdio>
 int main(int argc, char **argv)
 {
-
-
     QApplication app(argc, argv); app.setApplicationName("NyxMapMaskUITest");
     Engine engine; QString error;
     if (!engine.initialize(&error)) return 1;

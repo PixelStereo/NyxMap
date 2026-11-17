@@ -11,8 +11,6 @@
 #include <cstdio>
 int main(int argc, char **argv)
 {
-
-
     QApplication app(argc, argv);
     Engine engine;
     QString error;

@@ -14,6 +14,6 @@ For Linux, choose either package:
 - **Portable archive:** extract the entire archive and launch `NyxMap/AppRun`. No installer, administrator access or FUSE required.
 - **AppImage:** make it executable (`chmod +x NyxMap-linux-x86_64*.AppImage`) and run it. If mounting is unavailable, use `./NyxMap-linux-x86_64-VERSION.AppImage --appimage-extract-and-run`, replacing `VERSION` with its release tag. This needs no FUSE installation.
 
-The Linux baseline is **Ubuntu 26.04, x86_64**; older glibc releases and other architectures are unsupported. The host supplies glibc, a desktop session and OpenGL 3.3 graphics drivers. OMT discovery uses the host's Avahi service and reports when it is unavailable. Optional Blackmagic hardware needs Desktop Video. These system services and hardware drivers are not application libraries.
+The Linux baseline is **Ubuntu 26.04, x86_64**; older glibc releases and other architectures are unsupported. The host supplies glibc, a desktop session and Vulkan 1.1 graphics drivers (Mesa on most distributions). OMT discovery uses the host's Avahi service and reports when it is unavailable. Optional Blackmagic hardware needs Desktop Video. These system services and hardware drivers are not application libraries.
 
 OMT (Open Media Transport, built from source, MIT) and NDI (from the NDI SDK, under its licence agreement) are included. See [known problems](../project/limitations.md) and [third-party notices](https://github.com/PixelStereo/NyxMap/blob/main/THIRD-PARTY-NOTICES.md).

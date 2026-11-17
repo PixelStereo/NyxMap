@@ -16,8 +16,6 @@ static bool near(double a, double b, double tol = 1e-6) { return std::abs(a - b)
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     try {
         Engine engine;

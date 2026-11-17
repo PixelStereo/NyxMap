@@ -12,9 +12,9 @@
 
 OutputWindow::OutputWindow(Engine *engine, quint64 viewport) : m_engine(engine), m_viewport(viewport)
 {
-    // macOS: shown by the render thread through the QRhi API of the platform (Metal, Direct3D 11, Vulkan)
+    // Shown by the render thread through its API's surface (Metal, Direct3D, Vulkan)
     setSurfaceType(m_engine->outputSurfaceType());
-    if (m_engine->rhiRendering()) rhidevice::prepareWindow(this); // Vulkan: the window's instance
+    rhidevice::prepareWindow(this); // Vulkan: the window's instance
     setTitle(QStringLiteral("NyxMap — Output"));
     create();
     m_engine->setViewportWindow(m_viewport, this);

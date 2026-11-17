@@ -43,8 +43,6 @@ static double mix(Engine &engine, int layer)
 }
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     Engine engine;
     QString error;

@@ -66,9 +66,6 @@ static void modelTests()
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-
-
-
     QGuiApplication app(argc, argv);
 
     modelTests();

@@ -20,8 +20,6 @@
 
 int main(int argc, char **argv)
 {
-
-
     QGuiApplication app(argc, argv);
     QString dump;
     const QStringList args = app.arguments().mid(1);

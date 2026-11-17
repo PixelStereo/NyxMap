@@ -66,9 +66,6 @@ static int decodeOnly(const QStringList &files, double seconds)
 
 int main(int argc, char **argv)
 {
-
-
-
     QGuiApplication app(argc, argv);
 
     double seconds = 10, fps = 60;
