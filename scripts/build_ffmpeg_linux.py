@@ -25,6 +25,9 @@ SHA256 = "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3"
 def main():
     prefix = Path(sys.argv[1]).resolve()
     url = f"https://ffmpeg.org/releases/ffmpeg-{VERSION}.tar.xz"
+    # Tried in turn when the first does not answer in time (ffmpeg.org times out on hosted runners at times); the pinned
+    # SHA-256 below authenticates whichever answers
+    mirrors = [url, f"https://ftp.osuosl.org/pub/blfs/conglomeration/ffmpeg/ffmpeg-{VERSION}.tar.xz"]
     configure = [f"--prefix={prefix}", "--enable-shared", "--disable-static", "--disable-programs",
                  "--disable-doc", "--disable-autodetect", "--enable-pthreads", "--enable-zlib",
                  "--enable-libdav1d", "--enable-vaapi", "--enable-libdrm",
@@ -41,13 +44,17 @@ def main():
     # Bound network failures and avoid broken IPv6 routes on hosted runners.
     # The pinned SHA-256 below still authenticates the complete source archive.
     partial = archive.with_suffix(".part")
-    subprocess.run(["curl", "--ipv4", "--fail", "--location",
-                    "--connect-timeout", "20", "--max-time", "240",
-                    "--retry", "3", "--retry-delay", "3", "--retry-all-errors",
-                    "--retry-max-time", "600", "--output", str(partial), url], check=True)
+    for attempt, mirror in enumerate(mirrors * 2):
+        done = subprocess.run(["curl", "--ipv4", "--fail", "--location",
+                               "--connect-timeout", "20", "--max-time", "150",
+                               "--retry", "2", "--retry-delay", "3", "--retry-all-errors",
+                               "--output", str(partial), mirror]).returncode == 0
+        if done and hashlib.sha256(partial.read_bytes()).hexdigest() == SHA256:
+            break
+        print(f"no usable download from {mirror} (attempt {attempt + 1})", flush=True)
+    else:
+        sys.exit("FFmpeg source: no mirror gave the archive of the pinned checksum")
     partial.replace(archive)
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != SHA256:
-        sys.exit("FFmpeg source checksum mismatch")
     with tarfile.open(archive) as src:
         src.extractall(work, filter="data")
     source = work / f"ffmpeg-{VERSION}"
