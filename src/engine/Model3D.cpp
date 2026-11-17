@@ -61,6 +61,7 @@ int Model3D::addImage(const QImage &image)
 
 bool Model3D::load(const QString &path, QString *err, const QStringList &hidden)
 {
+    ++m_revision;
     m_path = path;
     m_hidden = hidden;
     m_objects.clear();
@@ -783,6 +784,7 @@ void Model3D::setDetail(int detail)
     detail = std::clamp(detail, 1, 8);
     if (!m_primitive || detail == m_detail) return;
     m_detail = detail;
+    ++m_revision;
     releaseRhi(); // made again, uploaded when next drawn
     m_meshes.clear();
     QString err;

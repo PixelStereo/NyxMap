@@ -1,4 +1,5 @@
 #include "BeatClock.h"
+#include "ChangeFeed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,6 +38,7 @@ void BeatClock::setBpm(double bpm)
     std::lock_guard<std::mutex> lk(m_mutex);
     rebase(nowNs());
     m_bpm = std::clamp(bpm, kMinBpm, kMaxBpm);
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 int BeatClock::beatsPerBar() const
@@ -49,6 +51,7 @@ void BeatClock::setBeatsPerBar(int n)
 {
     std::lock_guard<std::mutex> lk(m_mutex);
     m_beatsPerBar = std::clamp(n, 1, 16);
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 bool BeatClock::running() const
@@ -63,6 +66,7 @@ void BeatClock::start()
     m_originNs = nowNs();
     m_originBeat = 0;
     m_running = true;
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 void BeatClock::stop()
@@ -70,6 +74,7 @@ void BeatClock::stop()
     std::lock_guard<std::mutex> lk(m_mutex);
     rebase(nowNs());
     m_running = false;
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 void BeatClock::resume()
@@ -78,6 +83,7 @@ void BeatClock::resume()
     if (m_running) return;
     m_originNs = nowNs();
     m_running = true;
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 void BeatClock::tapAt(int64_t now)
@@ -98,6 +104,7 @@ void BeatClock::tapAt(int64_t now)
     for (int i = 0; i < n; ++i) sum += m_tapIntervals[i];
     rebase(now);
     m_bpm = std::clamp(60.0 * n / sum, kMinBpm, kMaxBpm);
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 int BeatClock::beatInBar() const
@@ -135,6 +142,7 @@ void BeatClock::sync(double beat, double bpm, bool playing)
     m_bpm = std::clamp(bpm, kMinBpm, kMaxBpm);
     m_running = playing;
     m_externalNs = now;
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }
 
 BeatClock::Source BeatClock::source() const
@@ -158,4 +166,5 @@ void BeatClock::fromJson(const QJsonObject &o)
     m_originBeat = 0;
     m_externalNs = 0;
     m_taps = 0;
+    ChangeFeed::address(QStringLiteral("/clock")); // the OSC feedback
 }

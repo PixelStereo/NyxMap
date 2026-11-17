@@ -80,7 +80,11 @@ quint64 keyOf(const Layer &l)
 const std::vector<Parameter *> &Layer::parameters()
 {
     const quint64 key = keyOf(*this);
-    if (key == paramKey && !paramList.empty()) return paramList;
+    if (key == paramKey && !paramList.empty()) {
+        if (paramList.front()->holder() != id) // a layer made from another keeps its list: the values say whose they are
+            for (Parameter *p : paramList) p->holder(id);
+        return paramList;
+    }
     paramKey = key;
     paramStore.clear();
     paramList.clear();
