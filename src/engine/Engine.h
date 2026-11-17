@@ -1316,6 +1316,8 @@ private:
         double lastInternal = std::numeric_limits<double>::quiet_NaN();
         std::array<double, 4> lastColor{{0, 0, 0, 1}}; // an Internal color source: what it was last read as
         bool lastColorValid = false;
+        QString colorPathsFor;                 // the source address the four channel addresses below are made for
+        std::array<QString, 4> colorPaths;
         bool choiceSet = false;
         int lastChoice = -1;
         bool lastBool = false;
