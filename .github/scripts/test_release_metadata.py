@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
-    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}.zip",
+    names = [f"NyxMap-macos-{tag}.zip", f"NyxMap-windows-{tag}-Setup.exe",
              f"NyxMap-linux-x86_64-{tag}.AppImage", f"NyxMap-linux-x86_64-{tag}.tar.gz"]
     return {"tag_name": tag, "published_at": date, "draft": False, "prerelease": False, **flags,
             "assets": [{"name": name, "state": "uploaded", "size": 123,

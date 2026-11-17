@@ -949,10 +949,10 @@ jobs:
           @'
           NyxMap Windows x64 runtime notes
 
-          This archive bundles the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
-          and Microsoft's official vc_redist.x64.exe installer.
-          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe, then start the NyxMap executable.
-          Run the versioned NyxMap executable from this extracted directory.
+          The installer puts the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
+          and Microsoft's official vc_redist.x64.exe installer in one folder (per user, no administrator rights).
+          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe from that folder (the Start menu
+          shortcut points at it), then start NyxMap again.
 
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
@@ -982,15 +982,25 @@ jobs:
 
           $tagSuffix = ""
           if ($env:GITHUB_REF_TYPE -eq "tag") { $tagSuffix = "-$env:GITHUB_REF_NAME" }
-          Compress-Archive -Path dist\* -DestinationPath "NyxMap-windows$tagSuffix.zip" -Force
-      - name: Smoke test of the extracted archive
+          # A per-user installer (no administrator rights) around exactly the same files as before
+          $version = (Get-Content build/application.json -Raw | ConvertFrom-Json).version
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS install failed" }
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          $setup = Join-Path $PWD "NyxMap-windows$tagSuffix-Setup.exe"
+          & $makensis "/DPRODUCT=NyxMap" "/DAPP_VERSION=$version" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist" "/DOUTPUT=$setup" packaging\windows.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+      - name: Smoke test of the installed application
         if: needs.scope.outputs.package == 'true'
         shell: pwsh
         run: |
-          # Extracted elsewhere, with neither FFmpeg's nor Qt's folders in PATH: only what the archive holds
+          # Installed silently in a clean folder, with neither FFmpeg's nor Qt's folders in PATH: only what the installer holds
           $appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
-          $clean = Join-Path $env:RUNNER_TEMP "clean"
-          Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
+          $setup = (Get-ChildItem NyxMap-windows*-Setup.exe | Select-Object -First 1).FullName
+          $installed = Join-Path $env:RUNNER_TEMP "installed"
+          $installer = Start-Process -FilePath $setup -ArgumentList "/S /D=$installed" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
+          $clean = Join-Path $installed "app"
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
           # The graphics API is the runner's software one; without any, the program still has to start (exit code 1)
           python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
@@ -999,7 +1009,7 @@ jobs:
         if: needs.scope.outputs.package == 'true'
         with:
           name: NyxMap-windows
-          path: NyxMap-windows*.zip
+          path: NyxMap-windows*-Setup.exe
 
 
   companion:
@@ -1030,6 +1040,7 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/**/*.zip
+            dist/**/*-Setup.exe
             dist/**/*.tar.gz
             dist/**/*.AppImage
             dist/**/*.tgz

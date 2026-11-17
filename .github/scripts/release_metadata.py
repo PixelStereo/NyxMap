@@ -16,7 +16,7 @@ def release_assets(release, repository):
         return None
     names = {
         "mac": f"{product}-macos-{tag}.zip",
-        "win": f"{product}-windows-{tag}.zip",
+        "win": f"{product}-windows-{tag}-Setup.exe",
         "linux": f"{product}-linux-x86_64-{tag}.AppImage",
         "portable": f"{product}-linux-x86_64-{tag}.tar.gz",
     }
