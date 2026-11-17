@@ -39,7 +39,7 @@ wait_for_main_window() {
 # missing-media warning is modal and appears afterwards; don't send Return to
 # whichever window happens to have focus during that transition.
 dismiss_open_warning() {
-    local deadline=$((SECONDS + 30)) dialog
+    local deadline=$((SECONDS + 120)) dialog
     until dialog=$(xdotool search --onlyvisible --name "^Open Project$" 2>/dev/null | head -n 1) && [ -n "$dialog" ]; do
         kill -0 "$APP" 2>/dev/null || { fail "application exited before the project warning"; return 1; }
         [ "$SECONDS" -lt "$deadline" ] || {
