@@ -234,6 +234,37 @@ int runOutputColorTests(Engine &engine)
             mirrored=mirrored && std::abs(int(flipped[size_t(x)*4+c])-int(base[size_t(width-1-x)*4+c]))<=2;
         check(mirrored,"flip mirrors the output left to right");
         engine.setParameter(first,"flip/x",false);
+        // the blend guide: the overlap in the viewport's color, the rest black when only the overlap is asked for
+        engine.setParameter(first,"soft_edge/left/width",256);
+        engine.setParameter(first,"soft_edge/guide/r",1);
+        engine.setParameter(first,"soft_edge/guide/g",0.2);
+        engine.setParameter(first,"soft_edge/guide/b",0.2);
+        engine.setBlendGuide(first,1,true,false);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            const bool tinted=std::abs(int(g[100*4])-32768)<400 && std::abs(int(g[100*4+1])-6554)<400 && g[600*4]==0 && g[600*4+1]==0 && g[600*4+2]==0;
+            check(tinted,"the blend guide shows the overlap in the viewport's color and nothing else when only the overlap is asked for");
+        }
+        engine.setBlendGuide(first,2,false,true);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            check(g[600*4]>=65530 && g[600*4+1]>=65530 && g[2*4]<g[600*4]/4,"the white field is white outside the ramp and fades inside it");
+        }
+        engine.setParameter(first,"soft_edge/black",10);
+        engine.setBlendGuide(first,4,false,true);
+        engine.renderFrame();
+        {
+            const auto g=read(first);
+            const double lifted=std::pow(0.1,1/2.2)*65535;
+            check(std::abs(double(g[600*4])-lifted)<500 && g[100*4]<600,"the black level is lifted outside the overlap and not inside it");
+        }
+        engine.setBlendGuide(0,0,false,true);
+        engine.setParameter(first,"soft_edge/black",0);
+        engine.setParameter(first,"soft_edge/left/width",0);
+        engine.renderFrame();
+        check(read(first)==base,"without the guide, the black level and the soft edge the output is as it was");
         // the cross where the pointer is, on the output only while it is set
         engine.setViewportProbe(first,QPointF(0.25,0.5));
         engine.renderFrame();

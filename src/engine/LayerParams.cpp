@@ -310,6 +310,14 @@ const std::vector<Parameter *> &Layer::parameters()
         num("soft_edge/gamma", "Spatial › Soft Edge Gamma", 1, 3, 2.2, [self] { return self->softGamma; },
             [self](double v) { self->softGamma = v; })
             .step(0.01);
+        num("soft_edge/black", "Spatial › Soft Edge Black Level (%)", 0, 30, 0.0, [self] { return self->softBlack; },
+            [self](double v) { self->softBlack = v; })
+            .step(0.1);
+        static const double kGuideDefault[3] = {0.2, 0.8, 1.0};
+        for (int c = 0; c < 3; ++c)
+            num(QStringLiteral("soft_edge/guide/") + QChar("rgb"[c]), QStringLiteral("Spatial › Soft Edge Guide ") + QChar("RGB"[c]), 0, 1,
+                kGuideDefault[c], [self, c] { return self->guideColor[c]; }, [self, c](double v) { self->guideColor[c] = v; })
+                .colorComponent(c);
     }
 
     // Playback: the media's (backwards below 0: it turns round where it is), or the pace of the shader's TIME

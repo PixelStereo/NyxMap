@@ -690,9 +690,12 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             auto *mainTabs = window.findChild<QTabWidget *>("mainInspectorTabs");
             auto *inspectorStack = window.findChild<QStackedWidget *>("inspectorStack");
-            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Composition" && mainTabs->count() == 3 &&
-                      inspectorStack && inspectorStack->count() == 3,
-                  "one Inspector tab (a layer, a viewport or a fixture), then Composition and Settings");
+            check(mainTabs && mainTabs->tabText(0) == "Inspector" && mainTabs->tabText(1) == "Viewports" && mainTabs->tabText(2) == "Composition" &&
+                      mainTabs->count() == 4 && inspectorStack && inspectorStack->count() == 2,
+                  "an Inspector tab (a layer, a group or a fixture), the Viewports tab (their list, + and −, their parameters), then Composition and Settings");
+            check(window.findChild<QPushButton *>("addViewport") && window.findChild<QPushButton *>("removeViewport") && viewportList &&
+                      viewportList->parentWidget() && viewportList->parentWidget()->isAncestorOf(viewportInspector),
+                  "the Viewports tab has its list and the + and − buttons");
             check(viewportList && viewportList->currentRow() == 0 && viewportInspector && viewportInspector->layerIndex() == engine.viewports().front(), "first viewport selected by default");
             {
                 const quint64 viewport = engine.layerId(engine.viewports().front());
@@ -1136,7 +1139,7 @@ int main(int argc, char **argv)
             auto *viewportInspector = window.findChild<LayerInspector *>("viewportInspector");
             const quint64 v1 = engine.layerId(engine.addViewport("V1")), v2 = engine.layerId(engine.addViewport("V2")),
                           v3 = engine.layerId(engine.addViewport("V3"));
-            if (auto *stack = window.findChild<QStackedWidget *>("inspectorStack")) stack->setCurrentIndex(1);
+            if (tabs) tabs->setCurrentIndex(1); // the Viewports tab
             app.processEvents();
             check(viewportList && viewportList->selectionMode() == QAbstractItemView::ExtendedSelection,
                   "viewport list takes a multiple selection");

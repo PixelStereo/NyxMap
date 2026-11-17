@@ -3,6 +3,8 @@
 #include "ColorPicker.h"
 #include <QAbstractItemView>
 #include <QDateTime>
+#include <QMenu>
+#include <QActionGroup>
 #include <QSpinBox>
 #include <QPointer>
 
@@ -1270,6 +1272,41 @@ QToolButton *ZoomBar::addButton(const QString &text, const QString &tip)
     b->setAutoRaise(true);
     m_row->addWidget(b);
     return b;
+}
+
+QToolButton *ZoomBar::addChannelButton(const std::function<void(int)> &changed)
+{
+    QToolButton *b = addButton(QStringLiteral("RGB"), QStringLiteral("The channel shown, in black and white: R, G, B or A (alpha). RGB: the picture as it is.\n"
+                                                                     "Only the view changes: not the render, not the outputs."));
+    b->setObjectName(QStringLiteral("viewChannel"));
+    auto *menu = new QMenu(b);
+    auto *group = new QActionGroup(menu);
+    static const char *const kNames[] = {"RGB", "R", "G", "B", "A"};
+    static const char *const kLong[] = {"RGB (the picture)", "R (red)", "G (green)", "B (blue)", "A (alpha)"};
+    for (int k = 0; k < 5; ++k) {
+        QAction *a = menu->addAction(QLatin1String(kLong[k]));
+        a->setCheckable(true);
+        a->setChecked(k == 0);
+        group->addAction(a);
+        connect(a, &QAction::triggered, b, [b, k, changed] {
+            b->setText(QLatin1String(kNames[k]));
+            changed(k);
+        });
+    }
+    b->setMenu(menu);
+    b->setPopupMode(QToolButton::InstantPopup);
+    place();
+    return b;
+}
+
+void ZoomBar::showChannel(QToolButton *button, int channel)
+{
+    if (!button || !button->menu()) return;
+    static const char *const kNames[] = {"RGB", "R", "G", "B", "A"};
+    channel = std::clamp(channel, 0, 4);
+    button->setText(QLatin1String(kNames[channel]));
+    const auto actions = button->menu()->actions();
+    if (channel < actions.size()) actions[channel]->setChecked(true);
 }
 
 void ZoomBar::setZoom(double zoom)

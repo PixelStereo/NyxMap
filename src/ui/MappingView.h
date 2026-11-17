@@ -173,7 +173,8 @@ private:
     QPointF m_guideAt;
     QToolButton *m_magnetButton = nullptr;
     QToolButton *m_autoSelectButton = nullptr;
-    QToolButton *m_maskModeButton = nullptr;
+    QToolButton *m_maskModeButton = nullptr, *m_channelButton = nullptr;
+    int m_channel = 0; // the channel shown: RGB, R, G, B, A
     bool m_maskEditMode = false;
 
     // Fixtures

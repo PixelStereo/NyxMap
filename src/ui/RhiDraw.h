@@ -34,6 +34,8 @@ public:
     bool hasPicture() const { return m_pictureSize.isValid(); }
     QSize pictureSize() const { return m_pictureSize; }
 
+    // The channel the picture shows: 0 its colors, 1 R, 2 G, 3 B, 4 A, each in black and white (the shader: no cost)
+    void setChannel(int channel) { m_channel = channel; }
     void begin(const QColor &background);
     // The picture on a rectangle of NDC (-1..1); over: its own alpha, blended over what is there
     void drawPicture(float left, float bottom, float right, float top, bool over = false);
@@ -65,4 +67,5 @@ private:
     std::vector<float> m_data; // x, y, u, v, r, g, b, a per vertex
     std::vector<Command> m_commands;
     QColor m_background;
+    int m_channel = 0;
 };

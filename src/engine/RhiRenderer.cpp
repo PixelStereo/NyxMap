@@ -1188,7 +1188,7 @@ struct RhiRenderer::Impl {
     {
         const bool warped = v.flipX || v.flipY || !v.warp.isIdentity();
         const bool crossed = v.probe.x() >= 0;
-        if (!warped && !v.softEdgeActive() && !crossed) return;
+        if (!warped && !v.outputTreated() && !crossed) return;
         r.group.ensure(rhi.get(), size);
         if (!r.group.ready()) return;
         if (warped && warpVertices(v, r) && fullscreen(Draw::Restore, r.group, nullptr, 0, {r.out.texture()})) {
@@ -1211,11 +1211,15 @@ struct RhiRenderer::Impl {
             }
             cb->endPass();
         }
-        if ((v.softEdgeActive() || crossed) && fullscreen(Draw::Restore, r.group, nullptr, 0, {r.out.texture()})) {
-            const float u[20] = {float(v.softWidth[0]), float(v.softWidth[1]), float(v.softWidth[2]), float(v.softWidth[3]),
+        if ((v.outputTreated() || crossed) && fullscreen(Draw::Restore, r.group, nullptr, 0, {r.out.texture()})) {
+            const bool guided = v.guideMode > 0;
+            const float u[28] = {float(v.softWidth[0]), float(v.softWidth[1]), float(v.softWidth[2]), float(v.softWidth[3]),
                                  float(v.softCurve[0]), float(v.softCurve[1]), float(v.softCurve[2]), float(v.softCurve[3]),
-                                 float(v.softGamma), 0.f, 0.f, 0.f, float(size.width()), float(size.height()), 0.f, 0.f,
-                                 crossed ? float(v.probe.x()) : -1.f, float(1.0 - v.probe.y()), 0.f, 0.f};
+                                 float(v.softGamma), guided && !v.guideRamp ? 0.f : 1.f, float(v.softBlack / 100.0), 0.f,
+                                 float(size.width()), float(size.height()), 0.f, 0.f,
+                                 crossed ? float(v.probe.x()) : -1.f, float(1.0 - v.probe.y()), 0.f, 0.f,
+                                 float(v.guideMode), v.guideOnly ? 1.f : 0.f, 0.f, 0.f,
+                                 float(v.guideColor[0]), float(v.guideColor[1]), float(v.guideColor[2]), 0.f};
             fullscreen(Draw::SoftEdge, r.out, u, sizeof u, {r.group.texture()}, QColor(0, 0, 0, 255));
         }
     }

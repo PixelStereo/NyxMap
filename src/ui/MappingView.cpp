@@ -66,6 +66,10 @@ MappingView::MappingView(Engine *engine, QWidget *parent) : QRhiWidget(parent), 
     m_fixturesButton->setObjectName(QStringLiteral("mappingFixtures"));
     m_fixturesButton->setCheckable(true);
     connect(m_fixturesButton, &QToolButton::toggled, this, &MappingView::setShowFixtures);
+    m_channelButton = m_zoomBar->addChannelButton([this](int channel) {
+        m_channel = channel;
+        update();
+    });
     connect(m_engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
     setShowFixtures(QSettings().value(QStringLiteral("view/fixtures/mapping"), false).toBool());
     connect(m_zoomBar, &ZoomBar::zoomOutClicked, this, [this] { zoomBy(1 / 1.25); });
@@ -354,7 +358,7 @@ void MappingView::zoomBy(double factor) { zoomAt(QPointF(width() / 2.0, height()
 QJsonObject MappingView::viewState() const
 {
     return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_showFixtures},
-            {"mask_edit", m_maskEditMode}};
+            {"mask_edit", m_maskEditMode}, {"channel", m_channel}};
 }
 
 void MappingView::setViewState(const QJsonObject &o)
@@ -364,6 +368,8 @@ void MappingView::setViewState(const QJsonObject &o)
     if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
     if (o.contains("fixtures")) setShowFixtures(o.value("fixtures").toBool());
     if (o.contains("mask_edit")) setMaskEditMode(o.value("mask_edit").toBool());
+    m_channel = std::clamp(o.value("channel").toInt(0), 0, 4);
+    ZoomBar::showChannel(m_channelButton, m_channel);
     updateZoomLabel();
     update();
 }
@@ -686,6 +692,7 @@ void MappingView::paintScene()
             m_pictureKey = image.cacheKey();
         }
         const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+        m_draw.setChannel(m_channel);
         m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
                            float(1 - r.top() / h * 2));
     }

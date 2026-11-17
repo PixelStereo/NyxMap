@@ -62,6 +62,7 @@ int main(int argc, char *argv[])
     QCommandLineOption shotOpt("screenshot", "Capture the main window, then quit (tests).", "capture.png");
     QCommandLineOption enduranceOpt("endurance-csv", "Write 1 Hz frame/resource metrics and deadline events to a CSV and JSONL pair.", "session.csv");
     QCommandLineOption viewportsOpt("viewports", "With --render: also save each viewport's picture, next to the output (<output>-viewport-<n>.png).");
+    QCommandLineOption guideOpt("guide", "With --render: the blend guide on every viewport (1 pattern, 2 white, 3 grey, 4 black).", "mode");
     QCommandLineOption strictOpt("strict", "With --render: a layer or effect in error fails the render (exit code 4).");
     // A show played headless: its startup sequence, for a time, a numbered picture every so often (a preview to make a
     // video of, with its soundtrack: the pictures' times are those of the show)
@@ -71,6 +72,7 @@ int main(int argc, char *argv[])
                                          "of the output's name (out/frame-####.jpg).", "s");
     cli.addOption(renderOpt);
     cli.addOption(viewportsOpt);
+    cli.addOption(guideOpt);
     cli.addOption(strictOpt);
     cli.addOption(framesOpt);
     cli.addOption(playOpt);
@@ -127,6 +129,7 @@ int main(int argc, char *argv[])
             if (!engine.startAudio(QString(), &aerr, true)) qWarning("Audio not started: %s", qPrintable(aerr));
             engine.sequencer().playStartup();
         }
+        if (cli.isSet(guideOpt)) engine.setBlendGuide(0, cli.value(guideOpt).toInt(), false, true);
         const int frames = qMax(1, cli.value(framesOpt).toInt());
         const double seconds = cli.value(secondsOpt).toDouble(), every = cli.value(everyOpt).toDouble();
         const QString pattern = cli.value(renderOpt);

@@ -64,6 +64,10 @@ public:
             update();
         });
         connect(engine, &Engine::fixturesChanged, this, qOverload<>(&QWidget::update));
+        m_channelButton = m_bar->addChannelButton([this](int channel) {
+            m_channel = channel;
+            update();
+        });
     }
     // The source shown (0: the composition): fixtures are drawn over the composition and the viewports only
     void setSource(quint64 id)
@@ -106,7 +110,7 @@ public:
     }
     QJsonObject viewState() const
     {
-        return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_fixturesButton->isChecked()}};
+        return {{"zoom", m_zoom}, {"pan", QJsonArray{m_pan.x(), m_pan.y()}}, {"fixtures", m_fixturesButton->isChecked()}, {"channel", m_channel}};
     }
     void setViewState(const QJsonObject &o)
     {
@@ -114,6 +118,8 @@ public:
         const QJsonArray pan = o.value("pan").toArray();
         if (pan.size() == 2) m_pan = QPointF(pan[0].toDouble(), pan[1].toDouble());
         if (o.contains("fixtures")) m_fixturesButton->setChecked(o.value("fixtures").toBool());
+        m_channel = std::clamp(o.value("channel").toInt(0), 0, 4);
+        ZoomBar::showChannel(m_channelButton, m_channel);
         m_bar->setZoom(m_zoom);
         update();
     }
@@ -139,6 +145,7 @@ protected:
             m_picture = image.size();
             const QRectF r = viewRect();
             const float w = float(std::max(1, width())), h = float(std::max(1, height()));
+            m_draw.setChannel(m_channel);
             m_draw.drawPicture(float(r.left() / w * 2 - 1), float(1 - r.bottom() / h * 2), float(r.right() / w * 2 - 1),
                                float(1 - r.top() / h * 2));
         }
@@ -529,7 +536,8 @@ private:
     Engine *m_engine;
     int m_slot;
     quint64 m_source = 0;
-    QToolButton *m_fixturesButton = nullptr;
+    QToolButton *m_fixturesButton = nullptr, *m_channelButton = nullptr;
+    int m_channel = 0; // RGB, R, G, B, A
     RhiDraw m_draw;
     qint64 m_pictureKey = 0;
     PaintOverlay *m_overlay = nullptr;
@@ -575,6 +583,20 @@ PreviewWorkspace::PreviewWorkspace(Engine *engine, MappingView *mapping, QWidget
         for (Cell &c : m_cells) c.picture->setCross(on);
     });
     controls->addWidget(cross);
+    // The blend guide on every viewport's output: a pattern that shows each overlap, to line the projectors up
+    auto *guide = new QToolButton;
+    guide->setObjectName(QStringLiteral("previewGuide"));
+    guide->setText(QStringLiteral("▦ Guide"));
+    guide->setCheckable(true);
+    guide->setToolTip(QStringLiteral("Blend guide on every viewport's output: the overlap of each soft edge in the viewport's color, a grid, the ends "
+                                     "of the ramps. For one viewport, or a white / grey / black field: Soft Edge in its Spatial tab. "
+                                     "It shows on the real outputs: switch it off for the show."));
+    guide->setStyleSheet(cross->styleSheet());
+    connect(guide, &QToolButton::toggled, this, [this](bool on) {
+        m_engine->setBlendGuide(0, on ? 1 : 0, false, true);
+        emit softEdgeEdited(); // the inspectors show it
+    });
+    controls->addWidget(guide);
     controls->addStretch();
     layout->addLayout(controls);
     m_fpsTimer = new QTimer(this);

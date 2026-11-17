@@ -218,6 +218,7 @@ public:
     // publishing. Placed in the composition by their Spatial (mapping bounds); never inside a group.
     int addViewport(const QString &name = {}, QSize size = {}); // index of the new viewport
     bool isViewport(int i) const;
+    void setBlendGuide(quint64 viewport, int mode, bool onlyOverlap, bool withRamp); // the guide on a viewport's output (0: all of them); mode 0 off
     void setViewportProbe(quint64 viewport, QPointF at); // a cross on its output at `at` (normalized, origin top left; negative: none)
     QList<int> viewports() const;          // indices, in list order (they come first)
     quint64 mainViewportId() const;        // the first one

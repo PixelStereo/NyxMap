@@ -65,6 +65,7 @@ public:
     void rebuild();
     void refreshAfterRecall();
     void refreshDynamic(); // playback position (called periodically)
+    void hidePicker();     // no menu of layers: another list picks what it shows (the Viewports tab)
     void refreshMasks();   // the masks changed elsewhere (the preview, undo)
     void refreshSpatial(); // position / scale fields follow the mapping (handles dragged in the preview)
     void selectMask(int index); // a mask picked or drawn in the preview
@@ -90,6 +91,7 @@ private:
     void buildPicker();   // the menu at the top (made once)
     void refreshPicker(); // its items follow the layers (added, renamed, moved), its current one the layer shown
     QString m_pickerKey;
+    QWidget *m_pickerRow = nullptr;
     QPointer<QComboBox> m_picker;
     QPointer<QToolButton> m_pickerPrev, m_pickerNext;
     QString layoutKey() const;
@@ -233,6 +235,9 @@ private:
     QString m_revealAnim;   // the card to show once rebuilt
     QPointer<QDoubleSpinBox> m_posX, m_posY, m_scaleX, m_scaleY, m_rotation, m_pivotX, m_pivotY;
     QPointer<QDoubleSpinBox> m_softWidth[4], m_softCurve[4], m_softGamma; // a viewport's soft edge (left, right, top, bottom)
+    QPointer<class QComboBox> m_guideMode;
+    QPointer<class QCheckBox> m_guideOnly, m_guideRamp;
+    QPointer<QDoubleSpinBox> m_softBlack;
     QPointer<QToolButton> m_flipX, m_flipY;                              // and its flip / flop
     bool m_scaleLinked = true;
     bool m_sizePx = false; // a viewport: width and height in composition pixels (a layer: scale in %)
