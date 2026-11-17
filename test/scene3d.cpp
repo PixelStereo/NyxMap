@@ -191,6 +191,7 @@ int runScene3dTests(Engine &engine)
         return engine.grabOutput().pixelColor(32, 32);
     };
     const QColor lit = center();
+    std::printf("      first picture: centre %s on %s, lite %d\n", qPrintable(lit.name()), qPrintable(engine.gpuRenderer()), int(Scene3D::lite(engine.gpuRenderer())));
     // The output is over black: the scene's transparent background shows it
     check(lit.lightness() > 40, "the cube is drawn in the middle, lit");
     engine.renderFrame();
