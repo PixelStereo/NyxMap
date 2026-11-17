@@ -544,6 +544,7 @@ QRhiTexture *RhiScene::drawView(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *
         QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(d->view, c.kind, c.srb) : nullptr;
         if (!ps) continue;
         cb->setGraphicsPipeline(ps);
+        cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
         cb->setShaderResources(c.srb);
         const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
         cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
@@ -920,6 +921,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             QRhiGraphicsPipeline *ps = c.srb ? d->shadowPipeline(maps, c.kind, c.srb) : nullptr;
             if (!ps) continue;
             cb->setGraphicsPipeline(ps);
+            cb->setViewport({0, 0, float(draw.size.width()), float(draw.size.height())}); // after the pipeline: Vulkan then sets the scissor to it
             cb->setShaderResources(c.srb);
             const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
             cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
@@ -936,6 +938,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
             QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(d->seen, c.kind, c.srb) : nullptr;
             if (!ps) continue;
             cb->setGraphicsPipeline(ps);
+            cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
             cb->setShaderResources(c.srb);
             const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
             cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
@@ -1029,6 +1032,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         }
         if (bg && bgSrb) {
             cb->setGraphicsPipeline(bg.get());
+            cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
             cb->setShaderResources(bgSrb);
             cb->draw(3);
         }
@@ -1052,6 +1056,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         }
         if (sky && skySrb) {
             cb->setGraphicsPipeline(sky.get());
+            cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
             cb->setShaderResources(skySrb);
             cb->draw(3);
         }
@@ -1060,6 +1065,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
         QRhiGraphicsPipeline *ps = c.srb ? d->pipeline(main, c.kind, c.srb) : nullptr;
         if (!ps) continue;
         cb->setGraphicsPipeline(ps);
+        cb->setViewport({0, 0, float(w), float(h)}); // after the pipeline: Vulkan then sets the scissor to it
         cb->setShaderResources(c.srb);
         const QRhiCommandBuffer::VertexInput input(c.vertices, 0);
         cb->setVertexInput(0, 1, &input, c.indices, 0, QRhiCommandBuffer::IndexUInt32);
