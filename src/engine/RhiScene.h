@@ -40,6 +40,11 @@ public:
     int triangles() const { return m_triangles; }
 
 private:
+    // draw() keeps the last picture while nothing it shows changes (as the OpenGL scene did): the frames that follow cost
+    // nothing, after a few that let the reflections settle. A layer's picture on a model can change at any frame
+    QRhiTexture *drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, const SceneSettings &s, const std::vector<Scene3D::Item> &items,
+                         const std::vector<Scene3D::Lamp> &lamps, int w, int h, const Scene3DQuality &quality, QRhiTexture *environment,
+                         bool environmentLinear);
     std::vector<Scene3D::Item> withMaterials(QRhiResourceUpdateBatch *u, const std::vector<Scene3D::Item> &items);
     struct Impl;
     std::unique_ptr<Impl> d;
