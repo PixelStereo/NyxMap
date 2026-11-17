@@ -374,7 +374,7 @@ def package(build, ffmpeg, omt, ndi, output):
         "AppImage: chmod +x NyxMap-linux-x86_64*.AppImage, then run it.\n"
         "If FUSE is unavailable: ./NyxMap-linux-x86_64*.AppImage --appimage-extract-and-run\n"
         "Qt, FFmpeg, audio/camera plugins, NDI and OMT are included. The host provides glibc, a desktop session "
-        "and OpenGL 3.3 graphics drivers. Optional Blackmagic hardware needs Desktop Video.\n"
+        "and Vulkan 1.1 graphics drivers. Optional Blackmagic hardware needs Desktop Video.\n"
         "OMT discovery needs a running Avahi service; the application reports its absence.\n"
         "Licences and dependency/source versions: usr/bin/THIRD-PARTY-NOTICES.md, THIRD-PARTY-LINUX.md, "
         "DEPENDENCIES.txt and licenses/.\n")

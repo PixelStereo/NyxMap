@@ -6,7 +6,6 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QSurfaceFormat>
 #include <QUndoStack>
 #include <cmath>
 #include <cstdio>
@@ -14,11 +13,9 @@
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
+
     QApplication app(argc, argv);
     app.setApplicationName("NyxMapLineUITest");
     Engine engine;

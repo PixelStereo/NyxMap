@@ -713,7 +713,7 @@ struct RhiRenderer::Impl {
         r.final = tex; // none: a mask or a matte that could not be drawn never lets the picture through
     }
 
-    // A Text layer's picture: redrawn only when what is shown changes (typed characters, edits, style), as OpenGL does
+    // A Text layer's picture: redrawn only when what is shown changes (typed characters, edits, style), as before
     QRhiTexture *textPicture(Layer &l, RLayer &r)
     {
         // A Timecode generator: its clock; a Countdown, Stopwatch or Clock: its time (an overtime in a color of its own)

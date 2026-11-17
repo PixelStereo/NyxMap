@@ -11,7 +11,7 @@ RUN --mount=type=secret,id=ubuntu-ca,required=true,mode=0444 \
         /etc/apt/sources.list.d/ubuntu.sources \
     && { attempt=1; until apt-get -o APT::Update::Error-Mode=any update \
       && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3 xvfb xauth libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libglx-mesa0 libegl1 libegl-mesa0 libgles2 libopengl0 \
+    python3 xvfb xauth mesa-vulkan-drivers libvulkan1 libglx-mesa0 libegl1 libegl-mesa0 libgles2 libopengl0 \
       ; do \
         if [ "$attempt" -ge 3 ]; then exit 100; fi; \
         echo "APT failed; refreshing package indexes (attempt $((attempt + 1))/3)" >&2; \
@@ -20,6 +20,5 @@ RUN --mount=type=secret,id=ubuntu-ca,required=true,mode=0444 \
     && rm -rf /var/lib/apt/lists/* && rm /etc/apt/apt.conf.d/80nyxmap-ci-build
 RUN useradd --create-home nyxmap
 USER nyxmap
-ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV PYTHONUNBUFFERED=1
 WORKDIR /tmp

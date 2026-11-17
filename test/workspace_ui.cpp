@@ -53,7 +53,6 @@
 #include <QSplitter>
 #include <QScrollBar>
 #include <QStackedWidget>
-#include <QSurfaceFormat>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <algorithm>
@@ -277,9 +276,8 @@ static void systemIsfVisibilityTests(Engine &engine, const std::function<void(bo
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format; format.setVersion(3, 3); format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
     QApplication app(argc, argv);
     QTemporaryDir settings;
     QSettings::setDefaultFormat(QSettings::IniFormat);

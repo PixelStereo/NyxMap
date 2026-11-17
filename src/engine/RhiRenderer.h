@@ -1,6 +1,6 @@
 #pragma once
 // The engine's frame through QRhi (render thread, under the engine's lock): the port of Render.cpp's renderPass,
-// renderLayer, processLayer, compositeLayers, renderViewport and composite. It reads the same layers as the OpenGL
+// renderLayer, processLayer, compositeLayers, renderViewport and composite. It reads the layers of the engine
 // renderer and keeps its own GPU state per layer (pictures, effect instances, meshes).
 //
 // Ported: video (RhiVideoTexture), image and ISF generator sources, a source's color space, ROI (rectangle,
@@ -55,9 +55,9 @@ public:
     void hdrArrived(quint64 layer, const std::vector<float> &pixels, QSize size);
     // The frame: every layer's picture, the viewports' and the composition's (render thread, under the lock)
     void render(const IsfRenderContext &rc);
-    // The interface's previews while it still shows them through OpenGL: reduced copies of pictures, read back during the
+    // The interface's previews: reduced copies of pictures, read back during the
     // frame (render thread). Set before render(); taken after it. `slot`: the engine's preview slot; `id`: a layer, a
-    // viewport, or 0 for the composition. Pixels: RGBA8, the picture's bottom row first (as an OpenGL texture holds them)
+    // viewport, or 0 for the composition. Pixels: RGBA8, the picture's bottom row first (the origin of the pictures)
     struct PreviewRequest {
         int slot = 0;
         quint64 id = 0;

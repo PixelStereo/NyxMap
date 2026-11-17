@@ -32,10 +32,8 @@ QSurface::SurfaceType surfaceType()
     return QSurface::MetalSurface;
 #elif defined(Q_OS_WIN)
     return QSurface::Direct3DSurface;
-#elif defined(NYXMAP_RHI_VULKAN)
-    return vulkanInstance() ? QSurface::VulkanSurface : QSurface::OpenGLSurface;
 #else
-    return QSurface::OpenGLSurface;
+    return QSurface::VulkanSurface; // Linux: the engine's shaders are SPIR-V, MSL and HLSL, there is no other API
 #endif
 }
 

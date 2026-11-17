@@ -1487,7 +1487,7 @@ std::shared_ptr<Engine::Garbage> Engine::detachSource(Layer &l)
     return g;
 }
 
-// Releases a detached source: decode thread stopped here, GL resources in the render thread.
+// Releases a detached source: decode thread stopped here, GPU resources in the render thread.
 void Engine::releaseGarbage(const std::shared_ptr<Garbage> &g)
 {
     if (g->video) g->video->close();
@@ -2873,7 +2873,7 @@ bool Engine::setIsfImageInput(IsfInstance *inst, int input, const QString &path,
     if (!inst) return false;
     bool ok = false;
     QString e;
-    // The GL task takes the lock itself: the instance stays alive and its inputs are not walked meanwhile, and no
+    // The render thread's task takes the lock itself: the instance stays alive and its inputs are not walked meanwhile, and no
     // thread waits for the render thread while holding the lock (the render thread takes it outside its tasks too)
     runGl([&] {
         Lock lk(&m_mutex);
@@ -2935,7 +2935,7 @@ bool Engine::reloadIsf(IsfInstance *inst)
 {
     if (!inst) return false;
     bool ok = false;
-    // As setIsfImageInput: the GL task holds the lock, so the instance stays alive and its inputs (swapped by the
+    // As setIsfImageInput: the render thread's task holds the lock, so the instance stays alive and its inputs (swapped by the
     // reload) are not walked by a parameter meanwhile
     runGl([&] {
         Lock lk(&m_mutex);
@@ -2960,7 +2960,7 @@ int Engine::reloadIsfFile(const QString &path, QString *error)
     const QString absolute = QFileInfo(path).absoluteFilePath();
     int reloaded = 0;
     QStringList errors;
-    // The GL task holds the lock (instances kept alive); nothing waits for the render thread while holding it
+    // The render thread's task holds the lock (instances kept alive); nothing waits for the render thread while holding it
     runGl([&] {
         Lock lock(&m_mutex);
         for (auto &layer : m_layers) {

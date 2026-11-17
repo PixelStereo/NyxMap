@@ -126,8 +126,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev \
-            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev qt6-webengine-dev \
+            mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev libasound2-plugins ffmpeg xvfb clang zlib1g-dev libavahi-client3 libpulse0 libssl3t64 \
             nasm libdav1d-dev libva-dev libdrm-dev libssl-dev libsrt-openssl-dev qt6-wayland qt6-image-formats-plugins python3-pil \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good fonts-dejavu-core ccache
@@ -284,8 +284,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
+            mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -328,8 +328,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+          sudo apt-get install -y cmake pkg-config qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
+            mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev libasound2-dev xvfb valgrind ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -379,8 +379,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev \
+          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev \
             libswresample-dev libavutil-dev libasound2-dev xvfb ccache
       - name: Compiler cache
         uses: ./.github/actions/ccache
@@ -448,8 +448,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev libqt6opengl6-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
-            libgl1-mesa-dev libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
+          sudo apt-get install -y build-essential cmake pkg-config qt6-base-dev qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev \
+            mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
             libasound2-dev xvfb openbox xdotool imagemagick x11-apps x11-utils python3
       - name: Build
         timeout-minutes: 15
@@ -494,8 +494,8 @@ jobs:
         run: |
           bash .github/scripts/configure_linux_apt.sh
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev libqt6opengl6-dev \
-            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev libgl1-mesa-dev mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
+          sudo apt-get install -y cmake pkg-config clang libclang-rt-dev qt6-base-dev \
+            qt6-multimedia-dev qt6-shadertools-dev qt6-base-private-dev qt6-svg-dev mesa-vulkan-drivers libvulkan1 libavformat-dev libavcodec-dev libswscale-dev libswresample-dev \
             libavutil-dev ffmpeg
       - name: Build
         run: |
@@ -796,8 +796,6 @@ jobs:
         with:
           name: test-media
           path: test/media
-      # No GPU on the runner: Mesa's software OpenGL (llvmpipe, OpenGL 4.5)
-      - uses: ssciwr/setup-mesa-dist-win@v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -976,8 +974,8 @@ jobs:
           $clean = Join-Path $env:RUNNER_TEMP "clean"
           Expand-Archive (Get-ChildItem NyxMap-windows*.zip | Select-Object -First 1).FullName -DestinationPath $clean -Force
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
-          # OpenGL comes from Mesa installed on the runner; without it the program still has to start (exit code 1)
-          python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke" --allow-no-gl
+          # No GPU on the runner: Direct3D 11 runs on WARP, Windows' software device
+          python scripts/smoke_package.py "$clean\$appName.exe" "$clean\isf" "$PWD\test\media" "$env:RUNNER_TEMP\smoke"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: needs.scope.outputs.package == 'true'

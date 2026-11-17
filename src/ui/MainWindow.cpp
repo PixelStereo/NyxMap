@@ -901,7 +901,7 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     m_mouseTimer.start();
     m_settings->startAudio(); // sound card saved in the settings (system default otherwise)
     if (!m_engine->isThreaded()) {
-        // Platform without OpenGL rendering on a separate thread: rendering is clocked by the UI.
+        // Platform without rendering on a separate thread: rendering is clocked by the UI.
         m_renderTimer.setTimerType(Qt::PreciseTimer);
         m_renderTimer.setInterval(16);
         // A zero-interval timer renders whenever the event loop is ready.

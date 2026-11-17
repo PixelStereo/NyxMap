@@ -1,7 +1,6 @@
 #include "Publishing.h"
 #include <QGuiApplication>
 #include <QOffscreenSurface>
-#include <QOpenGLContext>
 #include <atomic>
 #include <cstdio>
 #include <thread>

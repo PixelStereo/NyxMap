@@ -36,7 +36,7 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
       IMPORTED_LOCATION "${NYXMAP_TOUCHENGINE_FRAMEWORK}/TouchEngine"
       FRAMEWORK TRUE
       INTERFACE_INCLUDE_DIRECTORIES "${nyxmap_touchengine_SOURCE_DIR}")
-    # Through QRhi's Metal device (no OpenGL): ToxMetal
+    # Through QRhi's Metal device: ToxMetal
     target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm)
     set_source_files_properties(${CMAKE_SOURCE_DIR}/src/engine/ToxMetal.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
   else()
@@ -46,7 +46,7 @@ if(NYXMAP_ACCEPT_TOUCHENGINE_LICENSE AND (APPLE OR WIN32))
       IMPORTED_LOCATION "${NYXMAP_TOUCHENGINE_DLL}"
       INTERFACE_INCLUDE_DIRECTORIES "${nyxmap_touchengine_SOURCE_DIR}/include")
     target_link_libraries(nyxmap_engine PRIVATE d3d11 dxgi)
-    # Through QRhi's Direct3D 11 device (no OpenGL): ToxD3D11
+    # Through QRhi's Direct3D 11 device: ToxD3D11
     target_sources(nyxmap_engine PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/ToxD3D11.cpp)
     # Also used by the tests; multi-config executables are in their configuration directory.
     file(COPY "${NYXMAP_TOUCHENGINE_DLL}" DESTINATION "${CMAKE_BINARY_DIR}")

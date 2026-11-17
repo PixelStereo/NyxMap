@@ -193,7 +193,7 @@ public:
 
     // QRhi prototype (docs/developers/qrhi-prototype.md): the shader as Vulkan-flavoured GLSL 440, what
     // QShaderBaker bakes into SPIR-V, Metal and HLSL. Its values in one std140 block (binding 0), each image at its
-    // own binding, the varyings at explicit locations (matched by name between the stages). No GL. error: why it
+    // own binding, the varyings at explicit locations (matched by name between the stages). error: why it
     // could not be read.
     struct RhiSources {
         QString vertex, fragment, error;
@@ -215,7 +215,7 @@ public:
     // Whether the shaders of those sources compile (baked for every backend, kept by their text); err: why not
     static bool checkShaders(const RhiSources &src, QString *err);
 
-    // The QRhi renderer (IsfRhi.cpp), on the same state as the OpenGL one (inputs, time, passes). loadRhi: read and baked for `rhi`, no GL needed (false: error()). renderRhi: as render()
+    // The QRhi renderer (IsfRhi.cpp), on the state of the instance (inputs, time, passes). loadRhi: read and baked for `rhi`, no device needed (false: error()). renderRhi: as render()
     // does, into `out` (made outSize; RGBA16F when it already is, else RGBA8), recorded in `cb` outside any pass;
     // `input` the filter's picture (nullptr: none). Render thread of `rhi`.
     bool loadRhi(const QString &path, QRhi *rhi);
@@ -224,7 +224,7 @@ public:
     void releaseRhi();
     bool isValidRhi() const;
 
-    // Lightweight header parsing (for the library, no GL).
+    // Lightweight header parsing (for the library).
     struct Header {
         QString name, description;
         QStringList categories;

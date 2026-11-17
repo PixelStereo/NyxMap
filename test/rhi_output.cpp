@@ -11,7 +11,6 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <QWindow>
 
@@ -21,10 +20,8 @@
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
+
+
     QGuiApplication app(argc, argv);
     QString dump;
     const QStringList args = app.arguments().mid(1);
@@ -37,14 +34,14 @@ int main(int argc, char **argv)
     {
         const std::unique_ptr<QRhi> probe = rhidevice::create();
         if (probe && rhidevice::isVirtualDevice(probe.get())) {
-            std::printf("SKIP: %s is a virtual GPU, its pictures are not OpenGL's to the pixel\n", probe->driverInfo().deviceName.constData());
+            std::printf("SKIP: %s is a virtual GPU, its pictures are not the real GPU's to the pixel\n", probe->driverInfo().deviceName.constData());
             return 77;
         }
     }
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));
+        std::printf("SKIP: no graphics device: %s\n", qPrintable(err));
         return 77;
     }
     e.newProject();
@@ -68,10 +65,6 @@ int main(int argc, char **argv)
 
     QWindow window;
     window.setSurfaceType(e.outputSurfaceType());
-    if (window.surfaceType() == QSurface::OpenGLSurface) {
-        std::printf("SKIP: no native surface type for the QRhi backend\n");
-        return 77;
-    }
     window.resize(320, 180);
     window.create();
     e.setViewportWindow(viewport, &window);

@@ -631,7 +631,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     sb.reflect[1] = d->lastValid && reflections > 0 ? 1 : 0;
     sb.range[0] = cam.nearPlane, sb.range[1] = cam.farPlane, sb.range[2] = s.exposure, sb.range[3] = s.glowThreshold;
     {
-        const QMatrix4x4 viewProj = cam.proj * cam.view; // OpenGL's: the shader works in its clip space
+        const QMatrix4x4 viewProj = cam.proj * cam.view; // the shader works in OpenGL's clip space (depth -1..1)
         std::memcpy(sb.viewProj, viewProj.constData(), sizeof sb.viewProj);
     }
     // The environment: a copy in half floats, then its levels (the rougher a surface, the blurrier its reflection). An HDR
@@ -673,7 +673,7 @@ QRhiTexture *RhiScene::draw(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u, c
     sb.envInfo[2] = std::log2(float(kEnvW));
     sb.envInfo[3] = environmentLinear ? 1.0f : 0.0f;
     struct SpotShadow {
-        QMatrix4x4 matrix; // the light's view and projection (OpenGL's clip space)
+        QMatrix4x4 matrix; // the light's view and projection (clip space -1..1 in depth)
         QVector3D planes;
         float radius, bias;
     };

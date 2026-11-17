@@ -10,7 +10,6 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QSurfaceFormat>
 #include <QTcpSocket>
 #include <QTcpServer>
 #include <QTimer>
@@ -129,10 +128,8 @@ struct Client {
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(format);
+
+
     QGuiApplication app(argc, argv);
     try {
         // A valid HTTP response may arrive in several packets, including a

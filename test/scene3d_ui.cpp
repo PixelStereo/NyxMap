@@ -1006,7 +1006,7 @@ int runScene3dUiTests(Engine &engine)
             pump();
             const QImage after = preview ? preview->grab().toImage() : QImage();
             check(engine.materials().at(id)->metal > .89f && engine.materials().at(id)->color[1] == 0, "material controls edit shared resource");
-            // The engine's shaders are baked without GLSL: a window left on OpenGL (a CI without Vulkan) cannot draw them
+            // The engine's shaders are baked without GLSL: a widget left on QRhi's OpenGL backend (a Linux without Vulkan) cannot draw them
             const std::unique_ptr<QRhi> probe = rhidevice::create();
             const bool drawable = preview && preview->api() != QRhiWidget::Api::OpenGL && probe && !rhidevice::isVirtualDevice(probe.get());
             if (drawable)

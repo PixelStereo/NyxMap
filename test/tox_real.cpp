@@ -9,16 +9,13 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <cstdio>
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
+
+
     QGuiApplication app(argc, argv);
     const QString path = qEnvironmentVariable("NYXMAP_TOX");
     if (path.isEmpty() || !touchEngineCompiledIn()) {
@@ -28,7 +25,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("SKIP: no OpenGL: %s\n", qPrintable(err));
+        std::printf("SKIP: no graphics device: %s\n", qPrintable(err));
         return 77;
     }
     e.newProject();

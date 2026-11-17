@@ -7,7 +7,6 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QSet>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cstdio>
 
@@ -67,11 +66,9 @@ static void modelTests()
 int main(int argc, char **argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+
+
     QGuiApplication app(argc, argv);
 
     modelTests();
@@ -79,7 +76,7 @@ int main(int argc, char **argv)
     Engine e;
     QString err;
     if (!e.initialize(&err)) {
-        std::printf("FAIL OpenGL: %s\n", qPrintable(err));
+        std::printf("FAIL renderer: %s\n", qPrintable(err));
         return 1;
     }
     e.newProject();

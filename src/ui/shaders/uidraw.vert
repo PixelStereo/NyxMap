@@ -1,5 +1,5 @@
 #version 440
-layout(location = 0) in vec2 position; // NDC, y up (clip space as OpenGL's; the matrix corrects it for the backend)
+layout(location = 0) in vec2 position; // NDC, y up (the matrix corrects it for the backend)
 layout(location = 1) in vec2 uv;
 layout(location = 2) in vec4 color;
 layout(location = 0) out vec2 v_uv;

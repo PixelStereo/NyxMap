@@ -225,7 +225,7 @@ void Mapping::buildVertices(int n, std::vector<float> &out) const
             out[k++] = float(p.x() * 2.0 - 1.0);
             out[k++] = float(1.0 - p.y() * 2.0);
             out[k++] = float(u);
-            out[k++] = float(1.0 - v); // textures in OpenGL convention
+            out[k++] = float(1.0 - v); // texture convention: the bottom first
         }
     }
 }

@@ -14,7 +14,6 @@
 #include <QIcon>
 #include <QCommandLineParser>
 #include <QMessageBox>
-#include <QSurfaceFormat>
 #include <QThread>
 #include <QTimer>
 #include <atomic>
@@ -40,17 +39,6 @@ static void consoleMessageHandler(QtMsgType type, const QMessageLogContext &cont
 
 int main(int argc, char *argv[])
 {
-    // OpenGL 3.3 core everywhere (macOS then provides 4.1 core). Contexts shared between engine and windows.
-    QSurfaceFormat fmt;
-    fmt.setRenderableType(QSurfaceFormat::OpenGL);
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    fmt.setDepthBufferSize(0);
-    fmt.setStencilBufferSize(8);
-    fmt.setSwapInterval(1);
-    QSurfaceFormat::setDefaultFormat(fmt);
-    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-
     QApplication app(argc, argv);
     s_previousMessageHandler = qInstallMessageHandler(consoleMessageHandler);
     ignoreWheelOnFields(&app); // the trackpad scrolls the panels, it never changes a value
@@ -92,7 +80,7 @@ int main(int argc, char *argv[])
                                                   "were found, then quit (exit code 5 if one does not load).");
     cli.addOption(libsOpt);
     cli.addPositionalArgument("project", ".nyxmap project to open");
-    // --render exit codes: 0 rendered, 1 OpenGL unavailable, 2 output not written, 3 project not loaded,
+    // --render exit codes: 0 rendered, 1 no graphics device (Metal, Direct3D 11 or Vulkan), 2 output not written, 3 project not loaded,
     // 4 a layer or an effect in error (--strict)
     cli.process(app);
     const QString project = cli.positionalArguments().value(0);
@@ -115,7 +103,7 @@ int main(int argc, char *argv[])
             qCritical("%s", qPrintable(err));
             return 1;
         }
-        QMessageBox::critical(nullptr, "NyxMap", QStringLiteral("Could not initialize OpenGL:\n") + err);
+        QMessageBox::critical(nullptr, "NyxMap", QStringLiteral("Could not initialize the renderer:\n") + err);
         return 1;
     }
 

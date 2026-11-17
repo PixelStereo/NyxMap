@@ -24,19 +24,6 @@
 #include <cmath>
 #include <cstring>
 
-#ifndef GL_BGRA
-#define GL_BGRA 0x80E1
-#endif
-#ifndef GL_PIXEL_PACK_BUFFER
-#define GL_PIXEL_PACK_BUFFER 0x88EB
-#endif
-#ifndef GL_STREAM_READ
-#define GL_STREAM_READ 0x88E1
-#endif
-#ifndef GL_MAP_READ_BIT
-#define GL_MAP_READ_BIT 0x0001
-#endif
-
 // The Text generator's picture: the text shown now (typed so far, during a typewriter), wrapped to the layer's
 // width, with its alignment (left, center, right, justified; top, middle, bottom), line spacing and letter spacing.
 // Filled with `fill` (the text's color, or a countdown's overtime color). Flipped like the images (the sources are
@@ -807,7 +794,7 @@ double Engine::nextDt()
 void Engine::frame(double dt)
 {
     const uint64_t lockRequested = RealtimeTiming::nowNs();
-    // In threaded mode, keep serving OpenGL tasks while the UI holds the lock:
+    // In threaded mode, keep serving the render thread's tasks while the UI holds the lock:
     // it may wait on a task while holding it, without deadlock.
     if (m_threaded) {
         while (!m_mutex.tryLock(2)) {

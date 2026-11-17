@@ -2,7 +2,7 @@
 // Pixel mapping: light fixtures placed on the composition, their pixels sampled at every frame and sent as DMX
 // (Art-Net, sACN: Dmx.h). This file holds the model only — the types of fixture (their channels and their grid of
 // pixels), the fixtures placed and patched, the DMX outputs — and the two pure steps between a picture and DMX:
-// where each pixel is sampled, and the universes the sampled colours make. No OpenGL, no network.
+// where each pixel is sampled, and the universes the sampled colours make. No GPU, no network.
 //
 // Coordinates: normalized composition, origin top left (as the mapping). Universes are the protocol's own numbers
 // (Art-Net: the 15-bit port address, from 0; sACN: 1..63999). Addresses: 1..512.

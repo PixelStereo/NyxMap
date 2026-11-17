@@ -1,4 +1,4 @@
-// What the interface's pictures cost a frame (the OpenGL renderer; NYXMAP_RENDERER=rhi for QRhi): a 4K composition, the
+// What the interface's pictures cost a frame (QRhi): a 4K composition, the
 // four preview cells and the mapping view's picture asked for or not. Prints the mean time of a frame.
 #include "Engine.h"
 #include "Layer.h"
@@ -6,16 +6,13 @@
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
-#include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <cstdio>
 
 int main(int argc, char **argv)
 {
-    QSurfaceFormat fmt;
-    fmt.setVersion(3, 3);
-    fmt.setProfile(QSurfaceFormat::CoreProfile);
-    QSurfaceFormat::setDefaultFormat(fmt);
+
+
     QGuiApplication app(argc, argv);
     Engine e;
     QString err;

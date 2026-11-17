@@ -37,7 +37,7 @@ struct Runtime {
     Runtime()
     {
         // Do not export symbols: Debian libfaust embeds LLVM, which otherwise
-        // interposes on Mesa's separate LLVM and can hang shader compilation.
+        // interposes on a separate LLVM (Mesa's lavapipe) and can hang shader compilation.
         library.setLoadHints(QLibrary::ResolveAllSymbolsHint | QLibrary::PreventUnloadHint | QLibrary::DeepBindHint);
         for (const QString &path : {QCoreApplication::applicationDirPath() + "/faust",
                                     QStringLiteral(NYXMAP_FAUST_LIBRARY_FILE), QStringLiteral("faust")}) {
