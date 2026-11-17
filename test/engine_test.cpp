@@ -4695,15 +4695,19 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             // What each window was given, read back from its swapchain
             e.setCapturePresentedForTests(true);
             const auto before1 = e.windowFrames(vp1), before2 = e.windowFrames(vp2);
-            for (int k = 0; k < 4; ++k) {
+            QColor c1, c2;
+            int frames = 0;
+            const auto centre = [](const QImage &p) { return p.isNull() ? QColor() : p.pixelColor(p.width() / 2, p.height() / 2); };
+            // A swapchain's first frames can show what it was cleared with: up to 30 frames, until both show their part
+            do {
                 e.renderFrame();
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            }
-            const QImage p1 = e.presentedForTests(vp1), p2 = e.presentedForTests(vp2);
+                c1 = centre(e.presentedForTests(vp1));
+                c2 = centre(e.presentedForTests(vp2));
+            } while (++frames < 30 && !(c1.isValid() && c1.red() > 200 && c2.isValid() && c2.blue() > 200));
             e.setCapturePresentedForTests(false);
+            std::printf("      presented after %d frames: %s / %s\n", frames, qPrintable(c1.name()), qPrintable(c2.name()));
             CHECK(e.windowFrames(vp1) > before1 && e.windowFrames(vp2) > before2);
-            const QColor c1 = p1.isNull() ? QColor() : p1.pixelColor(p1.width() / 2, p1.height() / 2);
-            const QColor c2 = p2.isNull() ? QColor() : p2.pixelColor(p2.width() / 2, p2.height() / 2);
             CHECK(c1.isValid() && c1.red() > 200 && c1.blue() < 50);
             CHECK(c2.isValid() && c2.blue() > 200 && c2.red() < 50);
             e.setViewportWindow(vp1, nullptr);
@@ -6058,6 +6062,7 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
             e.setDefaultPlayMode(PlayMode::Loop);
             e.removeLayer(s1);
         }
+        std::printf("      frame timing: %s\n", QJsonDocument(e.frameTiming().json()).toJson(QJsonDocument::Compact).constData());
         e.setLayerMuted(v, false);
 
         e.removeLayer(e.layerCount() > v ? v : 0);
