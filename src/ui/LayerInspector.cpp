@@ -650,6 +650,16 @@ void LayerInspector::editMapping(const QString &text, const std::function<void(M
     emit mappingChanged();
 }
 
+void LayerInspector::editWarp(const QString &text, const std::function<void(Mapping &)> &fn)
+{
+    if (m_engine->isLocked(m_layer)) return;
+    const Mapping before = cmd::SetMapping::read(m_engine, m_layer, true);
+    Mapping after = before;
+    fn(after);
+    m_undo->push(new cmd::SetMapping(m_engine, m_layer, before, after, text, false, true));
+    emit mappingChanged();
+}
+
 void LayerInspector::editEffects(const QString &text, const std::function<void()> &op)
 {
     if (m_engine->isLocked(m_layer)) {
@@ -3925,6 +3935,150 @@ QWidget *LayerInspector::buildMapping(const LayerValues &s)
             editMapping(QStringLiteral("Whole Composition"), [](Mapping &m) { m.resetCorners(); });
             refreshSpatial();
         });
+
+        // What the projector shows: flipped across (flip) or upside down (flop)
+        auto *flips = new QHBoxLayout;
+        flips->addWidget(new QLabel(QStringLiteral("Output")));
+        auto flipButton = [&](const QString &text, const QString &tip, const QString &path, bool on) {
+            auto *b = new QToolButton;
+            b->setText(text);
+            b->setToolTip(tip);
+            b->setCheckable(true);
+            b->setChecked(on);
+            b->setStyleSheet(QStringLiteral("QToolButton:checked { background:%1; color:%2; }")
+                                 .arg(theme::css(), theme::onAccent().name()));
+            m_animate->attach(b, {path});
+            connect(b, &QToolButton::toggled, this, [this, path, text](bool checked) {
+                cmd::setValue(m_undo, m_engine, m_layerId, path, checked, text);
+            });
+            flips->addWidget(b);
+            return b;
+        };
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            const Layer *l = m_engine->layer(m_layer);
+            m_flipX = flipButton(QStringLiteral("Flip ↔"), QStringLiteral("Mirror the output left to right (a projector seen from behind)"),
+                                 QStringLiteral("flip/x"), l && l->flipX);
+            m_flipY = flipButton(QStringLiteral("Flop ↕"), QStringLiteral("Turn the output upside down (a projector hung from the ceiling)"),
+                                 QStringLiteral("flip/y"), l && l->flipY);
+        }
+        flips->addStretch();
+        v->addLayout(flips);
+
+        // Warp: the output's picture pulled by its corners or by a mesh of points, dragged in a view of the viewport
+        auto *warp = new QGroupBox(QStringLiteral("Warp"));
+        auto *wl = new QVBoxLayout(warp);
+        auto *wmode = new QHBoxLayout;
+        auto *off = new QRadioButton(QStringLiteral("Off"));
+        auto *wcorners = new QRadioButton(QStringLiteral("Corners"));
+        auto *wmesh = new QRadioButton(QStringLiteral("Mesh"));
+        auto *wgroup = new QButtonGroup(warp);
+        wgroup->addButton(off, 0);
+        wgroup->addButton(wcorners, 1);
+        wgroup->addButton(wmesh, 2);
+        int editing = 0, wc = 4, wr = 4;
+        {
+            Engine::Lock lock(&m_engine->mutex());
+            if (const Layer *l = m_engine->layer(m_layer)) {
+                editing = l->warpEdit;
+                wc = l->warp.cols;
+                wr = l->warp.rows;
+            }
+        }
+        (editing == 2 ? wmesh : editing == 1 ? wcorners : off)->setChecked(true);
+        off->setToolTip(QStringLiteral("The warp is applied but not draggable in the views"));
+        wcorners->setToolTip(QStringLiteral("Drag the four corners of the output in a view of this viewport"));
+        wmesh->setToolTip(QStringLiteral("Drag the points of a mesh over the output in a view of this viewport"));
+        wmode->addWidget(off);
+        wmode->addWidget(wcorners);
+        wmode->addWidget(wmesh);
+        wmode->addStretch();
+        auto *wcols = new IntBox, *wrows = new IntBox;
+        wcols->setRange(2, 32);
+        wrows->setRange(2, 32);
+        wcols->setValue(wc);
+        wrows->setValue(wr);
+        wcols->setToolTip(QStringLiteral("Point columns"));
+        wrows->setToolTip(QStringLiteral("Point rows"));
+        auto *wapply = new QPushButton(QStringLiteral("Apply"));
+        wapply->setToolTip(QStringLiteral("Change the mesh density (clears the mesh)"));
+        auto *wflat = new QPushButton(QStringLiteral("Flatten"));
+        wflat->setToolTip(QStringLiteral("Corners and mesh back to the whole, upright frame"));
+        wmode->addWidget(wcols);
+        wmode->addWidget(new QLabel(QStringLiteral("×")));
+        wmode->addWidget(wrows);
+        wmode->addWidget(wapply);
+        wmode->addWidget(wflat);
+        wl->addLayout(wmode);
+        auto *whint = new QLabel(QStringLiteral("In a view of this viewport: drag a point. The ✛ Cross over the views shows on the "
+                                                "output where the pointer is."));
+        whint->setWordWrap(true);
+        whint->setStyleSheet("color:#888; font-size:11px;");
+        wl->addWidget(whint);
+        v->addWidget(warp);
+        connect(wgroup, &QButtonGroup::idClicked, this, [this](int id) {
+            {
+                Engine::Lock lock(&m_engine->mutex());
+                if (Layer *l = m_engine->layer(m_layer)) l->warpEdit = id;
+            }
+            emit mappingChanged();
+        });
+        connect(wapply, &QPushButton::clicked, this, [this, wcols, wrows] {
+            const int c = wcols->value(), r = wrows->value();
+            editWarp(QStringLiteral("Warp Mesh Density"), [c, r](Mapping &m) { m.resetMesh(c, r); });
+        });
+        connect(wflat, &QPushButton::clicked, this, [this] {
+            editWarp(QStringLiteral("Flatten Warp"), [](Mapping &m) {
+                m.resetCorners();
+                m.resetMesh(m.cols, m.rows);
+            });
+        });
+
+        // Soft edge: the ramp that blends this output into its neighbour's, in pixels of this output, and its curve
+        auto *soft = new QGroupBox(QStringLiteral("Soft Edge"));
+        auto *sg = new QGridLayout(soft);
+        sg->setHorizontalSpacing(6);
+        sg->addWidget(new QLabel(QStringLiteral("Width")), 0, 1);
+        sg->addWidget(new QLabel(QStringLiteral("Curve")), 0, 2);
+        static const char *const kSides[] = {"left", "right", "top", "bottom"};
+        static const char *const kNames[] = {"Left", "Right", "Top", "Bottom"};
+        auto numberOf = [&](const QString &path, const QString &suffix, int decimals, double step, const QString &tip) {
+            auto *b = new NumberBox;
+            const auto [lo, hi] = limitsOf(path, 0, 100000);
+            b->setRange(path.endsWith("width") ? 0 : lo, path.endsWith("width") ? 100000 : hi);
+            b->setDecimals(decimals);
+            b->setSingleStep(step);
+            b->setSuffix(suffix);
+            b->setKeyboardTracking(false);
+            b->setAccelerated(true);
+            b->setToolTip(tip);
+            b->setValue(m_engine->parameterValue(m_layerId, path).toDouble());
+            m_animate->attach(b, {path});
+            connect(b, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, path](double value) {
+                cmd::setValue(m_undo, m_engine, m_layerId, path, value, QStringLiteral("Soft Edge"));
+            });
+            return b;
+        };
+        for (int k = 0; k < 4; ++k) {
+            const QString base = QStringLiteral("soft_edge/%1/").arg(QLatin1String(kSides[k]));
+            sg->addWidget(new QLabel(QLatin1String(kNames[k])), k + 1, 0);
+            m_softWidth[k] = numberOf(base + QStringLiteral("width"), QStringLiteral(" px"), 0, 1,
+                                      QStringLiteral("Length of the ramp from this side, in pixels of the output (0: none). "
+                                                     "Set it to the overlap with the next projector."));
+            m_softCurve[k] = numberOf(base + QStringLiteral("curve"), QString(), 2, 0.05,
+                                      QStringLiteral("How the ramp bends, in linear light: 2 is Bourke's (two overlapping ramps "
+                                                     "with the same curve add up to one); lower is lighter, higher darker."));
+            sg->addWidget(m_softWidth[k], k + 1, 1);
+            sg->addWidget(m_softCurve[k], k + 1, 2);
+        }
+        sg->addWidget(new QLabel(QStringLiteral("Gamma")), 5, 0);
+        m_softGamma = numberOf(QStringLiteral("soft_edge/gamma"), QString(), 2, 0.05,
+                               QStringLiteral("The projectors' gamma (2.2 for most): the ramp is made in linear light, then encoded with it."));
+        sg->addWidget(m_softGamma, 5, 1);
+        sg->setColumnStretch(1, 1);
+        sg->setColumnStretch(2, 1);
+        v->addWidget(soft);
+        v->addStretch();
         return g;
     }
 
@@ -4402,6 +4556,30 @@ void LayerInspector::refreshSpatial()
         Layer *l = m_engine->layer(m_layer);
         if (!l) return;
         m = l->mapping;
+        if (l->isViewport) {
+            for (int k = 0; k < 4; ++k) {
+                if (m_softWidth[k] && !m_softWidth[k]->hasFocus() && m_softWidth[k]->value() != l->softWidth[k]) {
+                    QSignalBlocker blk(m_softWidth[k]);
+                    m_softWidth[k]->setValue(l->softWidth[k]);
+                }
+                if (m_softCurve[k] && !m_softCurve[k]->hasFocus() && m_softCurve[k]->value() != l->softCurve[k]) {
+                    QSignalBlocker blk(m_softCurve[k]);
+                    m_softCurve[k]->setValue(l->softCurve[k]);
+                }
+            }
+            if (m_softGamma && !m_softGamma->hasFocus() && m_softGamma->value() != l->softGamma) {
+                QSignalBlocker blk(m_softGamma);
+                m_softGamma->setValue(l->softGamma);
+            }
+            if (m_flipX && m_flipX->isChecked() != l->flipX) {
+                QSignalBlocker blk(m_flipX);
+                m_flipX->setChecked(l->flipX);
+            }
+            if (m_flipY && m_flipY->isChecked() != l->flipY) {
+                QSignalBlocker blk(m_flipY);
+                m_flipY->setChecked(l->flipY);
+            }
+        }
     }
     const double unitX = m_sizePx ? comp.width() : 100.0, unitY = m_sizePx ? comp.height() : 100.0;
     QDoubleSpinBox *boxes[7] = {m_posX, m_posY, m_scaleX, m_scaleY, m_pivotX, m_pivotY, m_rotation};

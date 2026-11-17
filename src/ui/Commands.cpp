@@ -202,17 +202,17 @@ bool SetLayerProp::mergeWith(const QUndoCommand *other)
 
 // --- SetMapping -------------------------------------------------------------
 
-SetMapping::SetMapping(Engine *e, int layer, const Mapping &before, const Mapping &after, const QString &text, bool nudge)
-    : m_e(e), m_layer(layer), m_before(before), m_after(after), m_nudge(nudge), m_time(nowMs())
+SetMapping::SetMapping(Engine *e, int layer, const Mapping &before, const Mapping &after, const QString &text, bool nudge, bool warp)
+    : m_e(e), m_layer(layer), m_before(before), m_after(after), m_nudge(nudge), m_warp(warp), m_time(nowMs())
 {
     setText(text);
 }
 
-Mapping SetMapping::read(Engine *e, int layer)
+Mapping SetMapping::read(Engine *e, int layer, bool warp)
 {
     Engine::Lock lk(&e->mutex());
     Layer *l = e->layer(layer);
-    return l ? l->mapping : Mapping();
+    return l ? (warp ? l->warp : l->mapping) : Mapping();
 }
 
 void SetMapping::apply(const Mapping &m)
@@ -220,17 +220,18 @@ void SetMapping::apply(const Mapping &m)
     Engine::Lock lk(&m_e->mutex());
     Layer *l = m_e->layer(m_layer);
     if (!l) return;
-    const unsigned rev = l->mapping.revision;
-    const double aspect = l->mapping.aspect; // the composition's now
-    l->mapping = m;
-    l->mapping.aspect = aspect;
-    l->mapping.revision = rev + 1;
+    Mapping &target = m_warp ? l->warp : l->mapping;
+    const unsigned rev = target.revision;
+    const double aspect = target.aspect; // the composition's now
+    target = m;
+    target.aspect = aspect;
+    target.revision = rev + 1;
 }
 
 bool SetMapping::mergeWith(const QUndoCommand *other)
 {
     auto *o = static_cast<const SetMapping *>(other);
-    if (!m_nudge || !o->m_nudge || o->m_layer != m_layer) return false;
+    if (!m_nudge || !o->m_nudge || o->m_layer != m_layer || o->m_warp != m_warp) return false;
     if (o->m_time - m_time > kMergeWindowMs) return false;
     m_after = o->m_after;
     m_time = o->m_time;

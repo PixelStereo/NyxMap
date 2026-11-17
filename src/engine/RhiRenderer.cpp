@@ -39,7 +39,7 @@
 
 namespace {
 // Each way of drawing, by what tells its pipelines apart
-enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade, Restore, TestCard };
+enum class Draw { Composite, CompositeDiff, Prep, EffectMask, OutputColor, Dim, ShapeMask, PictureMatte, Fade, Restore, TestCard, SoftEdge };
 
 // The blending of a layer composited (Render.cpp's compositeLayers), premultiplied
 QRhiGraphicsPipeline::TargetBlend blendOf(BlendMode mode)
@@ -126,6 +126,9 @@ struct RhiRenderer::Impl {
         std::unique_ptr<QRhiBuffer> mesh;
         Mapping meshShape;
         bool meshMade = false, meshGrid = false;
+        std::unique_ptr<QRhiBuffer> warpMesh; // a viewport's output warp (and its flip), made again when it changes
+        Mapping warpShape;
+        bool warpMade = false, warpGrid = false, warpFlipX = false, warpFlipY = false;
         bool used = false;
         int unusedFrames = 0;
     };
@@ -244,13 +247,15 @@ struct RhiRenderer::Impl {
         case Draw::PictureMatte:
         case Draw::Fade:
         case Draw::TestCard:
+        case Draw::SoftEdge:
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")},
                                  {QRhiShaderStage::Fragment, shader(draw == Draw::Prep ? "prep.frag"
                                                                     : draw == Draw::EffectMask ? "effectmask.frag"
                                                                     : draw == Draw::ShapeMask ? "shapemask.frag"
                                                                     : draw == Draw::PictureMatte ? "matte.frag"
                                                                     : draw == Draw::Fade ? "fade.frag"
-                                                                    : draw == Draw::TestCard ? "testcard.frag" : "outputcolor.frag")}});
+                                                                    : draw == Draw::TestCard ? "testcard.frag"
+                                                                    : draw == Draw::SoftEdge ? "softedge.frag" : "outputcolor.frag")}});
             break;
         case Draw::Restore: // a picture copied over the whole target (no blending)
             ps->setShaderStages({{QRhiShaderStage::Vertex, shader("fullscreen.vert")}, {QRhiShaderStage::Fragment, shader("blit.frag")}});
@@ -1148,6 +1153,73 @@ struct RhiRenderer::Impl {
         if (picture) processLayer(g, r, picture, picture->pixelSize(), true, rc);
     }
 
+    // A viewport's output warp (corner pin and mesh) and flip in a vertex buffer of its own: made again when they change
+    bool warpVertices(const Layer &v, RLayer &r)
+    {
+        const Mapping &m = v.warp, &was = r.warpShape;
+        bool same = r.warpMade && was.cols == m.cols && was.rows == m.rows && was.offsets == m.offsets && r.warpFlipX == v.flipX &&
+                    r.warpFlipY == v.flipY;
+        for (int i = 0; same && i < 4; ++i) same = was.pins[i] == m.pins[i];
+        if (same) return true;
+        r.warpGrid = std::any_of(std::begin(m.pins), std::end(m.pins), [](const QPointF &p) { return !p.isNull(); }) ||
+                     std::any_of(m.offsets.begin(), m.offsets.end(), [](const QPointF &p) { return !p.isNull(); });
+        std::vector<float> vertices;
+        m.buildVertices(r.warpGrid ? kMeshSubdiv : 1, vertices);
+        for (size_t k = 0; k + 3 < vertices.size(); k += 4) { // flipped: the picture's sides taken the other way round
+            if (v.flipX) vertices[k + 2] = 1.0f - vertices[k + 2];
+            if (v.flipY) vertices[k + 3] = 1.0f - vertices[k + 3];
+        }
+        const quint32 bytes = quint32(vertices.size() * sizeof(float));
+        if (!r.warpMesh || r.warpMesh->size() != bytes) {
+            r.warpMesh.reset(rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, bytes));
+            if (!r.warpMesh->create()) return false;
+        }
+        batch()->uploadStaticBuffer(r.warpMesh.get(), vertices.data());
+        r.warpShape = m;
+        r.warpFlipX = v.flipX;
+        r.warpFlipY = v.flipY;
+        r.warpMade = true;
+        return true;
+    }
+
+    // As its projector throws it: the output flipped and warped (its picture drawn over a mesh, from a copy of itself), then
+    // faded towards the sides that blend into a neighbour (softedge.frag)
+    void asProjected(Layer &v, RLayer &r, QSize size)
+    {
+        const bool warped = v.flipX || v.flipY || !v.warp.isIdentity();
+        const bool crossed = v.probe.x() >= 0;
+        if (!warped && !v.softEdgeActive() && !crossed) return;
+        r.group.ensure(rhi.get(), size);
+        if (!r.group.ready()) return;
+        if (warped && warpVertices(v, r) && fullscreen(Draw::Restore, r.group, nullptr, 0, {r.out.texture()})) {
+            const float u[16] = {1, 1, 0, 0, 1, 0, 0, 0, 1, res().ndcFlip(), 1, 0, 0, 0, 0, 0};
+            const auto all = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
+            const auto fs = QRhiShaderResourceBinding::FragmentStage;
+            QRhiShaderResourceBindings *srb = res().bindings({{0, all, ubuf(u, sizeof u)},
+                                                              {1, fs, nullptr, r.group.texture(), res().linear()},
+                                                              {2, fs, nullptr, res().black(), res().linear()},
+                                                              {3, fs, nullptr, res().black(), res().linear()}});
+            QRhiGraphicsPipeline *ps = srb ? pipeline(Draw::Composite, BlendMode::Normal, r.out, srb) : nullptr;
+            cb->beginPass(r.out.cleared(), QColor(0, 0, 0, 255), {1.0f, 0}, take());
+            if (ps) {
+                cb->setGraphicsPipeline(ps);
+                cb->setViewport({0, 0, float(r.out.width()), float(r.out.height())});
+                cb->setShaderResources(srb);
+                const QRhiCommandBuffer::VertexInput vin(r.warpMesh.get(), 0);
+                cb->setVertexInput(0, 1, &vin, r.warpGrid ? gridIndices.get() : quadIndices.get(), 0, QRhiCommandBuffer::IndexUInt32);
+                cb->drawIndexed(quint32(r.warpGrid ? gridIndexCount : 6));
+            }
+            cb->endPass();
+        }
+        if ((v.softEdgeActive() || crossed) && fullscreen(Draw::Restore, r.group, nullptr, 0, {r.out.texture()})) {
+            const float u[20] = {float(v.softWidth[0]), float(v.softWidth[1]), float(v.softWidth[2]), float(v.softWidth[3]),
+                                 float(v.softCurve[0]), float(v.softCurve[1]), float(v.softCurve[2]), float(v.softCurve[3]),
+                                 float(v.softGamma), 0.f, 0.f, 0.f, float(size.width()), float(size.height()), 0.f, 0.f,
+                                 crossed ? float(v.probe.x()) : -1.f, float(1.0 - v.probe.y()), 0.f, 0.f};
+            fullscreen(Draw::SoftEdge, r.out, u, sizeof u, {r.group.texture()}, QColor(0, 0, 0, 255));
+        }
+    }
+
     // A viewport's output (Render.cpp's renderViewport, then its part of composite())
     void renderViewport(Layer &v, RLayer &r, const std::vector<Layer *> &shown, const IsfRenderContext &rc, double level)
     {
@@ -1181,6 +1253,7 @@ struct RhiRenderer::Impl {
         if (!r.out.ready()) return;
         if (e.viewportIsPlain(v, shown)) { // its layers straight into its output, over black
             composite(r.out, shown, view, QColor(0, 0, 0, 255), v.id, rr.angle, level);
+            asProjected(v, r, size);
             r.final = r.raw = r.preFx = r.out.texture();
             return;
         }
@@ -1223,6 +1296,7 @@ struct RhiRenderer::Impl {
             }
             cb->endPass();
         }
+        asProjected(v, r, size);
         dim(r.out, level);
     }
 

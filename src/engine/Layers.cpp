@@ -259,6 +259,14 @@ int Engine::addViewport(const QString &name, QSize size)
     return indexOfId(id);
 }
 
+void Engine::setViewportProbe(quint64 viewport, QPointF at)
+{
+    Lock lk(&m_mutex);
+    const int i = indexOfId(viewport);
+    if (i < 0 || !m_layers[size_t(i)]->isViewport) return;
+    m_layers[size_t(i)]->probe = at.x() < 0 || at.y() < 0 || at.x() > 1 || at.y() > 1 ? QPointF(-1, -1) : at;
+}
+
 bool Engine::isViewport(int i) const
 {
     Lock lk(&m_mutex);

@@ -61,6 +61,7 @@ int main(int argc, char *argv[])
     QCommandLineOption framesOpt("frames", "Number of frames to render before capture (with --render).", "n", "30");
     QCommandLineOption shotOpt("screenshot", "Capture the main window, then quit (tests).", "capture.png");
     QCommandLineOption enduranceOpt("endurance-csv", "Write 1 Hz frame/resource metrics and deadline events to a CSV and JSONL pair.", "session.csv");
+    QCommandLineOption viewportsOpt("viewports", "With --render: also save each viewport's picture, next to the output (<output>-viewport-<n>.png).");
     QCommandLineOption strictOpt("strict", "With --render: a layer or effect in error fails the render (exit code 4).");
     // A show played headless: its startup sequence, for a time, a numbered picture every so often (a preview to make a
     // video of, with its soundtrack: the pictures' times are those of the show)
@@ -69,6 +70,7 @@ int main(int argc, char *argv[])
     QCommandLineOption everyOpt("every", "With --render: also save a picture every s seconds, numbered in place of the #### "
                                          "of the output's name (out/frame-####.jpg).", "s");
     cli.addOption(renderOpt);
+    cli.addOption(viewportsOpt);
     cli.addOption(strictOpt);
     cli.addOption(framesOpt);
     cli.addOption(playOpt);
@@ -164,7 +166,16 @@ int main(int argc, char *argv[])
                           qPrintable(publishKindName(PublishKind(k))), qPrintable(st.text), st.receivers);
             }
         }
-        const bool ok = engine.grabOutput().save(QString(pattern).replace(QStringLiteral("####"), QStringLiteral("last")));
+        const QString lastName = QString(pattern).replace(QStringLiteral("####"), QStringLiteral("last"));
+        if (cli.isSet(viewportsOpt)) {
+            const QFileInfo out(lastName);
+            int n = 0;
+            for (int v : engine.viewports()) {
+                const QString name = out.path() + QLatin1Char('/') + out.completeBaseName() + QStringLiteral("-viewport-%1.").arg(++n) + out.suffix();
+                if (!engine.grabViewport(engine.layerId(v)).save(name)) qWarning("Picture not written: %s", qPrintable(name));
+            }
+        }
+        const bool ok = engine.grabOutput().save(lastName);
         engine.shutdown();
         if (!ok) {
             qCritical("Output not written: %s", qPrintable(cli.value(renderOpt)));

@@ -28,6 +28,7 @@ public:
 
 signals:
     void layerPicked(int index); // clicked in a 3D view
+    void softEdgeEdited();       // a viewport's soft edge dragged in its view
 
 private:
     void setCount(int count);

@@ -16,6 +16,7 @@ nav = [
     { "Media sources" = "visuals/media.md" },
     { "Generators" = "visuals/generators.md" },
     { "3D scenes" = "visuals/3d-scenes.md" },
+    { "Viewports" = "visuals/viewports.md" },
     { "Pixel mapping (DMX)" = "visuals/pixel-mapping.md" },
   ] },
   { "Audio" = [

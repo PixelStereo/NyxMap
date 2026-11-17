@@ -422,6 +422,10 @@ MainWindow::MainWindow(Engine *engine, QWidget *parent) : QMainWindow(parent), m
     connect(m_engine, &Engine::viewsRecalled, this, &MainWindow::applyViews);
     cv->addWidget(previews, 1);
     previews->setUndoStack(m_undo);
+    connect(previews, &PreviewWorkspace::softEdgeEdited, this, [this] {
+        m_inspector->refreshSpatial();
+        m_viewportInspector->refreshSpatial();
+    });
     connect(previews, &PreviewWorkspace::layerPicked, this, [this](int index) { selectLayer(index); });
     top->addWidget(workspacePane(center, QStringLiteral("mainPreviewScroll")));
     top->addWidget(workspacePane(m_tabs, QStringLiteral("mainInspectorScroll")));

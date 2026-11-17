@@ -182,7 +182,7 @@ qt_add_shaders(nyxmap_engine "nyxmap_shaders"
         src/engine/shaders/blit.vert src/engine/shaders/blit.frag src/engine/shaders/fullscreen.vert
         src/engine/shaders/composite.vert src/engine/shaders/composite.frag src/engine/shaders/prep.frag
         src/engine/shaders/effectmask.frag src/engine/shaders/outputcolor.frag
-        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag src/engine/shaders/testcard.frag
+        src/engine/shaders/shapemask.frag src/engine/shaders/matte.frag src/engine/shaders/compositediff.frag src/engine/shaders/fade.frag src/engine/shaders/testcard.frag src/engine/shaders/softedge.frag
         src/engine/shaders/sceneview.vert src/engine/shaders/sceneplain.frag src/engine/shaders/sceneunlit.frag
         src/engine/shaders/scenelit.frag src/engine/shaders/scenepost.vert src/engine/shaders/scenepost.frag
         src/engine/shaders/sceneshadow.frag src/engine/shaders/scenepoint.frag
