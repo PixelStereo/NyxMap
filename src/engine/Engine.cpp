@@ -1,6 +1,10 @@
 // Engine: life of the engine itself — OpenGL context and render thread, the runGl() task protocol,
 // the output window, the composition size, and the composition opacity / blackout fades.
 // The rest of its methods live in Layers.cpp, Render.cpp, Project.cpp, Media.cpp and Snapshots.cpp.
+#ifdef __APPLE__
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
 #include "EngineInternal.h"
 #include "RhiDevice.h"
 #include "RhiRenderer.h"
@@ -175,6 +179,11 @@ void Engine::renderLoop()
         tsanRelease(&m_thread);
         return;
     }
+#ifdef __APPLE__
+    // The frame's deadlines are short: the highest quality of service gives its sleeps the tightest timer leeway
+    // (a loaded or virtual machine otherwise wakes a 14 ms sleep after several periods)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     QElapsedTimer pace;
     while (!m_quit) {
         pace.start();
