@@ -30,6 +30,7 @@
 #include <QHostAddress>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
@@ -59,7 +60,9 @@ public:
     // Every value of the state now (tests, and what is sent)
     std::vector<osc::Message> state() const;
     static std::vector<osc::Message> stateFor(Engine *engine, bool modified = false);
-    void sendNow(bool everything); // sends the values that changed (all of them: everything)
+    // Sends the values that changed (all of them: everything). slice of slices: only that share of the namespace is read,
+    // so the engine's lock is held a fraction of the time (the timer goes through the slices, a cycle every 100 ms)
+    void sendNow(bool everything, int slice = 0, int slices = 1);
 
 signals:
     void sent(int messages); // tests
@@ -78,4 +81,8 @@ private:
     QTimer m_timer;
     OscNamespace m_namespace;
     QHash<QString, QByteArray> m_sent; // last encoded value per address
+    int m_namespaceGeneration = -1;
+    int m_slice = 0;
+    QSet<QString> m_sequencePaths; // what state() gives
+    QHash<QString, QVariantList> m_lastValues; // last value read per namespace address (a value that did not change is not encoded again)
 };

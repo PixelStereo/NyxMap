@@ -158,6 +158,7 @@ void OscNamespace::refresh()
     const QString sig = signature();
     if (sig == m_signature && !m_nodes.empty()) return;
     m_signature = sig;
+    ++m_generation;
     build();
 }
 
@@ -165,6 +166,25 @@ const OscNode *OscNamespace::node(const QString &path) const
 {
     const auto it = m_nodes.find(path);
     return it == m_nodes.end() ? nullptr : &it->second;
+}
+
+void OscNamespace::forEachReadable(const std::function<void(const QString &, const OscNode &)> &visit) const
+{
+    for (const auto &[path, node] : m_nodes)
+        if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(path, node);
+}
+
+void OscNamespace::forEachReadableSlice(int slice, int slices, const std::function<void(const QString &, const OscNode &)> &visit) const
+{
+    if (m_readableGeneration != m_generation) {
+        m_readable.clear();
+        for (const auto &[path, node] : m_nodes)
+            if (!node.type.isEmpty() && node.get && (node.access & 1)) m_readable.emplace_back(&path, &node);
+        m_readableGeneration = m_generation;
+    }
+    const size_t total = m_readable.size(), count = size_t(std::max(1, slices));
+    for (size_t k = size_t(slice) * total / count, end = (size_t(slice) + 1) * total / count; k < end; ++k)
+        visit(*m_readable[k].first, *m_readable[k].second);
 }
 
 QStringList OscNamespace::paths() const

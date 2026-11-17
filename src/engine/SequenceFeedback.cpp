@@ -5,10 +5,14 @@
 #include <QUdpSocket>
 #include <cmath>
 
+namespace {
+constexpr int kSlices = 4; // a cycle of the namespace every 100 ms, in four reads
+}
+
 SequenceFeedback::SequenceFeedback(Engine *engine, QObject *parent) : QObject(parent), m_e(engine), m_namespace(engine)
 {
     m_socket = new QUdpSocket(this);
-    m_timer.setInterval(100);
+    m_timer.setInterval(100 / kSlices);
     connect(&m_timer, &QTimer::timeout, this, &SequenceFeedback::tick);
     // At each cue and each edit, at once (queued: the cue clock may say so from its own thread)
     connect(&m_e->sequencer(), &Sequencer::positionChanged, this, [this] { sendNow(false); }, Qt::QueuedConnection);
@@ -74,6 +78,7 @@ void SequenceFeedback::setEnabled(bool on)
     } else {
         m_timer.stop();
         m_sent.clear();
+        m_lastValues.clear();
     }
 }
 
@@ -86,7 +91,8 @@ void SequenceFeedback::setModified(bool on)
 
 void SequenceFeedback::tick()
 {
-    sendNow(false);
+    sendNow(false, m_slice, kSlices);
+    m_slice = (m_slice + 1) % kSlices;
 }
 
 static QString clockText(double t)
@@ -229,38 +235,63 @@ std::vector<osc::Message> SequenceFeedback::stateFor(Engine *engine, bool modifi
     return out;
 }
 
-void SequenceFeedback::sendNow(bool everything)
+void SequenceFeedback::sendNow(bool everything, int slice, int slices)
 {
     if (!m_enabled || m_targets.empty()) return;
-    auto messages = state();
-    QSet<QString> sequencePaths;
-    for (const auto &message : messages) sequencePaths.insert(message.address);
+    auto messages = slice == 0 ? state() : std::vector<osc::Message>();
+    if (slice == 0) { // the sequence's own addresses, kept for the other slices
+        m_sequencePaths.clear();
+        for (const auto &message : messages) m_sequencePaths.insert(message.address);
+    }
+    const QSet<QString> &sequencePaths = m_sequencePaths;
+    // The namespace's values, read under the lock and no longer than that: the nodes are walked where they are (not found
+    // again by their path), and only a value that changed is encoded
+    std::vector<osc::Message> changed;
     {
         Engine::Lock lock(&m_e->mutex());
-        m_namespace.refresh();
-        for (const auto &path : m_namespace.paths()) {
-            if (sequencePaths.contains(path)) continue;
-            const auto *node = m_namespace.node(path);
-            if (!node || !node->get || !(node->access & 1)) continue;
-            osc::Message message{path, node->type, node->get()};
-            if (message.args.isEmpty()) continue;
+        if (slice == 0) m_namespace.refresh();
+        if (m_namespace.generation() != m_namespaceGeneration) { // the structure changed: what is gone is forgotten
+            m_namespaceGeneration = m_namespace.generation();
+            QSet<QString> present;
+            m_namespace.forEachReadable([&](const QString &path, const OscNode &) { present.insert(path); });
+            for (auto it = m_lastValues.begin(); it != m_lastValues.end();)
+                it = present.contains(it.key()) ? std::next(it) : m_lastValues.erase(it);
+            for (auto it = m_sent.begin(); it != m_sent.end();)
+                it = (present.contains(it.key()) || sequencePaths.contains(it.key())) ? std::next(it) : m_sent.erase(it);
+        }
+        m_namespace.forEachReadableSlice(slice, slices, [&](const QString &path, const OscNode &node) {
+            if (sequencePaths.contains(path)) return;
+            QVariantList args = node.get();
+            if (args.isEmpty()) return;
+            auto last = m_lastValues.find(path);
+            if (!everything && last != m_lastValues.end() && last.value() == args) return;
+            if (last == m_lastValues.end()) {
+                m_lastValues.insert(path, args);
+                if (!everything) return; // seen for the first time: what it is now is the baseline, not a change
+            } else {
+                last.value() = args;
+            }
+            osc::Message message{path, node.type, std::move(args)};
             for (qsizetype i = 0; i < message.types.size(); ++i)
                 if (message.types[i] == 'T' || message.types[i] == 'F')
                     message.types[i] = message.args.value(i).toBool() ? QLatin1Char('T') : QLatin1Char('F');
-            messages.push_back(std::move(message));
-        }
+            changed.push_back(std::move(message));
+        });
     }
-    QHash<QString, QByteArray> current;
     int count = 0;
-    for (const auto &message : messages) {
+    const auto send = [&](const osc::Message &message, bool known) { // known: its value was seen to change
         const auto packet = osc::encode(message);
-        const auto previous = m_sent.constFind(message.address);
-        current.insert(message.address, packet);
-        if (!everything && (previous == m_sent.cend() || previous.value() == packet)) continue;
+        if (!known) {
+            const auto previous = m_sent.constFind(message.address);
+            const bool unchanged = previous == m_sent.cend() || previous.value() == packet; // a first sight is a baseline
+            m_sent.insert(message.address, packet);
+            if (!everything && unchanged) return;
+        }
         for (const auto &target : m_targets)
             if (!target.address.isNull()) m_socket->writeDatagram(packet, target.address, target.port);
         ++count;
-    }
-    m_sent = std::move(current);
+    };
+    for (const auto &message : messages) send(message, false);
+    for (const auto &message : changed) send(message, true);
     if (count) emit sent(count);
 }

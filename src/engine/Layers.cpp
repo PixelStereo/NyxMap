@@ -866,8 +866,16 @@ int Engine::indexOfId(quint64 id) const
         const size_t row = renderLayerIndex(id);
         return row < m_layers.size() ? int(row) : -1;
     }
+    // Where it was found last time, if it is still there (a layer moves, is made or is removed: the answer is checked)
+    const auto cached = m_indexOfIdCache.constFind(id);
+    if (cached != m_indexOfIdCache.cend() && size_t(cached.value()) < m_layers.size() && m_layers[size_t(cached.value())]->id == id)
+        return cached.value();
     for (size_t i = 0; i < m_layers.size(); ++i)
-        if (m_layers[i]->id == id) return int(i);
+        if (m_layers[i]->id == id) {
+            m_indexOfIdCache.insert(id, int(i));
+            return int(i);
+        }
+    m_indexOfIdCache.remove(id);
     return -1;
 }
 
