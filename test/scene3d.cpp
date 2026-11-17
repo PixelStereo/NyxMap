@@ -619,6 +619,15 @@ int runScene3dTests(Engine &engine)
         const int with = levels(112);
         check(lite || with < without - 10, "the cube's shadow on the floor");
         check(std::abs(levels(80) - aside) < 12, "beside it, the floor as it was");
+        // The shadow maps are kept while nothing in them moves: a cube that moves afterwards still takes its shadow with it
+        for (int k = 0; k < 4; ++k) levels(112);
+        const double cubeX = engine.parameterValue(caster, "model/position/x").toDouble();
+        engine.setParameter(caster, "model/position/x", cubeX - 1.5);
+        const int shadowMoved = levels(112);
+        std::printf("      shadow at the pixel: %d before, %d after the cube moved (floor without shadow: %d)\n", with, shadowMoved, without);
+        check(lite || shadowMoved > with + 10, "the cube moved: its shadow is not where it was (the maps are not kept)");
+        engine.setParameter(caster, "model/position/x", cubeX);
+        for (int k = 0; k < 4; ++k) levels(112);
         // A point light's shadows fall on all sides of it
         engine.setParameter(spot, "light/type", QStringLiteral("point"));
         engine.setParameter(spot, "light/shadow", false);

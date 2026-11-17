@@ -110,6 +110,7 @@ struct RhiScene::Impl {
     std::map<int, std::unique_ptr<QRhiGraphicsPipeline>> fullscreen; // by surface and fragment shader
     std::vector<std::unique_ptr<QRhiBuffer>> ubufs;
     size_t nextUbuf = 0;
+    quint64 frameNumber = 0; // for what must be drawn again at every frame
     std::unique_ptr<QRhiBuffer> sceneUbuf, postUbuf;
     std::unique_ptr<QRhiBuffer> lights; // the lights, seven vec4 each, as many as the scene has (a storage buffer)
     quint32 lightCapacity = 0;
@@ -124,6 +125,9 @@ struct RhiScene::Impl {
         };
         std::vector<Layer> layers;
         int size = 0, count = 0;
+        // What each layer was drawn from (a hash): a layer whose models and light did not change is not drawn again
+        std::vector<quint64> keys;
+        std::vector<char> keyed;
     } spotMaps, pointMaps;
     std::unique_ptr<QRhiBuffer> shadowData, pointData;
     quint32 shadowCapacity = 0, pointCapacity = 0;
@@ -145,6 +149,8 @@ struct RhiScene::Impl {
         if (!m.depth->create()) return false;
         m.size = size;
         m.count = count;
+        m.keys.assign(size_t(count), 0);
+        m.keyed.assign(size_t(count), 0);
         m.layers.resize(size_t(count));
         for (int k = 0; k < count; ++k) {
             QRhiColorAttachment attachment(m.texture.get());
@@ -646,6 +652,7 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
     Impl::Surface &main = wantsGlow ? d->litGlow : d->lit;
     if (!d->ensure(main, w, h, samples, true, QRhiTexture::RGBA8, wantsGlow)) return nullptr;
     d->nextUbuf = 0;
+    ++d->frameNumber;
     RhiResources &res = RhiResources::of(rhi);
     const Camera3D cam = Camera3D::of(s, float(w) / float(h));
     const QMatrix4x4 proj = backendProjection(rhi, cam.proj);
@@ -682,6 +689,15 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         if (weight > 0) center /= weight;
         for (const Placed &p : all)
             if (casts(p)) reach = std::max(reach, (p.center - center).length() + p.radius);
+        if (reach > 0) {
+            // The lights' views are made from the centre and the reach of what casts: held steady under small motions (the
+            // centre on a grid, the reach in steps and widened by what the grid moves it) so that a map is not made again
+            // for a model that moves a little, and not at all when only the camera does
+            const auto stepUp = [](float v) { return std::pow(1.0625f, std::ceil(std::log(std::max(v, 1e-4f)) / std::log(1.0625f))); };
+            const float grid = stepUp(reach) / 16.0f;
+            center = QVector3D(std::round(center.x() / grid), std::round(center.y() / grid), std::round(center.z() / grid)) * grid;
+            reach = stepUp(reach + grid);
+        }
     }
 
     // The scene's lights and their shadows: no limit to either but the memory
@@ -879,6 +895,8 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
         int layer;
         std::vector<Command> commands;
         QSize size;
+        quint64 key = 0;
+        bool cached = false; // its map still holds what it would draw
     };
     std::vector<ShadowDraw> shadowDraws;
     const auto shadowBind = [&](QRhiBuffer *b, QRhiTexture *displace) {
@@ -886,6 +904,41 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
                              {2, QRhiShaderResourceBinding::VertexStage, nullptr, displace ? displace : res.black(), res.linear()}});
     };
     const auto casters = [&](ShadowDraw &draw, const QMatrix4x4 &lightSees, const QMatrix4x4 &fixed, const QVector4D &ink) {
+        { // What the map is made of: the light's matrix and every model in its view, as the pass would write them
+            quint64 hash = 1469598103934665603ull;
+            const auto mix = [&hash](const void *data, size_t bytes) {
+                const auto *w = static_cast<const unsigned char *>(data);
+                for (size_t k = 0; k < bytes; ++k) hash = (hash ^ w[k]) * 1099511628211ull;
+            };
+            mix(fixed.constData(), sizeof(float) * 16);
+            mix(&ink, sizeof ink);
+            const int sizeWidth = draw.size.width();
+            mix(&sizeWidth, sizeof sizeWidth);
+            bool volatileCaster = false;
+            for (const Placed &p : all) {
+                if (!casts(p) || !inView(lightSees, p)) continue;
+                Place pl = place(*p.item, p.model, cam, fixed);
+                const QMatrix4x4 identity;
+                std::memcpy(pl.view, identity.constData(), sizeof pl.view);
+                mix(&pl, sizeof pl);
+                const Model3D *which = p.item->model.get();
+                mix(&which, sizeof which);
+                for (const Model3D::RhiDraw &mesh : p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false)) {
+                    mix(&mesh.vertices, sizeof mesh.vertices);
+                    mix(&mesh.indexCount, sizeof mesh.indexCount);
+                    mix(&mesh.blended, sizeof mesh.blended);
+                }
+                mix(&p.item->displaceRhi, sizeof p.item->displaceRhi);
+                volatileCaster = volatileCaster || (p.item->displaceRhi && !p.item->placement.materialHeight); // a layer's picture moves the points
+            }
+            if (volatileCaster) mix(&d->frameNumber, sizeof d->frameNumber);
+            draw.key = hash;
+            Impl::Maps &maps = *draw.maps;
+            if (draw.layer < int(maps.keys.size()) && maps.keyed[size_t(draw.layer)] && maps.keys[size_t(draw.layer)] == hash) {
+                draw.cached = true;
+                return;
+            }
+        }
         for (const Placed &p : all) {
             if (!casts(p) || !inView(lightSees, p)) continue; // a screen gives light, a floor or a wall only receives
             const std::vector<Model3D::RhiDraw> draws = p.item->model->rhiDraws(rhi, u, &p.item->placement, p.item->pictureRhi != nullptr, false);
@@ -987,6 +1040,9 @@ QRhiTexture *RhiScene::drawNow(QRhiCommandBuffer *cb, QRhiResourceUpdateBatch *u
     // The shadows' passes first: each light's view, a distance or a depth, in its layer
     for (ShadowDraw &draw : shadowDraws) {
         Impl::Maps &maps = *draw.maps;
+        if (draw.cached) continue; // what the map holds is what this pass would draw
+        maps.keys[size_t(draw.layer)] = draw.key;
+        maps.keyed[size_t(draw.layer)] = 1;
         QRhiTextureRenderTarget *target = maps.layers[size_t(draw.layer)].target.get();
         cb->beginPass(target, QColor::fromRgbF(1, 1, 1, 1), {1.0f, 0}, u);
         u = nullptr;
