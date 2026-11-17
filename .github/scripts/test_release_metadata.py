@@ -21,6 +21,15 @@ def release(tag="v1.2.3", date="2026-10-22T10:00:00Z", **flags):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
+    def test_release_before_the_windows_installer_keeps_its_zip(self):
+        old = release()
+        for asset in old["assets"]:
+            if asset["name"].endswith("-Setup.exe"):
+                asset["name"] = asset["name"].replace("-Setup.exe", ".zip")
+                asset["browser_download_url"] = asset["browser_download_url"].replace("-Setup.exe", ".zip")
+        chosen, urls = metadata.select_release([old], REPO)
+        self.assertTrue(urls["win"].endswith("-windows-v1.2.3.zip"))
+
     def test_actual_assets_and_idempotence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -951,8 +951,8 @@ jobs:
 
           The installer puts the versioned NyxMap executable, Qt runtime libraries/plugins, FFmpeg DLLs, ISF shaders,
           and Microsoft's official vc_redist.x64.exe installer in one folder (per user, no administrator rights).
-          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe from that folder (the Start menu
-          shortcut points at it), then start NyxMap again.
+          If Windows reports that the Visual C++ runtime is missing, run vc_redist.x64.exe from
+          %LOCALAPPDATA%\Programs\NyxMap\app, then start NyxMap again.
 
           OMT (Open Media Transport) is included: libomt.dll and libvmx.dll, built from source
           (MIT licences in OMT-LICENSES.txt).
