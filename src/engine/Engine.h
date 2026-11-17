@@ -898,6 +898,12 @@ public:
     double fps() const { return m_fps.load(); }
     // Frame timing (FrameTiming.h): intervals, missed deadlines, compute and present times, OSC / cue to frame
     FrameTiming::Stats frameTiming() const { return m_frameTiming.stats(); }
+    QString renderLoopSummary() const
+    {
+        return QStringLiteral("tasks %1 (%2 ms), sleeps asked %3 ms took %4 ms, other %5 ms")
+            .arg(m_loopTaskCount.load()).arg(m_loopTasksNs.load() / 1000000).arg(m_loopSleepAskedNs.load() / 1000000)
+            .arg(m_loopSleepTookNs.load() / 1000000).arg(m_loopOtherNs.load() / 1000000);
+    }
     FrameTiming::Window takeFrameTimingWindow() { return m_frameTiming.takeWindow(); }
     QJsonObject frameTimingJson() const; // the same, with the outputs' dropped frames (OSC /composition/timing)
     void resetFrameTiming();
@@ -1108,6 +1114,9 @@ private:
     bool m_capturePresented = false; // tests: the QRhi renderer keeps what it presents
     double m_presentHz = 0; // render thread: the refresh rate of the window that waits for its screen (0: none)
     qint64 m_paceNext = -1; // render thread: when the next frame is due (steady clock ns; -1: from now)
+    // Where the render thread's loop spends its time besides the frames (ms, summed): the tasks it runs for other threads,
+    // the sleeps it asked for and what they took, the rest (resources, signal)
+    std::atomic<qint64> m_loopTasksNs{0}, m_loopSleepAskedNs{0}, m_loopSleepTookNs{0}, m_loopOtherNs{0}, m_loopTaskCount{0};
     void releaseOutputSurface(OutputSurface &o);
     void present(const Layer &viewport, OutputSurface &out);
     std::map<quint64, OutputSurface> m_outWindows; // by viewport id (render thread)

@@ -181,7 +181,11 @@ void Engine::renderLoop()
     QElapsedTimer pace;
     while (!m_quit) {
         pace.start();
+        const qint64 loopStart = FrameTiming::nowNs();
         runPendingTasks();
+        const qint64 tasksTook = FrameTiming::nowNs() - loopStart;
+        m_loopTasksNs += tasksTook;
+        if (tasksTook > 1000000) ++m_loopTaskCount; // loops where the tasks took over a millisecond
 
         // Pace: the frame rate chosen; else the screen of the output window shown (the last one, which waits for its
         // vertical sync); else the main screen's refresh rate. A frame its output does not show (no surface from
@@ -197,8 +201,10 @@ void Engine::renderLoop()
         const bool presented = presentViewports(!uncapped);
         const qint64 t2 = FrameTiming::nowNs();
         m_frameTiming.noteFrame(t0, t1, t2, periodNs, presented);
+        const qint64 otherStart = FrameTiming::nowNs();
         sampleResources();
         if (!m_framePending.exchange(true)) emit frameRendered();
+        m_loopOtherNs += FrameTiming::nowNs() - otherStart;
 
         // The vertical sync held this frame (it waited for its screen): it is the pace, nothing to add. Otherwise the
         // next frame is due one period after this one was (absolute deadlines: a late wake-up is caught up on the next
@@ -210,7 +216,12 @@ void Engine::renderLoop()
         const bool heldBySync = rate == 0 && presented && t2 - t1 >= 4000000;
         const qint64 sleepNs = heldBySync ? FramePacer::resync(m_paceNext, t2, periodNs)
                                           : FramePacer::next(m_paceNext, t0, FrameTiming::nowNs(), periodNs);
-        if (sleepNs > 0) QThread::usleep(static_cast<unsigned long>(sleepNs / 1000));
+        if (sleepNs > 0) {
+            const qint64 slept = FrameTiming::nowNs();
+            QThread::usleep(static_cast<unsigned long>(sleepNs / 1000));
+            m_loopSleepAskedNs += sleepNs;
+            m_loopSleepTookNs += FrameTiming::nowNs() - slept;
+        }
         (void)pace;
     }
     runPendingTasks();
