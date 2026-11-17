@@ -998,7 +998,7 @@ jobs:
           $appName = (Get-Content build/application.json -Raw | ConvertFrom-Json).name
           $setup = (Get-ChildItem NyxMap-windows*-Setup.exe | Select-Object -First 1).FullName
           $installed = Join-Path $env:RUNNER_TEMP "installed"
-          $installer = Start-Process -FilePath $setup -ArgumentList "/S /D=$installed" -Wait -PassThru
+          $installer = Start-Process -FilePath $setup -ArgumentList "/S /CurrentUser /D=$installed" -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
           $clean = Join-Path $installed "app"
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'ffmpeg|Qt' }) -join ';'
