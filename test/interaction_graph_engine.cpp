@@ -166,8 +166,10 @@ int main(int argc, char **argv)
     SequenceFeedback feedback(&engine);
     feedback.setTargets({message.oscDestination});
     feedback.setEnabled(true);
-    const auto receivedControlFeedback = [&] {
+    const auto receivedControlFeedback = [&](bool expected) {
         bool received = false;
+        // A datagram takes a moment to reach the receiver's socket: waited for when one is expected, a short while when not
+        if (!receiver.hasPendingDatagrams()) receiver.waitForReadyRead(expected ? 1000 : 40);
         while (receiver.hasPendingDatagrams()) {
             messages.clear();
             if (osc::decode(receiver.receiveDatagram().data(), messages))
@@ -177,12 +179,36 @@ int main(int argc, char **argv)
         return received;
     };
     feedback.sendNow(false);
-    check(!receivedControlFeedback(), "an unchanged control sends no feedback");
+    check(!receivedControlFeedback(false), "an unchanged control sends no feedback");
     engine.setControlValue(buttonId, 1);
     feedback.sendNow(false);
-    check(receivedControlFeedback(), "a changed control is sent as OSC feedback");
+    check(receivedControlFeedback(true), "a changed control is sent as OSC feedback");
     feedback.sendNow(false);
-    check(!receivedControlFeedback(), "feedback does not resend the control's unchanged value");
+    check(!receivedControlFeedback(false), "feedback does not resend the control's unchanged value");
+    // A parameter that is written tells the feedback by itself: no read goes round, nothing is polled
+    {
+        const int layerIndex = engine.addLayer("Feedback layer");
+        const quint64 layerId = engine.layerId(layerIndex);
+        feedback.sendNow(false); // the layer is in the namespace: its values are the baseline
+        const auto sawOpacity = [&](bool expected) {
+            bool seen = false;
+            if (!receiver.hasPendingDatagrams()) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50); // the queued read
+                receiver.waitForReadyRead(expected ? 1000 : 40);
+            }
+            while (receiver.hasPendingDatagrams()) {
+                messages.clear();
+                if (osc::decode(receiver.receiveDatagram().data(), messages))
+                    for (const auto &packet : messages) seen |= packet.address.endsWith(QLatin1String("/opacity"));
+            }
+            return seen;
+        };
+        while (receiver.hasPendingDatagrams()) receiver.receiveDatagram();
+        check(!sawOpacity(false), "nothing written: nothing sent");
+        engine.setParameter(layerId, "opacity", 0.3);
+        check(sawOpacity(true), "a parameter written is sent as OSC feedback, without a read going round");
+        check(!sawOpacity(false), "and not again");
+    }
     feedback.setEnabled(false);
     engine.shutdown();
     return failures ? 1 : 0;

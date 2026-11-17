@@ -1147,6 +1147,7 @@ private:
     std::vector<float> m_meshScratch;
     std::vector<uint8_t> m_renderMark; // render pass: layer already rendered this frame (reused, no allocation)
     std::vector<std::pair<quint64, size_t>> m_renderLayerIndices;
+    mutable QHash<quint64, int> m_indexOfIdCache; // where a layer was last found: checked before it is believed (under the lock)
     bool m_renderLayerIndexActive = false; // only while frame() holds the lock after cue/interaction updates
     std::vector<std::vector<size_t>> m_renderChildren;
 

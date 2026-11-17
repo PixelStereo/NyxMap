@@ -1183,6 +1183,7 @@ const std::vector<Parameter *> &Layer::parameters()
 
     paramIndex.clear();
     for (auto &p : paramStore) {
+        p->holder(id);
         paramList.push_back(p.get());
         paramIndex.insert(p->path(), p.get());
     }

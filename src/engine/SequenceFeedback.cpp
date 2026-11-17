@@ -16,7 +16,13 @@ SequenceFeedback::SequenceFeedback(Engine *engine, QObject *parent) : QObject(pa
     connect(m_e, &Engine::snapshotsChanged, this, [this] { sendNow(false); });
     connect(m_e, &Engine::presetsChanged, this, [this] { sendNow(false); });
     connect(m_e, &Engine::animationsChanged, this, [this] { sendNow(false); });
+    // The structure (layers, controls, interactions…) changed: the addresses are not the same, the namespace is read again
+    for (auto signal : {&Engine::layersChanged, &Engine::controlsChanged, &Engine::interactionsChanged, &Engine::timecodeRoutingChanged})
+        connect(m_e, signal, this, [this] { sendNow(false); });
+    connect(m_e, &Engine::layerAnimsChanged, this, [this] { sendNow(false); });
 }
+
+SequenceFeedback::~SequenceFeedback() { ChangeFeed::ignore(this); }
 
 bool SequenceFeedback::parseTarget(const QString &target, QString *host, quint16 *port)
 {
@@ -69,11 +75,20 @@ void SequenceFeedback::setEnabled(bool on)
     if (on == m_enabled) return;
     m_enabled = on;
     if (on) {
-        m_timer.start();
+        ChangeFeed::observe(this);
         sendNow(false);
+        updateTimer();
     } else {
+        ChangeFeed::ignore(this);
         m_timer.stop();
+        {
+            std::lock_guard<std::mutex> lk(m_pendingMutex);
+            m_pendingParams.clear();
+            m_pendingLayers.clear();
+            m_pendingAddresses.clear();
+        }
         m_sent.clear();
+        m_lastValues.clear();
     }
 }
 
@@ -84,9 +99,23 @@ void SequenceFeedback::setModified(bool on)
     sendNow(false);
 }
 
+void SequenceFeedback::updateTimer()
+{
+    const bool running = m_enabled && [&] {
+        Engine::Lock lock(&m_e->mutex());
+        return m_e->sequencer().running();
+    }();
+    if (running && !m_timer.isActive()) m_timer.start();
+    else if (!running && m_timer.isActive()) m_timer.stop();
+}
+
 void SequenceFeedback::tick()
 {
-    sendNow(false);
+    if (!m_enabled || m_targets.empty()) return;
+    int count = 0;
+    for (const auto &message : state()) transmit(message, false, false, &count); // the times of the step on its way
+    if (count) emit sent(count);
+    updateTimer();
 }
 
 static QString clockText(double t)
@@ -229,38 +258,137 @@ std::vector<osc::Message> SequenceFeedback::stateFor(Engine *engine, bool modifi
     return out;
 }
 
+void SequenceFeedback::transmit(const osc::Message &message, bool known, bool everything, int *count)
+{
+    const auto packet = osc::encode(message);
+    if (!known) { // the sequence's values: sent when they differ from what was sent
+        const auto previous = m_sent.constFind(message.address);
+        const bool unchanged = previous == m_sent.cend() || previous.value() == packet; // a first sight is a baseline
+        m_sent.insert(message.address, packet);
+        if (!everything && unchanged) return;
+    }
+    for (const auto &target : m_targets)
+        if (!target.address.isNull()) m_socket->writeDatagram(packet, target.address, target.port);
+    ++*count;
+}
+
+namespace {
+// What a node says now, as a message when it differs from what was last read (`everything`: always); a first reading is the
+// baseline, not a change
+bool readNode(QHash<QString, QVariantList> &last, bool everything, const QString &path, const OscNode &node, osc::Message *out)
+{
+    if (node.type.isEmpty() || !node.get || !(node.access & 1)) return false; // not something to read
+    QVariantList args = node.get();
+    if (args.isEmpty()) return false;
+    auto it = last.find(path);
+    if (!everything && it != last.end() && it.value() == args) return false;
+    if (it == last.end()) {
+        last.insert(path, args);
+        if (!everything) return false;
+    } else {
+        it.value() = args;
+    }
+    *out = osc::Message{path, node.type, std::move(args)};
+    for (qsizetype i = 0; i < out->types.size(); ++i)
+        if (out->types[i] == 'T' || out->types[i] == 'F')
+            out->types[i] = out->args.value(i).toBool() ? QLatin1Char('T') : QLatin1Char('F');
+    return true;
+}
+} // namespace
+
 void SequenceFeedback::sendNow(bool everything)
 {
     if (!m_enabled || m_targets.empty()) return;
     auto messages = state();
-    QSet<QString> sequencePaths;
-    for (const auto &message : messages) sequencePaths.insert(message.address);
+    m_sequencePaths.clear();
+    for (const auto &message : messages) m_sequencePaths.insert(message.address);
+    std::vector<osc::Message> changed;
     {
         Engine::Lock lock(&m_e->mutex());
         m_namespace.refresh();
-        for (const auto &path : m_namespace.paths()) {
-            if (sequencePaths.contains(path)) continue;
-            const auto *node = m_namespace.node(path);
-            if (!node || !node->get || !(node->access & 1)) continue;
-            osc::Message message{path, node->type, node->get()};
-            if (message.args.isEmpty()) continue;
-            for (qsizetype i = 0; i < message.types.size(); ++i)
-                if (message.types[i] == 'T' || message.types[i] == 'F')
-                    message.types[i] = message.args.value(i).toBool() ? QLatin1Char('T') : QLatin1Char('F');
-            messages.push_back(std::move(message));
+        if (m_namespace.generation() != m_namespaceGeneration) { // the structure changed: what is gone is forgotten
+            m_namespaceGeneration = m_namespace.generation();
+            QSet<QString> present;
+            m_namespace.forEachReadable([&](const QString &path, const OscNode &) { present.insert(path); });
+            for (auto it = m_lastValues.begin(); it != m_lastValues.end();)
+                it = present.contains(it.key()) ? std::next(it) : m_lastValues.erase(it);
+            for (auto it = m_sent.begin(); it != m_sent.end();)
+                it = (present.contains(it.key()) || m_sequencePaths.contains(it.key())) ? std::next(it) : m_sent.erase(it);
         }
+        m_namespace.forEachReadable([&](const QString &path, const OscNode &node) {
+            if (m_sequencePaths.contains(path)) return;
+            osc::Message message;
+            if (readNode(m_lastValues, everything, path, node, &message)) changed.push_back(std::move(message));
+        });
     }
-    QHash<QString, QByteArray> current;
     int count = 0;
-    for (const auto &message : messages) {
-        const auto packet = osc::encode(message);
-        const auto previous = m_sent.constFind(message.address);
-        current.insert(message.address, packet);
-        if (!everything && (previous == m_sent.cend() || previous.value() == packet)) continue;
-        for (const auto &target : m_targets)
-            if (!target.address.isNull()) m_socket->writeDatagram(packet, target.address, target.port);
-        ++count;
+    for (const auto &message : messages) transmit(message, false, everything, &count);
+    for (const auto &message : changed) transmit(message, true, everything, &count);
+    if (count) emit sent(count);
+    updateTimer();
+}
+
+// What is written is noted where it is written (any thread, the lock often held) and read here, once, in the main thread's
+// next turn: nothing goes round while nothing changes, and only the addresses that were named are read
+void SequenceFeedback::queueFlush()
+{
+    if (m_flushQueued) return;
+    m_flushQueued = true;
+    QMetaObject::invokeMethod(this, &SequenceFeedback::flushChanges, Qt::QueuedConnection);
+}
+
+void SequenceFeedback::parameterWritten(quint64 holder, const QString &path)
+{
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    m_pendingParams.insert({holder, path});
+    queueFlush();
+}
+
+void SequenceFeedback::layerChanged(quint64 layer)
+{
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    m_pendingLayers.insert(layer);
+    queueFlush();
+}
+
+void SequenceFeedback::addressChanged(const QString &address)
+{
+    std::lock_guard<std::mutex> lk(m_pendingMutex);
+    m_pendingAddresses.insert(address);
+    queueFlush();
+}
+
+void SequenceFeedback::flushChanges()
+{
+    QSet<std::pair<quint64, QString>> params;
+    QSet<quint64> layers;
+    QSet<QString> addresses;
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMutex);
+        params.swap(m_pendingParams);
+        layers.swap(m_pendingLayers);
+        addresses.swap(m_pendingAddresses);
+        m_flushQueued = false;
     }
-    m_sent = std::move(current);
+    if (!m_enabled || m_targets.empty()) return;
+    std::vector<osc::Message> changed;
+    {
+        Engine::Lock lock(&m_e->mutex());
+        QSet<QString> seen; // an address once, whatever named it
+        const auto take = [&](const QString &path, const OscNode &node) {
+            if (m_sequencePaths.contains(path) || seen.contains(path)) return;
+            seen.insert(path);
+            osc::Message message;
+            if (readNode(m_lastValues, false, path, node, &message)) changed.push_back(std::move(message));
+        };
+        for (const auto &key : params)
+            for (const QString &address : m_namespace.addressesOf(key.first, key.second))
+                if (const OscNode *node = m_namespace.node(address)) take(address, *node);
+        for (const quint64 layer : layers)
+            for (const QString &prefix : m_namespace.layerPrefixes(layer)) m_namespace.forEachUnder(prefix, take);
+        for (const QString &address : addresses) m_namespace.forEachUnder(address, take);
+    }
+    int count = 0;
+    for (const auto &message : changed) transmit(message, true, false, &count);
     if (count) emit sent(count);
 }

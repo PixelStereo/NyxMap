@@ -1,4 +1,5 @@
 #include "Osc.h"
+#include "ChangeFeed.h"
 #include "EventLog.h"
 #include "EngineInternal.h"
 #include "Engine.h"
@@ -158,6 +159,7 @@ void OscNamespace::refresh()
     const QString sig = signature();
     if (sig == m_signature && !m_nodes.empty()) return;
     m_signature = sig;
+    ++m_generation;
     build();
 }
 
@@ -165,6 +167,55 @@ const OscNode *OscNamespace::node(const QString &path) const
 {
     const auto it = m_nodes.find(path);
     return it == m_nodes.end() ? nullptr : &it->second;
+}
+
+QStringList OscNamespace::addressesOf(quint64 layer, const QString &path) const
+{
+    QStringList out;
+    const auto add = [&](const QString &address) {
+        if (m_nodes.count(address)) out << address;
+    };
+    QStringList bases;
+    if (!layer) {
+        if (path.startsWith(QLatin1String("interaction/"))) {
+            const QString p = m_interactionPrefix.value(path.section('/', 1, 1).toULongLong());
+            if (!p.isEmpty()) bases << p, add(p + '/' + path.section('/', 2));
+            return out;
+        }
+        bases << QStringLiteral("/composition");
+        add(QStringLiteral("/composition/") + path);
+    } else {
+        if (m_prefixOf.contains(layer)) bases << m_prefixOf.value(layer);
+        bases << QStringLiteral("/show/layer/by-id/%1").arg(layer);
+        for (const QString &base : bases) add(base + '/' + path);
+    }
+    const int cut = path.lastIndexOf('/');
+    if (cut > 0) // the numbers that go together (x y, r g b) are also at their common address
+        for (const QString &base : bases) add(base + '/' + path.left(cut));
+    return out;
+}
+
+void OscNamespace::forEachUnder(const QString &prefix, const std::function<void(const QString &, const OscNode &)> &visit) const
+{
+    for (auto it = m_nodes.lower_bound(prefix); it != m_nodes.end() && it->first.startsWith(prefix); ++it) {
+        const OscNode &node = it->second;
+        if (it->first.size() > prefix.size() && it->first[prefix.size()] != '/') continue; // another name that begins alike
+        if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(it->first, node);
+    }
+}
+
+QStringList OscNamespace::layerPrefixes(quint64 layer) const
+{
+    QStringList out;
+    if (m_prefixOf.contains(layer)) out << m_prefixOf.value(layer);
+    out << QStringLiteral("/show/layer/by-id/%1").arg(layer);
+    return out;
+}
+
+void OscNamespace::forEachReadable(const std::function<void(const QString &, const OscNode &)> &visit) const
+{
+    for (const auto &[path, node] : m_nodes)
+        if (!node.type.isEmpty() && node.get && (node.access & 1)) visit(path, node);
 }
 
 QStringList OscNamespace::paths() const
@@ -690,7 +741,7 @@ struct LayerNodes {
     // Read under the lock; writes refused on a locked layer unless `always`
     OscNode &method(const QString &path, const QString &type, int access, const QString &desc,
                     std::function<QVariantList(Layer &)> get, std::function<bool(int, const QVariantList &)> set,
-                    bool always = false)
+                    bool always = false, bool layerState = true)
     {
         OscNode &n = add(path, type, access, desc);
         Engine *eng = e;
@@ -702,10 +753,12 @@ struct LayerNodes {
                 return l ? get(*l) : QVariantList();
             };
         if (set)
-            n.set = [eng, lid, set, always](const QVariantList &a) {
+            n.set = [eng, lid, set, always, layerState](const QVariantList &a) {
                 const int idx = eng->indexOfId(lid);
                 if (idx < 0 || (!always && eng->isLocked(idx))) return false;
-                return set(idx, a);
+                const bool done = set(idx, a);
+                if (done && layerState) ChangeFeed::layer(lid); // its own state (a parameter says so by itself)
+                return done;
             };
         return n;
     }
@@ -767,7 +820,8 @@ struct LayerNodes {
                                        if (number) return !a.isEmpty() && p->setNumber(num(a[0]));
                                        if (p->info().type == ParamInfo::Type::Bool) return p->setValue(truth(a.value(0)));
                                        return p->setValue(a.value(0));
-                                   }));
+                                   }),
+                                   false, false);
             if (i.type != ParamInfo::Type::Bool && i.type != ParamInfo::Type::Text && i.type != ParamInfo::Type::Trigger)
                 node.range = {rangeOf(i)};
             if (number && i.min == i.lo && i.max == i.hi) node.clip = "both";
@@ -829,7 +883,8 @@ struct LayerNodes {
                                            if (!x || !x->setNumber(num(a[k]) * scale)) return false;
                                        }
                                        return true;
-                                   }));
+                                   }),
+                                   false, false);
             node.range = range;
             if (std::all_of(paths.cbegin(), paths.cend(), [&byPath](const QString &path) {
                     const ParamInfo &i = byPath[path];

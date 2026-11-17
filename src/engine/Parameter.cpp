@@ -1,4 +1,5 @@
 #include "Parameter.h"
+#include "ChangeFeed.h"
 
 #include <limits>
 
@@ -147,6 +148,13 @@ double Parameter::asNumber() const
 }
 
 bool Parameter::setValue(const QVariant &v)
+{
+    const bool written = writeValue(v);
+    if (written) ChangeFeed::parameter(m_holder, m_info.path);
+    return written;
+}
+
+bool Parameter::writeValue(const QVariant &v)
 {
     if (!(m_info.access & ParamInfo::Write) || !m_set) return false;
     switch (m_info.type) {

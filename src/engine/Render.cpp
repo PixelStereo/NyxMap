@@ -3,6 +3,7 @@
 // composition is assembled, then read back for the interface preview and for publishing.
 #include <QJsonArray>
 #include "EngineInternal.h"
+#include "ChangeFeed.h"
 #include "RhiRenderer.h"
 #include "RhiTarget.h"
 #include "TimecodeClock.h"
@@ -865,6 +866,13 @@ void Engine::frame(double dt)
     RhiTarget::setWorkingFormat(effectiveRender().depth >= 10 ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8); // the 10-bit precision
     markNeeded();
     for (auto &l : m_layers) updateSource(*l, dt);
+    if (ChangeFeed::listening()) { // a playhead goes on moving: its feedback is told ten times a second, only while it plays
+        for (auto &l : m_layers)
+            if (l->playing && l->hasTransport() && m_frameStampNs - l->timeFedNs >= 100'000'000) {
+                l->timeFedNs = m_frameStampNs;
+                ChangeFeed::parameter(l->id, QStringLiteral("time"));
+            }
+    }
     for (auto &[id, t] : m_transitions) updateSource(*t->from, dt); // the outgoing sources play on
     releaseRetired(false); // transitions over whose decoders are closed by now
 

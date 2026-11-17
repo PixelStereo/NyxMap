@@ -1,4 +1,5 @@
 #include "Commands.h"
+#include "ChangeFeed.h"
 #include "EngineInternal.h"
 #include "Osc.h"
 
@@ -186,6 +187,7 @@ void SetLayerProp::apply(const QVariant &v)
     case ColorMask:
     case Matte: break;
     }
+    ChangeFeed::layer(m_layer); // its name, flags: the OSC feedback
 }
 
 bool SetLayerProp::mergeWith(const QUndoCommand *other)

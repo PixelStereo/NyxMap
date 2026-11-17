@@ -5764,7 +5764,9 @@ void main(){ gl_FragColor = vec4(IMG_NORM_PIXEL(fft, vec2(%1, .5)).r, IMG_SIZE(w
                 ++cycles;
             }
             const double expected = t.elapsed() / 1000.0 * AudioOutput::kSampleRate;
-            CHECK(cycles > 50 && double(mixed.load()) > expected * 0.8); // the callback kept its pace
+            // The loop's sleeps are as long as the machine's timer lets them be (15 ms on a Windows runner: fewer turns)
+            std::printf("      callback test: %d add/remove turns, mixed %.0f%% of the time asked\n", cycles, 100.0 * double(mixed.load()) / expected);
+            CHECK(cycles > 20 && double(mixed.load()) > expected * 0.8); // the callback kept its pace
             for (auto &st : streams) st->close(); // removed: closing cannot race the callback
             out.setTap(nullptr);
             out.stop();

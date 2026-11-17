@@ -61,9 +61,17 @@ public:
     explicit OscNamespace(Engine *e) : m_e(e) {}
 
     void refresh();                         // rebuilds if the structure signature changed
+    int generation() const { return m_generation; } // counts the rebuilds
     QString signature() const;              // layers, sources, effects and parameters (not values)
     const OscNode *node(const QString &path) const;
     QStringList paths() const;              // every method (node with a type)
+    // Every readable method, in order, without finding each by its path (the node is at hand)
+    void forEachReadable(const std::function<void(const QString &, const OscNode &)> &visit) const;
+    // Where a parameter of a holder is (by its name, by its id, and at its common address), those that exist
+    QStringList addressesOf(quint64 layer, const QString &path) const;
+    // Every readable method at an address and under it
+    void forEachUnder(const QString &prefix, const std::function<void(const QString &, const OscNode &)> &visit) const;
+    QStringList layerPrefixes(quint64 layer) const; // a layer's addresses (by name, by id)
     QJsonObject toJson(const QString &path) const; // node and its contents (OSCQuery)
     // The OSC address of a value (a layer's id, 0: the composition — "interaction/<id>/…": an interaction's), as
     // built now ("": it has none)
@@ -79,6 +87,7 @@ private:
 
     Engine *m_e;
     QString m_signature;
+    int m_generation = 0;
     std::map<QString, OscNode> m_nodes;
     QHash<quint64, QString> m_prefixOf; // a layer's address
     QHash<quint64, QString> m_interactionPrefix; // an interaction's ("/interaction/<name>")

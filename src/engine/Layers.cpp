@@ -2,6 +2,7 @@
 // layer), transport, effect chain, and the copy of parameters from one layer to another.
 #include "Naming.h"
 #include "EngineInternal.h"
+#include "ChangeFeed.h"
 #include "Midi.h"
 #include "ImageFile.h"
 #include "Psd.h"
@@ -866,8 +867,16 @@ int Engine::indexOfId(quint64 id) const
         const size_t row = renderLayerIndex(id);
         return row < m_layers.size() ? int(row) : -1;
     }
+    // Where it was found last time, if it is still there (a layer moves, is made or is removed: the answer is checked)
+    const auto cached = m_indexOfIdCache.constFind(id);
+    if (cached != m_indexOfIdCache.cend() && size_t(cached.value()) < m_layers.size() && m_layers[size_t(cached.value())]->id == id)
+        return cached.value();
     for (size_t i = 0; i < m_layers.size(); ++i)
-        if (m_layers[i]->id == id) return int(i);
+        if (m_layers[i]->id == id) {
+            m_indexOfIdCache.insert(id, int(i));
+            return int(i);
+        }
+    m_indexOfIdCache.remove(id);
     return -1;
 }
 
@@ -2292,6 +2301,7 @@ void Engine::setLayerPlaying(int i, bool playing)
     if (playing && l->atEnd()) startMedia(*l); // played to the end: starts again
     l->playing = playing;
     if (playing) l->ended = false;
+    ChangeFeed::layer(l->id);
 }
 
 void Engine::setLayerPlayMode(int i, PlayMode mode)
@@ -2319,6 +2329,7 @@ void Engine::seekLayer(int i, double t)
     if (!l || !l->hasTransport()) return;
     journal(QStringLiteral("seek"), QStringLiteral("%1 @ %2 s").arg(l->name).arg(t, 0, 'f', 3));
     reposition(*l, t, l->dir);
+    ChangeFeed::parameter(l->id, QStringLiteral("time")); // its playhead moved
 }
 
 void Engine::setLayerVolume(int i, float volume)
